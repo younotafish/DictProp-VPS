@@ -1,0 +1,5 @@
+{
+  "name": "PopDict",
+  "description": "An AI-powered C1 ESL tutor and thinking dictionary with spaced repetition.",
+  "requestFramePermissions": []
+}
