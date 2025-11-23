@@ -5,11 +5,11 @@ import { NotebookView } from './views/Notebook';
 import { StudyView } from './views/Study';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, VocabCard, SRSData, SearchResult, SyncStatus, TaskType } from './types';
+import { StoredItem, ViewState, VocabCard, SRSData, SearchResult, SyncStatus, TaskType, SyncState } from './types';
 import { Search, Book, BrainCircuit } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signInAnonymouslyUser, signOut, isConfigured, handleRedirectResult } from './services/firebase';
+import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signInAnonymouslyUser, signOut, isConfigured, handleRedirectResult, loadUserData } from './services/firebase';
 import { FirebaseConfigModal } from './components/FirebaseConfigModal';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
@@ -24,7 +24,19 @@ const getItemTitle = (item: StoredItem): string => {
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>('search');
-  const [savedItems, setSavedItems] = useState<StoredItem[]>([]);
+  
+  // Simplified sync state (items only)
+  const [syncState, setSyncState] = useState<SyncState>({
+    items: [],
+    operations: [],
+    pendingOps: [],
+    lastSyncedOpId: null,
+    deviceId: ''
+  });
+  
+  // Derived state
+  const savedItems = syncState.items;
+  
   const [recursiveQuery, setRecursiveQuery] = useState<string | undefined>(undefined);
   const [selectedStoredItem, setSelectedStoredItem] = useState<StoredItem | undefined>(undefined);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -47,6 +59,30 @@ const App: React.FC = () => {
   const touchEndX = useRef<number | null>(null);
   const touchEndY = useRef<number | null>(null);
   const minSwipeDistance = 50;
+
+  // Force refresh logic for iOS PWA
+  useEffect(() => {
+      const handleVisibilityChange = () => {
+          if (document.visibilityState === 'visible') {
+              const lastHiddenStr = localStorage.getItem('app_last_hidden');
+              if (lastHiddenStr) {
+                  const lastHidden = parseInt(lastHiddenStr, 10);
+                  const now = Date.now();
+                  // If app was in background for more than 5 minutes, reload to refresh state
+                  if (now - lastHidden > 5 * 60 * 1000) {
+                      console.log("🔄 App was backgrounded for >5m, refreshing...");
+                      window.location.reload();
+                  }
+              }
+              localStorage.removeItem('app_last_hidden');
+          } else {
+              localStorage.setItem('app_last_hidden', Date.now().toString());
+          }
+      };
+      
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
   const onTouchStart = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
@@ -91,6 +127,8 @@ const App: React.FC = () => {
   useEffect(() => {
     const initStorage = async () => {
         try {
+            console.log("🔧 Initializing storage and sync system...");
+            
             const migrated = await migrateFromLocalStorage();
             let itemsToLoad: StoredItem[] = [];
             
@@ -106,19 +144,51 @@ const App: React.FC = () => {
             }
             
             // Auto-migrate SRS data to new format if needed
-            const needsMigration = itemsToLoad.some(item => typeof item.srs?.memoryStrength !== 'number');
-            if (needsMigration && itemsToLoad.length > 0) {
-                console.log("🔄 Migrating", itemsToLoad.length, "items to new SRS format...");
-                const migratedItems = itemsToLoad.map(item => ({
+            let processedItems = [...itemsToLoad];
+            let hasChanges = false;
+
+            // 1. SRS Migration
+            const needsSRSMigration = processedItems.some(item => typeof item.srs?.memoryStrength !== 'number');
+            if (needsSRSMigration && processedItems.length > 0) {
+                console.log("🔄 Migrating", processedItems.length, "items to new SRS format...");
+                processedItems = processedItems.map(item => ({
                     ...item,
                     srs: migrateSRSData(item.srs)
                 }));
-                setSavedItems(migratedItems);
-                await saveData(migratedItems);
+                hasChanges = true;
                 console.log("✅ SRS migration complete!");
-            } else {
-                setSavedItems(itemsToLoad);
             }
+
+            // 2. Timestamp Fix (for Sync)
+            const needsTimestampFix = processedItems.some(item => !item.updatedAt && !item.savedAt);
+            if (needsTimestampFix) {
+                console.log("🔄 Fixing missing timestamps for sync compatibility...");
+                const now = Date.now();
+                processedItems = processedItems.map(item => {
+                    if (!item.updatedAt && !item.savedAt) {
+                        return { ...item, savedAt: now, updatedAt: now };
+                    }
+                    return item;
+                });
+                hasChanges = true;
+                console.log("✅ Timestamp fix complete!");
+            }
+
+            // 3. Initialize sync state (simple items only)
+            setSyncState({
+                items: processedItems,
+                operations: [],
+                pendingOps: [],
+                lastSyncedOpId: null,
+                deviceId: ''
+            });
+            
+            // 5. Save if we made changes
+            if (hasChanges) {
+                await saveData(processedItems);
+            }
+            
+            console.log("✅ Storage initialization complete");
         } catch (e) {
             console.error("Failed to initialize storage", e);
         } finally {
@@ -128,7 +198,7 @@ const App: React.FC = () => {
     initStorage();
   }, []);
 
-  // 2. FIREBASE SYNC LOGIC
+  // 2. FIREBASE SYNC LOGIC (Operation-Based)
   useEffect(() => {
     if (!isFirebaseConfigured) return;
 
@@ -136,88 +206,139 @@ const App: React.FC = () => {
     handleRedirectResult().catch((error) => {
       if (error?.code === 'auth/unauthorized-domain') {
         setUnauthorizedDomain(window.location.host || window.location.origin || "Unable to detect URL");
+      } else if (error?.message === "REDIRECT_FAILED_SILENTLY") {
+        setSignInError({ 
+            code: 'auth/safari-privacy', 
+            message: "Sign-in failed due to Safari privacy settings. Please disable 'Prevent Cross-Site Tracking' in Settings > Safari and try again." 
+        });
       } else if (error) {
         console.error("Redirect result error:", error);
       }
     });
 
-    let unsubscribeData: (() => void) | undefined;
+    let unsubscribeOps: (() => void) | undefined;
 
-    const unsubscribeAuth = subscribeToAuth((currentUser) => {
+    const unsubscribeAuth = subscribeToAuth(async (currentUser) => {
       setUser(currentUser);
       
-      // Clean up previous data subscription if it exists
-      if (unsubscribeData) {
-        unsubscribeData();
-        unsubscribeData = undefined;
+      // Clean up previous subscription if it exists
+      if (unsubscribeOps) {
+        unsubscribeOps();
+        unsubscribeOps = undefined;
       }
       
       if (currentUser) {
-        console.log("🔥 Setting up Firebase sync for user:", currentUser.uid);
-        unsubscribeData = subscribeToUserData(currentUser.uid, (remoteItems) => {
-            console.log("🔥 📥 Received items from Firebase:", remoteItems.length);
+        console.log("🔥 Setting up sync for user:", currentUser.uid);
+        
+        // SIMPLE SYNC: Load items directly from Firebase (no operations)
+        try {
+          console.log("🔥 📥 Fetching items from Firebase...");
+          const remoteItems = await loadUserData(currentUser.uid);
+          const activeRemoteItems = remoteItems.filter(item => !item.isDeleted);
+          console.log(`🔥 📥 Loaded ${activeRemoteItems.length} items from Firebase`);
+          
+          // Merge with local items
+          setSyncState(prevState => {
+            const mergedItems = mergeDatasets(prevState.items, activeRemoteItems);
+            console.log(`🔥 ✅ Initial sync complete: ${mergedItems.length} items`);
             
-            setSavedItems(prevLocal => {
-                console.log("🔥 📊 Merging - Remote:", remoteItems.length, "Local:", prevLocal.length);
-                const merged = mergeDatasets(prevLocal, remoteItems);
-                console.log("🔥 ✅ After merge:", merged.length, "items");
-                return merged;
-            });
+            return {
+              ...prevState,
+              items: mergedItems
+            };
+          });
+        } catch (error) {
+          console.error("🔥 ❌ Initial sync failed:", error);
+        }
+        
+        // Subscribe to real-time updates
+        unsubscribeOps = subscribeToUserData(currentUser.uid, (remoteItems) => {
+          const activeRemoteItems = remoteItems.filter(item => !item.isDeleted);
+          console.log(`🔥 📥 Received ${activeRemoteItems.length} items from subscription`);
+          
+          setSyncState(prevState => {
+            const mergedItems = mergeDatasets(prevState.items, activeRemoteItems);
+            console.log(`🔥 ✅ Merged: ${mergedItems.length} items total`);
+            
+            return {
+              ...prevState,
+              items: mergedItems
+            };
+          });
         });
       }
     });
 
     return () => {
       console.log("🔥 Cleaning up Firebase subscriptions");
-      if (unsubscribeData) unsubscribeData();
+      if (unsubscribeOps) unsubscribeOps();
       unsubscribeAuth();
     };
   }, [isFirebaseConfigured]);
 
-  // 3. SAVE EFFECTS (Persistence)
+  // 3. SAVE EFFECTS (Persistence + Simple Item Sync)
   useEffect(() => {
     if (!isLoaded) return; 
 
     const timer = setTimeout(async () => {
       // 1. Save to Local IDB
-      await saveData(savedItems);
-      console.log("💾 Saved to IndexedDB:", savedItems.length, "items");
+      await saveData(syncState.items);
+      console.log(`💾 Saved to IndexedDB: ${syncState.items.length} items`);
       
-      // 2. Push to Cloud (Firebase) - OPTIMIZED
+      // 2. Push items to Cloud (Firebase) - Simple sync
       if (user && isFirebaseConfigured) {
-          // Get last sync timestamp from localStorage
-          const lastSyncKey = `last_sync_${user.uid}`;
-          const lastSyncTime = parseInt(localStorage.getItem(lastSyncKey) || '0', 10);
+          setSyncStatus('syncing');
           
-          // Only sync items that have changed since last sync
-          const itemsToSync = savedItems.filter(item => {
-              const itemTime = item.updatedAt || item.savedAt || 0;
-              return itemTime > lastSyncTime;
-          });
-          
-          // Only sync if there are actual changes
-          if (itemsToSync.length > 0) {
-              console.log(`🔥 Syncing ${itemsToSync.length} changed items (out of ${savedItems.length} total)...`);
-              setSyncStatus('syncing');
-              saveUserData(user.uid, itemsToSync)
-                .then(() => {
-                  console.log("🔥 Firebase sync complete!");
-                  localStorage.setItem(lastSyncKey, Date.now().toString());
-                  setSyncStatus('saved');
-                })
-                .catch((e) => {
-                  console.error("🔥 Firebase sync error:", e);
-                  setSyncStatus('error');
-                });
-          } else {
-              console.log("🔥 No changes to sync - skipping Firebase request");
+          try {
+            await saveUserData(user.uid, syncState.items);
+            console.log("🔥 ✅ Items synced to Firebase!");
+            setSyncStatus('saved');
+          } catch (e) {
+            console.error("🔥 ❌ Sync error:", e);
+            setSyncStatus('error');
           }
       }
 
-    }, 3000); // 3s debounce (increased from 2s)
+    }, 5000); // 5s debounce (user preference)
 
     return () => clearTimeout(timer);
-  }, [savedItems, isLoaded, user, isFirebaseConfigured]);
+  }, [syncState, isLoaded, user, isFirebaseConfigured]);
+
+  const handleForceSync = async () => {
+    if (!user || !isFirebaseConfigured) return;
+    
+    console.log("🔥 Force Sync Initiated");
+    setSyncStatus('syncing');
+    
+    try {
+      // 1. Upload local items to Firebase
+      console.log(`🔥 Force Sync: Uploading ${syncState.items.length} items...`);
+      await saveUserData(user.uid, syncState.items);
+      
+      // 2. Pull latest items from Firebase
+      console.log("🔥 Force Sync: Fetching latest items...");
+      const remoteItems = await loadUserData(user.uid);
+      const activeRemoteItems = remoteItems.filter(item => !item.isDeleted);
+      console.log(`🔥 Force Sync: Loaded ${activeRemoteItems.length} items from server`);
+      
+      // 3. Merge
+      setSyncState(prevState => {
+        const mergedItems = mergeDatasets(prevState.items, activeRemoteItems);
+        console.log(`🔥 Force Sync: Merged! ${mergedItems.length} items total`);
+        return {
+          ...prevState,
+          items: mergedItems
+        };
+      });
+      
+      setSyncStatus('saved');
+      console.log("🔥 Force Sync: Complete!");
+      
+    } catch (e) {
+      console.error("🔥 Force Sync Failed:", e);
+      setSyncStatus('error');
+    }
+  };
 
   const handleSignIn = async () => {
       try {
@@ -284,86 +405,108 @@ const App: React.FC = () => {
   };
 
   const handleSave = (item: StoredItem) => {
-    setSavedItems(prev => {
-        if (!Array.isArray(prev)) return [item];
-        try {
-            if (!item || !item.data || !item.data.id) return prev;
-            const rawTitle = getItemTitle(item);
-            const incomingTitle = String(rawTitle || '').toLowerCase().trim();
-            if (!incomingTitle) return prev; 
-            
-            const itemToSave = { 
-                ...item, 
-                updatedAt: Date.now(),
-                isDeleted: false 
-            };
+    try {
+      if (!item || !item.data || !item.data.id) return;
+      
+      const rawTitle = getItemTitle(item);
+      const incomingTitle = String(rawTitle || '').toLowerCase().trim();
+      if (!incomingTitle) return;
+      
+      const itemToSave = { 
+        ...item, 
+        updatedAt: Date.now(),
+        savedAt: item.savedAt || Date.now(),
+        isDeleted: false 
+      };
 
-            const existingIndex = prev.findIndex(i => 
-                String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle
-            );
+      // Check if item already exists
+      const existingIndex = syncState.items.findIndex(i => 
+        String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle
+      );
 
-            if (existingIndex >= 0) {
-                const existingItem = prev[existingIndex];
-                const dataId = (existingItem.data as any)?.id || itemToSave.data.id;
-                const mergedSrs = ensureSRSData(
-                    existingItem.srs ?? itemToSave.srs,
-                    dataId,
-                    existingItem.type
-                );
-
-                const mergedItem: StoredItem = {
-                    ...itemToSave,
-                    savedAt: existingItem.savedAt || Date.now(),
-                    srs: mergedSrs
-                };
-
-                const newItems = [...prev];
-                newItems.splice(existingIndex, 1);
-                return [mergedItem, ...newItems];
-            }
-            const normalizedSRS = ensureSRSData(
-                itemToSave.srs,
-                itemToSave.data.id,
-                itemToSave.type
-            );
-            return [{ ...itemToSave, srs: normalizedSRS }, ...prev];
-        } catch (err) {
-            console.error("Error during save operation:", err);
-            return prev;
-        }
-    });
+      if (existingIndex >= 0) {
+        // Update existing item
+        const existingItem = syncState.items[existingIndex];
+        
+        // Merge SRS data
+        const mergedSrs = ensureSRSData(
+          existingItem.srs ?? itemToSave.srs,
+          existingItem.data.id,
+          existingItem.type
+        );
+        
+        const mergedItem: StoredItem = {
+          ...itemToSave,
+          savedAt: existingItem.savedAt || Date.now(),
+          updatedAt: Date.now(),
+          srs: mergedSrs
+        };
+        
+        // Update items array directly
+        const newItems = [...syncState.items];
+        newItems[existingIndex] = mergedItem;
+        
+        setSyncState({
+          ...syncState,
+          items: newItems
+        });
+      } else {
+        // New item
+        const normalizedSRS = ensureSRSData(itemToSave.srs, itemToSave.data.id, itemToSave.type);
+        const finalItem = { 
+          ...itemToSave, 
+          srs: normalizedSRS,
+          savedAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        
+        setSyncState({
+          ...syncState,
+          items: [finalItem, ...syncState.items]
+        });
+      }
+    } catch (err) {
+      console.error("Error during save operation:", err);
+    }
   };
 
   const handleUpdateStoredItem = (item: StoredItem) => {
-      setSavedItems(prev => {
-          const rawTitle = getItemTitle(item);
-          const incomingTitle = String(rawTitle || '').toLowerCase().trim();
-          if (!incomingTitle) return prev;
-          
-          const updatedItemData = { ...item.data };
-
-          return prev.map(existing => {
-              const existingTitle = String(getItemTitle(existing) || '').toLowerCase().trim();
-              if (existingTitle === incomingTitle) {
-                  return { 
-                      ...existing, 
-                      data: { ...existing.data, ...updatedItemData },
-                      updatedAt: Date.now(),
-                      isDeleted: false
-                  };
-              }
-              return existing;
-          });
+    const rawTitle = getItemTitle(item);
+    const incomingTitle = String(rawTitle || '').toLowerCase().trim();
+    if (!incomingTitle) return;
+    
+    // Update item directly
+    const index = syncState.items.findIndex(i => i.data.id === item.data.id);
+    if (index >= 0) {
+      const newItems = [...syncState.items];
+      newItems[index] = {
+        ...item,
+        updatedAt: Date.now()
+      };
+      
+      setSyncState({
+        ...syncState,
+        items: newItems
       });
+    }
   };
 
   const handleDelete = (id: string) => {
-    setSavedItems(prev => prev.map(i => {
-        if (i.data?.id === id) {
-            return { ...i, isDeleted: true, updatedAt: Date.now() };
-        }
-        return i;
-    }));
+    // Mark item as deleted
+    const index = syncState.items.findIndex(i => i.data.id === id);
+    if (index >= 0) {
+      const newItems = [...syncState.items];
+      newItems[index] = {
+        ...newItems[index],
+        isDeleted: true,
+        updatedAt: Date.now()
+      };
+      
+      setSyncState({
+        ...syncState,
+        items: newItems
+      });
+    }
   };
 
   const handleRecursiveSearch = (text: string) => {
@@ -377,28 +520,37 @@ const App: React.FC = () => {
       setDetailItem({ data: item.data, type: item.type });
   };
 
-  // Enhanced SRS update with new algorithm
+  // Enhanced SRS update with new algorithm (using operations)
   const updateSRS = (itemId: string, quality: number, taskType: TaskType = 'recall', responseTime: number = 3000) => {
-      setSavedItems(prev => prev.map(item => {
-          if (!item.data || item.data.id !== itemId) return item;
-          
-          // Migrate old SRS data if needed
-          const migratedSRS = migrateSRSData(item.srs);
-          
-          // Use new algorithm
-          const updatedSRS = SRSAlgorithm.updateAfterReview(
-            migratedSRS,
-            quality,
-            taskType,
-            responseTime
-          );
-
-          return {
-              ...item,
-              updatedAt: Date.now(), 
-              srs: updatedSRS
-          };
-      }));
+    const item = syncState.items.find(i => i.data.id === itemId);
+    if (!item) return;
+    
+    // Migrate old SRS data if needed
+    const migratedSRS = migrateSRSData(item.srs);
+    
+    // Use new algorithm
+    const updatedSRS = SRSAlgorithm.updateAfterReview(
+      migratedSRS,
+      quality,
+      taskType,
+      responseTime
+    );
+    
+    // Update SRS directly
+    const index = syncState.items.findIndex(i => i.data.id === itemId);
+    if (index >= 0) {
+      const newItems = [...syncState.items];
+      newItems[index] = {
+        ...newItems[index],
+        srs: updatedSRS,
+        updatedAt: Date.now()
+      };
+      
+      setSyncState({
+        ...syncState,
+        items: newItems
+      });
+    }
   };
 
   // Legacy updateSRS for backward compatibility with old Study view
@@ -482,6 +634,7 @@ const App: React.FC = () => {
             isConfigured={isFirebaseConfigured}
             syncStatus={syncStatus}
             onScroll={handleScroll}
+            onForceSync={handleForceSync}
           />
         )}
         

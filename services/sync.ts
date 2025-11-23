@@ -43,45 +43,62 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
            }
       }
 
-      // 1. Prioritize Learning Progress
-      const localHistory = localItem.srs?.history?.length || 0;
-      const remoteHistory = remoteItem.srs?.history?.length || 0;
+      // 1. Smart Field-Level Merging
+      // Instead of picking one winner, we merge the best parts of both.
+      
+      const localHistory = localItem.srs?.totalReviews || localItem.srs?.history?.length || 0;
+      const remoteHistory = remoteItem.srs?.totalReviews || remoteItem.srs?.history?.length || 0;
+      
+      const localTime = localItem.updatedAt || localItem.savedAt || 0;
+      const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || 0;
+      
+      let mergedItem: StoredItem = { ...remoteItem }; // Start with remote as base
 
-      let winningItem: StoredItem;
+      // A. DATA MERGE (Content - Word/Definition)
+      // Content usually changes rarely. Trust the most recent update.
+      if (localTime > remoteTime) {
+          mergedItem.data = { ...localItem.data };
+          mergedItem.updatedAt = localTime;
+          mergedItem.savedAt = localItem.savedAt;
+      }
+
+      // B. SRS MERGE (Learning Progress)
+      // Always keep the history with MORE reviews. 
+      // If I studied on iPhone (5 reviews) and iPad has old data (2 reviews), iPhone wins regardless of timestamp.
+      // If I studied on both offline... this is hard, but "Total Reviews" is a good proxy for "most progress".
+      if (localHistory > remoteHistory) {
+          mergedItem.srs = { ...localItem.srs };
+      } else if (localHistory === remoteHistory) {
+          // Tie-breaker: Recency of last review
+          const localReview = localItem.srs?.lastReviewDate || 0;
+          const remoteReview = remoteItem.srs?.lastReviewDate || 0;
+          if (localReview > remoteReview) {
+               mergedItem.srs = { ...localItem.srs };
+          }
+      }
+
+      // C. IMAGE MERGE (Preservation)
+      // If one has an image and the other doesn't, keep the image.
+      // If both have images, Recency (A) already handled it by picking the base 'data'.
+      // But we double-check specifically for "missing vs present" case.
+      const finalData = mergedItem.data as any;
+      const localData = localItem.data as any;
       
-      if (remoteHistory > localHistory) {
-        winningItem = remoteItem;
-      } else if (remoteHistory === localHistory) {
-        // 2. If progress is same, check recency
-        const localTime = localItem.updatedAt || localItem.savedAt || localItem.srs.nextReview || 0;
-        const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || remoteItem.srs.nextReview || 0;
-        
-        winningItem = remoteTime > localTime ? remoteItem : localItem;
-      } else {
-        winningItem = localItem;
+      if (localData.imageUrl && !finalData.imageUrl) {
+          finalData.imageUrl = localData.imageUrl;
       }
       
-      // 3. Preserve local images (remote doesn't have them)
-      if (localItem.data) {
-        const localData = localItem.data as any;
-        const winningData = winningItem.data as any;
-        
-        if (localData.imageUrl && !winningData.imageUrl) {
-          winningData.imageUrl = localData.imageUrl;
-        }
-        
-        // If it's a phrase, preserve vocab images too
-        if (localItem.type === 'phrase' && Array.isArray(localData.vocabs) && Array.isArray(winningData.vocabs)) {
-          winningData.vocabs.forEach((remoteVocab: any, index: number) => {
-            const localVocab = localData.vocabs[index];
-            if (localVocab?.imageUrl && !remoteVocab.imageUrl) {
-              remoteVocab.imageUrl = localVocab.imageUrl;
-            }
+      // Phrase Vocabs Images
+      if (mergedItem.type === 'phrase' && Array.isArray(finalData.vocabs) && Array.isArray(localData.vocabs)) {
+          finalData.vocabs.forEach((vocab: any, index: number) => {
+               const localVocab = localData.vocabs[index];
+               if (localVocab?.imageUrl && !vocab.imageUrl) {
+                   vocab.imageUrl = localVocab.imageUrl;
+               }
           });
-        }
       }
-      
-      map.set(remoteItem.data.id, winningItem);
+
+      map.set(remoteItem.data.id, mergedItem);
     }
   });
 

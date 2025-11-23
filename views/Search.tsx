@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeInput, generateIllustration } from '../services/geminiService';
 import { SearchResult, StoredItem, VocabCard } from '../types';
-import { ArrowRight, Search as SearchIcon, Mic, Loader2, Bookmark, BookmarkMinus, Play, RotateCw, BookOpen, ArrowLeft, AlertCircle } from 'lucide-react';
+import { ArrowRight, Search as SearchIcon, Mic, Loader2, Bookmark, BookmarkMinus, Play, RotateCw, BookOpen, ArrowLeft, AlertCircle, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
@@ -42,6 +42,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isMounted = useRef(true);
+  const searchRequestId = useRef(0);
 
   useEffect(() => {
       isMounted.current = true;
@@ -119,13 +120,32 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   };
 
   const performSearch = async (text: string) => {
+    // Increment ID to invalidate previous searches
+    const currentSearchId = ++searchRequestId.current;
+    
     setLoading(true);
     setError(null);
     setResult(null);
     setVocabResult(null);
+    
+    // Push current state to history before starting new search (if we had a result)
+    if (result || vocabResult) {
+        setSearchHistory(prev => {
+            const newItem = {
+                query: result ? result.query : (vocabResult?.word || ''),
+                result: result || vocabResult!,
+                type: result ? 'phrase' : 'vocab' as const
+            };
+            // Limit history to last 5 items to prevent memory buildup
+            const newHistory = [...prev, newItem];
+            if (newHistory.length > 5) return newHistory.slice(newHistory.length - 5);
+            return newHistory;
+        });
+    }
+
     try {
         const data = await analyzeInput(text);
-        if (!isMounted.current) return;
+        if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
 
         setResult(data);
         setLoading(false);
@@ -133,7 +153,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         
         // 1. Generate Main Visual Context
         generateIllustration(data.visualKeyword, '16:9').then(img => {
-             if (!isMounted.current) return;
+             if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
              if (img) {
                  setResult(prev => prev ? { ...prev, imageUrl: img } : null);
                  
@@ -149,36 +169,45 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
              setImageLoading(false);
         });
 
-        // 2. Generate Vocab Illustrations (Parallel)
-        data.vocabs.forEach(vocab => {
-            if (vocab.imagePrompt) {
-                generateIllustration(vocab.imagePrompt, '4:3').then(img => {
-                    if (!isMounted.current) return;
-                    if (img) {
-                         const updatedVocab = { ...vocab, imageUrl: img };
-                         
-                         setResult(prev => {
-                             if (!prev) return null;
-                             const newVocabs = (prev.vocabs || []).map(v => 
-                                v.id === vocab.id ? { ...v, imageUrl: img } : v
-                             );
-                             return { ...prev, vocabs: newVocabs };
-                         });
+        // 2. Generate Vocab Illustrations (Sequentially to avoid freezing)
+        // We use a robust approach: process in small batches or just one by one
+        const processVocabImages = async () => {
+            for (const vocab of data.vocabs) {
+                if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
+                
+                if (vocab.imagePrompt) {
+                    try {
+                        const img = await generateIllustration(vocab.imagePrompt, '4:3');
+                        if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
+                        
+                        if (img) {
+                             setResult(prev => {
+                                 if (!prev) return null;
+                                 const newVocabs = (prev.vocabs || []).map(v => 
+                                    v.id === vocab.id ? { ...v, imageUrl: img } : v
+                                 );
+                                 return { ...prev, vocabs: newVocabs };
+                             });
 
-                         // Update storage if this vocab (or its parent phrase) is already saved
-                         onUpdateStoredItem({
-                             data: updatedVocab,
-                             type: 'vocab',
-                             savedAt: 0,
-                             srs: createInitialSRS(vocab.id, 'vocab')
-                         });
+                             onUpdateStoredItem({
+                                 data: { ...vocab, imageUrl: img },
+                                 type: 'vocab',
+                                 savedAt: 0,
+                                 srs: createInitialSRS(vocab.id, 'vocab')
+                             });
+                        }
+                    } catch (e) {
+                        console.warn("Vocab image generation failed", e);
                     }
-                });
+                }
             }
-        });
+        };
+        
+        // Start processing in background, but sequentially
+        processVocabImages();
 
     } catch (err: any) {
-        if (isMounted.current) {
+        if (isMounted.current && currentSearchId === searchRequestId.current) {
             if (err.message === 'QUOTA_EXCEEDED') {
                  setError("Daily AI limit reached. Please check your plan or try again later.");
             } else {
@@ -209,11 +238,12 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   };
 
   const handleNewSearch = () => {
-    // Clear query but keep results visible
+    // Clear everything - query, results, errors
     setQuery('');
     setError(null);
+    setResult(null);
+    setVocabResult(null);
     setIsViewingStored(false);
-    // Note: Don't clear result/vocabResult to preserve last search
     // Note: textarea height reset is handled by the useEffect reacting to query change
   };
 
@@ -277,10 +307,10 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   const headerTitle = vocabResult ? (vocabResult.word || '') : result ? (result.query || '') : '';
 
   return (
-    <div className="h-full flex flex-col bg-slate-50 relative">
+    <div className="h-full bg-slate-50 relative overflow-y-auto" onScroll={onScroll}>
       
       {/* Top Search Input Area */}
-      <div className="w-full p-3 bg-white/80 backdrop-blur-md border-b border-slate-200/60 z-30 sticky top-0 shrink-0">
+      <div className="w-full p-3 bg-white/80 backdrop-blur-md border-b border-slate-200/60 z-30">
         <div className="flex items-center gap-2 max-w-3xl mx-auto">
           {searchHistory.length > 0 && (result || vocabResult) && (
             <button
@@ -300,9 +330,21 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
             disabled={loading}
             placeholder="What do you want to learn?"
             rows={1}
-            className="w-full pl-4 pr-12 py-3.5 text-base rounded-2xl bg-transparent text-slate-800 placeholder:text-slate-400 outline-none resize-none overflow-hidden disabled:opacity-60"
+            className="w-full pl-4 pr-24 py-3.5 text-base rounded-2xl bg-transparent text-slate-800 placeholder:text-slate-400 outline-none resize-none overflow-hidden disabled:opacity-60"
             style={{ minHeight: '52px' }}
           />
+          {/* Clear button (X) - shows when there's text */}
+          {query.trim() && (
+            <button 
+              type="button"
+              onClick={handleNewSearch}
+              className="absolute right-12 bottom-2 w-9 h-9 bg-slate-200 text-slate-500 rounded-xl flex items-center justify-center hover:bg-slate-300 hover:text-slate-700 transition-all"
+              title="Clear"
+            >
+              <X size={18} />
+            </button>
+          )}
+          {/* Submit button */}
           <button 
             type="submit"
             disabled={!query.trim() || loading}
@@ -315,7 +357,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
       </div>
       
       {/* Content Area - Scrollable */}
-      <div className="flex-1 overflow-y-auto w-full min-h-0 pb-[calc(5rem+env(safe-area-inset-bottom))]" onScroll={onScroll}>
+      <div className="w-full pb-[calc(5rem+env(safe-area-inset-bottom))]">
         
         {/* Zero State - Centered in available space */}
         {!result && !vocabResult && !loading && !error && (
@@ -385,39 +427,35 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         {(result || vocabResult) && !loading && (
           <div className="fade-in pb-8 max-w-3xl mx-auto">
             
-            {/* Sticky Context Header (Floating) */}
-            <div className="sticky top-0 z-20 px-4 py-3 pointer-events-none">
-                <div className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl px-4 py-2.5 flex justify-between items-center shadow-sm pointer-events-auto">
-                    <h2 className="font-bold text-slate-800 truncate max-w-[60%] text-sm flex items-center gap-2">
-                        {result && <span className="w-2 h-2 rounded-full bg-indigo-500"></span>}
-                        {vocabResult && <span className="w-2 h-2 rounded-full bg-emerald-500"></span>}
-                        {headerTitle}
-                    </h2>
-                    <div className="flex items-center gap-1">
-                        {isViewingStored && (
-                            <Button variant="ghost" size="sm" onClick={handleRefresh} title="Refresh Analysis" className="h-8 w-8 p-0">
-                                <RotateCw size={16} className="text-slate-400" />
-                            </Button>
-                        )}
-                        <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={toggleSave} 
-                            className={`h-8 px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
-                        >
-                            {isSaved ? <BookmarkMinus size={16} /> : <Bookmark size={16} />}
-                            <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
-                        </Button>
-                    </div>
-                </div>
-            </div>
-
             {/* Render Search Result (Phrase) */}
             {result && (
                 <>
                 {/* Hero Card */}
-                <div className="px-4 space-y-4 mt-2">
-                <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="px-4 space-y-4 mt-6">
+                <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden relative">
+                    {/* Save button - fixed in top right */}
+                    <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+                        {isViewingStored && (
+                            <button 
+                                onClick={handleRefresh} 
+                                title="Refresh Analysis" 
+                                className="p-3 rounded-full bg-white/90 backdrop-blur text-slate-600 hover:text-indigo-600 hover:bg-white shadow-lg transition-all active:scale-90"
+                            >
+                                <RotateCw size={20} />
+                            </button>
+                        )}
+                        <button 
+                            onClick={toggleSave} 
+                            className={`p-3 rounded-full shadow-lg transition-all active:scale-90 ${
+                                isSaved 
+                                    ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+                                    : 'bg-white/90 backdrop-blur text-slate-600 hover:bg-white hover:text-indigo-600'
+                            }`}
+                            title={isSaved ? 'Remove from Notebook' : 'Save to Notebook'}
+                        >
+                            {isSaved ? <Bookmark size={20} fill="currentColor" /> : <Bookmark size={20} />}
+                        </button>
+                    </div>
                     {/* Generated Image Header */}
                     <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group">
                     {result.imageUrl ? (
@@ -487,7 +525,30 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
 
             {/* Render Single Vocab Card (Stored Vocab) */}
             {vocabResult && (
-                <div className="p-4 h-full pb-10 mt-2">
+                <div className="p-4 h-full pb-10 mt-6 relative">
+                     {/* Save button - fixed in top right */}
+                     <div className="absolute top-6 right-6 z-10 flex items-center gap-2">
+                         {isViewingStored && (
+                             <button 
+                                 onClick={handleRefresh} 
+                                 title="Refresh Analysis" 
+                                 className="p-3 rounded-full bg-white text-slate-600 hover:text-indigo-600 hover:bg-slate-50 shadow-lg transition-all active:scale-90 border border-slate-200"
+                             >
+                                 <RotateCw size={20} />
+                             </button>
+                         )}
+                         <button 
+                             onClick={() => toggleSaveVocab(vocabResult)} 
+                             className={`p-3 rounded-full shadow-lg transition-all active:scale-90 border ${
+                                 isSaved 
+                                     ? 'bg-indigo-600 text-white hover:bg-indigo-700 border-indigo-600' 
+                                     : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-indigo-600 border-slate-200'
+                             }`}
+                             title={isSaved ? 'Remove from Notebook' : 'Save to Notebook'}
+                         >
+                             {isSaved ? <Bookmark size={20} fill="currentColor" /> : <Bookmark size={20} />}
+                         </button>
+                     </div>
                      <div className="flex items-center gap-2 mb-4 px-2 text-slate-400 text-xs uppercase font-bold tracking-wider">
                         <BookOpen size={14} />
                         <span>Saved Vocabulary</span>
@@ -496,7 +557,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                         data={vocabResult} 
                         onSave={() => toggleSaveVocab(vocabResult)}
                         isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocabResult.word || '').toLowerCase().trim())}
-                        showSave={true}
+                        showSave={false}
                         className="min-h-[60vh] shadow-sm border-slate-200"
                         onSearch={handleTermClick}
                         scrollable={true}

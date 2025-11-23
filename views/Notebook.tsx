@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { StoredItem, SyncStatus } from '../types';
-import { Trash2, Search, BookOpen, Layers, Cloud, AlertCircle, Check, Loader2 } from 'lucide-react';
+import { Trash2, Search, BookOpen, Layers, Cloud, AlertCircle, Check, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 
@@ -17,11 +17,12 @@ interface NotebookProps {
   isConfigured: boolean;
   syncStatus?: SyncStatus;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
+  onForceSync?: () => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({ 
     items, onDelete, onSearch, onViewDetail, 
-    user, onSignIn, onGuestSignIn, onSignOut, isConfigured, syncStatus, onScroll 
+    user, onSignIn, onGuestSignIn, onSignOut, isConfigured, syncStatus, onScroll, onForceSync
 }) => {
   
   // Filter out deleted items for display
@@ -67,8 +68,19 @@ export const NotebookView: React.FC<NotebookProps> = ({
         </div>
         <div className="flex items-center gap-1 bg-white rounded-full p-1 pl-3 border border-slate-100 shadow-sm">
              <div className="mr-2 flex items-center gap-2" title={`Sync Status: ${syncStatus}`}>
-                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider hidden sm:inline">Sync</span>
-                 {getSyncIcon()}
+                 <button 
+                    onClick={onForceSync} 
+                    disabled={syncStatus === 'syncing' || !user}
+                    className={`flex items-center gap-2 group ${syncStatus === 'syncing' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-50 rounded-full pr-2'}`}
+                    title="Force Sync (Download & Upload)"
+                 >
+                     <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider hidden sm:inline group-hover:text-slate-600">Sync</span>
+                     {syncStatus === 'syncing' ? (
+                         <Loader2 className="animate-spin text-indigo-500" size={16} />
+                     ) : (
+                         <RefreshCw className="text-slate-400 group-hover:text-indigo-500 transition-colors" size={14} />
+                     )}
+                 </button>
              </div>
              <div className="h-4 w-[1px] bg-slate-200 mx-1"></div>
              <UserMenu 

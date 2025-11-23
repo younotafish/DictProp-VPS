@@ -17,6 +17,7 @@ import {
   doc, 
   setDoc, 
   getDoc,
+  getDocs,
   deleteDoc,
   collection,
   onSnapshot,
@@ -99,18 +100,21 @@ const provider = new GoogleAuthProvider();
 // Helper to detect iOS Safari
 const isIOsSafari = (): boolean => {
   const ua = navigator.userAgent;
-  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  // EXCLUDE iPad from forced redirect. iPads work well with popups (desktop-class browsing).
+  const isSmallIOS = /iPhone|iPod/.test(ua);
   const isStandalone = (window.navigator as any).standalone === true;
   const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
-  return isIOS && (isSafari || isStandalone);
+  return isSmallIOS && (isSafari || isStandalone);
 };
 
 export const signIn = async () => {
   if (!auth) throw new Error("NOT_CONFIGURED");
   try {
-    // iOS Safari has issues with popups, use redirect instead
+    // iOS Safari on iPhone has issues with popups, use redirect instead
     if (isIOsSafari()) {
-      console.log("iOS Safari detected, using redirect method");
+      console.log("iOS Safari (iPhone) detected, using redirect method");
+      // Set flag to detect silent failures (e.g. Cross-Site Tracking)
+      localStorage.setItem('auth_redirect_pending', 'true');
       await signInWithRedirect(auth, provider);
       // The actual sign-in will complete when the page reloads
       // handleRedirectResult should be called on app initialization
@@ -138,14 +142,29 @@ export const handleRedirectResult = async () => {
   if (!auth) return null;
   try {
     const result = await getRedirectResult(auth);
+    const wasPending = localStorage.getItem('auth_redirect_pending');
+    
     if (result) {
       console.log("Redirect sign-in successful", result.user.uid);
+      localStorage.removeItem('auth_redirect_pending');
+    } else if (wasPending) {
+       // We expected a result but got none. This usually means the redirect flow failed silently.
+       console.warn("Redirect sign-in returned null despite pending flag. Likely Cross-Site Tracking issue.");
+       localStorage.removeItem('auth_redirect_pending');
+       // We can throw an error here to inform the UI, or just log it.
+       // Throwing allows the UI to show a "Try disabling Cross-Site Tracking" hint.
+       throw new Error("REDIRECT_FAILED_SILENTLY"); 
     }
     return result;
   } catch (error: any) {
+    localStorage.removeItem('auth_redirect_pending');
     const code = error.code || '';
     if (code === 'auth/unauthorized-domain') {
       throw error;
+    }
+    if (error.message === "REDIRECT_FAILED_SILENTLY") {
+        console.error("Redirect failed silently (likely Safari privacy settings)");
+        throw error;
     }
     console.error("Error handling redirect result", error);
     return null;
@@ -181,6 +200,27 @@ export const subscribeToAuth = (callback: (user: User | null) => void) => {
 
 // 5. Data Functions - SUBCOLLECTION ARCHITECTURE
 
+export const loadUserData = async (userId: string): Promise<StoredItem[]> => {
+  if (!db) throw new Error("NOT_CONFIGURED");
+  
+  try {
+    const itemsCollection = collection(db, "users", userId, "items");
+    const snapshot = await getDocs(itemsCollection);
+    
+    const items: StoredItem[] = [];
+    snapshot.forEach((doc: any) => {
+        const data = doc.data() as StoredItem;
+        items.push(data);
+    });
+    
+    console.log(`🔥 Firebase: Manual fetch retrieved ${items.length} items (including deleted)`);
+    return items;
+  } catch (error) {
+    console.error("🔥 Firebase: Error loading user data:", error);
+    throw error;
+  }
+};
+
 export const subscribeToUserData = (
   userId: string, 
   onData: (items: StoredItem[]) => void
@@ -200,13 +240,10 @@ export const subscribeToUserData = (
     const items: StoredItem[] = [];
     snapshot.forEach((doc: any) => {
         const data = doc.data() as StoredItem;
-        // Only include non-deleted items (deleted items shouldn't be in Firestore anyway)
-        if (!data.isDeleted) {
-          items.push(data);
-        }
+        items.push(data);
     });
     
-    console.log(`🔥 Firebase: Parsed ${items.length} active items from cloud (${snapshot.metadata.fromCache ? 'cache' : 'server'})`);
+    console.log(`🔥 Firebase: Parsed ${items.length} items from cloud (${snapshot.metadata.fromCache ? 'cache' : 'server'})`);
     onData(items);
   };
 
@@ -309,14 +346,13 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
   if (!db || !userId) return;
   
   try {
-    // Separate active and deleted items
+    // Separate active and deleted items for logging, but we handle them similarly now (Soft Delete)
     const activeItems = items.filter(item => !item.isDeleted);
     const deletedItems = items.filter(item => item.isDeleted);
     
     // OPTIMIZATION: Limit batch size to avoid excessive writes
     // Firestore allows 500 ops/batch, but we limit to 100 for cost control
     const MAX_BATCH_SIZE = 100;
-    const MAX_DELETES_PER_SYNC = 20;
     
     if (activeItems.length === 0 && deletedItems.length === 0) {
         console.log("🔥 Firebase: No changes to sync");
@@ -329,62 +365,52 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
         lastSynced: Date.now()
     }, { merge: true });
 
-    const totalBatches = Math.ceil(Math.max(activeItems.length / MAX_BATCH_SIZE, deletedItems.length / MAX_DELETES_PER_SYNC));
+    // Combine all items to write (both active and deleted)
+    // We use Soft Deletes (isDeleted: true) instead of actual deletion to ensure sync propagation
+    const allItems = [...activeItems, ...deletedItems];
+    const totalBatches = Math.ceil(allItems.length / MAX_BATCH_SIZE);
     let writeCountTotal = 0;
-    let deleteCountTotal = 0;
 
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-      const writeStart = batchIndex * MAX_BATCH_SIZE;
-      const deleteStart = batchIndex * MAX_DELETES_PER_SYNC;
+      const start = batchIndex * MAX_BATCH_SIZE;
+      const batchItems = allItems.slice(start, start + MAX_BATCH_SIZE);
       
-      const itemsToWrite = activeItems.slice(writeStart, writeStart + MAX_BATCH_SIZE);
-      const itemsToDelete = deletedItems.slice(deleteStart, deleteStart + MAX_DELETES_PER_SYNC);
-
-      if (itemsToWrite.length === 0 && itemsToDelete.length === 0) {
-        continue;
-      }
-
-      console.log(`🔥 Firebase: Syncing batch ${batchIndex + 1}/${totalBatches} -> ${itemsToWrite.length} writes, ${itemsToDelete.length} deletes`);
+      console.log(`🔥 Firebase: Syncing batch ${batchIndex + 1}/${totalBatches} -> ${batchItems.length} items`);
 
       // Process images: upload base64 to Storage and replace with URLs
       // This is sequential to avoid overwhelming the connection
       const processedItems: StoredItem[] = [];
-      for (const item of itemsToWrite) {
+      for (const item of batchItems) {
         if (item.data && item.data.id) {
-          const processedItem = await processItemImages(userId, item);
-          processedItems.push(processedItem);
+          // Don't upload images for deleted items
+          if (item.isDeleted) {
+              processedItems.push(item);
+          } else {
+              const processedItem = await processItemImages(userId, item);
+              processedItems.push(processedItem);
+          }
         }
       }
 
       const batch = writeBatch(db);
       let batchWriteCount = 0;
-      let batchDeleteCount = 0;
       
       processedItems.forEach(item => {
           if (item.data && item.data.id) {
               const docRef = doc(db, "users", userId, "items", item.data.id);
-              batch.set(docRef, item);
+              batch.set(docRef, item, { merge: true });
               batchWriteCount++;
           }
       });
       
-      itemsToDelete.forEach(item => {
-          if (item.data && item.data.id) {
-              const docRef = doc(db, "users", userId, "items", item.data.id);
-              batch.delete(docRef);
-              batchDeleteCount++;
-          }
-      });
-
-      if (batchWriteCount > 0 || batchDeleteCount > 0) {
+      if (batchWriteCount > 0) {
           await batch.commit();
-          console.log(`🔥 Firebase: ✅ Batch ${batchIndex + 1} committed (${batchWriteCount} writes, ${batchDeleteCount} deletes)`);
+          console.log(`🔥 Firebase: ✅ Batch ${batchIndex + 1} committed (${batchWriteCount} writes)`);
           writeCountTotal += batchWriteCount;
-          deleteCountTotal += batchDeleteCount;
       }
     }
 
-    console.log(`🔥 Firebase: ✅ Sync complete! Total writes: ${writeCountTotal}, deletes: ${deleteCountTotal}`);
+    console.log(`🔥 Firebase: ✅ Sync complete! Total writes: ${writeCountTotal}`);
   } catch (e: any) {
     console.error("🔥 Firebase: ❌ Error saving to cloud:", e);
     console.error("🔥 Firebase: Error details:", e.message, "Code:", e.code);
@@ -511,3 +537,7 @@ export const recordStudySession = async (
     console.error("🔥 Firebase: Error recording session:", error);
   }
 };
+
+// ========== DEPRECATED: OPERATION-BASED SYNC REMOVED ==========
+// The operation-based sync was removed because items exceeded Firestore's 1MB document limit.
+// We now use simple direct item sync which works perfectly with the existing items collection.

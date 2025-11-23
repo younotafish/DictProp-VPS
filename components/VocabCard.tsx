@@ -71,11 +71,11 @@ export const VocabCardDisplay: React.FC<Props> = ({
   };
 
   return (
-    <div className={`bg-white rounded-2xl p-6 shadow-md border border-slate-100 flex flex-col h-full ${scrollable ? 'overflow-y-auto no-scrollbar' : 'overflow-hidden'} ${className}`}>
+    <div className={`bg-white rounded-2xl p-5 shadow-md border border-slate-100 flex flex-col h-full ${scrollable ? 'overflow-y-auto no-scrollbar' : 'overflow-hidden'} ${className}`}>
       {/* Header */}
-      <div className="flex justify-between items-start mb-4 shrink-0">
+      <div className="flex justify-between items-start mb-3 shrink-0">
         <div>
-          <h3 className="text-3xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
+          <h3 className="text-2xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
           {showPronunciation && (
           <div className="flex items-center gap-2 mt-1 text-slate-500">
             {showAudio && data.ipa && (
@@ -114,24 +114,24 @@ export const VocabCardDisplay: React.FC<Props> = ({
 
       {/* Generated Image */}
       {data.imageUrl && (
-        <div className="mb-5 rounded-xl overflow-hidden h-40 w-full bg-slate-50 border border-slate-100 shadow-inner shrink-0">
+        <div className="mb-4 rounded-xl overflow-hidden h-32 w-full bg-slate-50 border border-slate-100 shadow-inner shrink-0">
           <img src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
         </div>
       )}
 
       {/* Core Meaning */}
-      <div className="mb-6 shrink-0">
+      <div className="mb-4 shrink-0">
         <p className="text-xl text-slate-700 font-medium">{data.chinese}</p>
         <p className="text-slate-500 mt-1 italic">{data.definition}</p>
       </div>
 
-      <div className="space-y-5">
+      <div className="space-y-4">
         {/* Example Sentences */}
-        <div className="bg-slate-50 p-4 rounded-xl">
+        <div className="bg-slate-50 p-3 rounded-xl">
           <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase mb-2">
             <BookOpen size={12} /> Usage
           </div>
-          <ul className="space-y-3">
+          <ul className="space-y-2">
             {ensureArray(data.examples).map((ex, i) => (
               <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3">
                  {ex.split(new RegExp(`(${data.word})`, 'gi')).map((part, j) => 

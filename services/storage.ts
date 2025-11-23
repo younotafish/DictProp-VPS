@@ -132,6 +132,16 @@ export const saveData = async (items: StoredItem[]): Promise<void> => {
   }
 };
 
+// ============================================
+// DEPRECATED: OPERATION STORAGE REMOVED
+// ============================================
+// Operation-based sync was removed due to Firestore 1MB document limit.
+// Items are now synced directly using the items collection.
+
+// ============================================
+// LEGACY MIGRATION
+// ============================================
+
 // Check if old localStorage data exists and move it to IDB
 export const migrateFromLocalStorage = async (): Promise<StoredItem[] | null> => {
     const localData = localStorage.getItem('popdict_items');

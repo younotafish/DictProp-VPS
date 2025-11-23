@@ -274,8 +274,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             showSave={false}
             onSearch={onSearch}
             className="h-full w-full rounded-[2rem] border-0 shadow-xl"
-            showAudio={false}
-            showPronunciation={false}
+            showAudio={true}
+            showPronunciation={true}
           />
         </div>
       );
