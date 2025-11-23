@@ -434,7 +434,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="fixed inset-0 bg-white flex flex-col relative">
+    <div className="fixed inset-0 bg-white flex flex-col">
       {unauthorizedDomain && <AuthDomainErrorModal domain={unauthorizedDomain} onClose={() => setUnauthorizedDomain(null)} />}
       {signInError && <ErrorModal error={signInError} onClose={() => setSignInError(null)} />}
 

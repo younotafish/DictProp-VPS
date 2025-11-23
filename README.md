@@ -33,6 +33,39 @@ View your app in AI Studio: https://ai.studio/apps/drive/1xgIRAWPloe5gPdslYRnvse
    npm run dev
    ```
 
+## ☁️ Deploy to Firebase Hosting
+
+The repo ships with `firebase.json` + `.firebaserc` targeting the `dictpropstore` Firebase project and serving the built Vite output from `dist/` with SPA rewrites.
+
+1. Install the CLI & authenticate (one-time):
+   ```bash
+   npm install -g firebase-tools
+   firebase login
+   ```
+
+2. **IMPORTANT**: Authorize your domain in Firebase Console (required for authentication):
+   - Go to [Firebase Console](https://console.firebase.google.com/)
+   - Select your project (`dictpropstore`)
+   - Navigate to **Authentication** → **Settings** → **Authorized domains**
+   - Click "Add domain" and add:
+     - `dictpropstore.web.app` (default Firebase hosting)
+     - `dictpropstore.firebaseapp.com` (Firebase hosting)
+     - Any custom domains you're using
+   - **Note:** This is especially critical for iOS/mobile browsers!
+   - See [IOS_AUTH_FIX.md](./IOS_AUTH_FIX.md) for detailed troubleshooting
+   
+3. Build the static bundle:
+   ```bash
+   npm run build
+   ```
+
+4. Deploy to Firebase Hosting:
+   ```bash
+   npm run deploy
+   ```
+
+You can override the project by editing `.firebaserc` or passing `--project <id>` to the deploy script if you need to target a different Firebase environment.
+
 ## 📚 Advanced SRS System
 
 The app features a sophisticated spaced repetition system with:
