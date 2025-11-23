@@ -19,13 +19,13 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
     const localItem = map.get(remoteItem.data.id);
 
     if (!localItem) {
-      // New item from cloud
+      // New item from cloud - use as-is
       map.set(remoteItem.data.id, remoteItem);
     } else {
-      // Conflict Resolution
+      // Conflict Resolution with Image Preservation
+      
       // 0. Respect Deletions
       if (remoteItem.isDeleted && !localItem.isDeleted) {
-           // If remote is deleted and newer than local, delete local
            const remoteTime = remoteItem.updatedAt || 0;
            const localTime = localItem.updatedAt || 0;
            if (remoteTime > localTime) {
@@ -47,18 +47,41 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const localHistory = localItem.srs?.history?.length || 0;
       const remoteHistory = remoteItem.srs?.history?.length || 0;
 
+      let winningItem: StoredItem;
+      
       if (remoteHistory > localHistory) {
-        map.set(remoteItem.data.id, remoteItem);
-      } 
-      // 2. If progress is same, check recency
-      else if (remoteHistory === localHistory) {
-         const localTime = localItem.updatedAt || localItem.savedAt || localItem.srs.nextReview || 0;
-         const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || remoteItem.srs.nextReview || 0;
-         
-         if (remoteTime > localTime) {
-             map.set(remoteItem.data.id, remoteItem);
-         }
+        winningItem = remoteItem;
+      } else if (remoteHistory === localHistory) {
+        // 2. If progress is same, check recency
+        const localTime = localItem.updatedAt || localItem.savedAt || localItem.srs.nextReview || 0;
+        const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || remoteItem.srs.nextReview || 0;
+        
+        winningItem = remoteTime > localTime ? remoteItem : localItem;
+      } else {
+        winningItem = localItem;
       }
+      
+      // 3. Preserve local images (remote doesn't have them)
+      if (localItem.data) {
+        const localData = localItem.data as any;
+        const winningData = winningItem.data as any;
+        
+        if (localData.imageUrl && !winningData.imageUrl) {
+          winningData.imageUrl = localData.imageUrl;
+        }
+        
+        // If it's a phrase, preserve vocab images too
+        if (localItem.type === 'phrase' && Array.isArray(localData.vocabs) && Array.isArray(winningData.vocabs)) {
+          winningData.vocabs.forEach((remoteVocab: any, index: number) => {
+            const localVocab = localData.vocabs[index];
+            if (localVocab?.imageUrl && !remoteVocab.imageUrl) {
+              remoteVocab.imageUrl = localVocab.imageUrl;
+            }
+          });
+        }
+      }
+      
+      map.set(remoteItem.data.id, winningItem);
     }
   });
 

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PopDict Sync Debugger</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 p-8">
+    <div class="max-w-2xl mx-auto bg-white p-6 rounded-lg shadow">
+        <h1 class="text-2xl font-bold mb-4">🔍 PopDict Sync Debugger</h1>
+        
+        <div class="space-y-4">
+            <div>
+                <h2 class="font-bold text-lg mb-2">1. Check Sync Config</h2>
+                <button onclick="checkSyncConfig()" class="bg-blue-500 text-white px-4 py-2 rounded">
+                    Check localStorage Config
+                </button>
+                <pre id="syncConfig" class="mt-2 bg-slate-100 p-3 rounded text-sm"></pre>
+            </div>
+
+            <div>
+                <h2 class="font-bold text-lg mb-2">2. Check Saved Items</h2>
+                <button onclick="checkItems()" class="bg-green-500 text-white px-4 py-2 rounded">
+                    Check IndexedDB Items
+                </button>
+                <pre id="items" class="mt-2 bg-slate-100 p-3 rounded text-sm max-h-96 overflow-auto"></pre>
+            </div>
+
+            <div>
+                <h2 class="font-bold text-lg mb-2">3. Fix Sync Config</h2>
+                <button onclick="fixSyncConfig()" class="bg-purple-500 text-white px-4 py-2 rounded">
+                    Reset to Firebase Sync
+                </button>
+                <p id="fixResult" class="mt-2 text-sm"></p>
+            </div>
+
+            <div>
+                <h2 class="font-bold text-lg mb-2">4. Open Console</h2>
+                <p class="text-sm text-slate-600">
+                    Press F12 and look for messages starting with 🔥 Firebase
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        window.checkSyncConfig = function() {
+            const config = localStorage.getItem('popdict_sync_config');
+            const element = document.getElementById('syncConfig');
+            if (config) {
+                element.textContent = JSON.stringify(JSON.parse(config), null, 2);
+            } else {
+                element.textContent = 'No sync config found!';
+            }
+        };
+
+        window.checkItems = async function() {
+            const element = document.getElementById('items');
+            try {
+                const request = indexedDB.open('popdict_storage', 1);
+                request.onsuccess = function(event) {
+                    const db = event.target.result;
+                    const transaction = db.transaction(['items'], 'readonly');
+                    const objectStore = transaction.objectStore('items');
+                    const getAllRequest = objectStore.getAll();
+                    
+                    getAllRequest.onsuccess = function() {
+                        const items = getAllRequest.result;
+                        element.textContent = `Found ${items.length} items:\n\n` + 
+                            JSON.stringify(items.map(i => ({
+                                type: i.type,
+                                title: i.type === 'vocab' ? i.data.word : i.data.query,
+                                savedAt: new Date(i.savedAt).toLocaleString(),
+                                updatedAt: i.updatedAt ? new Date(i.updatedAt).toLocaleString() : 'N/A',
+                                isDeleted: i.isDeleted
+                            })), null, 2);
+                    };
+                };
+            } catch (e) {
+                element.textContent = 'Error: ' + e.message;
+            }
+        };
+
+        window.fixSyncConfig = function() {
+            const config = {
+                type: 'firebase',
+                enabled: true,
+                lastSynced: 0
+            };
+            localStorage.setItem('popdict_sync_config', JSON.stringify(config));
+            document.getElementById('fixResult').textContent = 
+                '✅ Config reset! Refresh the main app to apply changes.';
+        };
+    </script>
+</body>
+</html>
+

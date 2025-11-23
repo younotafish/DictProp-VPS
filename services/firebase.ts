@@ -15,11 +15,20 @@ import {
   doc, 
   setDoc, 
   getDoc,
+  deleteDoc,
   collection,
   onSnapshot,
   writeBatch,
   Firestore
 } from "firebase/firestore";
+import {
+  getStorage,
+  ref,
+  uploadString,
+  getDownloadURL,
+  deleteObject,
+  FirebaseStorage
+} from "firebase/storage";
 import { StoredItem } from "../types";
 
 const CONFIG_KEY = 'popdict_firebase_config';
@@ -37,6 +46,7 @@ const DEFAULT_CONFIG = {
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
+let storage: FirebaseStorage | undefined;
 
 // Initialize Firebase
 try {
@@ -59,6 +69,7 @@ try {
     app = initializeApp(config);
     auth = getAuth(app);
     db = getFirestore(app);
+    storage = getStorage(app);
 } catch (e) {
     console.error("Failed to initialize Firebase", e);
 }
@@ -141,64 +152,149 @@ export const subscribeToUserData = (
   // Listen to the 'items' subcollection
   const itemsCollection = collection(db, "users", userId, "items");
   
-  console.log("🔥 Firebase: Subscribing to updates...");
+  console.log("🔥 Firebase: Subscribing to updates for user:", userId);
 
   return onSnapshot(itemsCollection, (snapshot) => {
-    // IGNORE LOCAL WRITES to prevent loops
-    if (snapshot.metadata.hasPendingWrites) return;
+    // Log metadata for debugging
+    console.log("🔥 Firebase: Snapshot received, fromCache:", snapshot.metadata.fromCache, "size:", snapshot.size);
 
     const items: StoredItem[] = [];
     snapshot.forEach(doc => {
-        items.push(doc.data() as StoredItem);
+        const data = doc.data() as StoredItem;
+        // Only include non-deleted items (deleted items shouldn't be in Firestore anyway)
+        if (!data.isDeleted) {
+          items.push(data);
+        }
     });
     
-    if (items.length > 0) {
-        console.log(`🔥 Firebase: Received ${items.length} items from cloud.`);
-    }
+    console.log(`🔥 Firebase: Parsed ${items.length} active items from cloud (${snapshot.metadata.fromCache ? 'cache' : 'server'})`);
+    
+    // Always call onData - merge logic will handle conflicts
     onData(items);
   }, (error) => {
-      console.error("Firestore subscription error:", error);
+      console.error("🔥 Firestore subscription error:", error);
+      console.error("🔥 Firestore: Error code:", error.code, "Message:", error.message);
   });
+};
+
+// Helper: Upload base64 image to Storage and return download URL
+const uploadImageToStorage = async (userId: string, itemId: string, imageData: string, imageType: 'main' | 'vocab', vocabIndex?: number): Promise<string | null> => {
+  if (!storage || !imageData || !imageData.startsWith('data:image/')) {
+    return null;
+  }
+  
+  try {
+    // Create unique path for the image
+    const timestamp = Date.now();
+    const suffix = imageType === 'vocab' ? `_vocab${vocabIndex}` : '';
+    const imagePath = `users/${userId}/items/${itemId}${suffix}_${timestamp}.png`;
+    const imageRef = ref(storage, imagePath);
+    
+    // Upload base64 string
+    await uploadString(imageRef, imageData, 'data_url');
+    
+    // Get download URL
+    const downloadURL = await getDownloadURL(imageRef);
+    console.log(`🔥 Storage: Uploaded image to ${imagePath}`);
+    return downloadURL;
+  } catch (error) {
+    console.error('🔥 Storage: Upload failed:', error);
+    return null;
+  }
+};
+
+// Helper: Process item images and upload to Storage
+const processItemImages = async (userId: string, item: StoredItem): Promise<StoredItem> => {
+  const processedItem = JSON.parse(JSON.stringify(item));
+  
+  if (!processedItem.data) return processedItem;
+  
+  // Process main image (for vocab cards or phrases)
+  if (processedItem.data.imageUrl && processedItem.data.imageUrl.startsWith('data:image/')) {
+    const downloadURL = await uploadImageToStorage(userId, processedItem.data.id, processedItem.data.imageUrl, 'main');
+    if (downloadURL) {
+      processedItem.data.imageUrl = downloadURL;
+    }
+  }
+  
+  // Process vocab images (for phrases)
+  if (processedItem.type === 'phrase' && Array.isArray(processedItem.data.vocabs)) {
+    for (let i = 0; i < processedItem.data.vocabs.length; i++) {
+      const vocab = processedItem.data.vocabs[i];
+      if (vocab.imageUrl && vocab.imageUrl.startsWith('data:image/')) {
+        const downloadURL = await uploadImageToStorage(userId, processedItem.data.id, vocab.imageUrl, 'vocab', i);
+        if (downloadURL) {
+          processedItem.data.vocabs[i].imageUrl = downloadURL;
+        }
+      }
+    }
+  }
+  
+  return processedItem;
 };
 
 export const saveUserData = async (userId: string, items: StoredItem[]) => {
   if (!db || !userId) return;
   
   try {
-    // Force Create Parent Document to ensure it shows in Console
+    // Separate active and deleted items
+    const activeItems = items.filter(item => !item.isDeleted);
+    const deletedItems = items.filter(item => item.isDeleted);
+    
+    // Force Create Parent Document
     const userDocRef = doc(db, "users", userId);
     await setDoc(userDocRef, { 
         lastSynced: Date.now(),
-        itemCount: items.length 
+        itemCount: activeItems.length 
     }, { merge: true });
 
-    const batch = writeBatch(db);
-    let opCount = 0;
-    
-    console.log(`🔥 Firebase: Saving ${items.length} items to cloud...`);
+    console.log(`🔥 Firebase: Syncing ${activeItems.length} active items (${deletedItems.length} to delete)...`);
 
-    items.slice(0, 490).forEach(item => {
+    // Process images: upload base64 to Storage and replace with URLs
+    const processedItems: StoredItem[] = [];
+    for (const item of activeItems.slice(0, 400)) {
+      if (item.data && item.data.id) {
+        const processedItem = await processItemImages(userId, item);
+        processedItems.push(processedItem);
+      }
+    }
+
+    const batch = writeBatch(db);
+    let writeCount = 0;
+    let deleteCount = 0;
+    
+    // Add/Update active items (now with Storage URLs instead of base64)
+    processedItems.forEach(item => {
         if (item.data && item.data.id) {
             const docRef = doc(db, "users", userId, "items", item.data.id);
-            if (item.isDeleted) {
-                // If it's deleted locally, we explicitly mark it deleted in cloud (Soft Delete)
-                batch.set(docRef, item);
-            } else {
-                batch.set(docRef, item);
-            }
-            opCount++;
+            batch.set(docRef, item);
+            writeCount++;
+        }
+    });
+    
+    // Delete removed items from Firestore
+    deletedItems.slice(0, 90).forEach(item => {
+        if (item.data && item.data.id) {
+            const docRef = doc(db, "users", userId, "items", item.data.id);
+            batch.delete(docRef);
+            deleteCount++;
         }
     });
 
-    if (opCount > 0) {
+    if (writeCount > 0 || deleteCount > 0) {
+        console.log(`🔥 Firebase: Committing ${writeCount} writes, ${deleteCount} deletes...`);
         await batch.commit();
-        console.log("🔥 Firebase: Write successful.");
+        console.log("🔥 Firebase: ✅ Sync complete! Images uploaded to Storage.");
+    } else {
+        console.log("🔥 Firebase: No changes to sync");
     }
   } catch (e: any) {
-    console.error("Error saving to cloud", e);
+    console.error("🔥 Firebase: ❌ Error saving to cloud:", e);
+    console.error("🔥 Firebase: Error details:", e.message, "Code:", e.code);
     if (e.code === 'permission-denied') {
-        console.error("Check Firestore Rules! Read/Write must be allowed.");
+        console.error("🔥 Firebase: ⚠️  Check Firestore Rules!");
         throw new Error("Permission denied. Check database rules.");
     }
+    throw e;
   }
 };

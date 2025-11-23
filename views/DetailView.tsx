@@ -103,13 +103,19 @@ export const DetailView: React.FC<DetailViewProps> = ({
         onTouchEnd={onTouchEnd}
     >
         {/* Header */}
-        <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 py-3 flex justify-between items-center shrink-0 z-10">
-            <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2">
+        <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-4 py-3 flex justify-between items-center shrink-0 z-30 sticky top-0">
+            <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
                 <ArrowLeft size={20} className="mr-1" /> Back
             </Button>
             <div className="flex items-center gap-2">
-                 <Button variant="ghost" size="sm" onClick={handleToggleSave}>
-                    {isSaved ? <BookmarkMinus className="text-indigo-600" /> : <Bookmark className="text-slate-400" />}
+                 <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={handleToggleSave}
+                    className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+                 >
+                    {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
+                    <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
                   </Button>
             </div>
         </div>
@@ -127,28 +133,28 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     onExpand={undefined} // Already expanded
                     onSearch={handleVocabSearch}
                     scrollable={false} // Let the page scroll
-                    className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible"
+                    className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
                  />
             )}
 
             {/* PHRASE VIEW */}
             {type === 'phrase' && (
-                <div className="space-y-6 max-w-2xl mx-auto">
-                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="space-y-6 max-w-3xl mx-auto">
+                    <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
                         {/* Hero Image */}
-                        <div className="h-56 bg-slate-100 relative overflow-hidden flex items-center justify-center">
+                        <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group">
                             {(data as SearchResult).imageUrl ? (
-                                <img src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in" />
+                                <img src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
                             ) : (
                                 <div className="flex flex-col items-center text-slate-400">
-                                    <SearchIcon className="mb-2 opacity-50" size={32}/>
-                                    <span className="text-xs uppercase font-bold tracking-wider">{(data as SearchResult).visualKeyword}</span>
+                                    <SearchIcon className="mb-2 opacity-30" size={32}/>
+                                    <span className="text-xs uppercase font-bold tracking-wider opacity-60">{(data as SearchResult).visualKeyword}</span>
                                 </div>
                             )}
                             <div className="absolute bottom-4 right-4">
                                 <AudioButton 
                                     text={(data as SearchResult).query} 
-                                    className="bg-white/90 backdrop-blur p-4 rounded-full shadow-lg text-indigo-600 active:scale-95 transition-transform hover:bg-white"
+                                    className="bg-white/90 backdrop-blur p-4 rounded-full shadow-lg text-indigo-600 active:scale-90 transition-all hover:bg-indigo-600 hover:text-white"
                                     initialIcon={Play}
                                     fillIcon={true}
                                     iconSize={24}
@@ -156,14 +162,20 @@ export const DetailView: React.FC<DetailViewProps> = ({
                             </div>
                         </div>
 
-                        <div className="p-6">
+                        <div className="p-6 sm:p-8">
                             <div className="mb-6">
                                 <h2 className="text-3xl font-bold text-slate-900 leading-tight mb-2">{(data as SearchResult).translation}</h2>
-                                <p className="text-slate-500 font-mono">{(data as SearchResult).pronunciation}</p>
+                                <p className="text-slate-500 font-mono text-base bg-slate-100 px-2 py-1 rounded-lg inline-block">{(data as SearchResult).pronunciation}</p>
                             </div>
                             
-                            <div className="prose prose-indigo prose-base max-w-none text-slate-600 bg-slate-50 p-5 rounded-xl border border-slate-100">
-                                <ReactMarkdown>{(data as SearchResult).grammar}</ReactMarkdown>
+                            <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">
+                                <ReactMarkdown 
+                                    components={{
+                                        strong: ({node, ...props}) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
+                                    }}
+                                >
+                                    {(data as SearchResult).grammar}
+                                </ReactMarkdown>
                             </div>
                         </div>
                     </div>
@@ -171,7 +183,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     {/* Included Vocab List */}
                     {((data as SearchResult).vocabs || []).length > 0 && (
                          <div>
-                            <h3 className="px-2 mb-4 text-sm font-bold text-slate-400 uppercase tracking-wider">Key Vocabulary</h3>
+                            <div className="px-2 mb-4 flex items-center gap-2">
+                                <SearchIcon size={16} className="text-indigo-500" />
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Key Vocabulary</h3>
+                            </div>
                             <div className="grid gap-4">
                                 {((data as SearchResult).vocabs || []).map((vocab) => (
                                     <VocabCardDisplay 
@@ -182,7 +197,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                                         onSearch={handleVocabSearch}
                                         scrollable={false}
                                         showSave={true}
-                                        className="!h-auto !overflow-visible"
+                                        className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
                                     />
                                 ))}
                             </div>

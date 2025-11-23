@@ -12,11 +12,12 @@ interface StudyProps {
   onUpdateSRS: (itemId: string, quality: number) => void; // quality: 0 (Soon), 3 (Good), 5 (Easy)
   onSearch: (text: string) => void;
   onDelete: (id: string) => void;
+  onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
 type StudyMode = 'dashboard' | 'session' | 'complete';
 
-export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, onDelete }) => {
+export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, onDelete, onScroll }) => {
   const [mode, setMode] = useState<StudyMode>('dashboard');
   const [queue, setQueue] = useState<StoredItem[]>([]);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -165,54 +166,58 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
   // --- DASHBOARD VIEW ---
   if (mode === 'dashboard') {
       return (
-        <div className="h-full overflow-y-auto bg-slate-50 p-6 pb-24">
+        <div className="h-full overflow-y-auto bg-slate-50 p-6 pb-[calc(5rem+env(safe-area-inset-bottom))]" onScroll={onScroll}>
             <h2 className="text-3xl font-bold text-slate-800 mb-1">Study Center</h2>
             <p className="text-slate-500 mb-8">Your personalized spaced-repetition queue.</p>
 
             {/* Main Action Card */}
-            <div className="bg-white rounded-3xl p-6 shadow-lg shadow-indigo-100 border border-indigo-50 mb-8 relative overflow-hidden">
+            <div className="bg-gradient-to-br from-indigo-600 to-violet-600 rounded-3xl p-6 shadow-xl shadow-indigo-200 mb-8 relative overflow-hidden text-white">
                 <div className="relative z-10">
-                    <div className="flex items-baseline gap-1 mb-1">
-                        <span className="text-4xl font-extrabold text-indigo-600">{stats.due}</span>
-                        <span className="text-slate-500 font-medium">items due</span>
+                    <div className="flex items-baseline gap-2 mb-2">
+                        <span className="text-5xl font-extrabold tracking-tighter">{stats.due}</span>
+                        <span className="text-indigo-200 font-medium text-lg">items due</span>
                     </div>
-                    <p className="text-sm text-slate-400 mb-6">
-                        {stats.due > 0 ? "Review these now to keep your streak!" : "You're all caught up! Practice extra?"}
+                    <p className="text-sm text-indigo-100 mb-8 font-medium max-w-[80%]">
+                        {stats.due > 0 ? "Time to review! Keep your memory fresh." : "You're all caught up! Great job."}
                     </p>
-                    <Button onClick={startSession} className="w-full py-4 text-lg shadow-indigo-200 shadow-xl">
-                        {stats.due > 0 ? "Start Review Session" : "Start Practice Session"}
+                    <Button onClick={startSession} className="w-full py-4 text-lg bg-white text-indigo-600 hover:bg-indigo-50 border-0 font-bold shadow-lg">
+                        {stats.due > 0 ? "Start Review Session" : "Practice Anyway"}
                     </Button>
                 </div>
                 {/* Decorative BG */}
-                <div className="absolute -right-8 -top-8 w-32 h-32 bg-indigo-50 rounded-full opacity-50 blur-2xl"></div>
-                <div className="absolute -left-8 -bottom-8 w-32 h-32 bg-purple-50 rounded-full opacity-50 blur-2xl"></div>
+                <div className="absolute -right-8 -top-8 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl"></div>
+                <div className="absolute -left-8 -bottom-8 w-40 h-40 bg-indigo-400 opacity-20 rounded-full blur-2xl"></div>
             </div>
 
             {/* Stats Grid */}
-            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 px-1">Progress Overview</h3>
-            <div className="grid grid-cols-2 gap-4">
-                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
-                    <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-3">
-                        <Star size={20} fill="currentColor" />
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 px-1">Your Progress</h3>
+            <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between h-32">
+                    <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center">
+                        <Trophy size={20} fill="currentColor" className="opacity-80" />
                     </div>
-                    <span className="text-2xl font-bold text-slate-800">{stats.mastered}</span>
-                    <span className="text-xs text-slate-400 font-medium uppercase">Mastered</span>
+                    <div>
+                        <span className="text-2xl font-bold text-slate-800 block">{stats.mastered}</span>
+                        <span className="text-xs text-slate-400 font-bold uppercase tracking-wide">Mastered</span>
+                    </div>
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
-                    <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-3">
+                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between h-32">
+                    <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center">
                         <TrendingUp size={20} />
                     </div>
-                    <span className="text-2xl font-bold text-slate-800">{stats.learning}</span>
-                    <span className="text-xs text-slate-400 font-medium uppercase">Learning</span>
+                    <div>
+                        <span className="text-2xl font-bold text-slate-800 block">{stats.learning}</span>
+                        <span className="text-xs text-slate-400 font-bold uppercase tracking-wide">Learning</span>
+                    </div>
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center col-span-2 flex-row justify-between px-6">
-                    <div className="flex flex-col text-left">
-                        <span className="text-2xl font-bold text-slate-800">{stats.struggling}</span>
-                        <span className="text-xs text-slate-400 font-medium uppercase">Needs Attention</span>
+                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between col-span-2">
+                    <div className="flex flex-col">
+                         <span className="text-xs text-slate-400 font-bold uppercase tracking-wide mb-1">Needs Review</span>
+                         <span className="text-2xl font-bold text-slate-800">{stats.struggling}</span>
                     </div>
-                    <div className="w-12 h-12 bg-orange-100 text-orange-500 rounded-full flex items-center justify-center">
+                    <div className="w-12 h-12 bg-orange-50 text-orange-500 rounded-full flex items-center justify-center">
                          <AlertCircle size={24} />
                     </div>
                 </div>
@@ -225,18 +230,28 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
   if (mode === 'complete') {
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 bg-indigo-600 text-white relative overflow-hidden fade-in">
-        <div className="z-10 text-center animate-bounce-slow">
-            <Trophy size={64} className="mx-auto mb-6 text-yellow-300" />
-            <h2 className="text-3xl font-bold mb-2">Session Complete!</h2>
-            <p className="text-indigo-200 mb-8">You've reviewed all queued items.</p>
-            <div className="flex gap-4 justify-center">
-                <Button variant="secondary" onClick={() => setMode('dashboard')}>
-                    Dashboard
+        <div className="z-10 text-center">
+            <div className="mb-6 animate-bounce-slow">
+                 <Trophy size={80} className="mx-auto text-yellow-300 drop-shadow-lg" fill="currentColor" />
+            </div>
+            <h2 className="text-4xl font-bold mb-3 tracking-tight">Session Complete!</h2>
+            <p className="text-indigo-200 mb-10 text-lg max-w-xs mx-auto leading-relaxed">
+                You've reviewed all your cards for now. Excellent work!
+            </p>
+            <div className="flex flex-col gap-3 w-full max-w-xs">
+                <Button variant="primary" onClick={() => setMode('dashboard')} className="bg-white text-indigo-600 hover:bg-indigo-50 border-0 font-bold py-4">
+                    Back to Dashboard
                 </Button>
-                <Button variant="primary" onClick={startSession} className="bg-indigo-500 hover:bg-indigo-400 shadow-none border border-indigo-400">
+                <Button variant="ghost" onClick={startSession} className="text-indigo-200 hover:text-white hover:bg-indigo-500/30">
                     Review Again
                 </Button>
             </div>
+        </div>
+        
+        {/* Background decorations */}
+        <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
+            <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-indigo-500 rounded-full blur-[100px] opacity-50"></div>
+            <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-purple-500 rounded-full blur-[100px] opacity-50"></div>
         </div>
       </div>
     );
@@ -261,8 +276,8 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
                 &larr; End
             </Button>
             
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase">
-                <span>{queue.length} Left</span>
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase bg-white px-3 py-1 rounded-full shadow-sm">
+                <span>{queue.length} Remaining</span>
             </div>
 
             <Button variant="ghost" size="sm" onClick={handleDeleteCurrent} className="text-slate-400 hover:text-red-500" title="Remove from Study">
@@ -271,9 +286,9 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
         </div>
 
         {/* Progress Bar */}
-        <div className="w-full h-1.5 bg-slate-200 rounded-full mb-4 overflow-hidden shrink-0">
+        <div className="w-full h-1.5 bg-slate-200 rounded-full mb-6 overflow-hidden shrink-0">
           <div 
-              className="h-full bg-indigo-500 transition-all duration-500" 
+              className="h-full bg-indigo-500 transition-all duration-500 ease-out" 
               style={{ width: `${Math.max(5, 100 - (queue.length * 5))}%` }} 
           />
         </div>
@@ -281,37 +296,37 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
         {/* Flashcard Container */}
         <div className="flex-1 relative perspective-1000 group w-full min-h-0 mb-6">
           <div 
-              className={`relative w-full h-full transition-all duration-700 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}
+              className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}
               onClick={() => setIsFlipped(prev => !prev)}
           >
               {/* FRONT */}
               <div className="absolute inset-0 backface-hidden">
-                  <div className="w-full h-full bg-white rounded-3xl shadow-xl border border-slate-200 flex flex-col justify-between p-6 cursor-pointer hover:shadow-2xl transition-shadow relative overflow-hidden">
+                  <div className="w-full h-full bg-white rounded-[2rem] shadow-xl shadow-slate-200/60 border border-slate-100 flex flex-col justify-between p-8 cursor-pointer hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">
                       
                       {/* Top: Badge & Prompt */}
                       <div className="relative w-full h-8 shrink-0 flex justify-center">
-                          <p className="text-[10px] font-bold text-indigo-500 tracking-widest uppercase mt-1 opacity-50">Tap to flip</p>
-                          <div className={`absolute top-0 right-0 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${mastery.color}`}>
-                              <MasteryIcon size={10} /> {mastery.label}
+                          <p className="text-[10px] font-bold text-indigo-400 tracking-widest uppercase mt-1 opacity-60">Tap to reveal</p>
+                          <div className={`absolute top-0 right-0 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5 ${mastery.color}`}>
+                              <MasteryIcon size={12} /> {mastery.label}
                           </div>
                       </div>
 
                       {/* Middle: Content */}
-                      <div className="flex-1 flex items-center justify-center w-full overflow-hidden my-2">
+                      <div className="flex-1 flex items-center justify-center w-full overflow-hidden my-4">
                           <div className="max-h-full w-full overflow-y-auto no-scrollbar text-center px-2">
-                              <h2 className={`font-bold text-slate-800 break-words leading-snug ${getTextSize(frontText.length)}`}>
+                              <h2 className={`font-bold text-slate-800 break-words leading-tight tracking-tight ${getTextSize(frontText.length)}`}>
                                   {frontText}
                               </h2>
                           </div>
                       </div>
 
                       {/* Bottom: Meta & Audio */}
-                      <div className="shrink-0 flex flex-col items-center gap-4 pb-2">
-                          {frontSub && <p className="text-sm text-slate-400 font-mono truncate max-w-[90%]">{frontSub}</p>}
+                      <div className="shrink-0 flex flex-col items-center gap-6 pb-4">
+                          {frontSub && <p className="text-base text-slate-400 font-mono bg-slate-50 px-3 py-1 rounded-lg">{frontSub}</p>}
                           <AudioButton 
                               text={frontText}
-                              className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all active:scale-90 shadow-sm"
-                              iconSize={32}
+                              className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all active:scale-90 shadow-sm hover:shadow-md"
+                              iconSize={28}
                               onClick={(e) => e.stopPropagation()}
                           />
                       </div>
@@ -320,26 +335,28 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
 
               {/* BACK */}
               <div className="absolute inset-0 rotate-y-180 backface-hidden">
-                  <div className="w-full h-full bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden relative">
+                  <div className="w-full h-full bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-hidden relative">
                        {currentItem.type === 'vocab' ? (
                            <VocabCardDisplay 
                               data={currentItem.data as any} 
                               showSave={false} 
-                              className="h-full w-full rounded-3xl border-0 shadow-none" 
+                              className="h-full w-full rounded-[2rem] border-0 shadow-none" 
                               onSearch={onSearch}
                            />
                        ) : (
                            <div className="h-full p-8 flex flex-col justify-center overflow-y-auto text-center">
-                               <h3 className="text-2xl font-bold text-slate-800 mb-4 leading-snug">{(currentItem.data as any).translation}</h3>
+                               <h3 className="text-2xl font-bold text-slate-800 mb-6 leading-snug">{(currentItem.data as any).translation}</h3>
                                
-                               <div className="w-12 h-1 bg-indigo-100 mx-auto mb-6 rounded-full"></div>
+                               <div className="w-16 h-1 bg-indigo-100 mx-auto mb-8 rounded-full"></div>
 
                                <div className="prose prose-sm prose-indigo max-w-none text-slate-600">
-                                  <p className="font-mono text-slate-500 mb-6 bg-slate-50 p-2 rounded-lg inline-block">{(currentItem.data as any).pronunciation}</p>
+                                  <p className="font-mono text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg inline-block mb-6 font-medium">
+                                    /{(currentItem.data as any).pronunciation}/
+                                  </p>
                                   
                                   {(currentItem.data as any).visualKeyword && (
-                                    <div className="mt-2 p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-sm text-indigo-900">
-                                        <span className="block mb-1 text-[10px] font-bold uppercase text-indigo-400 tracking-widest">Concept</span>
+                                    <div className="mt-4 p-5 bg-gradient-to-br from-slate-50 to-indigo-50/50 rounded-2xl border border-slate-100 text-sm text-slate-700">
+                                        <span className="block mb-2 text-[10px] font-bold uppercase text-indigo-400 tracking-widest">Core Concept</span>
                                         {(currentItem.data as any).visualKeyword}
                                     </div>
                                   )}
@@ -351,30 +368,30 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
           </div>
         </div>
 
-        {/* Controls */}
-        <div className={`flex gap-3 transition-all duration-300 shrink-0 pb-2 ${isFlipped ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+        {/* Controls - Traffic Light System */}
+        <div className={`flex gap-3 transition-all duration-300 shrink-0 pb-4 ${isFlipped ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
             <button 
               onClick={() => handleRate(0)}
-              className="flex-1 flex flex-col items-center gap-1 py-3 bg-orange-100 text-orange-800 rounded-2xl font-bold active:scale-95 transition-transform shadow-sm hover:bg-orange-200"
+              className="flex-1 flex flex-col items-center gap-1 py-4 bg-rose-100 text-rose-700 rounded-2xl font-bold active:scale-95 transition-all shadow-sm hover:bg-rose-200 border-b-4 border-rose-200 active:border-b-0 active:translate-y-1"
             >
-              <Clock size={20} className="mb-1" />
-              <span className="text-[10px] uppercase tracking-wide">Soon</span>
+              <span className="text-xs uppercase tracking-widest opacity-70">Forgot</span>
+              <span className="text-lg">Again</span>
             </button>
             
             <button 
               onClick={() => handleRate(3)}
-              className="flex-1 flex flex-col items-center gap-1 py-3 bg-slate-200 text-slate-700 rounded-2xl font-bold active:scale-95 transition-transform shadow-sm hover:bg-slate-300"
+              className="flex-1 flex flex-col items-center gap-1 py-4 bg-amber-100 text-amber-700 rounded-2xl font-bold active:scale-95 transition-all shadow-sm hover:bg-amber-200 border-b-4 border-amber-200 active:border-b-0 active:translate-y-1"
             >
-              <Flame size={20} className="mb-1" />
-              <span className="text-[10px] uppercase tracking-wide">Hard</span>
+              <span className="text-xs uppercase tracking-widest opacity-70">Hard</span>
+              <span className="text-lg">Good</span>
             </button>
 
             <button 
               onClick={() => handleRate(5)}
-              className="flex-1 flex flex-col items-center gap-1 py-3 bg-emerald-100 text-emerald-800 rounded-2xl font-bold active:scale-95 transition-transform shadow-sm hover:bg-emerald-200"
+              className="flex-1 flex flex-col items-center gap-1 py-4 bg-emerald-100 text-emerald-700 rounded-2xl font-bold active:scale-95 transition-all shadow-sm hover:bg-emerald-200 border-b-4 border-emerald-200 active:border-b-0 active:translate-y-1"
             >
-              <CheckCircle size={20} className="mb-1" />
-              <span className="text-[10px] uppercase tracking-wide">Easy</span>
+              <span className="text-xs uppercase tracking-widest opacity-70">Easy</span>
+              <span className="text-lg">Easy</span>
             </button>
         </div>
       </div>

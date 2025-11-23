@@ -28,6 +28,8 @@ const App: React.FC = () => {
   const [recursiveQuery, setRecursiveQuery] = useState<string | undefined>(undefined);
   const [selectedStoredItem, setSelectedStoredItem] = useState<StoredItem | undefined>(undefined);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [showNav, setShowNav] = useState(true);
+  const [lastScrollY, setLastScrollY] = useState(0);
   
   // Sync Configuration
   const [syncConfig, setSyncConfig] = useState<SyncConfig>(() => {
@@ -125,24 +127,37 @@ const App: React.FC = () => {
   useEffect(() => {
     if (syncConfig.type !== 'firebase' || !isFirebaseConfigured) return;
 
+    let unsubscribeData: (() => void) | undefined;
+
     const unsubscribeAuth = subscribeToAuth((currentUser) => {
       setUser(currentUser);
       
+      // Clean up previous data subscription if it exists
+      if (unsubscribeData) {
+        unsubscribeData();
+        unsubscribeData = undefined;
+      }
+      
       if (currentUser) {
-        const unsubscribeData = subscribeToUserData(currentUser.uid, (remoteItems) => {
-            if (!remoteItems) return;
+        console.log("🔥 Setting up Firebase sync for user:", currentUser.uid);
+        unsubscribeData = subscribeToUserData(currentUser.uid, (remoteItems) => {
+            console.log("🔥 📥 Received items from Firebase:", remoteItems.length);
+            
             setSavedItems(prevLocal => {
+                console.log("🔥 📊 Merging - Remote:", remoteItems.length, "Local:", prevLocal.length);
                 const merged = mergeDatasets(prevLocal, remoteItems);
-                if (JSON.stringify(merged) !== JSON.stringify(prevLocal)) {
-                     return merged;
-                }
-                return prevLocal;
+                console.log("🔥 ✅ After merge:", merged.length, "items");
+                return merged;
             });
         });
-        return () => unsubscribeData();
       }
     });
-    return () => unsubscribeAuth();
+
+    return () => {
+      console.log("🔥 Cleaning up Firebase subscriptions");
+      if (unsubscribeData) unsubscribeData();
+      unsubscribeAuth();
+    };
   }, [syncConfig.type, isFirebaseConfigured]);
 
   // 3. CUSTOM SERVER SYNC LOGIC (Polling)
@@ -180,13 +195,21 @@ const App: React.FC = () => {
     const timer = setTimeout(async () => {
       // 1. Save to Local IDB
       await saveData(savedItems);
+      console.log("💾 Saved to IndexedDB:", savedItems.length, "items");
       
       // 2. Push to Cloud (Firebase)
       if (syncConfig.type === 'firebase' && user && isFirebaseConfigured) {
+          console.log("🔥 Syncing to Firebase...", savedItems.length, "items for user:", user.uid);
           setSyncStatus('syncing');
           saveUserData(user.uid, savedItems)
-            .then(() => setSyncStatus('saved'))
-            .catch(() => setSyncStatus('error'));
+            .then(() => {
+              console.log("🔥 Firebase sync complete!");
+              setSyncStatus('saved');
+            })
+            .catch((e) => {
+              console.error("🔥 Firebase sync error:", e);
+              setSyncStatus('error');
+            });
       }
 
       // 3. Push to Cloud (Custom)
@@ -394,6 +417,23 @@ const App: React.FC = () => {
       }));
   };
 
+  // Handle scroll to hide/show nav bar
+  const handleScroll = (e: React.UIEvent<HTMLElement>) => {
+    const currentScrollY = e.currentTarget.scrollTop;
+    
+    if (currentScrollY < 10) {
+      setShowNav(true);
+    } else if (currentScrollY > lastScrollY && currentScrollY > 100) {
+      // Scrolling down
+      setShowNav(false);
+    } else if (currentScrollY < lastScrollY) {
+      // Scrolling up
+      setShowNav(true);
+    }
+    
+    setLastScrollY(currentScrollY);
+  };
+
   const NavButton = ({ view, icon: Icon, label }: { view: ViewState, icon: any, label: string }) => (
     <button 
       onClick={() => { setCurrentView(view); setRecursiveQuery(undefined); setSelectedStoredItem(undefined); }}
@@ -405,7 +445,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="fixed inset-0 bg-white shadow-2xl overflow-hidden flex flex-col relative touch-pan-y">
+    <div className="fixed inset-0 bg-white shadow-2xl flex flex-col relative">
       {showSettingsModal && (
           <SyncSettingsModal 
             config={syncConfig} 
@@ -429,7 +469,7 @@ const App: React.FC = () => {
       )}
 
       <main 
-        className="flex-1 overflow-hidden relative w-full touch-pan-y"
+        className="flex-1 relative w-full overflow-hidden"
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -443,6 +483,7 @@ const App: React.FC = () => {
                 initialQuery={recursiveQuery}
                 initialData={selectedStoredItem}
                 onViewDetail={(data, type) => setDetailItem({ data, type })}
+                onScroll={handleScroll}
             />
         </div>
         
@@ -460,6 +501,7 @@ const App: React.FC = () => {
             onSetup={() => setShowSettingsModal(true)}
             isConfigured={isFirebaseConfigured}
             syncStatus={syncStatus}
+            onScroll={handleScroll}
           />
         )}
         
@@ -469,11 +511,12 @@ const App: React.FC = () => {
             onUpdateSRS={updateSRS}
             onSearch={handleRecursiveSearch} 
             onDelete={handleDelete}
+            onScroll={handleScroll}
           />
         )}
       </main>
 
-      <nav className="bg-white border-t border-slate-200 flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 shadow-[0_-1px_3px_rgba(0,0,0,0.05)] shrink-0">
+      <nav className={`fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 shadow-[0_-1px_3px_rgba(0,0,0,0.05)] transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
         <NavButton view="search" icon={Search} label="Search" />
         <NavButton view="notebook" icon={Book} label="Notebook" />
         <NavButton view="study" icon={BrainCircuit} label="Study" />

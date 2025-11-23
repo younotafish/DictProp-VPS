@@ -2,7 +2,7 @@
 import { GoogleGenAI, Schema, Type } from "@google/genai";
 import { SearchResult, VocabCard } from "../types";
 
-const apiKey = process.env.API_KEY || '';
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 const ai = new GoogleGenAI({ apiKey });
 
 // Internal ID generator to avoid external dependency issues
