@@ -344,6 +344,7 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
                               className="h-full w-full rounded-[2rem] border-0 shadow-none" 
                               onSearch={onSearch}
                               showAudio={false}
+                              showPronunciation={false}
                            />
                        ) : (
                            <div className="h-full p-8 flex flex-col justify-center overflow-y-auto text-center">

@@ -3,8 +3,6 @@ import React from 'react';
 import { VocabCard as VocabType } from '../types';
 import { Sparkles, BookOpen, History, Lightbulb, Maximize2 } from 'lucide-react';
 import { Button } from './Button';
-import { AudioButton } from './AudioButton';
-
 interface Props {
   data: VocabType;
   onSave?: () => void;
@@ -15,6 +13,7 @@ interface Props {
   onExpand?: () => void;
   scrollable?: boolean;
   showAudio?: boolean;
+  showPronunciation?: boolean;
 }
 
 export const VocabCardDisplay: React.FC<Props> = ({ 
@@ -26,7 +25,8 @@ export const VocabCardDisplay: React.FC<Props> = ({
   onSearch,
   onExpand,
   scrollable = true,
-  showAudio = true
+  showAudio = true,
+  showPronunciation = true
 }) => {
   
   // Robust helper to ensure we always map over an array
@@ -76,8 +76,9 @@ export const VocabCardDisplay: React.FC<Props> = ({
       <div className="flex justify-between items-start mb-4 shrink-0">
         <div>
           <h3 className="text-3xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
+          {showPronunciation && (
           <div className="flex items-center gap-2 mt-1 text-slate-500">
-            {showAudio && (
+            {showAudio && data.ipa && (
             <button 
                 onClick={(e) => { e.stopPropagation(); handlePlayAudio(data.word); }}
                 className="font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded text-sm hover:bg-indigo-100 transition-colors cursor-pointer text-left"
@@ -87,6 +88,7 @@ export const VocabCardDisplay: React.FC<Props> = ({
             </button>
             )}
           </div>
+          )}
         </div>
         <div className="flex items-center gap-1">
             {onExpand && (
