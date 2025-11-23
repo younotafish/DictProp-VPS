@@ -3,6 +3,8 @@ import { initializeApp, FirebaseApp } from "firebase/app";
 import { 
   getAuth, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   signInAnonymously,
   GoogleAuthProvider, 
   signOut as firebaseSignOut,
@@ -29,7 +31,7 @@ import {
   deleteObject,
   FirebaseStorage
 } from "firebase/storage";
-import { StoredItem } from "../types";
+import { StoredItem, TaskPerformance } from "../types";
 
 const CONFIG_KEY = 'popdict_firebase_config';
 
@@ -94,10 +96,27 @@ export const resetConfig = () => {
 // 4. Auth Functions
 const provider = new GoogleAuthProvider();
 
+// Helper to detect iOS Safari
+const isIOsSafari = (): boolean => {
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  const isStandalone = (window.navigator as any).standalone === true;
+  const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+  return isIOS && (isSafari || isStandalone);
+};
+
 export const signIn = async () => {
   if (!auth) throw new Error("NOT_CONFIGURED");
   try {
-    await signInWithPopup(auth, provider);
+    // iOS Safari has issues with popups, use redirect instead
+    if (isIOsSafari()) {
+      console.log("iOS Safari detected, using redirect method");
+      await signInWithRedirect(auth, provider);
+      // The actual sign-in will complete when the page reloads
+      // handleRedirectResult should be called on app initialization
+    } else {
+      await signInWithPopup(auth, provider);
+    }
   } catch (error: any) {
     // Suppress console noise for expected operational errors
     const code = error.code || '';
@@ -111,6 +130,25 @@ export const signIn = async () => {
     
     console.error("Error signing in", error);
     throw error;
+  }
+};
+
+// Handle redirect result (call this on app initialization for iOS)
+export const handleRedirectResult = async () => {
+  if (!auth) return null;
+  try {
+    const result = await getRedirectResult(auth);
+    if (result) {
+      console.log("Redirect sign-in successful", result.user.uid);
+    }
+    return result;
+  } catch (error: any) {
+    const code = error.code || '';
+    if (code === 'auth/unauthorized-domain') {
+      throw error;
+    }
+    console.error("Error handling redirect result", error);
+    return null;
   }
 };
 
@@ -154,12 +192,13 @@ export const subscribeToUserData = (
   
   console.log("🔥 Firebase: Subscribing to updates for user:", userId);
 
-  return onSnapshot(itemsCollection, (snapshot) => {
-    // Log metadata for debugging
-    console.log("🔥 Firebase: Snapshot received, fromCache:", snapshot.metadata.fromCache, "size:", snapshot.size);
-
+  // OPTIMIZATION: Throttle snapshot processing to avoid rapid re-renders
+  let throttleTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingSnapshot: any = null;
+  
+  const processSnapshot = (snapshot: any) => {
     const items: StoredItem[] = [];
-    snapshot.forEach(doc => {
+    snapshot.forEach((doc: any) => {
         const data = doc.data() as StoredItem;
         // Only include non-deleted items (deleted items shouldn't be in Firestore anyway)
         if (!data.isDeleted) {
@@ -168,9 +207,32 @@ export const subscribeToUserData = (
     });
     
     console.log(`🔥 Firebase: Parsed ${items.length} active items from cloud (${snapshot.metadata.fromCache ? 'cache' : 'server'})`);
-    
-    // Always call onData - merge logic will handle conflicts
     onData(items);
+  };
+
+  return onSnapshot(itemsCollection, (snapshot) => {
+    // Log metadata for debugging
+    console.log("🔥 Firebase: Snapshot received, fromCache:", snapshot.metadata.fromCache, "size:", snapshot.size);
+
+    // OPTIMIZATION: Skip processing if this is just a cache snapshot and we already processed it
+    if (snapshot.metadata.fromCache && snapshot.metadata.hasPendingWrites) {
+      console.log("🔥 Firebase: Skipping cache snapshot with pending writes");
+      return;
+    }
+    
+    // Throttle processing to once per 2 seconds
+    pendingSnapshot = snapshot;
+    
+    if (!throttleTimer) {
+      processSnapshot(snapshot);
+      throttleTimer = setTimeout(() => {
+        throttleTimer = null;
+        if (pendingSnapshot && pendingSnapshot !== snapshot) {
+          processSnapshot(pendingSnapshot);
+        }
+        pendingSnapshot = null;
+      }, 2000) as ReturnType<typeof setTimeout>;
+    }
   }, (error) => {
       console.error("🔥 Firestore subscription error:", error);
       console.error("🔥 Firestore: Error code:", error.code, "Message:", error.message);
@@ -203,30 +265,40 @@ const uploadImageToStorage = async (userId: string, itemId: string, imageData: s
   }
 };
 
-// Helper: Process item images and upload to Storage
+// Helper: Process item images and upload to Storage (OPTIMIZED)
 const processItemImages = async (userId: string, item: StoredItem): Promise<StoredItem> => {
   const processedItem = JSON.parse(JSON.stringify(item));
   
   if (!processedItem.data) return processedItem;
   
   // Process main image (for vocab cards or phrases)
+  // ONLY upload if it's a base64 string (not already a URL)
   if (processedItem.data.imageUrl && processedItem.data.imageUrl.startsWith('data:image/')) {
     const downloadURL = await uploadImageToStorage(userId, processedItem.data.id, processedItem.data.imageUrl, 'main');
     if (downloadURL) {
       processedItem.data.imageUrl = downloadURL;
+    } else {
+      // If upload failed, remove the base64 to avoid syncing large data
+      delete processedItem.data.imageUrl;
     }
   }
+  // If already a URL (https://...), keep it as-is
   
   // Process vocab images (for phrases)
   if (processedItem.type === 'phrase' && Array.isArray(processedItem.data.vocabs)) {
     for (let i = 0; i < processedItem.data.vocabs.length; i++) {
       const vocab = processedItem.data.vocabs[i];
+      // ONLY upload if it's a base64 string
       if (vocab.imageUrl && vocab.imageUrl.startsWith('data:image/')) {
         const downloadURL = await uploadImageToStorage(userId, processedItem.data.id, vocab.imageUrl, 'vocab', i);
         if (downloadURL) {
           processedItem.data.vocabs[i].imageUrl = downloadURL;
+        } else {
+          // If upload failed, remove the base64
+          delete processedItem.data.vocabs[i].imageUrl;
         }
       }
+      // If already a URL, keep it as-is
     }
   }
   
@@ -241,23 +313,36 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
     const activeItems = items.filter(item => !item.isDeleted);
     const deletedItems = items.filter(item => item.isDeleted);
     
-    // Force Create Parent Document
-    const userDocRef = doc(db, "users", userId);
-    await setDoc(userDocRef, { 
-        lastSynced: Date.now(),
-        itemCount: activeItems.length 
-    }, { merge: true });
-
-    console.log(`🔥 Firebase: Syncing ${activeItems.length} active items (${deletedItems.length} to delete)...`);
+    // OPTIMIZATION: Limit batch size to avoid excessive writes
+    // Firestore allows 500 ops/batch, but we limit to 100 for cost control
+    const MAX_BATCH_SIZE = 100;
+    const MAX_DELETES_PER_SYNC = 20;
+    
+    const itemsToWrite = activeItems.slice(0, MAX_BATCH_SIZE);
+    const itemsToDelete = deletedItems.slice(0, MAX_DELETES_PER_SYNC);
+    
+    if (itemsToWrite.length === 0 && itemsToDelete.length === 0) {
+        console.log("🔥 Firebase: No changes to sync");
+        return;
+    }
+    
+    console.log(`🔥 Firebase: Syncing ${itemsToWrite.length} active items (${itemsToDelete.length} to delete)...`);
 
     // Process images: upload base64 to Storage and replace with URLs
+    // This is sequential to avoid overwhelming the connection
     const processedItems: StoredItem[] = [];
-    for (const item of activeItems.slice(0, 400)) {
+    for (const item of itemsToWrite) {
       if (item.data && item.data.id) {
         const processedItem = await processItemImages(userId, item);
         processedItems.push(processedItem);
       }
     }
+
+    // Update Parent Document (reduced frequency check)
+    const userDocRef = doc(db, "users", userId);
+    await setDoc(userDocRef, { 
+        lastSynced: Date.now()
+    }, { merge: true });
 
     const batch = writeBatch(db);
     let writeCount = 0;
@@ -273,7 +358,7 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
     });
     
     // Delete removed items from Firestore
-    deletedItems.slice(0, 90).forEach(item => {
+    itemsToDelete.forEach(item => {
         if (item.data && item.data.id) {
             const docRef = doc(db, "users", userId, "items", item.data.id);
             batch.delete(docRef);
@@ -284,9 +369,7 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
     if (writeCount > 0 || deleteCount > 0) {
         console.log(`🔥 Firebase: Committing ${writeCount} writes, ${deleteCount} deletes...`);
         await batch.commit();
-        console.log("🔥 Firebase: ✅ Sync complete! Images uploaded to Storage.");
-    } else {
-        console.log("🔥 Firebase: No changes to sync");
+        console.log("🔥 Firebase: ✅ Sync complete!");
     }
   } catch (e: any) {
     console.error("🔥 Firebase: ❌ Error saving to cloud:", e);
@@ -296,5 +379,121 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
         throw new Error("Permission denied. Check database rules.");
     }
     throw e;
+  }
+};
+
+// ========== LEARNING ANALYTICS SYNC ==========
+
+export interface LearningAnalytics {
+  userId: string;
+  totalReviews: number;
+  totalStudyTime: number; // milliseconds
+  streak: number; // days
+  lastStudyDate: number; // timestamp
+  performanceByTask: {
+    [taskType: string]: {
+      attempts: number;
+      correct: number;
+      averageResponseTime: number;
+    };
+  };
+  weakWords: string[]; // IDs of words user struggles with
+  strongWords: string[]; // IDs of mastered words
+  dailyActivity: {
+    [date: string]: {
+      reviews: number;
+      studyTime: number;
+      accuracy: number;
+    };
+  };
+}
+
+/**
+ * Save learning analytics to Firebase
+ */
+export const saveLearningAnalytics = async (userId: string, analytics: LearningAnalytics): Promise<void> => {
+  if (!db) throw new Error("NOT_CONFIGURED");
+  
+  try {
+    const analyticsRef = doc(db, "users", userId, "analytics", "summary");
+    await setDoc(analyticsRef, {
+      ...analytics,
+      lastUpdated: Date.now()
+    }, { merge: true });
+    
+    console.log("🔥 Firebase: Learning analytics saved");
+  } catch (error) {
+    console.error("🔥 Firebase: Error saving analytics:", error);
+    throw error;
+  }
+};
+
+/**
+ * Load learning analytics from Firebase
+ */
+export const loadLearningAnalytics = async (userId: string): Promise<LearningAnalytics | null> => {
+  if (!db) throw new Error("NOT_CONFIGURED");
+  
+  try {
+    const analyticsRef = doc(db, "users", userId, "analytics", "summary");
+    const snapshot = await getDoc(analyticsRef);
+    
+    if (snapshot.exists()) {
+      return snapshot.data() as LearningAnalytics;
+    }
+    return null;
+  } catch (error) {
+    console.error("🔥 Firebase: Error loading analytics:", error);
+    return null;
+  }
+};
+
+/**
+ * Subscribe to learning analytics updates
+ */
+export const subscribeToAnalytics = (
+  userId: string,
+  onData: (analytics: LearningAnalytics | null) => void
+): (() => void) => {
+  if (!db) return () => {};
+  
+  const analyticsRef = doc(db, "users", userId, "analytics", "summary");
+  
+  return onSnapshot(analyticsRef, (snapshot) => {
+    if (snapshot.exists()) {
+      onData(snapshot.data() as LearningAnalytics);
+    } else {
+      onData(null);
+    }
+  }, (error) => {
+    console.error("🔥 Firebase: Analytics subscription error:", error);
+  });
+};
+
+/**
+ * Record a study session (for streak and activity tracking)
+ */
+export const recordStudySession = async (
+  userId: string,
+  sessionData: {
+    reviews: number;
+    studyTime: number;
+    accuracy: number;
+  }
+): Promise<void> => {
+  if (!db) throw new Error("NOT_CONFIGURED");
+  
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const sessionRef = doc(db, "users", userId, "sessions", today);
+    
+    await setDoc(sessionRef, {
+      ...sessionData,
+      timestamp: Date.now()
+    }, { merge: true });
+    
+    console.log("🔥 Firebase: Study session recorded for", today);
+  } catch (error) {
+    console.error("🔥 Firebase: Error recording session:", error);
   }
 };

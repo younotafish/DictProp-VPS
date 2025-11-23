@@ -27,13 +27,38 @@ export interface SearchResult {
   imageUrl?: string; // Base64 data uri
 }
 
+// Enhanced SRS with Memory Strength Model
 export interface SRSData {
   id: string; // References SearchResult.id or VocabCard.id
   type: 'vocab' | 'phrase';
   nextReview: number; // Timestamp
   interval: number; // In minutes
   easeFactor: number;
-  history: number[]; // 0 for fail, 1 for success
+  history: number[]; // 0 for fail, 1 for success (legacy)
+  
+  // Memory Strength System (Shanbay-like)
+  memoryStrength: number; // 0-100, hidden from user
+  lastReviewDate: number; // Timestamp of last review
+  totalReviews: number; // Total number of reviews
+  correctStreak: number; // Current streak of correct answers
+  
+  // Task-specific performance tracking
+  taskHistory: TaskPerformance[];
+  
+  // Forgetting curve parameters
+  stability: number; // How stable the memory is (days)
+  difficulty: number; // Inherent difficulty of this item (0-10)
+}
+
+// Different study task types with different difficulty levels
+export type TaskType = 'recognition' | 'recall' | 'typing' | 'listening' | 'sentence';
+
+export interface TaskPerformance {
+  taskType: TaskType;
+  timestamp: number;
+  quality: number; // 0-5 (SuperMemo-like)
+  responseTime: number; // milliseconds
+  strength: number; // Memory strength at time of review
 }
 
 // Combined type for storage
@@ -46,13 +71,8 @@ export interface StoredItem {
   isDeleted?: boolean; // Soft delete flag for sync
 }
 
-export type SyncType = 'firebase' | 'custom';
-
 export interface SyncConfig {
-  type: SyncType;
   enabled: boolean;
-  serverUrl?: string; // For custom server
-  apiKey?: string;    // For custom server (Bearer token)
   lastSynced: number;
 }
 

@@ -3,17 +3,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { SearchView } from './views/Search';
 import { NotebookView } from './views/Notebook';
 import { StudyView } from './views/Study';
+import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, VocabCard, SRSData, SearchResult, SyncConfig, SyncStatus } from './types';
+import { StoredItem, ViewState, VocabCard, SRSData, SearchResult, SyncConfig, SyncStatus, TaskType } from './types';
 import { Search, Book, BrainCircuit } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signInAnonymouslyUser, signOut, isConfigured } from './services/firebase';
-import { syncWithCustomServer } from './services/restSync';
+import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signInAnonymouslyUser, signOut, isConfigured, handleRedirectResult } from './services/firebase';
 import { FirebaseConfigModal } from './components/FirebaseConfigModal';
 import { SyncSettingsModal } from './components/SyncSettingsModal';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
+import { SRSAlgorithm } from './services/srsAlgorithm';
 
 const getItemTitle = (item: StoredItem): string => {
     if (!item || !item.data) return '';
@@ -34,7 +35,7 @@ const App: React.FC = () => {
   // Sync Configuration
   const [syncConfig, setSyncConfig] = useState<SyncConfig>(() => {
       const saved = localStorage.getItem('popdict_sync_config');
-      return saved ? JSON.parse(saved) : { type: 'firebase', enabled: true, lastSynced: 0 };
+      return saved ? JSON.parse(saved) : { enabled: true, lastSynced: 0 };
   });
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
@@ -98,21 +99,37 @@ const App: React.FC = () => {
     }
   };
 
-  // 1. Initialize Local Storage (Load from IndexedDB)
+  // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
     const initStorage = async () => {
         try {
             const migrated = await migrateFromLocalStorage();
+            let itemsToLoad: StoredItem[] = [];
+            
             if (migrated && migrated.length > 0) {
-                setSavedItems(migrated);
+                itemsToLoad = migrated;
             } else {
                 const items = await loadData();
                 if (items && Array.isArray(items)) {
-                    const validItems = items.filter((i: any) => 
+                    itemsToLoad = items.filter((i: any) => 
                         i && i.data && i.data.id && i.srs && i.type && !i.isDeleted
                     );
-                    setSavedItems(validItems);
                 }
+            }
+            
+            // Auto-migrate SRS data to new format if needed
+            const needsMigration = itemsToLoad.some(item => typeof item.srs?.memoryStrength !== 'number');
+            if (needsMigration && itemsToLoad.length > 0) {
+                console.log("🔄 Migrating", itemsToLoad.length, "items to new SRS format...");
+                const migratedItems = itemsToLoad.map(item => ({
+                    ...item,
+                    srs: migrateSRSData(item.srs)
+                }));
+                setSavedItems(migratedItems);
+                await saveData(migratedItems);
+                console.log("✅ SRS migration complete!");
+            } else {
+                setSavedItems(itemsToLoad);
             }
         } catch (e) {
             console.error("Failed to initialize storage", e);
@@ -125,7 +142,16 @@ const App: React.FC = () => {
 
   // 2. FIREBASE SYNC LOGIC
   useEffect(() => {
-    if (syncConfig.type !== 'firebase' || !isFirebaseConfigured) return;
+    if (!isFirebaseConfigured) return;
+
+    // Handle OAuth redirect result (for iOS Safari)
+    handleRedirectResult().catch((error) => {
+      if (error?.code === 'auth/unauthorized-domain') {
+        setUnauthorizedDomain(window.location.host || window.location.origin || "Unable to detect URL");
+      } else if (error) {
+        console.error("Redirect result error:", error);
+      }
+    });
 
     let unsubscribeData: (() => void) | undefined;
 
@@ -158,37 +184,9 @@ const App: React.FC = () => {
       if (unsubscribeData) unsubscribeData();
       unsubscribeAuth();
     };
-  }, [syncConfig.type, isFirebaseConfigured]);
+  }, [isFirebaseConfigured]);
 
-  // 3. CUSTOM SERVER SYNC LOGIC (Polling)
-  useEffect(() => {
-      if (syncConfig.type !== 'custom' || !syncConfig.serverUrl || !isLoaded) return;
-
-      const runCustomSync = async () => {
-          setSyncStatus('syncing');
-          try {
-              const { items, hasChanges } = await syncWithCustomServer(syncConfig.serverUrl!, syncConfig.apiKey, savedItems);
-              if (hasChanges) {
-                  setSavedItems(items);
-                  setSyncStatus('saved');
-              } else {
-                  setSyncStatus('idle');
-              }
-          } catch (e) {
-              setSyncStatus('error');
-              console.error("Custom sync failed", e);
-          }
-      };
-
-      // Initial sync
-      runCustomSync();
-
-      // Poll every 60 seconds
-      const interval = setInterval(runCustomSync, 60000);
-      return () => clearInterval(interval);
-  }, [syncConfig, isLoaded]); // Dependency on syncConfig ensures it restarts if URL changes
-
-  // 4. SAVE EFFECTS (Persistence)
+  // 3. SAVE EFFECTS (Persistence)
   useEffect(() => {
     if (!isLoaded) return; 
 
@@ -197,38 +195,41 @@ const App: React.FC = () => {
       await saveData(savedItems);
       console.log("💾 Saved to IndexedDB:", savedItems.length, "items");
       
-      // 2. Push to Cloud (Firebase)
-      if (syncConfig.type === 'firebase' && user && isFirebaseConfigured) {
-          console.log("🔥 Syncing to Firebase...", savedItems.length, "items for user:", user.uid);
-          setSyncStatus('syncing');
-          saveUserData(user.uid, savedItems)
-            .then(() => {
-              console.log("🔥 Firebase sync complete!");
-              setSyncStatus('saved');
-            })
-            .catch((e) => {
-              console.error("🔥 Firebase sync error:", e);
-              setSyncStatus('error');
-            });
-      }
-
-      // 3. Push to Cloud (Custom)
-      // handled by the polling effect or immediate trigger?
-      // Let's trigger an immediate push if in custom mode
-      if (syncConfig.type === 'custom' && syncConfig.serverUrl) {
-          setSyncStatus('syncing');
-          try {
-             await syncWithCustomServer(syncConfig.serverUrl, syncConfig.apiKey, savedItems);
-             setSyncStatus('saved');
-          } catch (e) {
-             setSyncStatus('error');
+      // 2. Push to Cloud (Firebase) - OPTIMIZED
+      if (user && isFirebaseConfigured) {
+          // Get last sync timestamp from localStorage
+          const lastSyncKey = `last_sync_${user.uid}`;
+          const lastSyncTime = parseInt(localStorage.getItem(lastSyncKey) || '0', 10);
+          
+          // Only sync items that have changed since last sync
+          const itemsToSync = savedItems.filter(item => {
+              const itemTime = item.updatedAt || item.savedAt || 0;
+              return itemTime > lastSyncTime;
+          });
+          
+          // Only sync if there are actual changes
+          if (itemsToSync.length > 0) {
+              console.log(`🔥 Syncing ${itemsToSync.length} changed items (out of ${savedItems.length} total)...`);
+              setSyncStatus('syncing');
+              saveUserData(user.uid, itemsToSync)
+                .then(() => {
+                  console.log("🔥 Firebase sync complete!");
+                  localStorage.setItem(lastSyncKey, Date.now().toString());
+                  setSyncStatus('saved');
+                })
+                .catch((e) => {
+                  console.error("🔥 Firebase sync error:", e);
+                  setSyncStatus('error');
+                });
+          } else {
+              console.log("🔥 No changes to sync - skipping Firebase request");
           }
       }
 
-    }, 2000); // 2s debounce
+    }, 3000); // 3s debounce (increased from 2s)
 
     return () => clearTimeout(timer);
-  }, [savedItems, isLoaded, user, isFirebaseConfigured, syncConfig]);
+  }, [savedItems, isLoaded, user, isFirebaseConfigured]);
 
   const handleSignIn = async () => {
       try {
@@ -362,59 +363,61 @@ const App: React.FC = () => {
       setDetailItem({ data: item.data, type: item.type });
   };
 
-  const updateSRS = (itemId: string, quality: number) => {
+  // Migrate existing SRS data to new format
+  const migrateSRSData = (srs: SRSData): SRSData => {
+    // Check if already migrated (has memoryStrength field)
+    if (typeof srs.memoryStrength === 'number') return srs;
+    
+    // Migrate old data to new format
+    const reviewCount = srs.history?.length || 0;
+    const correctCount = srs.history?.filter(q => q >= 3).length || 0;
+    const accuracy = reviewCount > 0 ? correctCount / reviewCount : 0;
+    
+    // Estimate initial memory strength based on old metrics
+    let initialStrength = 0;
+    if (srs.easeFactor > 2.5) initialStrength += 30;
+    if (srs.interval > 1440) initialStrength += 40; // > 1 day
+    if (accuracy > 0.7) initialStrength += 30;
+    
+    return {
+      ...srs,
+      memoryStrength: Math.min(100, initialStrength),
+      lastReviewDate: Date.now(),
+      totalReviews: reviewCount,
+      correctStreak: 0,
+      taskHistory: [],
+      stability: Math.max(0.5, srs.interval / (24 * 60)), // Convert interval to days
+      difficulty: 5, // Default medium difficulty
+    };
+  };
+
+  // Enhanced SRS update with new algorithm
+  const updateSRS = (itemId: string, quality: number, taskType: TaskType = 'recall', responseTime: number = 3000) => {
       setSavedItems(prev => prev.map(item => {
           if (!item.data || item.data.id !== itemId) return item;
           
-          const oldHistory = Array.isArray(item.srs.history) ? item.srs.history : [];
-          const newHistory = [...oldHistory, quality];
+          // Migrate old SRS data if needed
+          const migratedSRS = migrateSRSData(item.srs);
           
-          let streak = 0;
-          for (let i = newHistory.length - 1; i >= 0; i--) {
-            if (newHistory[i] >= 3) streak++;
-            else break;
-          }
-
-          let newInterval = item.srs.interval;
-          let newEase = item.srs.easeFactor;
-
-          if (quality >= 3) {
-              const delta = 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02);
-              newEase += delta;
-              if (newInterval === 0) newInterval = 1;
-              else if (newInterval === 1) newInterval = 10;
-              else {
-                  let growthMultiplier = newEase;
-                  if (quality === 3) growthMultiplier = Math.max(1.2, growthMultiplier * 0.85);
-                  if (quality === 5 && streak > 3) growthMultiplier *= 1.2; 
-                  newInterval = Math.round(newInterval * growthMultiplier);
-              }
-              if (streak > 8 && quality === 5) newEase += 0.05;
-          } else {
-              newInterval = 0; 
-              if (streak > 5) newEase -= 0.15; 
-              else if (streak > 2) newEase -= 0.25; 
-              else newEase -= 0.35; 
-          }
-
-          if (newEase < 1.3) newEase = 1.3; 
-          if (newEase > 3.5) newEase = 3.5; 
-
-          const minuteMultiplier = 60 * 1000; 
-          const nextReview = Date.now() + (newInterval * minuteMultiplier);
+          // Use new algorithm
+          const updatedSRS = SRSAlgorithm.updateAfterReview(
+            migratedSRS,
+            quality,
+            taskType,
+            responseTime
+          );
 
           return {
               ...item,
               updatedAt: Date.now(), 
-              srs: {
-                  ...item.srs,
-                  interval: newInterval,
-                  easeFactor: newEase,
-                  nextReview: nextReview,
-                  history: newHistory
-              }
+              srs: updatedSRS
           };
       }));
+  };
+
+  // Legacy updateSRS for backward compatibility with old Study view
+  const updateSRSLegacy = (itemId: string, quality: number) => {
+    updateSRS(itemId, quality, 'recall', 3000);
   };
 
   // Handle scroll to hide/show nav bar
@@ -506,12 +509,13 @@ const App: React.FC = () => {
         )}
         
         {currentView === 'study' && (
-          <StudyView 
+          <StudyEnhanced
             items={savedItems.filter(i => !i.isDeleted)} 
             onUpdateSRS={updateSRS}
             onSearch={handleRecursiveSearch} 
             onDelete={handleDelete}
             onScroll={handleScroll}
+            userId={user?.uid}
           />
         )}
       </main>

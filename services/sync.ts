@@ -1,5 +1,5 @@
 
-import { StoredItem, SyncConfig } from '../types';
+import { StoredItem } from '../types';
 
 // Smart Merge: Combines Local and Remote data
 export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): StoredItem[] => {
@@ -86,12 +86,4 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
   });
 
   return Array.from(map.values());
-};
-
-export const pullFromCloud = async (config: SyncConfig): Promise<StoredItem[] | null> => {
-    // Legacy pull - not used for Firebase
-    return [];
-};
-export const pushToCloud = async (config: SyncConfig, items: StoredItem[]): Promise<void> => {
-    // Legacy push
 };

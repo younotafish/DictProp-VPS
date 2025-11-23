@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Button } from './Button';
-import { LogOut, User as UserIcon, Settings, Ghost, RotateCcw, Server } from 'lucide-react';
+import { LogOut, User as UserIcon, Settings, Ghost } from 'lucide-react';
 import { resetConfig } from '../services/firebase';
 import { SyncConfig } from '../types';
 
@@ -18,26 +18,11 @@ interface Props {
 export const UserMenu: React.FC<Props> = ({ user, syncConfig, onSignIn, onGuestSignIn, onSignOut, onOpenSettings, isConfigured }) => {
   
   const handleReset = () => {
-      if (confirm("This will clear your custom configuration. Continue?")) {
+      if (confirm("This will clear your Firebase configuration. Continue?")) {
           resetConfig();
           window.location.reload();
       }
   };
-
-  // Custom Server Mode
-  if (syncConfig.type === 'custom') {
-      return (
-          <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 bg-indigo-50 rounded-full pl-2 pr-3 py-1 border border-indigo-100">
-                  <Server size={14} className="text-indigo-600"/>
-                  <span className="text-xs font-bold text-indigo-700">Custom Server</span>
-              </div>
-              <Button variant="ghost" size="sm" onClick={onOpenSettings} className="p-2">
-                  <Settings size={18} className="text-slate-400 hover:text-slate-600" />
-              </Button>
-          </div>
-      );
-  }
 
   // Firebase Mode
   if (!isConfigured) {

@@ -206,12 +206,11 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   };
 
   const handleNewSearch = () => {
-    setResult(null);
-    setVocabResult(null);
+    // Clear query but keep results visible
     setQuery('');
     setError(null);
-    setLoading(false);
     setIsViewingStored(false);
+    // Note: Don't clear result/vocabResult to preserve last search
     // Note: textarea height reset is handled by the useEffect reacting to query change
   };
 

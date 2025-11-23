@@ -164,15 +164,6 @@ When deploying to production:
 3. Set up Firebase App Check for additional security
 4. Monitor usage in Firebase Console → Usage dashboard
 
-## 7. Alternative: Custom Server Sync
-
-Your app also supports custom server sync! See `services/restSync.ts` for implementation details.
-
-To use custom server instead of Firebase:
-1. Click "Settings" in Notebook tab
-2. Toggle to "Custom Server"
-3. Enter your server URL and API key
-
 ---
 
 ## 🎉 You're All Set!

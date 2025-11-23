@@ -5,6 +5,39 @@ const DB_NAME = 'PopDictDB';
 const STORE_NAME = 'library';
 const DATA_KEY = 'user_items';
 
+// Fallback storage for iOS Safari private mode (where IndexedDB may not work)
+let inMemoryStorage: StoredItem[] | null = null;
+let indexedDBAvailable: boolean | null = null;
+
+const checkIndexedDBAvailability = async (): Promise<boolean> => {
+  if (indexedDBAvailable !== null) return indexedDBAvailable;
+  
+  if (typeof indexedDB === 'undefined') {
+    indexedDBAvailable = false;
+    return false;
+  }
+  
+  try {
+    // Try to open a test database to check if IndexedDB actually works
+    // (it may be disabled in iOS Safari private mode)
+    const testDB = await new Promise<boolean>((resolve) => {
+      const request = indexedDB.open('__test__');
+      request.onsuccess = () => {
+        request.result.close();
+        indexedDB.deleteDatabase('__test__');
+        resolve(true);
+      };
+      request.onerror = () => resolve(false);
+      request.onblocked = () => resolve(false);
+    });
+    indexedDBAvailable = testDB;
+    return testDB;
+  } catch {
+    indexedDBAvailable = false;
+    return false;
+  }
+};
+
 const getDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
@@ -12,7 +45,10 @@ const getDB = (): Promise<IDBDatabase> => {
         return;
     }
     const request = indexedDB.open(DB_NAME, 1);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      console.warn("IndexedDB open failed, will use in-memory fallback");
+      reject(request.error);
+    };
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -24,6 +60,26 @@ const getDB = (): Promise<IDBDatabase> => {
 };
 
 export const loadData = async (): Promise<StoredItem[]> => {
+  const idbAvailable = await checkIndexedDBAvailability();
+  
+  if (!idbAvailable) {
+    console.warn("IndexedDB not available, using in-memory storage (iOS Safari private mode?)");
+    // Try to load from localStorage as fallback
+    try {
+      const localData = localStorage.getItem('popdict_items_fallback');
+      if (localData) {
+        const parsed = JSON.parse(localData);
+        if (Array.isArray(parsed)) {
+          inMemoryStorage = parsed;
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load from localStorage fallback", e);
+    }
+    return inMemoryStorage || [];
+  }
+  
   try {
     const db = await getDB();
     return new Promise((resolve, reject) => {
@@ -35,11 +91,26 @@ export const loadData = async (): Promise<StoredItem[]> => {
     });
   } catch (error) {
     console.error("IDB Load Error", error);
-    return [];
+    // Fall back to in-memory storage
+    return inMemoryStorage || [];
   }
 };
 
 export const saveData = async (items: StoredItem[]): Promise<void> => {
+  const idbAvailable = await checkIndexedDBAvailability();
+  
+  if (!idbAvailable) {
+    console.warn("IndexedDB not available, saving to in-memory storage");
+    inMemoryStorage = items;
+    // Also try to save to localStorage as a fallback persistence layer
+    try {
+      localStorage.setItem('popdict_items_fallback', JSON.stringify(items));
+    } catch (e) {
+      console.warn("Failed to save to localStorage fallback (quota exceeded?)", e);
+    }
+    return;
+  }
+  
   try {
     const db = await getDB();
     return new Promise((resolve, reject) => {
@@ -51,7 +122,13 @@ export const saveData = async (items: StoredItem[]): Promise<void> => {
     });
   } catch (error) {
     console.error("IDB Save Error", error);
-    throw error;
+    // Fall back to in-memory storage
+    inMemoryStorage = items;
+    try {
+      localStorage.setItem('popdict_items_fallback', JSON.stringify(items));
+    } catch (e) {
+      console.warn("Failed to save to localStorage fallback", e);
+    }
   }
 };
 

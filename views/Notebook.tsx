@@ -57,7 +57,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
   // Retrieve current config from localstorage for the UserMenu
   const syncConfig = React.useMemo(() => {
       const saved = localStorage.getItem('popdict_sync_config');
-      return saved ? JSON.parse(saved) : { type: 'firebase', enabled: true };
+      return saved ? JSON.parse(saved) : { enabled: true };
   }, []);
 
   if (displayItems.length === 0) {
