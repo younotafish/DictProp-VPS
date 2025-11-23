@@ -6,6 +6,7 @@ import { Button } from '../components/Button';
 import { AudioButton } from '../components/AudioButton';
 import { VocabCardDisplay } from '../components/VocabCard';
 import ReactMarkdown from 'react-markdown';
+import { SRSAlgorithm } from '../services/srsAlgorithm';
 
 interface DetailViewProps {
   data: VocabCard | SearchResult;
@@ -24,6 +25,8 @@ const getStoredTitle = (item: StoredItem) => {
     const title = item.type === 'phrase' ? data.query : data.word;
     return String(title || '');
 };
+
+const createInitialSRS = (id: string, type: 'vocab' | 'phrase') => SRSAlgorithm.createNew(id, type);
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
   data, 
@@ -53,14 +56,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
               data: data,
               type: type,
               savedAt: Date.now(),
-              srs: {
-                  id: data.id,
-                  type: type,
-                  nextReview: Date.now(),
-                  interval: 0,
-                  easeFactor: 2.5,
-                  history: []
-              }
+              srs: createInitialSRS(data.id, type)
           });
       }
   };
@@ -90,21 +86,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             data: vocab,
             type: 'vocab',
             savedAt: Date.now(),
-            srs: {
-                id: vocab.id,
-                type: 'vocab',
-                nextReview: Date.now(),
-                interval: 0,
-                easeFactor: 2.5,
-                history: [],
-                memoryStrength: 0,
-                lastReviewDate: Date.now(),
-                totalReviews: 0,
-                correctStreak: 0,
-                taskHistory: [],
-                stability: 0.5,
-                difficulty: 5
-            }
+            srs: createInitialSRS(vocab.id, 'vocab')
         });
     }
   };

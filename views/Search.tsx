@@ -2,11 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeInput, generateIllustration } from '../services/geminiService';
 import { SearchResult, StoredItem, VocabCard } from '../types';
-import { ArrowRight, Search as SearchIcon, Mic, Loader2, Bookmark, BookmarkMinus, Play, RotateCw, BookOpen, ArrowLeft } from 'lucide-react';
+import { ArrowRight, Search as SearchIcon, Mic, Loader2, Bookmark, BookmarkMinus, Play, RotateCw, BookOpen, ArrowLeft, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { AudioButton } from '../components/AudioButton';
+import { SRSAlgorithm } from '../services/srsAlgorithm';
 
 interface SearchProps {
   onSave: (item: StoredItem) => void;
@@ -26,6 +27,8 @@ const getStoredTitle = (item: StoredItem) => {
     const title = item.type === 'phrase' ? data.query : data.word;
     return String(title || '');
 };
+
+const createInitialSRS = (id: string, type: 'vocab' | 'phrase') => SRSAlgorithm.createNew(id, type);
 
 export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, onDelete, savedItems, initialQuery, initialData, onViewDetail, onScroll }) => {
   const [query, setQuery] = useState(initialQuery || '');
@@ -140,7 +143,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                      data: updatedData,
                      type: 'phrase',
                      savedAt: 0, 
-                     srs: { id: data.id, type: 'phrase', nextReview: 0, interval: 0, easeFactor: 0, history: [] }
+                     srs: createInitialSRS(data.id, 'phrase')
                  });
              }
              setImageLoading(false);
@@ -167,7 +170,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                              data: updatedVocab,
                              type: 'vocab',
                              savedAt: 0,
-                             srs: { id: vocab.id, type: 'vocab', nextReview: 0, interval: 0, easeFactor: 0, history: [] }
+                             srs: createInitialSRS(vocab.id, 'vocab')
                          });
                     }
                 });
@@ -240,14 +243,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         data: result,
         type: 'phrase',
         savedAt: Date.now(),
-        srs: {
-          id: result.id,
-          type: 'phrase',
-          nextReview: Date.now(),
-          interval: 0,
-          easeFactor: 2.5,
-          history: []
-        }
+        srs: createInitialSRS(result.id, 'phrase')
       });
     }
   };
@@ -273,14 +269,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
             data: vocab,
             type: 'vocab',
             savedAt: Date.now(),
-            srs: {
-                id: vocab.id,
-                type: 'vocab',
-                nextReview: Date.now(),
-                interval: 0,
-                easeFactor: 2.5,
-                history: []
-            }
+            srs: createInitialSRS(vocab.id, 'vocab')
         });
     }
   };

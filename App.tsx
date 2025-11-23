@@ -248,6 +248,41 @@ const App: React.FC = () => {
       setUser(null);
   };
 
+  const migrateSRSData = (srs: SRSData): SRSData => {
+    if (typeof srs.memoryStrength === 'number') return srs;
+    
+    const reviewCount = srs.history?.length || 0;
+    const correctCount = srs.history?.filter(q => q >= 3).length || 0;
+    const accuracy = reviewCount > 0 ? correctCount / reviewCount : 0;
+    
+    let initialStrength = 0;
+    if (srs.easeFactor > 2.5) initialStrength += 30;
+    if (srs.interval > 1440) initialStrength += 40;
+    if (accuracy > 0.7) initialStrength += 30;
+    
+    return {
+      ...srs,
+      memoryStrength: Math.min(100, initialStrength),
+      lastReviewDate: Date.now(),
+      totalReviews: reviewCount,
+      correctStreak: 0,
+      taskHistory: [],
+      stability: Math.max(0.5, srs.interval / (24 * 60)),
+      difficulty: 5,
+    };
+  };
+
+  const ensureSRSData = (
+    srs: SRSData | undefined,
+    fallbackId: string,
+    fallbackType: 'vocab' | 'phrase'
+  ): SRSData => {
+    if (srs) {
+      return migrateSRSData(srs);
+    }
+    return SRSAlgorithm.createNew(fallbackId, fallbackType);
+  };
+
   const handleSave = (item: StoredItem) => {
     setSavedItems(prev => {
         if (!Array.isArray(prev)) return [item];
@@ -269,15 +304,12 @@ const App: React.FC = () => {
 
             if (existingIndex >= 0) {
                 const existingItem = prev[existingIndex];
-                const existingSrs = existingItem.srs; 
-                const mergedSrs: SRSData = {
-                    id: itemToSave.data.id,
-                    type: itemToSave.type,
-                    interval: (existingSrs?.interval ?? itemToSave.srs?.interval ?? 0),
-                    easeFactor: (existingSrs?.easeFactor ?? itemToSave.srs?.easeFactor ?? 2.5),
-                    nextReview: (existingSrs?.nextReview ?? itemToSave.srs?.nextReview ?? Date.now()),
-                    history: (existingSrs && Array.isArray(existingSrs.history)) ? existingSrs.history : []
-                };
+                const dataId = (existingItem.data as any)?.id || itemToSave.data.id;
+                const mergedSrs = ensureSRSData(
+                    existingItem.srs ?? itemToSave.srs,
+                    dataId,
+                    existingItem.type
+                );
 
                 const mergedItem: StoredItem = {
                     ...itemToSave,
@@ -289,7 +321,12 @@ const App: React.FC = () => {
                 newItems.splice(existingIndex, 1);
                 return [mergedItem, ...newItems];
             }
-            return [itemToSave, ...prev];
+            const normalizedSRS = ensureSRSData(
+                itemToSave.srs,
+                itemToSave.data.id,
+                itemToSave.type
+            );
+            return [{ ...itemToSave, srs: normalizedSRS }, ...prev];
         } catch (err) {
             console.error("Error during save operation:", err);
             return prev;
@@ -338,34 +375,6 @@ const App: React.FC = () => {
 
   const handleViewStoredItem = (item: StoredItem) => {
       setDetailItem({ data: item.data, type: item.type });
-  };
-
-  // Migrate existing SRS data to new format
-  const migrateSRSData = (srs: SRSData): SRSData => {
-    // Check if already migrated (has memoryStrength field)
-    if (typeof srs.memoryStrength === 'number') return srs;
-    
-    // Migrate old data to new format
-    const reviewCount = srs.history?.length || 0;
-    const correctCount = srs.history?.filter(q => q >= 3).length || 0;
-    const accuracy = reviewCount > 0 ? correctCount / reviewCount : 0;
-    
-    // Estimate initial memory strength based on old metrics
-    let initialStrength = 0;
-    if (srs.easeFactor > 2.5) initialStrength += 30;
-    if (srs.interval > 1440) initialStrength += 40; // > 1 day
-    if (accuracy > 0.7) initialStrength += 30;
-    
-    return {
-      ...srs,
-      memoryStrength: Math.min(100, initialStrength),
-      lastReviewDate: Date.now(),
-      totalReviews: reviewCount,
-      correctStreak: 0,
-      taskHistory: [],
-      stability: Math.max(0.5, srs.interval / (24 * 60)), // Convert interval to days
-      difficulty: 5, // Default medium difficulty
-    };
   };
 
   // Enhanced SRS update with new algorithm
