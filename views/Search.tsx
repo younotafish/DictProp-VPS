@@ -317,7 +317,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
           <button 
             type="submit"
             disabled={!query.trim() || loading}
-            className="absolute right-2 bottom-2 w-9 h-9 bg-indigo-600 text-white rounded-xl flex items-center justify-center hover:bg-indigo-700 disabled:opacity-0 disabled:scale-90 transition-all shadow-md shadow-indigo-200"
+            className="absolute right-2 bottom-2 w-9 h-9 bg-indigo-600 text-white rounded-xl flex items-center justify-center hover:bg-indigo-700 disabled:opacity-0 disabled:scale-90 transition-all shadow-md shadow-indigo-200 hidden sm:flex"
           >
             {loading ? <Loader2 className="animate-spin" size={18} /> : <ArrowRight size={20} />}
           </button>

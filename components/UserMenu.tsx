@@ -1,38 +1,17 @@
 
 import React from 'react';
 import { Button } from './Button';
-import { LogOut, User as UserIcon, Settings, Ghost } from 'lucide-react';
-import { resetConfig } from '../services/firebase';
-import { SyncConfig } from '../types';
+import { LogOut, User as UserIcon, Ghost } from 'lucide-react';
 
 interface Props {
   user: any | null; // Firebase User
-  syncConfig: SyncConfig;
   onSignIn: () => void;
   onGuestSignIn?: () => void;
   onSignOut: () => void;
-  onOpenSettings: () => void;
   isConfigured: boolean;
 }
 
-export const UserMenu: React.FC<Props> = ({ user, syncConfig, onSignIn, onGuestSignIn, onSignOut, onOpenSettings, isConfigured }) => {
-  
-  const handleReset = () => {
-      if (confirm("This will clear your Firebase configuration. Continue?")) {
-          resetConfig();
-          window.location.reload();
-      }
-  };
-
-  // Firebase Mode
-  if (!isConfigured) {
-      return (
-        <Button variant="secondary" size="sm" onClick={onOpenSettings} className="flex items-center gap-2 text-xs">
-            <Settings size={14} />
-            Setup Sync
-        </Button>
-      );
-  }
+export const UserMenu: React.FC<Props> = ({ user, onSignIn, onGuestSignIn, onSignOut, isConfigured }) => {
 
   if (!user) {
     return (
@@ -45,13 +24,6 @@ export const UserMenu: React.FC<Props> = ({ user, syncConfig, onSignIn, onGuestS
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="G" />
             Sign In
         </Button>
-         <button 
-            onClick={onOpenSettings}
-            className="p-2 text-slate-300 hover:text-slate-500 transition-colors"
-            title="Sync Settings"
-        >
-            <Settings size={14} />
-        </button>
       </div>
     );
   }

@@ -71,11 +71,6 @@ export interface StoredItem {
   isDeleted?: boolean; // Soft delete flag for sync
 }
 
-export interface SyncConfig {
-  enabled: boolean;
-  lastSynced: number;
-}
-
 export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
 export type ViewState = 'search' | 'notebook' | 'study';

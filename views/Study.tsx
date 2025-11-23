@@ -297,11 +297,12 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
         <div className="flex-1 relative perspective-1000 group w-full min-h-0 mb-6">
           <div 
               className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}
-              onClick={() => setIsFlipped(prev => !prev)}
           >
               {/* FRONT */}
               <div className="absolute inset-0 backface-hidden">
-                  <div className="w-full h-full bg-white rounded-[2rem] shadow-xl shadow-slate-200/60 border border-slate-100 flex flex-col justify-between p-8 cursor-pointer hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">
+                  <div className="w-full h-full bg-white rounded-[2rem] shadow-xl shadow-slate-200/60 border border-slate-100 flex flex-col justify-between p-8 cursor-pointer hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden"
+                      onClick={() => setIsFlipped(true)}
+                  >
                       
                       {/* Top: Badge & Prompt */}
                       <div className="relative w-full h-8 shrink-0 flex justify-center">
@@ -342,6 +343,7 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
                               showSave={false} 
                               className="h-full w-full rounded-[2rem] border-0 shadow-none" 
                               onSearch={onSearch}
+                              showAudio={false}
                            />
                        ) : (
                            <div className="h-full p-8 flex flex-col justify-center overflow-y-auto text-center">

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, Square, Play } from 'lucide-react';
 
@@ -18,39 +17,23 @@ export const AudioButton: React.FC<AudioButtonProps> = ({
   ...props
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [voicesLoaded, setVoicesLoaded] = useState(false);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Initialize voices (required for iOS Safari)
+  // Initialize voices
   useEffect(() => {
     const loadVoices = () => {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        setVoicesLoaded(true);
-      }
+      window.speechSynthesis.getVoices();
     };
-
-    // Load voices immediately
     loadVoices();
-
-    // Also listen for voiceschanged event (fires on some browsers)
     window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
-
-    return () => {
-      window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
-    };
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
   }, []);
-
-  // Reset state if text changes
-  useEffect(() => {
-    window.speechSynthesis.cancel();
-    setIsPlaying(false);
-  }, [text]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       window.speechSynthesis.cancel();
+      setIsPlaying(false);
     };
   }, []);
 
@@ -58,88 +41,78 @@ export const AudioButton: React.FC<AudioButtonProps> = ({
     e.stopPropagation();
     props.onClick?.(e);
 
-    if (!text) {
-      console.warn('AudioButton: No text provided for speech synthesis');
-      return;
-    }
+    if (!text) return;
 
-    // Check if speech synthesis is supported
-    if (!window.speechSynthesis) {
-      console.error('Speech synthesis not supported in this browser');
-      alert('Speech synthesis is not supported in your browser');
-      return;
-    }
-
+    // If currently playing this text, stop it
     if (isPlaying) {
-      // Stop if currently playing
       window.speechSynthesis.cancel();
       setIsPlaying(false);
-    } else {
-      // Always cancel any existing speech before starting new to prevent queueing bugs
-      window.speechSynthesis.cancel();
-      
-      // Small delay to ensure cancellation completes (iOS Safari fix)
-      setTimeout(() => {
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = 'en-US';
-        u.rate = 0.9;
-        u.volume = 1.0;
-        u.pitch = 1.0;
-        
-        // Try to select a specific voice (helps with iOS)
-        const voices = window.speechSynthesis.getVoices();
-        const englishVoice = voices.find(voice => 
-          voice.lang.startsWith('en-') && !voice.name.includes('Google')
-        );
-        if (englishVoice) {
-          u.voice = englishVoice;
-        }
-        
-        u.onstart = () => {
-          console.log('Speech started:', text);
-          setIsPlaying(true);
-        };
-        
-        u.onend = () => {
-          console.log('Speech ended');
-          setIsPlaying(false);
-        };
-        
-        u.onerror = (event) => {
-          console.error('Speech synthesis error:', event.error, event);
-          // 'canceled' or 'interrupted' errors are expected when we manually stop/switch
-          if (event.error !== 'canceled' && event.error !== 'interrupted') {
-            alert(`Speech error: ${event.error}. Try again.`);
-          }
-          setIsPlaying(false);
-        };
-        
-        utteranceRef.current = u;
-        
-        try {
-          window.speechSynthesis.speak(u);
-          console.log('Speech speak() called for:', text);
-          // Optimistically set playing to true to give immediate UI feedback
-          setIsPlaying(true);
-        } catch (error) {
-          console.error('Error calling speak():', error);
-          alert('Failed to start speech. Please try again.');
-          setIsPlaying(false);
-        }
-      }, 100);
+      return;
+    }
+
+    // Stop any other speech
+    window.speechSynthesis.cancel();
+
+    // Create utterance
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-US';
+    u.rate = 0.9; // Slightly slower for clarity
+    u.volume = 1.0;
+
+    // Robust Voice Selection Strategy
+    const voices = window.speechSynthesis.getVoices();
+    
+    // Priority List:
+    // 1. "Samantha" (High quality iOS/Mac)
+    // 2. "Google US English" (High quality Android/Chrome)
+    // 3. "Microsoft Zira" (High quality Windows)
+    // 4. Any "en-US" voice that is likely a system voice (not Google network if possible, to avoid lag, but Google US English is usually fine)
+    // 5. Any English voice
+    
+    let preferredVoice = voices.find(v => v.name === 'Samantha');
+    if (!preferredVoice) preferredVoice = voices.find(v => v.name === 'Google US English');
+    if (!preferredVoice) preferredVoice = voices.find(v => v.name.includes('Zira'));
+    if (!preferredVoice) preferredVoice = voices.find(v => v.lang === 'en-US' && !v.name.includes('Google')); 
+    if (!preferredVoice) preferredVoice = voices.find(v => v.lang.startsWith('en'));
+
+    if (preferredVoice) {
+      u.voice = preferredVoice;
+    }
+
+    u.onstart = () => {
+      setIsPlaying(true);
+    };
+
+    u.onend = () => {
+      setIsPlaying(false);
+    };
+
+    u.onerror = (event) => {
+      console.error("Speech synthesis error", event);
+      setIsPlaying(false);
+    };
+
+    utteranceRef.current = u; // Keep reference to prevent garbage collection
+
+    // Direct speak call (CRITICAL for iOS Safari - do not wrap in setTimeout)
+    try {
+      window.speechSynthesis.speak(u);
+    } catch (err) {
+      console.error("Speech synthesis failed", err);
+      setIsPlaying(false);
     }
   };
 
-  // Use Square (Stop) when playing, otherwise the initial icon (usually Volume or Play)
   const Icon = isPlaying ? Square : InitialIcon;
-  
-  // Fill the icon if requested and NOT playing (e.g. filled Play button)
   const shouldFill = fillIcon && !isPlaying;
 
   return (
     <button 
+      type="button"
       onClick={handleClick} 
-      className={`${className} ${isPlaying ? 'text-indigo-600 animate-pulse' : ''}`} 
+      className={`${className} ${isPlaying ? 'text-indigo-600 animate-pulse' : ''} touch-manipulation cursor-pointer z-20`} 
+      title="Play pronunciation"
+      aria-label={`Play pronunciation for ${text}`}
       {...props}
     >
        <Icon size={iconSize} fill={shouldFill ? "currentColor" : "none"} />

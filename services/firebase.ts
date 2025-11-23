@@ -318,24 +318,9 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
     const MAX_BATCH_SIZE = 100;
     const MAX_DELETES_PER_SYNC = 20;
     
-    const itemsToWrite = activeItems.slice(0, MAX_BATCH_SIZE);
-    const itemsToDelete = deletedItems.slice(0, MAX_DELETES_PER_SYNC);
-    
-    if (itemsToWrite.length === 0 && itemsToDelete.length === 0) {
+    if (activeItems.length === 0 && deletedItems.length === 0) {
         console.log("🔥 Firebase: No changes to sync");
         return;
-    }
-    
-    console.log(`🔥 Firebase: Syncing ${itemsToWrite.length} active items (${itemsToDelete.length} to delete)...`);
-
-    // Process images: upload base64 to Storage and replace with URLs
-    // This is sequential to avoid overwhelming the connection
-    const processedItems: StoredItem[] = [];
-    for (const item of itemsToWrite) {
-      if (item.data && item.data.id) {
-        const processedItem = await processItemImages(userId, item);
-        processedItems.push(processedItem);
-      }
     }
 
     // Update Parent Document (reduced frequency check)
@@ -344,33 +329,62 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
         lastSynced: Date.now()
     }, { merge: true });
 
-    const batch = writeBatch(db);
-    let writeCount = 0;
-    let deleteCount = 0;
-    
-    // Add/Update active items (now with Storage URLs instead of base64)
-    processedItems.forEach(item => {
-        if (item.data && item.data.id) {
-            const docRef = doc(db, "users", userId, "items", item.data.id);
-            batch.set(docRef, item);
-            writeCount++;
-        }
-    });
-    
-    // Delete removed items from Firestore
-    itemsToDelete.forEach(item => {
-        if (item.data && item.data.id) {
-            const docRef = doc(db, "users", userId, "items", item.data.id);
-            batch.delete(docRef);
-            deleteCount++;
-        }
-    });
+    const totalBatches = Math.ceil(Math.max(activeItems.length / MAX_BATCH_SIZE, deletedItems.length / MAX_DELETES_PER_SYNC));
+    let writeCountTotal = 0;
+    let deleteCountTotal = 0;
 
-    if (writeCount > 0 || deleteCount > 0) {
-        console.log(`🔥 Firebase: Committing ${writeCount} writes, ${deleteCount} deletes...`);
-        await batch.commit();
-        console.log("🔥 Firebase: ✅ Sync complete!");
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      const writeStart = batchIndex * MAX_BATCH_SIZE;
+      const deleteStart = batchIndex * MAX_DELETES_PER_SYNC;
+      
+      const itemsToWrite = activeItems.slice(writeStart, writeStart + MAX_BATCH_SIZE);
+      const itemsToDelete = deletedItems.slice(deleteStart, deleteStart + MAX_DELETES_PER_SYNC);
+
+      if (itemsToWrite.length === 0 && itemsToDelete.length === 0) {
+        continue;
+      }
+
+      console.log(`🔥 Firebase: Syncing batch ${batchIndex + 1}/${totalBatches} -> ${itemsToWrite.length} writes, ${itemsToDelete.length} deletes`);
+
+      // Process images: upload base64 to Storage and replace with URLs
+      // This is sequential to avoid overwhelming the connection
+      const processedItems: StoredItem[] = [];
+      for (const item of itemsToWrite) {
+        if (item.data && item.data.id) {
+          const processedItem = await processItemImages(userId, item);
+          processedItems.push(processedItem);
+        }
+      }
+
+      const batch = writeBatch(db);
+      let batchWriteCount = 0;
+      let batchDeleteCount = 0;
+      
+      processedItems.forEach(item => {
+          if (item.data && item.data.id) {
+              const docRef = doc(db, "users", userId, "items", item.data.id);
+              batch.set(docRef, item);
+              batchWriteCount++;
+          }
+      });
+      
+      itemsToDelete.forEach(item => {
+          if (item.data && item.data.id) {
+              const docRef = doc(db, "users", userId, "items", item.data.id);
+              batch.delete(docRef);
+              batchDeleteCount++;
+          }
+      });
+
+      if (batchWriteCount > 0 || batchDeleteCount > 0) {
+          await batch.commit();
+          console.log(`🔥 Firebase: ✅ Batch ${batchIndex + 1} committed (${batchWriteCount} writes, ${batchDeleteCount} deletes)`);
+          writeCountTotal += batchWriteCount;
+          deleteCountTotal += batchDeleteCount;
+      }
     }
+
+    console.log(`🔥 Firebase: ✅ Sync complete! Total writes: ${writeCountTotal}, deletes: ${deleteCountTotal}`);
   } catch (e: any) {
     console.error("🔥 Firebase: ❌ Error saving to cloud:", e);
     console.error("🔥 Firebase: Error details:", e.message, "Code:", e.code);

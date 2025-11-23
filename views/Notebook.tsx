@@ -1,8 +1,7 @@
 
-import React, { useRef } from 'react';
-import { StoredItem, SyncConfig, SyncStatus } from '../types';
-import { Trash2, Search, BookOpen, Layers, Download, Upload, Cloud, AlertCircle, Check, Loader2, MoreVertical } from 'lucide-react';
-import { exportBackup, validateBackup } from '../services/storage';
+import React from 'react';
+import { StoredItem, SyncStatus } from '../types';
+import { Trash2, Search, BookOpen, Layers, Cloud, AlertCircle, Check, Loader2 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 
@@ -11,41 +10,22 @@ interface NotebookProps {
   onDelete: (id: string) => void;
   onSearch: (text: string) => void;
   onViewDetail: (item: StoredItem) => void;
-  onImport: (items: StoredItem[]) => void;
   user: any | null;
   onSignIn: () => void;
   onGuestSignIn?: () => void;
   onSignOut: () => void;
-  onSetup: () => void; // Legacy prop name, but we'll pass open settings
   isConfigured: boolean;
   syncStatus?: SyncStatus;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({ 
-    items, onDelete, onSearch, onViewDetail, onImport, 
-    user, onSignIn, onGuestSignIn, onSignOut, onSetup, isConfigured, syncStatus, onScroll 
+    items, onDelete, onSearch, onViewDetail, 
+    user, onSignIn, onGuestSignIn, onSignOut, isConfigured, syncStatus, onScroll 
 }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Filter out deleted items for display
   const displayItems = items.filter(i => !i.isDeleted);
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      try {
-          const importedItems = await validateBackup(file);
-          onImport(importedItems);
-      } catch (err) {
-          alert("Failed to import backup.");
-      }
-      if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const triggerImport = () => {
-      fileInputRef.current?.click();
-  };
 
   const getSyncIcon = () => {
       if (syncStatus === 'syncing') return <Loader2 className="animate-spin text-indigo-500" size={16} />;
@@ -54,11 +34,6 @@ export const NotebookView: React.FC<NotebookProps> = ({
       return <Cloud className="text-slate-400" size={16} />;
   };
 
-  // Retrieve current config from localstorage for the UserMenu
-  const syncConfig = React.useMemo(() => {
-      const saved = localStorage.getItem('popdict_sync_config');
-      return saved ? JSON.parse(saved) : { enabled: true };
-  }, []);
 
   if (displayItems.length === 0) {
     return (
@@ -69,23 +44,15 @@ export const NotebookView: React.FC<NotebookProps> = ({
         <h3 className="text-xl font-bold text-slate-700 mb-2">Your notebook is empty</h3>
         <p className="text-sm mb-8 max-w-xs mx-auto">Save words from your searches to build your personal library.</p>
         
-        <div className="flex flex-col gap-3 w-full max-w-xs">
-            <Button variant="secondary" size="sm" onClick={triggerImport} className="flex items-center justify-center gap-2 w-full">
-                <Upload size={16} /> Restore Backup
-            </Button>
-            <div className="flex justify-center pt-4">
-                <UserMenu 
-                    user={user} 
-                    syncConfig={syncConfig}
-                    onSignIn={onSignIn} 
-                    onGuestSignIn={onGuestSignIn}
-                    onSignOut={onSignOut} 
-                    onOpenSettings={onSetup} 
-                    isConfigured={isConfigured} 
-                />
-            </div>
+        <div className="flex justify-center">
+            <UserMenu 
+                user={user} 
+                onSignIn={onSignIn} 
+                onGuestSignIn={onGuestSignIn}
+                onSignOut={onSignOut} 
+                isConfigured={isConfigured} 
+            />
         </div>
-        <input type="file" hidden ref={fileInputRef} onChange={handleFileChange} accept=".json" />
       </div>
     );
   }
@@ -106,23 +73,13 @@ export const NotebookView: React.FC<NotebookProps> = ({
              <div className="h-4 w-[1px] bg-slate-200 mx-1"></div>
              <UserMenu 
                 user={user} 
-                syncConfig={syncConfig}
                 onSignIn={onSignIn} 
                 onGuestSignIn={onGuestSignIn}
                 onSignOut={onSignOut} 
-                onOpenSettings={onSetup} 
                 isConfigured={isConfigured} 
              />
-             <Button variant="icon" size="sm" onClick={() => exportBackup(displayItems)} title="Export Backup">
-                <Download size={18} className="text-slate-400 hover:text-slate-600" />
-             </Button>
-             <Button variant="icon" size="sm" onClick={triggerImport} title="Import Backup">
-                <Upload size={18} className="text-slate-400 hover:text-slate-600" />
-             </Button>
         </div>
       </div>
-      
-      <input type="file" hidden ref={fileInputRef} onChange={handleFileChange} accept=".json" />
 
       <div className="p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-3 max-w-3xl mx-auto">
         {displayItems.map((item) => {

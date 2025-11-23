@@ -1,25 +1,21 @@
 /**
- * Enhanced Study View with Advanced SRS and Multiple Task Types
+ * Enhanced Study View with Advanced SRS and Flashcard Interface
  * 
  * Features:
- * - Dynamic task type selection based on memory strength
- * - Multiple study modes (recognition, recall, typing, listening, sentence)
+ * - "Simplified SuperMemo" logic: Memory Strength + Stability
+ * - Simple Flashcard UI: Front (Question) / Back (Answer)
+ * - Binary Choice: Memorized vs Not Memorized
  * - Real-time learning analytics
  * - Memory strength visualization
- * - Firebase sync for learning history
  */
 
 import React, { useState, useEffect } from 'react';
 import { StoredItem, TaskType, VocabCard, SearchResult } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { 
-  RecognitionTask, 
-  RecallTask, 
-  TypingTask, 
-  ListeningTask, 
-  SentenceTask 
-} from '../components/StudyTasks';
 import { Button } from '../components/Button';
+import { AudioButton } from '../components/AudioButton';
+import { VocabCardDisplay } from '../components/VocabCard';
+import ReactMarkdown from 'react-markdown';
 import { 
   Trophy, 
   TrendingUp, 
@@ -28,10 +24,15 @@ import {
   BarChart3,
   Zap,
   Target,
-  Clock
+  Clock,
+  CheckCircle,
+  XCircle,
+  Trash2,
+  Play,
+  Search as SearchIcon
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { saveLearningAnalytics, recordStudySession, LearningAnalytics } from '../services/firebase';
+import { recordStudySession } from '../services/firebase';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
@@ -55,12 +56,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const [mode, setMode] = useState<StudyMode>('dashboard');
   const [queue, setQueue] = useState<StoredItem[]>([]);
   const [sessionStartTime, setSessionStartTime] = useState(0);
+  const [isFlipped, setIsFlipped] = useState(false);
+  const [cardStartTime, setCardStartTime] = useState(0);
+  
   const [sessionStats, setSessionStats] = useState({
     reviews: 0,
     correct: 0,
     totalTime: 0
   });
-  const [currentTaskType, setCurrentTaskType] = useState<TaskType>('recognition');
 
   // Calculate comprehensive statistics
   const getStats = () => {
@@ -114,12 +117,12 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     
     let studySet = [...dueItems];
 
-    // 2. Backfill with struggling items if needed
+    // 2. Backfill with struggling items if needed (up to 10)
     if (studySet.length < 10) {
       const needed = 10 - studySet.length;
       const candidates = items
         .filter(item => !studySet.find(d => d.data.id === item.data.id))
-        .sort((a, b) => a.srs.memoryStrength - b.srs.memoryStrength);
+        .sort((a, b) => a.srs.memoryStrength - b.srs.memoryStrength); // Weakest first
       
       studySet = [...studySet, ...candidates.slice(0, needed)];
     }
@@ -131,110 +134,211 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
     setQueue(studySet);
     setMode('session');
+    setIsFlipped(false);
     setSessionStartTime(Date.now());
+    setCardStartTime(Date.now());
     setSessionStats({ reviews: 0, correct: 0, totalTime: 0 });
-    
-    // Determine task type for first item
-    if (studySet[0]) {
-      const taskType = SRSAlgorithm.recommendTaskType(studySet[0].srs);
-      setCurrentTaskType(taskType);
-    }
   };
 
-  const handleComplete = (quality: number, responseTime: number) => {
+  const handleRate = (isMemorized: boolean) => {
     if (!queue[0]) return;
 
     const currentItem = queue[0];
+    const responseTime = Date.now() - cardStartTime;
     
+    // Map binary choice to quality score
+    // Memorized -> 5 (Perfect)
+    // Not Memorized -> 1 (Hard Fail - keeping it > 0 to avoid total reset if just a slip, but 1 is strong penalty)
+    const quality = isMemorized ? 5 : 1;
+
     // Update SRS
-    onUpdateSRS(currentItem.data.id, quality, currentTaskType, responseTime);
+    // We use 'recognition' as the standard task type for flashcards
+    onUpdateSRS(currentItem.data.id, quality, 'recognition', responseTime);
 
     // Update session stats
     setSessionStats(prev => ({
       reviews: prev.reviews + 1,
-      correct: prev.correct + (quality >= 3 ? 1 : 0),
+      correct: prev.correct + (isMemorized ? 1 : 0),
       totalTime: prev.totalTime + responseTime
     }));
 
     // Move to next item
     const nextQueue = queue.slice(1);
     
+    // Re-queue if failed (so we see it again this session?)
+    // User requested: "Simplified SuperMemo". 
+    // Standard Anki/SM behavior: if failed, show again soon. 
+    // For this session queue, let's just move on to keep flow fast, 
+    // the algorithm will schedule it very soon (e.g. 1 min) anyway.
+    
     if (nextQueue.length === 0) {
-      // Session complete
-      setMode('complete');
-      confetti({
-        particleCount: 150,
-        spread: 80,
-        origin: { y: 0.6 }
-      });
-      
-      // Record session to Firebase
-      if (userId) {
-        const accuracy = sessionStats.reviews > 0 
-          ? ((sessionStats.correct + (quality >= 3 ? 1 : 0)) / (sessionStats.reviews + 1)) * 100
-          : 0;
-        
-        recordStudySession(userId, {
-          reviews: sessionStats.reviews + 1,
-          studyTime: Date.now() - sessionStartTime,
-          accuracy
-        });
-      }
+      finishSession(isMemorized ? 5 : 1);
     } else {
-      // Determine next task type
-      const nextTaskType = SRSAlgorithm.recommendTaskType(nextQueue[0].srs);
-      setCurrentTaskType(nextTaskType);
       setQueue(nextQueue);
+      setIsFlipped(false);
+      setCardStartTime(Date.now());
     }
   };
 
-  const handleSkip = () => {
+  const finishSession = (lastQuality: number) => {
+    setMode('complete');
+    confetti({
+      particleCount: 150,
+      spread: 80,
+      origin: { y: 0.6 }
+    });
+    
+    // Record session to Firebase
+    if (userId) {
+      const accuracy = sessionStats.reviews > 0 
+        ? ((sessionStats.correct + (lastQuality >= 3 ? 1 : 0)) / (sessionStats.reviews + 1)) * 100
+        : 0;
+      
+      recordStudySession(userId, {
+        reviews: sessionStats.reviews + 1,
+        studyTime: Date.now() - sessionStartTime,
+        accuracy
+      });
+    }
+  };
+
+  const handleDeleteCurrent = () => {
+    if (!queue[0]) return;
+    
+    // Delete from global storage
+    onDelete(queue[0].data.id);
+    
+    // Update session stats (don't count as review)
+    // Move to next item
     const nextQueue = queue.slice(1);
+    
     if (nextQueue.length === 0) {
+      // If that was the last one, we can go back to dashboard or finish
+      // Since it's deleted, maybe just go back to dashboard
       setMode('dashboard');
     } else {
-      const nextTaskType = SRSAlgorithm.recommendTaskType(nextQueue[0].srs);
-      setCurrentTaskType(nextTaskType);
       setQueue(nextQueue);
+      setIsFlipped(false);
+      setCardStartTime(Date.now());
     }
   };
 
-  // Render task component based on type
-  const renderTask = () => {
+  const renderFront = () => {
     if (!queue[0]) return null;
-    
+    const item = queue[0];
+    const isVocab = item.type === 'vocab';
+    const frontText = isVocab ? (item.data as VocabCard).word : (item.data as SearchResult).query;
+    const subText = isVocab ? (item.data as VocabCard).ipa : 'Phrase';
+
+    return (
+      <div 
+        className="w-full h-full bg-white rounded-[2rem] shadow-xl shadow-slate-200/60 border border-slate-100 flex flex-col justify-between p-8 cursor-pointer hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden"
+        onClick={() => setIsFlipped(true)}
+      >
+        <div className="relative w-full h-8 shrink-0 flex justify-center">
+          <p className="text-[10px] font-bold text-indigo-400 tracking-widest uppercase mt-1 opacity-60">Tap to reveal</p>
+        </div>
+
+        <div className="flex-1 flex items-center justify-center w-full overflow-hidden my-4">
+          <div className="max-h-full w-full overflow-y-auto no-scrollbar text-center px-2">
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-800 break-words leading-tight tracking-tight">
+              {frontText}
+            </h2>
+          </div>
+        </div>
+
+        <div 
+          className="shrink-0 flex flex-col items-center gap-6 pb-4 relative z-10"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {subText && <p className="text-base text-slate-400 font-mono bg-slate-50 px-3 py-1 rounded-lg">{subText}</p>}
+          <AudioButton 
+            text={frontText || ''}
+            className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all active:scale-90 shadow-sm hover:shadow-md"
+            iconSize={28}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderBack = () => {
+    if (!queue[0]) return null;
     const item = queue[0];
     
-    // Only vocab items support all task types
-    if (item.type !== 'vocab') {
+    if (item.type === 'vocab') {
       return (
-        <div className="h-full flex items-center justify-center p-8">
-          <p className="text-slate-500">Phrase items don't support interactive tasks yet.</p>
-          <Button onClick={handleSkip} className="mt-4">Skip</Button>
+        <div className="h-full w-full">
+          <VocabCardDisplay 
+            data={item.data as VocabCard}
+            showSave={false}
+            onSearch={onSearch}
+            className="h-full w-full rounded-[2rem] border-0 shadow-xl"
+            showAudio={false}
+          />
         </div>
       );
-    }
+    } else {
+      // Phrase View
+      const data = item.data as SearchResult;
+      return (
+        <div 
+          className="h-full w-full bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-y-auto no-scrollbar relative"
+        >
+            {/* Hero Image */}
+            <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group shrink-0">
+                {data.imageUrl ? (
+                    <img src={data.imageUrl} alt="Visual context" className="w-full h-full object-cover" />
+                ) : (
+                    <div className="flex flex-col items-center text-slate-400">
+                        <SearchIcon className="mb-2 opacity-30" size={32}/>
+                        <span className="text-xs uppercase font-bold tracking-wider opacity-60">{data.visualKeyword}</span>
+                    </div>
+                )}
+            </div>
 
-    const vocab = item.data as VocabCard;
-    const commonProps = {
-      vocab,
-      onComplete: handleComplete,
-      onSkip: handleSkip
-    };
+            <div className="p-6">
+                <div className="mb-6">
+                    <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{data.translation}</h2>
+                    <p className="text-slate-500 font-mono text-sm bg-slate-100 px-2 py-1 rounded-lg inline-block">{data.pronunciation}</p>
+                </div>
+                
+                <div className="prose prose-indigo prose-sm max-w-none text-slate-600 mb-6">
+                    <ReactMarkdown 
+                        components={{
+                            strong: ({node, ...props}) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
+                        }}
+                    >
+                        {data.grammar || ''}
+                    </ReactMarkdown>
+                </div>
 
-    switch (currentTaskType) {
-      case 'recognition':
-        return <RecognitionTask {...commonProps} />;
-      case 'recall':
-        return <RecallTask {...commonProps} />;
-      case 'typing':
-        return <TypingTask {...commonProps} />;
-      case 'listening':
-        return <ListeningTask {...commonProps} />;
-      case 'sentence':
-        return <SentenceTask {...commonProps} />;
-      default:
-        return <RecallTask {...commonProps} />;
+                 {/* Included Vocab List */}
+                 {((data.vocabs || []).length > 0) && (
+                     <div>
+                        <div className="mb-3 flex items-center gap-2">
+                            <SearchIcon size={14} className="text-indigo-500" />
+                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Key Vocabulary</h3>
+                        </div>
+                        <div className="grid gap-3">
+                            {(data.vocabs || []).map((vocab) => (
+                                <VocabCardDisplay 
+                                    key={vocab.id}
+                                    data={vocab} 
+                                    onSave={() => {}}
+                                    isSaved={false}
+                                    onSearch={onSearch}
+                                    scrollable={false}
+                                    showSave={false}
+                                    className="!h-auto !overflow-visible border border-slate-100 shadow-sm !p-4"
+                                />
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+      );
     }
   };
 
@@ -449,33 +553,72 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             <span>{queue.length} left</span>
           </div>
 
-          <div className="text-xs font-mono text-slate-400 bg-white px-3 py-1.5 rounded-full shadow-sm">
-            {sessionStats.reviews > 0 ? `${Math.round((sessionStats.correct / sessionStats.reviews) * 100)}%` : '0%'}
+          <div className="flex items-center gap-2">
+            <div className="text-xs font-mono text-slate-400 bg-white px-3 py-1.5 rounded-full shadow-sm">
+              {sessionStats.reviews > 0 ? `${Math.round((sessionStats.correct / sessionStats.reviews) * 100)}%` : '0%'}
+            </div>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleDeleteCurrent} 
+              className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full px-2"
+              title="Delete from Notebook"
+            >
+              <Trash2 size={18} />
+            </Button>
           </div>
         </div>
 
         {/* Progress Bar */}
-        <div className="w-full h-2 bg-slate-200 rounded-full mb-4 overflow-hidden shrink-0">
+        <div className="w-full h-2 bg-slate-200 rounded-full mb-6 overflow-hidden shrink-0">
           <div 
             className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-500 ease-out" 
             style={{ width: `${Math.max(5, ((sessionStats.reviews) / (sessionStats.reviews + queue.length)) * 100)}%` }} 
           />
         </div>
 
-        {/* Task Type Indicator */}
-        <div className="mb-4 shrink-0">
-          <div className="inline-flex items-center gap-2 bg-gradient-to-r from-violet-100 to-indigo-100 text-violet-700 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wide shadow-sm">
-            <BrainCircuit size={14} />
-            {currentTaskType} Mode
-          </div>
+        {/* Card Container */}
+        <div className="flex-1 relative perspective-1000 group w-full min-h-0 mb-6">
+           <div className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
+              
+              {/* Front Face */}
+              <div 
+                className="absolute inset-0 backface-hidden"
+                style={{ WebkitBackfaceVisibility: 'hidden', backfaceVisibility: 'hidden' }}
+              >
+                 {renderFront()}
+              </div>
+
+              {/* Back Face */}
+              <div 
+                className="absolute inset-0 rotate-y-180 backface-hidden"
+                style={{ WebkitBackfaceVisibility: 'hidden', backfaceVisibility: 'hidden' }}
+              >
+                 {renderBack()}
+              </div>
+           </div>
         </div>
 
-        {/* Task Container */}
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {renderTask()}
+        {/* Controls - Memorized vs Not Memorized */}
+        <div className={`grid grid-cols-2 gap-4 transition-all duration-300 shrink-0 pb-4 ${isFlipped ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+            <button 
+              onClick={() => handleRate(false)}
+              className="flex flex-col items-center justify-center gap-2 py-4 bg-rose-50 text-rose-600 rounded-2xl border-2 border-rose-100 hover:bg-rose-100 active:scale-95 transition-all shadow-sm"
+            >
+              <XCircle size={32} />
+              <span className="font-bold">Not Memorized</span>
+            </button>
+            
+            <button 
+              onClick={() => handleRate(true)}
+              className="flex flex-col items-center justify-center gap-2 py-4 bg-emerald-50 text-emerald-600 rounded-2xl border-2 border-emerald-100 hover:bg-emerald-100 active:scale-95 transition-all shadow-sm"
+            >
+              <CheckCircle size={32} />
+              <span className="font-bold">Memorized</span>
+            </button>
         </div>
+
       </div>
     </div>
   );
 };
-

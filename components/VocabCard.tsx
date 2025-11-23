@@ -14,6 +14,7 @@ interface Props {
   onSearch?: (term: string) => void;
   onExpand?: () => void;
   scrollable?: boolean;
+  showAudio?: boolean;
 }
 
 export const VocabCardDisplay: React.FC<Props> = ({ 
@@ -24,7 +25,8 @@ export const VocabCardDisplay: React.FC<Props> = ({
   showSave = true,
   onSearch,
   onExpand,
-  scrollable = true
+  scrollable = true,
+  showAudio = true
 }) => {
   
   // Robust helper to ensure we always map over an array
@@ -47,6 +49,27 @@ export const VocabCardDisplay: React.FC<Props> = ({
     </button>
   ));
 
+  // Speech logic for IPA click
+  const handlePlayAudio = (text: string) => {
+      if (!text) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'en-US';
+      u.rate = 0.9;
+      const voices = window.speechSynthesis.getVoices();
+      let preferredVoice = voices.find(v => v.name === 'Samantha');
+      if (!preferredVoice) preferredVoice = voices.find(v => v.name === 'Google US English');
+      if (!preferredVoice) preferredVoice = voices.find(v => v.name.includes('Zira'));
+      if (!preferredVoice) preferredVoice = voices.find(v => v.lang === 'en-US' && !v.name.includes('Google')); 
+      if (!preferredVoice) preferredVoice = voices.find(v => v.lang.startsWith('en'));
+      if (preferredVoice) u.voice = preferredVoice;
+      try {
+          window.speechSynthesis.speak(u);
+      } catch (err) {
+          console.error("Speech synthesis failed", err);
+      }
+  };
+
   return (
     <div className={`bg-white rounded-2xl p-6 shadow-md border border-slate-100 flex flex-col h-full ${scrollable ? 'overflow-y-auto no-scrollbar' : 'overflow-hidden'} ${className}`}>
       {/* Header */}
@@ -54,13 +77,14 @@ export const VocabCardDisplay: React.FC<Props> = ({
         <div>
           <h3 className="text-3xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
           <div className="flex items-center gap-2 mt-1 text-slate-500">
-            <span className="font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded text-sm">{data.ipa}</span>
-            {data.word && (
-                <AudioButton 
-                text={data.word} 
-                className="p-1 hover:text-indigo-600 transition-colors rounded-full hover:bg-slate-100"
-                iconSize={18}
-                />
+            {showAudio && (
+            <button 
+                onClick={(e) => { e.stopPropagation(); handlePlayAudio(data.word); }}
+                className="font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded text-sm hover:bg-indigo-100 transition-colors cursor-pointer text-left"
+                title="Click to pronounce"
+            >
+                {data.ipa}
+            </button>
             )}
           </div>
         </div>

@@ -5,13 +5,12 @@ import { NotebookView } from './views/Notebook';
 import { StudyView } from './views/Study';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, VocabCard, SRSData, SearchResult, SyncConfig, SyncStatus, TaskType } from './types';
+import { StoredItem, ViewState, VocabCard, SRSData, SearchResult, SyncStatus, TaskType } from './types';
 import { Search, Book, BrainCircuit } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signInAnonymouslyUser, signOut, isConfigured, handleRedirectResult } from './services/firebase';
 import { FirebaseConfigModal } from './components/FirebaseConfigModal';
-import { SyncSettingsModal } from './components/SyncSettingsModal';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
@@ -32,16 +31,10 @@ const App: React.FC = () => {
   const [showNav, setShowNav] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
   
-  // Sync Configuration
-  const [syncConfig, setSyncConfig] = useState<SyncConfig>(() => {
-      const saved = localStorage.getItem('popdict_sync_config');
-      return saved ? JSON.parse(saved) : { enabled: true, lastSynced: 0 };
-  });
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
   // Auth States (Firebase)
   const [user, setUser] = useState<any | null>(null);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
   const [signInError, setSignInError] = useState<{code?: string, message: string} | null>(null);
   const [isFirebaseConfigured, setIsFirebaseConfigured] = useState(isConfigured());
@@ -54,11 +47,6 @@ const App: React.FC = () => {
   const touchEndX = useRef<number | null>(null);
   const touchEndY = useRef<number | null>(null);
   const minSwipeDistance = 50;
-
-  // Save Sync Config
-  useEffect(() => {
-      localStorage.setItem('popdict_sync_config', JSON.stringify(syncConfig));
-  }, [syncConfig]);
 
   const onTouchStart = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
@@ -340,17 +328,6 @@ const App: React.FC = () => {
         return i;
     }));
   };
-  
-  const handleImport = (importedItems: StoredItem[]) => {
-      if (!importedItems || importedItems.length === 0) return;
-      const preparedItems = importedItems.map(i => ({
-          ...i, 
-          updatedAt: i.updatedAt || i.savedAt || Date.now(),
-          isDeleted: false
-      }));
-      setSavedItems(prev => mergeDatasets(prev, preparedItems));
-      alert(`Import successful!`);
-  };
 
   const handleRecursiveSearch = (text: string) => {
       setRecursiveQuery(text);
@@ -448,14 +425,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="fixed inset-0 bg-white shadow-2xl flex flex-col relative">
-      {showSettingsModal && (
-          <SyncSettingsModal 
-            config={syncConfig} 
-            onSave={setSyncConfig} 
-            onClose={() => setShowSettingsModal(false)} 
-          />
-      )}
+    <div className="fixed inset-0 bg-white flex flex-col relative">
       {unauthorizedDomain && <AuthDomainErrorModal domain={unauthorizedDomain} onClose={() => setUnauthorizedDomain(null)} />}
       {signInError && <ErrorModal error={signInError} onClose={() => setSignInError(null)} />}
 
@@ -496,12 +466,10 @@ const App: React.FC = () => {
             onDelete={handleDelete} 
             onSearch={handleRecursiveSearch} 
             onViewDetail={handleViewStoredItem}
-            onImport={handleImport}
             user={user}
             onSignIn={handleSignIn}
             onGuestSignIn={handleGuestSignIn}
             onSignOut={handleSignOut}
-            onSetup={() => setShowSettingsModal(true)}
             isConfigured={isFirebaseConfigured}
             syncStatus={syncStatus}
             onScroll={handleScroll}
@@ -520,7 +488,7 @@ const App: React.FC = () => {
         )}
       </main>
 
-      <nav className={`fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 shadow-[0_-1px_3px_rgba(0,0,0,0.05)] transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
+      <nav className={`fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
         <NavButton view="search" icon={Search} label="Search" />
         <NavButton view="notebook" icon={Book} label="Notebook" />
         <NavButton view="study" icon={BrainCircuit} label="Study" />

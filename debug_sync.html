@@ -10,11 +10,11 @@
         
         <div class="space-y-4">
             <div>
-                <h2 class="font-bold text-lg mb-2">1. Check Sync Config</h2>
-                <button onclick="checkSyncConfig()" class="bg-blue-500 text-white px-4 py-2 rounded">
-                    Check localStorage Config
+                <h2 class="font-bold text-lg mb-2">1. Check Firebase Config</h2>
+                <button onclick="checkFirebaseConfig()" class="bg-blue-500 text-white px-4 py-2 rounded">
+                    Check Firebase Config
                 </button>
-                <pre id="syncConfig" class="mt-2 bg-slate-100 p-3 rounded text-sm"></pre>
+                <pre id="firebaseConfig" class="mt-2 bg-slate-100 p-3 rounded text-sm"></pre>
             </div>
 
             <div>
@@ -26,15 +26,7 @@
             </div>
 
             <div>
-                <h2 class="font-bold text-lg mb-2">3. Fix Sync Config</h2>
-                <button onclick="fixSyncConfig()" class="bg-purple-500 text-white px-4 py-2 rounded">
-                    Reset to Firebase Sync
-                </button>
-                <p id="fixResult" class="mt-2 text-sm"></p>
-            </div>
-
-            <div>
-                <h2 class="font-bold text-lg mb-2">4. Open Console</h2>
+                <h2 class="font-bold text-lg mb-2">3. Open Console</h2>
                 <p class="text-sm text-slate-600">
                     Press F12 and look for messages starting with 🔥 Firebase
                 </p>
@@ -43,28 +35,28 @@
     </div>
 
     <script type="module">
-        window.checkSyncConfig = function() {
-            const config = localStorage.getItem('popdict_sync_config');
-            const element = document.getElementById('syncConfig');
+        window.checkFirebaseConfig = function() {
+            const config = localStorage.getItem('popdict_firebase_config');
+            const element = document.getElementById('firebaseConfig');
             if (config) {
                 element.textContent = JSON.stringify(JSON.parse(config), null, 2);
             } else {
-                element.textContent = 'No sync config found!';
+                element.textContent = 'Using default Firebase config (not overridden in localStorage)';
             }
         };
 
         window.checkItems = async function() {
             const element = document.getElementById('items');
             try {
-                const request = indexedDB.open('popdict_storage', 1);
+                const request = indexedDB.open('PopDictDB', 1);
                 request.onsuccess = function(event) {
                     const db = event.target.result;
-                    const transaction = db.transaction(['items'], 'readonly');
-                    const objectStore = transaction.objectStore('items');
-                    const getAllRequest = objectStore.getAll();
+                    const transaction = db.transaction(['library'], 'readonly');
+                    const objectStore = transaction.objectStore('library');
+                    const getRequest = objectStore.get('user_items');
                     
-                    getAllRequest.onsuccess = function() {
-                        const items = getAllRequest.result;
+                    getRequest.onsuccess = function() {
+                        const items = getRequest.result || [];
                         element.textContent = `Found ${items.length} items:\n\n` + 
                             JSON.stringify(items.map(i => ({
                                 type: i.type,
@@ -74,20 +66,18 @@
                                 isDeleted: i.isDeleted
                             })), null, 2);
                     };
+                    
+                    getRequest.onerror = function() {
+                        element.textContent = 'No items found in IndexedDB';
+                    };
+                };
+                
+                request.onerror = function() {
+                    element.textContent = 'Error opening IndexedDB';
                 };
             } catch (e) {
                 element.textContent = 'Error: ' + e.message;
             }
-        };
-
-        window.fixSyncConfig = function() {
-            const config = {
-                enabled: true,
-                lastSynced: 0
-            };
-            localStorage.setItem('popdict_sync_config', JSON.stringify(config));
-            document.getElementById('fixResult').textContent = 
-                '✅ Config reset! Refresh the main app to apply changes.';
         };
     </script>
 </body>

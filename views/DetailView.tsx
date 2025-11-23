@@ -70,6 +70,45 @@ export const DetailView: React.FC<DetailViewProps> = ({
       onSearch(term);
   };
 
+  const handleSaveVocab = (vocab: VocabCard) => {
+    // Check if already saved
+    const isAlreadySaved = savedItems.some(i => 
+        getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim()
+    );
+
+    if (isAlreadySaved) {
+        // Find the ID and delete
+        const existingItem = savedItems.find(i => 
+            getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim()
+        );
+        if (existingItem) {
+            onDelete(existingItem.data.id);
+        }
+    } else {
+        // Save new
+        onSave({
+            data: vocab,
+            type: 'vocab',
+            savedAt: Date.now(),
+            srs: {
+                id: vocab.id,
+                type: 'vocab',
+                nextReview: Date.now(),
+                interval: 0,
+                easeFactor: 2.5,
+                history: [],
+                memoryStrength: 0,
+                lastReviewDate: Date.now(),
+                totalReviews: 0,
+                correctStreak: 0,
+                taskHistory: [],
+                stability: 0.5,
+                difficulty: 5
+            }
+        });
+    }
+  };
+
   // Swipe to Close Logic
   const touchStart = useRef<number | null>(null);
   const touchEnd = useRef<number | null>(null);
@@ -192,7 +231,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                                     <VocabCardDisplay 
                                         key={vocab.id}
                                         data={vocab} 
-                                        onSave={() => {}}
+                                        onSave={() => handleSaveVocab(vocab)}
                                         isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim())}
                                         onSearch={handleVocabSearch}
                                         scrollable={false}
