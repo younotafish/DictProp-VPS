@@ -25,8 +25,8 @@ import {
   Zap,
   Target,
   Clock,
-  ThumbDown,
-  ThumbUp,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Play,
   Search as SearchIcon
@@ -606,7 +606,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
               onClick={() => handleRate(false)}
               className="flex flex-col items-center justify-center gap-2 py-4 bg-rose-50 text-rose-600 rounded-2xl border-2 border-rose-100 hover:bg-rose-100 active:scale-95 transition-all shadow-sm"
             >
-              <ThumbDown size={32} />
+              <ThumbsDown size={32} />
               <span className="font-bold">Not Memorized</span>
             </button>
             
@@ -614,7 +614,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
               onClick={() => handleRate(true)}
               className="flex flex-col items-center justify-center gap-2 py-4 bg-emerald-50 text-emerald-600 rounded-2xl border-2 border-emerald-100 hover:bg-emerald-100 active:scale-95 transition-all shadow-sm"
             >
-              <ThumbUp size={32} />
+              <ThumbsUp size={32} />
               <span className="font-bold">Memorized</span>
             </button>
         </div>
