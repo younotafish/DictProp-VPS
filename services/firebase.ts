@@ -32,6 +32,7 @@ import {
   deleteObject,
   FirebaseStorage
 } from "firebase/storage";
+import { getFunctions, Functions } from "firebase/functions";
 import { StoredItem, TaskPerformance } from "../types";
 
 const CONFIG_KEY = 'popdict_firebase_config';
@@ -50,6 +51,7 @@ let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
 let storage: FirebaseStorage | undefined;
+let functions: Functions | undefined;
 
 // Initialize Firebase
 try {
@@ -73,9 +75,13 @@ try {
     auth = getAuth(app);
     db = getFirestore(app);
     storage = getStorage(app);
+    functions = getFunctions(app);
 } catch (e) {
     console.error("Failed to initialize Firebase", e);
 }
+
+export { functions };
+
 
 // 2. Helper to check status
 export const isConfigured = () => !!app;

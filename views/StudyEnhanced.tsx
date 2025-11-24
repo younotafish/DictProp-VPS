@@ -58,6 +58,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const [sessionStartTime, setSessionStartTime] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [cardStartTime, setCardStartTime] = useState(0);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   
   const [sessionStats, setSessionStats] = useState({
     reviews: 0,
@@ -561,7 +562,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             <Button 
               variant="ghost" 
               size="sm" 
-              onClick={handleDeleteCurrent} 
+              onClick={() => setShowDeleteConfirm(true)} 
               className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full px-2"
               title="Delete from Notebook"
             >
@@ -620,6 +621,35 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         </div>
 
       </div>
+      
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[60] bg-black/20 backdrop-blur-[2px] flex items-center justify-center p-6 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                <div className="w-12 h-12 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Trash2 size={24} />
+                </div>
+                <h3 className="text-lg font-bold text-slate-800 mb-2">Delete Item?</h3>
+                <p className="text-sm text-slate-500 mb-6">
+                    This will permanently remove this item from your notebook and study queue.
+                </p>
+                <div className="flex gap-3">
+                    <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)} className="flex-1">
+                        Cancel
+                    </Button>
+                    <Button 
+                        variant="primary" 
+                        onClick={() => {
+                            handleDeleteCurrent();
+                            setShowDeleteConfirm(false);
+                        }} 
+                        className="flex-1 bg-rose-500 hover:bg-rose-600 shadow-rose-200 border-0"
+                    >
+                        Delete
+                    </Button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

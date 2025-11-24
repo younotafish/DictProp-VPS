@@ -25,8 +25,25 @@ export const NotebookView: React.FC<NotebookProps> = ({
     user, onSignIn, onGuestSignIn, onSignOut, isConfigured, syncStatus, onScroll, onForceSync
 }) => {
   
-  // Filter out deleted items for display
-  const displayItems = items.filter(i => !i.isDeleted);
+  // Filter out deleted items and sort by familiarity (weakest first) then recency
+  const displayItems = React.useMemo(() => {
+    return items
+      .filter(i => !i.isDeleted)
+      .sort((a, b) => {
+        // 1. Familiarity (Memory Strength) - Ascending (Weakest first)
+        // New items (0 strength) will appear at the top
+        const strengthA = a.srs?.memoryStrength || 0;
+        const strengthB = b.srs?.memoryStrength || 0;
+        
+        if (strengthA !== strengthB) {
+            return strengthA - strengthB;
+        }
+
+        // 2. Time Added (savedAt) - Descending (Newest first)
+        // Tie-breaker for items with same strength
+        return (b.savedAt || 0) - (a.savedAt || 0);
+      });
+  }, [items]);
 
   const getSyncIcon = () => {
       if (syncStatus === 'syncing') return <Loader2 className="animate-spin text-indigo-500" size={16} />;
