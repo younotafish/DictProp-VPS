@@ -249,7 +249,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         </div>
 
         <div 
-          className="shrink-0 flex flex-col items-center gap-6 pb-4 relative z-10"
+          className="shrink-0 flex flex-col items-center gap-6 pb-4 relative"
           onClick={(e) => e.stopPropagation()}
         >
           {subText && <p className="text-base text-slate-400 font-mono bg-slate-50 px-3 py-1 rounded-lg">{subText}</p>}
@@ -585,7 +585,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
               
               {/* Front Face */}
               <div 
-                className="absolute inset-0 backface-hidden"
+                className={`absolute inset-0 backface-hidden transition-opacity duration-75 delay-200 ${isFlipped ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
                 style={{ WebkitBackfaceVisibility: 'hidden', backfaceVisibility: 'hidden' }}
               >
                  {renderFront()}
@@ -593,7 +593,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
               {/* Back Face */}
               <div 
-                className="absolute inset-0 rotate-y-180 backface-hidden"
+                className={`absolute inset-0 rotate-y-180 backface-hidden transition-opacity duration-75 delay-200 ${isFlipped ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
                 style={{ WebkitBackfaceVisibility: 'hidden', backfaceVisibility: 'hidden' }}
               >
                  {renderBack()}

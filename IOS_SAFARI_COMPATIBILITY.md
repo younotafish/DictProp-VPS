@@ -98,6 +98,18 @@ This document summarizes all iOS Safari compatibility fixes applied to the codeb
 
 ---
 
+### 8. ✅ 3D Card Flip Artifacts (StudyEnhanced.tsx)
+**Problem:** Content from the front of the card (e.g., buttons) "leaks" through and is visible on the back side during/after flip on iOS Safari, due to `backface-visibility: hidden` failures with stacking contexts.
+**Solution:**
+- Implemented manual visibility toggling using `opacity` and `pointer-events`
+- Added `transition-opacity` with `delay` to synchronize visibility change with the 90-degree point of the flip animation
+- Ensures front face is effectively `display: none` (visually) when card is flipped
+
+**Files Modified:**
+- `views/StudyEnhanced.tsx`
+
+---
+
 ## 🧪 Testing Recommendations
 
 ### Test on Real iOS Devices:
@@ -189,11 +201,11 @@ All critical iOS Safari compatibility issues have been addressed:
 - ✅ **Touch events** handle gestures correctly
 - ✅ **Viewport** uses dynamic height units
 - ✅ **Input fields** prevent auto-zoom
+- ✅ **3D Flips** use robust opacity toggling
 
 The app should now work seamlessly on iOS Safari with excellent UX!
 
 ---
 
-**Last Updated:** 2025-11-23
+**Last Updated:** 2025-11-24
 **Tested On:** iOS Safari 14+, Chrome on iOS, Safari PWA mode
-

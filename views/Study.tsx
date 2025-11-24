@@ -299,7 +299,7 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
               className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}
           >
               {/* FRONT */}
-              <div className="absolute inset-0 backface-hidden">
+              <div className={`absolute inset-0 backface-hidden transition-opacity duration-75 delay-200 ${isFlipped ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
                   <div className="w-full h-full bg-white rounded-[2rem] shadow-xl shadow-slate-200/60 border border-slate-100 flex flex-col justify-between p-8 cursor-pointer hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden"
                       onClick={() => setIsFlipped(true)}
                   >
@@ -335,7 +335,7 @@ export const StudyView: React.FC<StudyProps> = ({ items, onUpdateSRS, onSearch, 
               </div>
 
               {/* BACK */}
-              <div className="absolute inset-0 rotate-y-180 backface-hidden">
+              <div className={`absolute inset-0 rotate-y-180 backface-hidden transition-opacity duration-75 delay-200 ${isFlipped ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                   <div className="w-full h-full bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-hidden relative">
                        {currentItem.type === 'vocab' ? (
                            <VocabCardDisplay 
