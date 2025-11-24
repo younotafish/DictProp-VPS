@@ -11,6 +11,7 @@
 import React, { useState, useEffect } from 'react';
 import { VocabCard, SearchResult, TaskType } from '../types';
 import { AudioButton } from './AudioButton';
+import { PronunciationBlock } from './PronunciationBlock';
 import { Check, X, Volume2 } from 'lucide-react';
 import { Button } from './Button';
 
@@ -63,10 +64,16 @@ export const RecognitionTask: React.FC<VocabTaskProps> = ({ vocab, onComplete, o
       </div>
 
       <div className="flex-1 flex flex-col justify-center items-center">
-        <h1 className="text-4xl font-bold text-slate-800 mb-2">{vocab.word}</h1>
-        <p className="text-slate-400 mb-12 font-mono">{vocab.ipa}</p>
-
-        <AudioButton text={vocab.word} className="mb-8" />
+        <h1 className="text-4xl font-bold text-slate-800 mb-4">{vocab.word}</h1>
+        
+        <div className="mb-12">
+            <PronunciationBlock 
+                text={vocab.word}
+                ipa={vocab.ipa}
+                className="text-lg bg-slate-100 px-4 py-2 rounded-xl"
+                showIcon={true}
+            />
+        </div>
 
         <div className="w-full max-w-md space-y-3">
           {options.map((opt, idx) => {
@@ -134,10 +141,16 @@ export const RecallTask: React.FC<VocabTaskProps> = ({ vocab, onComplete, onSkip
       </div>
 
       <div className="flex-1 flex flex-col justify-center items-center">
-        <h1 className="text-5xl font-bold text-slate-800 mb-4">{vocab.word}</h1>
-        <p className="text-slate-400 mb-8 font-mono text-lg">{vocab.ipa}</p>
-
-        <AudioButton text={vocab.word} className="mb-12" iconSize={32} />
+        <h1 className="text-5xl font-bold text-slate-800 mb-6">{vocab.word}</h1>
+        
+        <div className="mb-12">
+            <PronunciationBlock 
+                text={vocab.word}
+                ipa={vocab.ipa}
+                className="text-xl bg-slate-100 px-6 py-3 rounded-2xl"
+                showIcon={true}
+            />
+        </div>
 
         {!revealed ? (
           <Button onClick={handleReveal} className="px-8 py-4 text-lg">

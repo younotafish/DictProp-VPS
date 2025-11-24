@@ -135,7 +135,8 @@ const App: React.FC = () => {
             if (migrated && migrated.length > 0) {
                 itemsToLoad = migrated;
             } else {
-                const items = await loadData();
+                // Initially load guest data (user is not logged in yet)
+                const items = await loadData('guest');
                 if (items && Array.isArray(items)) {
                     itemsToLoad = items.filter((i: any) => 
                         i && i.data && i.data.id && i.srs && i.type && !i.isDeleted
@@ -219,7 +220,6 @@ const App: React.FC = () => {
     let unsubscribeOps: (() => void) | undefined;
 
     const unsubscribeAuth = subscribeToAuth(async (currentUser) => {
-      setUser(currentUser);
       
       // Clean up previous subscription if it exists
       if (unsubscribeOps) {
@@ -230,25 +230,37 @@ const App: React.FC = () => {
       if (currentUser) {
         console.log("🔥 Setting up sync for user:", currentUser.uid);
         
-        // SIMPLE SYNC: Load items directly from Firebase (no operations)
+        // 1. Load User's specific local data (offline cache for this user)
+        console.log("📥 Loading local data for user...");
+        const userLocalItems = await loadData(currentUser.uid);
+        
+        // 2. Load Remote Data
         try {
           console.log("🔥 📥 Fetching items from Firebase...");
           const remoteItems = await loadUserData(currentUser.uid);
           const activeRemoteItems = remoteItems.filter(item => !item.isDeleted);
           console.log(`🔥 📥 Loaded ${activeRemoteItems.length} items from Firebase`);
           
-          // Merge with local items
-          setSyncState(prevState => {
-            const mergedItems = mergeDatasets(prevState.items, activeRemoteItems);
-            console.log(`🔥 ✅ Initial sync complete: ${mergedItems.length} items`);
-            
-            return {
-              ...prevState,
-              items: mergedItems
-            };
-          });
+          // 3. Merge User Local + User Remote
+          // (We purposely do NOT merge 'guest' items here to prevent data leaks between accounts)
+          const mergedItems = mergeDatasets(userLocalItems, activeRemoteItems);
+          console.log(`🔥 ✅ Initial sync complete: ${mergedItems.length} items`);
+          
+          // Set state and user together to avoid inconsistent renders
+          setUser(currentUser);
+          setSyncState(prevState => ({
+            ...prevState,
+            items: mergedItems
+          }));
+          
         } catch (error) {
           console.error("🔥 ❌ Initial sync failed:", error);
+          // Still set the user and local items if remote fails
+          setUser(currentUser);
+          setSyncState(prevState => ({
+              ...prevState,
+              items: userLocalItems
+          }));
         }
         
         // Subscribe to real-time updates
@@ -266,6 +278,17 @@ const App: React.FC = () => {
             };
           });
         });
+      } else {
+          // LOGGED OUT
+          console.log("👋 User logged out, switching to guest storage");
+          setUser(null);
+          
+          // Load guest data
+          const guestItems = await loadData('guest');
+          setSyncState(prevState => ({
+              ...prevState,
+              items: guestItems
+          }));
       }
     });
 
@@ -282,8 +305,10 @@ const App: React.FC = () => {
 
     const timer = setTimeout(async () => {
       // 1. Save to Local IDB
-      await saveData(syncState.items);
-      console.log(`💾 Saved to IndexedDB: ${syncState.items.length} items`);
+      // Save to user-specific storage or guest storage
+      const targetUserId = user?.uid || 'guest';
+      await saveData(syncState.items, targetUserId);
+      console.log(`💾 Saved to IndexedDB (${targetUserId}): ${syncState.items.length} items`);
       
       // 2. Push items to Cloud (Firebase) - Simple sync
       if (user && isFirebaseConfigured) {

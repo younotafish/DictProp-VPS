@@ -1,10 +1,11 @@
 
 import React, { useState, useRef } from 'react';
 import { VocabCard, SearchResult, StoredItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Play, Search as SearchIcon } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Play, Search as SearchIcon, RefreshCw } from 'lucide-react';
 import { Button } from '../components/Button';
 import { AudioButton } from '../components/AudioButton';
 import { VocabCardDisplay } from '../components/VocabCard';
+import { PronunciationBlock } from '../components/PronunciationBlock';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
@@ -132,6 +133,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
                  <Button 
                     variant="ghost" 
                     size="sm" 
+                    onClick={() => onSearch(type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word)}
+                    className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                    title="Refresh / Search Again"
+                 >
+                    <RefreshCw size={18} />
+                 </Button>
+                 <Button 
+                    variant="ghost" 
+                    size="sm" 
                     onClick={handleToggleSave}
                     className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
                  >
@@ -155,6 +165,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     onSearch={handleVocabSearch}
                     scrollable={false} // Let the page scroll
                     className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
+                    showRefresh={false} // Handled in header
                  />
             )}
 
@@ -172,21 +183,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
                                     <span className="text-xs uppercase font-bold tracking-wider opacity-60">{(data as SearchResult).visualKeyword}</span>
                                 </div>
                             )}
-                            <div className="absolute bottom-4 right-4">
-                                <AudioButton 
-                                    text={(data as SearchResult).query} 
-                                    className="bg-white/90 backdrop-blur p-4 rounded-full shadow-lg text-indigo-600 active:scale-90 transition-all hover:bg-indigo-600 hover:text-white"
-                                    initialIcon={Play}
-                                    fillIcon={true}
-                                    iconSize={24}
-                                />
-                            </div>
                         </div>
 
                         <div className="p-6 sm:p-8">
                             <div className="mb-6">
                                 <h2 className="text-3xl font-bold text-slate-900 leading-tight mb-2">{(data as SearchResult).translation}</h2>
-                                <p className="text-slate-500 font-mono text-base bg-slate-100 px-2 py-1 rounded-lg inline-block">{(data as SearchResult).pronunciation}</p>
+                                <PronunciationBlock 
+                                    text={(data as SearchResult).query}
+                                    ipa={(data as SearchResult).pronunciation}
+                                    className="text-base bg-slate-100 px-2 py-1 rounded-lg"
+                                />
                             </div>
                             
                             <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">

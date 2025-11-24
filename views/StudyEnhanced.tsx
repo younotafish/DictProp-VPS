@@ -14,6 +14,7 @@ import { StoredItem, TaskType, VocabCard, SearchResult } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { Button } from '../components/Button';
 import { AudioButton } from '../components/AudioButton';
+import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import ReactMarkdown from 'react-markdown';
 import { 
@@ -29,7 +30,8 @@ import {
   ThumbsUp,
   Trash2,
   Play,
-  Search as SearchIcon
+  Search as SearchIcon,
+  RefreshCw
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { recordStudySession } from '../services/firebase';
@@ -252,12 +254,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           className="shrink-0 flex flex-col items-center gap-6 pb-4 relative"
           onClick={(e) => e.stopPropagation()}
         >
-          {subText && <p className="text-base text-slate-400 font-mono bg-slate-50 px-3 py-1 rounded-lg">{subText}</p>}
-          <AudioButton 
-            text={frontText || ''}
-            className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all active:scale-90 shadow-sm hover:shadow-md"
-            iconSize={28}
-          />
+          {subText && (
+             <PronunciationBlock 
+                text={frontText || ''}
+                ipa={subText}
+                className="text-lg bg-indigo-50 text-indigo-600 px-4 py-2 rounded-xl"
+                showIcon={true}
+             />
+          )}
         </div>
       </div>
     );
@@ -289,6 +293,13 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         >
             {/* Hero Image */}
             <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group shrink-0">
+                <button 
+                    onClick={(e) => { e.stopPropagation(); onSearch(data.query); }}
+                    className="absolute top-4 right-4 z-20 bg-white/90 p-2 rounded-full shadow-md text-slate-400 hover:text-indigo-600 transition-colors"
+                    title="Refresh / Search Again"
+                >
+                    <RefreshCw size={18} />
+                </button>
                 {data.imageUrl ? (
                     <img src={data.imageUrl} alt="Visual context" className="w-full h-full object-cover" />
                 ) : (
@@ -302,7 +313,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             <div className="p-6">
                 <div className="mb-6">
                     <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{data.translation}</h2>
-                    <p className="text-slate-500 font-mono text-sm bg-slate-100 px-2 py-1 rounded-lg inline-block">{data.pronunciation}</p>
+                    <PronunciationBlock 
+                        text={data.query}
+                        ipa={data.pronunciation}
+                        className="text-sm bg-slate-100 px-2 py-1 rounded-lg"
+                    />
                 </div>
                 
                 <div className="prose prose-indigo prose-sm max-w-none text-slate-600 mb-6">

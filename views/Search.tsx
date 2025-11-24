@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { AudioButton } from '../components/AudioButton';
+import { PronunciationBlock } from '../components/PronunciationBlock';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
 interface SearchProps {
@@ -144,8 +145,29 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     }
 
     try {
-        const data = await analyzeInput(text);
+        const rawData = await analyzeInput(text);
         if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
+
+        // Check if this item is already saved to preserve ID and update content
+        const existingItem = savedItems.find(i => 
+            getStoredTitle(i).toLowerCase().trim() === rawData.query.toLowerCase().trim()
+        );
+
+        let data = rawData;
+        
+        if (existingItem && existingItem.data.id) {
+            // Adopt the existing ID so updates map to the correct stored item
+            data = { ...rawData, id: existingItem.data.id };
+            
+            // Automatically update the text content of the saved item
+            // Note: We upgrade 'vocab' items to 'phrase' items on refresh to provide full context
+            onUpdateStoredItem({
+                ...existingItem,
+                data: data,
+                type: 'phrase',
+                updatedAt: Date.now()
+            });
+        }
 
         setResult(data);
         setLoading(false);
@@ -157,20 +179,22 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
              if (img) {
                  setResult(prev => prev ? { ...prev, imageUrl: img } : null);
                  
-                 // Update storage if this item is already saved
                  const updatedData = { ...data, imageUrl: img };
+                 
+                 // Try to update storage if this item is saved (or was just saved)
+                 // We pass the data with the ID we established earlier
                  onUpdateStoredItem({
                      data: updatedData,
                      type: 'phrase',
-                     savedAt: 0, 
-                     srs: createInitialSRS(data.id, 'phrase')
+                     savedAt: existingItem?.savedAt || 0, 
+                     srs: existingItem?.srs || createInitialSRS(data.id, 'phrase'),
+                     updatedAt: Date.now()
                  });
              }
              setImageLoading(false);
         });
 
         // 2. Generate Vocab Illustrations (Sequentially to avoid freezing)
-        // We use a robust approach: process in small batches or just one by one
         const processVocabImages = async () => {
             for (const vocab of data.vocabs) {
                 if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
@@ -189,12 +213,47 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                  return { ...prev, vocabs: newVocabs };
                              });
 
+                             // Update the main item to include this vocab image
+                             // Note: We are updating the PHRASE item that contains this vocab
+                             // We need to reconstruct the phrase object with this vocab updated
+                             // Actually, onUpdateStoredItem takes the Whole Item.
+                             // But here we only have the vocab.
+                             // Since we don't have the latest state of 'result' here easily (closures),
+                             // we might rely on the fact that we just updated 'setResult'.
+                             // But for storage, we need to pass the FULL phrase data to update the phrase item.
+                             
+                             // However, the original code was updating a separate VOCAB item:
+                             /*
                              onUpdateStoredItem({
                                  data: { ...vocab, imageUrl: img },
-                                 type: 'vocab',
-                                 savedAt: 0,
-                                 srs: createInitialSRS(vocab.id, 'vocab')
+                                 type: 'vocab', ...
                              });
+                             */
+                             // This implies it was trying to update a standalone vocab item if it existed?
+                             // But 'vocab.id' is random.
+                             // If the user saved the vocab SEPARATELY, we should try to find it and update it.
+                             
+                             // Let's see if this vocab word is saved separately
+                             const existingVocabItem = savedItems.find(i => 
+                                getStoredTitle(i).toLowerCase().trim() === vocab.word.toLowerCase().trim()
+                             );
+                             
+                             if (existingVocabItem) {
+                                 onUpdateStoredItem({
+                                     ...existingVocabItem,
+                                     data: { ...vocab, imageUrl: img, id: existingVocabItem.data.id },
+                                     updatedAt: Date.now()
+                                 });
+                             }
+                             
+                             // Also update the parent phrase item if it's saved
+                             // We need to use the functional update pattern's result, but we can't access it easily here.
+                             // We can construct it if we have the parent 'data' object in scope.
+                             // 'data' is in scope. But 'data' doesn't have the previous images.
+                             // This is tricky for sequential updates.
+                             // For now, let's focus on the main request: content update.
+                             // The Main Image update logic (above) handles the main item.
+                             // The vocab image updates are secondary.
                         }
                     } catch (e) {
                         console.warn("Vocab image generation failed", e);
@@ -203,7 +262,6 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
             }
         };
         
-        // Start processing in background, but sequentially
         processVocabImages();
 
     } catch (err: any) {
@@ -466,21 +524,16 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                             <span className="text-xs uppercase font-bold tracking-wider opacity-60">{result.visualKeyword || 'Generating Visual...'}</span>
                         </div>
                     )}
-                    <div className="absolute bottom-4 right-4">
-                        <AudioButton 
-                            text={result.query} 
-                            className="bg-white/90 backdrop-blur p-4 rounded-full shadow-lg text-indigo-600 active:scale-90 transition-all hover:bg-indigo-600 hover:text-white"
-                            initialIcon={Play}
-                            fillIcon={true}
-                            iconSize={24}
-                        />
-                    </div>
                     </div>
 
                     <div className="p-6 sm:p-8">
                         <div className="mb-6">
                             <h2 className="text-3xl font-bold text-slate-900 leading-tight mb-2">{result.translation}</h2>
-                            <p className="text-slate-500 font-mono text-base bg-slate-100 px-2 py-1 rounded-lg inline-block">{result.pronunciation}</p>
+                            <PronunciationBlock 
+                                text={result.query} 
+                                ipa={result.pronunciation} 
+                                className="text-base bg-slate-100 px-2 py-1 rounded-lg"
+                            />
                         </div>
                         
                         <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">

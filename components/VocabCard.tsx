@@ -1,8 +1,10 @@
 
 import React from 'react';
 import { VocabCard as VocabType } from '../types';
-import { Sparkles, BookOpen, History, Lightbulb, Maximize2 } from 'lucide-react';
+import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw } from 'lucide-react';
 import { Button } from './Button';
+import { PronunciationBlock } from './PronunciationBlock';
+
 interface Props {
   data: VocabType;
   onSave?: () => void;
@@ -14,6 +16,7 @@ interface Props {
   scrollable?: boolean;
   showAudio?: boolean;
   showPronunciation?: boolean;
+  showRefresh?: boolean;
 }
 
 export const VocabCardDisplay: React.FC<Props> = ({ 
@@ -26,7 +29,8 @@ export const VocabCardDisplay: React.FC<Props> = ({
   onExpand,
   scrollable = true,
   showAudio = true,
-  showPronunciation = true
+  showPronunciation = true,
+  showRefresh = true
 }) => {
   
   // Robust helper to ensure we always map over an array
@@ -49,27 +53,6 @@ export const VocabCardDisplay: React.FC<Props> = ({
     </button>
   ));
 
-  // Speech logic for IPA click
-  const handlePlayAudio = (text: string) => {
-      if (!text) return;
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'en-US';
-      u.rate = 0.9;
-      const voices = window.speechSynthesis.getVoices();
-      let preferredVoice = voices.find(v => v.name === 'Samantha');
-      if (!preferredVoice) preferredVoice = voices.find(v => v.name === 'Google US English');
-      if (!preferredVoice) preferredVoice = voices.find(v => v.name.includes('Zira'));
-      if (!preferredVoice) preferredVoice = voices.find(v => v.lang === 'en-US' && !v.name.includes('Google')); 
-      if (!preferredVoice) preferredVoice = voices.find(v => v.lang.startsWith('en'));
-      if (preferredVoice) u.voice = preferredVoice;
-      try {
-          window.speechSynthesis.speak(u);
-      } catch (err) {
-          console.error("Speech synthesis failed", err);
-      }
-  };
-
   return (
     <div className={`bg-white rounded-2xl p-5 shadow-md border border-slate-100 flex flex-col h-full ${scrollable ? 'overflow-y-auto no-scrollbar' : 'overflow-hidden'} ${className}`}>
       {/* Header */}
@@ -79,18 +62,25 @@ export const VocabCardDisplay: React.FC<Props> = ({
           {showPronunciation && (
           <div className="flex items-center gap-2 mt-1 text-slate-500">
             {showAudio && data.ipa && (
-            <button 
-                onClick={(e) => { e.stopPropagation(); handlePlayAudio(data.word); }}
-                className="font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded text-sm hover:bg-indigo-100 transition-colors cursor-pointer text-left"
-                title="Click to pronounce"
-            >
-                {data.ipa}
-            </button>
+              <PronunciationBlock 
+                text={data.word} 
+                ipa={data.ipa} 
+                className="text-sm bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
+              />
             )}
           </div>
           )}
         </div>
         <div className="flex items-center gap-1">
+            {showRefresh && onSearch && (
+                 <Button
+                    variant="icon"
+                    onClick={(e) => { e.stopPropagation(); onSearch(data.word); }}
+                    title="Refresh / Search Again"
+                 >
+                    <RefreshCw size={18} className="text-slate-400 hover:text-indigo-600" />
+                 </Button>
+            )}
             {onExpand && (
                 <Button 
                     variant="icon" 

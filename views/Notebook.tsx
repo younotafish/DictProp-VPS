@@ -151,9 +151,9 @@ export const NotebookView: React.FC<NotebookProps> = ({
                      <button 
                         onClick={(e) => { e.stopPropagation(); onSearch(title); }}
                         className="p-2 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="Search again"
+                        title="Refresh / Search Again"
                      >
-                        <Search size={18} />
+                        <RefreshCw size={18} />
                      </button>
                      <button 
                         onClick={(e) => { e.stopPropagation(); onDelete(item.data.id); }}
