@@ -154,13 +154,14 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
 
         // Check if this item is already saved to preserve ID and update content
-        const existingItem = savedItems.find(i => 
-            getStoredTitle(i).toLowerCase().trim() === rawData.query.toLowerCase().trim()
-        );
+        const queryToCheck = (rawData.query || '').toLowerCase().trim();
+        const existingItem = queryToCheck ? savedItems.find(i => 
+            getStoredTitle(i).toLowerCase().trim() === queryToCheck
+        ) : undefined;
 
         let data = rawData;
         
-        if (existingItem && existingItem.data.id) {
+        if (existingItem && existingItem.data && existingItem.data.id) {
             // Adopt the existing ID so updates map to the correct stored item
             data = { ...rawData, id: existingItem.data.id };
             

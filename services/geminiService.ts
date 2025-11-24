@@ -11,6 +11,10 @@ const generateId = (): string => {
 };
 
 export const analyzeInput = async (text: string): Promise<SearchResult> => {
+  if (!text || text.trim().length === 0) {
+    throw new Error("Cannot analyze empty text");
+  }
+  
   if (!functions) {
       throw new Error("Firebase functions not initialized. Check your Firebase configuration.");
   }

@@ -62,8 +62,14 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
             mergedItem = JSON.parse(JSON.stringify(remoteItem));
          }
       } catch (e) {
-         console.warn("Failed to clone item during merge, using remote item as reference", e);
-         mergedItem = { ...remoteItem }; // Shallow copy fallback
+         console.error("Failed to clone item during merge, using JSON fallback", e);
+         try {
+            // Force JSON fallback
+            mergedItem = JSON.parse(JSON.stringify(remoteItem));
+         } catch (jsonError) {
+            console.error("JSON clone also failed, data may be corrupted. Using shallow copy.", jsonError);
+            mergedItem = { ...remoteItem }; // Shallow copy as last resort
+         }
       }
 
       // A. DATA MERGE (Content - Word/Definition)

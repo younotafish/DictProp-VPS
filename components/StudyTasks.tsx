@@ -161,7 +161,7 @@ export const RecallTask: React.FC<VocabTaskProps> = ({ vocab, onComplete, onSkip
             <div className="p-6 bg-slate-50 rounded-2xl border-2 border-slate-200">
               <p className="text-2xl font-bold text-slate-800 mb-2">{vocab.chinese}</p>
               <p className="text-slate-600 leading-relaxed">{vocab.definition}</p>
-              {vocab.examples.length > 0 && (
+              {vocab.examples && vocab.examples.length > 0 && (
                 <p className="mt-4 text-sm text-slate-500 italic">{vocab.examples[0]}</p>
               )}
             </div>
@@ -221,7 +221,7 @@ export const TypingTask: React.FC<VocabTaskProps> = ({ vocab, onComplete, onSkip
       let quality = 0;
       if (correct) {
         quality = 5;
-      } else if (input.trim().toLowerCase().includes(vocab.word.toLowerCase().substring(0, 3))) {
+      } else if (vocab.word && vocab.word.length >= 3 && input.trim().toLowerCase().includes(vocab.word.toLowerCase().substring(0, 3))) {
         quality = 2; // Partial recall
       }
       onComplete(quality, responseTime);
@@ -444,7 +444,7 @@ export const SentenceTask: React.FC<VocabTaskProps> = ({ vocab, onComplete, onSk
               <div className="p-6 bg-indigo-50 rounded-2xl border-2 border-indigo-200">
                 <p className="text-xs text-indigo-400 font-bold uppercase mb-2">Example Sentence</p>
                 <p className="text-slate-700 italic leading-relaxed">
-                  {vocab.examples[0] || `The word "${vocab.word}" can be used in various contexts.`}
+                  {(vocab.examples && vocab.examples.length > 0 ? vocab.examples[0] : null) || `The word "${vocab.word}" can be used in various contexts.`}
                 </p>
               </div>
 

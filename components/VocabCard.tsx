@@ -122,15 +122,28 @@ export const VocabCardDisplay: React.FC<Props> = ({
             <BookOpen size={12} /> Usage
           </div>
           <ul className="space-y-2">
-            {ensureArray(data.examples).map((ex, i) => (
-              <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3">
-                 {ex.split(new RegExp(`(${data.word})`, 'gi')).map((part, j) => 
-                    part.toLowerCase() === (data.word || '').toLowerCase() 
-                    ? <span key={j} className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">{part}</span> 
-                    : part
-                 )}
-              </li>
-            ))}
+            {ensureArray(data.examples).map((ex, i) => {
+              // Safely handle word highlighting
+              const word = data.word || '';
+              if (!word || !ex) {
+                return <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3">{ex}</li>;
+              }
+              
+              try {
+                return (
+                  <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3">
+                    {ex.split(new RegExp(`(${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, j) => 
+                      part.toLowerCase() === word.toLowerCase() 
+                      ? <span key={j} className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">{part}</span> 
+                      : part
+                    )}
+                  </li>
+                );
+              } catch (e) {
+                // Fallback if regex fails
+                return <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3">{ex}</li>;
+              }
+            })}
           </ul>
         </div>
 

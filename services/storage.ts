@@ -75,8 +75,12 @@ export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> 
       if (localData) {
         const parsed = JSON.parse(localData);
         if (Array.isArray(parsed)) {
-          inMemoryStorage[userId] = parsed;
-          return parsed;
+          // Validate items have required properties
+          const validItems = parsed.filter((i: any) => 
+            i && i.data && i.data.id && i.type
+          );
+          inMemoryStorage[userId] = validItems;
+          return validItems;
         }
       }
     } catch (e) {
@@ -93,26 +97,51 @@ export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> 
       const request = store.get(storageKey);
       
       request.onsuccess = () => {
-        // MIGRATION: If specific user data not found, check for legacy "user_items"
-        // But only if we are looking for 'guest' data, to adopt the legacy data as guest data
-        // OR if we want to migrate legacy data to the first user who logs in.
-        // Decision: Treat legacy 'user_items' as 'guest' data.
-        if (!request.result && userId === 'guest') {
+        const data = request.result;
+        
+        // Validate loaded data
+        if (data && Array.isArray(data)) {
+          const validItems = data.filter((i: any) => 
+            i && i.data && i.data.id && i.type
+          );
+          
+          // MIGRATION: If specific user data not found, check for legacy "user_items"
+          if (validItems.length === 0 && userId === 'guest') {
             const legacyRequest = store.get('user_items');
             legacyRequest.onsuccess = () => {
-                if (legacyRequest.result) {
-                    console.log("📦 Found legacy data, migrating to guest storage...");
-                    // We found legacy data. Return it as guest data.
-                    // Ideally we should save it to the new key too, but save will happen on next update.
-                    resolve(legacyRequest.result); 
-                } else {
-                    resolve([]);
-                }
+              if (legacyRequest.result && Array.isArray(legacyRequest.result)) {
+                console.log("📦 Found legacy data, migrating to guest storage...");
+                const validLegacy = legacyRequest.result.filter((i: any) => 
+                  i && i.data && i.data.id && i.type
+                );
+                resolve(validLegacy);
+              } else {
+                resolve([]);
+              }
             };
-            legacyRequest.onerror = () => resolve([]); // Ignore legacy error
+            legacyRequest.onerror = () => resolve([]);
             return;
+          }
+          
+          resolve(validItems);
+        } else if (!data && userId === 'guest') {
+          // Try legacy migration
+          const legacyRequest = store.get('user_items');
+          legacyRequest.onsuccess = () => {
+            if (legacyRequest.result && Array.isArray(legacyRequest.result)) {
+              console.log("📦 Found legacy data, migrating to guest storage...");
+              const validLegacy = legacyRequest.result.filter((i: any) => 
+                i && i.data && i.data.id && i.type
+              );
+              resolve(validLegacy);
+            } else {
+              resolve([]);
+            }
+          };
+          legacyRequest.onerror = () => resolve([]);
+        } else {
+          resolve([]);
         }
-        resolve(request.result || []);
       };
       request.onerror = () => reject(request.error);
     });

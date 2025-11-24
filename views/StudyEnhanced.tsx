@@ -144,7 +144,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     setSessionStats({ reviews: 0, correct: 0, totalTime: 0 });
   };
 
-  const finishSession = useCallback((lastQuality: number) => {
+  const finishSession = useCallback(() => {
     setMode('complete');
     confetti({
       particleCount: 150,
@@ -155,11 +155,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     // Record session to Firebase
     if (userId) {
       const accuracy = sessionStats.reviews > 0 
-        ? ((sessionStats.correct + (lastQuality >= 3 ? 1 : 0)) / (sessionStats.reviews + 1)) * 100
+        ? (sessionStats.correct / sessionStats.reviews) * 100
         : 0;
       
       recordStudySession(userId, {
-        reviews: sessionStats.reviews + 1,
+        reviews: sessionStats.reviews,
         studyTime: Date.now() - sessionStartTime,
         accuracy
       });
@@ -198,7 +198,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     // the algorithm will schedule it very soon (e.g. 1 min) anyway.
     
     if (nextQueue.length === 0) {
-      finishSession(isMemorized ? 5 : 1);
+      finishSession();
     } else {
       setQueue(nextQueue);
       setIsFlipped(false);

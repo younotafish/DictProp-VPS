@@ -108,33 +108,8 @@ const App: React.FC = () => {
   };
 
   const onTouchEnd = () => {
-    // Prevent navigation gestures if we are inside an active study session (StudyEnhanced component handles its own gestures)
-    if (currentView === 'study') {
-        // You might want to check if a session is actually active here, but for now, blocking swipe nav in study view generally is safer
-        // However, StudyEnhanced has 'dashboard' mode where nav might be wanted.
-        // But to fix the specific issue of swipe-to-grade triggering nav:
-        return; 
-    }
-
-    if (!touchStartX.current || !touchEndX.current || !touchStartY.current || !touchEndY.current) return;
-    
-    const dx = touchStartX.current - touchEndX.current;
-    const dy = touchStartY.current - touchEndY.current;
-
-    // Scroll detection
-    if (Math.abs(dy) > Math.abs(dx)) return;
-
-    const isLeftSwipe = dx > minSwipeDistance;
-    const isRightSwipe = dx < -minSwipeDistance;
-    
-    if (isLeftSwipe) {
-        if (currentView === 'search') setCurrentView('notebook');
-        else if (currentView === 'notebook') setCurrentView('study');
-    }
-    if (isRightSwipe) {
-        if (currentView === 'study') setCurrentView('notebook');
-        else if (currentView === 'notebook') setCurrentView('search');
-    }
+    // DISABLED: Tab swipe navigation to prevent conflicts with card swipe gestures
+    return;
   };
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS

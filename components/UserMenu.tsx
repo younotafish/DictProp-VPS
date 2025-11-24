@@ -16,10 +16,12 @@ export const UserMenu: React.FC<Props> = ({ user, onSignIn, onGuestSignIn, onSig
   if (!user) {
     return (
       <div className="flex items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={onGuestSignIn} className="flex items-center gap-2 text-xs" title="Guest Mode">
-            <Ghost size={14} />
-            Guest
-        </Button>
+        {onGuestSignIn && (
+          <Button variant="secondary" size="sm" onClick={onGuestSignIn} className="flex items-center gap-2 text-xs" title="Guest Mode">
+              <Ghost size={14} />
+              Guest
+          </Button>
+        )}
         <Button variant="primary" size="sm" onClick={onSignIn} className="flex items-center gap-2 text-xs bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 shadow-sm">
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="G" />
             Sign In

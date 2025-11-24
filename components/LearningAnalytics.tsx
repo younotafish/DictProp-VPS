@@ -239,9 +239,9 @@ export const LearningAnalytics: React.FC<LearningAnalyticsProps> = ({ items }) =
           Recent Activity (Last 7 Days)
         </h3>
         <div className="flex items-end justify-between gap-2 h-32">
-          {analytics.recentActivity.map(({ date, count }) => {
-            const maxCount = Math.max(...analytics.recentActivity.map(a => a.count));
-            const height = (count / maxCount) * 100;
+          {analytics.recentActivity.length > 0 ? analytics.recentActivity.map(({ date, count }) => {
+            const maxCount = Math.max(...analytics.recentActivity.map(a => a.count), 1);
+            const height = maxCount > 0 ? (count / maxCount) * 100 : 0;
             
             return (
               <div key={date} className="flex-1 flex flex-col items-center gap-2">
@@ -255,7 +255,11 @@ export const LearningAnalytics: React.FC<LearningAnalyticsProps> = ({ items }) =
                 </span>
               </div>
             );
-          })}
+          }) : (
+            <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+              No recent activity
+            </div>
+          )}
         </div>
       </div>
 
