@@ -24,23 +24,45 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
     } else {
       // Conflict Resolution with Image Preservation
       
-      // 0. Respect Deletions
+      // 0. Respect Deletions (ENHANCED - deletion always wins unless there's a much newer update)
+      const DELETION_GRACE_PERIOD = 5000; // 5 seconds grace period for deletions
+      
       if (remoteItem.isDeleted && !localItem.isDeleted) {
            const remoteTime = remoteItem.updatedAt || 0;
            const localTime = localItem.updatedAt || 0;
-           if (remoteTime > localTime) {
+           // Deletion wins if remote is newer OR within grace period
+           if (remoteTime >= localTime - DELETION_GRACE_PERIOD) {
                map.set(remoteItem.data.id, remoteItem);
                return;
            }
+           // If local update is SIGNIFICANTLY newer (>5s), keep the local update
+           // This handles the edge case of offline edits happening after deletion
+           console.warn(`⚠️ Deletion conflict: Remote deleted at ${remoteTime}, but local updated at ${localTime}. Keeping local update.`);
       }
       
       if (localItem.isDeleted && !remoteItem.isDeleted) {
            const remoteTime = remoteItem.updatedAt || 0;
            const localTime = localItem.updatedAt || 0;
-           if (localTime > remoteTime) {
+           // Deletion wins if local is newer OR within grace period
+           if (localTime >= remoteTime - DELETION_GRACE_PERIOD) {
                // Keep local deletion
+               map.set(localItem.data.id, localItem);
                return;
            }
+           // If remote update is SIGNIFICANTLY newer, keep the remote update
+           console.warn(`⚠️ Deletion conflict: Local deleted at ${localTime}, but remote updated at ${remoteTime}. Keeping remote update.`);
+      }
+      
+      // If BOTH are deleted, use the newest deletion timestamp
+      if (localItem.isDeleted && remoteItem.isDeleted) {
+           const remoteTime = remoteItem.updatedAt || 0;
+           const localTime = localItem.updatedAt || 0;
+           if (remoteTime > localTime) {
+               map.set(remoteItem.data.id, remoteItem);
+           } else {
+               map.set(localItem.data.id, localItem);
+           }
+           return; // Don't merge further for deleted items
       }
 
       // 1. Smart Field-Level Merging

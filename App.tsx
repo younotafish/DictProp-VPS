@@ -188,6 +188,34 @@ const App: React.FC = () => {
     initStorage();
   }, []);
 
+  // Cleanup old deleted items (hard delete after retention period)
+  const cleanupOldDeletedItems = (items: StoredItem[]): StoredItem[] => {
+    const DELETION_RETENTION_DAYS = 30; // Keep deleted items for 30 days for sync
+    const retentionMs = DELETION_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    
+    const cleaned = items.filter(item => {
+      if (!item.isDeleted) return true; // Keep all active items
+      
+      const deletedAt = item.updatedAt || 0;
+      const age = now - deletedAt;
+      
+      if (age > retentionMs) {
+        console.log(`🧹 Hard deleting old item: ${(item.data as any).word || (item.data as any).query} (deleted ${Math.round(age / (24 * 60 * 60 * 1000))} days ago)`);
+        return false; // Hard delete
+      }
+      
+      return true; // Keep within retention period
+    });
+    
+    const removedCount = items.length - cleaned.length;
+    if (removedCount > 0) {
+      console.log(`🧹 Cleanup: Removed ${removedCount} old deleted items (>${DELETION_RETENTION_DAYS} days)`);
+    }
+    
+    return cleaned;
+  };
+
   // 2. FIREBASE SYNC LOGIC (Operation-Based)
   useEffect(() => {
     if (!isFirebaseConfigured) return;
@@ -227,16 +255,19 @@ const App: React.FC = () => {
         try {
           console.log("🔥 📥 Fetching items from Firebase...");
           const remoteItems = await loadUserData(currentUser.uid);
-          const activeRemoteItems = remoteItems.filter(item => !item.isDeleted);
-          console.log(`🔥 📥 Loaded ${activeRemoteItems.length} items from Firebase`);
+          console.log(`🔥 📥 Loaded ${remoteItems.length} items from Firebase (including deleted)`);
           
-          // 3. Merge User Local + User Remote
-          // (We purposely do NOT merge 'guest' items here to prevent data leaks between accounts)
-          const mergedItems = mergeDatasets(userLocalItems, activeRemoteItems);
-          console.log(`🔥 ✅ Initial sync complete: ${mergedItems.length} items`);
+          // 3. Merge User Local + User Remote (INCLUDING deleted items for proper sync)
+          // We must include deleted items in merge to propagate deletions across devices
+          let mergedItems = mergeDatasets(userLocalItems, remoteItems);
           
-          // Update last sync time based on remote data to avoid re-syncing what we just got
-          const maxRemoteTime = activeRemoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
+          // 4. Clean up old deleted items during initial sync
+          mergedItems = cleanupOldDeletedItems(mergedItems);
+          
+          console.log(`🔥 ✅ Initial sync complete: ${mergedItems.length} total items (${mergedItems.filter(i => !i.isDeleted).length} active, ${mergedItems.filter(i => i.isDeleted).length} soft-deleted)`);
+          
+          // Update last sync time based on ALL remote data to avoid re-syncing what we just got
+          const maxRemoteTime = remoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
           setLastSyncTime(prev => {
               const newTime = Math.max(prev, maxRemoteTime);
               localStorage.setItem('last_successful_sync', newTime.toString());
@@ -262,11 +293,10 @@ const App: React.FC = () => {
         
         // Subscribe to real-time updates
         unsubscribeOps = subscribeToUserData(currentUser.uid, (remoteItems) => {
-          const activeRemoteItems = remoteItems.filter(item => !item.isDeleted);
-          console.log(`🔥 📥 Received ${activeRemoteItems.length} items from subscription`);
+          console.log(`🔥 📥 Received ${remoteItems.length} items from subscription (including deleted)`);
           
-          // Update last sync time to avoid echo
-          const maxRemoteTime = activeRemoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
+          // Update last sync time to avoid echo (use ALL items including deleted)
+          const maxRemoteTime = remoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
           setLastSyncTime(prev => {
               const newTime = Math.max(prev, maxRemoteTime);
               localStorage.setItem('last_successful_sync', newTime.toString());
@@ -274,8 +304,9 @@ const App: React.FC = () => {
           });
 
           setSyncState(prevState => {
-            const mergedItems = mergeDatasets(prevState.items, activeRemoteItems);
-            console.log(`🔥 ✅ Merged: ${mergedItems.length} items total`);
+            // Merge with ALL items including deleted to propagate deletions
+            const mergedItems = mergeDatasets(prevState.items, remoteItems);
+            console.log(`🔥 ✅ Merged: ${mergedItems.length} total items (${mergedItems.filter(i => !i.isDeleted).length} active)`);
             
             return {
               ...prevState,
@@ -320,8 +351,10 @@ const App: React.FC = () => {
           // Filter only changed items (updatedAt > lastSyncTime)
           const changedItems = syncState.items.filter(item => {
               const updated = item.updatedAt || 0;
-              // Include if newer than last sync
-              return updated > lastSyncTime;
+              // Include if:
+              // 1. Newer than last sync, OR
+              // 2. Marked as deleted (deletions must always propagate)
+              return updated > lastSyncTime || item.isDeleted;
           });
 
           if (changedItems.length === 0) {
@@ -332,7 +365,9 @@ const App: React.FC = () => {
           setSyncStatus('syncing');
           
           try {
-            console.log(`🔥 Syncing ${changedItems.length} changed items to Firebase...`);
+            const activeCount = changedItems.filter(i => !i.isDeleted).length;
+            const deletedCount = changedItems.filter(i => i.isDeleted).length;
+            console.log(`🔥 Syncing ${changedItems.length} changed items to Firebase (${activeCount} active, ${deletedCount} deleted)...`);
             await saveUserData(user.uid, changedItems);
             
             // Update last sync time
@@ -372,16 +407,19 @@ const App: React.FC = () => {
       // 2. Pull latest items from Firebase
       console.log("🔥 Force Sync: Fetching latest items...");
       const remoteItems = await loadUserData(user.uid);
-      const activeRemoteItems = remoteItems.filter(item => !item.isDeleted);
-      console.log(`🔥 Force Sync: Loaded ${activeRemoteItems.length} items from server`);
+      console.log(`🔥 Force Sync: Loaded ${remoteItems.length} items from server (including deleted)`);
       
-      // 3. Merge
+      // 3. Merge (including deleted items to propagate deletions)
       setSyncState(prevState => {
-        const mergedItems = mergeDatasets(prevState.items, activeRemoteItems);
-        console.log(`🔥 Force Sync: Merged! ${mergedItems.length} items total`);
+        const mergedItems = mergeDatasets(prevState.items, remoteItems);
+        
+        // 4. Clean up old deleted items (hard delete after retention period)
+        const cleanedItems = cleanupOldDeletedItems(mergedItems);
+        
+        console.log(`🔥 Force Sync: Merged! ${cleanedItems.length} total items (${cleanedItems.filter(i => !i.isDeleted).length} active, ${cleanedItems.filter(i => i.isDeleted).length} soft-deleted)`);
         return {
           ...prevState,
-          items: mergedItems
+          items: cleanedItems
         };
       });
       
