@@ -54,7 +54,7 @@ export const VocabCardDisplay: React.FC<Props> = ({
   ));
 
   return (
-    <div className={`bg-white rounded-2xl p-5 shadow-md border border-slate-100 flex flex-col h-full ${scrollable ? 'overflow-y-auto no-scrollbar' : 'overflow-hidden'} ${className}`}>
+    <div className={`bg-white rounded-2xl p-5 shadow-md border border-slate-100 flex flex-col min-h-[85vh] ${scrollable ? 'overflow-y-auto no-scrollbar' : 'overflow-hidden'} ${className}`}>
       {/* Header */}
       <div className="flex justify-between items-start mb-3 shrink-0">
         <div>

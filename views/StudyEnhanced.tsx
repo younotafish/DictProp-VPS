@@ -9,7 +9,7 @@
  * - Memory strength visualization
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { StoredItem, TaskType, VocabCard, SearchResult } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { Button } from '../components/Button';
@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { recordStudySession } from '../services/firebase';
+import { StudyCardSwiper } from '../components/StudyCardSwiper';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
@@ -143,7 +144,29 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     setSessionStats({ reviews: 0, correct: 0, totalTime: 0 });
   };
 
-  const handleRate = (isMemorized: boolean) => {
+  const finishSession = useCallback((lastQuality: number) => {
+    setMode('complete');
+    confetti({
+      particleCount: 150,
+      spread: 80,
+      origin: { y: 0.6 }
+    });
+    
+    // Record session to Firebase
+    if (userId) {
+      const accuracy = sessionStats.reviews > 0 
+        ? ((sessionStats.correct + (lastQuality >= 3 ? 1 : 0)) / (sessionStats.reviews + 1)) * 100
+        : 0;
+      
+      recordStudySession(userId, {
+        reviews: sessionStats.reviews + 1,
+        studyTime: Date.now() - sessionStartTime,
+        accuracy
+      });
+    }
+  }, [userId, sessionStats, sessionStartTime]);
+
+  const handleRate = useCallback((isMemorized: boolean) => {
     if (!queue[0]) return;
 
     const currentItem = queue[0];
@@ -181,29 +204,22 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       setIsFlipped(false);
       setCardStartTime(Date.now());
     }
-  };
+  }, [queue, cardStartTime, onUpdateSRS, finishSession]);
 
-  const finishSession = (lastQuality: number) => {
-    setMode('complete');
-    confetti({
-      particleCount: 150,
-      spread: 80,
-      origin: { y: 0.6 }
-    });
-    
-    // Record session to Firebase
-    if (userId) {
-      const accuracy = sessionStats.reviews > 0 
-        ? ((sessionStats.correct + (lastQuality >= 3 ? 1 : 0)) / (sessionStats.reviews + 1)) * 100
-        : 0;
-      
-      recordStudySession(userId, {
-        reviews: sessionStats.reviews + 1,
-        studyTime: Date.now() - sessionStartTime,
-        accuracy
-      });
-    }
-  };
+  useEffect(() => {
+    if (mode !== 'session' || !isFlipped) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') {
+        handleRate(false);
+      } else if (e.key === 'ArrowRight') {
+        handleRate(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mode, isFlipped, handleRate]);
 
   const handleDeleteCurrent = () => {
     if (!queue[0]) return;
@@ -590,12 +606,16 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         <div className="w-full h-2 bg-slate-200 rounded-full mb-6 overflow-hidden shrink-0">
           <div 
             className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-500 ease-out" 
-            style={{ width: `${Math.max(5, ((sessionStats.reviews) / (sessionStats.reviews + queue.length)) * 100)}%` }} 
+            style={{ width: `${(sessionStats.reviews + queue.length) > 0 ? Math.max(5, ((sessionStats.reviews) / (sessionStats.reviews + queue.length)) * 100) : 5}%` }} 
           />
         </div>
 
         {/* Card Container */}
         <div className="flex-1 relative perspective-1000 group w-full min-h-0 mb-6">
+          <StudyCardSwiper 
+             onSwipe={(direction) => handleRate(direction === 'right')} 
+             enabled={isFlipped}
+          >
            <div className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
               
               {/* Front Face */}
@@ -614,25 +634,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                  {renderBack()}
               </div>
            </div>
-        </div>
-
-        {/* Controls - Memorized vs Not Memorized */}
-        <div className={`grid grid-cols-2 gap-4 transition-all duration-300 shrink-0 pb-4 ${isFlipped ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
-            <button 
-              onClick={() => handleRate(false)}
-              className="flex flex-col items-center justify-center gap-2 py-4 bg-rose-50 text-rose-600 rounded-2xl border-2 border-rose-100 hover:bg-rose-100 active:scale-95 transition-all shadow-sm"
-            >
-              <ThumbsDown size={32} />
-              <span className="font-bold">Not Memorized</span>
-            </button>
-            
-            <button 
-              onClick={() => handleRate(true)}
-              className="flex flex-col items-center justify-center gap-2 py-4 bg-emerald-50 text-emerald-600 rounded-2xl border-2 border-emerald-100 hover:bg-emerald-100 active:scale-95 transition-all shadow-sm"
-            >
-              <ThumbsUp size={32} />
-              <span className="font-bold">Memorized</span>
-            </button>
+          </StudyCardSwiper>
         </div>
 
       </div>

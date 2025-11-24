@@ -52,12 +52,24 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const localTime = localItem.updatedAt || localItem.savedAt || 0;
       const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || 0;
       
-      let mergedItem: StoredItem = { ...remoteItem }; // Start with remote as base
+      let mergedItem: StoredItem;
+      try {
+         // Deep clone to avoid mutation
+         // Prefer structuredClone if available, fallback to JSON
+         if (typeof structuredClone === 'function') {
+            mergedItem = structuredClone(remoteItem);
+         } else {
+            mergedItem = JSON.parse(JSON.stringify(remoteItem));
+         }
+      } catch (e) {
+         console.warn("Failed to clone item during merge, using remote item as reference", e);
+         mergedItem = { ...remoteItem }; // Shallow copy fallback
+      }
 
       // A. DATA MERGE (Content - Word/Definition)
       // Content usually changes rarely. Trust the most recent update.
       if (localTime > remoteTime) {
-          mergedItem.data = { ...localItem.data };
+          mergedItem.data = JSON.parse(JSON.stringify(localItem.data));
           mergedItem.updatedAt = localTime;
           mergedItem.savedAt = localItem.savedAt;
       }
@@ -67,13 +79,13 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // If I studied on iPhone (5 reviews) and iPad has old data (2 reviews), iPhone wins regardless of timestamp.
       // If I studied on both offline... this is hard, but "Total Reviews" is a good proxy for "most progress".
       if (localHistory > remoteHistory) {
-          mergedItem.srs = { ...localItem.srs };
+          mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
       } else if (localHistory === remoteHistory) {
           // Tie-breaker: Recency of last review
           const localReview = localItem.srs?.lastReviewDate || 0;
           const remoteReview = remoteItem.srs?.lastReviewDate || 0;
           if (localReview > remoteReview) {
-               mergedItem.srs = { ...localItem.srs };
+               mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
           }
       }
 
@@ -83,17 +95,33 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // But we double-check specifically for "missing vs present" case.
       const finalData = mergedItem.data as any;
       const localData = localItem.data as any;
+      const remoteData = remoteItem.data as any;
       
+      // Case 1: Local had image, Final (Remote?) is missing it -> Restore Local
       if (localData.imageUrl && !finalData.imageUrl) {
           finalData.imageUrl = localData.imageUrl;
       }
+      // Case 2: Remote had image, Final (Local?) is missing it -> Restore Remote
+      if (remoteData.imageUrl && !finalData.imageUrl) {
+          finalData.imageUrl = remoteData.imageUrl;
+      }
       
       // Phrase Vocabs Images
-      if (mergedItem.type === 'phrase' && Array.isArray(finalData.vocabs) && Array.isArray(localData.vocabs)) {
+      if (mergedItem.type === 'phrase' && Array.isArray(finalData.vocabs)) {
           finalData.vocabs.forEach((vocab: any, index: number) => {
-               const localVocab = localData.vocabs[index];
-               if (localVocab?.imageUrl && !vocab.imageUrl) {
-                   vocab.imageUrl = localVocab.imageUrl;
+               // Check Local
+               if (Array.isArray(localData.vocabs)) {
+                   const localVocab = localData.vocabs[index];
+                   if (localVocab?.imageUrl && !vocab.imageUrl) {
+                       vocab.imageUrl = localVocab.imageUrl;
+                   }
+               }
+               // Check Remote (if we are using Local as base)
+               if (Array.isArray(remoteData.vocabs)) {
+                   const remoteVocab = remoteData.vocabs[index];
+                   if (remoteVocab?.imageUrl && !vocab.imageUrl) {
+                       vocab.imageUrl = remoteVocab.imageUrl;
+                   }
                }
           });
       }

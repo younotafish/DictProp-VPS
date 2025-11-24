@@ -34,6 +34,12 @@ const App: React.FC = () => {
     deviceId: ''
   });
   
+  // Track last successful sync timestamp to enable Delta Sync
+  const [lastSyncTime, setLastSyncTime] = useState<number>(() => {
+      const saved = localStorage.getItem('last_successful_sync');
+      return saved ? parseInt(saved, 10) : 0;
+  });
+  
   // Derived state
   const savedItems = syncState.items;
   
@@ -51,7 +57,7 @@ const App: React.FC = () => {
   const [signInError, setSignInError] = useState<{code?: string, message: string} | null>(null);
   const [isFirebaseConfigured, setIsFirebaseConfigured] = useState(isConfigured());
 
-  const [detailItem, setDetailItem] = useState<{data: VocabCard | SearchResult, type: 'vocab' | 'phrase'} | null>(null);
+  const [detailContext, setDetailContext] = useState<{ items: StoredItem[], index: number } | null>(null);
 
   // Swipe Logic Refs
   const touchStartX = useRef<number | null>(null);
@@ -102,6 +108,14 @@ const App: React.FC = () => {
   };
 
   const onTouchEnd = () => {
+    // Prevent navigation gestures if we are inside an active study session (StudyEnhanced component handles its own gestures)
+    if (currentView === 'study') {
+        // You might want to check if a session is actually active here, but for now, blocking swipe nav in study view generally is safer
+        // However, StudyEnhanced has 'dashboard' mode where nav might be wanted.
+        // But to fix the specific issue of swipe-to-grade triggering nav:
+        return; 
+    }
+
     if (!touchStartX.current || !touchEndX.current || !touchStartY.current || !touchEndY.current) return;
     
     const dx = touchStartX.current - touchEndX.current;
@@ -246,6 +260,14 @@ const App: React.FC = () => {
           const mergedItems = mergeDatasets(userLocalItems, activeRemoteItems);
           console.log(`🔥 ✅ Initial sync complete: ${mergedItems.length} items`);
           
+          // Update last sync time based on remote data to avoid re-syncing what we just got
+          const maxRemoteTime = activeRemoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
+          setLastSyncTime(prev => {
+              const newTime = Math.max(prev, maxRemoteTime);
+              localStorage.setItem('last_successful_sync', newTime.toString());
+              return newTime;
+          });
+
           // Set state and user together to avoid inconsistent renders
           setUser(currentUser);
           setSyncState(prevState => ({
@@ -268,6 +290,14 @@ const App: React.FC = () => {
           const activeRemoteItems = remoteItems.filter(item => !item.isDeleted);
           console.log(`🔥 📥 Received ${activeRemoteItems.length} items from subscription`);
           
+          // Update last sync time to avoid echo
+          const maxRemoteTime = activeRemoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
+          setLastSyncTime(prev => {
+              const newTime = Math.max(prev, maxRemoteTime);
+              localStorage.setItem('last_successful_sync', newTime.toString());
+              return newTime;
+          });
+
           setSyncState(prevState => {
             const mergedItems = mergeDatasets(prevState.items, activeRemoteItems);
             console.log(`🔥 ✅ Merged: ${mergedItems.length} items total`);
@@ -310,12 +340,31 @@ const App: React.FC = () => {
       await saveData(syncState.items, targetUserId);
       console.log(`💾 Saved to IndexedDB (${targetUserId}): ${syncState.items.length} items`);
       
-      // 2. Push items to Cloud (Firebase) - Simple sync
+      // 2. Push items to Cloud (Firebase) - Delta Sync
       if (user && isFirebaseConfigured) {
+          // Filter only changed items (updatedAt > lastSyncTime)
+          const changedItems = syncState.items.filter(item => {
+              const updated = item.updatedAt || 0;
+              // Include if newer than last sync
+              return updated > lastSyncTime;
+          });
+
+          if (changedItems.length === 0) {
+              setSyncStatus('saved');
+              return;
+          }
+
           setSyncStatus('syncing');
           
           try {
-            await saveUserData(user.uid, syncState.items);
+            console.log(`🔥 Syncing ${changedItems.length} changed items to Firebase...`);
+            await saveUserData(user.uid, changedItems);
+            
+            // Update last sync time
+            const now = Date.now();
+            setLastSyncTime(now);
+            localStorage.setItem('last_successful_sync', now.toString());
+
             console.log("🔥 ✅ Items synced to Firebase!");
             setSyncStatus('saved');
           } catch (e) {
@@ -327,7 +376,7 @@ const App: React.FC = () => {
     }, 5000); // 5s debounce (user preference)
 
     return () => clearTimeout(timer);
-  }, [syncState, isLoaded, user, isFirebaseConfigured]);
+  }, [syncState, isLoaded, user, isFirebaseConfigured, lastSyncTime]);
 
   const handleForceSync = async () => {
     if (!user || !isFirebaseConfigured) return;
@@ -340,6 +389,11 @@ const App: React.FC = () => {
       console.log(`🔥 Force Sync: Uploading ${syncState.items.length} items...`);
       await saveUserData(user.uid, syncState.items);
       
+      // Update last sync time after force sync
+      const now = Date.now();
+      setLastSyncTime(now);
+      localStorage.setItem('last_successful_sync', now.toString());
+
       // 2. Pull latest items from Firebase
       console.log("🔥 Force Sync: Fetching latest items...");
       const remoteItems = await loadUserData(user.uid);
@@ -445,23 +499,35 @@ const App: React.FC = () => {
       };
 
       // Check if item already exists
-      const existingIndex = syncState.items.findIndex(i => 
-        String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle
-      );
+      // PRIORITY: Check by ID first
+      let existingIndex = syncState.items.findIndex(i => i.data.id === item.data.id);
+      
+      // If not found by ID, check by Title (fallback for legacy or duplicates prevention)
+      if (existingIndex === -1 && incomingTitle) {
+          existingIndex = syncState.items.findIndex(i => 
+            String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle
+          );
+      }
 
       if (existingIndex >= 0) {
         // Update existing item
         const existingItem = syncState.items[existingIndex];
         
+        // FORCE keeping the existing ID to ensure consistency
+        const idToUse = existingItem.data.id;
+
         // Merge SRS data
         const mergedSrs = ensureSRSData(
           existingItem.srs ?? itemToSave.srs,
-          existingItem.data.id,
+          idToUse,
           existingItem.type
         );
+        // Ensure SRS has correct ID
+        mergedSrs.id = idToUse;
         
         const mergedItem: StoredItem = {
           ...itemToSave,
+          data: { ...itemToSave.data, id: idToUse }, // Keep existing ID
           savedAt: existingItem.savedAt || Date.now(),
           updatedAt: Date.now(),
           srs: mergedSrs
@@ -538,11 +604,11 @@ const App: React.FC = () => {
       setRecursiveQuery(text);
       setSelectedStoredItem(undefined);
       setCurrentView('search');
-      setDetailItem(null); 
+      setDetailContext(null); 
   };
 
-  const handleViewStoredItem = (item: StoredItem) => {
-      setDetailItem({ data: item.data, type: item.type });
+  const handleViewStoredItem = (items: StoredItem[], index: number) => {
+      setDetailContext({ items, index });
   };
 
   // Enhanced SRS update with new algorithm (using operations)
@@ -615,11 +681,11 @@ const App: React.FC = () => {
       {unauthorizedDomain && <AuthDomainErrorModal domain={unauthorizedDomain} onClose={() => setUnauthorizedDomain(null)} />}
       {signInError && <ErrorModal error={signInError} onClose={() => setSignInError(null)} />}
 
-      {detailItem && (
+      {detailContext && (
           <DetailView 
-              data={detailItem.data}
-              type={detailItem.type}
-              onClose={() => setDetailItem(null)}
+              items={detailContext.items}
+              initialIndex={detailContext.index}
+              onClose={() => setDetailContext(null)}
               onSave={handleSave}
               onDelete={handleDelete}
               savedItems={savedItems.filter(i => !i.isDeleted)}
@@ -641,8 +707,12 @@ const App: React.FC = () => {
                 savedItems={savedItems.filter(i => !i.isDeleted)} 
                 initialQuery={recursiveQuery}
                 initialData={selectedStoredItem}
-                onViewDetail={(data, type) => setDetailItem({ data, type })}
+                onViewDetail={(data, type) => setDetailContext({ items: [{ data, type, srs: {} as any, savedAt: 0 }], index: 0 })}
                 onScroll={handleScroll}
+                onClear={() => {
+                    setRecursiveQuery(undefined);
+                    setSelectedStoredItem(undefined);
+                }}
             />
         </div>
         

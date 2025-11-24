@@ -41,6 +41,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
     if (autoPlay) {
       handlePlay();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPlay]);
 
   const handlePlay = (e?: React.MouseEvent) => {
@@ -113,8 +114,8 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
       `}
       title="Click to listen"
     >
-      {showIcon && <Volume2 size={14} className={isPlaying ? 'animate-pulse' : ''} />}
-      <span>{ipa || text}</span>
+      {showIcon && <Volume2 size={14} className={`shrink-0 ${isPlaying ? 'animate-pulse' : ''}`} />}
+      <span className="truncate max-w-full">{ipa || text}</span>
     </button>
   );
 };

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeInput, generateIllustration } from '../services/geminiService';
 import { SearchResult, StoredItem, VocabCard } from '../types';
-import { ArrowRight, Search as SearchIcon, Mic, Loader2, Bookmark, BookmarkMinus, Play, RotateCw, BookOpen, ArrowLeft, AlertCircle, X } from 'lucide-react';
+import { ArrowRight, Search as SearchIcon, Mic, Loader2, Bookmark, BookmarkMinus, Play, RotateCw, BookOpen, ArrowLeft, AlertCircle, X, Clipboard } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
@@ -19,6 +19,7 @@ interface SearchProps {
   initialData?: StoredItem;
   onViewDetail?: (data: VocabCard | SearchResult, type: 'vocab' | 'phrase') => void;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
+  onClear?: () => void;
 }
 
 // Helper to match title safely
@@ -31,7 +32,7 @@ const getStoredTitle = (item: StoredItem) => {
 
 const createInitialSRS = (id: string, type: 'vocab' | 'phrase') => SRSAlgorithm.createNew(id, type);
 
-export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, onDelete, savedItems, initialQuery, initialData, onViewDetail, onScroll }) => {
+export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, onDelete, savedItems, initialQuery, initialData, onViewDetail, onScroll, onClear }) => {
   const [query, setQuery] = useState(initialQuery || '');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SearchResult | null>(null);
@@ -44,6 +45,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isMounted = useRef(true);
   const searchRequestId = useRef(0);
+  const lastProcessedQuery = useRef<string | undefined>(undefined);
 
   useEffect(() => {
       isMounted.current = true;
@@ -87,13 +89,15 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
 
   // Handle Initial Query (Recursive search)
   useEffect(() => {
-    if (initialQuery && initialQuery !== result?.query && initialQuery !== vocabResult?.word) {
+    if (initialQuery && initialQuery !== lastProcessedQuery.current) {
+        lastProcessedQuery.current = initialQuery;
         setIsViewingStored(false);
         setVocabResult(null);
         setQuery(initialQuery);
         // Trigger search immediately
         performSearch(initialQuery);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
   // Auto-resize textarea
@@ -126,8 +130,9 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     
     setLoading(true);
     setError(null);
-    setResult(null);
-    setVocabResult(null);
+    // Don't clear results immediately to keep the screen populated while loading
+    // setResult(null); 
+    // setVocabResult(null);
     
     // Push current state to history before starting new search (if we had a result)
     if (result || vocabResult) {
@@ -170,6 +175,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         }
 
         setResult(data);
+        setVocabResult(null); // Clear any previous vocab result as we now have a phrase result
         setLoading(false);
         setImageLoading(true);
         
@@ -276,9 +282,22 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     }
   };
 
+  const handlePasteAndSearch = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && text.trim()) {
+        setQuery(text);
+        setIsViewingStored(false);
+        performSearch(text);
+      }
+    } catch (err) {
+      console.error('Failed to read clipboard', err);
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!query.trim() || loading) return;
+    if (!query.trim()) return;
     setIsViewingStored(false);
     performSearch(query);
   };
@@ -296,13 +315,8 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   };
 
   const handleNewSearch = () => {
-    // Clear everything - query, results, errors
+    // Only clear the query text, keep the results on screen
     setQuery('');
-    setError(null);
-    setResult(null);
-    setVocabResult(null);
-    setIsViewingStored(false);
-    // Note: textarea height reset is handled by the useEffect reacting to query change
   };
 
   const handleTermClick = (term: string) => {
@@ -380,17 +394,26 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
             </button>
           )}
           <form onSubmit={handleSubmit} className="relative shadow-sm rounded-2xl bg-slate-100 focus-within:ring-2 ring-indigo-500/20 focus-within:bg-white transition-all border border-transparent focus-within:border-indigo-200 flex-1">
-          <textarea
-            ref={textareaRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={loading}
-            placeholder="What do you want to learn?"
-            rows={1}
-            className="w-full pl-4 pr-24 py-3.5 text-base rounded-2xl bg-transparent text-slate-800 placeholder:text-slate-400 outline-none resize-none overflow-hidden disabled:opacity-60"
-            style={{ minHeight: '52px' }}
-          />
+            {/* Paste button */}
+            <button
+              type="button"
+              onClick={handlePasteAndSearch}
+              className="absolute left-2 bottom-2 w-9 h-9 text-slate-400 hover:text-indigo-600 rounded-xl flex items-center justify-center transition-all hover:bg-slate-200/50"
+              title="Paste and Search"
+            >
+              <Clipboard size={18} />
+            </button>
+            <textarea
+              ref={textareaRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={loading}
+              placeholder="What do you want to learn?"
+              rows={1}
+              className="w-full pl-12 pr-24 py-3.5 text-base rounded-2xl bg-transparent text-slate-800 placeholder:text-slate-400 outline-none resize-none overflow-hidden disabled:opacity-60"
+              style={{ minHeight: '52px' }}
+            />
           {/* Clear button (X) - shows when there's text */}
           {query.trim() && (
             <button 
@@ -406,7 +429,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
           <button 
             type="submit"
             disabled={!query.trim() || loading}
-            className="absolute right-2 bottom-2 w-9 h-9 bg-indigo-600 text-white rounded-xl flex items-center justify-center hover:bg-indigo-700 disabled:opacity-0 disabled:scale-90 transition-all shadow-md shadow-indigo-200 hidden sm:flex"
+            className="absolute right-2 bottom-2 w-9 h-9 bg-indigo-600 text-white rounded-xl flex items-center justify-center hover:bg-indigo-700 disabled:opacity-0 disabled:scale-90 transition-all shadow-md shadow-indigo-200"
           >
             {loading ? <Loader2 className="animate-spin" size={18} /> : <ArrowRight size={20} />}
           </button>
@@ -456,8 +479,8 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
           </div>
         )}
 
-        {/* Loading State - Centered */}
-        {loading && (
+        {/* Loading State - Centered (Only if no previous result to show) */}
+        {loading && !result && !vocabResult && (
           <div className="flex flex-col items-center justify-center min-h-[60vh] fade-in">
             <div className="relative">
                 <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 animate-pulse"></div>
@@ -482,8 +505,8 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         )}
 
         {/* Result Display */}
-        {(result || vocabResult) && !loading && (
-          <div className="fade-in pb-8 max-w-3xl mx-auto">
+        {(result || vocabResult) && (
+          <div className={`fade-in pb-8 max-w-3xl mx-auto transition-opacity duration-300 ${loading ? 'opacity-50 grayscale-[0.5]' : 'opacity-100'}`}>
             
             {/* Render Search Result (Phrase) */}
             {result && (

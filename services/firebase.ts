@@ -289,10 +289,10 @@ const uploadImageToStorage = async (userId: string, itemId: string, imageData: s
   }
   
   try {
-    // Create unique path for the image
-    const timestamp = Date.now();
+    // Create deterministic path for the image to avoid storage bloat
     const suffix = imageType === 'vocab' ? `_vocab${vocabIndex}` : '';
-    const imagePath = `users/${userId}/items/${itemId}${suffix}_${timestamp}.png`;
+    // REMOVED timestamp to ensure we overwrite old images instead of creating new ones
+    const imagePath = `users/${userId}/items/${itemId}${suffix}_main.png`;
     const imageRef = ref(storage, imagePath);
     
     // Upload base64 string
@@ -384,19 +384,29 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
       console.log(`🔥 Firebase: Syncing batch ${batchIndex + 1}/${totalBatches} -> ${batchItems.length} items`);
 
       // Process images: upload base64 to Storage and replace with URLs
-      // This is sequential to avoid overwhelming the connection
-      const processedItems: StoredItem[] = [];
-      for (const item of batchItems) {
+      // Parallelize uploads for better performance
+      const processedItems: StoredItem[] = await Promise.all(batchItems.map(async (item) => {
         if (item.data && item.data.id) {
           // Don't upload images for deleted items
           if (item.isDeleted) {
-              processedItems.push(item);
+              return item;
           } else {
-              const processedItem = await processItemImages(userId, item);
-              processedItems.push(processedItem);
+              // Check if we actually need to upload images (has base64 data)
+              const data = item.data as any;
+              const hasBase64 = (
+                  (data.imageUrl && data.imageUrl.startsWith('data:image/')) ||
+                  (item.type === 'phrase' && Array.isArray(data.vocabs) && data.vocabs.some((v: any) => v.imageUrl && v.imageUrl.startsWith('data:image/')))
+              );
+
+              if (hasBase64) {
+                  return await processItemImages(userId, item);
+              } else {
+                  return item;
+              }
           }
         }
-      }
+        return item;
+      }));
 
       const batch = writeBatch(db);
       let batchWriteCount = 0;

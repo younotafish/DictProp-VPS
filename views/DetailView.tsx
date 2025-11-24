@@ -10,8 +10,13 @@ import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
 interface DetailViewProps {
-  data: VocabCard | SearchResult;
-  type: 'vocab' | 'phrase';
+  items?: StoredItem[];
+  initialIndex?: number;
+  
+  // Legacy single item mode (for Search view)
+  data?: VocabCard | SearchResult;
+  type?: 'vocab' | 'phrase';
+  
   onClose: () => void;
   onSave: (item: StoredItem) => void;
   onDelete: (id: string) => void;
@@ -30,14 +35,96 @@ const getStoredTitle = (item: StoredItem) => {
 const createInitialSRS = (id: string, type: 'vocab' | 'phrase') => SRSAlgorithm.createNew(id, type);
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
-  data, 
-  type, 
+  items,
+  initialIndex = 0,
+  data: initialData,
+  type: initialType,
   onClose, 
   onSave, 
   onDelete, 
   savedItems,
   onSearch
 }) => {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const [isAnimating, setIsAnimating] = useState(false);
+  
+  // Determine current item to display
+  // If items list is provided, use that. Otherwise use legacy data prop.
+  const currentItem = items ? items[currentIndex] : { data: initialData!, type: initialType! };
+  const data = currentItem.data;
+  const type = currentItem.type;
+  
+  const nextIndex = currentIndex + 1;
+  const prevIndex = currentIndex - 1;
+  const hasNext = items && nextIndex < items.length;
+  const hasPrev = items && prevIndex >= 0;
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (!items || isAnimating) return;
+
+    const target = e.currentTarget;
+    const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    const scrollTop = target.scrollTop;
+    
+    // Next Item Trigger (Scroll Bottom)
+    if (hasNext && scrollBottom < 5) {
+       setTimeout(() => {
+           if (target.scrollHeight - target.scrollTop - target.clientHeight < 10) {
+                setIsAnimating(true);
+                setCurrentIndex(nextIndex);
+                // Reset scroll
+                if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+                setTimeout(() => setIsAnimating(false), 300);
+           }
+       }, 100);
+    }
+
+    // Prev Item Trigger (Scroll Top)
+    if (hasPrev && scrollTop === 0 && e.nativeEvent instanceof WheelEvent && (e.nativeEvent as WheelEvent).deltaY < -10) {
+       setIsAnimating(true);
+       setCurrentIndex(prevIndex);
+       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+       setTimeout(() => setIsAnimating(false), 300);
+    }
+  };
+  
+  // Touch Handling for "TikTok style" snap
+  const touchStartY = useRef<number | null>(null);
+  
+  const onContentTouchStart = (e: React.TouchEvent) => {
+      touchStartY.current = e.touches[0].clientY;
+  };
+  
+  const onContentTouchEnd = (e: React.TouchEvent) => {
+      if (touchStartY.current === null || !items || isAnimating) return;
+      
+      const diff = e.changedTouches[0].clientY - touchStartY.current;
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      // Swipe UP (diff < 0) -> Next Item
+      // Only if at bottom
+      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 10;
+      if (diff < -50 && isAtBottom && hasNext) {
+          setIsAnimating(true);
+          setCurrentIndex(nextIndex);
+          container.scrollTop = 0;
+          setTimeout(() => setIsAnimating(false), 300);
+      }
+      
+      // Swipe DOWN (diff > 0) -> Prev Item
+      // Only if at top
+      const isAtTop = container.scrollTop === 0;
+      if (diff > 50 && isAtTop && hasPrev) {
+          setIsAnimating(true);
+          setCurrentIndex(prevIndex);
+          container.scrollTop = 0;
+          setTimeout(() => setIsAnimating(false), 300);
+      }
+      
+      touchStartY.current = null;
+  };
   
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
   
@@ -130,6 +217,27 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <ArrowLeft size={20} className="mr-1" /> Back
             </Button>
             <div className="flex items-center gap-2">
+                 {hasPrev && (
+                     <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => { setCurrentIndex(prevIndex); if(scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0; }}
+                        className="text-slate-400 hover:text-indigo-600 rotate-90"
+                     >
+                        <ArrowLeft size={20} />
+                     </Button>
+                 )}
+                 {hasNext && (
+                     <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => { setCurrentIndex(nextIndex); if(scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0; }}
+                        className="text-slate-400 hover:text-indigo-600 -rotate-90"
+                     >
+                        <ArrowLeft size={20} />
+                     </Button>
+                 )}
+                 <div className="w-[1px] h-4 bg-slate-300 mx-1"></div>
                  <Button 
                     variant="ghost" 
                     size="sm" 
@@ -152,8 +260,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto no-scrollbar p-4 pb-24">
+        <div 
+            ref={scrollContainerRef}
+            className={`flex-1 overflow-y-auto no-scrollbar p-4 pb-24 transition-opacity duration-300 ${isAnimating ? 'opacity-50' : 'opacity-100'}`}
+            onScroll={handleScroll}
+            onTouchStart={onContentTouchStart}
+            onTouchEnd={onContentTouchEnd}
+        >
             
+            {/* Prev Item Hint (Only visible if at top) */}
+            {hasPrev && (
+                 <div className="py-4 text-center text-slate-400 flex flex-col items-center animate-pulse opacity-60 hover:opacity-100 transition-opacity mb-2">
+                    <ArrowLeft size={16} className="rotate-90" />
+                    <span className="text-xs uppercase font-bold tracking-widest mt-1">Scroll for previous</span>
+                 </div>
+            )}
+
             {/* VOCAB VIEW */}
             {type === 'vocab' && (
                  <VocabCardDisplay 
@@ -230,6 +352,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
                             </div>
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* Next Item Hint */}
+            {hasNext && (
+                <div className="py-8 text-center text-slate-400 flex flex-col items-center animate-pulse">
+                    <span className="text-xs uppercase font-bold tracking-widest mb-1">Scroll for next</span>
+                    <ArrowLeft size={16} className="-rotate-90" />
                 </div>
             )}
         </div>
