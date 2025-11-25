@@ -283,16 +283,40 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     }
   };
 
-  const handlePasteAndSearch = async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text && text.trim()) {
-        setQuery(text);
-        setIsViewingStored(false);
-        performSearch(text);
-      }
-    } catch (err) {
-      console.error('Failed to read clipboard', err);
+  const handlePasteAndSearch = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Focus the main textarea and trigger paste programmatically
+    if (textareaRef.current) {
+      // Store current value
+      const currentValue = query;
+      
+      // Clear and focus
+      textareaRef.current.value = '';
+      textareaRef.current.focus();
+      
+      // Set up paste listener
+      const handlePaste = (pasteEvent: ClipboardEvent) => {
+        pasteEvent.preventDefault();
+        const text = pasteEvent.clipboardData?.getData('text');
+        if (text && text.trim()) {
+          setQuery(text);
+          setIsViewingStored(false);
+          performSearch(text);
+        } else {
+          // Restore original value if paste failed
+          setQuery(currentValue);
+        }
+        textareaRef.current?.removeEventListener('paste', handlePaste);
+      };
+      
+      textareaRef.current.addEventListener('paste', handlePaste);
+      
+      // Trigger paste command
+      setTimeout(() => {
+        document.execCommand('paste');
+      }, 10);
     }
   };
 
@@ -399,7 +423,10 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
             <button
               type="button"
               onClick={handlePasteAndSearch}
-              className="absolute left-2 bottom-2 w-9 h-9 text-slate-400 hover:text-indigo-600 rounded-xl flex items-center justify-center transition-all hover:bg-slate-200/50"
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onTouchStart={(e) => { e.stopPropagation(); }}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              className="absolute left-2 bottom-2 z-20 w-10 h-10 text-slate-400 hover:text-indigo-600 rounded-xl flex items-center justify-center transition-all hover:bg-slate-200/50"
               title="Paste and Search"
             >
               <Clipboard size={18} />
@@ -552,11 +579,12 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
 
                     <div className="p-6 sm:p-8">
                         <div className="mb-6">
-                            <h2 className="text-3xl font-bold text-slate-900 leading-tight mb-2">{result.translation}</h2>
+                            <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{result.translation}</h2>
+                            <p className="text-lg text-slate-600 mb-3 leading-relaxed">{result.query}</p>
                             <PronunciationBlock 
                                 text={result.query} 
                                 ipa={result.pronunciation} 
-                                className="text-base bg-slate-100 px-2 py-1 rounded-lg"
+                                className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
                             />
                         </div>
                         

@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { StoredItem, SyncStatus } from '../types';
-import { Trash2, Search, BookOpen, Layers, Cloud, AlertCircle, Check, Loader2, RefreshCw, ChevronDown, ChevronUp, Type, ArrowDownAZ, Sparkles } from 'lucide-react';
+import { Trash2, Search, BookOpen, Layers, Cloud, AlertCircle, Check, Loader2, RefreshCw, ChevronDown, ChevronUp, Type, ArrowDownAZ, Sparkles, Filter } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -53,6 +53,14 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
     }
   };
 
+  const handleClick = () => {
+    if (isOpen) {
+      onClose();
+    } else {
+      onViewDetail();
+    }
+  };
+
   const handleTouchEnd = () => {
     if (!touchStart.current) return;
     
@@ -64,13 +72,6 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
       } else {
         onClose();
         setOffsetX(0);
-      }
-    } else {
-      // It was a tap, not a drag
-      if (isOpen) {
-        onClose();
-      } else {
-        onViewDetail();
       }
     }
     
@@ -121,6 +122,7 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
 
       {/* Main Card */}
       <div
+        onClick={handleClick}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -139,10 +141,20 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
           </div>
           
           <div className="min-w-0 flex-1 pt-0.5 pr-2">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
-              <h4 className="font-bold text-slate-900 text-lg leading-tight truncate max-w-full">{title}</h4>
-              {ipa && <PronunciationBlock text={title} ipa={ipa} className="text-xs py-0.5 px-1.5 h-6 bg-slate-50 border border-slate-100 max-w-[120px] shrink-0" />}
-              {isDue && <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">Due</span>}
+            <div className="mb-2 min-w-0">
+              <h4 className="font-bold text-slate-900 text-lg leading-tight line-clamp-2 text-ellipsis overflow-hidden" title={title}>{title}</h4>
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                {ipa && (
+                  <div className="min-w-0 shrink-0 max-w-full">
+                    <PronunciationBlock 
+                      text={title} 
+                      ipa={ipa} 
+                      className="text-xs py-0.5 px-1.5 min-h-[24px] bg-slate-50 border border-slate-100 max-w-[180px]" 
+                    />
+                  </div>
+                )}
+                {isDue && <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">Due</span>}
+              </div>
             </div>
             <p className="text-sm text-slate-500 truncate mb-2">{subtitle}</p>
 
@@ -188,6 +200,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     user, onSignIn, onGuestSignIn, onSignOut, isConfigured, syncStatus, onScroll, onForceSync
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
+  const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('all');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [showHeader, setShowHeader] = useState(true);
   const lastScrollY = useRef(0);
@@ -208,7 +221,15 @@ export const NotebookView: React.FC<NotebookProps> = ({
   
   const displayItems = React.useMemo(() => {
     return items
-      .filter(i => i && i.data && i.data.id && !i.isDeleted)
+      .filter(i => {
+        const isValid = i && i.data && i.data.id && !i.isDeleted;
+        if (!isValid) return false;
+        
+        if (filterMode === 'vocab') return i.type === 'vocab';
+        if (filterMode === 'phrase') return i.type === 'phrase';
+        
+        return true;
+      })
       .sort((a, b) => {
         if (sortMode === 'alphabetical') {
           const titleA = a.type === 'phrase' ? (a.data as any).query : (a.data as any).word;
@@ -225,7 +246,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
 
         return (b.savedAt || 0) - (a.savedAt || 0);
       });
-  }, [items, sortMode]);
+  }, [items, sortMode, filterMode]);
 
   if (displayItems.length === 0) {
     return (
@@ -258,6 +279,19 @@ export const NotebookView: React.FC<NotebookProps> = ({
           <p className="text-xs text-slate-500 font-medium">{displayItems.length} items stored</p>
         </div>
         <div className="flex items-center gap-1 bg-white rounded-full p-1 pl-1 border border-slate-100 shadow-sm">
+          <button
+            onClick={() => setFilterMode(prev => {
+              if (prev === 'all') return 'vocab';
+              if (prev === 'vocab') return 'phrase';
+              return 'all';
+            })}
+            className={`w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-50 transition-colors ${filterMode !== 'all' ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400'}`}
+            title={`Filter: ${filterMode === 'all' ? 'All Items' : filterMode === 'vocab' ? 'Vocabulary Only' : 'Phrases Only'}`}
+          >
+            {filterMode === 'all' && <Filter size={16} />}
+            {filterMode === 'vocab' && <Type size={16} />}
+            {filterMode === 'phrase' && <Layers size={16} />}
+          </button>
           <button
             onClick={() => setSortMode(prev => prev === 'familiarity' ? 'alphabetical' : 'familiarity')}
             className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-50 text-slate-400 hover:text-indigo-600 transition-colors"

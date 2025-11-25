@@ -95,6 +95,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
         }
       }, 100);
     }
+    
+    // Prev Item Trigger (Scroll Top - Wheel/Mouse only as touch is handled by swipe)
+    // We add a small check to ensure user is intentionally scrolling UP when already at top
+    // This is tricky with momentum scrolling, so we rely mostly on the visual cue or swipe.
+    // But if user uses scroll wheel at top, scrollTop stays 0.
+    // Let's stick to the touch handler for mobile and arrows for desktop for now to avoid accidental triggers.
+
   };
   
   // Touch Handling for "TikTok style" snap
@@ -305,11 +312,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
                 <div className="p-6 sm:p-8">
                   <div className="mb-6">
-                    <h2 className="text-3xl font-bold text-slate-900 leading-tight mb-2">{(data as SearchResult).translation}</h2>
+                    <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{(data as SearchResult).translation}</h2>
+                    <p className="text-lg text-slate-600 mb-3 leading-relaxed">{(data as SearchResult).query}</p>
                     <PronunciationBlock 
                       text={(data as SearchResult).query}
                       ipa={(data as SearchResult).pronunciation}
-                      className="text-base bg-slate-100 px-2 py-1 rounded-lg"
+                      className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
                     />
                   </div>
                   

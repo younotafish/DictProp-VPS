@@ -329,10 +329,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             <div className="p-6">
                 <div className="mb-6">
                     <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{data.translation}</h2>
+                    <p className="text-lg text-slate-600 mb-3 leading-relaxed">{data.query}</p>
                     <PronunciationBlock 
                         text={data.query}
                         ipa={data.pronunciation}
-                        className="text-sm bg-slate-100 px-2 py-1 rounded-lg"
+                        className="text-sm bg-slate-100 px-2 py-1 rounded-lg w-full"
                     />
                 </div>
                 
