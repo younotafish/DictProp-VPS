@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { VocabCard as VocabType } from '../types';
 import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw } from 'lucide-react';

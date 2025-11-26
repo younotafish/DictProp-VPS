@@ -64,7 +64,7 @@ The user has entered a SINGLE WORD or SHORT PHRASE (not a full sentence).
 Your task: Create comprehensive vocabulary cards for this word/phrase.
 
 CRITICAL - MULTIPLE MEANINGS:
-You MUST create SEPARATE vocab cards for EACH distinct meaning or sense of the word/phrase.
+You MUST create SEPARATE vocab cards for EACH distinct, uncommon meaning or sense of the word/phrase.
 - Different parts of speech = different cards (noun vs verb vs adjective)
 - Different contexts/domains = different cards (technical vs casual, literal vs figurative)
 - Different common usages = different cards
@@ -113,7 +113,7 @@ function isWordOrPhrase(text: string): boolean {
   if (words.length === 1) return true;
   
   // 2-4 words without sentence-ending punctuation is likely a phrase
-  if (words.length <= 4 && !/[.!?]$/.test(trimmed)) return true;
+  if (words.length <= 5 && !/[.!?]$/.test(trimmed)) return true;
   
   // Check for sentence structure indicators
   const hasSentenceStructure = 

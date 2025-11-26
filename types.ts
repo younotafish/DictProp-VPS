@@ -1,4 +1,3 @@
-
 export interface VocabCard {
   id: string; // Unique ID
   word: string;
@@ -80,3 +79,11 @@ export type ViewState = 'search' | 'notebook' | 'study';
 export interface SyncState {
   items: StoredItem[];
 }
+
+// Helper to get item title (word or query)
+export const getItemTitle = (item: StoredItem): string => {
+  if (!item || !item.data) return '';
+  const data = item.data as any;
+  const val = item.type === 'phrase' ? data.query : data.word;
+  return String(val || '');
+};

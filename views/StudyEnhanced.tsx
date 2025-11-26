@@ -13,7 +13,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { StoredItem, TaskType, VocabCard, SearchResult } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { Button } from '../components/Button';
-import { AudioButton } from '../components/AudioButton';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import ReactMarkdown from 'react-markdown';
@@ -29,7 +28,9 @@ import {
   Trash2,
   Play,
   Search as SearchIcon,
-  RefreshCw
+  RefreshCw,
+  ThumbsUp,
+  ThumbsDown
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { recordStudySession } from '../services/firebase';
@@ -204,7 +205,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   }, [queue, cardStartTime, onUpdateSRS, finishSession]);
 
   useEffect(() => {
-    if (mode !== 'session' || !isFlipped) return;
+    if (mode !== 'session') return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft') {
@@ -216,7 +217,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, isFlipped, handleRate]);
+  }, [mode, handleRate]);
 
   const handleDeleteCurrent = () => {
     if (!queue[0]) return;
@@ -492,8 +493,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           </div>
         </div>
 
-        {/* Session Stats (if available) */}
-        {sessionStats.reviews > 0 && mode === 'dashboard' && (
+        {/* Session Stats (only show after completing a session) */}
+        {sessionStats.reviews > 0 && (
           <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-2xl border border-indigo-200 mb-6">
             <h3 className="text-sm font-bold text-indigo-700 mb-3 flex items-center gap-2">
               <BarChart3 size={16} />
@@ -506,7 +507,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
               </div>
               <div>
                 <p className="text-2xl font-bold text-emerald-600">
-                  {sessionStats.reviews > 0 ? Math.round((sessionStats.correct / sessionStats.reviews) * 100) : 0}%
+                  {Math.round((sessionStats.correct / sessionStats.reviews) * 100)}%
                 </p>
                 <p className="text-xs text-slate-500">Accuracy</p>
               </div>
@@ -619,10 +620,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         </div>
 
         {/* Card Container */}
-        <div className="flex-1 relative perspective-1000 group w-full min-h-0 mb-6">
+        <div className="flex-1 relative perspective-1000 group w-full min-h-0 mb-1">
           <StudyCardSwiper 
              onSwipe={(direction) => handleRate(direction === 'right')} 
-             enabled={isFlipped}
+             enabled={true}
           >
            <div className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
               
@@ -648,6 +649,24 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
               </div>
            </div>
           </StudyCardSwiper>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="grid grid-cols-2 gap-1 shrink-0 h-8">
+           <button 
+             onClick={() => handleRate(false)}
+             className="bg-rose-500 active:bg-rose-600 text-white rounded-lg font-bold text-xs shadow-sm shadow-rose-200 transition-all active:scale-95 flex items-center justify-center gap-1 p-0"
+           >
+             <ThumbsDown size={14} strokeWidth={2.5} />
+             <span className="hidden sm:inline">Not Memorized</span>
+           </button>
+           <button 
+             onClick={() => handleRate(true)}
+             className="bg-emerald-500 active:bg-emerald-600 text-white rounded-lg font-bold text-xs shadow-sm shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-1 p-0"
+           >
+             <ThumbsUp size={14} strokeWidth={2.5} />
+             <span className="hidden sm:inline">Memorized</span>
+           </button>
         </div>
 
       </div>

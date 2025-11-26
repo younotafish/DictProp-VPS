@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Volume2 } from 'lucide-react';
+import { speak } from '../services/speech';
 
 interface PronunciationBlockProps {
   text: string; // Text to speak
@@ -49,51 +50,22 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
 
     if (!text) return;
 
-    // If currently playing this text, stop it
+    // If currently playing, stop it
     if (isPlaying) {
       window.speechSynthesis.cancel();
       setIsPlaying(false);
       return;
     }
 
-    // Stop any other speech
-    window.speechSynthesis.cancel();
-
-    // Create utterance
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'en-US';
-    u.rate = 0.9; 
-    u.volume = 1.0;
-
-    const voices = window.speechSynthesis.getVoices();
-    
-    let preferredVoice = voices.find(v => v.name === 'Samantha');
-    if (!preferredVoice) preferredVoice = voices.find(v => v.name === 'Google US English');
-    if (!preferredVoice) preferredVoice = voices.find(v => v.name.includes('Zira'));
-    if (!preferredVoice) preferredVoice = voices.find(v => v.lang === 'en-US' && !v.name.includes('Google')); 
-    if (!preferredVoice) preferredVoice = voices.find(v => v.lang.startsWith('en'));
-
-    if (preferredVoice) {
-      u.voice = preferredVoice;
-    }
-
-    u.onstart = () => {
-      setIsPlaying(true);
-    };
-
-    u.onend = () => {
-      setIsPlaying(false);
-    };
-
-    u.onerror = (event) => {
-      console.error("Speech synthesis error", event);
-      setIsPlaying(false);
-    };
-
-    utteranceRef.current = u; 
-
     try {
-      window.speechSynthesis.speak(u);
+      utteranceRef.current = speak(text, {
+        onStart: () => setIsPlaying(true),
+        onEnd: () => setIsPlaying(false),
+        onError: (event) => {
+          console.error("Speech synthesis error", event);
+          setIsPlaying(false);
+        }
+      });
     } catch (err) {
       console.error("Speech synthesis failed", err);
       setIsPlaying(false);

@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Button } from './Button';
 import { LogOut, User as UserIcon, Ghost } from 'lucide-react';
@@ -8,10 +7,9 @@ interface Props {
   onSignIn: () => void;
   onGuestSignIn?: () => void;
   onSignOut: () => void;
-  isConfigured: boolean;
 }
 
-export const UserMenu: React.FC<Props> = ({ user, onSignIn, onGuestSignIn, onSignOut, isConfigured }) => {
+export const UserMenu: React.FC<Props> = ({ user, onSignIn, onGuestSignIn, onSignOut }) => {
 
   if (!user) {
     return (

@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { X, ShieldAlert, Copy, ExternalLink, Check, AlertTriangle } from 'lucide-react';
 import { Button } from './Button';

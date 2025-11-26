@@ -1,26 +1,16 @@
-
 import React, { useState, useEffect } from 'react';
 import { SearchView } from './views/Search';
 import { NotebookView } from './views/Notebook';
-import { StudyView } from './views/Study';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, SRSData, SyncStatus, TaskType, SyncState } from './types';
+import { StoredItem, ViewState, SRSData, SyncStatus, TaskType, SyncState, getItemTitle } from './types';
 import { Search, Book, BrainCircuit } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signInAnonymouslyUser, signOut, isConfigured, handleRedirectResult, loadUserData } from './services/firebase';
-import { FirebaseConfigModal } from './components/FirebaseConfigModal';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
-
-const getItemTitle = (item: StoredItem): string => {
-    if (!item || !item.data) return '';
-    const data = item.data as any;
-    const val = (item.type === 'phrase' ? data.query : data.word);
-    return String(val || '');
-};
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
@@ -150,7 +140,7 @@ const App: React.FC = () => {
                 items: processedItems
             });
             
-            // 5. Save if we made changes
+            // 4. Save if we made changes
             if (hasChanges) {
                 await saveData(processedItems);
             }
@@ -450,71 +440,87 @@ const App: React.FC = () => {
       const incomingTitle = String(rawTitle || '').toLowerCase().trim();
       if (!incomingTitle) return;
       
+      const now = Date.now();
       const itemToSave = { 
         ...item, 
-        updatedAt: Date.now(),
-        savedAt: item.savedAt || Date.now(),
+        updatedAt: now,
+        savedAt: item.savedAt || now,
         isDeleted: false 
       };
 
-      // Check if item already exists
-      // PRIORITY: Check by ID first
-      let existingIndex = syncState.items.findIndex(i => i.data.id === item.data.id);
-      
-      // If not found by ID, check by Title (fallback for legacy or duplicates prevention)
-      if (existingIndex === -1 && incomingTitle) {
-          existingIndex = syncState.items.findIndex(i => 
-            String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle
+      // Use functional update to avoid stale closure issues when saving multiple items quickly
+      setSyncState(prevState => {
+        // Check if item already exists
+        // PRIORITY: Check by ID first
+        let existingIndex = prevState.items.findIndex(i => i.data.id === item.data.id);
+        
+        // If not found by ID, check by Title AND Sense (for vocab items with multiple meanings)
+        if (existingIndex === -1 && incomingTitle) {
+            const incomingSense = item.type === 'vocab' ? ((item.data as any).sense || '') : '';
+            
+            existingIndex = prevState.items.findIndex(i => {
+              const titleMatch = String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle;
+              if (!titleMatch) return false;
+              
+              // For vocab items, also check if the sense matches
+              // This allows saving multiple meanings of the same word
+              if (item.type === 'vocab' && i.type === 'vocab') {
+                const existingSense = (i.data as any).sense || '';
+                return existingSense === incomingSense;
+              }
+              
+              return true;
+            });
+        }
+
+        if (existingIndex >= 0) {
+          // Update existing item
+          const existingItem = prevState.items[existingIndex];
+          
+          // FORCE keeping the existing ID to ensure consistency
+          const idToUse = existingItem.data.id;
+
+          // Merge SRS data
+          const mergedSrs = ensureSRSData(
+            existingItem.srs ?? itemToSave.srs,
+            idToUse,
+            existingItem.type
           );
-      }
-
-      if (existingIndex >= 0) {
-        // Update existing item
-        const existingItem = syncState.items[existingIndex];
-        
-        // FORCE keeping the existing ID to ensure consistency
-        const idToUse = existingItem.data.id;
-
-        // Merge SRS data
-        const mergedSrs = ensureSRSData(
-          existingItem.srs ?? itemToSave.srs,
-          idToUse,
-          existingItem.type
-        );
-        // Ensure SRS has correct ID
-        mergedSrs.id = idToUse;
-        
-        const mergedItem: StoredItem = {
-          ...itemToSave,
-          data: { ...itemToSave.data, id: idToUse }, // Keep existing ID
-          savedAt: existingItem.savedAt || Date.now(),
-          updatedAt: Date.now(),
-          srs: mergedSrs
-        };
-        
-        // Update items array directly
-        const newItems = [...syncState.items];
-        newItems[existingIndex] = mergedItem;
-        
-        setSyncState({
-          ...syncState,
-          items: newItems
-        });
-      } else {
-        // New item
-        const normalizedSRS = ensureSRSData(itemToSave.srs, itemToSave.data.id, itemToSave.type);
-        const finalItem = { 
-          ...itemToSave, 
-          srs: normalizedSRS,
-          savedAt: Date.now(),
-          updatedAt: Date.now()
-        };
-        
-        setSyncState({
-          ...syncState,
-          items: [finalItem, ...syncState.items]
-        });
-      }
+          // Ensure SRS has correct ID
+          mergedSrs.id = idToUse;
+          
+          const mergedItem: StoredItem = {
+            ...itemToSave,
+            data: { ...itemToSave.data, id: idToUse }, // Keep existing ID
+            savedAt: existingItem.savedAt || now,
+            updatedAt: now,
+            srs: mergedSrs
+          };
+          
+          // Update items array directly
+          const newItems = [...prevState.items];
+          newItems[existingIndex] = mergedItem;
+          
+          return {
+            ...prevState,
+            items: newItems
+          };
+        } else {
+          // New item
+          const normalizedSRS = ensureSRSData(itemToSave.srs, itemToSave.data.id, itemToSave.type);
+          const finalItem = { 
+            ...itemToSave, 
+            srs: normalizedSRS,
+            savedAt: now,
+            updatedAt: now
+          };
+          
+          return {
+            ...prevState,
+            items: [finalItem, ...prevState.items]
+          };
+        }
+      });
     } catch (err) {
       console.error("Error during save operation:", err);
     }
@@ -525,38 +531,44 @@ const App: React.FC = () => {
     const incomingTitle = String(rawTitle || '').toLowerCase().trim();
     if (!incomingTitle) return;
     
-    // Update item directly
-    const index = syncState.items.findIndex(i => i.data.id === item.data.id);
-    if (index >= 0) {
-      const newItems = [...syncState.items];
-      newItems[index] = {
-        ...item,
-        updatedAt: Date.now()
-      };
-      
-      setSyncState({
-        ...syncState,
-        items: newItems
-      });
-    }
+    // Use functional update to avoid stale closure issues
+    setSyncState(prevState => {
+      const index = prevState.items.findIndex(i => i.data.id === item.data.id);
+      if (index >= 0) {
+        const newItems = [...prevState.items];
+        newItems[index] = {
+          ...item,
+          updatedAt: Date.now()
+        };
+        
+        return {
+          ...prevState,
+          items: newItems
+        };
+      }
+      return prevState;
+    });
   };
 
   const handleDelete = (id: string) => {
-    // Mark item as deleted
-    const index = syncState.items.findIndex(i => i.data.id === id);
-    if (index >= 0) {
-      const newItems = [...syncState.items];
-      newItems[index] = {
-        ...newItems[index],
-        isDeleted: true,
-        updatedAt: Date.now()
-      };
-      
-      setSyncState({
-        ...syncState,
-        items: newItems
-      });
-    }
+    // Use functional update to avoid stale closure issues
+    setSyncState(prevState => {
+      const index = prevState.items.findIndex(i => i.data.id === id);
+      if (index >= 0) {
+        const newItems = [...prevState.items];
+        newItems[index] = {
+          ...newItems[index],
+          isDeleted: true,
+          updatedAt: Date.now()
+        };
+        
+        return {
+          ...prevState,
+          items: newItems
+        };
+      }
+      return prevState;
+    });
   };
 
   const handleRecursiveSearch = (text: string) => {
@@ -572,40 +584,39 @@ const App: React.FC = () => {
 
   // Enhanced SRS update with new algorithm (using operations)
   const updateSRS = (itemId: string, quality: number, taskType: TaskType = 'recall', responseTime: number = 3000) => {
-    const item = syncState.items.find(i => i.data.id === itemId);
-    if (!item) return;
-    
-    // Migrate old SRS data if needed
-    const migratedSRS = migrateSRSData(item.srs);
-    
-    // Use new algorithm
-    const updatedSRS = SRSAlgorithm.updateAfterReview(
-      migratedSRS,
-      quality,
-      taskType,
-      responseTime
-    );
-    
-    // Update SRS directly
-    const index = syncState.items.findIndex(i => i.data.id === itemId);
-    if (index >= 0) {
-      const newItems = [...syncState.items];
-      newItems[index] = {
-        ...newItems[index],
-        srs: updatedSRS,
-        updatedAt: Date.now()
-      };
+    // Use functional update to avoid stale closure issues
+    setSyncState(prevState => {
+      const item = prevState.items.find(i => i.data.id === itemId);
+      if (!item) return prevState;
       
-      setSyncState({
-        ...syncState,
-        items: newItems
-      });
-    }
-  };
-
-  // Legacy updateSRS for backward compatibility with old Study view
-  const updateSRSLegacy = (itemId: string, quality: number) => {
-    updateSRS(itemId, quality, 'recall', 3000);
+      // Migrate old SRS data if needed
+      const migratedSRS = migrateSRSData(item.srs);
+      
+      // Use new algorithm
+      const updatedSRS = SRSAlgorithm.updateAfterReview(
+        migratedSRS,
+        quality,
+        taskType,
+        responseTime
+      );
+      
+      // Update SRS directly
+      const index = prevState.items.findIndex(i => i.data.id === itemId);
+      if (index >= 0) {
+        const newItems = [...prevState.items];
+        newItems[index] = {
+          ...newItems[index],
+          srs: updatedSRS,
+          updatedAt: Date.now()
+        };
+        
+        return {
+          ...prevState,
+          items: newItems
+        };
+      }
+      return prevState;
+    });
   };
 
   // Handle scroll to hide/show nav bar
@@ -691,7 +702,6 @@ const App: React.FC = () => {
             onSignIn={handleSignIn}
             onGuestSignIn={handleGuestSignIn}
             onSignOut={handleSignOut}
-            isConfigured={isFirebaseConfigured}
             syncStatus={syncStatus}
             onScroll={handleScroll}
             onForceSync={handleForceSync}

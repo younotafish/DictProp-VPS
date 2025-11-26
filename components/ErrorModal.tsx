@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { X, AlertOctagon, Copy, Check } from 'lucide-react';
 import { Button } from './Button';

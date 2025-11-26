@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeInput, generateIllustration } from '../services/geminiService';
-import { SearchResult, StoredItem, VocabCard } from '../types';
+import { SearchResult, StoredItem, VocabCard, getItemTitle } from '../types';
 import { ArrowRight, Search as SearchIcon, Loader2, Bookmark, RotateCw, BookOpen, ArrowLeft, AlertCircle, X, Clipboard } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '../components/Button';
@@ -20,16 +19,6 @@ interface SearchProps {
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
   onClear?: () => void;
 }
-
-// Helper to match title safely
-const getStoredTitle = (item: StoredItem) => {
-    if (!item || !item.data) return '';
-    const data = item.data as any;
-    const title = item.type === 'phrase' ? data.query : data.word;
-    return String(title || '');
-};
-
-const createInitialSRS = (id: string, type: 'vocab' | 'phrase') => SRSAlgorithm.createNew(id, type);
 
 export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, onDelete, savedItems, initialQuery, initialData, onViewDetail, onScroll, onClear }) => {
   const [query, setQuery] = useState(initialQuery || '');
@@ -60,7 +49,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
 
   // Find if this title exists in saved items (Case-insensitive check)
   const savedItemMatch = currentTitle 
-    ? savedItems.find(item => getStoredTitle(item).toLowerCase().trim() === currentTitle.toLowerCase().trim())
+    ? savedItems.find(item => getItemTitle(item).toLowerCase().trim() === currentTitle.toLowerCase().trim())
     : undefined;
 
   const isSaved = !!savedItemMatch;
@@ -136,10 +125,11 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     // Push current state to history before starting new search (if we had a result)
     if (result || vocabResult) {
         setSearchHistory(prev => {
+            const itemType: 'phrase' | 'vocab' = result ? 'phrase' : 'vocab';
             const newItem = {
                 query: result ? result.query : (vocabResult?.word || ''),
                 result: result || vocabResult!,
-                type: result ? 'phrase' : 'vocab' as const
+                type: itemType
             };
             // Limit history to last 5 items to prevent memory buildup
             const newHistory = [...prev, newItem];
@@ -155,7 +145,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         // Check if this item is already saved to preserve ID and update content
         const queryToCheck = (rawData.query || '').toLowerCase().trim();
         const existingItem = queryToCheck ? savedItems.find(i => 
-            getStoredTitle(i).toLowerCase().trim() === queryToCheck
+            getItemTitle(i).toLowerCase().trim() === queryToCheck
         ) : undefined;
 
         let data = rawData;
@@ -193,7 +183,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                      data: updatedData,
                      type: 'phrase',
                      savedAt: existingItem?.savedAt || 0, 
-                     srs: existingItem?.srs || createInitialSRS(data.id, 'phrase'),
+                     srs: existingItem?.srs || SRSAlgorithm.createNew(data.id, 'phrase'),
                      updatedAt: Date.now()
                  });
              }
@@ -219,29 +209,9 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                  return { ...prev, vocabs: newVocabs };
                              });
 
-                             // Update the main item to include this vocab image
-                             // Note: We are updating the PHRASE item that contains this vocab
-                             // We need to reconstruct the phrase object with this vocab updated
-                             // Actually, onUpdateStoredItem takes the Whole Item.
-                             // But here we only have the vocab.
-                             // Since we don't have the latest state of 'result' here easily (closures),
-                             // we might rely on the fact that we just updated 'setResult'.
-                             // But for storage, we need to pass the FULL phrase data to update the phrase item.
-                             
-                             // However, the original code was updating a separate VOCAB item:
-                             /*
-                             onUpdateStoredItem({
-                                 data: { ...vocab, imageUrl: img },
-                                 type: 'vocab', ...
-                             });
-                             */
-                             // This implies it was trying to update a standalone vocab item if it existed?
-                             // But 'vocab.id' is random.
-                             // If the user saved the vocab SEPARATELY, we should try to find it and update it.
-                             
-                             // Let's see if this vocab word is saved separately
+                             // Update saved vocab item if it exists separately
                              const existingVocabItem = savedItems.find(i => 
-                                getStoredTitle(i).toLowerCase().trim() === vocab.word.toLowerCase().trim()
+                                getItemTitle(i).toLowerCase().trim() === vocab.word.toLowerCase().trim()
                              );
                              
                              if (existingVocabItem) {
@@ -251,15 +221,6 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                      updatedAt: Date.now()
                                  });
                              }
-                             
-                             // Also update the parent phrase item if it's saved
-                             // We need to use the functional update pattern's result, but we can't access it easily here.
-                             // We can construct it if we have the parent 'data' object in scope.
-                             // 'data' is in scope. But 'data' doesn't have the previous images.
-                             // This is tricky for sequential updates.
-                             // For now, let's focus on the main request: content update.
-                             // The Main Image update logic (above) handles the main item.
-                             // The vocab image updates are secondary.
                         }
                     } catch (e) {
                         console.warn("Vocab image generation failed", e);
@@ -369,7 +330,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         data: result,
         type: 'phrase',
         savedAt: Date.now(),
-        srs: createInitialSRS(result.id, 'phrase')
+        srs: SRSAlgorithm.createNew(result.id, 'phrase')
       });
     }
   };
@@ -379,10 +340,20 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     const word = vocab.word || '';
     if (!word) return;
 
-    // Check specifically for this vocab word in storage
-    const savedVocabMatch = savedItems.find(item => 
-        getStoredTitle(item).toLowerCase().trim() === word.toLowerCase().trim()
-    );
+    // Check specifically for this vocab word AND sense in storage
+    // This allows saving multiple meanings of the same word
+    const savedVocabMatch = savedItems.find(item => {
+        const titleMatch = getItemTitle(item).toLowerCase().trim() === word.toLowerCase().trim();
+        if (!titleMatch) return false;
+        
+        // For vocab items, also check if the sense matches
+        if (item.type === 'vocab') {
+            const itemSense = (item.data as any).sense || '';
+            const vocabSense = vocab.sense || '';
+            return itemSense === vocabSense;
+        }
+        return true;
+    });
 
     if (savedVocabMatch) {
         if (savedVocabMatch.data && savedVocabMatch.data.id) {
@@ -395,7 +366,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
             data: vocab,
             type: 'vocab',
             savedAt: Date.now(),
-            srs: createInitialSRS(vocab.id, 'vocab')
+            srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
         });
     }
   };
@@ -571,7 +542,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                     <VocabCardDisplay 
                                         data={vocab} 
                                         onSave={() => toggleSaveVocab(vocab)}
-                                        isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() && (i.data as any).sense === vocab.sense)}
+                                        isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() && (i.data as any).sense === vocab.sense)}
                                         onSearch={handleTermClick}
                                         onExpand={() => onViewDetail?.(vocab, 'vocab')}
                                         scrollable={false}
@@ -659,7 +630,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                         <VocabCardDisplay 
                                             data={vocab} 
                                             onSave={() => toggleSaveVocab(vocab)}
-                                            isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim())}
+                                            isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() && (i.data as any).sense === vocab.sense)}
                                             onSearch={handleTermClick}
                                             onExpand={() => onViewDetail?.(vocab, 'vocab')}
                                             scrollable={false}
@@ -708,7 +679,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                      <VocabCardDisplay 
                         data={vocabResult} 
                         onSave={() => toggleSaveVocab(vocabResult)}
-                        isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocabResult.word || '').toLowerCase().trim())}
+                        isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocabResult.word || '').toLowerCase().trim() && (i.data as any).sense === vocabResult.sense)}
                         showSave={false}
                         className="min-h-[60vh] shadow-sm border-slate-200"
                         onSearch={handleTermClick}

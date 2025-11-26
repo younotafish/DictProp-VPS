@@ -1,6 +1,5 @@
-
 import React, { useState, useRef } from 'react';
-import { VocabCard, SearchResult, StoredItem } from '../types';
+import { VocabCard, SearchResult, StoredItem, getItemTitle } from '../types';
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
@@ -22,16 +21,6 @@ interface DetailViewProps {
   savedItems: StoredItem[];
   onSearch: (text: string) => void;
 }
-
-// Helper to match title safely
-const getStoredTitle = (item: StoredItem) => {
-    if (!item || !item.data) return '';
-    const data = item.data as any;
-    const title = item.type === 'phrase' ? data.query : data.word;
-    return String(title || '');
-};
-
-const createInitialSRS = (id: string, type: 'vocab' | 'phrase') => SRSAlgorithm.createNew(id, type);
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
   items,
@@ -141,7 +130,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
   
   const savedItemMatch = savedItems.find(item => 
-    getStoredTitle(item).toLowerCase().trim() === (title || '').toLowerCase().trim()
+    getItemTitle(item).toLowerCase().trim() === (title || '').toLowerCase().trim()
   );
   const isSaved = !!savedItemMatch;
 
@@ -155,7 +144,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         data: data,
         type: type,
         savedAt: Date.now(),
-        srs: createInitialSRS(data.id, type)
+        srs: SRSAlgorithm.createNew(data.id, type)
       });
     }
   };
@@ -167,12 +156,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   const handleSaveVocab = (vocab: VocabCard) => {
     const isAlreadySaved = savedItems.some(i => 
-      getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim()
+      getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim()
     );
 
     if (isAlreadySaved) {
       const existingItem = savedItems.find(i => 
-        getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim()
+        getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim()
       );
       if (existingItem) {
         onDelete(existingItem.data.id);
@@ -182,28 +171,28 @@ export const DetailView: React.FC<DetailViewProps> = ({
         data: vocab,
         type: 'vocab',
         savedAt: Date.now(),
-        srs: createInitialSRS(vocab.id, 'vocab')
+        srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
       });
     }
   };
 
-  // Swipe to Close Logic
-  const touchStart = useRef<number | null>(null);
-  const touchEnd = useRef<number | null>(null);
+  // Horizontal Swipe to Close Logic
+  const closeSwipeStartX = useRef<number | null>(null);
+  const closeSwipeEndX = useRef<number | null>(null);
   const minSwipeDistance = 50;
 
-  const onTouchStart = (e: React.TouchEvent) => {
-    touchEnd.current = null;
-    touchStart.current = e.targetTouches[0].clientX;
+  const onCloseSwipeStart = (e: React.TouchEvent) => {
+    closeSwipeEndX.current = null;
+    closeSwipeStartX.current = e.targetTouches[0].clientX;
   };
 
-  const onTouchMove = (e: React.TouchEvent) => {
-    touchEnd.current = e.targetTouches[0].clientX;
+  const onCloseSwipeMove = (e: React.TouchEvent) => {
+    closeSwipeEndX.current = e.targetTouches[0].clientX;
   };
 
-  const onTouchEnd = () => {
-    if (!touchStart.current || !touchEnd.current) return;
-    const distance = touchStart.current - touchEnd.current;
+  const onCloseSwipeEnd = () => {
+    if (!closeSwipeStartX.current || !closeSwipeEndX.current) return;
+    const distance = closeSwipeStartX.current - closeSwipeEndX.current;
     const isRightSwipe = distance < -minSwipeDistance;
     
     if (isRightSwipe) {
@@ -214,9 +203,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
   return (
     <div 
       className="fixed inset-0 z-50 bg-slate-50 flex flex-col animate-in slide-in-from-right duration-300 shadow-2xl"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
+      onTouchStart={onCloseSwipeStart}
+      onTouchMove={onCloseSwipeMove}
+      onTouchEnd={onCloseSwipeEnd}
     >
       <div 
         ref={scrollContainerRef}
@@ -344,7 +333,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         key={vocab.id}
                         data={vocab} 
                         onSave={() => handleSaveVocab(vocab)}
-                        isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim())}
+                        isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim())}
                         onSearch={handleVocabSearch}
                         scrollable={false}
                         showSave={true}

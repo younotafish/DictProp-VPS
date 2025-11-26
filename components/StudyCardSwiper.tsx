@@ -3,7 +3,7 @@
  * Handles swipe gestures (Left = Not Memorized, Right = Memorized) for flashcards.
  * Supports both Touch and Mouse interactions.
  */
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { ThumbsDown, ThumbsUp } from 'lucide-react';
 
 interface SwiperProps {
@@ -18,56 +18,33 @@ export const StudyCardSwiper: React.FC<SwiperProps> = ({ children, onSwipe, enab
   const [isActuallyDragging, setIsActuallyDragging] = useState(false); // True only after drag threshold is met
   const startX = useRef<number | null>(null);
   const startY = useRef<number | null>(null);
-  const directionLocked = useRef<'horizontal' | 'vertical' | null>(null);
+  const startTime = useRef<number>(0);
+  const directionLocked = useRef<'horizontal' | 'vertical' | 'selection' | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const threshold = 100; // Minimum swipe distance to trigger action
-  const dragStartThreshold = 15; // Movement needed before we consider it a drag (allows text selection)
-  const directionLockThreshold = 10; // Movement needed to determine scroll vs swipe direction
+  const dragStartThreshold = 10; // Movement needed before we consider it a drag (lowered for better responsiveness)
+  const directionLockThreshold = 5; // Movement needed to determine scroll vs swipe direction
+  const textSelectionDelay = 150; // ms - if user holds longer than this before moving, assume text selection intent
+  const horizontalRatio = 1.2; // Horizontal movement must be this much greater than vertical to count as swipe
 
-  // Check if touch target is likely for text selection
-  const isTextSelectionTarget = (target: EventTarget | null): boolean => {
-    if (!target || !(target instanceof HTMLElement)) return false;
-    const tagName = target.tagName.toLowerCase();
-    // Allow selection on text-heavy elements
-    if (['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'td', 'th', 'label', 'div'].includes(tagName)) {
-      // Check if this element or a parent has select-text class
-      let el: HTMLElement | null = target;
-      while (el) {
-        if (el.classList.contains('select-text')) {
-          return true;
-        }
-        el = el.parentElement;
-      }
-    }
-    // Check computed style
-    const style = window.getComputedStyle(target);
-    const userSelect = style.getPropertyValue('user-select') || style.getPropertyValue('-webkit-user-select');
-    if (userSelect === 'text') {
-      return true;
-    }
-    return false;
-  };
-
-  // Handle Touch Events
-  const handleTouchStart = (e: React.TouchEvent) => {
+  // Handle Touch Events - using native listeners for iOS Safari compatibility
+  const handleTouchStart = useCallback((e: TouchEvent) => {
     if (!enabled) return;
-    // Don't capture touch if user might be trying to select text
-    if (isTextSelectionTarget(e.target)) {
-      return;
-    }
     startX.current = e.touches[0].clientX;
     startY.current = e.touches[0].clientY;
+    startTime.current = Date.now();
     directionLocked.current = null;
     setIsDragging(true);
-  };
+  }, [enabled]);
 
-  const handleTouchMove = (e: React.TouchEvent) => {
+  const handleTouchMove = useCallback((e: TouchEvent) => {
     if (!enabled || startX.current === null || startY.current === null) return;
     
     const currentX = e.touches[0].clientX;
     const currentY = e.touches[0].clientY;
     const diffX = currentX - startX.current;
     const diffY = currentY - startY.current;
+    const elapsed = Date.now() - startTime.current;
     
     // Determine direction if not locked yet
     if (!directionLocked.current) {
@@ -76,42 +53,69 @@ export const StudyCardSwiper: React.FC<SwiperProps> = ({ children, onSwipe, enab
       
       // Need some movement before we can determine direction
       if (absX > directionLockThreshold || absY > directionLockThreshold) {
-        // If vertical movement is greater, lock to vertical (scrolling)
-        // Use a 1.2 ratio to favor vertical scrolling slightly
-        if (absY > absX * 1.2) {
-          directionLocked.current = 'vertical';
-          return; // Let the browser handle scroll
-        } else if (absX > absY) {
+        // Require strongly horizontal movement to trigger swipe
+        // This makes swiping more intentional - diagonal or mostly vertical = scroll/select
+        if (absX > absY * horizontalRatio) {
+          // If user held for a while before moving horizontally, assume text selection intent
+          if (elapsed > textSelectionDelay) {
+            directionLocked.current = 'selection';
+            return; // Let the browser handle text selection
+          }
           directionLocked.current = 'horizontal';
+          // Prevent default immediately to lock the gesture
+          if (e.cancelable) e.preventDefault();
+        } else {
+          // Anything else (vertical, diagonal) = let browser handle it
+          directionLocked.current = 'vertical';
+          return;
         }
       }
     }
     
-    // If locked to vertical, don't handle horizontal swipe
-    if (directionLocked.current === 'vertical') {
+    // If locked to vertical or selection, don't handle horizontal swipe
+    if (directionLocked.current === 'vertical' || directionLocked.current === 'selection') {
       return;
     }
     
     // Only start visual dragging after threshold is met and direction is horizontal
-    if (directionLocked.current === 'horizontal' && Math.abs(diffX) > dragStartThreshold) {
-      setIsActuallyDragging(true);
-      setOffset(diffX);
-    }
-  };
+    if (directionLocked.current === 'horizontal') {
+      // CRITICAL for iOS Safari: prevent default to stop browser's own gesture handling
+      if (e.cancelable) e.preventDefault();
 
-  const handleTouchEnd = () => {
+      if (Math.abs(diffX) > dragStartThreshold) {
+        setIsActuallyDragging(true);
+        setOffset(diffX);
+      }
+    }
+  }, [enabled]);
+
+  const handleTouchEnd = useCallback(() => {
     handleEnd();
-  };
+  }, []);
+
+  // Attach native touch listeners with { passive: false } for iOS Safari
+  // This allows preventDefault() to work during horizontal swipes
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false }); // passive: false is CRITICAL
+    container.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
 
   // Handle Mouse Events
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!enabled) return;
-    // Don't capture mouse if user might be trying to select text
-    if (isTextSelectionTarget(e.target)) {
-      return;
-    }
     startX.current = e.clientX;
     startY.current = e.clientY;
+    startTime.current = Date.now();
     directionLocked.current = null;
     setIsDragging(true);
   };
@@ -123,6 +127,7 @@ export const StudyCardSwiper: React.FC<SwiperProps> = ({ children, onSwipe, enab
     const currentY = e.clientY;
     const diffX = currentX - startX.current;
     const diffY = currentY - startY.current;
+    const elapsed = Date.now() - startTime.current;
     
     // Determine direction if not locked yet
     if (!directionLocked.current) {
@@ -130,16 +135,23 @@ export const StudyCardSwiper: React.FC<SwiperProps> = ({ children, onSwipe, enab
       const absY = Math.abs(diffY);
       
       if (absX > directionLockThreshold || absY > directionLockThreshold) {
-        if (absY > absX * 1.2) {
+        // Require strongly horizontal movement to trigger swipe
+        if (absX > absY * horizontalRatio) {
+          // If user held for a while before moving horizontally, assume text selection intent
+          if (elapsed > textSelectionDelay) {
+            directionLocked.current = 'selection';
+            return;
+          }
+          directionLocked.current = 'horizontal';
+        } else {
+          // Anything else (vertical, diagonal) = let browser handle it
           directionLocked.current = 'vertical';
           return;
-        } else if (absX > absY) {
-          directionLocked.current = 'horizontal';
         }
       }
     }
     
-    if (directionLocked.current === 'vertical') {
+    if (directionLocked.current === 'vertical' || directionLocked.current === 'selection') {
       return;
     }
     
@@ -198,15 +210,15 @@ export const StudyCardSwiper: React.FC<SwiperProps> = ({ children, onSwipe, enab
   return (
     <div 
       ref={containerRef}
-      className={`relative w-full h-full touch-pan-y ${isActuallyDragging ? 'select-none' : 'select-text'}`}
+      className={`relative w-full h-full ${isActuallyDragging ? 'select-none' : 'select-text'}`}
       style={{ 
+        // iOS Safari: touch-action must be 'none' when dragging to prevent browser interference
+        // Otherwise allow pan-y for vertical scrolling
+        touchAction: isActuallyDragging ? 'none' : 'pan-y',
         WebkitUserSelect: isActuallyDragging ? 'none' : 'text', 
         userSelect: isActuallyDragging ? 'none' : 'text',
         WebkitTouchCallout: isActuallyDragging ? 'none' : 'default'
       }}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}

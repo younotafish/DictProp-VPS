@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { StoredItem, SyncStatus } from '../types';
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter } from 'lucide-react';
@@ -8,7 +7,6 @@ import { PronunciationBlock } from '../components/PronunciationBlock';
 
 interface NotebookItemProps {
   item: StoredItem;
-  index: number;
   isOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
@@ -189,7 +187,6 @@ interface NotebookProps {
   onSignIn: () => void;
   onGuestSignIn?: () => void;
   onSignOut: () => void;
-  isConfigured: boolean;
   syncStatus?: SyncStatus;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
   onForceSync?: () => void;
@@ -197,7 +194,7 @@ interface NotebookProps {
 
 export const NotebookView: React.FC<NotebookProps> = ({ 
     items, onDelete, onSearch, onViewDetail, 
-    user, onSignIn, onGuestSignIn, onSignOut, isConfigured, syncStatus, onScroll, onForceSync
+    user, onSignIn, onGuestSignIn, onSignOut, syncStatus, onScroll, onForceSync
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('all');
@@ -263,7 +260,6 @@ export const NotebookView: React.FC<NotebookProps> = ({
             onSignIn={onSignIn} 
             onGuestSignIn={onGuestSignIn}
             onSignOut={onSignOut} 
-            isConfigured={isConfigured} 
           />
         </div>
       </div>
@@ -321,7 +317,6 @@ export const NotebookView: React.FC<NotebookProps> = ({
             onSignIn={onSignIn} 
             onGuestSignIn={onGuestSignIn}
             onSignOut={onSignOut} 
-            isConfigured={isConfigured} 
           />
         </div>
       </div>
@@ -331,7 +326,6 @@ export const NotebookView: React.FC<NotebookProps> = ({
           <NotebookItem 
             key={item.data.id}
             item={item}
-            index={index}
             isOpen={openItemId === item.data.id}
             onOpen={() => setOpenItemId(item.data.id)}
             onClose={() => setOpenItemId(null)}

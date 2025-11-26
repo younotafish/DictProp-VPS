@@ -1,4 +1,3 @@
-
 import { StoredItem } from '../types';
 
 // Smart Merge: Combines Local and Remote data

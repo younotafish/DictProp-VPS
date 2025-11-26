@@ -1,4 +1,3 @@
-
 import { initializeApp, FirebaseApp } from "firebase/app";
 import { 
   getAuth, 
@@ -84,21 +83,7 @@ export { functions };
 // 2. Helper to check status
 export const isConfigured = () => !!app;
 
-// New Helper for App to check safely
-export const isFirebaseInitialized = () => !!auth && !!db;
-
-// 3. Helper to save config and reload
-export const saveConfig = (config: any) => {
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-    window.location.reload(); // Reload to re-initialize
-};
-
-export const resetConfig = () => {
-    localStorage.removeItem(CONFIG_KEY);
-    window.location.reload();
-};
-
-// 4. Auth Functions
+// Auth Functions
 const provider = new GoogleAuthProvider();
 
 // Helper to detect iOS Safari
@@ -251,7 +236,7 @@ export const subscribeToUserData = (
     onData(items);
   };
 
-  return onSnapshot(itemsCollection, (snapshot) => {
+  const unsubscribe = onSnapshot(itemsCollection, (snapshot) => {
     // Log metadata for debugging
     console.log("🔥 Firebase: Snapshot received, fromCache:", snapshot.metadata.fromCache, "size:", snapshot.size);
 
@@ -278,6 +263,16 @@ export const subscribeToUserData = (
       console.error("🔥 Firestore subscription error:", error);
       console.error("🔥 Firestore: Error code:", error.code, "Message:", error.message);
   });
+
+  // Return cleanup function that clears throttle timer and unsubscribes
+  return () => {
+    if (throttleTimer) {
+      clearTimeout(throttleTimer);
+      throttleTimer = null;
+    }
+    pendingSnapshot = null;
+    unsubscribe();
+  };
 };
 
 // Helper: Upload base64 image to Storage and return download URL
@@ -436,94 +431,6 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
   }
 };
 
-// ========== LEARNING ANALYTICS SYNC ==========
-
-export interface LearningAnalytics {
-  userId: string;
-  totalReviews: number;
-  totalStudyTime: number; // milliseconds
-  streak: number; // days
-  lastStudyDate: number; // timestamp
-  performanceByTask: {
-    [taskType: string]: {
-      attempts: number;
-      correct: number;
-      averageResponseTime: number;
-    };
-  };
-  weakWords: string[]; // IDs of words user struggles with
-  strongWords: string[]; // IDs of mastered words
-  dailyActivity: {
-    [date: string]: {
-      reviews: number;
-      studyTime: number;
-      accuracy: number;
-    };
-  };
-}
-
-/**
- * Save learning analytics to Firebase
- */
-export const saveLearningAnalytics = async (userId: string, analytics: LearningAnalytics): Promise<void> => {
-  if (!db) throw new Error("NOT_CONFIGURED");
-  
-  try {
-    const analyticsRef = doc(db, "users", userId, "analytics", "summary");
-    await setDoc(analyticsRef, {
-      ...analytics,
-      lastUpdated: Date.now()
-    }, { merge: true });
-    
-    console.log("🔥 Firebase: Learning analytics saved");
-  } catch (error) {
-    console.error("🔥 Firebase: Error saving analytics:", error);
-    throw error;
-  }
-};
-
-/**
- * Load learning analytics from Firebase
- */
-export const loadLearningAnalytics = async (userId: string): Promise<LearningAnalytics | null> => {
-  if (!db) throw new Error("NOT_CONFIGURED");
-  
-  try {
-    const analyticsRef = doc(db, "users", userId, "analytics", "summary");
-    const snapshot = await getDoc(analyticsRef);
-    
-    if (snapshot.exists()) {
-      return snapshot.data() as LearningAnalytics;
-    }
-    return null;
-  } catch (error) {
-    console.error("🔥 Firebase: Error loading analytics:", error);
-    return null;
-  }
-};
-
-/**
- * Subscribe to learning analytics updates
- */
-export const subscribeToAnalytics = (
-  userId: string,
-  onData: (analytics: LearningAnalytics | null) => void
-): (() => void) => {
-  if (!db) return () => {};
-  
-  const analyticsRef = doc(db, "users", userId, "analytics", "summary");
-  
-  return onSnapshot(analyticsRef, (snapshot) => {
-    if (snapshot.exists()) {
-      onData(snapshot.data() as LearningAnalytics);
-    } else {
-      onData(null);
-    }
-  }, (error) => {
-    console.error("🔥 Firebase: Analytics subscription error:", error);
-  });
-};
-
 /**
  * Record a study session (for streak and activity tracking)
  */
@@ -552,6 +459,3 @@ export const recordStudySession = async (
   }
 };
 
-// ========== DEPRECATED: OPERATION-BASED SYNC REMOVED ==========
-// The operation-based sync was removed because items exceeded Firestore's 1MB document limit.
-// We now use simple direct item sync which works perfectly with the existing items collection.
