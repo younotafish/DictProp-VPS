@@ -1,9 +1,8 @@
 
 import React, { useState, useRef } from 'react';
 import { VocabCard, SearchResult, StoredItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Play, Search as SearchIcon, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw } from 'lucide-react';
 import { Button } from '../components/Button';
-import { AudioButton } from '../components/AudioButton';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import ReactMarkdown from 'react-markdown';
@@ -278,7 +277,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           {hasPrev && (
             <div className="py-4 text-center text-slate-400 flex flex-col items-center animate-pulse opacity-60 hover:opacity-100 transition-opacity mb-2">
               <ArrowLeft size={16} className="rotate-90" />
-              <span className="text-xs uppercase font-bold tracking-widest mt-1">Scroll for previous</span>
+              <span className="text-xs uppercase font-bold tracking-widest mt-1">Previous item</span>
             </div>
           )}
 
@@ -360,7 +359,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
           {hasNext && (
             <div className="py-8 text-center text-slate-400 flex flex-col items-center animate-pulse">
-              <span className="text-xs uppercase font-bold tracking-widest mb-1">Scroll for next</span>
+              <span className="text-xs uppercase font-bold tracking-widest mb-1">Next item</span>
               <ArrowLeft size={16} className="-rotate-90" />
             </div>
           )}

@@ -8,24 +8,17 @@
  * Sentence: Use word in context
  */
 
-import React, { useState, useEffect } from 'react';
-import { VocabCard, SearchResult, TaskType } from '../types';
+import React, { useState } from 'react';
+import { VocabCard } from '../types';
 import { AudioButton } from './AudioButton';
 import { PronunciationBlock } from './PronunciationBlock';
 import { Check, X, Volume2 } from 'lucide-react';
 import { Button } from './Button';
 
-interface BaseTaskProps {
+interface VocabTaskProps {
+  vocab: VocabCard;
   onComplete: (quality: number, responseTime: number) => void;
   onSkip: () => void;
-}
-
-interface VocabTaskProps extends BaseTaskProps {
-  vocab: VocabCard;
-}
-
-interface PhraseTaskProps extends BaseTaskProps {
-  phrase: SearchResult;
 }
 
 // ========== RECOGNITION TASK ==========
@@ -248,7 +241,7 @@ export const TypingTask: React.FC<VocabTaskProps> = ({ vocab, onComplete, onSkip
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && input.trim() && handleSubmit()}
-                placeholder="Type the English word..."
+                placeholder="Type your answer..."
                 className="w-full p-4 text-xl border-2 border-slate-300 rounded-xl focus:border-indigo-500 focus:outline-none"
                 autoFocus
               />
@@ -327,7 +320,7 @@ export const ListeningTask: React.FC<VocabTaskProps> = ({ vocab, onComplete, onS
         <div className="w-full max-w-md space-y-8">
           <div className="flex flex-col items-center">
             <Volume2 size={64} className="text-slate-300 mb-6" />
-            <p className="text-slate-500 mb-8 text-center">Listen and type what you hear</p>
+            <p className="text-slate-500 mb-8 text-center font-medium">Listen carefully and type what you hear</p>
             
             <AudioButton
               text={vocab.word}
@@ -431,7 +424,7 @@ export const SentenceTask: React.FC<VocabTaskProps> = ({ vocab, onComplete, onSk
           <div className="p-6 bg-slate-50 rounded-2xl border-2 border-slate-200">
             <p className="text-xs text-slate-400 font-bold uppercase mb-3">Challenge</p>
             <p className="text-slate-700 leading-relaxed">
-              Try to create a sentence using this word. Think about the context and usage.
+              Can you create a sentence using this word in the right context?
             </p>
           </div>
 

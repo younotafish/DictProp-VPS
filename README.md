@@ -10,12 +10,12 @@ View your app in AI Studio: https://ai.studio/apps/drive/1xgIRAWPloe5gPdslYRnvse
 
 ## ✨ Key Features
 
-- 🤖 **AI-Powered Definitions** - Get comprehensive word explanations using Gemini AI
-- 🧠 **Advanced SRS System** - SuperMemo/Shanbay-inspired memory strength algorithm
-- 🎯 **Multi-Task Learning** - Recognition, Recall, Typing, Listening, and Sentence tasks
-- 📊 **Learning Analytics** - Track your progress with detailed insights
-- ☁️ **Firebase Sync** - Cloud backup across devices
-- 📱 **Mobile-First Design** - Beautiful, responsive UI optimized for mobile
+- 🤖 **AI-Powered Analysis** - Get comprehensive word and phrase explanations with examples, etymology, and mnemonics using Gemini AI
+- 🧠 **Advanced SRS System** - SuperMemo/Shanbay-inspired memory strength algorithm that adapts to your learning
+- 🎯 **Multi-Task Learning** - Five task types: Recognition, Recall, Typing, Listening, and Sentence usage
+- 📊 **Learning Analytics** - Track your progress with detailed mastery insights and memory strength metrics
+- ☁️ **Cross-Device Sync** - Seamless cloud backup and real-time sync across all your devices
+- 📱 **Mobile-First Design** - Beautiful, responsive PWA optimized for mobile learning
 
 ## 🚀 Run Locally
 
@@ -95,13 +95,13 @@ The app features a **simple, optimized sync system** that just works:
 
 ## 🎓 Study Modes
 
-1. **Recognition** ⭐ - Multiple choice (easiest)
-2. **Recall** ⭐⭐ - Self-graded memory recall
-3. **Listening** ⭐⭐⭐ - Audio-only recognition
-4. **Typing** ⭐⭐⭐⭐ - Produce the word from meaning
-5. **Sentence** ⭐⭐⭐⭐⭐ - Use in context (hardest)
+1. **Recognition** ⭐ - Multiple choice meaning selection (easiest)
+2. **Recall** ⭐⭐ - Self-graded memory recall without hints
+3. **Listening** ⭐⭐⭐ - Audio-only recognition and transcription
+4. **Typing** ⭐⭐⭐⭐ - Produce the exact word from its meaning
+5. **Sentence** ⭐⭐⭐⭐⭐ - Create sentences using the word in context (hardest)
 
-The system automatically recommends task types based on your mastery level.
+The system intelligently recommends task types based on your current mastery level.
 
 ## 🔧 Setup Guides
 

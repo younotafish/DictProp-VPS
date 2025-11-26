@@ -18,7 +18,6 @@ import {
   setDoc, 
   getDoc,
   getDocs,
-  deleteDoc,
   collection,
   onSnapshot,
   writeBatch,
@@ -29,11 +28,10 @@ import {
   ref,
   uploadString,
   getDownloadURL,
-  deleteObject,
   FirebaseStorage
 } from "firebase/storage";
 import { getFunctions, Functions } from "firebase/functions";
-import { StoredItem, TaskPerformance } from "../types";
+import { StoredItem } from "../types";
 
 const CONFIG_KEY = 'popdict_firebase_config';
 

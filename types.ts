@@ -2,6 +2,7 @@
 export interface VocabCard {
   id: string; // Unique ID
   word: string;
+  sense?: string; // Brief label for this specific meaning (e.g., "noun: emotion", "verb: to affect")
   chinese: string;
   ipa: string;
   definition: string;
@@ -75,50 +76,7 @@ export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
 export type ViewState = 'search' | 'notebook' | 'study';
 
-// ============================================
-// OPERATION-BASED SYNC SYSTEM
-// ============================================
-
-/**
- * Represents a single atomic change to the data
- * Every user action (create, update, delete) becomes an operation
- */
-export interface SyncOperation {
-  id: string; // Format: `${deviceId}_${timestamp}_${nonce}`
-  deviceId: string; // Unique identifier for this device
-  timestamp: number; // When operation was created
-  type: 'create' | 'update' | 'delete';
-  itemId: string; // ID of the item being modified
-  
-  // For field-level updates (allows merging edits to different fields)
-  field?: string; // Path like "data.definition" or "srs.interval"
-  value?: any; // New value for the field
-  
-  // For full item operations
-  item?: StoredItem; // Used for 'create' operations
-  
-  // Metadata
-  applied?: boolean; // Whether this op has been applied locally
-  synced?: boolean; // Whether this op has been synced to cloud
-}
-
-/**
- * The complete sync state for the application
- * Maintains both the current state and operation history
- */
+// Simplified sync state (operation-based sync was removed due to Firestore limits)
 export interface SyncState {
-  // Current derived state (computed from operations)
   items: StoredItem[];
-  
-  // Operation log (last 1000 operations for conflict resolution)
-  operations: SyncOperation[];
-  
-  // Pending operations not yet synced to server
-  pendingOps: SyncOperation[];
-  
-  // Last operation ID we've synced to server
-  lastSyncedOpId: string | null;
-  
-  // Device identifier for this device
-  deviceId: string;
 }

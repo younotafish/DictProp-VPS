@@ -2,11 +2,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeInput, generateIllustration } from '../services/geminiService';
 import { SearchResult, StoredItem, VocabCard } from '../types';
-import { ArrowRight, Search as SearchIcon, Mic, Loader2, Bookmark, BookmarkMinus, Play, RotateCw, BookOpen, ArrowLeft, AlertCircle, X, Clipboard } from 'lucide-react';
+import { ArrowRight, Search as SearchIcon, Loader2, Bookmark, RotateCw, BookOpen, ArrowLeft, AlertCircle, X, Clipboard } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
-import { AudioButton } from '../components/AudioButton';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
@@ -479,14 +478,14 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
             </div>
             
             <h1 className="text-3xl font-bold text-slate-900 mb-3 tracking-tight">
-              What's on your mind?
+              What would you like to learn?
             </h1>
             <p className="text-slate-500 max-w-xs mb-10 text-lg leading-relaxed">
-              Ask about any phrase, idiom, or word to get an AI-powered explanation.
+              Search for any word, phrase, or idiom to get instant AI-powered insights and examples.
             </p>
             
             <div className="w-full max-w-md space-y-4">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Inspiration</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Try These</p>
               <div className="flex flex-wrap justify-center gap-2">
                 {[
                     { t: "serendipity", i: "📚" },
@@ -536,85 +535,43 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         {(result || vocabResult) && (
           <div className={`fade-in pb-8 max-w-3xl mx-auto transition-opacity duration-300 ${loading ? 'opacity-50 grayscale-[0.5]' : 'opacity-100'}`}>
             
-            {/* Render Search Result (Phrase) */}
+            {/* Render Search Result */}
             {result && (
                 <>
-                {/* Hero Card */}
-                <div className="px-4 space-y-4 mt-6">
-                <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden relative">
-                    {/* Save button - fixed in top right */}
-                    <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
-                        {isViewingStored && (
-                            <button 
-                                onClick={handleRefresh} 
-                                title="Refresh Analysis" 
-                                className="p-3 rounded-full bg-white/90 backdrop-blur text-slate-600 hover:text-indigo-600 hover:bg-white shadow-lg transition-all active:scale-90"
-                            >
-                                <RotateCw size={20} />
-                            </button>
-                        )}
-                        <button 
-                            onClick={toggleSave} 
-                            className={`p-3 rounded-full shadow-lg transition-all active:scale-90 ${
-                                isSaved 
-                                    ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
-                                    : 'bg-white/90 backdrop-blur text-slate-600 hover:bg-white hover:text-indigo-600'
-                            }`}
-                            title={isSaved ? 'Remove from Notebook' : 'Save to Notebook'}
-                        >
-                            {isSaved ? <Bookmark size={20} fill="currentColor" /> : <Bookmark size={20} />}
-                        </button>
-                    </div>
-                    {/* Generated Image Header */}
-                    <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group">
-                    {result.imageUrl ? (
-                        <img src={result.imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
-                    ) : (
-                        <div className="flex flex-col items-center text-slate-400">
-                            {imageLoading ? <Loader2 className="animate-spin mb-2 text-indigo-400"/> : <SearchIcon className="mb-2 opacity-30" size={32}/>}
-                            <span className="text-xs uppercase font-bold tracking-wider opacity-60">{result.visualKeyword || 'Generating Visual...'}</span>
+                {/* WORD MODE: Only show vocabulary cards as carousel (no translation means word mode) */}
+                {!result.translation ? (
+                    <div className="mt-6 mb-6">
+                        <div className="px-6 mb-4 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <BookOpen size={16} className="text-indigo-500" />
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+                                    {(result.vocabs || []).length > 1 ? 'All Meanings' : 'Definition'}
+                                </h3>
+                            </div>
+                            {isViewingStored && (
+                                <button 
+                                    onClick={handleRefresh} 
+                                    title="Refresh Analysis" 
+                                    className="p-2 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition-all active:scale-90"
+                                >
+                                    <RotateCw size={18} />
+                                </button>
+                            )}
                         </div>
-                    )}
-                    </div>
-
-                    <div className="p-6 sm:p-8">
-                        <div className="mb-6">
-                            <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{result.translation}</h2>
-                            <p className="text-lg text-slate-600 mb-3 leading-relaxed">{result.query}</p>
-                            <PronunciationBlock 
-                                text={result.query} 
-                                ipa={result.pronunciation} 
-                                className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
-                            />
-                        </div>
-                        
-                        <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">
-                            <ReactMarkdown 
-                                components={{
-                                    strong: ({node, ...props}) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
-                                }}
-                            >
-                                {result.grammar}
-                            </ReactMarkdown>
-                        </div>
-                    </div>
-                </div>
-                </div>
-
-                {/* Vocab Carousel */}
-                {(result.vocabs || []).length > 0 && (
-                    <div className="mt-8 mb-6">
-                        <div className="px-6 mb-4 flex items-center gap-2">
-                            <BookOpen size={16} className="text-indigo-500" />
-                            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Key Vocabulary</h3>
-                        </div>
+                        {/* Vocab Cards - Horizontal carousel for word mode */}
                         <div className="flex overflow-x-auto px-4 gap-4 pb-8 no-scrollbar snap-x snap-mandatory items-stretch">
-                            {(result.vocabs || []).map((vocab) => (
-                                <div key={vocab.id} className="min-w-[85vw] md:min-w-[400px] snap-center h-auto">
+                            {(result.vocabs || []).map((vocab, index) => (
+                                <div key={vocab.id} className="min-w-[85vw] md:min-w-[400px] snap-center h-auto relative">
+                                    {/* Meaning number badge for multiple meanings */}
+                                    {(result.vocabs || []).length > 1 && (
+                                        <div className="absolute -left-1 -top-1 z-10 w-7 h-7 bg-indigo-600 text-white text-sm font-bold rounded-full flex items-center justify-center shadow-md">
+                                            {index + 1}
+                                        </div>
+                                    )}
                                     <VocabCardDisplay 
                                         data={vocab} 
                                         onSave={() => toggleSaveVocab(vocab)}
-                                        isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim())}
+                                        isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() && (i.data as any).sense === vocab.sense)}
                                         onSearch={handleTermClick}
                                         onExpand={() => onViewDetail?.(vocab, 'vocab')}
                                         scrollable={false}
@@ -624,6 +581,96 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                             ))}
                         </div>
                     </div>
+                ) : (
+                    /* SENTENCE MODE: Full analysis with hero card */
+                    <>
+                    {/* Hero Card */}
+                    <div className="px-4 space-y-4 mt-6">
+                    <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden relative">
+                        {/* Save button - fixed in top right */}
+                        <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+                            {isViewingStored && (
+                                <button 
+                                    onClick={handleRefresh} 
+                                    title="Refresh Analysis" 
+                                    className="p-3 rounded-full bg-white/90 backdrop-blur text-slate-600 hover:text-indigo-600 hover:bg-white shadow-lg transition-all active:scale-90"
+                                >
+                                    <RotateCw size={20} />
+                                </button>
+                            )}
+                            <button 
+                                onClick={toggleSave} 
+                                className={`p-3 rounded-full shadow-lg transition-all active:scale-90 ${
+                                    isSaved 
+                                        ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+                                        : 'bg-white/90 backdrop-blur text-slate-600 hover:bg-white hover:text-indigo-600'
+                                }`}
+                                title={isSaved ? 'Remove from Notebook' : 'Save to Notebook'}
+                            >
+                                {isSaved ? <Bookmark size={20} fill="currentColor" /> : <Bookmark size={20} />}
+                            </button>
+                        </div>
+                        {/* Generated Image Header */}
+                        <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group">
+                        {result.imageUrl ? (
+                            <img src={result.imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
+                        ) : (
+                            <div className="flex flex-col items-center text-slate-400">
+                                {imageLoading ? <Loader2 className="animate-spin mb-2 text-indigo-400"/> : <SearchIcon className="mb-2 opacity-30" size={32}/>}
+                                <span className="text-xs uppercase font-bold tracking-wider opacity-60">{result.visualKeyword || 'Generating Visual...'}</span>
+                            </div>
+                        )}
+                        </div>
+
+                        <div className="p-6 sm:p-8">
+                            <div className="mb-6">
+                                <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{result.translation}</h2>
+                                <p className="text-lg text-slate-600 mb-3 leading-relaxed">{result.query}</p>
+                                <PronunciationBlock 
+                                    text={result.query} 
+                                    ipa={result.pronunciation} 
+                                    className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
+                                />
+                            </div>
+                            
+                            <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">
+                                <ReactMarkdown 
+                                    components={{
+                                        strong: ({node, ...props}) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
+                                    }}
+                                >
+                                    {result.grammar}
+                                </ReactMarkdown>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+
+                    {/* Vocab Carousel for sentence mode */}
+                    {(result.vocabs || []).length > 0 && (
+                        <div className="mt-8 mb-6">
+                            <div className="px-6 mb-4 flex items-center gap-2">
+                                <BookOpen size={16} className="text-indigo-500" />
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Key Vocabulary</h3>
+                            </div>
+                            <div className="flex overflow-x-auto px-4 gap-4 pb-8 no-scrollbar snap-x snap-mandatory items-stretch">
+                                {(result.vocabs || []).map((vocab) => (
+                                    <div key={vocab.id} className="min-w-[85vw] md:min-w-[400px] snap-center h-auto">
+                                        <VocabCardDisplay 
+                                            data={vocab} 
+                                            onSave={() => toggleSaveVocab(vocab)}
+                                            isSaved={savedItems.some(i => getStoredTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim())}
+                                            onSearch={handleTermClick}
+                                            onExpand={() => onViewDetail?.(vocab, 'vocab')}
+                                            scrollable={false}
+                                            className="h-full border-slate-200 shadow-sm hover:shadow-md transition-shadow"
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    </>
                 )}
                 </>
             )}

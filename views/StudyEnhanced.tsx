@@ -26,8 +26,6 @@ import {
   Zap,
   Target,
   Clock,
-  ThumbsDown,
-  ThumbsUp,
   Trash2,
   Play,
   Search as SearchIcon,
@@ -132,7 +130,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     }
 
     if (studySet.length === 0) {
-      alert("No items to review! Add more to your notebook.");
+      alert("No items to review yet! Add vocabulary or phrases to your notebook to start studying.");
       return;
     }
 
@@ -191,11 +189,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     // Move to next item
     const nextQueue = queue.slice(1);
     
-    // Re-queue if failed (so we see it again this session?)
-    // User requested: "Simplified SuperMemo". 
-    // Standard Anki/SM behavior: if failed, show again soon. 
-    // For this session queue, let's just move on to keep flow fast, 
-    // the algorithm will schedule it very soon (e.g. 1 min) anyway.
+    // Re-queue if failed (so we see it again this session)
+    if (!isMemorized) {
+       nextQueue.push(currentItem);
+    }
     
     if (nextQueue.length === 0) {
       finishSession();
@@ -248,21 +245,30 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const isVocab = item.type === 'vocab';
     const frontText = isVocab ? (item.data as VocabCard).word : (item.data as SearchResult).query;
     const subText = isVocab ? (item.data as VocabCard).ipa : 'Phrase';
+    const sense = isVocab ? (item.data as VocabCard).sense : undefined;
 
     return (
       <div 
-        className="w-full h-full bg-white rounded-[2rem] shadow-xl shadow-slate-200/60 border border-slate-100 flex flex-col justify-between p-8 cursor-pointer hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden"
+        className="w-full h-full bg-gradient-to-br from-white to-indigo-50/30 rounded-[2rem] shadow-xl shadow-slate-200/60 border-2 border-indigo-100 flex flex-col justify-between p-8 cursor-pointer hover:shadow-2xl hover:-translate-y-1 hover:border-indigo-200 transition-all duration-300 relative overflow-hidden group"
         onClick={() => setIsFlipped(true)}
       >
-        <div className="relative w-full h-8 shrink-0 flex justify-center">
-          <p className="text-[10px] font-bold text-indigo-400 tracking-widest uppercase mt-1 opacity-60">Tap to reveal</p>
+        <div className="relative w-full h-8 shrink-0 flex justify-center items-center gap-2">
+          <Play size={12} className="text-indigo-400 opacity-60" fill="currentColor" />
+          <p className="text-[10px] font-bold text-indigo-400 tracking-widest uppercase opacity-60 group-hover:opacity-100 transition-opacity">Tap to reveal answer</p>
         </div>
 
         <div className="flex-1 flex items-center justify-center w-full overflow-hidden my-4">
           <div className="max-h-full w-full overflow-y-auto no-scrollbar text-center px-2">
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-800 break-words leading-tight tracking-tight">
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-800 break-words leading-tight tracking-tight mb-2">
               {frontText}
             </h2>
+            {/* Show sense/meaning hint for words with multiple meanings */}
+            {sense && (
+              <span className="inline-block mt-2 px-3 py-1 bg-violet-100 text-violet-700 text-sm font-medium rounded-full">
+                {sense}
+              </span>
+            )}
+            <div className="w-16 h-1 bg-gradient-to-r from-transparent via-indigo-300 to-transparent mx-auto opacity-30 mt-3"></div>
           </div>
         </div>
 
@@ -274,7 +280,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
              <PronunciationBlock 
                 text={frontText || ''}
                 ipa={subText}
-                className="text-lg bg-indigo-50 text-indigo-600 px-4 py-2 rounded-xl"
+                className="text-lg bg-indigo-50 text-indigo-600 px-4 py-2 rounded-xl shadow-sm"
                 showIcon={true}
              />
           )}
@@ -305,7 +311,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       const data = item.data as SearchResult;
       return (
         <div 
-          className="h-full w-full bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-y-auto no-scrollbar relative"
+          className="h-full w-full bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-y-auto relative select-text pb-8"
+          style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
         >
             {/* Hero Image */}
             <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group shrink-0">
@@ -326,7 +333,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                 )}
             </div>
 
-            <div className="p-6">
+            <div className="p-6 pb-10">
                 <div className="mb-6">
                     <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{data.translation}</h2>
                     <p className="text-lg text-slate-600 mb-3 leading-relaxed">{data.query}</p>
@@ -354,7 +361,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                             <SearchIcon size={14} className="text-indigo-500" />
                             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Key Vocabulary</h3>
                         </div>
-                        <div className="grid gap-3">
+                        <div className="grid gap-3 pb-4">
                             {(data.vocabs || []).map((vocab) => (
                                 <VocabCardDisplay 
                                     key={vocab.id}
@@ -382,8 +389,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mb-4">
           <BrainCircuit size={40} className="text-slate-400" />
         </div>
-        <h3 className="text-xl font-bold text-slate-700 mb-2">No Knowledge Yet</h3>
-        <p className="max-w-xs">Add words to your notebook to start building your personalized AI curriculum.</p>
+        <h3 className="text-xl font-bold text-slate-700 mb-2">Your Study Space</h3>
+        <p className="max-w-xs">Add vocabulary and phrases to your notebook to begin your learning journey with smart spaced repetition.</p>
       </div>
     );
   }
@@ -533,7 +540,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           </div>
           <h2 className="text-4xl font-bold mb-3 tracking-tight">Brilliant Session!</h2>
           <p className="text-violet-200 mb-8 text-lg max-w-xs mx-auto">
-            You've strengthened {sessionStats.reviews} memories
+            You've reviewed {sessionStats.reviews} {sessionStats.reviews === 1 ? 'card' : 'cards'} and strengthened your memory
           </p>
 
           {/* Session Summary */}
@@ -575,7 +582,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // --- SESSION VIEW ---
   return (
     <div className="fixed inset-0 z-50 bg-slate-100 flex flex-col animate-in slide-in-from-bottom duration-300">
-      <div className="w-full max-w-md mx-auto h-full flex flex-col p-4">
+      <div className="w-full max-w-md mx-auto h-full flex flex-col p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
         {/* Header */}
         <div className="flex justify-between items-center mb-4 shrink-0">
           <Button variant="ghost" size="sm" onClick={() => setMode('dashboard')} className="text-slate-400 hover:text-slate-600">
@@ -629,8 +636,13 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
               {/* Back Face */}
               <div 
-                className={`absolute inset-0 rotate-y-180 backface-hidden transition-opacity duration-75 delay-200 ${isFlipped ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-                style={{ WebkitBackfaceVisibility: 'hidden', backfaceVisibility: 'hidden' }}
+                className={`absolute inset-0 rotate-y-180 backface-hidden transition-opacity duration-75 delay-200 select-text ${isFlipped ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                style={{ 
+                  WebkitBackfaceVisibility: 'hidden', 
+                  backfaceVisibility: 'hidden',
+                  WebkitUserSelect: 'text',
+                  userSelect: 'text'
+                }}
               >
                  {renderBack()}
               </div>

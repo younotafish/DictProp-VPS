@@ -1,11 +1,11 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SearchView } from './views/Search';
 import { NotebookView } from './views/Notebook';
 import { StudyView } from './views/Study';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, VocabCard, SRSData, SearchResult, SyncStatus, TaskType, SyncState } from './types';
+import { StoredItem, ViewState, SRSData, SyncStatus, TaskType, SyncState } from './types';
 import { Search, Book, BrainCircuit } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
@@ -23,15 +23,18 @@ const getItemTitle = (item: StoredItem): string => {
 };
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<ViewState>('search');
+  const [currentView, setCurrentView] = useState<ViewState>(() => {
+    return (localStorage.getItem('app_current_view') as ViewState) || 'search';
+  });
+
+  // Persist current view
+  useEffect(() => {
+    localStorage.setItem('app_current_view', currentView);
+  }, [currentView]);
   
   // Simplified sync state (items only)
   const [syncState, setSyncState] = useState<SyncState>({
-    items: [],
-    operations: [],
-    pendingOps: [],
-    lastSyncedOpId: null,
-    deviceId: ''
+    items: []
   });
   
   // Track last successful sync timestamp to enable Delta Sync
@@ -43,7 +46,18 @@ const App: React.FC = () => {
   // Derived state
   const savedItems = syncState.items;
   
-  const [recursiveQuery, setRecursiveQuery] = useState<string | undefined>(undefined);
+  const [recursiveQuery, setRecursiveQuery] = useState<string | undefined>(() => {
+      return localStorage.getItem('app_last_query') || undefined;
+  });
+  
+  useEffect(() => {
+      if (recursiveQuery) {
+          localStorage.setItem('app_last_query', recursiveQuery);
+      } else {
+          localStorage.removeItem('app_last_query');
+      }
+  }, [recursiveQuery]);
+
   const [selectedStoredItem, setSelectedStoredItem] = useState<StoredItem | undefined>(undefined);
   const [isLoaded, setIsLoaded] = useState(false);
   const [showNav, setShowNav] = useState(true);
@@ -59,12 +73,6 @@ const App: React.FC = () => {
 
   const [detailContext, setDetailContext] = useState<{ items: StoredItem[], index: number } | null>(null);
 
-  // Swipe Logic Refs
-  const touchStartX = useRef<number | null>(null);
-  const touchStartY = useRef<number | null>(null);
-  const touchEndX = useRef<number | null>(null);
-  const touchEndY = useRef<number | null>(null);
-  const minSwipeDistance = 50;
 
   // Force refresh logic for iOS PWA
   useEffect(() => {
@@ -90,34 +98,11 @@ const App: React.FC = () => {
       return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
-  const onTouchStart = (e: React.TouchEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('.overflow-x-auto')) {
-        touchStartX.current = null;
-        return;
-    }
-    touchEndX.current = null;
-    touchEndY.current = null;
-    touchStartX.current = e.targetTouches[0].clientX;
-    touchStartY.current = e.targetTouches[0].clientY;
-  };
-
-  const onTouchMove = (e: React.TouchEvent) => {
-    touchEndX.current = e.targetTouches[0].clientX;
-    touchEndY.current = e.targetTouches[0].clientY;
-  };
-
-  const onTouchEnd = () => {
-    // DISABLED: Tab swipe navigation to prevent conflicts with card swipe gestures
-    return;
-  };
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
     const initStorage = async () => {
         try {
-            console.log("🔧 Initializing storage and sync system...");
-            
             const migrated = await migrateFromLocalStorage();
             let itemsToLoad: StoredItem[] = [];
             
@@ -140,19 +125,16 @@ const App: React.FC = () => {
             // 1. SRS Migration
             const needsSRSMigration = processedItems.some(item => typeof item.srs?.memoryStrength !== 'number');
             if (needsSRSMigration && processedItems.length > 0) {
-                console.log("🔄 Migrating", processedItems.length, "items to new SRS format...");
                 processedItems = processedItems.map(item => ({
                     ...item,
                     srs: migrateSRSData(item.srs)
                 }));
                 hasChanges = true;
-                console.log("✅ SRS migration complete!");
             }
 
             // 2. Timestamp Fix (for Sync)
             const needsTimestampFix = processedItems.some(item => !item.updatedAt && !item.savedAt);
             if (needsTimestampFix) {
-                console.log("🔄 Fixing missing timestamps for sync compatibility...");
                 const now = Date.now();
                 processedItems = processedItems.map(item => {
                     if (!item.updatedAt && !item.savedAt) {
@@ -161,24 +143,17 @@ const App: React.FC = () => {
                     return item;
                 });
                 hasChanges = true;
-                console.log("✅ Timestamp fix complete!");
             }
 
-            // 3. Initialize sync state (simple items only)
+            // 3. Initialize sync state
             setSyncState({
-                items: processedItems,
-                operations: [],
-                pendingOps: [],
-                lastSyncedOpId: null,
-                deviceId: ''
+                items: processedItems
             });
             
             // 5. Save if we made changes
             if (hasChanges) {
                 await saveData(processedItems);
             }
-            
-            console.log("✅ Storage initialization complete");
         } catch (e) {
             console.error("Failed to initialize storage", e);
         } finally {
@@ -201,17 +176,11 @@ const App: React.FC = () => {
       const age = now - deletedAt;
       
       if (age > retentionMs) {
-        console.log(`🧹 Hard deleting old item: ${(item.data as any).word || (item.data as any).query} (deleted ${Math.round(age / (24 * 60 * 60 * 1000))} days ago)`);
         return false; // Hard delete
       }
       
       return true; // Keep within retention period
     });
-    
-    const removedCount = items.length - cleaned.length;
-    if (removedCount > 0) {
-      console.log(`🧹 Cleanup: Removed ${removedCount} old deleted items (>${DELETION_RETENTION_DAYS} days)`);
-    }
     
     return cleaned;
   };
@@ -245,17 +214,12 @@ const App: React.FC = () => {
       }
       
       if (currentUser) {
-        console.log("🔥 Setting up sync for user:", currentUser.uid);
-        
         // 1. Load User's specific local data (offline cache for this user)
-        console.log("📥 Loading local data for user...");
         const userLocalItems = await loadData(currentUser.uid);
         
         // 2. Load Remote Data
         try {
-          console.log("🔥 📥 Fetching items from Firebase...");
           const remoteItems = await loadUserData(currentUser.uid);
-          console.log(`🔥 📥 Loaded ${remoteItems.length} items from Firebase (including deleted)`);
           
           // 3. Merge User Local + User Remote (INCLUDING deleted items for proper sync)
           // We must include deleted items in merge to propagate deletions across devices
@@ -263,8 +227,6 @@ const App: React.FC = () => {
           
           // 4. Clean up old deleted items during initial sync
           mergedItems = cleanupOldDeletedItems(mergedItems);
-          
-          console.log(`🔥 ✅ Initial sync complete: ${mergedItems.length} total items (${mergedItems.filter(i => !i.isDeleted).length} active, ${mergedItems.filter(i => i.isDeleted).length} soft-deleted)`);
           
           // Update last sync time based on ALL remote data to avoid re-syncing what we just got
           const maxRemoteTime = remoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
@@ -282,7 +244,7 @@ const App: React.FC = () => {
           }));
           
         } catch (error) {
-          console.error("🔥 ❌ Initial sync failed:", error);
+          console.error("Initial sync failed:", error);
           // Still set the user and local items if remote fails
           setUser(currentUser);
           setSyncState(prevState => ({
@@ -293,8 +255,6 @@ const App: React.FC = () => {
         
         // Subscribe to real-time updates
         unsubscribeOps = subscribeToUserData(currentUser.uid, (remoteItems) => {
-          console.log(`🔥 📥 Received ${remoteItems.length} items from subscription (including deleted)`);
-          
           // Update last sync time to avoid echo (use ALL items including deleted)
           const maxRemoteTime = remoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
           setLastSyncTime(prev => {
@@ -306,7 +266,6 @@ const App: React.FC = () => {
           setSyncState(prevState => {
             // Merge with ALL items including deleted to propagate deletions
             const mergedItems = mergeDatasets(prevState.items, remoteItems);
-            console.log(`🔥 ✅ Merged: ${mergedItems.length} total items (${mergedItems.filter(i => !i.isDeleted).length} active)`);
             
             return {
               ...prevState,
@@ -316,7 +275,6 @@ const App: React.FC = () => {
         });
       } else {
           // LOGGED OUT
-          console.log("👋 User logged out, switching to guest storage");
           setUser(null);
           
           // Load guest data
@@ -329,7 +287,6 @@ const App: React.FC = () => {
     });
 
     return () => {
-      console.log("🔥 Cleaning up Firebase subscriptions");
       if (unsubscribeOps) unsubscribeOps();
       unsubscribeAuth();
     };
@@ -344,7 +301,6 @@ const App: React.FC = () => {
       // Save to user-specific storage or guest storage
       const targetUserId = user?.uid || 'guest';
       await saveData(syncState.items, targetUserId);
-      console.log(`💾 Saved to IndexedDB (${targetUserId}): ${syncState.items.length} items`);
       
       // 2. Push items to Cloud (Firebase) - Delta Sync
       if (user && isFirebaseConfigured) {
@@ -365,9 +321,6 @@ const App: React.FC = () => {
           setSyncStatus('syncing');
           
           try {
-            const activeCount = changedItems.filter(i => !i.isDeleted).length;
-            const deletedCount = changedItems.filter(i => i.isDeleted).length;
-            console.log(`🔥 Syncing ${changedItems.length} changed items to Firebase (${activeCount} active, ${deletedCount} deleted)...`);
             await saveUserData(user.uid, changedItems);
             
             // Update last sync time
@@ -375,10 +328,9 @@ const App: React.FC = () => {
             setLastSyncTime(now);
             localStorage.setItem('last_successful_sync', now.toString());
 
-            console.log("🔥 ✅ Items synced to Firebase!");
             setSyncStatus('saved');
           } catch (e) {
-            console.error("🔥 ❌ Sync error:", e);
+            console.error("Sync error:", e);
             setSyncStatus('error');
           }
       }
@@ -391,12 +343,10 @@ const App: React.FC = () => {
   const handleForceSync = async () => {
     if (!user || !isFirebaseConfigured) return;
     
-    console.log("🔥 Force Sync Initiated");
     setSyncStatus('syncing');
     
     try {
       // 1. Upload local items to Firebase
-      console.log(`🔥 Force Sync: Uploading ${syncState.items.length} items...`);
       await saveUserData(user.uid, syncState.items);
       
       // Update last sync time after force sync
@@ -405,9 +355,7 @@ const App: React.FC = () => {
       localStorage.setItem('last_successful_sync', now.toString());
 
       // 2. Pull latest items from Firebase
-      console.log("🔥 Force Sync: Fetching latest items...");
       const remoteItems = await loadUserData(user.uid);
-      console.log(`🔥 Force Sync: Loaded ${remoteItems.length} items from server (including deleted)`);
       
       // 3. Merge (including deleted items to propagate deletions)
       setSyncState(prevState => {
@@ -416,7 +364,6 @@ const App: React.FC = () => {
         // 4. Clean up old deleted items (hard delete after retention period)
         const cleanedItems = cleanupOldDeletedItems(mergedItems);
         
-        console.log(`🔥 Force Sync: Merged! ${cleanedItems.length} total items (${cleanedItems.filter(i => !i.isDeleted).length} active, ${cleanedItems.filter(i => i.isDeleted).length} soft-deleted)`);
         return {
           ...prevState,
           items: cleanedItems
@@ -424,10 +371,9 @@ const App: React.FC = () => {
       });
       
       setSyncStatus('saved');
-      console.log("🔥 Force Sync: Complete!");
       
     } catch (e) {
-      console.error("🔥 Force Sync Failed:", e);
+      console.error("Force Sync Failed:", e);
       setSyncStatus('error');
     }
   };
@@ -706,12 +652,7 @@ const App: React.FC = () => {
           />
       )}
 
-      <main 
-        className="flex-1 relative w-full overflow-hidden"
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-      >
+      <main className="flex-1 relative w-full overflow-hidden">
         <div className={`h-full w-full ${currentView === 'search' ? 'block' : 'hidden'}`}>
              <SearchView 
                 onSave={handleSave} 
@@ -720,7 +661,18 @@ const App: React.FC = () => {
                 savedItems={savedItems.filter(i => !i.isDeleted)} 
                 initialQuery={recursiveQuery}
                 initialData={selectedStoredItem}
-                onViewDetail={(data, type) => setDetailContext({ items: [{ data, type, srs: {} as any, savedAt: 0 }], index: 0 })}
+                onViewDetail={(data, type) => {
+                    const id = (data as any).id || 'temp';
+                    setDetailContext({ 
+                        items: [{ 
+                            data, 
+                            type, 
+                            srs: SRSAlgorithm.createNew(id, type), 
+                            savedAt: 0 
+                        }], 
+                        index: 0 
+                    });
+                }}
                 onScroll={handleScroll}
                 onClear={() => {
                     setRecursiveQuery(undefined);

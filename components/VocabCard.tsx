@@ -54,11 +54,20 @@ export const VocabCardDisplay: React.FC<Props> = ({
   ));
 
   return (
-    <div className={`bg-white rounded-2xl p-5 shadow-md border border-slate-100 flex flex-col min-h-[85vh] ${scrollable ? 'overflow-y-auto no-scrollbar' : 'overflow-hidden'} ${className}`}>
+    <div 
+      className={`bg-white rounded-2xl p-5 pb-20 shadow-md border border-slate-100 flex flex-col select-text ${scrollable ? 'overflow-y-auto' : 'overflow-hidden'} ${className}`}
+      style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
+    >
       {/* Header */}
       <div className="flex justify-between items-start mb-3 shrink-0">
         <div>
           <h3 className="text-2xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
+          {/* Sense/Meaning Label */}
+          {data.sense && (
+            <span className="inline-block mt-1 px-2 py-0.5 bg-violet-100 text-violet-700 text-xs font-medium rounded-full">
+              {data.sense}
+            </span>
+          )}
           {showPronunciation && (
           <div className="flex items-center gap-2 mt-1 text-slate-500">
             {showAudio && data.ipa && (
@@ -110,14 +119,14 @@ export const VocabCardDisplay: React.FC<Props> = ({
       )}
 
       {/* Core Meaning */}
-      <div className="mb-4 shrink-0">
-        <p className="text-xl text-slate-700 font-medium">{data.chinese}</p>
-        <p className="text-slate-500 mt-1 italic">{data.definition}</p>
+      <div className="mb-4 shrink-0" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+        <p className="text-xl text-slate-700 font-medium leading-relaxed select-text">{data.chinese}</p>
+        <p className="text-slate-500 mt-1 italic leading-relaxed select-text">{data.definition}</p>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-4" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
         {/* Example Sentences */}
-        <div className="bg-slate-50 p-3 rounded-xl">
+        <div className="bg-slate-50 p-3 rounded-xl select-text">
           <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase mb-2">
             <BookOpen size={12} /> Usage
           </div>
@@ -175,8 +184,8 @@ export const VocabCardDisplay: React.FC<Props> = ({
            </p>
         </div>
         
-         <div className="text-xs text-slate-400 pt-2 border-t border-slate-100">
-            Register: {data.register}
+         <div className="text-xs text-slate-400 pt-2 border-t border-slate-100 select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+            <span className="font-semibold">Register:</span> {data.register}
          </div>
       </div>
     </div>

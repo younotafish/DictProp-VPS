@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { StoredItem, SyncStatus } from '../types';
-import { Trash2, Search, BookOpen, Layers, Cloud, AlertCircle, Check, Loader2, RefreshCw, ChevronDown, ChevronUp, Type, ArrowDownAZ, Sparkles, Filter } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -255,7 +255,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
           <BookOpen size={32} className="text-indigo-300" />
         </div>
         <h3 className="text-xl font-bold text-slate-700 mb-2">Your notebook is empty</h3>
-        <p className="text-sm mb-8 max-w-xs mx-auto">Save words from your searches to build your personal library.</p>
+        <p className="text-sm mb-8 max-w-xs mx-auto">Save words and phrases from your searches to build your personalized learning library.</p>
         
         <div className="flex justify-center">
           <UserMenu 
@@ -276,7 +276,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
       <div className={`sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md px-6 py-4 border-b border-slate-200/50 flex justify-between items-center transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-          <p className="text-xs text-slate-500 font-medium">{displayItems.length} items stored</p>
+          <p className="text-xs text-slate-500 font-medium">{displayItems.length} {displayItems.length === 1 ? 'item' : 'items'} saved</p>
         </div>
         <div className="flex items-center gap-1 bg-white rounded-full p-1 pl-1 border border-slate-100 shadow-sm">
           <button

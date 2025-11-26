@@ -14,7 +14,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   ipa, 
   className = '', 
   autoPlay = false,
-  showIcon = false
+  showIcon = true // Always show icon by default to indicate clickable audio
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -105,7 +105,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
       type="button"
       onClick={handlePlay}
       className={`
-        inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-sm transition-all duration-200 max-w-full
+        inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-sm transition-all duration-200
         ${isPlaying 
           ? 'bg-indigo-100 text-indigo-700 shadow-sm scale-105 ring-2 ring-indigo-200' 
           : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800'
@@ -114,8 +114,8 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
       `}
       title="Click to listen"
     >
-      {showIcon && <Volume2 size={14} className={`shrink-0 ${isPlaying ? 'animate-pulse' : ''}`} />}
-      <span className="max-w-full break-words text-left leading-tight truncate">{ipa || text}</span>
+      {showIcon && <Volume2 size={16} className={`shrink-0 ${isPlaying ? 'animate-pulse text-indigo-600' : ''}`} />}
+      <span className="break-words text-left leading-tight">{ipa || text}</span>
     </button>
   );
 };
