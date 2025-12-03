@@ -77,16 +77,22 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
       type="button"
       onClick={handlePlay}
       className={`
-        inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-sm transition-all duration-200
+        inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-sm transition-all duration-150
         ${isPlaying 
-          ? 'bg-indigo-100 text-indigo-700 shadow-sm scale-105 ring-2 ring-indigo-200' 
-          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800'
+          ? 'bg-indigo-600 text-white shadow-md scale-[1.02]' 
+          : 'bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 active:scale-95'
         }
         ${className}
       `}
       title="Click to listen"
     >
-      {showIcon && <Volume2 size={16} className={`shrink-0 ${isPlaying ? 'animate-pulse text-indigo-600' : ''}`} />}
+      {showIcon && (
+        <Volume2 
+          size={16} 
+          strokeWidth={2} 
+          className={`shrink-0 ${isPlaying ? 'animate-pulse' : ''}`}
+        />
+      )}
       <span className="break-words text-left leading-tight">{ipa || text}</span>
     </button>
   );

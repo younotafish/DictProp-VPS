@@ -32,6 +32,47 @@ const QUALITY_IMPACT: Record<number, number> = {
 
 export class SRSAlgorithm {
   /**
+   * Migrate old SRS data format to new format with memory strength
+   */
+  static migrate(srs: SRSData): SRSData {
+    if (typeof srs.memoryStrength === 'number') return srs;
+    
+    const reviewCount = srs.history?.length || 0;
+    const correctCount = srs.history?.filter(q => q >= 3).length || 0;
+    const accuracy = reviewCount > 0 ? correctCount / reviewCount : 0;
+    
+    let initialStrength = 0;
+    if (srs.easeFactor > 2.5) initialStrength += 30;
+    if (srs.interval > 1440) initialStrength += 40;
+    if (accuracy > 0.7) initialStrength += 30;
+    
+    return {
+      ...srs,
+      memoryStrength: Math.min(100, initialStrength),
+      lastReviewDate: Date.now(),
+      totalReviews: reviewCount,
+      correctStreak: 0,
+      taskHistory: [],
+      stability: Math.max(0.5, srs.interval / (24 * 60)),
+      difficulty: 5,
+    };
+  }
+
+  /**
+   * Ensure SRS data exists with valid format, creating or migrating as needed
+   */
+  static ensure(
+    srs: SRSData | undefined,
+    fallbackId: string,
+    fallbackType: 'vocab' | 'phrase'
+  ): SRSData {
+    if (srs) {
+      return this.migrate(srs);
+    }
+    return this.createNew(fallbackId, fallbackType);
+  }
+
+  /**
    * Initialize new SRS data for an item
    */
   static createNew(id: string, type: 'vocab' | 'phrase', difficulty: number = 5): SRSData {

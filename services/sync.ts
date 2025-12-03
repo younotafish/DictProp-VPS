@@ -73,25 +73,8 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const localTime = localItem.updatedAt || localItem.savedAt || 0;
       const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || 0;
       
-      let mergedItem: StoredItem;
-      try {
-         // Deep clone to avoid mutation
-         // Prefer structuredClone if available, fallback to JSON
-         if (typeof structuredClone === 'function') {
-            mergedItem = structuredClone(remoteItem);
-         } else {
-            mergedItem = JSON.parse(JSON.stringify(remoteItem));
-         }
-      } catch (e) {
-         console.error("Failed to clone item during merge, using JSON fallback", e);
-         try {
-            // Force JSON fallback
-            mergedItem = JSON.parse(JSON.stringify(remoteItem));
-         } catch (jsonError) {
-            console.error("JSON clone also failed, data may be corrupted. Using shallow copy.", jsonError);
-            mergedItem = { ...remoteItem }; // Shallow copy as last resort
-         }
-      }
+      // Deep clone to avoid mutation
+      const mergedItem: StoredItem = structuredClone(remoteItem);
 
       // A. DATA MERGE (Content - Word/Definition)
       // Content usually changes rarely. Trust the most recent update.
@@ -116,39 +99,40 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
           }
       }
 
-      // C. IMAGE MERGE (Preservation)
-      // If one has an image and the other doesn't, keep the image.
-      // If both have images, Recency (A) already handled it by picking the base 'data'.
-      // But we double-check specifically for "missing vs present" case.
+      // C. IMAGE MERGE (Preservation for Offline)
+      // PRIORITY: Base64 data > URL (base64 works offline, URLs don't)
+      // Always prefer local base64 over remote URL for offline support
       const finalData = mergedItem.data as any;
       const localData = localItem.data as any;
       const remoteData = remoteItem.data as any;
       
-      // Case 1: Local had image, Final (Remote?) is missing it -> Restore Local
-      if (localData.imageUrl && !finalData.imageUrl) {
+      const isBase64 = (url: string) => url && url.startsWith('data:image/');
+      
+      // Main image: Prefer base64 for offline support
+      if (isBase64(localData.imageUrl)) {
+          // Local has base64 - always keep it (works offline)
           finalData.imageUrl = localData.imageUrl;
-      }
-      // Case 2: Remote had image, Final (Local?) is missing it -> Restore Remote
-      if (remoteData.imageUrl && !finalData.imageUrl) {
+      } else if (localData.imageUrl && !finalData.imageUrl) {
+          // Local has URL, final is missing - restore local
+          finalData.imageUrl = localData.imageUrl;
+      } else if (remoteData.imageUrl && !finalData.imageUrl) {
+          // Remote has image, final is missing - restore remote
           finalData.imageUrl = remoteData.imageUrl;
       }
       
-      // Phrase Vocabs Images
+      // Phrase Vocabs Images - same logic
       if (mergedItem.type === 'phrase' && Array.isArray(finalData.vocabs)) {
           finalData.vocabs.forEach((vocab: any, index: number) => {
-               // Check Local
-               if (Array.isArray(localData.vocabs)) {
-                   const localVocab = localData.vocabs[index];
-                   if (localVocab?.imageUrl && !vocab.imageUrl) {
-                       vocab.imageUrl = localVocab.imageUrl;
-                   }
-               }
-               // Check Remote (if we are using Local as base)
-               if (Array.isArray(remoteData.vocabs)) {
-                   const remoteVocab = remoteData.vocabs[index];
-                   if (remoteVocab?.imageUrl && !vocab.imageUrl) {
-                       vocab.imageUrl = remoteVocab.imageUrl;
-                   }
+               const localVocab = Array.isArray(localData.vocabs) ? localData.vocabs[index] : null;
+               const remoteVocab = Array.isArray(remoteData.vocabs) ? remoteData.vocabs[index] : null;
+               
+               // Prefer base64 for offline support
+               if (localVocab?.imageUrl && isBase64(localVocab.imageUrl)) {
+                   vocab.imageUrl = localVocab.imageUrl;
+               } else if (localVocab?.imageUrl && !vocab.imageUrl) {
+                   vocab.imageUrl = localVocab.imageUrl;
+               } else if (remoteVocab?.imageUrl && !vocab.imageUrl) {
+                   vocab.imageUrl = remoteVocab.imageUrl;
                }
           });
       }

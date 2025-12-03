@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
+import { OfflineImage } from '../components/OfflineImage';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
@@ -66,64 +67,48 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
     
     lastScrollY.current = currentScrollY;
-
-    if (!items || isAnimating) return;
-
-    const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
-    const scrollTop = target.scrollTop;
-    
-    // Next Item Trigger (Scroll Bottom)
-    if (hasNext && scrollBottom < 5) {
-      setTimeout(() => {
-        if (target.scrollHeight - target.scrollTop - target.clientHeight < 10) {
-          setIsAnimating(true);
-          setCurrentIndex(nextIndex);
-          if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-          setTimeout(() => setIsAnimating(false), 300);
-        }
-      }, 100);
-    }
-    
-    // Prev Item Trigger (Scroll Top - Wheel/Mouse only as touch is handled by swipe)
-    // We add a small check to ensure user is intentionally scrolling UP when already at top
-    // This is tricky with momentum scrolling, so we rely mostly on the visual cue or swipe.
-    // But if user uses scroll wheel at top, scrollTop stays 0.
-    // Let's stick to the touch handler for mobile and arrows for desktop for now to avoid accidental triggers.
-
   };
   
-  // Touch Handling for "TikTok style" snap
+  // Touch Handling for horizontal swipe navigation between items
+  const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
   
   const onContentTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
   };
   
   const onContentTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartY.current === null || !items || isAnimating) return;
+    if (touchStartX.current === null || touchStartY.current === null || !items || isAnimating) return;
     
-    const diff = e.changedTouches[0].clientY - touchStartY.current;
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    // Swipe UP (diff < 0) -> Next Item
-    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 10;
-    if (diff < -50 && isAtBottom && hasNext) {
-      setIsAnimating(true);
-      setCurrentIndex(nextIndex);
-      container.scrollTop = 0;
-      setTimeout(() => setIsAnimating(false), 300);
+    const diffX = e.changedTouches[0].clientX - touchStartX.current;
+    const diffY = e.changedTouches[0].clientY - touchStartY.current;
+    
+    // Only handle horizontal swipes (more horizontal than vertical)
+    if (Math.abs(diffX) > Math.abs(diffY) * 1.5 && Math.abs(diffX) > 50) {
+      // Swipe LEFT (diffX < 0) -> Next Item
+      if (diffX < -50 && hasNext) {
+        setIsAnimating(true);
+        setCurrentIndex(nextIndex);
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+        setTimeout(() => setIsAnimating(false), 300);
+      }
+      
+      // Swipe RIGHT (diffX > 0) -> Prev Item (or close if no prev)
+      if (diffX > 50) {
+        if (hasPrev) {
+          setIsAnimating(true);
+          setCurrentIndex(prevIndex);
+          if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+          setTimeout(() => setIsAnimating(false), 300);
+        } else {
+          // Close view if swiping right with no previous item
+          onClose();
+        }
+      }
     }
     
-    // Swipe DOWN (diff > 0) -> Prev Item
-    const isAtTop = container.scrollTop <= 0;
-    if (diff > 50 && isAtTop && hasPrev) {
-      setIsAnimating(true);
-      setCurrentIndex(prevIndex);
-      container.scrollTop = 0;
-      setTimeout(() => setIsAnimating(false), 300);
-    }
-    
+    touchStartX.current = null;
     touchStartY.current = null;
   };
   
@@ -176,36 +161,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   };
 
-  // Horizontal Swipe to Close Logic
-  const closeSwipeStartX = useRef<number | null>(null);
-  const closeSwipeEndX = useRef<number | null>(null);
-  const minSwipeDistance = 50;
-
-  const onCloseSwipeStart = (e: React.TouchEvent) => {
-    closeSwipeEndX.current = null;
-    closeSwipeStartX.current = e.targetTouches[0].clientX;
-  };
-
-  const onCloseSwipeMove = (e: React.TouchEvent) => {
-    closeSwipeEndX.current = e.targetTouches[0].clientX;
-  };
-
-  const onCloseSwipeEnd = () => {
-    if (!closeSwipeStartX.current || !closeSwipeEndX.current) return;
-    const distance = closeSwipeStartX.current - closeSwipeEndX.current;
-    const isRightSwipe = distance < -minSwipeDistance;
-    
-    if (isRightSwipe) {
-      onClose();
-    }
-  };
-
   return (
     <div 
       className="fixed inset-0 z-50 bg-slate-50 flex flex-col animate-in slide-in-from-right duration-300 shadow-2xl"
-      onTouchStart={onCloseSwipeStart}
-      onTouchMove={onCloseSwipeMove}
-      onTouchEnd={onCloseSwipeEnd}
     >
       <div 
         ref={scrollContainerRef}
@@ -220,27 +178,43 @@ export const DetailView: React.FC<DetailViewProps> = ({
             <ArrowLeft size={20} className="mr-1" /> Back
           </Button>
           <div className="flex items-center gap-2">
-            {hasPrev && (
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => { setCurrentIndex(prevIndex); if(scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0; }}
-                className="text-slate-400 hover:text-indigo-600 rotate-90"
-              >
-                <ArrowLeft size={20} />
-              </Button>
+            {/* Horizontal navigation for carousel */}
+            {items && items.length > 1 && (
+              <>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => { 
+                    if (hasPrev) {
+                      setCurrentIndex(prevIndex); 
+                      if(scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0; 
+                    }
+                  }}
+                  disabled={!hasPrev}
+                  className={`p-1.5 ${hasPrev ? 'text-slate-500 hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'}`}
+                >
+                  <ChevronLeft size={20} />
+                </Button>
+                <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2 py-1 rounded-full min-w-[50px] text-center">
+                  {currentIndex + 1} / {items.length}
+                </span>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => { 
+                    if (hasNext) {
+                      setCurrentIndex(nextIndex); 
+                      if(scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0; 
+                    }
+                  }}
+                  disabled={!hasNext}
+                  className={`p-1.5 ${hasNext ? 'text-slate-500 hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'}`}
+                >
+                  <ChevronRight size={20} />
+                </Button>
+                <div className="w-[1px] h-4 bg-slate-300 mx-1"></div>
+              </>
             )}
-            {hasNext && (
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => { setCurrentIndex(nextIndex); if(scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0; }}
-                className="text-slate-400 hover:text-indigo-600 -rotate-90"
-              >
-                <ArrowLeft size={20} />
-              </Button>
-            )}
-            <div className="w-[1px] h-4 bg-slate-300 mx-1"></div>
             <Button 
               variant="ghost" 
               size="sm" 
@@ -263,10 +237,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
         </div>
 
         <div className="p-4 pb-24">
-          {hasPrev && (
-            <div className="py-4 text-center text-slate-400 flex flex-col items-center animate-pulse opacity-60 hover:opacity-100 transition-opacity mb-2">
-              <ArrowLeft size={16} className="rotate-90" />
-              <span className="text-xs uppercase font-bold tracking-widest mt-1">Previous item</span>
+          {/* Sense badge for multi-meaning words */}
+          {items && items.length > 1 && type === 'vocab' && (data as VocabCard).sense && (
+            <div className="mb-4 flex items-center justify-center">
+              <span className="text-sm font-medium text-violet-600 bg-violet-50 px-4 py-1.5 rounded-full border border-violet-100">
+                {(data as VocabCard).sense}
+              </span>
             </div>
           )}
 
@@ -289,7 +265,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
               <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group">
                   {(data as SearchResult).imageUrl ? (
-                    <img src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
+                    <OfflineImage src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
                   ) : (
                     <div className="flex flex-col items-center text-slate-400">
                       <SearchIcon className="mb-2 opacity-30" size={32}/>
@@ -346,10 +322,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
             </div>
           )}
 
-          {hasNext && (
-            <div className="py-8 text-center text-slate-400 flex flex-col items-center animate-pulse">
-              <span className="text-xs uppercase font-bold tracking-widest mb-1">Next item</span>
-              <ArrowLeft size={16} className="-rotate-90" />
+          {/* Horizontal swipe hint for multi-meaning words */}
+          {items && items.length > 1 && (
+            <div className="py-6 text-center text-slate-400 flex items-center justify-center gap-3">
+              {hasPrev && (
+                <div className="flex items-center gap-1 opacity-60">
+                  <ChevronLeft size={14} />
+                  <span className="text-[10px] uppercase font-bold tracking-wider">Prev meaning</span>
+                </div>
+              )}
+              {hasPrev && hasNext && <span className="text-slate-300">•</span>}
+              {hasNext && (
+                <div className="flex items-center gap-1 opacity-60">
+                  <span className="text-[10px] uppercase font-bold tracking-wider">Next meaning</span>
+                  <ChevronRight size={14} />
+                </div>
+              )}
             </div>
           )}
         </div>

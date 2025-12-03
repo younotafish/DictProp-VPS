@@ -89,9 +89,8 @@ The app features a **simple, optimized sync system** that just works:
 - **Offline Support** - Everything works offline, syncs when reconnected
 - **Image Optimization** - Images stay local to avoid Firebase size limits
 
-### 🧪 Testing
-- Open `/check_items.html` to view what's in your Firebase
-- See [SYNC_FIX_SUMMARY.md](./SYNC_FIX_SUMMARY.md) for technical details
+### 🧪 Technical Details
+See [SYNC_FIX_SUMMARY.md](./SYNC_FIX_SUMMARY.md) for technical details.
 
 ## 🎓 Study Modes
 

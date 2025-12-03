@@ -15,15 +15,17 @@ const vocabSchema: Schema = {
     chinese: { type: Type.STRING, description: "Chinese translation for THIS specific meaning only" },
     ipa: { type: Type.STRING, description: "American IPA with stress marks" },
     definition: { type: Type.STRING, description: "Original English definition for THIS specific meaning/sense" },
+    forms: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Different grammatical forms of the word (e.g., for 'run': runs, running, ran, run). Include verb conjugations, noun plurals, adjective forms, etc." },
     synonyms: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Synonyms for THIS specific meaning" },
     antonyms: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Antonyms for THIS specific meaning" },
+    confusables: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Words easily confused with this word (similar spelling, sound, or meaning). E.g., affect/effect, accept/except, complement/compliment" },
     examples: { type: Type.ARRAY, items: { type: Type.STRING }, description: "2 natural contemporary sentences showing THIS specific meaning" },
     history: { type: Type.STRING, description: "Brief etymology/origin (1-2 lines)" },
     register: { type: Type.STRING, description: "Frequency/register note (formal, slang, etc.)" },
     mnemonic: { type: Type.STRING, description: "A simple memory aid for THIS specific meaning" },
     imagePrompt: { type: Type.STRING, description: "A prompt to generate an illustrative image for THIS specific meaning" }
   },
-  required: ["word", "sense", "chinese", "ipa", "definition", "synonyms", "antonyms", "examples", "history", "register", "mnemonic", "imagePrompt"]
+  required: ["word", "sense", "chinese", "ipa", "definition", "forms", "synonyms", "antonyms", "confusables", "examples", "history", "register", "mnemonic", "imagePrompt"]
 };
 
 // Schema for WORD/PHRASE mode - vocabulary only
@@ -81,6 +83,12 @@ Each card MUST have:
 - Definition, examples, synonyms, antonyms specific to THAT meaning only
 - Different Chinese translations for each sense
 - Mnemonic specific to that meaning
+- Confusables: words often confused with this one (similar spelling, sound, or meaning)
+  Examples: affect/effect, accept/except, complement/compliment, principal/principle
+- Forms: different grammatical forms of the word
+  For verbs: base, 3rd person singular, past tense, past participle, present participle (e.g., run → runs, ran, run, running)
+  For nouns: singular, plural (e.g., child → children)
+  For adjectives: comparative, superlative (e.g., big → bigger, biggest)
 
 Be thorough - include common AND less common meanings. This helps learners master all usages.
 `;
@@ -102,6 +110,7 @@ Focus on what makes this sentence interesting for a C1 learner.
 
 For vocabs: Only extract words that are C1/C2 level, idiomatic, or have interesting nuance.
 If a vocab word has multiple meanings, create separate cards for each relevant meaning.
+Include confusables for each vocab - words often confused with it (similar spelling, sound, or meaning).
 `;
 
 // Helper function to detect if input is a word/phrase or a sentence

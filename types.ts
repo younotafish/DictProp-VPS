@@ -5,8 +5,10 @@ export interface VocabCard {
   chinese: string;
   ipa: string;
   definition: string;
+  forms?: string[]; // Different forms of the word (e.g., run → runs, running, ran)
   synonyms: string[];
   antonyms: string[];
+  confusables: string[]; // Words easily confused with this word (similar spelling, sound, or meaning)
   examples: string[];
   history: string;
   register: string;
@@ -83,7 +85,16 @@ export interface SyncState {
 // Helper to get item title (word or query)
 export const getItemTitle = (item: StoredItem): string => {
   if (!item || !item.data) return '';
-  const data = item.data as any;
-  const val = item.type === 'phrase' ? data.query : data.word;
-  return String(val || '');
+  if (item.type === 'phrase') {
+    return (item.data as SearchResult).query || '';
+  }
+  return (item.data as VocabCard).word || '';
 };
+
+// Simplified Firebase User type for props
+export interface AppUser {
+  uid: string;
+  displayName?: string | null;
+  photoURL?: string | null;
+  email?: string | null;
+}

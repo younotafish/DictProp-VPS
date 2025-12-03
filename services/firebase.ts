@@ -4,7 +4,6 @@ import {
   signInWithPopup, 
   signInWithRedirect,
   getRedirectResult,
-  signInAnonymously,
   GoogleAuthProvider, 
   signOut as firebaseSignOut,
   onAuthStateChanged,
@@ -22,13 +21,6 @@ import {
   writeBatch,
   Firestore
 } from "firebase/firestore";
-import {
-  getStorage,
-  ref,
-  uploadString,
-  getDownloadURL,
-  FirebaseStorage
-} from "firebase/storage";
 import { getFunctions, Functions } from "firebase/functions";
 import { StoredItem } from "../types";
 
@@ -47,7 +39,6 @@ const DEFAULT_CONFIG = {
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
-let storage: FirebaseStorage | undefined;
 let functions: Functions | undefined;
 
 // Initialize Firebase
@@ -71,7 +62,6 @@ try {
     app = initializeApp(config);
     auth = getAuth(app);
     db = getFirestore(app);
-    storage = getStorage(app);
     functions = getFunctions(app);
 } catch (e) {
     console.error("Failed to initialize Firebase", e);
@@ -157,16 +147,6 @@ export const handleRedirectResult = async () => {
     }
     console.error("Error handling redirect result", error);
     return null;
-  }
-};
-
-export const signInAnonymouslyUser = async () => {
-  if (!auth) throw new Error("NOT_CONFIGURED");
-  try {
-    await signInAnonymously(auth);
-  } catch (error: any) {
-    console.error("Error signing in anonymously", error);
-    throw error;
   }
 };
 
@@ -275,72 +255,6 @@ export const subscribeToUserData = (
   };
 };
 
-// Helper: Upload base64 image to Storage and return download URL
-const uploadImageToStorage = async (userId: string, itemId: string, imageData: string, imageType: 'main' | 'vocab', vocabIndex?: number): Promise<string | null> => {
-  if (!storage || !imageData || !imageData.startsWith('data:image/')) {
-    return null;
-  }
-  
-  try {
-    // Create deterministic path for the image to avoid storage bloat
-    const suffix = imageType === 'vocab' ? `_vocab${vocabIndex}` : '';
-    // REMOVED timestamp to ensure we overwrite old images instead of creating new ones
-    const imagePath = `users/${userId}/items/${itemId}${suffix}_main.png`;
-    const imageRef = ref(storage, imagePath);
-    
-    // Upload base64 string
-    await uploadString(imageRef, imageData, 'data_url');
-    
-    // Get download URL
-    const downloadURL = await getDownloadURL(imageRef);
-    console.log(`🔥 Storage: Uploaded image to ${imagePath}`);
-    return downloadURL;
-  } catch (error) {
-    console.error('🔥 Storage: Upload failed:', error);
-    return null;
-  }
-};
-
-// Helper: Process item images and upload to Storage (OPTIMIZED)
-const processItemImages = async (userId: string, item: StoredItem): Promise<StoredItem> => {
-  const processedItem = JSON.parse(JSON.stringify(item));
-  
-  if (!processedItem.data) return processedItem;
-  
-  // Process main image (for vocab cards or phrases)
-  // ONLY upload if it's a base64 string (not already a URL)
-  if (processedItem.data.imageUrl && processedItem.data.imageUrl.startsWith('data:image/')) {
-    const downloadURL = await uploadImageToStorage(userId, processedItem.data.id, processedItem.data.imageUrl, 'main');
-    if (downloadURL) {
-      processedItem.data.imageUrl = downloadURL;
-    } else {
-      // If upload failed, remove the base64 to avoid syncing large data
-      delete processedItem.data.imageUrl;
-    }
-  }
-  // If already a URL (https://...), keep it as-is
-  
-  // Process vocab images (for phrases)
-  if (processedItem.type === 'phrase' && Array.isArray(processedItem.data.vocabs)) {
-    for (let i = 0; i < processedItem.data.vocabs.length; i++) {
-      const vocab = processedItem.data.vocabs[i];
-      // ONLY upload if it's a base64 string
-      if (vocab.imageUrl && vocab.imageUrl.startsWith('data:image/')) {
-        const downloadURL = await uploadImageToStorage(userId, processedItem.data.id, vocab.imageUrl, 'vocab', i);
-        if (downloadURL) {
-          processedItem.data.vocabs[i].imageUrl = downloadURL;
-        } else {
-          // If upload failed, remove the base64
-          delete processedItem.data.vocabs[i].imageUrl;
-        }
-      }
-      // If already a URL, keep it as-is
-    }
-  }
-  
-  return processedItem;
-};
-
 export const saveUserData = async (userId: string, items: StoredItem[]) => {
   if (!db || !userId) return;
   
@@ -376,30 +290,10 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
       
       console.log(`🔥 Firebase: Syncing batch ${batchIndex + 1}/${totalBatches} -> ${batchItems.length} items`);
 
-      // Process images: upload base64 to Storage and replace with URLs
-      // Parallelize uploads for better performance
-      const processedItems: StoredItem[] = await Promise.all(batchItems.map(async (item) => {
-        if (item.data && item.data.id) {
-          // Don't upload images for deleted items
-          if (item.isDeleted) {
-              return item;
-          } else {
-              // Check if we actually need to upload images (has base64 data)
-              const data = item.data as any;
-              const hasBase64 = (
-                  (data.imageUrl && data.imageUrl.startsWith('data:image/')) ||
-                  (item.type === 'phrase' && Array.isArray(data.vocabs) && data.vocabs.some((v: any) => v.imageUrl && v.imageUrl.startsWith('data:image/')))
-              );
-
-              if (hasBase64) {
-                  return await processItemImages(userId, item);
-              } else {
-                  return item;
-              }
-          }
-        }
-        return item;
-      }));
+      // NOTE: Images are stored as base64 directly in Firestore for reliable offline support.
+      // This avoids Firebase Storage CORS issues and ensures images sync with data.
+      // Trade-off: Firestore 1MB doc limit, but generated icons are small (~50-200KB).
+      const processedItems: StoredItem[] = batchItems;
 
       const batch = writeBatch(db);
       let batchWriteCount = 0;

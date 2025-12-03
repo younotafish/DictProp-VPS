@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { analyzeInput, generateIllustration } from '../services/geminiService';
 import { SearchResult, StoredItem, VocabCard, getItemTitle } from '../types';
 import { ArrowRight, Search as SearchIcon, Loader2, Bookmark, RotateCw, BookOpen, ArrowLeft, AlertCircle, X, Clipboard } from 'lucide-react';
@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
+import { OfflineImage } from '../components/OfflineImage';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
 interface SearchProps {
@@ -40,19 +41,24 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
       return () => { isMounted.current = false; };
   }, []);
 
-  // Determine title of current view
-  const currentTitle = vocabResult 
-    ? (vocabResult.word || '')
-    : result 
-        ? (result.query || '') 
-        : '';
-
-  // Find if this title exists in saved items (Case-insensitive check)
-  const savedItemMatch = currentTitle 
-    ? savedItems.find(item => getItemTitle(item).toLowerCase().trim() === currentTitle.toLowerCase().trim())
-    : undefined;
-
-  const isSaved = !!savedItemMatch;
+  // Memoized title lookup - avoids recalculating on every render
+  const { currentTitle, savedItemMatch, isSaved } = useMemo(() => {
+    const title = vocabResult 
+      ? (vocabResult.word || '')
+      : result 
+          ? (result.query || '') 
+          : '';
+    
+    const match = title 
+      ? savedItems.find(item => getItemTitle(item).toLowerCase().trim() === title.toLowerCase().trim())
+      : undefined;
+    
+    return {
+      currentTitle: title,
+      savedItemMatch: match,
+      isSaved: !!match
+    };
+  }, [vocabResult, result, savedItems]);
   
   // Handle Initial Data (From Notebook)
   useEffect(() => {
@@ -96,7 +102,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     }
   }, [query]);
 
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     if (searchHistory.length > 0) {
       const previous = searchHistory[searchHistory.length - 1];
       setSearchHistory(prev => prev.slice(0, -1));
@@ -110,11 +116,48 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
       }
       setQuery(previous.query);
     }
-  };
+  }, [searchHistory]);
 
   const performSearch = async (text: string) => {
     // Increment ID to invalidate previous searches
     const currentSearchId = ++searchRequestId.current;
+    
+    // Check if the query matches an existing saved item (case-insensitive)
+    const queryLower = text.toLowerCase().trim();
+    const existingItem = savedItems.find(item => 
+        getItemTitle(item).toLowerCase().trim() === queryLower
+    );
+    
+    // If found in local storage, display it directly without API call
+    if (existingItem) {
+        // Push current state to history before showing stored item
+        if (result || vocabResult) {
+            setSearchHistory(prev => {
+                const itemType: 'phrase' | 'vocab' = result ? 'phrase' : 'vocab';
+                const newItem = {
+                    query: result ? result.query : (vocabResult?.word || ''),
+                    result: result || vocabResult!,
+                    type: itemType
+                };
+                const newHistory = [...prev, newItem];
+                if (newHistory.length > 5) return newHistory.slice(newHistory.length - 5);
+                return newHistory;
+            });
+        }
+        
+        setIsViewingStored(true);
+        setLoading(false);
+        setError(null);
+        
+        if (existingItem.type === 'phrase') {
+            setResult(existingItem.data as SearchResult);
+            setVocabResult(null);
+        } else {
+            setVocabResult(existingItem.data as VocabCard);
+            setResult(null);
+        }
+        return;
+    }
     
     setLoading(true);
     setError(null);
@@ -243,72 +286,55 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     }
   };
 
-  const handlePasteAndSearch = (e: React.MouseEvent | React.TouchEvent) => {
+  const handlePasteAndSearch = async (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     e.stopPropagation();
     
-    // Focus the main textarea and trigger paste programmatically
-    if (textareaRef.current) {
-      // Store current value
-      const currentValue = query;
-      
-      // Clear and focus
-      textareaRef.current.value = '';
-      textareaRef.current.focus();
-      
-      // Set up paste listener
-      const handlePaste = (pasteEvent: ClipboardEvent) => {
-        pasteEvent.preventDefault();
-        const text = pasteEvent.clipboardData?.getData('text');
-        if (text && text.trim()) {
-          setQuery(text);
-          setIsViewingStored(false);
-          performSearch(text);
-        } else {
-          // Restore original value if paste failed
-          setQuery(currentValue);
-        }
-        textareaRef.current?.removeEventListener('paste', handlePaste);
-      };
-      
-      textareaRef.current.addEventListener('paste', handlePaste);
-      
-      // Trigger paste command
-      setTimeout(() => {
-        document.execCommand('paste');
-      }, 10);
+    try {
+      // Use modern Clipboard API
+      const text = await navigator.clipboard.readText();
+      if (text && text.trim()) {
+        setQuery(text.trim());
+        setIsViewingStored(false);
+        performSearch(text.trim());
+        textareaRef.current?.focus();
+      }
+    } catch (err) {
+      // Clipboard API might fail due to permissions - fallback: just focus the input
+      console.warn("Clipboard read failed, please paste manually", err);
+      textareaRef.current?.focus();
     }
   };
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = useCallback((e?: React.FormEvent) => {
     e?.preventDefault();
     if (!query.trim()) return;
     setIsViewingStored(false);
     performSearch(query);
-  };
+  }, [query]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
-  };
+  }, [handleSubmit]);
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
       setIsViewingStored(false);
       performSearch(query);
-  };
+  }, [query]);
 
-  const handleNewSearch = () => {
+  const handleNewSearch = useCallback(() => {
     // Only clear the query text, keep the results on screen
     setQuery('');
-  };
+  }, []);
 
-  const handleTermClick = (term: string) => {
+  const handleTermClick = useCallback((term: string) => {
       setQuery(term);
       setIsViewingStored(false);
       performSearch(term);
-  };
+  }, []);
 
   const toggleSave = () => {
     if (vocabResult) {
@@ -370,8 +396,6 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         });
     }
   };
-
-  const headerTitle = vocabResult ? (vocabResult.word || '') : result ? (result.query || '') : '';
 
   return (
     <div className="h-full bg-slate-50 relative overflow-y-auto" onScroll={onScroll}>
@@ -584,7 +608,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                         {/* Generated Image Header */}
                         <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group">
                         {result.imageUrl ? (
-                            <img src={result.imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
+                            <OfflineImage src={result.imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
                         ) : (
                             <div className="flex flex-col items-center text-slate-400">
                                 {imageLoading ? <Loader2 className="animate-spin mb-2 text-indigo-400"/> : <SearchIcon className="mb-2 opacity-30" size={32}/>}

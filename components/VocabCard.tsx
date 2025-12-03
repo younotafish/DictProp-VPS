@@ -1,8 +1,9 @@
 import React from 'react';
 import { VocabCard as VocabType } from '../types';
-import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw } from 'lucide-react';
+import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes } from 'lucide-react';
 import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
+import { OfflineImage } from './OfflineImage';
 
 interface Props {
   data: VocabType;
@@ -113,7 +114,7 @@ export const VocabCardDisplay: React.FC<Props> = ({
       {/* Generated Image */}
       {data.imageUrl && (
         <div className="mb-4 rounded-xl overflow-hidden h-32 w-full bg-slate-50 border border-slate-100 shadow-inner shrink-0">
-          <img src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
+          <OfflineImage src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
         </div>
       )}
 
@@ -122,6 +123,29 @@ export const VocabCardDisplay: React.FC<Props> = ({
         <p className="text-xl text-slate-700 font-medium leading-relaxed select-text">{data.chinese}</p>
         <p className="text-slate-500 mt-1 italic leading-relaxed select-text">{data.definition}</p>
       </div>
+
+      {/* Word Forms */}
+      {ensureArray(data.forms).length > 0 && (
+        <div className="mb-4 shrink-0">
+          <div className="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase mb-2">
+            <Shapes size={12} /> Word Forms
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {ensureArray(data.forms).map((form, idx) => (
+              <button
+                key={`${form}-${idx}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSearch?.(form);
+                }}
+                className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-lg text-sm font-medium hover:bg-indigo-100 transition-colors cursor-pointer border border-indigo-100"
+              >
+                {form}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-4" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
         {/* Example Sentences */}
@@ -171,16 +195,22 @@ export const VocabCardDisplay: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Synonyms/Antonyms */}
+        {/* Synonyms/Antonyms/Confusables */}
         <div className="text-sm">
            <p className="mb-1 flex flex-wrap items-baseline gap-2">
              <span className="text-slate-400 font-semibold text-xs uppercase mr-1">Synonyms</span> 
              <span className="inline">{renderPills(data.synonyms)}</span>
            </p>
-           <p className="flex flex-wrap items-baseline gap-2">
+           <p className="mb-1 flex flex-wrap items-baseline gap-2">
              <span className="text-slate-400 font-semibold text-xs uppercase mr-1">Antonyms</span>
              <span className="inline">{renderPills(data.antonyms)}</span>
            </p>
+           {ensureArray(data.confusables).length > 0 && (
+             <p className="flex flex-wrap items-baseline gap-2">
+               <span className="text-amber-500 font-semibold text-xs uppercase mr-1">Confusables</span>
+               <span className="inline">{renderPills(data.confusables)}</span>
+             </p>
+           )}
         </div>
         
          <div className="text-xs text-slate-400 pt-2 border-t border-slate-100 select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>

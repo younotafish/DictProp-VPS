@@ -13,6 +13,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { StoredItem, TaskType, VocabCard, SearchResult } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { Button } from '../components/Button';
+import { OfflineImage } from '../components/OfflineImage';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import ReactMarkdown from 'react-markdown';
@@ -30,11 +31,12 @@ import {
   Search as SearchIcon,
   RefreshCw,
   ThumbsUp,
-  ThumbsDown
+  ThumbsDown,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { recordStudySession } from '../services/firebase';
-import { StudyCardSwiper } from '../components/StudyCardSwiper';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
@@ -61,12 +63,70 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const [isFlipped, setIsFlipped] = useState(false);
   const [cardStartTime, setCardStartTime] = useState(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [meaningIndex, setMeaningIndex] = useState(0); // For carousel navigation within same-spelling words
+  const touchStartX = React.useRef<number | null>(null);
+  const touchStartY = React.useRef<number | null>(null);
   
   const [sessionStats, setSessionStats] = useState({
     reviews: 0,
     correct: 0,
     totalTime: 0
   });
+
+  // Helper to get the title/spelling of an item
+  const getItemSpelling = (item: StoredItem): string => {
+    if (item.type === 'vocab') {
+      return ((item.data as VocabCard).word || '').toLowerCase().trim();
+    }
+    return ((item.data as SearchResult).query || '').toLowerCase().trim();
+  };
+
+  // Find all items in the full items list that have the same spelling as the current queue item
+  const getSiblingMeanings = useCallback((): StoredItem[] => {
+    if (!queue[0]) return [];
+    const currentSpelling = getItemSpelling(queue[0]);
+    if (!currentSpelling) return [queue[0]];
+    
+    // Find all items with the same spelling from the full items list
+    const siblings = items.filter(item => 
+      getItemSpelling(item) === currentSpelling && !item.isDeleted
+    );
+    
+    return siblings.length > 0 ? siblings : [queue[0]];
+  }, [queue, items]);
+
+  const siblingMeanings = getSiblingMeanings();
+  const hasMutipleMeanings = siblingMeanings.length > 1;
+  const currentMeaningItem = hasMutipleMeanings ? siblingMeanings[meaningIndex] || queue[0] : queue[0];
+
+  // Horizontal swipe handlers for meaning carousel
+  const handleMeaningTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleMeaningTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStartX.current || !touchStartY.current || !hasMutipleMeanings) return;
+    
+    const diffX = e.changedTouches[0].clientX - touchStartX.current;
+    const diffY = e.changedTouches[0].clientY - touchStartY.current;
+    
+    // Only handle horizontal swipes (more horizontal than vertical)
+    if (Math.abs(diffX) > Math.abs(diffY) * 1.5 && Math.abs(diffX) > 50) {
+      if (diffX < -50 && meaningIndex < siblingMeanings.length - 1) {
+        // Swipe left -> next meaning
+        setMeaningIndex(prev => prev + 1);
+        setIsFlipped(false); // Reset flip when changing meaning
+      } else if (diffX > 50 && meaningIndex > 0) {
+        // Swipe right -> previous meaning
+        setMeaningIndex(prev => prev - 1);
+        setIsFlipped(false); // Reset flip when changing meaning
+      }
+    }
+    
+    touchStartX.current = null;
+    touchStartY.current = null;
+  };
 
   // Calculate comprehensive statistics
   const getStats = () => {
@@ -131,7 +191,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     }
 
     if (studySet.length === 0) {
-      alert("No items to review yet! Add vocabulary or phrases to your notebook to start studying.");
+      // No items to study - the button will be disabled anyway, but just in case
       return;
     }
 
@@ -166,9 +226,9 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   }, [userId, sessionStats, sessionStartTime]);
 
   const handleRate = useCallback((isMemorized: boolean) => {
-    if (!queue[0]) return;
+    if (!queue[0] || !currentMeaningItem) return;
 
-    const currentItem = queue[0];
+    const currentItem = currentMeaningItem; // Use the currently viewed meaning
     const responseTime = Date.now() - cardStartTime;
     
     // Map binary choice to quality score
@@ -200,9 +260,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     } else {
       setQueue(nextQueue);
       setIsFlipped(false);
+      setMeaningIndex(0); // Reset meaning index for next card
       setCardStartTime(Date.now());
     }
-  }, [queue, cardStartTime, onUpdateSRS, finishSession]);
+  }, [queue, cardStartTime, onUpdateSRS, finishSession, currentMeaningItem]);
 
   useEffect(() => {
     if (mode !== 'session') return;
@@ -220,10 +281,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   }, [mode, handleRate]);
 
   const handleDeleteCurrent = () => {
-    if (!queue[0]) return;
+    if (!currentMeaningItem) return;
     
-    // Delete from global storage
-    onDelete(queue[0].data.id);
+    // Delete from global storage (delete the currently viewed meaning)
+    onDelete(currentMeaningItem.data.id);
     
     // Update session stats (don't count as review)
     // Move to next item
@@ -236,13 +297,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     } else {
       setQueue(nextQueue);
       setIsFlipped(false);
+      setMeaningIndex(0); // Reset meaning index
       setCardStartTime(Date.now());
     }
   };
 
   const renderFront = () => {
-    if (!queue[0]) return null;
-    const item = queue[0];
+    if (!currentMeaningItem) return null;
+    const item = currentMeaningItem;
     const isVocab = item.type === 'vocab';
     const frontText = isVocab ? (item.data as VocabCard).word : (item.data as SearchResult).query;
     const subText = isVocab ? (item.data as VocabCard).ipa : 'Phrase';
@@ -291,8 +353,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   };
 
   const renderBack = () => {
-    if (!queue[0]) return null;
-    const item = queue[0];
+    if (!currentMeaningItem) return null;
+    const item = currentMeaningItem;
     
     if (item.type === 'vocab') {
       return (
@@ -325,7 +387,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                     <RefreshCw size={18} />
                 </button>
                 {data.imageUrl ? (
-                    <img src={data.imageUrl} alt="Visual context" className="w-full h-full object-cover" />
+                    <OfflineImage src={data.imageUrl} alt="Visual context" className="w-full h-full object-cover" />
                 ) : (
                     <div className="flex flex-col items-center text-slate-400">
                         <SearchIcon className="mb-2 opacity-30" size={32}/>
@@ -612,19 +674,68 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         </div>
 
         {/* Progress Bar */}
-        <div className="w-full h-2 bg-slate-200 rounded-full mb-6 overflow-hidden shrink-0">
+        <div className="w-full h-2 bg-slate-200 rounded-full mb-4 overflow-hidden shrink-0">
           <div 
             className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-500 ease-out" 
             style={{ width: `${(sessionStats.reviews + queue.length) > 0 ? Math.max(5, ((sessionStats.reviews) / (sessionStats.reviews + queue.length)) * 100) : 5}%` }} 
           />
         </div>
 
+        {/* Carousel Navigation for Multiple Meanings */}
+        {hasMutipleMeanings && (
+          <div className="flex flex-col items-center gap-2 mb-3 shrink-0">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { setMeaningIndex(prev => Math.max(0, prev - 1)); setIsFlipped(false); }}
+                disabled={meaningIndex === 0}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                  meaningIndex === 0 
+                    ? 'text-slate-300 cursor-not-allowed' 
+                    : 'text-violet-500 bg-violet-50 hover:bg-violet-100 active:scale-95'
+                }`}
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-violet-600 bg-violet-50 px-3 py-1 rounded-full">
+                  {meaningIndex + 1} / {siblingMeanings.length} meanings
+                </span>
+              </div>
+              <button
+                onClick={() => { setMeaningIndex(prev => Math.min(siblingMeanings.length - 1, prev + 1)); setIsFlipped(false); }}
+                disabled={meaningIndex >= siblingMeanings.length - 1}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                  meaningIndex >= siblingMeanings.length - 1 
+                    ? 'text-slate-300 cursor-not-allowed' 
+                    : 'text-violet-500 bg-violet-50 hover:bg-violet-100 active:scale-95'
+                }`}
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
+            {/* Dot indicators */}
+            <div className="flex justify-center gap-1.5">
+              {siblingMeanings.map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => { setMeaningIndex(idx); setIsFlipped(false); }}
+                  className={`w-2 h-2 rounded-full transition-all ${
+                    idx === meaningIndex 
+                      ? 'bg-violet-500 w-4' 
+                      : 'bg-slate-300 hover:bg-slate-400'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Card Container */}
-        <div className="flex-1 relative perspective-1000 group w-full min-h-0 mb-1">
-          <StudyCardSwiper 
-             onSwipe={(direction) => handleRate(direction === 'right')} 
-             enabled={true}
-          >
+        <div 
+          className="flex-1 relative perspective-1000 group w-full min-h-0 mb-1"
+          onTouchStart={handleMeaningTouchStart}
+          onTouchEnd={handleMeaningTouchEnd}
+        >
            <div className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
               
               {/* Front Face */}
@@ -648,24 +759,23 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                  {renderBack()}
               </div>
            </div>
-          </StudyCardSwiper>
         </div>
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-1 shrink-0 h-8">
+        <div className="grid grid-cols-2 gap-3 shrink-0">
            <button 
              onClick={() => handleRate(false)}
-             className="bg-rose-500 active:bg-rose-600 text-white rounded-lg font-bold text-xs shadow-sm shadow-rose-200 transition-all active:scale-95 flex items-center justify-center gap-1 p-0"
+             className="bg-rose-500 active:bg-rose-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-rose-200 transition-all active:scale-95 flex items-center justify-center gap-2 py-4"
            >
-             <ThumbsDown size={14} strokeWidth={2.5} />
-             <span className="hidden sm:inline">Not Memorized</span>
+             <ThumbsDown size={20} strokeWidth={2.5} />
+             <span>Forgot</span>
            </button>
            <button 
              onClick={() => handleRate(true)}
-             className="bg-emerald-500 active:bg-emerald-600 text-white rounded-lg font-bold text-xs shadow-sm shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-1 p-0"
+             className="bg-emerald-500 active:bg-emerald-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-2 py-4"
            >
-             <ThumbsUp size={14} strokeWidth={2.5} />
-             <span className="hidden sm:inline">Memorized</span>
+             <ThumbsUp size={20} strokeWidth={2.5} />
+             <span>Got it</span>
            </button>
         </div>
 

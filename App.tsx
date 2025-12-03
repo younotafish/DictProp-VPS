@@ -1,16 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { SearchView } from './views/Search';
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, SRSData, SyncStatus, TaskType, SyncState, getItemTitle } from './types';
+import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, VocabCard, AppUser } from './types';
 import { Search, Book, BrainCircuit } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signInAnonymouslyUser, signOut, isConfigured, handleRedirectResult, loadUserData } from './services/firebase';
+import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData } from './services/firebase';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
+import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
+import { analyzeInput } from './services/geminiService';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
@@ -33,8 +35,9 @@ const App: React.FC = () => {
       return saved ? parseInt(saved, 10) : 0;
   });
   
-  // Derived state
+  // Derived state - memoized filtered items
   const savedItems = syncState.items;
+  const activeItems = useMemo(() => savedItems.filter(i => !i.isDeleted), [savedItems]);
   
   const [recursiveQuery, setRecursiveQuery] = useState<string | undefined>(() => {
       return localStorage.getItem('app_last_query') || undefined;
@@ -56,13 +59,43 @@ const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
   // Auth States (Firebase)
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
   const [signInError, setSignInError] = useState<{code?: string, message: string} | null>(null);
   const [isFirebaseConfigured, setIsFirebaseConfigured] = useState(isConfigured());
 
   const [detailContext, setDetailContext] = useState<{ items: StoredItem[], index: number } | null>(null);
 
+  // Network status detection for offline support
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Bulk refresh state
+  const [bulkRefreshProgress, setBulkRefreshProgress] = useState<{ current: number; total: number; isRunning: boolean } | null>(null);
+
+  // Confirm modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    variant?: 'danger' | 'warning' | 'success' | 'info';
+    onConfirm: () => void;
+    showCancel?: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Force refresh logic for iOS PWA
   useEffect(() => {
@@ -87,7 +120,6 @@ const App: React.FC = () => {
       document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
-
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
@@ -117,7 +149,7 @@ const App: React.FC = () => {
             if (needsSRSMigration && processedItems.length > 0) {
                 processedItems = processedItems.map(item => ({
                     ...item,
-                    srs: migrateSRSData(item.srs)
+                    srs: SRSAlgorithm.migrate(item.srs)
                 }));
                 hasChanges = true;
             }
@@ -368,6 +400,122 @@ const App: React.FC = () => {
     }
   };
 
+  // Bulk refresh - actual execution
+  const executeBulkRefresh = useCallback(async () => {
+    setBulkRefreshProgress({ current: 0, total: activeItems.length, isRunning: true });
+
+    // Group items by their title to avoid duplicate searches
+    const titleMap = new Map<string, StoredItem[]>();
+    activeItems.forEach(item => {
+      const title = getItemTitle(item).toLowerCase().trim();
+      if (!titleMap.has(title)) {
+        titleMap.set(title, []);
+      }
+      titleMap.get(title)!.push(item);
+    });
+
+    const uniqueTitles = Array.from(titleMap.keys());
+    let processed = 0;
+    let errors = 0;
+
+    for (const title of uniqueTitles) {
+      const itemsWithTitle = titleMap.get(title)!;
+      const originalItem = itemsWithTitle[0];
+      const searchQuery = getItemTitle(originalItem);
+
+      try {
+        // Re-search with the updated Gemini prompts
+        const newResult = await analyzeInput(searchQuery);
+        
+        // Update each item with matching title
+        for (const item of itemsWithTitle) {
+          // Find the matching vocab from the new result (by sense if available)
+          let newData: any = newResult;
+          
+          if (item.type === 'vocab' && newResult.vocabs && newResult.vocabs.length > 0) {
+            // Try to find matching sense
+            const oldSense = (item.data as VocabCard).sense;
+            const matchingVocab = oldSense 
+              ? newResult.vocabs.find(v => v.sense === oldSense) || newResult.vocabs[0]
+              : newResult.vocabs[0];
+            newData = { ...matchingVocab, id: item.data.id };
+          } else {
+            // For phrases, use the full result
+            newData = { ...newResult, id: item.data.id };
+          }
+
+          // Update the item while preserving SRS data
+          setSyncState(prevState => {
+            const index = prevState.items.findIndex(i => i.data.id === item.data.id);
+            if (index >= 0) {
+              const newItems = [...prevState.items];
+              newItems[index] = {
+                ...newItems[index],
+                data: newData,
+                type: item.type,
+                updatedAt: Date.now()
+              };
+              return { ...prevState, items: newItems };
+            }
+            return prevState;
+          });
+        }
+
+        processed++;
+        setBulkRefreshProgress({ current: processed, total: uniqueTitles.length, isRunning: true });
+
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+      } catch (error) {
+        console.error(`Failed to refresh "${searchQuery}":`, error);
+        errors++;
+        processed++;
+        setBulkRefreshProgress({ current: processed, total: uniqueTitles.length, isRunning: true });
+      }
+    }
+
+    setBulkRefreshProgress(null);
+    setConfirmModal({
+      isOpen: true,
+      title: 'Refresh Complete',
+      message: `Processed: ${processed} unique words/phrases\nErrors: ${errors}`,
+      confirmText: 'OK',
+      variant: errors > 0 ? 'warning' : 'success',
+      onConfirm: () => setConfirmModal(null),
+      showCancel: false
+    });
+  }, [activeItems]);
+
+  // Bulk refresh - show confirmation first
+  const handleBulkRefresh = useCallback(() => {
+    if (activeItems.length === 0) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'No Items',
+        message: 'Your notebook is empty. Add some items first!',
+        confirmText: 'OK',
+        variant: 'info',
+        onConfirm: () => setConfirmModal(null),
+        showCancel: false
+      });
+      return;
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Refresh All Items?',
+      message: `This will re-search all ${activeItems.length} items in your notebook with the latest AI analysis.\n\nThis may take a while and use API quota.`,
+      confirmText: 'Refresh All',
+      cancelText: 'Cancel',
+      variant: 'warning',
+      onConfirm: () => {
+        setConfirmModal(null);
+        executeBulkRefresh();
+      }
+    });
+  }, [activeItems, executeBulkRefresh]);
+
   const handleSignIn = async () => {
       try {
           await signIn();
@@ -384,53 +532,11 @@ const App: React.FC = () => {
       }
   };
 
-  const handleGuestSignIn = async () => {
-      try {
-          await signInAnonymouslyUser();
-      } catch (e: any) {
-          setSignInError({ code: e.code, message: e.message });
-      }
-  };
-
   const handleSignOut = async () => {
       await signOut();
       setUser(null);
   };
 
-  const migrateSRSData = (srs: SRSData): SRSData => {
-    if (typeof srs.memoryStrength === 'number') return srs;
-    
-    const reviewCount = srs.history?.length || 0;
-    const correctCount = srs.history?.filter(q => q >= 3).length || 0;
-    const accuracy = reviewCount > 0 ? correctCount / reviewCount : 0;
-    
-    let initialStrength = 0;
-    if (srs.easeFactor > 2.5) initialStrength += 30;
-    if (srs.interval > 1440) initialStrength += 40;
-    if (accuracy > 0.7) initialStrength += 30;
-    
-    return {
-      ...srs,
-      memoryStrength: Math.min(100, initialStrength),
-      lastReviewDate: Date.now(),
-      totalReviews: reviewCount,
-      correctStreak: 0,
-      taskHistory: [],
-      stability: Math.max(0.5, srs.interval / (24 * 60)),
-      difficulty: 5,
-    };
-  };
-
-  const ensureSRSData = (
-    srs: SRSData | undefined,
-    fallbackId: string,
-    fallbackType: 'vocab' | 'phrase'
-  ): SRSData => {
-    if (srs) {
-      return migrateSRSData(srs);
-    }
-    return SRSAlgorithm.createNew(fallbackId, fallbackType);
-  };
 
   const handleSave = (item: StoredItem) => {
     try {
@@ -481,7 +587,7 @@ const App: React.FC = () => {
           const idToUse = existingItem.data.id;
 
           // Merge SRS data
-          const mergedSrs = ensureSRSData(
+          const mergedSrs = SRSAlgorithm.ensure(
             existingItem.srs ?? itemToSave.srs,
             idToUse,
             existingItem.type
@@ -507,7 +613,7 @@ const App: React.FC = () => {
           };
         } else {
           // New item
-          const normalizedSRS = ensureSRSData(itemToSave.srs, itemToSave.data.id, itemToSave.type);
+          const normalizedSRS = SRSAlgorithm.ensure(itemToSave.srs, itemToSave.data.id, itemToSave.type);
           const finalItem = { 
             ...itemToSave, 
             srs: normalizedSRS,
@@ -590,7 +696,7 @@ const App: React.FC = () => {
       if (!item) return prevState;
       
       // Migrate old SRS data if needed
-      const migratedSRS = migrateSRSData(item.srs);
+      const migratedSRS = SRSAlgorithm.migrate(item.srs);
       
       // Use new algorithm
       const updatedSRS = SRSAlgorithm.updateAfterReview(
@@ -636,7 +742,7 @@ const App: React.FC = () => {
     setLastScrollY(currentScrollY);
   };
 
-  const NavButton = ({ view, icon: Icon, label }: { view: ViewState, icon: any, label: string }) => (
+  const NavButton = ({ view, icon: Icon, label }: { view: ViewState, icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, label: string }) => (
     <button 
       onClick={() => { setCurrentView(view); setRecursiveQuery(undefined); setSelectedStoredItem(undefined); }}
       className={`flex flex-col items-center justify-center flex-1 py-3 gap-1 transition-colors ${currentView === view ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
@@ -648,8 +754,29 @@ const App: React.FC = () => {
 
   return (
     <div className="fixed inset-0 bg-white flex flex-col">
+      {/* Offline banner */}
+      {!isOnline && (
+        <div className="bg-amber-500 text-white text-center py-2 text-sm font-medium flex items-center justify-center gap-2 shrink-0">
+          <span className="inline-block w-2 h-2 bg-white rounded-full animate-pulse" />
+          Offline mode — changes will sync when connected
+        </div>
+      )}
+      
       {unauthorizedDomain && <AuthDomainErrorModal domain={unauthorizedDomain} onClose={() => setUnauthorizedDomain(null)} />}
       {signInError && <ErrorModal error={signInError} onClose={() => setSignInError(null)} />}
+      {confirmModal && (
+        <ConfirmModal
+          isOpen={confirmModal.isOpen}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          cancelText={confirmModal.cancelText}
+          variant={confirmModal.variant}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal(null)}
+          showCancel={confirmModal.showCancel}
+        />
+      )}
 
       {detailContext && (
           <DetailView 
@@ -658,7 +785,7 @@ const App: React.FC = () => {
               onClose={() => setDetailContext(null)}
               onSave={handleSave}
               onDelete={handleDelete}
-              savedItems={savedItems.filter(i => !i.isDeleted)}
+              savedItems={activeItems}
               onSearch={handleRecursiveSearch}
           />
       )}
@@ -669,7 +796,7 @@ const App: React.FC = () => {
                 onSave={handleSave} 
                 onUpdateStoredItem={handleUpdateStoredItem}
                 onDelete={handleDelete} 
-                savedItems={savedItems.filter(i => !i.isDeleted)} 
+                savedItems={activeItems} 
                 initialQuery={recursiveQuery}
                 initialData={selectedStoredItem}
                 onViewDetail={(data, type) => {
@@ -694,23 +821,25 @@ const App: React.FC = () => {
         
         {currentView === 'notebook' && (
           <NotebookView 
-            items={savedItems.filter(i => !i.isDeleted)} 
+            items={activeItems} 
             onDelete={handleDelete} 
             onSearch={handleRecursiveSearch} 
             onViewDetail={handleViewStoredItem}
             user={user}
             onSignIn={handleSignIn}
-            onGuestSignIn={handleGuestSignIn}
             onSignOut={handleSignOut}
             syncStatus={syncStatus}
             onScroll={handleScroll}
             onForceSync={handleForceSync}
+            isOnline={isOnline}
+            onBulkRefresh={handleBulkRefresh}
+            bulkRefreshProgress={bulkRefreshProgress}
           />
         )}
         
         {currentView === 'study' && (
           <StudyEnhanced
-            items={savedItems.filter(i => !i.isDeleted)} 
+            items={activeItems} 
             onUpdateSRS={updateSRS}
             onSearch={handleRecursiveSearch} 
             onDelete={handleDelete}
