@@ -351,11 +351,9 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
         return;
     }
 
-    // Update Parent Document (reduced frequency check)
-    const userDocRef = doc(db, "users", userId);
-    await setDoc(userDocRef, { 
-        lastSynced: Date.now()
-    }, { merge: true });
+    // NOTE: Removed parent document lastSynced write - it was costing an extra
+    // write on every sync and wasn't being used for anything meaningful.
+    // Client-side lastSyncTime tracking is sufficient.
 
     // Combine all items to write (both active and deleted)
     // We use Soft Deletes (isDeleted: true) instead of actual deletion to ensure sync propagation

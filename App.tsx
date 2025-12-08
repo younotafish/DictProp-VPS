@@ -421,12 +421,11 @@ const App: React.FC = () => {
       // Skip cloud sync when offline - will sync when back online
       if (user && isFirebaseConfigured && isOnline) {
           // Filter only changed items (updatedAt > lastSyncTime)
+          // NOTE: Deleted items already have updatedAt set when deleted,
+          // so they'll be included naturally. No need for special case.
           const changedItems = syncState.items.filter(item => {
               const updated = item.updatedAt || 0;
-              // Include if:
-              // 1. Newer than last sync, OR
-              // 2. Marked as deleted (deletions must always propagate)
-              return updated > lastSyncTime || item.isDeleted;
+              return updated > lastSyncTime;
           });
 
           if (changedItems.length === 0) {

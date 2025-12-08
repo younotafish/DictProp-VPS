@@ -524,14 +524,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
         </div>
 
         <div className="p-4 pb-24">
-          {/* Sense badge retained for meaning clarity */}
-          {type === 'vocab' && (data as VocabCard).sense && (
-            <div className="mb-4 flex items-center justify-center">
-              <span className="text-sm font-medium text-violet-600 bg-violet-50 px-4 py-1.5 rounded-full border border-violet-100">
-                {(data as VocabCard).sense}
-              </span>
-            </div>
-          )}
 
           {type === 'vocab' && (
             <VocabCardDisplay 

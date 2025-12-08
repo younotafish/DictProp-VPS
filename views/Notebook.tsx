@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -335,6 +336,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
+  const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [showHeader, setShowHeader] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
@@ -355,8 +357,26 @@ export const NotebookView: React.FC<NotebookProps> = ({
   };
   
   const { displayItems, groupedItems, archivedItems, archivedGroups } = React.useMemo(() => {
+    // 1. Fuzzy Search
+    let processedItems = items;
+    
+    if (localSearchQuery.trim()) {
+      const fuse = new Fuse(items, {
+        keys: [
+          'data.word',
+          'data.query',
+          'data.chinese',
+          'data.translation'
+        ],
+        threshold: 0.3,
+        ignoreLocation: true
+      });
+      
+      processedItems = fuse.search(localSearchQuery).map(result => result.item);
+    }
+
     // Separate active and archived items
-    const activeFiltered = items
+    const activeFiltered = processedItems
       .filter(i => {
         const isValid = i && i.data && i.data.id && !i.isDeleted && !i.isArchived;
         if (!isValid) return false;
@@ -384,7 +404,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
       });
     
     // Archived items
-    const archivedFiltered = items
+    const archivedFiltered = processedItems
       .filter(i => {
         const isValid = i && i.data && i.data.id && !i.isDeleted && i.isArchived;
         if (!isValid) return false;
@@ -443,9 +463,9 @@ export const NotebookView: React.FC<NotebookProps> = ({
       archivedItems: archivedFiltered,
       archivedGroups: groupByTitle(archivedFiltered)
     };
-  }, [items, sortMode, filterMode]);
+  }, [items, sortMode, filterMode, localSearchQuery]);
 
-  if (displayItems.length === 0) {
+  if (displayItems.length === 0 && !localSearchQuery) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50">
         <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
@@ -468,73 +488,98 @@ export const NotebookView: React.FC<NotebookProps> = ({
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden bg-slate-50" onScroll={handleScroll}>
       {/* Header */}
-      <div className={`sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md px-6 py-4 border-b border-slate-200/50 flex justify-between items-center transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
-        <div>
-          <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-          <p className="text-xs text-slate-500 font-medium">{displayItems.length} {displayItems.length === 1 ? 'item' : 'items'} saved</p>
-        </div>
-        <div className="flex items-center gap-1 bg-white rounded-full p-1 border border-slate-100 shadow-sm flex-nowrap shrink-0">
-          <button
-            onClick={() => setFilterMode(prev => {
-              if (prev === 'all') return 'vocab';
-              if (prev === 'vocab') return 'phrase';
-              return 'all';
-            })}
-            className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-50 transition-colors ${filterMode !== 'all' ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400'}`}
-            title={`Filter: ${filterMode === 'all' ? 'All Items' : filterMode === 'vocab' ? 'Vocabulary Only' : 'Phrases Only'}`}
-          >
-            {filterMode === 'all' && <Filter size={16} />}
-            {filterMode === 'vocab' && <Type size={16} />}
-            {filterMode === 'phrase' && <Layers size={16} />}
-          </button>
-          <button
-            onClick={() => setSortMode(prev => prev === 'familiarity' ? 'alphabetical' : 'familiarity')}
-            className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-50 text-slate-400 hover:text-indigo-600 transition-colors"
-            title={sortMode === 'familiarity' ? 'Sort: Familiarity' : 'Sort: A-Z'}
-          >
-            {sortMode === 'familiarity' ? <Sparkles size={16} /> : <ArrowDownAZ size={16} />}
-          </button>
-          <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
-          {/* Refresh All Button */}
-          {onBulkRefresh && isOnline && (
-            <button 
-              onClick={onBulkRefresh} 
-              disabled={bulkRefreshProgress?.isRunning}
-              className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full ${bulkRefreshProgress?.isRunning ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-violet-50'}`}
-              title="Refresh All Items (re-search with latest AI)"
+      <div className={`sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md border-b border-slate-200/50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
+        <div className="px-6 py-4 flex justify-between items-center">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
+            <p className="text-xs text-slate-500 font-medium">{displayItems.length} {displayItems.length === 1 ? 'item' : 'items'} saved</p>
+          </div>
+          <div className="flex items-center gap-1 bg-white rounded-full p-1 border border-slate-100 shadow-sm flex-nowrap shrink-0">
+            <button
+              onClick={() => setFilterMode(prev => {
+                if (prev === 'all') return 'vocab';
+                if (prev === 'vocab') return 'phrase';
+                return 'all';
+              })}
+              className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-50 transition-colors ${filterMode !== 'all' ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400'}`}
+              title={`Filter: ${filterMode === 'all' ? 'All Items' : filterMode === 'vocab' ? 'Vocabulary Only' : 'Phrases Only'}`}
             >
-              {bulkRefreshProgress?.isRunning ? (
-                <Loader2 className="animate-spin text-violet-500" size={14} />
-              ) : (
-                <RotateCcw className="text-violet-400 hover:text-violet-600 transition-colors" size={14} />
-              )}
+              {filterMode === 'all' && <Filter size={16} />}
+              {filterMode === 'vocab' && <Type size={16} />}
+              {filterMode === 'phrase' && <Layers size={16} />}
             </button>
-          )}
-          {!isOnline ? (
-            <div className="flex items-center gap-1 text-amber-500 px-1 shrink-0" title="Offline">
-              <WifiOff size={14} />
+            <button
+              onClick={() => setSortMode(prev => prev === 'familiarity' ? 'alphabetical' : 'familiarity')}
+              className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-50 text-slate-400 hover:text-indigo-600 transition-colors"
+              title={sortMode === 'familiarity' ? 'Sort: Familiarity' : 'Sort: A-Z'}
+            >
+              {sortMode === 'familiarity' ? <Sparkles size={16} /> : <ArrowDownAZ size={16} />}
+            </button>
+            <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
+            {/* Refresh All Button */}
+            {onBulkRefresh && isOnline && (
+              <button 
+                onClick={onBulkRefresh} 
+                disabled={bulkRefreshProgress?.isRunning}
+                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full ${bulkRefreshProgress?.isRunning ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-violet-50'}`}
+                title="Refresh All Items (re-search with latest AI)"
+              >
+                {bulkRefreshProgress?.isRunning ? (
+                  <Loader2 className="animate-spin text-violet-500" size={14} />
+                ) : (
+                  <RotateCcw className="text-violet-400 hover:text-violet-600 transition-colors" size={14} />
+                )}
+              </button>
+            )}
+            {!isOnline ? (
+              <div className="flex items-center gap-1 text-amber-500 px-1 shrink-0" title="Offline">
+                <WifiOff size={14} />
+              </div>
+            ) : (
+              <button 
+                onClick={onForceSync} 
+                disabled={syncStatus === 'syncing' || !user}
+                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full ${syncStatus === 'syncing' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-50'}`}
+                title="Force Sync"
+              >
+                {syncStatus === 'syncing' ? (
+                  <Loader2 className="animate-spin text-indigo-500" size={14} />
+                ) : (
+                  <RefreshCw className="text-slate-400 hover:text-indigo-500 transition-colors" size={14} />
+                )}
+              </button>
+            )}
+            <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
+            <div className="shrink-0">
+              <UserMenu 
+                user={user} 
+                onSignIn={onSignIn} 
+                onSignOut={onSignOut} 
+              />
             </div>
-          ) : (
-            <button 
-              onClick={onForceSync} 
-              disabled={syncStatus === 'syncing' || !user}
-              className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full ${syncStatus === 'syncing' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-50'}`}
-              title="Force Sync"
-            >
-              {syncStatus === 'syncing' ? (
-                <Loader2 className="animate-spin text-indigo-500" size={14} />
-              ) : (
-                <RefreshCw className="text-slate-400 hover:text-indigo-500 transition-colors" size={14} />
-              )}
-            </button>
-          )}
-          <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
-          <div className="shrink-0">
-            <UserMenu 
-              user={user} 
-              onSignIn={onSignIn} 
-              onSignOut={onSignOut} 
+          </div>
+        </div>
+        
+        {/* Search Bar */}
+        <div className="px-6 pb-4">
+          <div className="relative group">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16} />
+            <input 
+              type="text"
+              value={localSearchQuery}
+              onChange={(e) => setLocalSearchQuery(e.target.value)}
+              placeholder="Search notebook..."
+              className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
             />
+            {localSearchQuery && (
+              <button 
+                onClick={() => setLocalSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100 transition-colors"
+                title="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
         </div>
       </div>
