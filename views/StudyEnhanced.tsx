@@ -17,6 +17,7 @@ import { OfflineImage } from '../components/OfflineImage';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import ReactMarkdown from 'react-markdown';
+import { speak } from '../services/speech';
 import { 
   Trophy, 
   TrendingUp, 
@@ -71,6 +72,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const [meaningIndex, setMeaningIndex] = useState(0); // For carousel navigation within same-spelling words
   const touchStartX = React.useRef<number | null>(null);
   const touchStartY = React.useRef<number | null>(null);
+  const touchStartTime = React.useRef<number | null>(null);
   
   const [sessionStats, setSessionStats] = useState({
     reviews: 0,
@@ -117,13 +119,47 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   }, [currentMeaningItem?.data.id, onLazyLoadImage]);
 
   // Horizontal swipe handlers for meaning carousel (vertical swipe disabled - use buttons)
+  // Only active on FRONT of card - back has selectable content that conflicts with swipe on iOS
   const handleMeaningTouchStart = (e: React.TouchEvent) => {
+    // Don't track swipe when card is flipped - back side has selectable content
+    if (isFlipped) return;
+    
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
+    touchStartTime.current = Date.now();
   };
 
   const handleMeaningTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStartX.current || !touchStartY.current) return;
+    // Don't process swipe when card is flipped - allows text selection on iOS
+    if (isFlipped) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      touchStartTime.current = null;
+      return;
+    }
+    
+    if (!touchStartX.current || !touchStartY.current || !touchStartTime.current) return;
+    
+    // Check if user is selecting text - don't interfere with text selection on iOS
+    const selection = window.getSelection();
+    const hasTextSelection = selection && selection.toString().trim().length > 0;
+    if (hasTextSelection) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      touchStartTime.current = null;
+      return;
+    }
+    
+    // Check touch duration - text selection/long press takes longer than a quick swipe
+    // Only process as swipe if it was a quick gesture (< 300ms)
+    const touchDuration = Date.now() - touchStartTime.current;
+    const maxSwipeDuration = 300;
+    if (touchDuration > maxSwipeDuration) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      touchStartTime.current = null;
+      return;
+    }
     
     const diffX = e.changedTouches[0].clientX - touchStartX.current;
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
@@ -147,6 +183,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     
     touchStartX.current = null;
     touchStartY.current = null;
+    touchStartTime.current = null;
   };
 
   const handleMouseDown = () => {
@@ -305,20 +342,80 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     }
   }, [queue, cardStartTime, onUpdateSRS, finishSession, currentMeaningItem, siblingMeanings]);
 
+  // Enhanced keyboard navigation for study mode
   useEffect(() => {
     if (mode !== 'session') return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Arrow keys for rating
       if (e.key === 'ArrowLeft') {
+        e.preventDefault();
         handleRate(false);
       } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
         handleRate(true);
+      }
+      
+      // Space to flip card
+      if (e.key === ' ' || e.key === 'Space') {
+        e.preventDefault();
+        setIsFlipped(prev => !prev);
+      }
+      
+      // Enter to flip card (alternative)
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (!isFlipped) {
+          setIsFlipped(true);
+        }
+      }
+      
+      // Escape to exit session
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMode('dashboard');
+      }
+      
+      // Arrow Up/Down for meaning navigation when multiple meanings
+      if (hasMutipleMeanings) {
+        if (e.key === 'ArrowUp' && meaningIndex > 0) {
+          e.preventDefault();
+          setMeaningIndex(prev => prev - 1);
+          setIsFlipped(false);
+        } else if (e.key === 'ArrowDown' && meaningIndex < siblingMeanings.length - 1) {
+          e.preventDefault();
+          setMeaningIndex(prev => prev + 1);
+          setIsFlipped(false);
+        }
+      }
+      
+      // Number keys for quick rating (1 = Forgot, 2 = Archive, 3 = Got it)
+      if (e.key === '1' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        handleRate(false);
+      } else if (e.key === '3' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        handleRate(true);
+      } else if (e.key === '2' && !e.metaKey && !e.ctrlKey && onArchive) {
+        e.preventDefault();
+        setShowArchiveConfirm(true);
+      }
+      
+      // P key to pronounce current word
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        if (currentMeaningItem) {
+          const text = currentMeaningItem.type === 'vocab' 
+            ? (currentMeaningItem.data as VocabCard).word 
+            : (currentMeaningItem.data as SearchResult).query;
+          if (text) speak(text);
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, handleRate]);
+  }, [mode, handleRate, isFlipped, hasMutipleMeanings, meaningIndex, siblingMeanings.length, onArchive, currentMeaningItem]);
 
   const handleDeleteCurrent = () => {
     if (!currentMeaningItem) return;
@@ -376,7 +473,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       >
         <div className="relative w-full h-8 shrink-0 flex justify-center items-center gap-2">
           <Play size={12} className="text-indigo-400 opacity-60" fill="currentColor" />
-          <p className="text-[10px] font-bold text-indigo-400 tracking-widest uppercase opacity-60 group-hover:opacity-100 transition-opacity">Tap to reveal answer</p>
+          <p className="text-[10px] font-bold text-indigo-400 tracking-widest uppercase opacity-60 group-hover:opacity-100 transition-opacity">
+            <span className="md:hidden">Tap to reveal</span>
+            <span className="hidden md:inline">Press Space or tap to reveal</span>
+          </p>
         </div>
 
         <div className="flex-1 flex items-center justify-center w-full overflow-hidden my-4">
@@ -417,11 +517,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     
     if (item.type === 'vocab') {
       return (
-        <div 
-          className="h-full w-full"
-          onTouchStart={handleMeaningTouchStart}
-          onTouchEnd={handleMeaningTouchEnd}
-        >
+        <div className="h-full w-full">
           <VocabCardDisplay 
             data={item.data as VocabCard}
             showSave={false}
@@ -439,8 +535,6 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         <div 
           className="h-full w-full bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-y-auto relative select-text pb-8"
           style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
-          onTouchStart={handleMeaningTouchStart}
-          onTouchEnd={handleMeaningTouchEnd}
         >
             {/* Hero Image */}
             <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group shrink-0">
@@ -723,24 +817,33 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         <div className="grid grid-cols-3 gap-3 shrink-0">
            <button 
              onClick={() => handleRate(false)}
-             className="h-14 bg-rose-500 active:bg-rose-600 rounded-2xl shadow-lg shadow-rose-200 transition-all active:scale-95"
-             aria-label="Forgot"
-             title="Forgot"
-           />
+             className="h-14 bg-rose-500 active:bg-rose-600 rounded-2xl shadow-lg shadow-rose-200 transition-all active:scale-95 flex items-center justify-center gap-2 group"
+             aria-label="Forgot (press ← or 1)"
+             title="Forgot (← or 1)"
+           >
+             <span className="hidden md:inline text-white/80 text-xs font-medium group-hover:text-white transition-colors">Forgot</span>
+             <kbd className="hidden md:inline bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded font-mono">←</kbd>
+           </button>
            {onArchive && (
              <button 
                onClick={handleArchiveClick}
-               className="h-14 bg-amber-400 active:bg-amber-500 rounded-2xl shadow-lg shadow-amber-200 transition-all active:scale-95"
-               aria-label="Archive"
-               title="Archive"
-             />
+               className="h-14 bg-amber-400 active:bg-amber-500 rounded-2xl shadow-lg shadow-amber-200 transition-all active:scale-95 flex items-center justify-center gap-2 group"
+               aria-label="Archive (press 2)"
+               title="Archive (2)"
+             >
+               <span className="hidden md:inline text-white/80 text-xs font-medium group-hover:text-white transition-colors">Archive</span>
+               <kbd className="hidden md:inline bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded font-mono">2</kbd>
+             </button>
            )}
            <button 
              onClick={() => handleRate(true)}
-             className="h-14 bg-emerald-500 active:bg-emerald-600 rounded-2xl shadow-lg shadow-emerald-200 transition-all active:scale-95"
-             aria-label="Got it"
-             title="Got it"
-           />
+             className="h-14 bg-emerald-500 active:bg-emerald-600 rounded-2xl shadow-lg shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-2 group"
+             aria-label="Got it (press → or 3)"
+             title="Got it (→ or 3)"
+           >
+             <span className="hidden md:inline text-white/80 text-xs font-medium group-hover:text-white transition-colors">Got it</span>
+             <kbd className="hidden md:inline bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded font-mono">→</kbd>
+           </button>
         </div>
 
       </div>

@@ -1,12 +1,14 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle, ItemGroup } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
+import { speak } from '../services/speech';
 
 interface DetailViewProps {
   // New group-based navigation props
@@ -135,6 +137,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   }, [currentItem?.data.id, onLazyLoadImage, savedItems]);
 
+
   if (!currentItem) {
     return null;
   }
@@ -172,12 +175,30 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const onContentTouchEnd = (e: React.TouchEvent) => {
     if (touchStartX.current === null || touchStartY.current === null || isAnimating) return;
     
+    // Check if user is selecting text - don't interfere with text selection on iOS
+    const selection = window.getSelection();
+    const hasTextSelection = selection && selection.toString().trim().length > 0;
+    if (hasTextSelection) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
+    
     const diffX = e.changedTouches[0].clientX - touchStartX.current;
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
     const absX = Math.abs(diffX);
     const absY = Math.abs(diffY);
     const swipeThreshold = 50;
     const swipeDuration = Date.now() - touchStartTime.current;
+    
+    // Skip if touch duration is too long (likely text selection attempt, not swipe)
+    // Text selection gestures take longer than quick navigation swipes
+    const maxSwipeDuration = 300;
+    if (swipeDuration > maxSwipeDuration) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
     
     // Check scroll position for edge-based navigation
     const container = scrollContainerRef.current;
@@ -189,7 +210,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     
     // Vertical Swipe (Groups/Words) - edge-based detection
     const isVerticalSwipe = absY > absX * 1.5 && absY > swipeThreshold;
-    const isFastSwipe = swipeDuration < 400;
+    const isFastSwipe = swipeDuration < 300;
     
     // Horizontal Swipe (Meanings)
     const isHorizontalSwipe = absX > absY * 1.5 && absX > swipeThreshold;
@@ -240,6 +261,25 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
   
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
+
+  // P key to pronounce current word
+  useEffect(() => {
+    if (showDeleteConfirm || showActionMenu) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if in input
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        if (title) speak(title);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [title, showDeleteConfirm, showActionMenu]);
   
   // Find saved item - first try by ID (most reliable), then fallback to title+sense matching
   const savedItemMatch = savedItems.find(item => item.data.id === data.id) || 
@@ -249,7 +289,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     );
   const isSaved = !!savedItemMatch;
 
-  const handleToggleSave = () => {
+  const handleToggleSave = useCallback(() => {
     if (isSaved && savedItemMatch) {
       onDelete(savedItemMatch.data.id);
     } else {
@@ -262,7 +302,66 @@ export const DetailView: React.FC<DetailViewProps> = ({
         srs: SRSAlgorithm.createNew(data.id, type)
       });
     }
-  };
+  }, [isSaved, savedItemMatch, data, type, onDelete, onSave]);
+
+  // Navigation handlers for keyboard
+  const handlePrevItem = useCallback(() => {
+    if (hasPrevItem && !isAnimating) {
+      setIsAnimating(true);
+      setCurrentItemIndex(prev => prev - 1);
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      setTimeout(() => setIsAnimating(false), 300);
+    }
+  }, [hasPrevItem, isAnimating]);
+
+  const handleNextItem = useCallback(() => {
+    if (hasNextItem && !isAnimating) {
+      setIsAnimating(true);
+      setCurrentItemIndex(prev => prev + 1);
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      setTimeout(() => setIsAnimating(false), 300);
+    }
+  }, [hasNextItem, isAnimating]);
+
+  const handlePrevGroup = useCallback(() => {
+    if (hasPrevGroup && !isAnimating && groups) {
+      setIsAnimating(true);
+      setCurrentGroupIndex(prev => prev - 1);
+      setCurrentItemIndex(0);
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      setTimeout(() => setIsAnimating(false), 300);
+    }
+  }, [hasPrevGroup, isAnimating, groups]);
+
+  const handleNextGroup = useCallback(() => {
+    if (hasNextGroup && !isAnimating && groups) {
+      setIsAnimating(true);
+      setCurrentGroupIndex(prev => prev + 1);
+      setCurrentItemIndex(0);
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      setTimeout(() => setIsAnimating(false), 300);
+    }
+  }, [hasNextGroup, isAnimating, groups]);
+
+  // Keyboard navigation
+  useKeyboardNavigation({
+    onEscape: onClose,
+    onArrowLeft: handlePrevItem,
+    onArrowRight: handleNextItem,
+    onArrowUp: handlePrevGroup,
+    onArrowDown: handleNextGroup,
+    onSave: handleToggleSave,
+    enabled: !showDeleteConfirm && !showActionMenu,
+  });
+
+  // Trackpad wheel navigation
+  useWheelNavigation({
+    onScrollLeft: handlePrevItem,
+    onScrollRight: handleNextItem,
+    containerRef: scrollContainerRef,
+    threshold: 80,
+    enabled: !!(currentGroup && currentGroup.items.length > 1),
+  });
 
   const handleVocabSearch = (term: string) => {
     onClose();
@@ -510,7 +609,63 @@ export const DetailView: React.FC<DetailViewProps> = ({
             </div>
           )}
 
-          {/* Navigation hints intentionally removed for a clean, gesture-first UI */}
+          {/* Desktop navigation buttons */}
+          <div className="hidden md:flex fixed bottom-6 left-1/2 -translate-x-1/2 z-40 items-center gap-2 bg-white/90 backdrop-blur-sm rounded-full px-4 py-2 shadow-lg border border-slate-200">
+            {/* Previous word */}
+            {hasPrevGroup && (
+              <button
+                onClick={handlePrevGroup}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1"
+                title="Previous word (↑)"
+              >
+                <ChevronUp size={16} />
+                <span className="text-xs font-medium">Prev word</span>
+              </button>
+            )}
+            
+            {/* Previous meaning */}
+            {hasPrevItem && (
+              <button
+                onClick={handlePrevItem}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1"
+                title="Previous meaning (←)"
+              >
+                <ChevronLeft size={16} />
+                <span className="text-xs font-medium">Prev</span>
+              </button>
+            )}
+            
+            {/* Position indicator */}
+            {currentGroup && currentGroup.items.length > 1 && (
+              <span className="text-xs font-bold text-violet-600 bg-violet-50 px-3 py-1 rounded-full">
+                {currentItemIndex + 1}/{currentGroup.items.length}
+              </span>
+            )}
+            
+            {/* Next meaning */}
+            {hasNextItem && (
+              <button
+                onClick={handleNextItem}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1"
+                title="Next meaning (→)"
+              >
+                <span className="text-xs font-medium">Next</span>
+                <ChevronRight size={16} />
+              </button>
+            )}
+            
+            {/* Next word */}
+            {hasNextGroup && (
+              <button
+                onClick={handleNextGroup}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1"
+                title="Next word (↓)"
+              >
+                <span className="text-xs font-medium">Next word</span>
+                <ChevronDown size={16} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

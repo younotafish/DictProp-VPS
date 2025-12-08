@@ -115,12 +115,17 @@ Extract phrasal verbs, idioms, and multi-word expressions as COMPLETE phrases (n
 - "couldn't help but" should be extracted as "couldn't help but"
 - "even though" can be extracted if it adds learning value
 
-CRITICAL - MULTIPLE MEANINGS (same as Word Mode):
-Each extracted vocabulary item MUST be treated EXACTLY like a direct Word Mode search.
-If "bank on" has multiple meanings, create SEPARATE vocab cards for each meaning:
-- Different contexts/domains = different cards (e.g., "bank on: to rely financially" vs "bank on: to trust emotionally")
-- Different registers = different cards (formal vs informal usage)
-- Different nuances = different cards
+CRITICAL - INCLUDE ALL MEANINGS (most important rule):
+Once a word/phrase is selected for extraction, you MUST include ALL its common meanings/senses as SEPARATE vocab cards.
+Do NOT limit to only the meaning used in the sentence context!
+
+Example: If extracting "zest" from a cooking sentence:
+- Card 1: zest (noun: culinary) - "The outer peel of citrus fruit..."
+- Card 2: zest (noun: enthusiasm) - "Great energy and enjoyment..."
+The user should learn ALL meanings of the word, not just the one in context.
+
+Example: If extracting "bank" from any sentence:
+- Create cards for ALL meanings: financial institution, river bank, to rely on, to tilt aircraft, etc.
 
 Each card MUST include ALL fields with the SAME depth as Word Mode:
 - word, sense, chinese, ipa, definition, forms, synonyms, antonyms, confusables, examples, history, register, mnemonic, imagePrompt
@@ -128,7 +133,7 @@ Each card MUST include ALL fields with the SAME depth as Word Mode:
 - Confusables: similar phrases that might be confused
 
 Only extract words/phrases that are C1/C2 level, idiomatic, or have interesting nuance.
-Be thorough - the user should get the same quality whether they search "bank on" directly or extract it from a sentence.
+Be thorough - the user should get the same quality whether they search a word directly or extract it from a sentence.
 `;
 
 // Helper function to detect if input is a word/phrase or a sentence

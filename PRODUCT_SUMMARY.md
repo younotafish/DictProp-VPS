@@ -1416,6 +1416,7 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 - Large touch target (minimum 44px height)
 - Works with keyboard (Enter/Space)
 - Screen reader announces "Play pronunciation"
+- Press `P` key to pronounce current word (Study/Detail views)
 
 ### Where Clickable IPA Appears
 
@@ -1824,9 +1825,42 @@ users/{userId}/vocab_items/{itemId}
 - Other browsers: Bookmark-based
 
 **Keyboard Shortcuts:**
-- Enter: Submit search
-- Shift+Enter: New line in search
-- Escape: Close modals
+
+| Shortcut | Action |
+|----------|--------|
+| `1` | Go to Search tab |
+| `2` | Go to Notebook tab |
+| `3` | Go to Study tab |
+| `⌘F` / `Ctrl+F` | Focus search input |
+| `Esc` | Close modal / Go back |
+| `?` | Show keyboard shortcuts help |
+| `←` `→` | Navigate between cards/meanings |
+| `↑` `↓` | Navigate between words (Detail View) |
+| `Space` | Flip flashcard |
+| `Enter` | Submit search / Open selected card |
+| `P` | Pronounce current word |
+
+**Study Mode Shortcuts:**
+
+| Shortcut | Action |
+|----------|--------|
+| `←` or `1` | Mark as Forgot |
+| `→` or `3` | Mark as Got it |
+| `2` | Archive card |
+| `Space` | Flip card to reveal answer |
+| `Esc` | Exit session |
+
+**Trackpad Gestures (Chrome macOS):**
+
+| Gesture | Action |
+|---------|--------|
+| Two-finger horizontal swipe | Navigate between cards in carousels |
+| Two-finger vertical swipe | Navigate between words (Detail View) |
+
+**Keyboard Shortcuts Help:**
+- Press `?` anywhere in the app to see available shortcuts
+- A keyboard icon appears in the navigation bar (desktop only)
+- Click it to view the shortcuts reference
 
 ---
 
@@ -1856,10 +1890,18 @@ users/{userId}/vocab_items/{itemId}
 - Adequate spacing between targets
 - Swipe gestures have button alternatives
 
-**Keyboard Navigation:**
+**Keyboard Navigation (Desktop/Chrome macOS):**
 - Tab order follows visual order
 - Focus indicators visible
 - Enter activates focused elements
+- Full keyboard control for all features:
+  - Number keys (`1`, `2`, `3`) switch tabs
+  - Arrow keys navigate carousels and cards
+  - `Space` flips flashcards
+  - `P` pronounces current word
+  - `Esc` closes modals/views
+  - `?` shows keyboard shortcuts help
+- Trackpad gestures for carousel navigation
 
 ### Screen Reader Compatibility
 
@@ -2490,15 +2532,28 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 | Action | How |
 |--------|-----|
 | Save word | Tap ⭐ on card |
-| Play audio | Tap IPA block (e.g., `/bæŋk/ 🔊`) |
-| Archive item | Long press → 📦 |
+| Play audio | Tap IPA block (e.g., `/bæŋk/ 🔊`) or press `P` |
+| Archive item | Long press → 📦 or press `2` (Study mode) |
 | Unarchive item | Long press archived card → 📤 |
 | Delete item | Long press → 🗑️ |
 | Refresh item | Long press → 🔄 |
 | Search related | Tap any pill (synonym, etc.) |
-| View full card | Tap notebook item |
+| View full card | Tap notebook item or press `Enter` |
 | Sign in | Tap user icon in Notebook |
 | Force sync | Tap sync icon in Notebook |
+| Show shortcuts | Press `?` or click ⌨️ in nav bar |
+
+### Keyboard Shortcuts (Desktop)
+| Shortcut | Action |
+|----------|--------|
+| `1` / `2` / `3` | Switch tabs (Search/Notebook/Study) |
+| `⌘F` | Focus search |
+| `←` `→` | Navigate cards |
+| `↑` `↓` | Navigate words |
+| `Space` | Flip flashcard |
+| `P` | Pronounce word |
+| `Esc` | Close/Go back |
+| `?` | Show shortcuts help |
 
 ### Mastery Levels
 | Level | Strength | Color | Meaning |

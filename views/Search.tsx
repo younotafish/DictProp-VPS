@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { analyzeInput, generateIllustration } from '../services/geminiService';
 import { SearchResult, StoredItem, VocabCard, getItemTitle } from '../types';
-import { ArrowRight, Search as SearchIcon, Loader2, Bookmark, RotateCw, BookOpen, ArrowLeft, AlertCircle, X, Clipboard } from 'lucide-react';
+import { ArrowRight, Search as SearchIcon, Loader2, Bookmark, RotateCw, BookOpen, ArrowLeft, AlertCircle, X, Clipboard, ChevronLeft, ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
 
 interface SearchProps {
   onSave: (item: StoredItem) => void;
@@ -39,6 +40,48 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   const SWIPE_THRESHOLD = 50;
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const carouselRef = useRef<HTMLDivElement>(null);
+  
+  // Calculate total vocabs for keyboard navigation
+  const totalVocabs = useMemo(() => result?.vocabs?.length || 0, [result]);
+  
+  // Keyboard navigation for carousel
+  useKeyboardNavigation({
+    onArrowLeft: () => {
+      if (totalVocabs > 1 && vocabIndex > 0) {
+        setVocabIndex(prev => prev - 1);
+      }
+    },
+    onArrowRight: () => {
+      if (totalVocabs > 1 && vocabIndex < totalVocabs - 1) {
+        setVocabIndex(prev => prev + 1);
+      }
+    },
+    onEnter: () => {
+      const currentVocab = result?.vocabs?.[vocabIndex];
+      if (currentVocab && onViewDetail) {
+        onViewDetail(currentVocab, 'vocab');
+      }
+    },
+    enabled: !loading && (result !== null || vocabResult !== null),
+  });
+  
+  // Trackpad wheel navigation for carousel
+  useWheelNavigation({
+    onScrollLeft: () => {
+      if (totalVocabs > 1 && vocabIndex > 0) {
+        setVocabIndex(prev => prev - 1);
+      }
+    },
+    onScrollRight: () => {
+      if (totalVocabs > 1 && vocabIndex < totalVocabs - 1) {
+        setVocabIndex(prev => prev + 1);
+      }
+    },
+    containerRef: carouselRef,
+    threshold: 80,
+    enabled: totalVocabs > 1,
+  });
   const isMounted = useRef(true);
   const searchRequestId = useRef(0);
   const lastProcessedQuery = useRef<string | undefined>(undefined);
@@ -697,6 +740,14 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                             
                             const handleCarouselTouchEnd = (e: React.TouchEvent) => {
                                 if (!touchStart.current) return;
+                                
+                                // Check if user is selecting text - don't interfere with text selection on iOS
+                                const selection = window.getSelection();
+                                if (selection && selection.toString().trim().length > 0) {
+                                    touchStart.current = null;
+                                    return;
+                                }
+                                
                                 const diffX = e.changedTouches[0].clientX - touchStart.current.x;
                                 const diffY = e.changedTouches[0].clientY - touchStart.current.y;
                                 const absX = Math.abs(diffX);
@@ -715,8 +766,9 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                 touchStart.current = null;
                             };
                             
-                            return (
+                                return (
                                 <div 
+                                    ref={carouselRef}
                                     className="px-4 pb-4"
                                     onTouchStart={handleCarouselTouchStart}
                                     onTouchEnd={handleCarouselTouchEnd}
@@ -729,11 +781,25 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                                 {vocabIndex + 1}
                                             </div>
                                         )}
-                                        {/* Next card indicator */}
+                                        {/* Previous card button - keyboard/trackpad accessible */}
+                                        {totalVocabs > 1 && vocabIndex > 0 && (
+                                            <button
+                                                onClick={() => setVocabIndex(prev => prev - 1)}
+                                                className="absolute -left-3 top-1/2 -translate-y-1/2 z-10 w-8 h-8 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
+                                                aria-label="Previous meaning"
+                                            >
+                                                <ChevronLeft size={18} />
+                                            </button>
+                                        )}
+                                        {/* Next card button - keyboard/trackpad accessible */}
                                         {totalVocabs > 1 && vocabIndex < totalVocabs - 1 && (
-                                            <div className="absolute -right-1 top-1/2 -translate-y-1/2 z-10 w-6 h-6 bg-indigo-100 text-indigo-600 text-xs font-bold rounded-full flex items-center justify-center shadow">
-                                                {vocabIndex + 2}
-                                            </div>
+                                            <button
+                                                onClick={() => setVocabIndex(prev => prev + 1)}
+                                                className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-8 h-8 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
+                                                aria-label="Next meaning"
+                                            >
+                                                <ChevronRight size={18} />
+                                            </button>
                                         )}
                                         <VocabCardDisplay 
                                             data={currentVocab} 
@@ -851,6 +917,14 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                 
                                 const handleCarouselTouchEnd = (e: React.TouchEvent) => {
                                     if (!touchStart.current) return;
+                                    
+                                    // Check if user is selecting text - don't interfere with text selection on iOS
+                                    const selection = window.getSelection();
+                                    if (selection && selection.toString().trim().length > 0) {
+                                        touchStart.current = null;
+                                        return;
+                                    }
+                                    
                                     const diffX = e.changedTouches[0].clientX - touchStart.current.x;
                                     const diffY = e.changedTouches[0].clientY - touchStart.current.y;
                                     const absX = Math.abs(diffX);

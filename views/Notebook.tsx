@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { StoredItem, SyncStatus, AppUser, ItemGroup } from '../types';
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
+import { useWheelNavigation } from '../hooks';
 
 interface NotebookItemProps {
   item: StoredItem;
@@ -184,9 +185,19 @@ const NotebookGroup: React.FC<NotebookGroupProps> = ({
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const totalItems = group.items.length;
+  const carouselRef = useRef<HTMLDivElement>(null);
 
   const touchStart = useRef<{x: number, y: number} | null>(null);
   const SWIPE_THRESHOLD = 50;
+  
+  // Trackpad wheel navigation for carousel
+  useWheelNavigation({
+    onScrollLeft: () => setCurrentIndex((prev) => (prev - 1 + totalItems) % totalItems),
+    onScrollRight: () => setCurrentIndex((prev) => (prev + 1) % totalItems),
+    containerRef: carouselRef,
+    threshold: 80,
+    enabled: totalItems > 1,
+  });
   
   // Single item - no carousel needed
   if (totalItems === 1) {
@@ -218,6 +229,14 @@ const NotebookGroup: React.FC<NotebookGroupProps> = ({
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!touchStart.current) return;
+    
+    // Check if user is selecting text - don't interfere with text selection on iOS
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) {
+      touchStart.current = null;
+      return;
+    }
+    
     const diffX = e.changedTouches[0].clientX - touchStart.current.x;
     const diffY = e.changedTouches[0].clientY - touchStart.current.y;
     const absX = Math.abs(diffX);
@@ -233,7 +252,26 @@ const NotebookGroup: React.FC<NotebookGroupProps> = ({
   };
   
   return (
-    <div className="relative" style={{ touchAction: 'pan-y' }}>
+    <div ref={carouselRef} className="relative" style={{ touchAction: 'pan-y' }}>
+      {/* Navigation arrows for desktop */}
+      {currentIndex > 0 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setCurrentIndex(prev => prev - 1); }}
+          className="absolute -left-2 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-violet-600 rounded-full flex items-center justify-center shadow-md hover:bg-violet-50 transition-colors hidden md:flex"
+          aria-label="Previous meaning"
+        >
+          <ChevronLeft size={16} />
+        </button>
+      )}
+      {currentIndex < totalItems - 1 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setCurrentIndex(prev => prev + 1); }}
+          className="absolute -right-2 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-violet-600 rounded-full flex items-center justify-center shadow-md hover:bg-violet-50 transition-colors hidden md:flex"
+          aria-label="Next meaning"
+        >
+          <ChevronRight size={16} />
+        </button>
+      )}
       {/* Card */}
       <div className="w-full" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <NotebookItem 

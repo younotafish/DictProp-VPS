@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { SearchView } from './views/Search';
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
 import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, VocabCard, SearchResult, AppUser, ItemGroup } from './types';
-import { Search, Book, BrainCircuit } from 'lucide-react';
+import { Search, Book, BrainCircuit, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem } from './services/firebase';
@@ -13,6 +13,24 @@ import { ErrorModal } from './components/ErrorModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { analyzeInput } from './services/geminiService';
+import { useGlobalNavigation } from './hooks';
+
+// Keyboard shortcut display component
+const ShortcutRow: React.FC<{ keys: string[], description: string }> = ({ keys, description }) => (
+  <div className="flex items-center justify-between py-1.5">
+    <span className="text-sm text-slate-600">{description}</span>
+    <div className="flex items-center gap-1">
+      {keys.map((key, i) => (
+        <React.Fragment key={i}>
+          <kbd className="min-w-[24px] h-6 px-1.5 bg-slate-100 border border-slate-200 rounded text-xs font-mono font-medium text-slate-700 flex items-center justify-center shadow-sm">
+            {key}
+          </kbd>
+          {i < keys.length - 1 && <span className="text-slate-300 text-xs">+</span>}
+        </React.Fragment>
+      ))}
+    </div>
+  </div>
+);
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
@@ -89,6 +107,68 @@ const App: React.FC = () => {
     onConfirm: () => void;
     showCancel?: boolean;
   } | null>(null);
+
+  // Keyboard shortcuts help modal
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+  const searchInputRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Global keyboard navigation for tab switching (1, 2, 3 keys)
+  useGlobalNavigation({
+    onNavigateToSearch: () => {
+      setCurrentView('search');
+      setRecursiveQuery(undefined);
+      setSelectedStoredItem(undefined);
+    },
+    onNavigateToNotebook: () => {
+      setCurrentView('notebook');
+      setRecursiveQuery(undefined);
+      setSelectedStoredItem(undefined);
+    },
+    onNavigateToStudy: () => {
+      setCurrentView('study');
+      setRecursiveQuery(undefined);
+      setSelectedStoredItem(undefined);
+    },
+    enabled: !detailContext && !confirmModal && !showKeyboardHelp, // Disable when modals are open
+  });
+
+  // Global Escape key to close modals or go back
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showKeyboardHelp) {
+          setShowKeyboardHelp(false);
+        } else if (confirmModal) {
+          setConfirmModal(null);
+        } else if (detailContext) {
+          setDetailContext(null);
+        }
+      }
+      
+      // Cmd+F to focus search
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        setCurrentView('search');
+        // Focus will be handled by SearchView
+        setTimeout(() => {
+          const textarea = document.querySelector('textarea[placeholder*="learn"]') as HTMLTextAreaElement;
+          textarea?.focus();
+          textarea?.select();
+        }, 100);
+      }
+      
+      // ? key to show keyboard shortcuts (when not in input)
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      if (e.key === '?' && !isInput && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setShowKeyboardHelp(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [detailContext, confirmModal, showKeyboardHelp]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -1147,7 +1227,97 @@ const App: React.FC = () => {
         <NavButton view="search" icon={Search} label="Search" />
         <NavButton view="notebook" icon={Book} label="Notebook" />
         <NavButton view="study" icon={BrainCircuit} label="Study" />
+        {/* Keyboard shortcuts hint - only visible on desktop */}
+        <button 
+          onClick={() => setShowKeyboardHelp(true)}
+          className="hidden md:flex flex-col items-center justify-center py-3 gap-1 text-slate-300 hover:text-slate-500 transition-colors"
+          title="Keyboard shortcuts (?)"
+        >
+          <Keyboard size={20} strokeWidth={2} />
+          <span className="text-[10px] font-bold uppercase tracking-wider">?</span>
+        </button>
       </nav>
+
+      {/* Keyboard Shortcuts Help Modal */}
+      {showKeyboardHelp && (
+        <div 
+          className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-150"
+          onClick={() => setShowKeyboardHelp(false)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-150 max-h-[80vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
+                <Keyboard size={24} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Keyboard Shortcuts</h3>
+                <p className="text-sm text-slate-500">Navigate faster with your keyboard</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {/* Navigation */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Navigation</h4>
+                <div className="space-y-2">
+                  <ShortcutRow keys={['1']} description="Go to Search" />
+                  <ShortcutRow keys={['2']} description="Go to Notebook" />
+                  <ShortcutRow keys={['3']} description="Go to Study" />
+                  <ShortcutRow keys={['⌘', 'F']} description="Focus search input" />
+                  <ShortcutRow keys={['Esc']} description="Close modal / Go back" />
+                </div>
+              </div>
+
+              {/* Cards & Carousels */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Cards & Carousels</h4>
+                <div className="space-y-2">
+                  <ShortcutRow keys={['←', '→']} description="Navigate between cards" />
+                  <ShortcutRow keys={['↑', '↓']} description="Navigate between words" />
+                  <ShortcutRow keys={['Space']} description="Flip flashcard" />
+                  <ShortcutRow keys={['Enter']} description="Open selected card" />
+                  <ShortcutRow keys={['P']} description="Pronounce current word" />
+                </div>
+              </div>
+
+              {/* Study Mode */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Study Mode</h4>
+                <div className="space-y-2">
+                  <ShortcutRow keys={['←']} description="Mark as Forgot" />
+                  <ShortcutRow keys={['→']} description="Mark as Got it" />
+                  <ShortcutRow keys={['Space']} description="Flip card to reveal answer" />
+                </div>
+              </div>
+
+              {/* Trackpad */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Trackpad Gestures</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between py-1.5">
+                    <span className="text-sm text-slate-600">Two-finger horizontal swipe</span>
+                    <span className="text-xs text-slate-400">Navigate cards</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5">
+                    <span className="text-sm text-slate-600">Two-finger vertical swipe</span>
+                    <span className="text-xs text-slate-400">Navigate words</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowKeyboardHelp(false)}
+              className="mt-6 w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition-colors"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
