@@ -344,29 +344,30 @@ export class SRSAlgorithm {
 
   /**
    * Calculate mastery level for display
+   * Based on memory strength score (0-100) per PRODUCT_SUMMARY.md spec:
+   * 0-10: New (Gray)
+   * 10-30: Struggling (Orange)
+   * 30-50: Learning (Amber)
+   * 50-70: Proficient (Blue)
+   * 70-85: Mastered (Emerald/Green)
+   * 85-100: Grandmaster (Purple)
    */
   static getMasteryLevel(srs: SRSData): { label: string; color: string; percentage: number } {
-    const { memoryStrength, stability, correctStreak } = srs;
+    const { memoryStrength } = srs;
     
-    // Calculate composite mastery score
-    const strengthScore = memoryStrength;
-    const stabilityScore = Math.min(100, (stability / 90) * 100);
-    const streakScore = Math.min(100, correctStreak * 10);
-    
-    const masteryScore = (strengthScore * 0.5 + stabilityScore * 0.3 + streakScore * 0.2);
-    
-    if (masteryScore >= 85) {
-      return { label: 'Grandmaster', color: 'purple', percentage: masteryScore };
-    } else if (masteryScore >= 70) {
-      return { label: 'Mastered', color: 'emerald', percentage: masteryScore };
-    } else if (masteryScore >= 50) {
-      return { label: 'Proficient', color: 'blue', percentage: masteryScore };
-    } else if (masteryScore >= 30) {
-      return { label: 'Learning', color: 'amber', percentage: masteryScore };
-    } else if (masteryScore >= 10) {
-      return { label: 'Struggling', color: 'orange', percentage: masteryScore };
+    // Use memory strength directly as per spec
+    if (memoryStrength >= 85) {
+      return { label: 'Grandmaster', color: 'purple', percentage: memoryStrength };
+    } else if (memoryStrength >= 70) {
+      return { label: 'Mastered', color: 'emerald', percentage: memoryStrength };
+    } else if (memoryStrength >= 50) {
+      return { label: 'Proficient', color: 'blue', percentage: memoryStrength };
+    } else if (memoryStrength >= 30) {
+      return { label: 'Learning', color: 'amber', percentage: memoryStrength };
+    } else if (memoryStrength >= 10) {
+      return { label: 'Struggling', color: 'orange', percentage: memoryStrength };
     } else {
-      return { label: 'New', color: 'slate', percentage: masteryScore };
+      return { label: 'New', color: 'slate', percentage: memoryStrength };
     }
   }
 }

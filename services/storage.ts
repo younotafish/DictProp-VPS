@@ -2,6 +2,8 @@ import { StoredItem } from '../types';
 
 const DB_NAME = 'PopDictDB';
 const STORE_NAME = 'library';
+const DB_VERSION = 2; // Keep at 2 for compatibility
+
 // Base key - will be suffixed with userId
 const BASE_DATA_KEY = 'items';
 
@@ -47,7 +49,7 @@ const getDB = (): Promise<IDBDatabase> => {
         reject(new Error("IndexedDB not supported"));
         return;
     }
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onerror = () => {
       console.warn("IndexedDB open failed, will use in-memory fallback");
       reject(request.error);
@@ -55,8 +57,15 @@ const getDB = (): Promise<IDBDatabase> => {
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
+      
+      // Create library store (v1)
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
+      }
+      
+      // Images store (v2) - kept for compatibility but not actively used
+      if (!db.objectStoreNames.contains('images')) {
+        db.createObjectStore('images');
       }
     };
   });
@@ -174,9 +183,6 @@ export const saveData = async (items: StoredItem[], userId: string = 'guest'): P
       const store = tx.objectStore(STORE_NAME);
       const request = store.put(items, storageKey);
       request.onsuccess = () => {
-          // If we successfully saved to the new key, and we were saving guest data,
-          // we might want to clean up legacy data? 
-          // Let's keep it simple for now.
           resolve();
       };
       request.onerror = () => reject(request.error);
@@ -211,4 +217,3 @@ export const migrateFromLocalStorage = async (): Promise<StoredItem[] | null> =>
     }
     return null;
 };
-

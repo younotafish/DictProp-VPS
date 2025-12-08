@@ -27,11 +27,10 @@ import {
   Target,
   Clock,
   Trash2,
+  Archive,
   Play,
   Search as SearchIcon,
   RefreshCw,
-  ThumbsUp,
-  ThumbsDown,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
@@ -43,8 +42,10 @@ interface StudyEnhancedProps {
   onUpdateSRS: (itemId: string, quality: number, taskType: TaskType, responseTime: number) => void;
   onSearch: (text: string) => void;
   onDelete: (id: string) => void;
+  onArchive?: (id: string) => void;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
   userId?: string; // For Firebase sync
+  onLazyLoadImage?: (itemId: string) => void; // Fetch image from Firebase if missing locally
 }
 
 type StudyMode = 'dashboard' | 'session' | 'complete';
@@ -53,16 +54,20 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   items, 
   onUpdateSRS, 
   onSearch, 
-  onDelete, 
+  onDelete,
+  onArchive,
   onScroll,
-  userId 
+  userId,
+  onLazyLoadImage
 }) => {
   const [mode, setMode] = useState<StudyMode>('dashboard');
   const [queue, setQueue] = useState<StoredItem[]>([]);
   const [sessionStartTime, setSessionStartTime] = useState(0);
+  const [sessionTotal, setSessionTotal] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [cardStartTime, setCardStartTime] = useState(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [meaningIndex, setMeaningIndex] = useState(0); // For carousel navigation within same-spelling words
   const touchStartX = React.useRef<number | null>(null);
   const touchStartY = React.useRef<number | null>(null);
@@ -99,33 +104,63 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const hasMutipleMeanings = siblingMeanings.length > 1;
   const currentMeaningItem = hasMutipleMeanings ? siblingMeanings[meaningIndex] || queue[0] : queue[0];
 
-  // Horizontal swipe handlers for meaning carousel
+  // Lazy load image from Firebase if missing locally
+  useEffect(() => {
+    if (!currentMeaningItem || !onLazyLoadImage) return;
+    
+    const itemData = currentMeaningItem.data as any;
+    const hasImage = itemData.imageUrl && itemData.imageUrl.startsWith('data:image/');
+    
+    if (!hasImage && currentMeaningItem.data.id) {
+      onLazyLoadImage(currentMeaningItem.data.id);
+    }
+  }, [currentMeaningItem?.data.id, onLazyLoadImage]);
+
+  // Horizontal swipe handlers for meaning carousel (vertical swipe disabled - use buttons)
   const handleMeaningTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
   };
 
   const handleMeaningTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStartX.current || !touchStartY.current || !hasMutipleMeanings) return;
+    if (!touchStartX.current || !touchStartY.current) return;
     
     const diffX = e.changedTouches[0].clientX - touchStartX.current;
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
     
-    // Only handle horizontal swipes (more horizontal than vertical)
-    if (Math.abs(diffX) > Math.abs(diffY) * 1.5 && Math.abs(diffX) > 50) {
-      if (diffX < -50 && meaningIndex < siblingMeanings.length - 1) {
+    const absX = Math.abs(diffX);
+    const absY = Math.abs(diffY);
+    const swipeThreshold = 50;
+    
+    // Only horizontal swipe for meaning navigation (vertical swipe disabled)
+    if (absX > absY * 1.5 && absX > swipeThreshold && hasMutipleMeanings) {
+      if (diffX < -swipeThreshold && meaningIndex < siblingMeanings.length - 1) {
         // Swipe left -> next meaning
         setMeaningIndex(prev => prev + 1);
-        setIsFlipped(false); // Reset flip when changing meaning
-      } else if (diffX > 50 && meaningIndex > 0) {
+        setIsFlipped(false);
+      } else if (diffX > swipeThreshold && meaningIndex > 0) {
         // Swipe right -> previous meaning
         setMeaningIndex(prev => prev - 1);
-        setIsFlipped(false); // Reset flip when changing meaning
+        setIsFlipped(false);
       }
     }
     
     touchStartX.current = null;
     touchStartY.current = null;
+  };
+
+  const handleMouseDown = () => {
+    // Long press disabled - archive uses button
+  };
+
+  const handleMouseUp = () => {
+    // Long press disabled - archive uses button
+  };
+  
+  // Handle archive from button
+  const handleArchiveClick = () => {
+    if (!onArchive || !currentMeaningItem) return;
+    setShowArchiveConfirm(true);
   };
 
   // Calculate comprehensive statistics
@@ -172,10 +207,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const dueItems = items
       .filter(item => item.srs.nextReview <= now)
       .sort((a, b) => {
-        // Prioritize by retention probability (lowest first - most at risk of forgetting)
-        const probA = SRSAlgorithm.getRetentionProbability(a.srs);
-        const probB = SRSAlgorithm.getRetentionProbability(b.srs);
-        return probA - probB;
+        // Prioritize lowest memory strength first, then oldest due (per PRODUCT_SUMMARY)
+        const strengthDiff = (a.srs.memoryStrength || 0) - (b.srs.memoryStrength || 0);
+        if (strengthDiff !== 0) return strengthDiff;
+        return (a.srs.nextReview || 0) - (b.srs.nextReview || 0);
       });
     
     let studySet = [...dueItems];
@@ -196,6 +231,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     }
 
     setQueue(studySet);
+    setSessionTotal(studySet.length);
     setMode('session');
     setIsFlipped(false);
     setSessionStartTime(Date.now());
@@ -228,17 +264,20 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const handleRate = useCallback((isMemorized: boolean) => {
     if (!queue[0] || !currentMeaningItem) return;
 
-    const currentItem = currentMeaningItem; // Use the currently viewed meaning
     const responseTime = Date.now() - cardStartTime;
     
-    // Map binary choice to quality score
-    // Memorized -> 5 (Perfect)
-    // Not Memorized -> 1 (Hard Fail - keeping it > 0 to avoid total reset if just a slip, but 1 is strong penalty)
-    const quality = isMemorized ? 5 : 1;
+    // Map binary choice to quality score per PRODUCT_SUMMARY.md spec:
+    // Memorized -> 4 (Very good - moderate gain)
+    // Not Memorized -> 1 (Hard Fail - moderate loss)
+    const quality = isMemorized ? 4 : 1;
 
-    // Update SRS
-    // We use 'recognition' as the standard task type for flashcards
-    onUpdateSRS(currentItem.data.id, quality, 'recognition', responseTime);
+    // Update SRS for ALL sibling meanings - per PRODUCT_SUMMARY.md:
+    // "All meanings share one SRS score"
+    // "Single review updates all meanings of that word"
+    // We use 'recall' as the standard task type for flashcards (tap to flip, self-grade)
+    siblingMeanings.forEach(sibling => {
+      onUpdateSRS(sibling.data.id, quality, 'recall', responseTime);
+    });
 
     // Update session stats
     setSessionStats(prev => ({
@@ -251,8 +290,9 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const nextQueue = queue.slice(1);
     
     // Re-queue if failed (so we see it again this session)
+    // Re-queue the first meaning as representative of the group
     if (!isMemorized) {
-       nextQueue.push(currentItem);
+       nextQueue.push(queue[0]);
     }
     
     if (nextQueue.length === 0) {
@@ -263,7 +303,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       setMeaningIndex(0); // Reset meaning index for next card
       setCardStartTime(Date.now());
     }
-  }, [queue, cardStartTime, onUpdateSRS, finishSession, currentMeaningItem]);
+  }, [queue, cardStartTime, onUpdateSRS, finishSession, currentMeaningItem, siblingMeanings]);
 
   useEffect(() => {
     if (mode !== 'session') return;
@@ -298,6 +338,25 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       setQueue(nextQueue);
       setIsFlipped(false);
       setMeaningIndex(0); // Reset meaning index
+      setCardStartTime(Date.now());
+    }
+  };
+
+  const handleArchiveCurrent = () => {
+    if (!currentMeaningItem || !onArchive) return;
+    
+    // Archive the currently viewed meaning
+    onArchive(currentMeaningItem.data.id);
+    
+    // Move to next item
+    const nextQueue = queue.slice(1);
+    
+    if (nextQueue.length === 0) {
+      setMode('dashboard');
+    } else {
+      setQueue(nextQueue);
+      setIsFlipped(false);
+      setMeaningIndex(0);
       setCardStartTime(Date.now());
     }
   };
@@ -358,7 +417,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     
     if (item.type === 'vocab') {
       return (
-        <div className="h-full w-full">
+        <div 
+          className="h-full w-full"
+          onTouchStart={handleMeaningTouchStart}
+          onTouchEnd={handleMeaningTouchEnd}
+        >
           <VocabCardDisplay 
             data={item.data as VocabCard}
             showSave={false}
@@ -376,6 +439,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         <div 
           className="h-full w-full bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-y-auto relative select-text pb-8"
           style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
+          onTouchStart={handleMeaningTouchStart}
+          onTouchEnd={handleMeaningTouchEnd}
         >
             {/* Hero Image */}
             <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group shrink-0">
@@ -462,126 +527,58 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   if (mode === 'dashboard') {
     return (
       <div className="h-full overflow-y-auto bg-slate-50 p-6 pb-[calc(5rem+env(safe-area-inset-bottom))]" onScroll={onScroll}>
-        <h2 className="text-3xl font-bold text-slate-800 mb-1">Advanced Study</h2>
-        <p className="text-slate-500 mb-8">Adaptive spaced-repetition with memory strength tracking</p>
+        <h2 className="text-3xl font-bold text-slate-800 mb-1">Today&apos;s Study</h2>
+        <p className="text-slate-500 mb-8">Adaptive recall with spaced repetition</p>
 
-        {/* Main Action Card */}
+        {/* Main Action Card (per doc) */}
         <div className="bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-600 rounded-3xl p-6 shadow-xl mb-8 relative overflow-hidden text-white">
           <div className="relative z-10">
             <div className="flex items-baseline gap-2 mb-2">
               <span className="text-5xl font-extrabold tracking-tighter">{stats.due}</span>
               <span className="text-violet-200 font-medium text-lg">due now</span>
             </div>
-            <p className="text-sm text-violet-100 mb-8 font-medium max-w-[80%]">
-              {stats.due > 0 
-                ? "Your brain is ready to strengthen these memories!" 
-                : stats.hasStudiedToday 
-                  ? "Amazing! You've completed today's reviews." 
-                  : "Start today's practice to maintain your streak!"}
-            </p>
-            <Button onClick={startSession} className="w-full py-4 text-lg bg-white text-violet-600 hover:bg-violet-50 border-0 font-bold shadow-lg">
-              {stats.due > 0 ? "Begin Smart Review" : "Practice Mode"}
+            <div className="text-sm text-violet-100 mb-8 font-medium flex flex-col gap-1">
+              <span>Avg retention: {stats.avgStrength}%</span>
+              <span>Estimated: {Math.max(1, Math.ceil(stats.due * 0.5))} min</span>
+            </div>
+            <Button 
+              onClick={startSession} 
+              disabled={stats.due === 0 && items.length === 0}
+              className="w-full py-4 text-lg bg-white text-violet-600 hover:bg-violet-50 border-0 font-bold shadow-lg disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {stats.due > 0 ? "Start Session" : "Practice Mode"}
             </Button>
           </div>
           <div className="absolute -right-8 -top-8 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl"></div>
           <div className="absolute -left-8 -bottom-8 w-40 h-40 bg-purple-400 opacity-20 rounded-full blur-2xl"></div>
         </div>
 
-        {/* Overall Progress Bar */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-6">
-          <div className="flex items-center justify-between mb-3">
+        {/* Weekly stats summary */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <Zap size={18} className="text-amber-500" fill="currentColor" />
-              <span className="text-sm font-bold text-slate-700">Memory Strength</span>
+              <BarChart3 size={16} className="text-indigo-500" />
+              <span className="text-sm font-bold text-slate-700">Weekly Stats</span>
             </div>
-            <span className="text-2xl font-bold text-slate-800">{stats.avgStrength}%</span>
+            <span className="text-xs text-slate-400">This week</span>
           </div>
-          <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500 transition-all duration-500"
-              style={{ width: `${stats.avgStrength}%` }}
-            />
-          </div>
-          <p className="text-xs text-slate-400 mt-2">
-            Average retention strength across all items
-          </p>
-        </div>
-
-        {/* Stats Grid */}
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 px-1">Mastery Levels</h3>
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <div className="bg-white p-5 rounded-2xl border border-purple-100 shadow-sm">
-            <div className="w-10 h-10 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mb-3">
-              <Trophy size={20} fill="currentColor" />
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div>
+              <p className="text-lg font-bold text-slate-800">{sessionStats.reviews || 0}</p>
+              <p className="text-xs text-slate-500">Reviews</p>
             </div>
-            <span className="text-2xl font-bold text-slate-800 block">{stats.grandmaster}</span>
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wide">Grandmaster</span>
-            <div className="mt-2 h-1 bg-purple-100 rounded-full">
-              <div className="h-full bg-purple-500 rounded-full" style={{ width: '100%' }} />
+            <div>
+              <p className="text-lg font-bold text-emerald-600">
+                {sessionStats.reviews > 0 ? Math.round((sessionStats.correct / sessionStats.reviews) * 100) : 0}%
+              </p>
+              <p className="text-xs text-slate-500">Accuracy</p>
             </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-emerald-100 shadow-sm">
-            <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-3">
-              <Target size={20} />
-            </div>
-            <span className="text-2xl font-bold text-slate-800 block">{stats.mastered}</span>
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wide">Mastered</span>
-            <div className="mt-2 h-1 bg-emerald-100 rounded-full">
-              <div className="h-full bg-emerald-500 rounded-full" style={{ width: '85%' }} />
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-blue-100 shadow-sm">
-            <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-3">
-              <TrendingUp size={20} />
-            </div>
-            <span className="text-2xl font-bold text-slate-800 block">{stats.learning}</span>
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wide">Learning</span>
-            <div className="mt-2 h-1 bg-blue-100 rounded-full">
-              <div className="h-full bg-blue-500 rounded-full" style={{ width: '60%' }} />
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-orange-100 shadow-sm">
-            <div className="w-10 h-10 bg-orange-50 text-orange-600 rounded-full flex items-center justify-center mb-3">
-              <Flame size={20} />
-            </div>
-            <span className="text-2xl font-bold text-slate-800 block">{stats.struggling}</span>
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wide">Needs Practice</span>
-            <div className="mt-2 h-1 bg-orange-100 rounded-full">
-              <div className="h-full bg-orange-500 rounded-full" style={{ width: '30%' }} />
+            <div>
+              <p className="text-lg font-bold text-slate-800">{stats.hasStudiedToday ? 1 : 0}</p>
+              <p className="text-xs text-slate-500">Streak (days)</p>
             </div>
           </div>
         </div>
-
-        {/* Session Stats (only show after completing a session) */}
-        {sessionStats.reviews > 0 && (
-          <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-2xl border border-indigo-200 mb-6">
-            <h3 className="text-sm font-bold text-indigo-700 mb-3 flex items-center gap-2">
-              <BarChart3 size={16} />
-              Last Session
-            </h3>
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div>
-                <p className="text-2xl font-bold text-slate-800">{sessionStats.reviews}</p>
-                <p className="text-xs text-slate-500">Reviews</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-emerald-600">
-                  {Math.round((sessionStats.correct / sessionStats.reviews) * 100)}%
-                </p>
-                <p className="text-xs text-slate-500">Accuracy</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-blue-600">
-                  {Math.round(sessionStats.totalTime / 1000)}s
-                </p>
-                <p className="text-xs text-slate-500">Time</p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -654,22 +651,9 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           
           <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase bg-white px-3 py-1.5 rounded-full shadow-sm">
             <Clock size={14} />
-            <span>{queue.length} left</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="text-xs font-mono text-slate-400 bg-white px-3 py-1.5 rounded-full shadow-sm">
-              {sessionStats.reviews > 0 ? `${Math.round((sessionStats.correct / sessionStats.reviews) * 100)}%` : '0%'}
-            </div>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setShowDeleteConfirm(true)} 
-              className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full px-2"
-              title="Delete from Notebook"
-            >
-              <Trash2 size={18} />
-            </Button>
+            <span>
+              Card {Math.min(sessionStats.reviews + 1, sessionTotal || sessionStats.reviews + queue.length)}/{sessionTotal || sessionStats.reviews + queue.length || 0}
+            </span>
           </div>
         </div>
 
@@ -681,49 +665,21 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           />
         </div>
 
-        {/* Carousel Navigation for Multiple Meanings */}
+        {/* Meaning indicators (dots only) for multi-meaning words */}
         {hasMutipleMeanings && (
           <div className="flex flex-col items-center gap-2 mb-3 shrink-0">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => { setMeaningIndex(prev => Math.max(0, prev - 1)); setIsFlipped(false); }}
-                disabled={meaningIndex === 0}
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                  meaningIndex === 0 
-                    ? 'text-slate-300 cursor-not-allowed' 
-                    : 'text-violet-500 bg-violet-50 hover:bg-violet-100 active:scale-95'
-                }`}
-              >
-                <ChevronLeft size={20} />
-              </button>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-violet-600 bg-violet-50 px-3 py-1 rounded-full">
-                  {meaningIndex + 1} / {siblingMeanings.length} meanings
-                </span>
-              </div>
-              <button
-                onClick={() => { setMeaningIndex(prev => Math.min(siblingMeanings.length - 1, prev + 1)); setIsFlipped(false); }}
-                disabled={meaningIndex >= siblingMeanings.length - 1}
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                  meaningIndex >= siblingMeanings.length - 1 
-                    ? 'text-slate-300 cursor-not-allowed' 
-                    : 'text-violet-500 bg-violet-50 hover:bg-violet-100 active:scale-95'
-                }`}
-              >
-                <ChevronRight size={20} />
-              </button>
-            </div>
-            {/* Dot indicators */}
-            <div className="flex justify-center gap-1.5">
+            <div className="flex justify-center gap-2">
               {siblingMeanings.map((_, idx) => (
                 <button
                   key={idx}
                   onClick={() => { setMeaningIndex(idx); setIsFlipped(false); }}
-                  className={`w-2 h-2 rounded-full transition-all ${
+                  className={`h-2 rounded-full transition-all ${
                     idx === meaningIndex 
-                      ? 'bg-violet-500 w-4' 
-                      : 'bg-slate-300 hover:bg-slate-400'
+                      ? 'bg-violet-500 w-5' 
+                      : 'bg-slate-300 w-2 hover:bg-slate-400'
                   }`}
+                  aria-label={`Meaning ${idx + 1}`}
+                  title="Swipe left/right to change meaning"
                 />
               ))}
             </div>
@@ -733,8 +689,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         {/* Card Container */}
         <div 
           className="flex-1 relative perspective-1000 group w-full min-h-0 mb-1"
-          onTouchStart={handleMeaningTouchStart}
-          onTouchEnd={handleMeaningTouchEnd}
+        onTouchStart={handleMeaningTouchStart}
+        onTouchEnd={handleMeaningTouchEnd}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
         >
            <div className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
               
@@ -761,49 +719,56 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
            </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-3 shrink-0">
+        {/* Action Buttons - Three color bars: Forgot / Archive / Got it */}
+        <div className="grid grid-cols-3 gap-3 shrink-0">
            <button 
              onClick={() => handleRate(false)}
-             className="bg-rose-500 active:bg-rose-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-rose-200 transition-all active:scale-95 flex items-center justify-center gap-2 py-4"
-           >
-             <ThumbsDown size={20} strokeWidth={2.5} />
-             <span>Forgot</span>
-           </button>
+             className="h-14 bg-rose-500 active:bg-rose-600 rounded-2xl shadow-lg shadow-rose-200 transition-all active:scale-95"
+             aria-label="Forgot"
+             title="Forgot"
+           />
+           {onArchive && (
+             <button 
+               onClick={handleArchiveClick}
+               className="h-14 bg-amber-400 active:bg-amber-500 rounded-2xl shadow-lg shadow-amber-200 transition-all active:scale-95"
+               aria-label="Archive"
+               title="Archive"
+             />
+           )}
            <button 
              onClick={() => handleRate(true)}
-             className="bg-emerald-500 active:bg-emerald-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-2 py-4"
-           >
-             <ThumbsUp size={20} strokeWidth={2.5} />
-             <span>Got it</span>
-           </button>
+             className="h-14 bg-emerald-500 active:bg-emerald-600 rounded-2xl shadow-lg shadow-emerald-200 transition-all active:scale-95"
+             aria-label="Got it"
+             title="Got it"
+           />
         </div>
 
       </div>
       
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-[60] bg-black/20 backdrop-blur-[2px] flex items-center justify-center p-6 animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-                <div className="w-12 h-12 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Trash2 size={24} />
+      {/* Archive prompt on long-press */}
+      {showArchiveConfirm && onArchive && (
+        <div className="fixed inset-0 z-[60] bg-black/25 backdrop-blur-[2px] flex items-center justify-center p-6 animate-in fade-in duration-150" onClick={() => setShowArchiveConfirm(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center animate-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
+                <div className="w-12 h-12 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Archive size={24} />
                 </div>
-                <h3 className="text-lg font-bold text-slate-800 mb-2">Delete Item?</h3>
+                <h3 className="text-lg font-bold text-slate-800 mb-2">Archive this card?</h3>
                 <p className="text-sm text-slate-500 mb-6">
-                    This will permanently remove this item from your notebook and study queue.
+                    It will leave this session and future sessions until unarchived.
                 </p>
                 <div className="flex gap-3">
-                    <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)} className="flex-1">
+                    <Button variant="ghost" onClick={() => setShowArchiveConfirm(false)} className="flex-1">
                         Cancel
                     </Button>
                     <Button 
                         variant="primary" 
                         onClick={() => {
-                            handleDeleteCurrent();
-                            setShowDeleteConfirm(false);
+                            handleArchiveCurrent();
+                            setShowArchiveConfirm(false);
                         }} 
-                        className="flex-1 bg-rose-500 hover:bg-rose-600 shadow-rose-200 border-0"
+                        className="flex-1 bg-amber-500 hover:bg-amber-600 shadow-amber-200 border-0"
                     >
-                        Delete
+                        Archive
                     </Button>
                 </div>
             </div>

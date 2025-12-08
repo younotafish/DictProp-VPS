@@ -1,15 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { StoredItem, SyncStatus, AppUser } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { StoredItem, SyncStatus, AppUser, ItemGroup } from '../types';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
-
-// Group type for items with same spelling
-interface ItemGroup {
-  title: string;
-  items: StoredItem[];
-}
 
 interface NotebookItemProps {
   item: StoredItem;
@@ -19,95 +13,41 @@ interface NotebookItemProps {
   onDelete: (id: string) => void;
   onSearch: (text: string) => void;
   onViewDetail: () => void;
+  onArchive?: (id: string) => void;
+  onUnarchive?: (id: string) => void;
   // For carousel mode
   totalInGroup?: number;
   indexInGroup?: number;
 }
 
 const NotebookItem: React.FC<NotebookItemProps> = ({
-  item, isOpen, onOpen, onClose, onDelete, onSearch, onViewDetail, totalInGroup = 1, indexInGroup = 0
+  item, isOpen, onOpen, onClose, onDelete, onSearch, onViewDetail, onArchive, onUnarchive, totalInGroup = 1, indexInGroup = 0
 }) => {
-  const touchStart = useRef<{x: number, y: number, time: number} | null>(null);
-  const directionLocked = useRef<'horizontal' | 'vertical' | null>(null);
-  const [offsetX, setOffsetX] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  
-  const SWIPE_THRESHOLD = 80; // Increased threshold
-  const MAX_OFFSET = 100;
-  const DIRECTION_LOCK_THRESHOLD = 15; // Minimum movement to determine direction
-  const HORIZONTAL_RATIO = 2.5; // Horizontal must be this much greater than vertical
-  
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStart.current = {
-      x: e.touches[0].clientX,
-      y: e.touches[0].clientY,
-      time: Date.now()
-    };
-    directionLocked.current = null;
+  const [showActions, setShowActions] = useState(false);
+  const longPressTimer = useRef<number | null>(null);
+  const LONG_PRESS_MS = 500;
+
+  const handlePressStart = () => {
+    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = window.setTimeout(() => {
+      setShowActions(true);
+    }, LONG_PRESS_MS);
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!touchStart.current) return;
-
-    const deltaX = e.touches[0].clientX - touchStart.current.x;
-    const deltaY = e.touches[0].clientY - touchStart.current.y;
-    const absX = Math.abs(deltaX);
-    const absY = Math.abs(deltaY);
-
-    // Lock direction once we have enough movement
-    if (!directionLocked.current && (absX > DIRECTION_LOCK_THRESHOLD || absY > DIRECTION_LOCK_THRESHOLD)) {
-      // Require strongly horizontal movement to trigger swipe
-      if (absX > absY * HORIZONTAL_RATIO && absX > DIRECTION_LOCK_THRESHOLD) {
-        directionLocked.current = 'horizontal';
-      } else {
-        directionLocked.current = 'vertical';
-      }
+  const handlePressEnd = () => {
+    if (longPressTimer.current) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
     }
-
-    // Only handle horizontal swipes, let vertical scroll naturally
-    if (directionLocked.current === 'horizontal') {
-      e.preventDefault();
-      setIsDragging(true);
-      
-      // Constrain offset
-      const targetOffset = isOpen ? -100 : 0;
-      const newOffset = Math.max(-MAX_OFFSET, Math.min(0, targetOffset + deltaX));
-      setOffsetX(newOffset);
-    }
-    // If vertical, don't preventDefault - allow natural scrolling
   };
 
   const handleClick = () => {
-    if (isOpen) {
-      onClose();
-    } else {
-      onViewDetail();
+    if (showActions) {
+      setShowActions(false);
+      return;
     }
+    onViewDetail();
   };
-
-  const handleTouchEnd = () => {
-    if (!touchStart.current) return;
-    
-    if (isDragging && directionLocked.current === 'horizontal') {
-      // Determine final state based on offset
-      if (offsetX < -SWIPE_THRESHOLD) {
-        onOpen();
-        setOffsetX(-100);
-      } else {
-        onClose();
-        setOffsetX(0);
-      }
-    }
-    
-    setIsDragging(false);
-    directionLocked.current = null;
-    touchStart.current = null;
-  };
-
-  // Sync offsetX with isOpen state
-  useEffect(() => {
-    setOffsetX(isOpen ? -100 : 0);
-  }, [isOpen]);
 
   const isPhrase = item.type === 'phrase';
   const title = isPhrase 
@@ -128,85 +68,99 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
 
   return (
     <div className="relative overflow-hidden rounded-2xl shadow-sm border border-slate-100 bg-slate-50">
-      {/* Action Buttons Background */}
-      <div className="absolute top-0 right-0 bottom-0 w-[100px] flex items-center justify-around bg-gradient-to-l from-slate-200 to-slate-100">
-        <button 
-          onClick={(e) => { e.stopPropagation(); onSearch(title); onClose(); }}
-          className="p-2 bg-white text-indigo-500 shadow rounded-full hover:bg-indigo-50 active:scale-90 transition-all"
-          title="Refresh / Search Again"
-        >
-          <RefreshCw size={18} />
-        </button>
-        <button 
-          onClick={(e) => { e.stopPropagation(); onDelete(item.data.id); }}
-          className="p-2 bg-white text-rose-500 shadow rounded-full hover:bg-rose-50 active:scale-90 transition-all"
-          title="Delete"
-        >
-          <Trash2 size={18} />
-        </button>
-      </div>
-
       {/* Main Card */}
       <div
         onClick={handleClick}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        style={{
-          transform: `translateX(${offsetX}px)`,
-          transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
-        }}
+        onMouseDown={handlePressStart}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={(e) => { handlePressStart(); }}
+        onTouchEnd={handlePressEnd}
         className="bg-white p-4 relative cursor-pointer"
+        style={{ touchAction: 'pan-y' }}
       >
         {/* SRS Indicator Strip */}
         <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${isDue ? 'bg-orange-400' : (intervalDays > 21 ? 'bg-emerald-400' : 'bg-slate-200')}`}></div>
 
-        <div className="flex items-start gap-3 pl-2">
-          <div className={`mt-1 shrink-0 ${isPhrase ? 'text-indigo-400' : 'text-emerald-400'}`}>
-            {isPhrase ? <Layers size={14} /> : <Type size={14} />}
-          </div>
-          
-          <div className="min-w-0 flex-1 pt-0.5 pr-2">
-            <div className="mb-2 min-w-0">
-              <h4 className="font-bold text-slate-900 text-lg leading-tight line-clamp-2 text-ellipsis overflow-hidden" title={title}>{title}</h4>
-              <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                {ipa && (
-                  <div className="min-w-0 shrink-0 max-w-full">
-                    <PronunciationBlock 
-                      text={title} 
-                      ipa={ipa} 
-                      className="text-xs py-0.5 px-1.5 min-h-[24px] bg-slate-50 border border-slate-100 max-w-[180px]" 
-                    />
-                  </div>
-                )}
-                {sense && totalInGroup > 1 && (
-                  <span className="text-[10px] font-medium text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full shrink-0 max-w-[120px] truncate" title={sense}>
-                    {sense}
-                  </span>
-                )}
-                {isDue && <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">Due</span>}
-              </div>
+        <div className="pl-3 pr-2">
+          <div className="mb-2">
+            <h4 className="font-bold text-slate-900 text-lg leading-tight line-clamp-2" title={title}>{title}</h4>
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              {ipa && (
+                <PronunciationBlock 
+                  text={title} 
+                  ipa={ipa} 
+                  className="text-xs py-0.5 px-1.5 min-h-[24px] bg-slate-50 border border-slate-100" 
+                />
+              )}
+              {sense && totalInGroup > 1 && (
+                <span className="text-[10px] font-medium text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={sense}>
+                  {sense}
+                </span>
+              )}
+              {isDue && <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide">Due</span>}
             </div>
-            <p className="text-sm text-slate-500 truncate mb-2">{subtitle}</p>
-
-            {(examples?.length > 0 || history) && (
-              <div className="space-y-2 mt-2 pt-2 border-t border-slate-50">
-                {examples?.length > 0 && (
-                  <div className="text-xs text-slate-600 italic border-l-2 border-indigo-200 pl-2 line-clamp-2">
-                    "{examples[0]}"
-                  </div>
-                )}
-                {history && (
-                  <div className="text-[11px] text-slate-400 leading-relaxed">
-                    <span className="font-bold uppercase tracking-wider text-[9px] text-slate-300 mr-1">Origin</span>
-                    <span className="line-clamp-2">{history}</span>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
+          <p className="text-sm text-slate-500 truncate mb-2">{subtitle}</p>
+
+          {(examples?.length > 0 || history) && (
+            <div className="space-y-2 mt-2 pt-2 border-t border-slate-50">
+              {examples?.length > 0 && (
+                <div className="text-xs text-slate-600 italic border-l-2 border-indigo-200 pl-2 line-clamp-2">
+                  "{examples[0]}"
+                </div>
+              )}
+              {history && (
+                <div className="text-[11px] text-slate-400 leading-relaxed">
+                  <span className="font-bold uppercase tracking-wider text-[9px] text-slate-300 mr-1">Origin</span>
+                  <span className="line-clamp-2">{history}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Long-press actions */}
+      {showActions && (
+        <div className="absolute top-3 right-3 flex flex-col gap-2 z-20">
+          <button 
+            onClick={(e) => { e.stopPropagation(); onSearch(title); setShowActions(false); }}
+            className="p-2 bg-white text-indigo-500 shadow rounded-full hover:bg-indigo-50 active:scale-95 transition-all"
+            title="Refresh / Search Again"
+          >
+            <RefreshCw size={18} />
+          </button>
+          {item.isArchived ? (
+            onUnarchive && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); onUnarchive(item.data.id); setShowActions(false); }}
+                className="p-2 bg-white text-emerald-500 shadow rounded-full hover:bg-emerald-50 active:scale-95 transition-all"
+                title="Unarchive"
+              >
+                <ArchiveRestore size={18} />
+              </button>
+            )
+          ) : (
+            onArchive && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); onArchive(item.data.id); setShowActions(false); }}
+                className="p-2 bg-white text-amber-500 shadow rounded-full hover:bg-amber-50 active:scale-95 transition-all"
+                title="Archive"
+              >
+                <Archive size={18} />
+              </button>
+            )
+          )}
+          <button 
+            onClick={(e) => { e.stopPropagation(); onDelete(item.data.id); setShowActions(false); }}
+            className="p-2 bg-white text-rose-500 shadow rounded-full hover:bg-rose-50 active:scale-95 transition-all"
+            title="Delete"
+          >
+            <Trash2 size={18} />
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -214,18 +168,25 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
 // Carousel wrapper for grouped items with same spelling
 interface NotebookGroupProps {
   group: ItemGroup;
+  groups: ItemGroup[]; // Full list of groups for DetailView navigation
+  groupIndex: number;
   openItemId: string | null;
   setOpenItemId: (id: string | null) => void;
   onDelete: (id: string) => void;
   onSearch: (text: string) => void;
-  onViewDetail: (groupItems: StoredItem[], index: number) => void;
+  onViewDetail: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
+  onArchive?: (id: string) => void;
+  onUnarchive?: (id: string) => void;
 }
 
 const NotebookGroup: React.FC<NotebookGroupProps> = ({
-  group, openItemId, setOpenItemId, onDelete, onSearch, onViewDetail
+  group, groups, groupIndex, openItemId, setOpenItemId, onDelete, onSearch, onViewDetail, onArchive, onUnarchive
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const totalItems = group.items.length;
+
+  const touchStart = useRef<{x: number, y: number} | null>(null);
+  const SWIPE_THRESHOLD = 50;
   
   // Single item - no carousel needed
   if (totalItems === 1) {
@@ -240,8 +201,10 @@ const NotebookGroup: React.FC<NotebookGroupProps> = ({
         onSearch={onSearch}
         onViewDetail={() => {
           setOpenItemId(null);
-          onViewDetail(group.items, 0);
+          onViewDetail(groups, groupIndex, 0);
         }}
+        onArchive={onArchive}
+        onUnarchive={onUnarchive}
       />
     );
   }
@@ -249,40 +212,30 @@ const NotebookGroup: React.FC<NotebookGroupProps> = ({
   // Multiple items - carousel mode
   const currentItem = group.items[currentIndex];
   
-  const goNext = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentIndex((prev) => (prev + 1) % totalItems);
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
-  
-  const goPrev = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentIndex((prev) => (prev - 1 + totalItems) % totalItems);
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStart.current) return;
+    const diffX = e.changedTouches[0].clientX - touchStart.current.x;
+    const diffY = e.changedTouches[0].clientY - touchStart.current.y;
+    const absX = Math.abs(diffX);
+    const absY = Math.abs(diffY);
+    if (absX > absY * 1.5 && absX > SWIPE_THRESHOLD) {
+      if (diffX < 0) {
+        setCurrentIndex((prev) => (prev + 1) % totalItems);
+      } else {
+        setCurrentIndex((prev) => (prev - 1 + totalItems) % totalItems);
+      }
+    }
+    touchStart.current = null;
   };
   
   return (
-    <div className="relative">
-      {/* Carousel indicator */}
-      <div className="absolute -top-1 right-2 z-10 flex items-center gap-1 bg-violet-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm">
-        <span>{currentIndex + 1}/{totalItems}</span>
-        <span className="opacity-70">meanings</span>
-      </div>
-      
-      {/* Navigation arrows */}
-      <button
-        onClick={goPrev}
-        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 w-8 h-8 bg-white rounded-full shadow-md border border-slate-200 flex items-center justify-center text-slate-500 hover:text-violet-600 hover:border-violet-300 transition-all active:scale-90"
-      >
-        <ChevronLeft size={18} />
-      </button>
-      <button
-        onClick={goNext}
-        className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 w-8 h-8 bg-white rounded-full shadow-md border border-slate-200 flex items-center justify-center text-slate-500 hover:text-violet-600 hover:border-violet-300 transition-all active:scale-90"
-      >
-        <ChevronRight size={18} />
-      </button>
-      
+    <div className="relative" style={{ touchAction: 'pan-y' }}>
       {/* Card */}
-      <div className="mx-4">
+      <div className="w-full" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <NotebookItem 
           item={currentItem}
           isOpen={openItemId === currentItem.data.id}
@@ -292,8 +245,10 @@ const NotebookGroup: React.FC<NotebookGroupProps> = ({
           onSearch={onSearch}
           onViewDetail={() => {
             setOpenItemId(null);
-            onViewDetail(group.items, currentIndex);
+            onViewDetail(groups, groupIndex, currentIndex);
           }}
+          onArchive={onArchive}
+          onUnarchive={onUnarchive}
           totalInGroup={totalItems}
           indexInGroup={currentIndex}
         />
@@ -321,7 +276,7 @@ interface NotebookProps {
   items: StoredItem[];
   onDelete: (id: string) => void;
   onSearch: (text: string) => void;
-  onViewDetail: (items: StoredItem[], index: number) => void;
+  onViewDetail: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
   user: AppUser | null;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -331,17 +286,20 @@ interface NotebookProps {
   isOnline?: boolean;
   onBulkRefresh?: () => void;
   bulkRefreshProgress?: { current: number; total: number; isRunning: boolean } | null;
+  onArchive?: (id: string) => void;
+  onUnarchive?: (id: string) => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({ 
     items, onDelete, onSearch, onViewDetail, 
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress
+    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
-  const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [showHeader, setShowHeader] = useState(true);
+  const [showArchived, setShowArchived] = useState(false);
   const lastScrollY = useRef(0);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -358,10 +316,11 @@ export const NotebookView: React.FC<NotebookProps> = ({
     onScroll?.(e);
   };
   
-  const { displayItems, groupedItems } = React.useMemo(() => {
-    const filtered = items
+  const { displayItems, groupedItems, archivedItems, archivedGroups } = React.useMemo(() => {
+    // Separate active and archived items
+    const activeFiltered = items
       .filter(i => {
-        const isValid = i && i.data && i.data.id && !i.isDeleted;
+        const isValid = i && i.data && i.data.id && !i.isDeleted && !i.isArchived;
         if (!isValid) return false;
         
         if (filterMode === 'vocab') return i.type === 'vocab';
@@ -386,41 +345,66 @@ export const NotebookView: React.FC<NotebookProps> = ({
         return (b.savedAt || 0) - (a.savedAt || 0);
       });
     
-    // Group items by title (same spelling)
-    const groupMap = new Map<string, StoredItem[]>();
-    filtered.forEach(item => {
-      const title = item.type === 'phrase' 
-        ? (item.data as any).query?.toLowerCase().trim()
-        : (item.data as any).word?.toLowerCase().trim();
-      
-      if (!title) return;
-      
-      if (!groupMap.has(title)) {
-        groupMap.set(title, []);
-      }
-      groupMap.get(title)!.push(item);
-    });
-    
-    // Convert to array of groups, maintaining sort order of first item in each group
-    const groups: ItemGroup[] = [];
-    const seenTitles = new Set<string>();
-    
-    filtered.forEach(item => {
-      const title = item.type === 'phrase' 
-        ? (item.data as any).query?.toLowerCase().trim()
-        : (item.data as any).word?.toLowerCase().trim();
-      
-      if (!title || seenTitles.has(title)) return;
-      seenTitles.add(title);
-      
-      const groupItems = groupMap.get(title) || [];
-      groups.push({
-        title: title,
-        items: groupItems
+    // Archived items
+    const archivedFiltered = items
+      .filter(i => {
+        const isValid = i && i.data && i.data.id && !i.isDeleted && i.isArchived;
+        if (!isValid) return false;
+        
+        if (filterMode === 'vocab') return i.type === 'vocab';
+        if (filterMode === 'phrase') return i.type === 'phrase';
+        
+        return true;
+      })
+      .sort((a, b) => {
+        const titleA = a.type === 'phrase' ? (a.data as any).query : (a.data as any).word;
+        const titleB = b.type === 'phrase' ? (b.data as any).query : (b.data as any).word;
+        return (titleA || '').localeCompare(titleB || '');
       });
-    });
     
-    return { displayItems: filtered, groupedItems: groups };
+    // Helper to group items by title
+    const groupByTitle = (itemList: StoredItem[]): ItemGroup[] => {
+      const groupMap = new Map<string, StoredItem[]>();
+      itemList.forEach(item => {
+        const title = item.type === 'phrase' 
+          ? (item.data as any).query?.toLowerCase().trim()
+          : (item.data as any).word?.toLowerCase().trim();
+        
+        if (!title) return;
+        
+        if (!groupMap.has(title)) {
+          groupMap.set(title, []);
+        }
+        groupMap.get(title)!.push(item);
+      });
+      
+      const groups: ItemGroup[] = [];
+      const seenTitles = new Set<string>();
+      
+      itemList.forEach(item => {
+        const title = item.type === 'phrase' 
+          ? (item.data as any).query?.toLowerCase().trim()
+          : (item.data as any).word?.toLowerCase().trim();
+        
+        if (!title || seenTitles.has(title)) return;
+        seenTitles.add(title);
+        
+        const groupItems = groupMap.get(title) || [];
+        groups.push({
+          title: title,
+          items: groupItems
+        });
+      });
+      
+      return groups;
+    };
+    
+    return { 
+      displayItems: activeFiltered, 
+      groupedItems: groupByTitle(activeFiltered),
+      archivedItems: archivedFiltered,
+      archivedGroups: groupByTitle(archivedFiltered)
+    };
   }, [items, sortMode, filterMode]);
 
   if (displayItems.length === 0) {
@@ -540,21 +524,65 @@ export const NotebookView: React.FC<NotebookProps> = ({
         </div>
       )}
 
-      <div className="p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-4 max-w-3xl mx-auto">
-        {groupedItems.map((group) => (
+      <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-3 w-full max-w-screen-md mx-auto">
+        {groupedItems.map((group, index) => (
           <NotebookGroup
             key={group.title}
             group={group}
+            groups={groupedItems}
+            groupIndex={index}
             openItemId={openItemId}
             setOpenItemId={setOpenItemId}
             onDelete={onDelete}
             onSearch={onSearch}
-            onViewDetail={(groupItems, index) => {
-              // Pass the group items directly for carousel navigation in DetailView
-              onViewDetail(groupItems, index);
-            }}
+            onViewDetail={onViewDetail}
+            onArchive={onArchive}
+            onUnarchive={onUnarchive}
           />
         ))}
+
+        {/* Archived Section */}
+        {archivedItems.length > 0 && (
+          <div className="mt-6 pt-4 border-t-2 border-slate-200">
+            <button
+              onClick={() => setShowArchived(!showArchived)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Archive size={18} className="text-slate-500" />
+                <span className="font-bold text-slate-700">Archived</span>
+                <span className="text-sm text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
+                  {archivedItems.length} {archivedItems.length === 1 ? 'item' : 'items'}
+                </span>
+              </div>
+              {showArchived ? (
+                <ChevronUp size={18} className="text-slate-500" />
+              ) : (
+                <ChevronDown size={18} className="text-slate-500" />
+              )}
+            </button>
+
+            {showArchived && (
+              <div className="grid gap-4 mt-4 animate-in slide-in-from-top-2 duration-200">
+                {archivedGroups.map((group, index) => (
+                  <NotebookGroup
+                    key={`archived-${group.title}`}
+                    group={group}
+                    groups={archivedGroups}
+                    groupIndex={index}
+                    openItemId={openItemId}
+                    setOpenItemId={setOpenItemId}
+                    onDelete={onDelete}
+                    onSearch={onSearch}
+                    onViewDetail={onViewDetail}
+                    onArchive={onArchive}
+                    onUnarchive={onUnarchive}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

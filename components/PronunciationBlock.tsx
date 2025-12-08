@@ -77,10 +77,10 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
       type="button"
       onClick={handlePlay}
       className={`
-        inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-sm transition-all duration-150
+        inline-flex items-center gap-2 px-3 py-1.5 rounded-xl font-mono text-sm transition-all duration-150 border
         ${isPlaying 
-          ? 'bg-indigo-600 text-white shadow-md scale-[1.02]' 
-          : 'bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 active:scale-95'
+          ? 'bg-indigo-600 text-white shadow-lg scale-[1.02] border-indigo-600' 
+          : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 active:scale-95 shadow-sm'
         }
         ${className}
       `}
@@ -89,11 +89,11 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
       {showIcon && (
         <Volume2 
           size={16} 
-          strokeWidth={2} 
-          className={`shrink-0 ${isPlaying ? 'animate-pulse' : ''}`}
+          strokeWidth={2.5} 
+          className={`shrink-0 ${isPlaying ? 'animate-pulse' : 'text-indigo-500'}`}
         />
       )}
-      <span className="break-words text-left leading-tight">{ipa || text}</span>
+      <span className="break-words text-left leading-tight font-semibold">{ipa || text}</span>
     </button>
   );
 };

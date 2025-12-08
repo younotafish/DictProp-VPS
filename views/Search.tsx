@@ -16,12 +16,14 @@ interface SearchProps {
   savedItems: StoredItem[];
   initialQuery?: string;
   initialData?: StoredItem;
+  forceRefresh?: boolean; // When true, bypass local cache and call AI
+  onForceRefreshComplete?: () => void; // Called after force refresh search starts
   onViewDetail?: (data: VocabCard | SearchResult, type: 'vocab' | 'phrase') => void;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
   onClear?: () => void;
 }
 
-export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, onDelete, savedItems, initialQuery, initialData, onViewDetail, onScroll, onClear }) => {
+export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, onDelete, savedItems, initialQuery, initialData, forceRefresh, onForceRefreshComplete, onViewDetail, onScroll, onClear }) => {
   const [query, setQuery] = useState(initialQuery || '');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SearchResult | null>(null);
@@ -31,10 +33,26 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   const [isViewingStored, setIsViewingStored] = useState(false);
   const [searchHistory, setSearchHistory] = useState<Array<{query: string, result: SearchResult | VocabCard, type: 'phrase' | 'vocab'}>>([]);
   
+  // Carousel state for vocab cards
+  const [vocabIndex, setVocabIndex] = useState(0);
+  const touchStart = useRef<{x: number, y: number} | null>(null);
+  const SWIPE_THRESHOLD = 50;
+  
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isMounted = useRef(true);
   const searchRequestId = useRef(0);
   const lastProcessedQuery = useRef<string | undefined>(undefined);
+  const lastResultQuery = useRef<string | undefined>(undefined);
+  
+  // Reset vocab index only when a NEW search result arrives (different query)
+  // Don't reset when just the images are updated
+  useEffect(() => {
+    const currentQuery = result?.query || vocabResult?.word;
+    if (currentQuery && currentQuery !== lastResultQuery.current) {
+      setVocabIndex(0);
+      lastResultQuery.current = currentQuery;
+    }
+  }, [result, vocabResult]);
 
   useEffect(() => {
       isMounted.current = true;
@@ -81,18 +99,22 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     }
   }, [initialData]);
 
-  // Handle Initial Query (Recursive search)
+  // Handle Initial Query (Recursive search) with optional force refresh
   useEffect(() => {
-    if (initialQuery && initialQuery !== lastProcessedQuery.current) {
+    if (initialQuery && (initialQuery !== lastProcessedQuery.current || forceRefresh)) {
         lastProcessedQuery.current = initialQuery;
         setIsViewingStored(false);
         setVocabResult(null);
         setQuery(initialQuery);
-        // Trigger search immediately
-        performSearch(initialQuery);
+        // Trigger search immediately, bypassing local cache if forceRefresh is true
+        performSearch(initialQuery, forceRefresh);
+        // Notify parent that force refresh has been handled
+        if (forceRefresh && onForceRefreshComplete) {
+            onForceRefreshComplete();
+        }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialQuery]);
+  }, [initialQuery, forceRefresh]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -118,18 +140,19 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     }
   }, [searchHistory]);
 
-  const performSearch = async (text: string) => {
+  const performSearch = async (text: string, skipLocalCache: boolean = false) => {
     // Increment ID to invalidate previous searches
     const currentSearchId = ++searchRequestId.current;
     
-    // Check if the query matches an existing saved item (case-insensitive)
+    // Check if the query matches existing saved items (case-insensitive)
+    // Skip this check if skipLocalCache is true (force refresh from AI)
     const queryLower = text.toLowerCase().trim();
-    const existingItem = savedItems.find(item => 
+    const existingItems = skipLocalCache ? [] : savedItems.filter(item => 
         getItemTitle(item).toLowerCase().trim() === queryLower
     );
     
-    // If found in local storage, display it directly without API call
-    if (existingItem) {
+    // If found in local storage, display directly without API call
+    if (existingItems.length > 0) {
         // Push current state to history before showing stored item
         if (result || vocabResult) {
             setSearchHistory(prev => {
@@ -149,13 +172,40 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         setLoading(false);
         setError(null);
         
-        if (existingItem.type === 'phrase') {
-            setResult(existingItem.data as SearchResult);
+        // Check if any saved item is a phrase
+        const phraseItem = existingItems.find(i => i.type === 'phrase');
+        if (phraseItem) {
+            setResult(phraseItem.data as SearchResult);
             setVocabResult(null);
         } else {
-            setVocabResult(existingItem.data as VocabCard);
-            setResult(null);
+            // All are vocab items - construct a result with all meanings
+            const vocabItems = existingItems.map(i => i.data as VocabCard);
+            if (vocabItems.length === 1) {
+                // Single meaning - show as single vocab
+                setVocabResult(vocabItems[0]);
+                setResult(null);
+            } else {
+                // Multiple meanings - show as SearchResult with vocabs array
+                setResult({
+                    id: vocabItems[0].id,
+                    query: text,
+                    translation: '', // Empty = word mode (shows vocab carousel)
+                    grammar: '',
+                    visualKeyword: '',
+                    pronunciation: vocabItems[0].ipa || '',
+                    vocabs: vocabItems,
+                    timestamp: Date.now()
+                });
+                setVocabResult(null);
+            }
         }
+        return;
+    }
+    
+    // Check if offline before making API call
+    if (!navigator.onLine) {
+        setError("You're offline. Search only works for saved words when offline.");
+        setLoading(false);
         return;
     }
     
@@ -187,23 +237,92 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
 
         // Check if this item is already saved to preserve ID and update content
         const queryToCheck = (rawData.query || '').toLowerCase().trim();
-        const existingItem = queryToCheck ? savedItems.find(i => 
+        
+        // Find ALL existing saved items with same title (could be multiple meanings)
+        const existingItems = queryToCheck ? savedItems.filter(i => 
             getItemTitle(i).toLowerCase().trim() === queryToCheck
-        ) : undefined;
+        ) : [];
+        
+        // Primary existing item (first match, used for main ID)
+        const existingItem = existingItems[0];
 
         let data = rawData;
         
+        // Map vocab IDs - preserve existing IDs for vocabs that match saved items
+        // Uses fuzzy sense matching: same part-of-speech = same meaning
+        // This handles AI returning slightly different descriptions while keeping meanings separate
+        const usedIds = new Set<string>(); // Track IDs we've already assigned to prevent duplicates
+        
+        // Extract part of speech from sense (e.g., "noun: agricultural produce" → "noun")
+        const getPartOfSpeech = (sense: string): string => {
+            const match = sense.toLowerCase().match(/^(noun|verb|adjective|adverb|adj|adv|prep|preposition|conjunction|conj|interjection|pronoun|article|determiner)/);
+            return match ? match[1] : '';
+        };
+        
+        const mappedVocabs = (rawData.vocabs || []).map((vocab) => {
+            const vocabTitle = (vocab.word || '').toLowerCase().trim();
+            const vocabPOS = getPartOfSpeech(vocab.sense || '');
+            
+            // Find saved vocab with same title and same part of speech
+            // This allows "noun: agricultural produce" to match "noun: crops grown for food"
+            // But prevents "noun: produce" from matching "verb: to harvest"
+            const existingSavedVocab = savedItems.find(i => {
+                if (i.type !== 'vocab') return false;
+                const savedTitle = getItemTitle(i).toLowerCase().trim();
+                const savedSense = (i.data as VocabCard).sense || '';
+                const savedPOS = getPartOfSpeech(savedSense);
+                const savedId = i.data.id;
+                
+                // Must match title, part-of-speech must match, and ID must not be already used
+                // Empty POS matches empty POS (for senses without clear part-of-speech)
+                return savedTitle === vocabTitle && 
+                       savedPOS === vocabPOS &&
+                       !usedIds.has(savedId);
+            });
+            
+            if (existingSavedVocab && existingSavedVocab.data.id) {
+                // Adopt existing ID and preserve existing image if new one isn't available
+                usedIds.add(existingSavedVocab.data.id);
+                return { 
+                    ...vocab, 
+                    id: existingSavedVocab.data.id,
+                    imageUrl: vocab.imageUrl || (existingSavedVocab.data as VocabCard).imageUrl
+                };
+            }
+            
+            // No match - keep the new unique ID from AI
+            return vocab;
+        });
+        
+        data = { ...rawData, vocabs: mappedVocabs };
+        
         if (existingItem && existingItem.data && existingItem.data.id) {
             // Adopt the existing ID so updates map to the correct stored item
-            data = { ...rawData, id: existingItem.data.id };
+            data = { ...data, id: existingItem.data.id };
             
-            // Automatically update the text content of the saved item
-            // Note: We upgrade 'vocab' items to 'phrase' items on refresh to provide full context
-            onUpdateStoredItem({
-                ...existingItem,
-                data: data,
-                type: 'phrase',
-                updatedAt: Date.now()
+            // Automatically update ALL existing items with same title
+            // This handles cases where user saved multiple meanings
+            existingItems.forEach(existing => {
+                if (existing.type === 'vocab') {
+                    // For vocab items, find the matching vocab from the new data by ID
+                    const matchingVocab = mappedVocabs.find(v => v.id === existing.data.id);
+                    if (matchingVocab) {
+                        onUpdateStoredItem({
+                            ...existing,
+                            data: matchingVocab,
+                            type: 'vocab',
+                            updatedAt: Date.now()
+                        });
+                    }
+                } else {
+                    // For phrase items, update with the full SearchResult
+                    onUpdateStoredItem({
+                        ...existing,
+                        data: { ...data, id: existing.data.id },
+                        type: 'phrase',
+                        updatedAt: Date.now()
+                    });
+                }
             });
         }
 
@@ -238,6 +357,9 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
             for (const vocab of data.vocabs) {
                 if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
                 
+                // Skip if vocab already has an image (preserved from existing saved item)
+                if (vocab.imageUrl) continue;
+                
                 if (vocab.imagePrompt) {
                     try {
                         const img = await generateIllustration(vocab.imagePrompt, '4:3');
@@ -252,18 +374,15 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                  return { ...prev, vocabs: newVocabs };
                              });
 
-                             // Update saved vocab item if it exists separately
-                             const existingVocabItem = savedItems.find(i => 
-                                getItemTitle(i).toLowerCase().trim() === vocab.word.toLowerCase().trim()
-                             );
-                             
-                             if (existingVocabItem) {
-                                 onUpdateStoredItem({
-                                     ...existingVocabItem,
-                                     data: { ...vocab, imageUrl: img, id: existingVocabItem.data.id },
-                                     updatedAt: Date.now()
-                                 });
-                             }
+                             // Always try to update saved item - don't rely on stale savedItems prop
+                             // The onUpdateStoredItem handler will check current state and update if exists
+                             // This ensures images are saved even if user saved item after search started
+                             onUpdateStoredItem({
+                                 data: { ...vocab, imageUrl: img },
+                                 type: 'vocab',
+                                 savedAt: 0, // Will be ignored if item exists
+                                 updatedAt: Date.now()
+                             });
                         }
                     } catch (e) {
                         console.warn("Vocab image generation failed", e);
@@ -276,10 +395,17 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
 
     } catch (err: any) {
         if (isMounted.current && currentSearchId === searchRequestId.current) {
-            if (err.message === 'QUOTA_EXCEEDED') {
-                 setError("Daily AI limit reached. Please check your plan or try again later.");
+            const msg = err.message || '';
+            
+            if (msg === 'QUOTA_EXCEEDED') {
+                setError("Daily AI limit reached. Please check your plan or try again later.");
+            } else if (msg.includes('Firebase functions not initialized')) {
+                setError("Service not configured. Please check your setup.");
+            } else if (!navigator.onLine) {
+                // Went offline during the request
+                setError("You're offline. Search only works for saved words when offline.");
             } else {
-                 setError("Search failed. Please try again.");
+                setError("Search failed. Please check your connection and try again.");
             }
             setLoading(false);
         }
@@ -366,20 +492,24 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
     const word = vocab.word || '';
     if (!word) return;
 
-    // Check specifically for this vocab word AND sense in storage
-    // This allows saving multiple meanings of the same word
-    const savedVocabMatch = savedItems.find(item => {
-        const titleMatch = getItemTitle(item).toLowerCase().trim() === word.toLowerCase().trim();
-        if (!titleMatch) return false;
-        
-        // For vocab items, also check if the sense matches
-        if (item.type === 'vocab') {
-            const itemSense = (item.data as any).sense || '';
-            const vocabSense = vocab.sense || '';
-            return itemSense === vocabSense;
-        }
-        return true;
-    });
+    // First check by ID (most reliable - handles refreshed items with adopted IDs)
+    let savedVocabMatch = vocab.id ? savedItems.find(item => item.data.id === vocab.id) : undefined;
+    
+    // If not found by ID, check by word AND sense (for items that weren't refreshed)
+    if (!savedVocabMatch) {
+        savedVocabMatch = savedItems.find(item => {
+            const titleMatch = getItemTitle(item).toLowerCase().trim() === word.toLowerCase().trim();
+            if (!titleMatch) return false;
+            
+            // For vocab items, also check if the sense matches
+            if (item.type === 'vocab') {
+                const itemSense = (item.data as any).sense || '';
+                const vocabSense = vocab.sense || '';
+                return itemSense === vocabSense;
+            }
+            return true;
+        });
+    }
 
     if (savedVocabMatch) {
         if (savedVocabMatch.data && savedVocabMatch.data.id) {
@@ -398,7 +528,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   };
 
   return (
-    <div className="h-full bg-slate-50 relative overflow-y-auto" onScroll={onScroll}>
+    <div className="h-full bg-slate-50 relative overflow-y-scroll overscroll-y-contain" onScroll={onScroll} style={{ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch' }}>
       
       {/* Top Search Input Area */}
       <div className="w-full p-3 bg-white/80 backdrop-blur-md border-b border-slate-200/60 z-30">
@@ -553,28 +683,88 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                                 </button>
                             )}
                         </div>
-                        {/* Vocab Cards - Horizontal carousel for word mode */}
-                        <div className="flex overflow-x-auto px-4 gap-4 pb-8 no-scrollbar snap-x snap-mandatory items-stretch">
-                            {(result.vocabs || []).map((vocab, index) => (
-                                <div key={vocab.id} className="min-w-[85vw] md:min-w-[400px] snap-center h-auto relative">
-                                    {/* Meaning number badge for multiple meanings */}
-                                    {(result.vocabs || []).length > 1 && (
-                                        <div className="absolute -left-1 -top-1 z-10 w-7 h-7 bg-indigo-600 text-white text-sm font-bold rounded-full flex items-center justify-center shadow-md">
-                                            {index + 1}
+                        {/* Vocab Cards - Touch-based carousel for word mode */}
+                        {(() => {
+                            const vocabs = result.vocabs || [];
+                            const totalVocabs = vocabs.length;
+                            const currentVocab = vocabs[vocabIndex] || vocabs[0];
+                            
+                            if (!currentVocab) return null;
+                            
+                            const handleCarouselTouchStart = (e: React.TouchEvent) => {
+                                touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                            };
+                            
+                            const handleCarouselTouchEnd = (e: React.TouchEvent) => {
+                                if (!touchStart.current) return;
+                                const diffX = e.changedTouches[0].clientX - touchStart.current.x;
+                                const diffY = e.changedTouches[0].clientY - touchStart.current.y;
+                                const absX = Math.abs(diffX);
+                                const absY = Math.abs(diffY);
+                                
+                                // Only handle horizontal swipes
+                                if (absX > absY * 1.2 && absX > SWIPE_THRESHOLD) {
+                                    if (diffX < 0 && vocabIndex < totalVocabs - 1) {
+                                        // Swipe left - next card
+                                        setVocabIndex(prev => prev + 1);
+                                    } else if (diffX > 0 && vocabIndex > 0) {
+                                        // Swipe right - previous card
+                                        setVocabIndex(prev => prev - 1);
+                                    }
+                                }
+                                touchStart.current = null;
+                            };
+                            
+                            return (
+                                <div 
+                                    className="px-4 pb-4"
+                                    onTouchStart={handleCarouselTouchStart}
+                                    onTouchEnd={handleCarouselTouchEnd}
+                                    style={{ touchAction: 'pan-y' }}
+                                >
+                                    <div className="relative">
+                                        {/* Meaning number badge */}
+                                        {totalVocabs > 1 && (
+                                            <div className="absolute -left-1 -top-1 z-10 w-7 h-7 bg-indigo-600 text-white text-sm font-bold rounded-full flex items-center justify-center shadow-md">
+                                                {vocabIndex + 1}
+                                            </div>
+                                        )}
+                                        {/* Next card indicator */}
+                                        {totalVocabs > 1 && vocabIndex < totalVocabs - 1 && (
+                                            <div className="absolute -right-1 top-1/2 -translate-y-1/2 z-10 w-6 h-6 bg-indigo-100 text-indigo-600 text-xs font-bold rounded-full flex items-center justify-center shadow">
+                                                {vocabIndex + 2}
+                                            </div>
+                                        )}
+                                        <VocabCardDisplay 
+                                            data={currentVocab} 
+                                            onSave={() => toggleSaveVocab(currentVocab)}
+                                            isSaved={savedItems.some(i => i.data.id === currentVocab.id || (getItemTitle(i).toLowerCase().trim() === (currentVocab.word || '').toLowerCase().trim() && (i.data as any).sense === currentVocab.sense))}
+                                            onSearch={handleTermClick}
+                                            onExpand={() => onViewDetail?.(currentVocab, 'vocab')}
+                                            scrollable={false}
+                                            className="border-slate-200 shadow-sm"
+                                        />
+                                    </div>
+                                    
+                                    {/* Dot indicators */}
+                                    {totalVocabs > 1 && (
+                                        <div className="flex justify-center gap-1.5 mt-3">
+                                            {vocabs.map((_, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    onClick={() => setVocabIndex(idx)}
+                                                    className={`w-2 h-2 rounded-full transition-all ${
+                                                        idx === vocabIndex 
+                                                            ? 'bg-indigo-600 w-4' 
+                                                            : 'bg-slate-300 hover:bg-slate-400'
+                                                    }`}
+                                                />
+                                            ))}
                                         </div>
                                     )}
-                                    <VocabCardDisplay 
-                                        data={vocab} 
-                                        onSave={() => toggleSaveVocab(vocab)}
-                                        isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() && (i.data as any).sense === vocab.sense)}
-                                        onSearch={handleTermClick}
-                                        onExpand={() => onViewDetail?.(vocab, 'vocab')}
-                                        scrollable={false}
-                                        className="h-full border-slate-200 shadow-sm hover:shadow-md transition-shadow"
-                                    />
                                 </div>
-                            ))}
-                        </div>
+                            );
+                        })()}
                     </div>
                 ) : (
                     /* SENTENCE MODE: Full analysis with hero card */
@@ -641,28 +831,78 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                     </div>
                     </div>
 
-                    {/* Vocab Carousel for sentence mode */}
+                    {/* Vocab Carousel for sentence mode - uses same carousel component */}
                     {(result.vocabs || []).length > 0 && (
                         <div className="mt-8 mb-6">
                             <div className="px-6 mb-4 flex items-center gap-2">
                                 <BookOpen size={16} className="text-indigo-500" />
                                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Key Vocabulary</h3>
                             </div>
-                            <div className="flex overflow-x-auto px-4 gap-4 pb-8 no-scrollbar snap-x snap-mandatory items-stretch">
-                                {(result.vocabs || []).map((vocab) => (
-                                    <div key={vocab.id} className="min-w-[85vw] md:min-w-[400px] snap-center h-auto">
-                                        <VocabCardDisplay 
-                                            data={vocab} 
-                                            onSave={() => toggleSaveVocab(vocab)}
-                                            isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() && (i.data as any).sense === vocab.sense)}
-                                            onSearch={handleTermClick}
-                                            onExpand={() => onViewDetail?.(vocab, 'vocab')}
-                                            scrollable={false}
-                                            className="h-full border-slate-200 shadow-sm hover:shadow-md transition-shadow"
-                                        />
+                            {(() => {
+                                const vocabs = result.vocabs || [];
+                                const totalVocabs = vocabs.length;
+                                const currentVocab = vocabs[vocabIndex] || vocabs[0];
+                                
+                                if (!currentVocab) return null;
+                                
+                                const handleCarouselTouchStart = (e: React.TouchEvent) => {
+                                    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                                };
+                                
+                                const handleCarouselTouchEnd = (e: React.TouchEvent) => {
+                                    if (!touchStart.current) return;
+                                    const diffX = e.changedTouches[0].clientX - touchStart.current.x;
+                                    const diffY = e.changedTouches[0].clientY - touchStart.current.y;
+                                    const absX = Math.abs(diffX);
+                                    const absY = Math.abs(diffY);
+                                    
+                                    if (absX > absY * 1.2 && absX > SWIPE_THRESHOLD) {
+                                        if (diffX < 0 && vocabIndex < totalVocabs - 1) {
+                                            setVocabIndex(prev => prev + 1);
+                                        } else if (diffX > 0 && vocabIndex > 0) {
+                                            setVocabIndex(prev => prev - 1);
+                                        }
+                                    }
+                                    touchStart.current = null;
+                                };
+                                
+                                return (
+                                    <div 
+                                        className="px-4 pb-4"
+                                        onTouchStart={handleCarouselTouchStart}
+                                        onTouchEnd={handleCarouselTouchEnd}
+                                        style={{ touchAction: 'pan-y' }}
+                                    >
+                                        <div className="relative">
+                                            <VocabCardDisplay 
+                                                data={currentVocab} 
+                                                onSave={() => toggleSaveVocab(currentVocab)}
+                                                isSaved={savedItems.some(i => i.data.id === currentVocab.id || (getItemTitle(i).toLowerCase().trim() === (currentVocab.word || '').toLowerCase().trim() && (i.data as any).sense === currentVocab.sense))}
+                                                onSearch={handleTermClick}
+                                                onExpand={() => onViewDetail?.(currentVocab, 'vocab')}
+                                                scrollable={false}
+                                                className="border-slate-200 shadow-sm"
+                                            />
+                                        </div>
+                                        
+                                        {totalVocabs > 1 && (
+                                            <div className="flex justify-center gap-1.5 mt-3">
+                                                {vocabs.map((_, idx) => (
+                                                    <button
+                                                        key={idx}
+                                                        onClick={() => setVocabIndex(idx)}
+                                                        className={`w-2 h-2 rounded-full transition-all ${
+                                                            idx === vocabIndex 
+                                                                ? 'bg-indigo-600 w-4' 
+                                                                : 'bg-slate-300 hover:bg-slate-400'
+                                                        }`}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
-                                ))}
-                            </div>
+                                );
+                            })()}
                         </div>
                     )}
                     </>
@@ -672,13 +912,13 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
 
             {/* Render Single Vocab Card (Stored Vocab) */}
             {vocabResult && (
-                <div className="p-4 h-full pb-10 mt-6 relative">
+                <div className="p-4 pb-10 mt-6 relative">
                      {/* Save button - fixed in top right */}
                      <div className="absolute top-6 right-6 z-10 flex items-center gap-2">
                          {isViewingStored && (
                              <button 
                                  onClick={handleRefresh} 
-                                 title="Refresh Analysis" 
+                                 title="Get all meanings" 
                                  className="p-3 rounded-full bg-white text-slate-600 hover:text-indigo-600 hover:bg-slate-50 shadow-lg transition-all active:scale-90 border border-slate-200"
                              >
                                  <RotateCw size={20} />
@@ -696,18 +936,29 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                              {isSaved ? <Bookmark size={20} fill="currentColor" /> : <Bookmark size={20} />}
                          </button>
                      </div>
-                     <div className="flex items-center gap-2 mb-4 px-2 text-slate-400 text-xs uppercase font-bold tracking-wider">
-                        <BookOpen size={14} />
-                        <span>Saved Vocabulary</span>
+                     <div className="flex items-center justify-between mb-4 px-2">
+                        <div className="flex items-center gap-2 text-slate-400 text-xs uppercase font-bold tracking-wider">
+                            <BookOpen size={14} />
+                            <span>Saved Vocabulary</span>
+                        </div>
+                        {isViewingStored && (
+                            <button 
+                                onClick={handleRefresh}
+                                className="text-xs text-indigo-500 hover:text-indigo-700 font-medium flex items-center gap-1"
+                            >
+                                <RotateCw size={12} />
+                                Get all meanings
+                            </button>
+                        )}
                      </div>
                      <VocabCardDisplay 
                         data={vocabResult} 
                         onSave={() => toggleSaveVocab(vocabResult)}
-                        isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocabResult.word || '').toLowerCase().trim() && (i.data as any).sense === vocabResult.sense)}
+                        isSaved={savedItems.some(i => i.data.id === vocabResult.id || (getItemTitle(i).toLowerCase().trim() === (vocabResult.word || '').toLowerCase().trim() && (i.data as any).sense === vocabResult.sense))}
                         showSave={false}
-                        className="min-h-[60vh] shadow-sm border-slate-200"
+                        className="shadow-sm border-slate-200"
                         onSearch={handleTermClick}
-                        scrollable={true}
+                        scrollable={false}
                      />
                 </div>
             )}

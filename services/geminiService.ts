@@ -57,6 +57,10 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
   }
 };
 
+/**
+ * Generate an illustration
+ * Returns base64 image data directly (simpler and more reliable than blob storage)
+ */
 export const generateIllustration = async (prompt: string, aspectRatio: '16:9' | '4:3' | '1:1' = '1:1'): Promise<string | undefined> => {
   if (!functions) {
       console.warn("Firebase functions not initialized, skipping image generation");
@@ -74,7 +78,7 @@ export const generateIllustration = async (prompt: string, aspectRatio: '16:9' |
         return undefined;
     }
     
-    return data.imageData;
+    return data.imageData; // Return base64 directly
   } catch (error: any) {
     console.warn("Image generation failed", error);
     return undefined; 

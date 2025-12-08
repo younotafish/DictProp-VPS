@@ -100,36 +100,32 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       }
 
       // C. IMAGE MERGE (Preservation for Offline)
-      // PRIORITY: Base64 data > URL (base64 works offline, URLs don't)
-      // Always prefer local base64 over remote URL for offline support
+      // PRIORITY: Local images ALWAYS win over remote
+      // This is critical because:
+      // 1. Base64 images work offline (URLs don't)
+      // 2. Remote images might be stripped due to Firestore 1MB document limit
+      // 3. Local IndexedDB has no size limit and stores full images
       const finalData = mergedItem.data as any;
       const localData = localItem.data as any;
       const remoteData = remoteItem.data as any;
       
-      const isBase64 = (url: string) => url && url.startsWith('data:image/');
-      
-      // Main image: Prefer base64 for offline support
-      if (isBase64(localData.imageUrl)) {
-          // Local has base64 - always keep it (works offline)
-          finalData.imageUrl = localData.imageUrl;
-      } else if (localData.imageUrl && !finalData.imageUrl) {
-          // Local has URL, final is missing - restore local
+      // Main image: LOCAL ALWAYS WINS (since remote might have been stripped)
+      if (localData.imageUrl) {
+          // Local has an image - always keep it
           finalData.imageUrl = localData.imageUrl;
       } else if (remoteData.imageUrl && !finalData.imageUrl) {
-          // Remote has image, final is missing - restore remote
+          // Local has no image, but remote does - use remote
           finalData.imageUrl = remoteData.imageUrl;
       }
       
-      // Phrase Vocabs Images - same logic
+      // Phrase Vocabs Images - same logic: LOCAL WINS
       if (mergedItem.type === 'phrase' && Array.isArray(finalData.vocabs)) {
           finalData.vocabs.forEach((vocab: any, index: number) => {
                const localVocab = Array.isArray(localData.vocabs) ? localData.vocabs[index] : null;
                const remoteVocab = Array.isArray(remoteData.vocabs) ? remoteData.vocabs[index] : null;
                
-               // Prefer base64 for offline support
-               if (localVocab?.imageUrl && isBase64(localVocab.imageUrl)) {
-                   vocab.imageUrl = localVocab.imageUrl;
-               } else if (localVocab?.imageUrl && !vocab.imageUrl) {
+               // Local image always wins
+               if (localVocab?.imageUrl) {
                    vocab.imageUrl = localVocab.imageUrl;
                } else if (remoteVocab?.imageUrl && !vocab.imageUrl) {
                    vocab.imageUrl = remoteVocab.imageUrl;

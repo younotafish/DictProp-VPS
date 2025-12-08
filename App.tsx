@@ -3,11 +3,11 @@ import { SearchView } from './views/Search';
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, VocabCard, AppUser } from './types';
+import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, VocabCard, SearchResult, AppUser, ItemGroup } from './types';
 import { Search, Book, BrainCircuit } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData } from './services/firebase';
+import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem } from './services/firebase';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -38,10 +38,15 @@ const App: React.FC = () => {
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
   const activeItems = useMemo(() => savedItems.filter(i => !i.isDeleted), [savedItems]);
+  // Items available for study (excludes archived)
+  const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived), [savedItems]);
   
   const [recursiveQuery, setRecursiveQuery] = useState<string | undefined>(() => {
       return localStorage.getItem('app_last_query') || undefined;
   });
+  
+  // Force refresh flag - when true, SearchView will bypass local cache and call AI
+  const [forceRefreshSearch, setForceRefreshSearch] = useState(false);
   
   useEffect(() => {
       if (recursiveQuery) {
@@ -64,7 +69,8 @@ const App: React.FC = () => {
   const [signInError, setSignInError] = useState<{code?: string, message: string} | null>(null);
   const [isFirebaseConfigured, setIsFirebaseConfigured] = useState(isConfigured());
 
-  const [detailContext, setDetailContext] = useState<{ items: StoredItem[], index: number } | null>(null);
+  // Updated DetailContext to support Group-based navigation (2D: Groups vs Items)
+  const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number } | null>(null);
 
   // Network status detection for offline support
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -172,7 +178,7 @@ const App: React.FC = () => {
                 items: processedItems
             });
             
-            // 4. Save if we made changes
+            // 5. Save if we made changes
             if (hasChanges) {
                 await saveData(processedItems);
             }
@@ -237,42 +243,49 @@ const App: React.FC = () => {
       
       if (currentUser) {
         // 1. Load User's specific local data (offline cache for this user)
+        // This is the primary data source - always available offline
         const userLocalItems = await loadData(currentUser.uid);
         
-        // 2. Load Remote Data
-        try {
-          const remoteItems = await loadUserData(currentUser.uid);
-          
-          // 3. Merge User Local + User Remote (INCLUDING deleted items for proper sync)
-          // We must include deleted items in merge to propagate deletions across devices
-          let mergedItems = mergeDatasets(userLocalItems, remoteItems);
-          
-          // 4. Clean up old deleted items during initial sync
-          mergedItems = cleanupOldDeletedItems(mergedItems);
-          
-          // Update last sync time based on ALL remote data to avoid re-syncing what we just got
-          const maxRemoteTime = remoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
-          setLastSyncTime(prev => {
-              const newTime = Math.max(prev, maxRemoteTime);
-              localStorage.setItem('last_successful_sync', newTime.toString());
-              return newTime;
-          });
-
-          // Set state and user together to avoid inconsistent renders
-          setUser(currentUser);
-          setSyncState(prevState => ({
+        // Set user and local items FIRST (instant, works offline)
+        setUser(currentUser);
+        setSyncState(prevState => ({
             ...prevState,
-            items: mergedItems
-          }));
-          
-        } catch (error) {
-          console.error("Initial sync failed:", error);
-          // Still set the user and local items if remote fails
-          setUser(currentUser);
-          setSyncState(prevState => ({
+            items: userLocalItems
+        }));
+        
+        // 2. Load Remote Data ONLY if online (background sync)
+        // Skip cloud fetch when offline to avoid delays
+        if (navigator.onLine) {
+          try {
+            const remoteItems = await loadUserData(currentUser.uid);
+            
+            // 3. Merge User Local + User Remote (INCLUDING deleted items for proper sync)
+            // We must include deleted items in merge to propagate deletions across devices
+            let mergedItems = mergeDatasets(userLocalItems, remoteItems);
+            
+            // 4. Clean up old deleted items during initial sync
+            mergedItems = cleanupOldDeletedItems(mergedItems);
+            
+            // Update last sync time based on ALL remote data to avoid re-syncing what we just got
+            const maxRemoteTime = remoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
+            setLastSyncTime(prev => {
+                const newTime = Math.max(prev, maxRemoteTime);
+                localStorage.setItem('last_successful_sync', newTime.toString());
+                return newTime;
+            });
+
+            // Update state with merged data
+            setSyncState(prevState => ({
               ...prevState,
-              items: userLocalItems
-          }));
+              items: mergedItems
+            }));
+            
+          } catch (error) {
+            console.error("Initial sync failed:", error);
+            // Local items already set above, no action needed
+          }
+        } else {
+          console.log("📴 Offline: Using local data only");
         }
         
         // Subscribe to real-time updates
@@ -319,13 +332,14 @@ const App: React.FC = () => {
     if (!isLoaded) return; 
 
     const timer = setTimeout(async () => {
-      // 1. Save to Local IDB
+      // 1. Save to Local IDB FIRST (always, works offline)
       // Save to user-specific storage or guest storage
       const targetUserId = user?.uid || 'guest';
       await saveData(syncState.items, targetUserId);
       
       // 2. Push items to Cloud (Firebase) - Delta Sync
-      if (user && isFirebaseConfigured) {
+      // Skip cloud sync when offline - will sync when back online
+      if (user && isFirebaseConfigured && isOnline) {
           // Filter only changed items (updatedAt > lastSyncTime)
           const changedItems = syncState.items.filter(item => {
               const updated = item.updatedAt || 0;
@@ -355,15 +369,18 @@ const App: React.FC = () => {
             console.error("Sync error:", e);
             setSyncStatus('error');
           }
+      } else if (!isOnline) {
+          // Offline - data saved locally, will sync when online
+          setSyncStatus('saved');
       }
 
     }, 5000); // 5s debounce (user preference)
 
     return () => clearTimeout(timer);
-  }, [syncState, isLoaded, user, isFirebaseConfigured, lastSyncTime]);
+  }, [syncState, isLoaded, user, isFirebaseConfigured, lastSyncTime, isOnline]);
 
   const handleForceSync = async () => {
-    if (!user || !isFirebaseConfigured) return;
+    if (!user || !isFirebaseConfigured || !isOnline) return;
     
     setSyncStatus('syncing');
     
@@ -380,17 +397,16 @@ const App: React.FC = () => {
       const remoteItems = await loadUserData(user.uid);
       
       // 3. Merge (including deleted items to propagate deletions)
-      setSyncState(prevState => {
-        const mergedItems = mergeDatasets(prevState.items, remoteItems);
-        
-        // 4. Clean up old deleted items (hard delete after retention period)
-        const cleanedItems = cleanupOldDeletedItems(mergedItems);
-        
-        return {
-          ...prevState,
-          items: cleanedItems
-        };
-      });
+      const currentItems = syncState.items;
+      let mergedItems = mergeDatasets(currentItems, remoteItems);
+      
+      // 4. Clean up old deleted items (hard delete after retention period)
+      const cleanedItems = cleanupOldDeletedItems(mergedItems);
+      
+      setSyncState(prevState => ({
+        ...prevState,
+        items: cleanedItems
+      }));
       
       setSyncStatus('saved');
       
@@ -613,7 +629,22 @@ const App: React.FC = () => {
           };
         } else {
           // New item
-          const normalizedSRS = SRSAlgorithm.ensure(itemToSave.srs, itemToSave.data.id, itemToSave.type);
+          
+          // SHARED SRS LOGIC: Check if there are any OTHER items with the same word
+          // If so, inherit their SRS state
+          let srsToUse = itemToSave.srs;
+          
+          const siblingItem = prevState.items.find(i => 
+             !i.isDeleted && 
+             String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle
+          );
+          
+          if (siblingItem) {
+              // Inherit SRS from sibling, but ensure ID matches the NEW item
+              srsToUse = { ...siblingItem.srs, id: itemToSave.data.id };
+          }
+
+          const normalizedSRS = SRSAlgorithm.ensure(srsToUse, itemToSave.data.id, itemToSave.type);
           const finalItem = { 
             ...itemToSave, 
             srs: normalizedSRS,
@@ -639,11 +670,23 @@ const App: React.FC = () => {
     
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
-      const index = prevState.items.findIndex(i => i.data.id === item.data.id);
+      const itemId = item.data.id;
+      
+      // Case 1: Direct match by ID (top-level items)
+      const index = prevState.items.findIndex(i => i.data.id === itemId);
       if (index >= 0) {
+        const existingItem = prevState.items[index];
         const newItems = [...prevState.items];
+        
+        // Merge: keep existing fields, update with new data, preserve important metadata
         newItems[index] = {
-          ...item,
+          ...existingItem,
+          data: {
+            ...existingItem.data,
+            ...item.data,
+            // Preserve existing imageUrl if incoming doesn't have one
+            imageUrl: (item.data as any).imageUrl || (existingItem.data as any).imageUrl
+          },
           updatedAt: Date.now()
         };
         
@@ -652,11 +695,108 @@ const App: React.FC = () => {
           items: newItems
         };
       }
+      
+      // Case 2: Check if this is a vocab inside a phrase item
+      // Vocab images are generated separately and need to update the parent phrase
+      if (item.type === 'vocab') {
+        const vocabData = item.data as VocabCard;
+        
+        for (let i = 0; i < prevState.items.length; i++) {
+          const stored = prevState.items[i];
+          if (stored.type === 'phrase') {
+            const phraseData = stored.data as SearchResult;
+            const vocabIndex = (phraseData.vocabs || []).findIndex(v => v.id === itemId);
+            
+            if (vocabIndex >= 0) {
+              // Found the vocab inside this phrase - update it
+              const newVocabs = [...(phraseData.vocabs || [])];
+              newVocabs[vocabIndex] = {
+                ...newVocabs[vocabIndex],
+                ...vocabData,
+                // Preserve existing imageUrl if incoming doesn't have one
+                imageUrl: vocabData.imageUrl || newVocabs[vocabIndex].imageUrl
+              };
+              
+              const newItems = [...prevState.items];
+              newItems[i] = {
+                ...stored,
+                data: {
+                  ...phraseData,
+                  vocabs: newVocabs
+                },
+                updatedAt: Date.now()
+              };
+              
+              return {
+                ...prevState,
+                items: newItems
+              };
+            }
+          }
+        }
+      }
+      
       return prevState;
     });
   };
 
+  /**
+   * Lazy load image from Firebase if local item is missing it
+   * Called when viewing a saved card that has no local image
+   */
+  const handleLazyLoadImage = useCallback(async (itemId: string) => {
+    if (!user || !isOnline) return;
+    
+    try {
+      const remoteItem = await loadSingleItem(user.uid, itemId);
+      if (!remoteItem) return;
+      
+      const remoteData = remoteItem.data as any;
+      const hasRemoteImage = remoteData.imageUrl && remoteData.imageUrl.startsWith('data:image/');
+      
+      if (!hasRemoteImage) return;
+      
+      // Update local storage with the remote image
+      setSyncState(prevState => {
+        const index = prevState.items.findIndex(i => i.data.id === itemId);
+        if (index >= 0) {
+          const localData = prevState.items[index].data as any;
+          const hasLocalImage = localData.imageUrl && localData.imageUrl.startsWith('data:image/');
+          
+          if (!hasLocalImage) {
+            console.log(`🖼️ Lazy-loaded image from Firebase for: ${remoteData.word || remoteData.query}`);
+            const newItems = [...prevState.items];
+            newItems[index] = {
+              ...prevState.items[index],
+              data: {
+                ...localData,
+                imageUrl: remoteData.imageUrl,
+                // Also update vocab images if this is a phrase
+                ...(remoteItem.type === 'phrase' && remoteData.vocabs && {
+                  vocabs: (localData.vocabs || []).map((localVocab: any, i: number) => {
+                    const remoteVocab = remoteData.vocabs[i];
+                    if (remoteVocab?.imageUrl && !localVocab.imageUrl) {
+                      return { ...localVocab, imageUrl: remoteVocab.imageUrl };
+                    }
+                    return localVocab;
+                  })
+                })
+              },
+              updatedAt: Date.now()
+            };
+            return { ...prevState, items: newItems };
+          }
+        }
+        return prevState;
+      });
+    } catch (e) {
+      console.warn("Failed to lazy-load image from Firebase:", e);
+    }
+  }, [user, isOnline]);
+
   const handleDelete = (id: string) => {
+    console.log('🗑️ App: Deleting item', id);
+    
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
       const index = prevState.items.findIndex(i => i.data.id === id);
@@ -673,46 +813,110 @@ const App: React.FC = () => {
           items: newItems
         };
       }
+      console.warn('🗑️ App: Item not found for deletion:', id);
       return prevState;
+    });
+    
+    // Update detailContext to remove the deleted item (instead of closing entirely)
+    setDetailContext(prev => {
+      if (!prev) return null;
+      
+      // Create new groups with the deleted item removed
+      const newGroups = prev.groups.map(group => ({
+        ...group,
+        items: group.items.filter(item => item.data.id !== id)
+      })).filter(group => group.items.length > 0); // Remove empty groups
+      
+      // If no groups left, close the view
+      if (newGroups.length === 0) {
+        return null;
+      }
+      
+      // Adjust indices if needed
+      let newGroupIndex = prev.groupIndex;
+      let newItemIndex = prev.itemIndex;
+      
+      // If current group was removed or index is out of bounds
+      if (newGroupIndex >= newGroups.length) {
+        newGroupIndex = newGroups.length - 1;
+      }
+      
+      // If current item index is out of bounds for the new group
+      if (newItemIndex >= newGroups[newGroupIndex].items.length) {
+        newItemIndex = Math.max(0, newGroups[newGroupIndex].items.length - 1);
+      }
+      
+      return {
+        groups: newGroups,
+        groupIndex: newGroupIndex,
+        itemIndex: newItemIndex
+      };
     });
   };
 
-  const handleRecursiveSearch = (text: string) => {
-      setRecursiveQuery(text);
-      setSelectedStoredItem(undefined);
-      setCurrentView('search');
-      setDetailContext(null); 
-  };
-
-  const handleViewStoredItem = (items: StoredItem[], index: number) => {
-      setDetailContext({ items, index });
-  };
-
-  // Enhanced SRS update with new algorithm (using operations)
-  const updateSRS = (itemId: string, quality: number, taskType: TaskType = 'recall', responseTime: number = 3000) => {
-    // Use functional update to avoid stale closure issues
+  const handleArchive = (id: string) => {
+    console.log('📦 App: Archiving item', id);
+    
     setSyncState(prevState => {
-      const item = prevState.items.find(i => i.data.id === itemId);
-      if (!item) return prevState;
-      
-      // Migrate old SRS data if needed
-      const migratedSRS = SRSAlgorithm.migrate(item.srs);
-      
-      // Use new algorithm
-      const updatedSRS = SRSAlgorithm.updateAfterReview(
-        migratedSRS,
-        quality,
-        taskType,
-        responseTime
-      );
-      
-      // Update SRS directly
-      const index = prevState.items.findIndex(i => i.data.id === itemId);
+      const index = prevState.items.findIndex(i => i.data.id === id);
       if (index >= 0) {
         const newItems = [...prevState.items];
         newItems[index] = {
           ...newItems[index],
-          srs: updatedSRS,
+          isArchived: true,
+          updatedAt: Date.now()
+        };
+        
+        return {
+          ...prevState,
+          items: newItems
+        };
+      }
+      console.warn('📦 App: Item not found for archiving:', id);
+      return prevState;
+    });
+    
+    // Update detailContext to remove the archived item (instead of closing entirely)
+    setDetailContext(prev => {
+      if (!prev) return null;
+      
+      // Create new groups with the archived item removed
+      const newGroups = prev.groups.map(group => ({
+        ...group,
+        items: group.items.filter(item => item.data.id !== id)
+      })).filter(group => group.items.length > 0);
+      
+      if (newGroups.length === 0) {
+        return null;
+      }
+      
+      let newGroupIndex = prev.groupIndex;
+      let newItemIndex = prev.itemIndex;
+      
+      if (newGroupIndex >= newGroups.length) {
+        newGroupIndex = newGroups.length - 1;
+      }
+      
+      if (newItemIndex >= newGroups[newGroupIndex].items.length) {
+        newItemIndex = Math.max(0, newGroups[newGroupIndex].items.length - 1);
+      }
+      
+      return {
+        groups: newGroups,
+        groupIndex: newGroupIndex,
+        itemIndex: newItemIndex
+      };
+    });
+  };
+
+  const handleUnarchive = (id: string) => {
+    setSyncState(prevState => {
+      const index = prevState.items.findIndex(i => i.data.id === id);
+      if (index >= 0) {
+        const newItems = [...prevState.items];
+        newItems[index] = {
+          ...newItems[index],
+          isArchived: false,
           updatedAt: Date.now()
         };
         
@@ -722,6 +926,81 @@ const App: React.FC = () => {
         };
       }
       return prevState;
+    });
+  };
+
+  const handleRecursiveSearch = (text: string) => {
+      setRecursiveQuery(text);
+      setSelectedStoredItem(undefined);
+      setCurrentView('search');
+      setDetailContext(null);
+      setForceRefreshSearch(false); // Normal search, check local first
+  };
+
+  // Force refresh search - bypasses local cache and calls AI
+  const handleForceRefreshSearch = (text: string) => {
+      setRecursiveQuery(text);
+      setSelectedStoredItem(undefined);
+      setCurrentView('search');
+      setDetailContext(null);
+      setForceRefreshSearch(true); // Force real AI search
+  };
+
+  // Updated handler to support groups
+  const handleViewStoredItem = (groups: ItemGroup[], groupIndex: number, itemIndex: number) => {
+      setDetailContext({ groups, groupIndex, itemIndex });
+  };
+
+  // Enhanced SRS update with new algorithm (using operations)
+  const updateSRS = (itemId: string, quality: number, taskType: TaskType = 'recall', responseTime: number = 3000) => {
+    // Use functional update to avoid stale closure issues
+    setSyncState(prevState => {
+      const targetItem = prevState.items.find(i => i.data.id === itemId);
+      if (!targetItem) return prevState;
+      
+      // Find ALL items with the same word/query to update them together (Shared SRS)
+      // Case-insensitive matching
+      const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
+      
+      // Identify IDs to update (current + siblings)
+      const idsToUpdate = new Set<string>();
+      idsToUpdate.add(itemId);
+      
+      prevState.items.forEach(item => {
+          if (!item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle) {
+              idsToUpdate.add(item.data.id);
+          }
+      });
+      
+      // Calculate NEW SRS state based on the target item's current state
+      // We use the target item as the "source of truth" for the previous state
+      const migratedSRS = SRSAlgorithm.migrate(targetItem.srs);
+      const updatedSRS = SRSAlgorithm.updateAfterReview(
+        migratedSRS,
+        quality,
+        taskType,
+        responseTime
+      );
+      
+      // Update ALL matching items with the NEW SRS state
+      const newItems = prevState.items.map(item => {
+          if (idsToUpdate.has(item.data.id)) {
+              // Create a copy of the updated SRS with the correct ID for this specific item
+              const itemSpecificSRS = { ...updatedSRS, id: item.data.id };
+              
+              return {
+                  ...item,
+                  srs: itemSpecificSRS,
+                  updatedAt: Date.now()
+              };
+          }
+          return item;
+      });
+      
+      return {
+          ...prevState,
+          items: newItems
+      };
     });
   };
 
@@ -780,17 +1059,21 @@ const App: React.FC = () => {
 
       {detailContext && (
           <DetailView 
-              items={detailContext.items}
-              initialIndex={detailContext.index}
+              groups={detailContext.groups}
+              initialGroupIndex={detailContext.groupIndex}
+              initialItemIndex={detailContext.itemIndex}
               onClose={() => setDetailContext(null)}
               onSave={handleSave}
               onDelete={handleDelete}
+              onArchive={handleArchive}
               savedItems={activeItems}
               onSearch={handleRecursiveSearch}
+              onRefresh={handleForceRefreshSearch}
+              onLazyLoadImage={handleLazyLoadImage}
           />
       )}
 
-      <main className="flex-1 relative w-full overflow-hidden">
+      <main className="flex-1 relative w-full min-h-0 overflow-hidden">
         <div className={`h-full w-full ${currentView === 'search' ? 'block' : 'hidden'}`}>
              <SearchView 
                 onSave={handleSave} 
@@ -799,16 +1082,23 @@ const App: React.FC = () => {
                 savedItems={activeItems} 
                 initialQuery={recursiveQuery}
                 initialData={selectedStoredItem}
+                forceRefresh={forceRefreshSearch}
+                onForceRefreshComplete={() => setForceRefreshSearch(false)}
                 onViewDetail={(data, type) => {
+                    // For search view detail, we create a temporary group with just this item
                     const id = (data as any).id || 'temp';
+                    const item: StoredItem = { 
+                        data, 
+                        type, 
+                        srs: SRSAlgorithm.createNew(id, type), 
+                        savedAt: 0 
+                    };
+                    const title = getItemTitle(item);
+                    
                     setDetailContext({ 
-                        items: [{ 
-                            data, 
-                            type, 
-                            srs: SRSAlgorithm.createNew(id, type), 
-                            savedAt: 0 
-                        }], 
-                        index: 0 
+                        groups: [{ title, items: [item] }],
+                        groupIndex: 0,
+                        itemIndex: 0
                     });
                 }}
                 onScroll={handleScroll}
@@ -834,17 +1124,21 @@ const App: React.FC = () => {
             isOnline={isOnline}
             onBulkRefresh={handleBulkRefresh}
             bulkRefreshProgress={bulkRefreshProgress}
+            onArchive={handleArchive}
+            onUnarchive={handleUnarchive}
           />
         )}
         
         {currentView === 'study' && (
           <StudyEnhanced
-            items={activeItems} 
+            items={studyItems} 
             onUpdateSRS={updateSRS}
             onSearch={handleRecursiveSearch} 
             onDelete={handleDelete}
+            onArchive={handleArchive}
             onScroll={handleScroll}
             userId={user?.uid}
+            onLazyLoadImage={handleLazyLoadImage}
           />
         )}
       </main>

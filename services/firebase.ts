@@ -190,6 +190,27 @@ export const loadUserData = async (userId: string): Promise<StoredItem[]> => {
   }
 };
 
+/**
+ * Fetch a single item from Firebase by ID
+ * Used for lazy-loading images that exist in cloud but not locally
+ */
+export const loadSingleItem = async (userId: string, itemId: string): Promise<StoredItem | null> => {
+  if (!db) return null;
+  
+  try {
+    const docRef = doc(db, "users", userId, "items", itemId);
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      return docSnap.data() as StoredItem;
+    }
+    return null;
+  } catch (error) {
+    console.error("🔥 Firebase: Error loading single item:", error);
+    return null;
+  }
+};
+
 export const subscribeToUserData = (
   userId: string, 
   onData: (items: StoredItem[]) => void
@@ -255,6 +276,64 @@ export const subscribeToUserData = (
   };
 };
 
+/**
+ * Prepare item for Firestore by converting blob IDs to base64 and stripping oversized images.
+ * Images stored as blobs locally need to be converted to base64 for cloud sync.
+ * Oversized images (>800KB) are stripped to stay within Firestore's 1MB document limit.
+ */
+/**
+ * Strip oversized images from item to fit within Firestore 1MB document limit.
+ * Images are kept in local IndexedDB but stripped for cloud sync if too large.
+ */
+const prepareItemForFirestore = (item: StoredItem): StoredItem => {
+  // Firestore limit is 1MB (1,048,576 bytes), but we use 800KB as safe threshold
+  const MAX_IMAGE_SIZE = 800 * 1024; // 800KB per image
+  const MAX_DOC_SIZE = 900 * 1024; // 900KB total document
+  
+  // Deep clone to avoid mutating original
+  const cloned = JSON.parse(JSON.stringify(item)) as StoredItem;
+  const data = cloned.data as any;
+  
+  // Check main image size - delete field instead of setting undefined (Firestore rejects undefined)
+  if (data.imageUrl && data.imageUrl.startsWith('data:image/')) {
+    const imageSize = data.imageUrl.length * 0.75; // Base64 is ~4/3 of actual bytes
+    if (imageSize > MAX_IMAGE_SIZE) {
+      console.warn(`🔥 Firebase: Stripping oversized image (${Math.round(imageSize/1024)}KB) from ${data.word || data.query}`);
+      delete data.imageUrl;
+    }
+  }
+  
+  // Check phrase vocabs images
+  if (cloned.type === 'phrase' && Array.isArray(data.vocabs)) {
+    data.vocabs = data.vocabs.map((vocab: any) => {
+      if (vocab.imageUrl && vocab.imageUrl.startsWith('data:image/')) {
+        const imageSize = vocab.imageUrl.length * 0.75;
+        if (imageSize > MAX_IMAGE_SIZE) {
+          console.warn(`🔥 Firebase: Stripping oversized vocab image from ${vocab.word}`);
+          const { imageUrl, ...rest } = vocab;  // Remove imageUrl from object
+          return rest;
+        }
+      }
+      return vocab;
+    });
+  }
+  
+  // Final size check
+  const docSize = JSON.stringify(cloned).length;
+  if (docSize > MAX_DOC_SIZE) {
+    console.warn(`🔥 Firebase: Document still too large (${Math.round(docSize/1024)}KB), stripping all images`);
+    delete data.imageUrl;
+    if (Array.isArray(data.vocabs)) {
+      data.vocabs = data.vocabs.map((vocab: any) => {
+        const { imageUrl, ...rest } = vocab;
+        return rest;
+      });
+    }
+  }
+  
+  return cloned;
+};
+
 export const saveUserData = async (userId: string, items: StoredItem[]) => {
   if (!db || !userId) return;
   
@@ -290,10 +369,9 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
       
       console.log(`🔥 Firebase: Syncing batch ${batchIndex + 1}/${totalBatches} -> ${batchItems.length} items`);
 
-      // NOTE: Images are stored as base64 directly in Firestore for reliable offline support.
-      // This avoids Firebase Storage CORS issues and ensures images sync with data.
-      // Trade-off: Firestore 1MB doc limit, but generated icons are small (~50-200KB).
-      const processedItems: StoredItem[] = batchItems;
+      // Process items to fit within Firestore document size limits
+      // Strip oversized images to stay under 1MB limit
+      const processedItems: StoredItem[] = batchItems.map(item => prepareItemForFirestore(item));
 
       const batch = writeBatch(db);
       let batchWriteCount = 0;
@@ -327,6 +405,7 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
 
 /**
  * Record a study session (for streak and activity tracking)
+ * Only records when online - sessions are not queued for offline
  */
 export const recordStudySession = async (
   userId: string,
@@ -336,6 +415,12 @@ export const recordStudySession = async (
     accuracy: number;
   }
 ): Promise<void> => {
+  // Skip if offline - session recording is not critical
+  if (!navigator.onLine) {
+    console.log("📴 Offline: Skipping session recording");
+    return;
+  }
+  
   if (!db) throw new Error("NOT_CONFIGURED");
   
   try {

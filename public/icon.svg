@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7c3aed"/>
+      <stop offset="50%" style="stop-color:#6366f1"/>
+      <stop offset="100%" style="stop-color:#4f46e5"/>
+    </linearGradient>
+    <!-- Inner glow -->
+    <radialGradient id="glow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" style="stop-color:rgba(255,255,255,0.15)"/>
+      <stop offset="100%" style="stop-color:rgba(255,255,255,0)"/>
+    </radialGradient>
+  </defs>
+  
+  <!-- Rounded rectangle background -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bg)"/>
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#glow)"/>
+  
+  <!-- Open book -->
+  <g transform="translate(256, 266)">
+    <!-- Left page -->
+    <path d="M0 -97 L0 97 L-133 97 Q-143 0 -133 -97 Z" fill="rgba(255,255,255,0.95)"/>
+    <!-- Right page -->
+    <path d="M0 -97 L0 97 L133 97 Q143 0 133 -97 Z" fill="rgba(255,255,255,0.95)"/>
+    <!-- Spine shadow -->
+    <line x1="0" y1="-97" x2="0" y2="97" stroke="rgba(99,102,241,0.3)" stroke-width="6"/>
+    
+    <!-- Text lines - left page -->
+    <rect x="-113" y="-69" width="82" height="18" rx="9" fill="rgba(99,102,241,0.4)"/>
+    <rect x="-113" y="-41" width="61" height="18" rx="9" fill="rgba(99,102,241,0.4)"/>
+    <rect x="-113" y="-13" width="82" height="18" rx="9" fill="rgba(99,102,241,0.4)"/>
+    <rect x="-113" y="15" width="61" height="18" rx="9" fill="rgba(99,102,241,0.4)"/>
+    
+    <!-- Text lines - right page -->
+    <rect x="20" y="-69" width="72" height="18" rx="9" fill="rgba(99,102,241,0.4)"/>
+    <rect x="20" y="-41" width="87" height="18" rx="9" fill="rgba(99,102,241,0.4)"/>
+    <rect x="20" y="-13" width="72" height="18" rx="9" fill="rgba(99,102,241,0.4)"/>
+    <rect x="20" y="15" width="87" height="18" rx="9" fill="rgba(99,102,241,0.4)"/>
+  </g>
+  
+  <!-- Sparkles -->
+  <!-- Main sparkle (top right) -->
+  <g transform="translate(399, 143)" fill="white">
+    <polygon points="0,-36 8,-8 36,0 8,8 0,36 -8,8 -36,0 -8,-8"/>
+  </g>
+  
+  <!-- Smaller sparkles -->
+  <g transform="translate(435, 215)" fill="rgba(255,255,255,0.8)">
+    <polygon points="0,-18 4,-4 18,0 4,4 0,18 -4,4 -18,0 -4,-4"/>
+  </g>
+  <g transform="translate(92, 112)" fill="rgba(255,255,255,0.7)">
+    <polygon points="0,-20 5,-5 20,0 5,5 0,20 -5,5 -20,0 -5,-5"/>
+  </g>
+  <g transform="translate(348, 92)" fill="rgba(255,255,255,0.6)">
+    <polygon points="0,-15 4,-4 15,0 4,4 0,15 -4,4 -15,0 -4,-4"/>
+  </g>
+  
+  <!-- Small dots -->
+  <circle cx="128" cy="164" r="6" fill="rgba(255,255,255,0.5)"/>
+  <circle cx="450" cy="282" r="5" fill="rgba(255,255,255,0.5)"/>
+  <circle cx="77" cy="317" r="4" fill="rgba(255,255,255,0.5)"/>
+</svg>
+

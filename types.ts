@@ -71,6 +71,13 @@ export interface StoredItem {
   savedAt: number;
   updatedAt?: number;
   isDeleted?: boolean; // Soft delete flag for sync
+  isArchived?: boolean; // Archive flag - keeps item but excludes from study
+}
+
+// Group type for items with same spelling - Shared across views
+export interface ItemGroup {
+  title: string;
+  items: StoredItem[];
 }
 
 export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';

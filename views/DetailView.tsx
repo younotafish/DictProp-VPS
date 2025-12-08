@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { VocabCard, SearchResult, StoredItem, getItemTitle } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { VocabCard, SearchResult, StoredItem, getItemTitle, ItemGroup } from '../types';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -9,51 +9,138 @@ import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
 interface DetailViewProps {
-  items?: StoredItem[];
-  initialIndex?: number;
-  
+  // New group-based navigation props
+  groups?: ItemGroup[];
+  initialGroupIndex?: number;
+  initialItemIndex?: number;
+
   // Legacy single item mode (for Search view)
-  data?: VocabCard | SearchResult;
-  type?: 'vocab' | 'phrase';
+  items?: StoredItem[]; // Fallback if groups not provided
+  initialIndex?: number;
   
   onClose: () => void;
   onSave: (item: StoredItem) => void;
   onDelete: (id: string) => void;
+  onArchive?: (id: string) => void;
   savedItems: StoredItem[];
   onSearch: (text: string) => void;
+  onRefresh?: (text: string) => void; // Force a real AI search, bypassing local cache
+  onLazyLoadImage?: (itemId: string) => void; // Fetch image from Firebase if missing locally
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
-  items,
+  groups,
+  initialGroupIndex = 0,
+  initialItemIndex = 0,
+  items, // Legacy support
   initialIndex = 0,
-  data: initialData,
-  type: initialType,
   onClose, 
   onSave, 
-  onDelete, 
+  onDelete,
+  onArchive,
   savedItems,
-  onSearch
+  onSearch,
+  onRefresh,
+  onLazyLoadImage
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  
+  // State for 2D navigation
+  const [currentGroupIndex, setCurrentGroupIndex] = useState(groups ? initialGroupIndex : 0);
+  const [currentItemIndex, setCurrentItemIndex] = useState(groups ? initialItemIndex : initialIndex);
+  
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHeader, setShowHeader] = useState(true);
+  const [showActionMenu, setShowActionMenu] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const lastScrollY = useRef(0);
   
-  // Determine current item to display
-  const currentItem = items ? items[currentIndex] : (initialData && initialType ? { data: initialData, type: initialType } : null);
+  // Sync local indices when props change (e.g., after delete/archive updates detailContext)
+  useEffect(() => {
+    if (groups) {
+      // Clamp indices to valid range
+      const maxGroupIndex = Math.max(0, groups.length - 1);
+      const clampedGroupIndex = Math.min(initialGroupIndex, maxGroupIndex);
+      
+      const maxItemIndex = groups[clampedGroupIndex] 
+        ? Math.max(0, groups[clampedGroupIndex].items.length - 1) 
+        : 0;
+      const clampedItemIndex = Math.min(initialItemIndex, maxItemIndex);
+      
+      setCurrentGroupIndex(clampedGroupIndex);
+      setCurrentItemIndex(clampedItemIndex);
+    }
+  }, [groups, initialGroupIndex, initialItemIndex]);
   
+  // Determine current item to display
+  let currentItem: StoredItem | null = null;
+  let currentGroup: ItemGroup | null = null;
+  let hasNextGroup = false;
+  let hasPrevGroup = false;
+  let hasNextItem = false;
+  let hasPrevItem = false;
+
+  if (groups && groups.length > 0) {
+    // Safety: clamp indices to valid range
+    const safeGroupIndex = Math.min(currentGroupIndex, groups.length - 1);
+    currentGroup = groups[safeGroupIndex];
+    
+    if (currentGroup && currentGroup.items.length > 0) {
+      const safeItemIndex = Math.min(currentItemIndex, currentGroup.items.length - 1);
+      currentItem = currentGroup.items[safeItemIndex];
+      
+      hasNextGroup = safeGroupIndex < groups.length - 1;
+      hasPrevGroup = safeGroupIndex > 0;
+      hasNextItem = safeItemIndex < currentGroup.items.length - 1;
+      hasPrevItem = safeItemIndex > 0;
+    }
+  } else if (items && items.length > 0) {
+    // Legacy flat list mode
+    currentItem = items[currentItemIndex];
+    hasNextItem = currentItemIndex < items.length - 1;
+    hasPrevItem = currentItemIndex > 0;
+  }
+  
+  // Reset item index when group changes
+  useEffect(() => {
+    if (groups) {
+        setCurrentItemIndex(0);
+    }
+  }, [currentGroupIndex, groups]);
+
+  // Lazy load image from Firebase if missing locally
+  useEffect(() => {
+    if (!currentItem || !onLazyLoadImage) return;
+    
+    const itemId = currentItem.data.id;
+    const itemData = currentItem.data as any;
+    
+    // Check if this item is saved and missing an image
+    const isSaved = savedItems.some(i => i.data.id === itemId);
+    const hasImage = itemData.imageUrl && itemData.imageUrl.startsWith('data:image/');
+    
+    if (isSaved && !hasImage) {
+      // Trigger lazy load from Firebase
+      onLazyLoadImage(itemId);
+    }
+    
+    // Also check vocab images for phrase type
+    if (isSaved && currentItem.type === 'phrase' && itemData.vocabs) {
+      itemData.vocabs.forEach((vocab: any) => {
+        if (!vocab.imageUrl && vocab.id) {
+          // The parent item ID is used - Firebase stores the whole phrase
+          // so we only need to fetch the parent once
+        }
+      });
+    }
+  }, [currentItem?.data.id, onLazyLoadImage, savedItems]);
+
   if (!currentItem) {
     return null;
   }
   
   const data = currentItem.data;
   const type = currentItem.type;
-  
-  const nextIndex = currentIndex + 1;
-  const prevIndex = currentIndex - 1;
-  const hasNext = items && nextIndex < items.length;
-  const hasPrev = items && prevIndex >= 0;
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
@@ -69,36 +156,76 @@ export const DetailView: React.FC<DetailViewProps> = ({
     lastScrollY.current = currentScrollY;
   };
   
-  // Touch Handling for horizontal swipe navigation between items
+  // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const touchStartScrollTop = useRef<number>(0);
+  const touchStartTime = useRef<number>(0);
   
   const onContentTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
+    touchStartScrollTop.current = scrollContainerRef.current?.scrollTop || 0;
+    touchStartTime.current = Date.now();
   };
   
   const onContentTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartX.current === null || touchStartY.current === null || !items || isAnimating) return;
+    if (touchStartX.current === null || touchStartY.current === null || isAnimating) return;
     
     const diffX = e.changedTouches[0].clientX - touchStartX.current;
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
+    const absX = Math.abs(diffX);
+    const absY = Math.abs(diffY);
+    const swipeThreshold = 50;
+    const swipeDuration = Date.now() - touchStartTime.current;
     
-    // Only handle horizontal swipes (more horizontal than vertical)
-    if (Math.abs(diffX) > Math.abs(diffY) * 1.5 && Math.abs(diffX) > 50) {
-      // Swipe LEFT (diffX < 0) -> Next Item
-      if (diffX < -50 && hasNext) {
+    // Check scroll position for edge-based navigation
+    const container = scrollContainerRef.current;
+    const scrollTop = container?.scrollTop || 0;
+    const scrollHeight = container?.scrollHeight || 0;
+    const clientHeight = container?.clientHeight || 0;
+    const isAtTop = scrollTop <= 5;
+    const isAtBottom = scrollTop + clientHeight >= scrollHeight - 5;
+    
+    // Vertical Swipe (Groups/Words) - edge-based detection
+    const isVerticalSwipe = absY > absX * 1.5 && absY > swipeThreshold;
+    const isFastSwipe = swipeDuration < 400;
+    
+    // Horizontal Swipe (Meanings)
+    const isHorizontalSwipe = absX > absY * 1.5 && absX > swipeThreshold;
+
+    if (isVerticalSwipe && isFastSwipe && groups) {
+      // Swipe UP -> Next Group (Word) - only when at bottom or content is short
+      if (diffY < -swipeThreshold && hasNextGroup && (isAtBottom || scrollHeight <= clientHeight)) {
         setIsAnimating(true);
-        setCurrentIndex(nextIndex);
+        setCurrentGroupIndex(prev => prev + 1);
+        setCurrentItemIndex(0); // Reset to first meaning
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+        setTimeout(() => setIsAnimating(false), 300);
+      }
+      // Swipe DOWN -> Previous Group (Word) - only when at top
+      else if (diffY > swipeThreshold && hasPrevGroup && isAtTop) {
+        setIsAnimating(true);
+        setCurrentGroupIndex(prev => prev - 1);
+        setCurrentItemIndex(0); // Reset to first meaning
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+        setTimeout(() => setIsAnimating(false), 300);
+      }
+    }
+    else if (isHorizontalSwipe) {
+      // Swipe LEFT -> Next Item (Meaning)
+      if (diffX < -swipeThreshold && hasNextItem) {
+        setIsAnimating(true);
+        setCurrentItemIndex(prev => prev + 1);
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
         setTimeout(() => setIsAnimating(false), 300);
       }
       
-      // Swipe RIGHT (diffX > 0) -> Prev Item (or close if no prev)
-      if (diffX > 50) {
-        if (hasPrev) {
+      // Swipe RIGHT -> Prev Item (Meaning) or Close
+      if (diffX > swipeThreshold) {
+        if (hasPrevItem) {
           setIsAnimating(true);
-          setCurrentIndex(prevIndex);
+          setCurrentItemIndex(prev => prev - 1);
           if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
           setTimeout(() => setIsAnimating(false), 300);
         } else {
@@ -114,9 +241,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
   
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
   
-  const savedItemMatch = savedItems.find(item => 
-    getItemTitle(item).toLowerCase().trim() === (title || '').toLowerCase().trim()
-  );
+  // Find saved item - first try by ID (most reliable), then fallback to title+sense matching
+  const savedItemMatch = savedItems.find(item => item.data.id === data.id) || 
+    savedItems.find(item => 
+      getItemTitle(item).toLowerCase().trim() === (title || '').toLowerCase().trim() &&
+      (item.type === 'phrase' || (item.data as VocabCard).sense === (data as VocabCard).sense)
+    );
   const isSaved = !!savedItemMatch;
 
   const handleToggleSave = () => {
@@ -141,12 +271,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   const handleSaveVocab = (vocab: VocabCard) => {
     const isAlreadySaved = savedItems.some(i => 
-      getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim()
+      getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() &&
+      (i.data as any).sense === vocab.sense
     );
 
     if (isAlreadySaved) {
       const existingItem = savedItems.find(i => 
-        getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim()
+        getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() &&
+        (i.data as any).sense === vocab.sense
       );
       if (existingItem) {
         onDelete(existingItem.data.id);
@@ -161,6 +293,39 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   };
 
+  const handleDeleteItem = () => {
+    // Use savedItemMatch ID if available, otherwise use currentItem's ID
+    const idToDelete = savedItemMatch?.data.id || data.id;
+    if (!idToDelete) {
+      console.warn('Delete failed: No valid ID found');
+      return;
+    }
+    
+    console.log('🗑️ DetailView: Deleting item:', idToDelete, title);
+    setShowDeleteConfirm(false);
+    setShowActionMenu(false);
+    
+    // App.tsx handles updating detailContext and navigation
+    onDelete(idToDelete);
+  };
+
+  const handleArchiveItem = () => {
+    if (!onArchive) return;
+    
+    // Use savedItemMatch ID if available, otherwise use currentItem's ID
+    const idToArchive = savedItemMatch?.data.id || data.id;
+    if (!idToArchive) {
+      console.warn('Archive failed: No valid ID found');
+      return;
+    }
+    
+    console.log('📦 DetailView: Archiving item:', idToArchive, title);
+    setShowActionMenu(false);
+    
+    // App.tsx handles updating detailContext and navigation
+    onArchive(idToArchive);
+  };
+
   return (
     <div 
       className="fixed inset-0 z-50 bg-slate-50 flex flex-col animate-in slide-in-from-right duration-300 shadow-2xl"
@@ -172,55 +337,34 @@ export const DetailView: React.FC<DetailViewProps> = ({
         onTouchStart={onContentTouchStart}
         onTouchEnd={onContentTouchEnd}
       >
-        {/* Header */}
+        {/* Header - minimal (close + quick actions) with meaning indicator */}
         <div className={`sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-4 py-3 flex justify-between items-center shrink-0 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
-          <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
-            <ArrowLeft size={20} className="mr-1" /> Back
-          </Button>
           <div className="flex items-center gap-2">
-            {/* Horizontal navigation for carousel */}
-            {items && items.length > 1 && (
-              <>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => { 
-                    if (hasPrev) {
-                      setCurrentIndex(prevIndex); 
-                      if(scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0; 
-                    }
-                  }}
-                  disabled={!hasPrev}
-                  className={`p-1.5 ${hasPrev ? 'text-slate-500 hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'}`}
-                >
-                  <ChevronLeft size={20} />
-                </Button>
-                <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2 py-1 rounded-full min-w-[50px] text-center">
-                  {currentIndex + 1} / {items.length}
-                </span>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => { 
-                    if (hasNext) {
-                      setCurrentIndex(nextIndex); 
-                      if(scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0; 
-                    }
-                  }}
-                  disabled={!hasNext}
-                  className={`p-1.5 ${hasNext ? 'text-slate-500 hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'}`}
-                >
-                  <ChevronRight size={20} />
-                </Button>
-                <div className="w-[1px] h-4 bg-slate-300 mx-1"></div>
-              </>
+            <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
+              <ArrowLeft size={20} className="mr-1" /> Close
+            </Button>
+            {/* Meaning position indicator - shows which card in the group */}
+            {currentGroup && currentGroup.items.length > 1 && (
+              <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100">
+                {currentItemIndex + 1}/{currentGroup.items.length}
+              </span>
             )}
+          </div>
+          <div className="flex items-center gap-1">
             <Button 
               variant="ghost" 
               size="sm" 
-              onClick={() => onSearch(type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word)}
+              onClick={() => {
+                const searchText = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
+                // Use onRefresh if available (forces real AI search), otherwise fall back to onSearch
+                if (onRefresh) {
+                  onRefresh(searchText);
+                } else {
+                  onSearch(searchText);
+                }
+              }}
               className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
-              title="Refresh / Search Again"
+              title="Refresh with AI"
             >
               <RefreshCw size={18} />
             </Button>
@@ -233,12 +377,56 @@ export const DetailView: React.FC<DetailViewProps> = ({
               {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
               <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
             </Button>
+            {/* Action menu for saved items */}
+            {isSaved && (
+              <div className="relative">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setShowActionMenu(!showActionMenu)}
+                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                  title="More actions"
+                >
+                  <MoreVertical size={18} />
+                </Button>
+                {/* Dropdown menu */}
+                {showActionMenu && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={() => setShowActionMenu(false)}
+                    />
+                    <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-xl shadow-xl border border-slate-200 py-1 min-w-[160px] animate-in fade-in zoom-in-95 duration-150">
+                      {onArchive && (
+                        <button
+                          onClick={handleArchiveItem}
+                          className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-amber-50 hover:text-amber-700 flex items-center gap-2.5 transition-colors"
+                        >
+                          <Archive size={16} />
+                          Archive
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setShowActionMenu(false);
+                          setShowDeleteConfirm(true);
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 transition-colors"
+                      >
+                        <Trash2 size={16} />
+                        Delete
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="p-4 pb-24">
-          {/* Sense badge for multi-meaning words */}
-          {items && items.length > 1 && type === 'vocab' && (data as VocabCard).sense && (
+          {/* Sense badge retained for meaning clarity */}
+          {type === 'vocab' && (data as VocabCard).sense && (
             <div className="mb-4 flex items-center justify-center">
               <span className="text-sm font-medium text-violet-600 bg-violet-50 px-4 py-1.5 rounded-full border border-violet-100">
                 {(data as VocabCard).sense}
@@ -309,7 +497,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         key={vocab.id}
                         data={vocab} 
                         onSave={() => handleSaveVocab(vocab)}
-                        isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim())}
+                        isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() && (i.data as any).sense === vocab.sense)}
                         onSearch={handleVocabSearch}
                         scrollable={false}
                         showSave={true}
@@ -322,26 +510,46 @@ export const DetailView: React.FC<DetailViewProps> = ({
             </div>
           )}
 
-          {/* Horizontal swipe hint for multi-meaning words */}
-          {items && items.length > 1 && (
-            <div className="py-6 text-center text-slate-400 flex items-center justify-center gap-3">
-              {hasPrev && (
-                <div className="flex items-center gap-1 opacity-60">
-                  <ChevronLeft size={14} />
-                  <span className="text-[10px] uppercase font-bold tracking-wider">Prev meaning</span>
-                </div>
-              )}
-              {hasPrev && hasNext && <span className="text-slate-300">•</span>}
-              {hasNext && (
-                <div className="flex items-center gap-1 opacity-60">
-                  <span className="text-[10px] uppercase font-bold tracking-wider">Next meaning</span>
-                  <ChevronRight size={14} />
-                </div>
-              )}
-            </div>
-          )}
+          {/* Navigation hints intentionally removed for a clean, gesture-first UI */}
         </div>
       </div>
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && (
+        <div 
+          className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-150"
+          onClick={() => setShowDeleteConfirm(false)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center animate-in zoom-in-95 duration-150"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-14 h-14 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={28} />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Delete this word?</h3>
+            <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+              This will remove <span className="font-semibold text-slate-700">"{title}"</span> from your notebook and erase all learning progress.
+            </p>
+            <div className="flex gap-3">
+              <Button 
+                variant="ghost" 
+                onClick={() => setShowDeleteConfirm(false)} 
+                className="flex-1 py-3"
+              >
+                Cancel
+              </Button>
+              <Button 
+                variant="primary" 
+                onClick={handleDeleteItem}
+                className="flex-1 py-3 bg-rose-500 hover:bg-rose-600 border-0 text-white"
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

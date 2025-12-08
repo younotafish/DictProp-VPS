@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { VocabCard as VocabType } from '../types';
 import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes } from 'lucide-react';
 import { Button } from './Button';
@@ -19,7 +19,8 @@ interface Props {
   showRefresh?: boolean;
 }
 
-export const VocabCardDisplay: React.FC<Props> = ({ 
+// Memoize to prevent re-renders when other cards in the list update
+export const VocabCardDisplay: React.FC<Props> = memo(({ 
   data, 
   onSave, 
   isSaved = false, 
@@ -219,4 +220,12 @@ export const VocabCardDisplay: React.FC<Props> = ({
       </div>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // Custom comparison - only re-render if data or callbacks actually change
+  return (
+    prevProps.data.id === nextProps.data.id &&
+    prevProps.data.imageUrl === nextProps.data.imageUrl &&
+    prevProps.isSaved === nextProps.isSaved &&
+    prevProps.className === nextProps.className
+  );
+});

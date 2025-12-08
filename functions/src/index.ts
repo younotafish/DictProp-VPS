@@ -3,8 +3,9 @@ import { GoogleGenAI, Schema, Type } from "@google/genai";
 import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 
-// Define the secret parameter
+// Define the secret parameters
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
+const replicateApiKey = defineSecret("REPLICATE_API_TOKEN");
 
 // Vocab card schema (shared between both modes)
 const vocabSchema: Schema = {
@@ -52,7 +53,7 @@ const sentenceModeSchema: Schema = {
     vocabs: { 
       type: Type.ARRAY, 
       items: vocabSchema,
-      description: "List of interesting/uncommon/C1 vocabulary found in the sentence"
+      description: "List of interesting/uncommon/C1 vocabulary found in the sentence. Include phrasal verbs (e.g., 'bank on'), idioms, and multi-word expressions as complete phrases, not individual words. Each item gets full vocabulary card treatment."
     }
   },
   required: ["translation", "grammar", "visualKeyword", "pronunciation", "vocabs"]
@@ -108,9 +109,26 @@ Your task: Provide a comprehensive analysis including:
 For the 'grammar' field, use Markdown formatting (bolding, bullet points) to make it readable.
 Focus on what makes this sentence interesting for a C1 learner.
 
-For vocabs: Only extract words that are C1/C2 level, idiomatic, or have interesting nuance.
-If a vocab word has multiple meanings, create separate cards for each relevant meaning.
-Include confusables for each vocab - words often confused with it (similar spelling, sound, or meaning).
+CRITICAL - VOCABULARY EXTRACTION:
+Extract phrasal verbs, idioms, and multi-word expressions as COMPLETE phrases (not individual words).
+- "bank on" should be extracted as "bank on" (not just "bank")
+- "couldn't help but" should be extracted as "couldn't help but"
+- "even though" can be extracted if it adds learning value
+
+CRITICAL - MULTIPLE MEANINGS (same as Word Mode):
+Each extracted vocabulary item MUST be treated EXACTLY like a direct Word Mode search.
+If "bank on" has multiple meanings, create SEPARATE vocab cards for each meaning:
+- Different contexts/domains = different cards (e.g., "bank on: to rely financially" vs "bank on: to trust emotionally")
+- Different registers = different cards (formal vs informal usage)
+- Different nuances = different cards
+
+Each card MUST include ALL fields with the SAME depth as Word Mode:
+- word, sense, chinese, ipa, definition, forms, synonyms, antonyms, confusables, examples, history, register, mnemonic, imagePrompt
+- Forms: grammatical variations (e.g., "bank on" → banks on, banked on, banking on)
+- Confusables: similar phrases that might be confused
+
+Only extract words/phrases that are C1/C2 level, idiomatic, or have interesting nuance.
+Be thorough - the user should get the same quality whether they search "bank on" directly or extract it from a sentence.
 `;
 
 // Helper function to detect if input is a word/phrase or a sentence
@@ -121,17 +139,20 @@ function isWordOrPhrase(text: string): boolean {
   // Single word is definitely word mode
   if (words.length === 1) return true;
   
-  // 2-4 words without sentence-ending punctuation is likely a phrase
-  if (words.length <= 5 && !/[.!?]$/.test(trimmed)) return true;
-  
+  const endsWithPunctuation = /[.!?]$/.test(trimmed);
+  if (endsWithPunctuation) return false; // Explicit sentence-ending punctuation
+
+  // 6+ words → sentence mode (per PRODUCT_SUMMARY detection rules)
+  if (words.length >= 6) return false;
+
   // Check for sentence structure indicators
-  const hasSentenceStructure = 
-    /[.!?]$/.test(trimmed) || // Ends with sentence punctuation
-    words.length > 6 || // Long enough to be a sentence
-    /^(I|You|He|She|It|We|They|The|A|An|This|That|There|Here)\s/i.test(trimmed) || // Starts with common sentence starters
-    /\b(is|are|was|were|have|has|had|do|does|did|will|would|could|should|can|may|might)\b/i.test(trimmed); // Contains auxiliary verbs
-  
-  return !hasSentenceStructure;
+  const startsLikeSentence = /^(I|You|He|She|It|We|They|The|A|An|This|That|There|Here)\s/i.test(trimmed);
+  const hasAuxVerb = /\b(is|are|was|were|have|has|had|do|does|did|will|would|could|should|can|may|might)\b/i.test(trimmed);
+
+  if (startsLikeSentence || hasAuxVerb) return false;
+
+  // Otherwise treat 2-5 word inputs without punctuation as word/phrase mode
+  return true;
 }
 
 export const analyzeInput = onCall({ secrets: [geminiApiKey], cors: true }, async (request) => {
@@ -208,10 +229,10 @@ export const analyzeInput = onCall({ secrets: [geminiApiKey], cors: true }, asyn
   }
 });
 
-export const generateIllustration = onCall({ secrets: [geminiApiKey], cors: true }, async (request) => {
-  const apiKey = geminiApiKey.value();
+export const generateIllustration = onCall({ secrets: [replicateApiKey], cors: true }, async (request) => {
+  const apiKey = replicateApiKey.value();
   if (!apiKey) {
-    throw new HttpsError('failed-precondition', 'GEMINI_API_KEY is not set');
+    throw new HttpsError('failed-precondition', 'REPLICATE_API_TOKEN is not set');
   }
 
   const prompt = request.data.prompt;
@@ -221,43 +242,82 @@ export const generateIllustration = onCall({ secrets: [geminiApiKey], cors: true
     throw new HttpsError('invalid-argument', 'Prompt is required');
   }
 
-  const ai = new GoogleGenAI({ apiKey });
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [{ text: `(Icon style), minimal vector art, flat design, ${prompt}. solid background. No text.` }]
+    // Start prediction with Flux Schnell (sync mode with Prefer: wait)
+    const response = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'wait',
       },
-      config: {
-        imageConfig: {
-          aspectRatio: aspectRatio,
+      body: JSON.stringify({
+        input: {
+          prompt: `(Icon style), minimal vector art, flat design, ${prompt}. solid background. No text.`,
+          aspect_ratio: aspectRatio,
+          output_format: 'webp',
+          output_quality: 50,  // Reduced from 80 to keep images under 200KB
+          num_outputs: 1,
         }
-      }
+      }),
     });
 
-    // Extract image
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return {
-          imageData: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
-        };
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const status = response.status;
+      
+      // Check for rate limit / billing issues (use loose equality for safety)
+      if (status == 429 || status == 402) {
+        logger.warn("Replicate rate limit hit:", status, errorData);
+        return { imageData: undefined, error: "QUOTA_EXCEEDED" };
       }
+      
+      logger.error("Replicate API error:", status, errorData);
+      throw new Error(`Replicate API error: ${status}`);
     }
+
+    const prediction = await response.json();
+
+    // Check if prediction completed
+    if (prediction.status === 'succeeded' && prediction.output && prediction.output.length > 0) {
+      const imageUrl = prediction.output[0];
+      
+      // Fetch the image and convert to base64
+      const imageResponse = await fetch(imageUrl);
+      if (!imageResponse.ok) {
+        throw new Error('Failed to fetch generated image');
+      }
+      
+      const arrayBuffer = await imageResponse.arrayBuffer();
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
+      const mimeType = imageResponse.headers.get('content-type') || 'image/webp';
+      
+      return { imageData: `data:${mimeType};base64,${base64}` };
+    }
+
+    // If prediction failed
+    if (prediction.status === 'failed') {
+      logger.error("Prediction failed:", prediction.error);
+      throw new Error(prediction.error || 'Image generation failed');
+    }
+
+    logger.warn("Prediction not completed:", prediction.status);
     return { imageData: undefined };
+
   } catch (error: any) {
     const msg = error.message || '';
     const isQuota = 
         msg.includes('429') || 
+        msg.includes('402') ||
         msg.includes('quota') || 
-        msg.includes('RESOURCE_EXHAUSTED');
+        msg.includes('billing');
 
     if (isQuota) {
-        logger.warn("Image generation skipped: Quota exceeded.");
-        return { imageData: undefined, error: "QUOTA_EXCEEDED" };
+      logger.warn("Image generation skipped: Quota/billing issue.");
+      return { imageData: undefined, error: "QUOTA_EXCEEDED" };
     } else {
-        logger.warn("Image generation failed", error);
-        throw new HttpsError('internal', error.message);
+      logger.warn("Image generation failed", error);
+      throw new HttpsError('internal', error.message);
     }
   }
 });
