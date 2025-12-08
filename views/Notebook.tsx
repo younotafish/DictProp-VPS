@@ -393,14 +393,28 @@ export const NotebookView: React.FC<NotebookProps> = ({
           return (titleA || '').localeCompare(titleB || '');
         }
 
-        const strengthA = a.srs?.memoryStrength || 0;
-        const strengthB = b.srs?.memoryStrength || 0;
-        
-        if (strengthA !== strengthB) {
-          return strengthA - strengthB;
+        // Sort by Priority (Due/Overdue first, then by Strength)
+        const now = Date.now();
+        const dueA = a.srs?.nextReview || 0;
+        const dueB = b.srs?.nextReview || 0;
+        const isDueA = dueA <= now;
+        const isDueB = dueB <= now;
+
+        // 1. Due items always come before non-due items
+        if (isDueA !== isDueB) {
+          return isDueA ? -1 : 1;
         }
 
-        return (b.savedAt || 0) - (a.savedAt || 0);
+        // 2. If both are Due: Sort by Strength ASC (weakest first), then by Overdue amount
+        if (isDueA && isDueB) {
+            const strengthA = a.srs?.memoryStrength || 0;
+            const strengthB = b.srs?.memoryStrength || 0;
+            if (strengthA !== strengthB) return strengthA - strengthB;
+            return dueA - dueB; // Oldest due date first
+        }
+
+        // 3. If neither is Due (Future): Sort by Next Review Date ASC (soonest first)
+        return dueA - dueB;
       });
     
     // Archived items
@@ -511,7 +525,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
             <button
               onClick={() => setSortMode(prev => prev === 'familiarity' ? 'alphabetical' : 'familiarity')}
               className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-50 text-slate-400 hover:text-indigo-600 transition-colors"
-              title={sortMode === 'familiarity' ? 'Sort: Familiarity' : 'Sort: A-Z'}
+              title={sortMode === 'familiarity' ? 'Sort: Review Priority' : 'Sort: A-Z'}
             >
               {sortMode === 'familiarity' ? <Sparkles size={16} /> : <ArrowDownAZ size={16} />}
             </button>

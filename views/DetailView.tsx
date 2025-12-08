@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle, ItemGroup } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -55,6 +55,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [showHeader, setShowHeader] = useState(true);
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const lastScrollY = useRef(0);
   
   // Sync local indices when props change (e.g., after delete/archive updates detailContext)
@@ -263,23 +264,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
 
   // P key to pronounce current word
-  useEffect(() => {
-    if (showDeleteConfirm || showActionMenu) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Skip if in input
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
-      if (e.key === 'p' || e.key === 'P') {
-        e.preventDefault();
-        if (title) speak(title);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showDeleteConfirm, showActionMenu]);
+  // Moved to bottom to access handlers
   
   // Find saved item - first try by ID (most reliable), then fallback to title+sense matching
   const savedItemMatch = savedItems.find(item => item.data.id === data.id) || 
@@ -425,6 +410,142 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onArchive(idToArchive);
   };
 
+  const handleResetSRS = useCallback(() => {
+    // Reset SRS progress
+    if (!data.id) return;
+    
+    console.log('🔄 DetailView: Resetting SRS for item:', data.id, title);
+    
+    const targetTitle = (title || '').toLowerCase().trim();
+    // Find all siblings to reset them together (Shared SRS)
+    const siblings = savedItems.filter(item => 
+      !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle
+    );
+
+    if (siblings.length > 0) {
+      siblings.forEach(sibling => {
+         const newSRS = SRSAlgorithm.createNew(sibling.data.id, sibling.type);
+         // Preserve original savedAt if possible, or update? 
+         // Resetting usually implies starting over, so updating savedAt is acceptable, 
+         // but keeping original savedAt might be better for history. 
+         // Let's keep original savedAt for siblings.
+         onSave({ 
+           ...sibling, 
+           srs: newSRS,
+           // We don't change savedAt to preserve "Added on" date, unless we want to "bump" it.
+           // Let's treat it as a fresh start for the Algorithm, but the item itself is old.
+         });
+      });
+    } else {
+       // Fallback for current item if not found in saved list (e.g. slight delay in sync)
+       const newSRS = SRSAlgorithm.createNew(data.id, type);
+       onSave({
+         data: data,
+         type: type,
+         savedAt: Date.now(),
+         srs: newSRS
+       });
+    }
+    
+    setShowActionMenu(false);
+  }, [data, title, type, onSave, savedItems]);
+
+  const handleRemember = useCallback(() => {
+    console.log('🧠 DetailView: Marking as remembered via shortcut/gesture');
+    
+    // Trigger Success Animation
+    setShowSuccessAnim(true);
+    setTimeout(() => setShowSuccessAnim(false), 1500);
+
+    // Default response time for manual "I know this" action
+    const DEFAULT_RESPONSE_TIME = 1000;  
+    
+    const targetTitle = (title || '').toLowerCase().trim();
+    // Find all siblings to update them together (Shared SRS)
+    const siblings = savedItems.filter(item => 
+      !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle
+    );
+    
+    if (siblings.length > 0) {
+      // Update existing items (all siblings)
+      siblings.forEach(sibling => {
+        const updatedSRS = SRSAlgorithm.updateAfterReview(
+          sibling.srs,
+          4, // Quality: Memorized (Good/Easy)
+          'recall',
+          DEFAULT_RESPONSE_TIME
+        );
+        
+        onSave({
+          ...sibling,
+          srs: updatedSRS
+        });
+      });
+    } else {
+      // Create new item and immediately mark as remembered
+      if (!data.id) return;
+      
+      let newSRS = SRSAlgorithm.createNew(data.id, type);
+      
+      // Apply the "remembered" update immediately
+      newSRS = SRSAlgorithm.updateAfterReview(
+        newSRS,
+        4, // Quality: Memorized
+        'recall',
+        DEFAULT_RESPONSE_TIME
+      );
+      
+      onSave({
+        data: data,
+        type: type,
+        savedAt: Date.now(),
+        srs: newSRS
+      });
+    }
+  }, [data, type, savedItems, onSave, title]);
+
+  const handleDoubleClick = () => {
+    // Avoid triggering when selecting text
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) {
+       return;
+    }
+
+    console.log('👆👆 DetailView: Double click detected');
+    handleRemember();
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    if (showDeleteConfirm || showActionMenu) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if in input
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+      // P: Pronounce
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        if (title) speak(title);
+      }
+      
+      // R: Remember (Shift+R: Reset)
+      if (e.key === 'r' || e.key === 'R') {
+         if (e.shiftKey) {
+             e.preventDefault();
+             handleResetSRS();
+         } else {
+             e.preventDefault();
+             handleRemember();
+         }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [title, showDeleteConfirm, showActionMenu, handleRemember, handleResetSRS]);
+
   return (
     <div 
       className="fixed inset-0 z-50 bg-slate-50 flex flex-col animate-in slide-in-from-right duration-300 shadow-2xl"
@@ -435,6 +556,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         onScroll={handleScroll}
         onTouchStart={onContentTouchStart}
         onTouchEnd={onContentTouchEnd}
+        onDoubleClick={handleDoubleClick}
       >
         {/* Header - minimal (close + quick actions) with meaning indicator */}
         <div className={`sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-4 py-3 flex justify-between items-center shrink-0 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
@@ -505,6 +627,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
                           Archive
                         </button>
                       )}
+                      <button
+                        onClick={handleResetSRS}
+                        className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2.5 transition-colors"
+                      >
+                        <RotateCcw size={16} />
+                        Reset Memory Strength
+                      </button>
                       <button
                         onClick={() => {
                           setShowActionMenu(false);
@@ -660,6 +789,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Success Animation Overlay */}
+      {showSuccessAnim && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
+          <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-full shadow-2xl flex items-center gap-3 animate-in zoom-in fade-in slide-in-from-bottom-4 duration-300">
+            <Sparkles className="text-amber-500 w-6 h-6 animate-pulse" />
+            <span className="text-slate-800 font-bold text-lg">Remembered!</span>
+          </div>
+        </div>
+      )}
 
       {/* Delete confirmation modal */}
       {showDeleteConfirm && (

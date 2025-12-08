@@ -682,8 +682,12 @@ const App: React.FC = () => {
           const idToUse = existingItem.data.id;
 
           // Merge SRS data
+          // PRIORITY: Use the incoming SRS (itemToSave.srs) if available, as it likely contains updates (e.g. from DetailView)
+          // Fallback to existing SRS only if incoming is missing
+          const srsSource = itemToSave.srs || existingItem.srs;
+          
           const mergedSrs = SRSAlgorithm.ensure(
-            existingItem.srs ?? itemToSave.srs,
+            srsSource,
             idToUse,
             existingItem.type
           );
@@ -1279,6 +1283,8 @@ const App: React.FC = () => {
                   <ShortcutRow keys={['Space']} description="Flip flashcard" />
                   <ShortcutRow keys={['Enter']} description="Open selected card" />
                   <ShortcutRow keys={['P']} description="Pronounce current word" />
+                  <ShortcutRow keys={['R']} description="Mark as Remembered" />
+                  <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />
                 </div>
               </div>
 

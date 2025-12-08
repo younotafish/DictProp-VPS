@@ -406,7 +406,10 @@ All meanings of a word share one memory strength — when you review "bank", you
 - Cycle through by tapping the filter icon
 
 **Sort Options:**
-- **By Familiarity** — Struggling words first, mastered words last (based on lowest-strength meaning in group)
+- **By Familiarity** — Smart sorting for learning efficiency:
+  1. **Due Items** (Need review now)
+  2. **Struggling Items** (Weakest strength first)
+  3. **Future Items** (Recently reviewed, pushed to bottom)
 - **Alphabetical** — A-Z sorting by word/phrase
 - Toggle by tapping the sort icon
 
@@ -600,6 +603,12 @@ Each full-screen card contains:
 - **Search** — Tap any pill to search that word
 - **Audio** — Tap IPA block to hear pronunciation
 - **Close** — Return to previous screen
+- **Remember** — Double-click background or press `R` to mark as "Remembered" (Quality: 4)
+- **Reset** — Use "Reset Memory Strength" in menu or press `Shift+R` to restart progress
+
+**Quick Actions (Desktop/Gestures):**
+- **Double-Click Background**: Instantly mark word as "Remembered" (Success animation appears)
+- **Keyboard Shortcuts**: `R` to Remember, `Shift+R` to Reset
 
 **Multiple Meanings — Grouped Carousel in Detail View:**
 If the word has multiple saved meanings:
@@ -1839,6 +1848,8 @@ users/{userId}/vocab_items/{itemId}
 | `Space` | Flip flashcard |
 | `Enter` | Submit search / Open selected card |
 | `P` | Pronounce current word |
+| `R` | Mark as Remembered (Detail View) |
+| `Shift + R` | Reset Memory Strength (Detail View) |
 
 **Study Mode Shortcuts:**
 
