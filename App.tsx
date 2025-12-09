@@ -16,6 +16,8 @@ import { analyzeInput } from './services/geminiService';
 import { useGlobalNavigation } from './hooks';
 
 // Keyboard shortcut display component
+const DETAIL_CONTEXT_KEY = 'app_detail_context';
+
 const ShortcutRow: React.FC<{ keys: string[], description: string }> = ({ keys, description }) => (
   <div className="flex items-center justify-between py-1.5">
     <span className="text-sm text-slate-600">{description}</span>
@@ -88,7 +90,28 @@ const App: React.FC = () => {
   const [isFirebaseConfigured, setIsFirebaseConfigured] = useState(isConfigured());
 
   // Updated DetailContext to support Group-based navigation (2D: Groups vs Items)
-  const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number } | null>(null);
+  const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number } | null>(() => {
+    try {
+      const saved = localStorage.getItem(DETAIL_CONTEXT_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      console.warn("Failed to restore detail context", e);
+      return null;
+    }
+  });
+
+  // Persist detailContext
+  useEffect(() => {
+    try {
+      if (detailContext) {
+        localStorage.setItem(DETAIL_CONTEXT_KEY, JSON.stringify(detailContext));
+      } else {
+        localStorage.removeItem(DETAIL_CONTEXT_KEY);
+      }
+    } catch (e) {
+      console.warn("Failed to save detail context (quota exceeded?)", e);
+    }
+  }, [detailContext]);
 
   // Network status detection for offline support
   const [isOnline, setIsOnline] = useState(navigator.onLine);
