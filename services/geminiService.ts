@@ -32,13 +32,14 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
 
     return {
       id: generateId(),
-      query: text,
+      query: data.query || text, // Use translated query from server if available
       translation: data.translation,
       grammar: data.grammar,
       visualKeyword: data.visualKeyword,
       pronunciation: data.pronunciation,
       vocabs: vocabs,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      originalQuery: data.originalQuery // Original Chinese input if translated
     };
   } catch (error: any) {
     console.error("Analysis failed", error);
@@ -61,7 +62,9 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
  * Generate an illustration
  * Returns base64 image data directly (simpler and more reliable than blob storage)
  */
-export const generateIllustration = async (prompt: string, aspectRatio: '16:9' | '4:3' | '1:1' = '1:1'): Promise<string | undefined> => {
+export const generateIllustration = async (prompt: string, aspectRatio: '16:9' | '9:16' | '4:3' | '1:1' = '1:1'): Promise<string | undefined> => {
+  console.log(`[generateIllustration] Requesting image with aspect ratio: ${aspectRatio}`);
+  
   if (!functions) {
       console.warn("Firebase functions not initialized, skipping image generation");
       return undefined;

@@ -27,6 +27,7 @@ export interface SearchResult {
   vocabs: VocabCard[];
   timestamp: number;
   imageUrl?: string; // Base64 data uri
+  originalQuery?: string; // Original Chinese input if translated
 }
 
 // Enhanced SRS with Memory Strength Model
@@ -72,6 +73,7 @@ export interface StoredItem {
   updatedAt?: number;
   isDeleted?: boolean; // Soft delete flag for sync
   isArchived?: boolean; // Archive flag - keeps item but excludes from study
+  lastSyncedHash?: string; // Local-only: hash of content as last synced to Firestore
 }
 
 // Group type for items with same spelling - Shared across views

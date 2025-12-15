@@ -114,8 +114,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
       {/* Generated Image */}
       {data.imageUrl && (
-        <div className="mb-4 rounded-xl overflow-hidden h-32 w-full bg-slate-50 border border-slate-100 shadow-inner shrink-0">
-          <OfflineImage src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
+        <div className="mb-4 rounded-xl overflow-hidden w-full bg-slate-50 border border-slate-100 shadow-inner shrink-0">
+          <OfflineImage src={data.imageUrl} alt={data.word} className="w-full fade-in" />
         </div>
       )}
 

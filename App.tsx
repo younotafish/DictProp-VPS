@@ -7,7 +7,7 @@ import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, V
 import { Search, Book, BrainCircuit, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem } from './services/firebase';
+import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash } from './services/firebase';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -214,9 +214,9 @@ const App: React.FC = () => {
               if (lastHiddenStr) {
                   const lastHidden = parseInt(lastHiddenStr, 10);
                   const now = Date.now();
-                  // If app was in background for more than 5 minutes, reload to refresh state
-                  if (now - lastHidden > 5 * 60 * 1000) {
-                      console.log("🔄 App was backgrounded for >5m, refreshing...");
+                  // If app was in background for more than 30 seconds, reload to refresh state
+                  if (now - lastHidden > 30 * 1000) {
+                      console.log("🔄 App was backgrounded for >30s, refreshing...");
                       window.location.reload();
                   }
               }
@@ -440,31 +440,51 @@ const App: React.FC = () => {
       const targetUserId = user?.uid || 'guest';
       await saveData(syncState.items, targetUserId);
       
-      // 2. Push items to Cloud (Firebase) - Delta Sync
+      // 2. Push items to Cloud (Firebase) - Delta Sync with Hash Comparison
       // Skip cloud sync when offline - will sync when back online
       if (user && isFirebaseConfigured && isOnline) {
-          // Filter only changed items (updatedAt > lastSyncTime)
-          // NOTE: Deleted items already have updatedAt set when deleted,
-          // so they'll be included naturally. No need for special case.
-          const changedItems = syncState.items.filter(item => {
+          // Filter items that actually need writing:
+          // 1. Must have been updated since last sync (timestamp check)
+          // 2. Content hash must differ from last synced hash (prevents redundant writes)
+          const itemsWithHashes: { item: StoredItem; hash: string }[] = [];
+          
+          syncState.items.forEach(item => {
               const updated = item.updatedAt || 0;
-              return updated > lastSyncTime;
+              if (updated <= lastSyncTime) return; // Skip if not updated since last sync
+              
+              const currentHash = getItemContentHash(item);
+              if (currentHash === item.lastSyncedHash) return; // Skip if content unchanged
+              
+              itemsWithHashes.push({ item, hash: currentHash });
           });
 
-          if (changedItems.length === 0) {
+          if (itemsWithHashes.length === 0) {
               setSyncStatus('saved');
               return;
           }
 
           setSyncStatus('syncing');
+          console.log(`🔥 Firebase: ${itemsWithHashes.length} items actually changed (hash check)`);
           
           try {
-            await saveUserData(user.uid, changedItems);
+            await saveUserData(user.uid, itemsWithHashes.map(i => i.item));
             
             // Update last sync time
             const now = Date.now();
             setLastSyncTime(now);
             localStorage.setItem('last_successful_sync', now.toString());
+            
+            // Update items with their new hashes to prevent re-syncing
+            setSyncState(prevState => {
+              const updatedItems = prevState.items.map(item => {
+                const synced = itemsWithHashes.find(i => i.item.data.id === item.data.id);
+                if (synced) {
+                  return { ...item, lastSyncedHash: synced.hash };
+                }
+                return item;
+              });
+              return { ...prevState, items: updatedItems };
+            });
 
             setSyncStatus('saved');
           } catch (e) {
@@ -505,9 +525,15 @@ const App: React.FC = () => {
       // 4. Clean up old deleted items (hard delete after retention period)
       const cleanedItems = cleanupOldDeletedItems(mergedItems);
       
+      // 5. Update hashes for all items to prevent re-syncing on next regular sync
+      const itemsWithHashes = cleanedItems.map(item => ({
+        ...item,
+        lastSyncedHash: getItemContentHash(item)
+      }));
+      
       setSyncState(prevState => ({
         ...prevState,
-        items: cleanedItems
+        items: itemsWithHashes
       }));
       
       setSyncStatus('saved');
@@ -1139,6 +1165,12 @@ const App: React.FC = () => {
 
   return (
     <div className="fixed inset-0 bg-white flex flex-col">
+      {!isLoaded ? (
+        <div className="flex items-center justify-center h-full">
+          <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
+        </div>
+      ) : (
+      <>
       {/* Offline banner */}
       {!isOnline && (
         <div className="bg-amber-500 text-white text-center py-2 text-sm font-medium flex items-center justify-center gap-2 shrink-0">
@@ -1345,6 +1377,8 @@ const App: React.FC = () => {
             </button>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

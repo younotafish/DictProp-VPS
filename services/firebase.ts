@@ -277,6 +277,19 @@ export const subscribeToUserData = (
 };
 
 /**
+ * Fast djb2 hash algorithm - produces a short hash string from any input.
+ * Used for content comparison to avoid redundant Firestore writes.
+ */
+const hashString = (str: string): string => {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash).toString(36);
+};
+
+/**
  * Prepare item for Firestore by converting blob IDs to base64 and stripping oversized images.
  * Images stored as blobs locally need to be converted to base64 for cloud sync.
  * Oversized images (>800KB) are stripped to stay within Firestore's 1MB document limit.
@@ -292,6 +305,10 @@ const prepareItemForFirestore = (item: StoredItem): StoredItem => {
   
   // Deep clone to avoid mutating original
   const cloned = JSON.parse(JSON.stringify(item)) as StoredItem;
+  
+  // Strip local-only field (not needed in Firestore)
+  delete cloned.lastSyncedHash;
+  
   const data = cloned.data as any;
   
   // Check main image size - delete field instead of setting undefined (Firestore rejects undefined)
@@ -332,6 +349,28 @@ const prepareItemForFirestore = (item: StoredItem): StoredItem => {
   }
   
   return cloned;
+};
+
+/**
+ * Creates a hash of item content as it would be stored in Firestore.
+ * Used to detect if an item actually changed and needs to be synced.
+ * Excludes timestamps and the hash field itself.
+ */
+export const getItemContentHash = (item: StoredItem): string => {
+  // Prepare item exactly as it would be written to Firestore
+  const prepared = prepareItemForFirestore(item);
+  
+  // Extract only the content fields that matter for sync
+  // Exclude: savedAt, updatedAt (timestamps), lastSyncedHash (self-reference)
+  const contentToHash = {
+    type: prepared.type,
+    data: prepared.data,
+    srs: prepared.srs,
+    isDeleted: prepared.isDeleted,
+    isArchived: prepared.isArchived,
+  };
+  
+  return hashString(JSON.stringify(contentToHash));
 };
 
 export const saveUserData = async (userId: string, items: StoredItem[]) => {
@@ -405,6 +444,59 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
  * Record a study session (for streak and activity tracking)
  * Only records when online - sessions are not queued for offline
  */
+// Session record type for historical data
+export interface SessionRecord {
+  date: string; // YYYY-MM-DD
+  reviews: number;
+  studyTime: number;
+  accuracy: number;
+  timestamp: number;
+}
+
+/**
+ * Load session history from Firebase for statistics
+ * Returns sessions from the last N days
+ */
+export const loadSessionHistory = async (
+  userId: string,
+  days: number = 30
+): Promise<SessionRecord[]> => {
+  if (!db) return [];
+  
+  try {
+    const sessionsCollection = collection(db, "users", userId, "sessions");
+    const snapshot = await getDocs(sessionsCollection);
+    
+    const sessions: SessionRecord[] = [];
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const cutoffTimestamp = cutoffDate.getTime();
+    
+    snapshot.forEach((doc: any) => {
+      const data = doc.data();
+      // Filter by date range
+      if (data.timestamp && data.timestamp >= cutoffTimestamp) {
+        sessions.push({
+          date: doc.id, // Document ID is YYYY-MM-DD
+          reviews: data.reviews || 0,
+          studyTime: data.studyTime || 0,
+          accuracy: data.accuracy || 0,
+          timestamp: data.timestamp
+        });
+      }
+    });
+    
+    // Sort by date descending (most recent first)
+    sessions.sort((a, b) => b.timestamp - a.timestamp);
+    
+    console.log(`🔥 Firebase: Loaded ${sessions.length} session records from last ${days} days`);
+    return sessions;
+  } catch (error) {
+    console.error("🔥 Firebase: Error loading session history:", error);
+    return [];
+  }
+};
+
 export const recordStudySession = async (
   userId: string,
   sessionData: {

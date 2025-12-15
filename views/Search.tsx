@@ -9,6 +9,8 @@ import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
+import { Accordion, AccordionItem } from '../components/Accordion';
+import { parseGrammarSections } from '../utils/grammarParser';
 
 interface SearchProps {
   onSave: (item: StoredItem) => void;
@@ -86,6 +88,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
   const searchRequestId = useRef(0);
   const lastProcessedQuery = useRef<string | undefined>(undefined);
   const lastResultQuery = useRef<string | undefined>(undefined);
+  const pendingSearchRef = useRef<{ query: string; timestamp: number } | null>(null);
   
   // Reset vocab index only when a NEW search result arrives (different query)
   // Don't reset when just the images are updated
@@ -101,6 +104,34 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
       isMounted.current = true;
       return () => { isMounted.current = false; };
   }, []);
+
+  // iOS background suspension recovery - auto-retry searches that were interrupted
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && loading) {
+        // App going to background while search in progress - save the query
+        pendingSearchRef.current = { query, timestamp: Date.now() };
+      } else if (document.visibilityState === 'visible' && pendingSearchRef.current) {
+        const pending = pendingSearchRef.current;
+        pendingSearchRef.current = null;
+        
+        // Only retry if:
+        // 1. We were away less than 30 seconds
+        // 2. No result has arrived (request was killed by iOS)
+        // Note: Don't check `loading` - it's already false by the time we resume
+        // because the catch block runs when iOS kills the request
+        const elapsed = Date.now() - pending.timestamp;
+        if (elapsed < 30000 && !result && !vocabResult) {
+          console.log('iOS: Auto-retrying search after background suspension');
+          setError(null); // Clear any error from the killed request
+          performSearch(pending.query);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [loading, query, result, vocabResult]);
 
   // Memoized title lookup - avoids recalculating on every render
   const { currentTitle, savedItemMatch, isSaved } = useMemo(() => {
@@ -372,6 +403,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
         setResult(data);
         setVocabResult(null); // Clear any previous vocab result as we now have a phrase result
         setLoading(false);
+        pendingSearchRef.current = null; // Clear any pending iOS retry
         setImageLoading(true);
         
         // 1. Generate Main Visual Context
@@ -405,7 +437,7 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                 
                 if (vocab.imagePrompt) {
                     try {
-                        const img = await generateIllustration(vocab.imagePrompt, '4:3');
+                        const img = await generateIllustration(vocab.imagePrompt, '16:9');
                         if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
                         
                         if (img) {
@@ -709,6 +741,17 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                 {/* WORD MODE: Only show vocabulary cards as carousel (no translation means word mode) */}
                 {!result.translation ? (
                     <div className="mt-6 mb-6">
+                        {/* Translation indicator for Chinese input */}
+                        {result.originalQuery && (
+                            <div className="px-6 mb-4">
+                                <div className="text-sm text-slate-500 bg-slate-100 rounded-lg px-3 py-2 inline-flex items-center gap-2">
+                                    <span className="text-slate-400">Originally:</span>
+                                    <span className="font-medium text-slate-700">{result.originalQuery}</span>
+                                    <ArrowRight size={14} className="text-slate-400" />
+                                    <span className="font-medium text-indigo-600">{result.query}</span>
+                                </div>
+                            </div>
+                        )}
                         <div className="px-6 mb-4 flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <BookOpen size={16} className="text-indigo-500" />
@@ -835,66 +878,129 @@ export const SearchView: React.FC<SearchProps> = ({ onSave, onUpdateStoredItem, 
                 ) : (
                     /* SENTENCE MODE: Full analysis with hero card */
                     <>
-                    {/* Hero Card */}
-                    <div className="px-4 space-y-4 mt-6">
-                    <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden relative">
-                        {/* Save button - fixed in top right */}
-                        <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+                    {/* Hero Card - Apple-style clean design */}
+                    <div className="px-4 mt-6">
+                      <div className="bg-white rounded-3xl shadow-lg shadow-black/5 border border-slate-200/60 overflow-hidden">
+                        
+                        {/* Image Header with floating action buttons */}
+                        <div className="aspect-video bg-gradient-to-br from-slate-100 to-slate-50 relative overflow-hidden">
+                          {result.imageUrl ? (
+                            <OfflineImage 
+                              src={result.imageUrl} 
+                              alt="Visual context" 
+                              className="w-full h-full object-cover fade-in" 
+                            />
+                          ) : (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
+                              {imageLoading ? (
+                                <Loader2 className="animate-spin mb-2 text-indigo-400" size={32}/>
+                              ) : (
+                                <SearchIcon className="mb-2 opacity-30" size={32}/>
+                              )}
+                              <span className="text-xs uppercase font-medium tracking-wider opacity-60">
+                                {result.visualKeyword || 'Generating...'}
+                              </span>
+                            </div>
+                          )}
+                          
+                          {/* Floating action buttons */}
+                          <div className="absolute top-4 right-4 flex items-center gap-2">
                             {isViewingStored && (
-                                <button 
-                                    onClick={handleRefresh} 
-                                    title="Refresh Analysis" 
-                                    className="p-3 rounded-full bg-white/90 backdrop-blur text-slate-600 hover:text-indigo-600 hover:bg-white shadow-lg transition-all active:scale-90"
-                                >
-                                    <RotateCw size={20} />
-                                </button>
+                              <button 
+                                onClick={handleRefresh} 
+                                title="Refresh Analysis" 
+                                className="p-2.5 rounded-full bg-white/95 backdrop-blur-sm text-slate-600 hover:text-indigo-600 shadow-lg shadow-black/10 transition-all active:scale-95"
+                              >
+                                <RotateCw size={18} />
+                              </button>
                             )}
                             <button 
-                                onClick={toggleSave} 
-                                className={`p-3 rounded-full shadow-lg transition-all active:scale-90 ${
-                                    isSaved 
-                                        ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
-                                        : 'bg-white/90 backdrop-blur text-slate-600 hover:bg-white hover:text-indigo-600'
-                                }`}
-                                title={isSaved ? 'Remove from Notebook' : 'Save to Notebook'}
+                              onClick={toggleSave} 
+                              className={`p-2.5 rounded-full shadow-lg shadow-black/10 transition-all active:scale-95 ${
+                                isSaved 
+                                  ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+                                  : 'bg-white/95 backdrop-blur-sm text-slate-600 hover:text-indigo-600'
+                              }`}
+                              title={isSaved ? 'Remove from Notebook' : 'Save to Notebook'}
                             >
-                                {isSaved ? <Bookmark size={20} fill="currentColor" /> : <Bookmark size={20} />}
+                              {isSaved ? <Bookmark size={18} fill="currentColor" /> : <Bookmark size={18} />}
                             </button>
-                        </div>
-                        {/* Generated Image Header */}
-                        <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group">
-                        {result.imageUrl ? (
-                            <OfflineImage src={result.imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
-                        ) : (
-                            <div className="flex flex-col items-center text-slate-400">
-                                {imageLoading ? <Loader2 className="animate-spin mb-2 text-indigo-400"/> : <SearchIcon className="mb-2 opacity-30" size={32}/>}
-                                <span className="text-xs uppercase font-bold tracking-wider opacity-60">{result.visualKeyword || 'Generating Visual...'}</span>
-                            </div>
-                        )}
+                          </div>
                         </div>
 
-                        <div className="p-6 sm:p-8">
-                            <div className="mb-6">
-                                <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{result.translation}</h2>
-                                <p className="text-lg text-slate-600 mb-3 leading-relaxed">{result.query}</p>
-                                <PronunciationBlock 
-                                    text={result.query} 
-                                    ipa={result.pronunciation} 
-                                    className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
-                                />
+                        {/* Content Section */}
+                        <div className="p-6">
+                          {/* Translation indicator for Chinese input */}
+                          {result.originalQuery && (
+                            <div className="text-sm text-slate-500 bg-slate-50 rounded-xl px-3 py-2 inline-flex items-center gap-2 mb-4 border border-slate-100">
+                              <span className="text-slate-400">Originally:</span>
+                              <span className="font-medium text-slate-700">{result.originalQuery}</span>
+                              <ArrowRight size={14} className="text-slate-300" />
+                              <span className="font-medium text-indigo-600">{result.query}</span>
                             </div>
-                            
-                            <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">
-                                <ReactMarkdown 
-                                    components={{
-                                        strong: ({node, ...props}) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
-                                    }}
+                          )}
+                          
+                          {/* Chinese Translation - Hero text */}
+                          <h2 className="text-2xl font-bold text-slate-900 leading-snug mb-3 tracking-tight">
+                            {result.translation}
+                          </h2>
+                          
+                          {/* English Sentence */}
+                          <p className="text-lg text-slate-600 leading-relaxed mb-4">
+                            {result.query}
+                          </p>
+                          
+                          {/* Pronunciation */}
+                          <div className="mb-6">
+                            <PronunciationBlock 
+                              text={result.query} 
+                              ipa={result.pronunciation} 
+                              className="text-sm bg-slate-50 border border-slate-100 px-3 py-2 rounded-xl inline-flex"
+                            />
+                          </div>
+                          
+                          {/* Divider */}
+                          <div className="h-px bg-slate-100 -mx-6 mb-4" />
+                          
+                          {/* Grammar Analysis - Accordion Sections */}
+                          {result.grammar && (
+                            <Accordion>
+                              {parseGrammarSections(result.grammar).map((section, idx) => (
+                                <AccordionItem 
+                                  key={`${section.title}-${idx}`}
+                                  title={section.title}
+                                  defaultOpen={idx === 0}
+                                  icon={section.icon ? <span className="text-base">{section.icon}</span> : undefined}
                                 >
-                                    {result.grammar}
-                                </ReactMarkdown>
-                            </div>
+                                  <div className="prose prose-sm max-w-none text-slate-600 prose-p:my-2 prose-ul:my-2 prose-li:my-0.5">
+                                    <ReactMarkdown 
+                                      components={{
+                                        strong: ({node, ...props}) => (
+                                          <span className="font-semibold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
+                                        ),
+                                        p: ({node, ...props}) => (
+                                          <p className="text-[15px] leading-relaxed text-slate-600" {...props} />
+                                        ),
+                                        ul: ({node, ...props}) => (
+                                          <ul className="space-y-1 ml-1" {...props} />
+                                        ),
+                                        li: ({node, ...props}) => (
+                                          <li className="text-[15px] text-slate-600 flex items-start gap-2">
+                                            <span className="text-indigo-400 mt-1.5">•</span>
+                                            <span {...props} />
+                                          </li>
+                                        ),
+                                      }}
+                                    >
+                                      {section.content}
+                                    </ReactMarkdown>
+                                  </div>
+                                </AccordionItem>
+                              ))}
+                            </Accordion>
+                          )}
                         </div>
-                    </div>
+                      </div>
                     </div>
 
                     {/* Vocab Carousel for sentence mode - uses same carousel component */}

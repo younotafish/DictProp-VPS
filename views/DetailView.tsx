@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle, ItemGroup } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -9,6 +9,36 @@ import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
 import { speak } from '../services/speech';
+
+// Helper to format relative time for next review
+const formatRelativeTime = (timestamp: number): string => {
+  const now = Date.now();
+  const diff = timestamp - now;
+  
+  if (diff <= 0) return 'now';
+  
+  const minutes = Math.floor(diff / (1000 * 60));
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  
+  if (days > 0) return `${days}d`;
+  if (hours > 0) return `${hours}h`;
+  if (minutes > 0) return `${minutes}m`;
+  return 'now';
+};
+
+// Color classes for mastery levels
+const getMasteryColors = (color: string) => {
+  const colorMap: Record<string, { bg: string; text: string; bar: string }> = {
+    slate: { bg: 'bg-slate-100', text: 'text-slate-600', bar: 'bg-slate-400' },
+    orange: { bg: 'bg-orange-100', text: 'text-orange-600', bar: 'bg-orange-400' },
+    amber: { bg: 'bg-amber-100', text: 'text-amber-600', bar: 'bg-amber-400' },
+    blue: { bg: 'bg-blue-100', text: 'text-blue-600', bar: 'bg-blue-400' },
+    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-600', bar: 'bg-emerald-400' },
+    purple: { bg: 'bg-purple-100', text: 'text-purple-600', bar: 'bg-purple-400' },
+  };
+  return colorMap[color] || colorMap.slate;
+};
 
 interface DetailViewProps {
   // New group-based navigation props
@@ -263,6 +293,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
   
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
 
+  // Auto-pronounce word when card changes
+  useEffect(() => {
+    if (!title) return;
+    
+    // Small delay to let animation settle before pronouncing
+    const timer = setTimeout(() => {
+      speak(title);
+    }, 100);
+    
+    return () => clearTimeout(timer);
+  }, [title, currentGroupIndex, currentItemIndex]);
+
   // P key to pronounce current word
   // Moved to bottom to access handlers
   
@@ -273,6 +315,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
       (item.type === 'phrase' || (item.data as VocabCard).sense === (data as VocabCard).sense)
     );
   const isSaved = !!savedItemMatch;
+
+  // Calculate global stats for saved items
+  const activeItems = savedItems.filter(i => !i.isDeleted && !i.isArchived);
+  const memorizedCount = activeItems.filter(i => i.srs.memoryStrength >= 70).length;
+  const dueToday = activeItems.filter(i => i.srs.nextReview <= Date.now()).length;
+  
+  // Get mastery info for current item
+  const mastery = savedItemMatch ? SRSAlgorithm.getMasteryLevel(savedItemMatch.srs) : null;
+  const masteryColors = mastery ? getMasteryColors(mastery.color) : null;
 
   const handleToggleSave = useCallback(() => {
     if (isSaved && savedItemMatch) {
@@ -653,6 +704,50 @@ export const DetailView: React.FC<DetailViewProps> = ({
         </div>
 
         <div className="p-4 pb-24">
+          {/* Memory Progress Bar - shown for saved items */}
+          {isSaved && savedItemMatch && mastery && masteryColors && (
+            <div className="max-w-3xl mx-auto mb-4">
+              <div className="flex items-center gap-2 text-xs">
+                {/* Mastery badge with percentage */}
+                <span className={`${masteryColors.bg} ${masteryColors.text} px-2 py-0.5 rounded-full font-semibold`}>
+                  {mastery.label} {Math.round(mastery.percentage)}%
+                </span>
+                
+                {/* Progress bar */}
+                <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full ${masteryColors.bar} transition-all duration-300`}
+                    style={{ width: `${mastery.percentage}%` }}
+                  />
+                </div>
+                
+                {/* Stats row */}
+                <span className="text-slate-400 whitespace-nowrap">
+                  {savedItemMatch.srs.totalReviews}×
+                </span>
+                {savedItemMatch.srs.correctStreak > 0 && (
+                  <span className="text-orange-500 flex items-center gap-0.5">
+                    <Flame size={12} />
+                    {savedItemMatch.srs.correctStreak}
+                  </span>
+                )}
+                <span className="text-slate-300">•</span>
+                <span className="text-emerald-600 flex items-center gap-0.5">
+                  <CheckCircle2 size={12} />
+                  {memorizedCount}
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="text-amber-600 flex items-center gap-0.5">
+                  <Clock size={12} />
+                  {dueToday}
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="text-slate-500">
+                  {savedItemMatch.srs.nextReview <= Date.now() ? 'due' : formatRelativeTime(savedItemMatch.srs.nextReview)}
+                </span>
+              </div>
+            </div>
+          )}
 
           {type === 'vocab' && (
             <VocabCardDisplay 
@@ -671,9 +766,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
           {type === 'phrase' && (
             <div className="space-y-6 max-w-3xl mx-auto">
               <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center group">
+                <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group">
                   {(data as SearchResult).imageUrl ? (
-                    <OfflineImage src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
+                    <OfflineImage src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full fade-in transition-transform duration-700 group-hover:scale-105" />
                   ) : (
                     <div className="flex flex-col items-center text-slate-400">
                       <SearchIcon className="mb-2 opacity-30" size={32}/>

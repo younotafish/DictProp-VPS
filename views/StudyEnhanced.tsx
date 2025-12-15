@@ -36,7 +36,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { recordStudySession } from '../services/firebase';
+import { recordStudySession, loadSessionHistory, SessionRecord } from '../services/firebase';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
@@ -80,6 +80,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     totalTime: 0
   });
 
+  // Historical session data from Firebase
+  const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
   // Helper to get the title/spelling of an item
   const getItemSpelling = (item: StoredItem): string => {
     if (item.type === 'vocab') {
@@ -117,6 +121,41 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       onLazyLoadImage(currentMeaningItem.data.id);
     }
   }, [currentMeaningItem?.data.id, onLazyLoadImage]);
+
+  // Auto-pronounce word when card changes in study session
+  useEffect(() => {
+    if (mode !== 'session' || !currentMeaningItem) return;
+    
+    const text = currentMeaningItem.type === 'vocab' 
+      ? (currentMeaningItem.data as VocabCard).word 
+      : (currentMeaningItem.data as SearchResult).query;
+    
+    if (text) {
+      const timer = setTimeout(() => {
+        speak(text);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [mode, currentMeaningItem?.data.id, meaningIndex]);
+
+  // Load session history from Firebase on mount
+  useEffect(() => {
+    if (!userId) return;
+    
+    const fetchHistory = async () => {
+      setIsLoadingHistory(true);
+      try {
+        const history = await loadSessionHistory(userId, 30);
+        setSessionHistory(history);
+      } catch (error) {
+        console.error('Failed to load session history:', error);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+    
+    fetchHistory();
+  }, [userId]);
 
   // Horizontal swipe handlers for meaning carousel (vertical swipe disabled - use buttons)
   // Only active on FRONT of card - back has selectable content that conflicts with swipe on iOS
@@ -205,33 +244,104 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const now = Date.now();
     const due = items.filter(i => i.srs.nextReview <= now).length;
     
-    // Memory strength based categories
+    // Memory strength based categories (per PRODUCT_SUMMARY.md spec)
     const grandmaster = items.filter(i => i.srs.memoryStrength >= 85).length;
     const mastered = items.filter(i => i.srs.memoryStrength >= 70 && i.srs.memoryStrength < 85).length;
-    const learning = items.filter(i => i.srs.memoryStrength >= 30 && i.srs.memoryStrength < 70).length;
-    const struggling = items.filter(i => i.srs.memoryStrength < 30).length;
+    const proficient = items.filter(i => i.srs.memoryStrength >= 50 && i.srs.memoryStrength < 70).length;
+    const learning = items.filter(i => i.srs.memoryStrength >= 30 && i.srs.memoryStrength < 50).length;
+    const struggling = items.filter(i => i.srs.memoryStrength >= 10 && i.srs.memoryStrength < 30).length;
+    const newItems = items.filter(i => i.srs.memoryStrength < 10).length;
     
-    // Streak calculation
+    // Streak calculation from session history
     const today = new Date().toISOString().split('T')[0];
-    const hasStudiedToday = items.some(i => {
+    const hasStudiedToday = sessionHistory.some(s => s.date === today) || items.some(i => {
       const lastReview = new Date(i.srs.lastReviewDate).toISOString().split('T')[0];
       return lastReview === today;
     });
+    
+    // Calculate consecutive day streak from session history
+    let streak = 0;
+    const sortedDates = [...new Set(sessionHistory.map(s => s.date))].sort().reverse();
+    const todayDate = new Date();
+    
+    for (let i = 0; i < sortedDates.length; i++) {
+      const expectedDate = new Date(todayDate);
+      expectedDate.setDate(expectedDate.getDate() - i);
+      const expectedDateStr = expectedDate.toISOString().split('T')[0];
+      
+      if (sortedDates.includes(expectedDateStr)) {
+        streak++;
+      } else if (i === 0 && !sortedDates.includes(expectedDateStr)) {
+        // If today isn't studied yet, check from yesterday
+        continue;
+      } else {
+        break;
+      }
+    }
     
     // Average memory strength
     const avgStrength = items.length > 0 
       ? items.reduce((sum, i) => sum + i.srs.memoryStrength, 0) / items.length 
       : 0;
 
+    // Weekly stats from session history (last 7 days)
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekAgoTimestamp = weekAgo.getTime();
+    const weekSessions = sessionHistory.filter(s => s.timestamp >= weekAgoTimestamp);
+    
+    const weeklyReviews = weekSessions.reduce((sum, s) => sum + s.reviews, 0);
+    const weeklyAccuracy = weekSessions.length > 0
+      ? weekSessions.reduce((sum, s) => sum + s.accuracy, 0) / weekSessions.length
+      : 0;
+    const weeklyStudyTime = weekSessions.reduce((sum, s) => sum + s.studyTime, 0);
+
+    // Card-level metrics
+    const longestStreak = items.length > 0
+      ? Math.max(...items.map(i => i.srs.correctStreak || 0))
+      : 0;
+    
+    const hardestCards = [...items]
+      .sort((a, b) => (b.srs.difficulty || 0) - (a.srs.difficulty || 0))
+      .slice(0, 3);
+    
+    const mostReviewed = [...items]
+      .sort((a, b) => (b.srs.totalReviews || 0) - (a.srs.totalReviews || 0))
+      .slice(0, 3);
+
+    // Get last 7 days for chart
+    const last7Days: { date: string; reviews: number; accuracy: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const daySession = sessionHistory.find(s => s.date === dateStr);
+      last7Days.push({
+        date: dateStr,
+        reviews: daySession?.reviews || 0,
+        accuracy: daySession?.accuracy || 0
+      });
+    }
+
     return { 
       due, 
       grandmaster, 
       mastered, 
+      proficient,
       learning, 
-      struggling, 
+      struggling,
+      newItems,
       total: items.length,
       hasStudiedToday,
-      avgStrength: Math.round(avgStrength)
+      avgStrength: Math.round(avgStrength),
+      streak,
+      weeklyReviews,
+      weeklyAccuracy: Math.round(weeklyAccuracy),
+      weeklyStudyTime,
+      longestStreak,
+      hardestCards,
+      mostReviewed,
+      last7Days
     };
   };
 
@@ -619,13 +729,34 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   // --- DASHBOARD VIEW ---
   if (mode === 'dashboard') {
+    // Helper to get item title for display
+    const getItemTitle = (item: StoredItem): string => {
+      if (item.type === 'vocab') {
+        return (item.data as VocabCard).word;
+      }
+      return (item.data as SearchResult).query;
+    };
+
+    // Mastery breakdown data for stacked bar
+    const masteryData = [
+      { label: 'Grandmaster', count: stats.grandmaster, color: 'bg-purple-500' },
+      { label: 'Mastered', count: stats.mastered, color: 'bg-emerald-500' },
+      { label: 'Proficient', count: stats.proficient, color: 'bg-blue-500' },
+      { label: 'Learning', count: stats.learning, color: 'bg-amber-400' },
+      { label: 'Struggling', count: stats.struggling, color: 'bg-orange-500' },
+      { label: 'New', count: stats.newItems, color: 'bg-slate-300' },
+    ];
+
+    // Max reviews for chart scaling
+    const maxReviews = Math.max(...stats.last7Days.map(d => d.reviews), 1);
+
     return (
       <div className="h-full overflow-y-auto bg-slate-50 p-6 pb-[calc(5rem+env(safe-area-inset-bottom))]" onScroll={onScroll}>
         <h2 className="text-3xl font-bold text-slate-800 mb-1">Today&apos;s Study</h2>
         <p className="text-slate-500 mb-8">Adaptive recall with spaced repetition</p>
 
         {/* Main Action Card (per doc) */}
-        <div className="bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-600 rounded-3xl p-6 shadow-xl mb-8 relative overflow-hidden text-white">
+        <div className="bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-600 rounded-3xl p-6 shadow-xl mb-6 relative overflow-hidden text-white">
           <div className="relative z-10">
             <div className="flex items-baseline gap-2 mb-2">
               <span className="text-5xl font-extrabold tracking-tighter">{stats.due}</span>
@@ -647,31 +778,184 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           <div className="absolute -left-8 -bottom-8 w-40 h-40 bg-purple-400 opacity-20 rounded-full blur-2xl"></div>
         </div>
 
-        {/* Weekly stats summary */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
+        {/* Weekly stats summary - Now with real Firebase data */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-4">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <BarChart3 size={16} className="text-indigo-500" />
               <span className="text-sm font-bold text-slate-700">Weekly Stats</span>
             </div>
-            <span className="text-xs text-slate-400">This week</span>
+            <span className="text-xs text-slate-400">
+              {isLoadingHistory ? 'Loading...' : 'Last 7 days'}
+            </span>
           </div>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div>
-              <p className="text-lg font-bold text-slate-800">{sessionStats.reviews || 0}</p>
+              <p className="text-xl font-bold text-slate-800">{stats.weeklyReviews}</p>
               <p className="text-xs text-slate-500">Reviews</p>
             </div>
             <div>
-              <p className="text-lg font-bold text-emerald-600">
-                {sessionStats.reviews > 0 ? Math.round((sessionStats.correct / sessionStats.reviews) * 100) : 0}%
-              </p>
+              <p className="text-xl font-bold text-emerald-600">{stats.weeklyAccuracy}%</p>
               <p className="text-xs text-slate-500">Accuracy</p>
             </div>
-            <div>
-              <p className="text-lg font-bold text-slate-800">{stats.hasStudiedToday ? 1 : 0}</p>
-              <p className="text-xs text-slate-500">Streak (days)</p>
+            <div className="flex flex-col items-center">
+              <div className="flex items-center gap-1">
+                <Flame size={16} className={stats.streak > 0 ? 'text-orange-500' : 'text-slate-300'} />
+                <p className="text-xl font-bold text-slate-800">{stats.streak}</p>
+              </div>
+              <p className="text-xs text-slate-500">Day Streak</p>
             </div>
           </div>
+        </div>
+
+        {/* Mastery Breakdown */}
+        {stats.total > 0 && (
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Target size={16} className="text-indigo-500" />
+              <span className="text-sm font-bold text-slate-700">Mastery Breakdown</span>
+              <span className="text-xs text-slate-400 ml-auto">{stats.total} cards</span>
+            </div>
+            
+            {/* Stacked Progress Bar */}
+            <div className="h-4 rounded-full overflow-hidden flex bg-slate-100 mb-3">
+              {masteryData.map((level, idx) => {
+                const percentage = stats.total > 0 ? (level.count / stats.total) * 100 : 0;
+                if (percentage === 0) return null;
+                return (
+                  <div
+                    key={idx}
+                    className={`${level.color} transition-all duration-500`}
+                    style={{ width: `${percentage}%` }}
+                    title={`${level.label}: ${level.count}`}
+                  />
+                );
+              })}
+            </div>
+            
+            {/* Legend */}
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              {masteryData.filter(l => l.count > 0).map((level, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <div className={`w-2.5 h-2.5 rounded-full ${level.color}`} />
+                  <span className="text-slate-600 truncate">{level.label}</span>
+                  <span className="text-slate-400 font-medium">{level.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 7-Day Activity Chart */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-4">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp size={16} className="text-indigo-500" />
+            <span className="text-sm font-bold text-slate-700">7-Day Activity</span>
+          </div>
+          
+          {/* Mini Bar Chart */}
+          <div className="flex items-end justify-between gap-1 h-20 mb-2">
+            {stats.last7Days.map((day, idx) => {
+              const height = maxReviews > 0 ? (day.reviews / maxReviews) * 100 : 0;
+              const isToday = idx === 6;
+              return (
+                <div key={idx} className="flex-1 flex flex-col items-center gap-1">
+                  <div className="w-full flex items-end justify-center" style={{ height: '60px' }}>
+                    <div 
+                      className={`w-full max-w-6 rounded-t transition-all duration-300 ${
+                        day.reviews > 0 
+                          ? isToday 
+                            ? 'bg-violet-500' 
+                            : 'bg-indigo-400'
+                          : 'bg-slate-200'
+                      }`}
+                      style={{ height: `${Math.max(height, 8)}%` }}
+                      title={`${day.reviews} reviews`}
+                    />
+                  </div>
+                  <span className={`text-[10px] ${isToday ? 'font-bold text-slate-700' : 'text-slate-400'}`}>
+                    {new Date(day.date).toLocaleDateString('en', { weekday: 'narrow' })}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          
+          {/* Summary row */}
+          <div className="flex justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
+            <span>Total: {stats.last7Days.reduce((sum, d) => sum + d.reviews, 0)} reviews</span>
+            <span>
+              Avg: {Math.round(stats.last7Days.reduce((sum, d) => sum + d.reviews, 0) / 7)}/day
+            </span>
+          </div>
+        </div>
+
+        {/* Card-Level Metrics */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Trophy size={16} className="text-amber-500" />
+            <span className="text-sm font-bold text-slate-700">Achievements</span>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            {/* Longest Streak */}
+            <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Zap size={14} className="text-amber-500" />
+                <span className="text-xs font-medium text-slate-600">Best Streak</span>
+              </div>
+              <p className="text-2xl font-bold text-slate-800">{stats.longestStreak}</p>
+              <p className="text-xs text-slate-500">correct in a row</p>
+            </div>
+            
+            {/* Study Time */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Clock size={14} className="text-blue-500" />
+                <span className="text-xs font-medium text-slate-600">Study Time</span>
+              </div>
+              <p className="text-2xl font-bold text-slate-800">
+                {Math.round(stats.weeklyStudyTime / 60000)}
+              </p>
+              <p className="text-xs text-slate-500">minutes this week</p>
+            </div>
+          </div>
+
+          {/* Hardest Cards */}
+          {stats.hardestCards.length > 0 && stats.hardestCards[0].srs.difficulty > 5 && (
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <p className="text-xs font-medium text-slate-600 mb-2">Challenging Cards</p>
+              <div className="flex flex-wrap gap-2">
+                {stats.hardestCards.slice(0, 3).map((item, idx) => (
+                  <button 
+                    key={idx}
+                    onClick={() => onSearch(getItemTitle(item))}
+                    className="px-2 py-1 bg-rose-50 text-rose-700 text-xs rounded-full font-medium hover:bg-rose-100 active:scale-95 transition-all cursor-pointer"
+                  >
+                    {getItemTitle(item)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Most Reviewed */}
+          {stats.mostReviewed.length > 0 && stats.mostReviewed[0].srs.totalReviews > 0 && (
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <p className="text-xs font-medium text-slate-600 mb-2">Most Practiced</p>
+              <div className="flex flex-wrap gap-2">
+                {stats.mostReviewed.slice(0, 3).map((item, idx) => (
+                  <button 
+                    key={idx}
+                    onClick={() => onSearch(getItemTitle(item))}
+                    className="px-2 py-1 bg-emerald-50 text-emerald-700 text-xs rounded-full font-medium hover:bg-emerald-100 active:scale-95 transition-all cursor-pointer"
+                  >
+                    {getItemTitle(item)} ({item.srs.totalReviews}x)
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
