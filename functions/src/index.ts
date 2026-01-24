@@ -169,7 +169,7 @@ Each vocab object MUST have these fields:
   "antonyms": ["array of strings - Antonyms for THIS specific meaning"],
   "confusables": ["array of strings - Words easily confused with this (similar spelling, sound, or meaning)"],
   "examples": ["array of 2 strings - Natural contemporary sentences showing THIS specific meaning"],
-  "history": "string - Brief etymology/origin (1-2 lines)",
+  "history": "string - Etymology and semantic evolution: Where the word comes from AND how/why it evolved to its current meaning. Explain the journey from original meaning to modern usage (2-3 sentences)",
   "register": "string - Frequency/register note (formal, slang, etc.)",
   "mnemonic": "string - A simple memory aid for THIS specific meaning",
   "imagePrompt": "string - A prompt to generate an illustrative image for THIS specific meaning"
@@ -219,7 +219,7 @@ const vocabSchema: Schema = {
     antonyms: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Antonyms for THIS specific meaning" },
     confusables: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Words easily confused with this word (similar spelling, sound, or meaning). E.g., affect/effect, accept/except, complement/compliment" },
     examples: { type: Type.ARRAY, items: { type: Type.STRING }, description: "2 natural contemporary sentences showing THIS specific meaning" },
-    history: { type: Type.STRING, description: "Brief etymology/origin (1-2 lines)" },
+    history: { type: Type.STRING, description: "Etymology and semantic evolution: Where the word comes from AND how/why it evolved to its current meaning. Explain the journey from original meaning to modern usage (2-3 sentences)" },
     register: { type: Type.STRING, description: "Frequency/register note (formal, slang, etc.)" },
     mnemonic: { type: Type.STRING, description: "A simple memory aid for THIS specific meaning" },
     imagePrompt: { type: Type.STRING, description: "A prompt to generate an illustrative image for THIS specific meaning" }
