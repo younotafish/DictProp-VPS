@@ -83,7 +83,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [currentItemIndex, setCurrentItemIndex] = useState(groups ? initialItemIndex : initialIndex);
   
   const [isAnimating, setIsAnimating] = useState(false);
-  const [showHeader, setShowHeader] = useState(true);
+  const [showHeader, setShowHeader] = useState(false); // Hidden by default, show on swipe down
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
@@ -181,11 +181,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const target = e.currentTarget;
     const currentScrollY = target.scrollTop;
 
-    // Header auto-hide logic
-    if (currentScrollY < 50) {
-      if (!showHeader) setShowHeader(true);
-    } else if (Math.abs(currentScrollY - lastScrollY.current) > 10) {
-      setShowHeader(currentScrollY < lastScrollY.current);
+    // Header show/hide logic - hidden by default, show on swipe down (scroll up)
+    const scrollDelta = currentScrollY - lastScrollY.current;
+    const minScrollDelta = 10; // Minimum scroll distance to trigger show/hide
+    
+    if (Math.abs(scrollDelta) > minScrollDelta) {
+      // Scrolling up (swipe down gesture) -> show header
+      // Scrolling down (swipe up gesture) -> hide header
+      setShowHeader(scrollDelta < 0);
     }
     
     lastScrollY.current = currentScrollY;
@@ -246,6 +249,17 @@ export const DetailView: React.FC<DetailViewProps> = ({
     
     // Horizontal Swipe (Meanings)
     const isHorizontalSwipe = absX > absY * 1.5 && absX > swipeThreshold;
+
+    // Pull down at top to show header (when scroll position is at top)
+    if (isVerticalSwipe && diffY > swipeThreshold && isAtTop) {
+      // If no previous group to navigate to, show the header
+      if (!hasPrevGroup || !groups) {
+        setShowHeader(true);
+        touchStartX.current = null;
+        touchStartY.current = null;
+        return;
+      }
+    }
 
     if (isVerticalSwipe && isFastSwipe && groups) {
       // Swipe UP -> Next Group (Word) - only when at bottom or content is short
