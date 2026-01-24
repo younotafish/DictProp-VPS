@@ -265,6 +265,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // Swipe UP -> Next Group (Word) - only when at bottom or content is short
       if (diffY < -swipeThreshold && hasNextGroup && (isAtBottom || scrollHeight <= clientHeight)) {
         setIsAnimating(true);
+        setShowHeader(false); // Hide header when navigating
         setCurrentGroupIndex(prev => prev + 1);
         setCurrentItemIndex(0); // Reset to first meaning
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -273,6 +274,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // Swipe DOWN -> Previous Group (Word) - only when at top
       else if (diffY > swipeThreshold && hasPrevGroup && isAtTop) {
         setIsAnimating(true);
+        setShowHeader(false); // Hide header when navigating
         setCurrentGroupIndex(prev => prev - 1);
         setCurrentItemIndex(0); // Reset to first meaning
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -283,6 +285,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // Swipe LEFT -> Next Item (Meaning)
       if (diffX < -swipeThreshold && hasNextItem) {
         setIsAnimating(true);
+        setShowHeader(false); // Hide header when navigating
         setCurrentItemIndex(prev => prev + 1);
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
         setTimeout(() => setIsAnimating(false), 300);
@@ -292,6 +295,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (diffX > swipeThreshold) {
         if (hasPrevItem) {
           setIsAnimating(true);
+          setShowHeader(false); // Hide header when navigating
           setCurrentItemIndex(prev => prev - 1);
           if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
           setTimeout(() => setIsAnimating(false), 300);
@@ -359,6 +363,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handlePrevItem = useCallback(() => {
     if (hasPrevItem && !isAnimating) {
       setIsAnimating(true);
+      setShowHeader(false); // Hide header when navigating
       setCurrentItemIndex(prev => prev - 1);
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       setTimeout(() => setIsAnimating(false), 300);
@@ -368,6 +373,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handleNextItem = useCallback(() => {
     if (hasNextItem && !isAnimating) {
       setIsAnimating(true);
+      setShowHeader(false); // Hide header when navigating
       setCurrentItemIndex(prev => prev + 1);
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       setTimeout(() => setIsAnimating(false), 300);
@@ -377,6 +383,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handlePrevGroup = useCallback(() => {
     if (hasPrevGroup && !isAnimating && groups) {
       setIsAnimating(true);
+      setShowHeader(false); // Hide header when navigating
       setCurrentGroupIndex(prev => prev - 1);
       setCurrentItemIndex(0);
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -387,6 +394,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handleNextGroup = useCallback(() => {
     if (hasNextGroup && !isAnimating && groups) {
       setIsAnimating(true);
+      setShowHeader(false); // Hide header when navigating
       setCurrentGroupIndex(prev => prev + 1);
       setCurrentItemIndex(0);
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
