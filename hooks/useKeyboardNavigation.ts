@@ -8,7 +8,7 @@
  * - Enter/Space: Activate focused element
  * - Cmd+S: Save current item (if applicable)
  * - Cmd+F: Focus search input
- * - 1/2/3: Switch between tabs (Search/Notebook/Study)
+ * - 1/2: Switch between tabs (Notebook/Study)
  */
 
 import { useEffect, useCallback, RefObject } from 'react';
@@ -161,10 +161,9 @@ function handleFocusTrap(e: KeyboardEvent, container: HTMLElement) {
 }
 
 /**
- * Hook for global tab navigation (1, 2, 3 to switch tabs)
+ * Hook for global tab navigation (1, 2 to switch tabs)
  */
 interface GlobalNavigationOptions {
-  onNavigateToSearch?: () => void;
   onNavigateToNotebook?: () => void;
   onNavigateToStudy?: () => void;
   enabled?: boolean;
@@ -172,7 +171,6 @@ interface GlobalNavigationOptions {
 
 export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
   const {
-    onNavigateToSearch,
     onNavigateToNotebook,
     onNavigateToStudy,
     enabled = true,
@@ -194,13 +192,9 @@ export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
       switch (e.key) {
         case '1':
           e.preventDefault();
-          onNavigateToSearch?.();
-          break;
-        case '2':
-          e.preventDefault();
           onNavigateToNotebook?.();
           break;
-        case '3':
+        case '2':
           e.preventDefault();
           onNavigateToStudy?.();
           break;
@@ -209,7 +203,7 @@ export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [enabled, onNavigateToSearch, onNavigateToNotebook, onNavigateToStudy]);
+  }, [enabled, onNavigateToNotebook, onNavigateToStudy]);
 };
 
 /**

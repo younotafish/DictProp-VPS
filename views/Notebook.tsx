@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import Fuse from 'fuse.js';
-import { StoredItem, SyncStatus, AppUser, ItemGroup } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X } from 'lucide-react';
+import { StoredItem, SyncStatus, AppUser, ItemGroup, SearchResult, VocabCard, getItemTitle } from '../types';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Clipboard, ArrowRight, AlertCircle, Bookmark } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
-import { useWheelNavigation } from '../hooks';
+import { VocabCardDisplay } from '../components/VocabCard';
+import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
+import { analyzeInput, generateIllustration } from '../services/geminiService';
+import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { speak } from '../services/speech';
 
 interface NotebookItemProps {
   item: StoredItem;
@@ -327,20 +331,290 @@ interface NotebookProps {
   bulkRefreshProgress?: { current: number; total: number; isRunning: boolean } | null;
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
+  onSave: (item: StoredItem) => void;
+  onUpdateStoredItem: (item: StoredItem) => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({ 
     items, onDelete, onSearch, onViewDetail, 
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive
+    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem
 }) => {
-  const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
-  const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
-  const [localSearchQuery, setLocalSearchQuery] = useState('');
+  // Persist notebook UI state to localStorage for iOS PWA resume
+  const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>(() => {
+    const saved = localStorage.getItem('notebook_sort_mode');
+    return (saved === 'alphabetical' || saved === 'familiarity') ? saved : 'familiarity';
+  });
+  const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>(() => {
+    const saved = localStorage.getItem('notebook_filter_mode');
+    return (saved === 'all' || saved === 'vocab' || saved === 'phrase') ? saved : 'vocab';
+  });
+  const [localSearchQuery, setLocalSearchQuery] = useState(() => {
+    return localStorage.getItem('notebook_search_query') || '';
+  });
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [showHeader, setShowHeader] = useState(true);
-  const [showArchived, setShowArchived] = useState(false);
+  const [showArchived, setShowArchived] = useState(() => {
+    return localStorage.getItem('notebook_show_archived') === 'true';
+  });
   const lastScrollY = useRef(0);
+  
+  // Persist state changes
+  useEffect(() => {
+    localStorage.setItem('notebook_sort_mode', sortMode);
+  }, [sortMode]);
+  
+  useEffect(() => {
+    localStorage.setItem('notebook_filter_mode', filterMode);
+  }, [filterMode]);
+  
+  useEffect(() => {
+    localStorage.setItem('notebook_search_query', localSearchQuery);
+  }, [localSearchQuery]);
+  
+  useEffect(() => {
+    localStorage.setItem('notebook_show_archived', showArchived.toString());
+  }, [showArchived]);
+  
+  // AI Search state
+  const [aiSearchResult, setAiSearchResult] = useState<SearchResult | null>(null);
+  const [aiSearchLoading, setAiSearchLoading] = useState(false);
+  const [aiSearchError, setAiSearchError] = useState<string | null>(null);
+  const [vocabIndex, setVocabIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const aiSearchCarouselRef = useRef<HTMLDivElement>(null);
+  const isMounted = useRef(true);
+  const searchRequestId = useRef(0);
+
+  // Calculate total vocabs for keyboard/wheel navigation
+  const totalAIVocabs = aiSearchResult?.vocabs?.length || 0;
+
+  // Keyboard navigation for AI search results carousel
+  useKeyboardNavigation({
+    onArrowLeft: () => {
+      if (totalAIVocabs > 1 && vocabIndex > 0) {
+        setVocabIndex(prev => prev - 1);
+      }
+    },
+    onArrowRight: () => {
+      if (totalAIVocabs > 1 && vocabIndex < totalAIVocabs - 1) {
+        setVocabIndex(prev => prev + 1);
+      }
+    },
+    onEnter: () => {
+      // Save current vocab when pressing Enter
+      const currentVocab = aiSearchResult?.vocabs?.[vocabIndex];
+      if (currentVocab) {
+        const isVocabSaved = items.some(i => 
+          i.data.id === currentVocab.id || 
+          (getItemTitle(i).toLowerCase().trim() === (currentVocab.word || '').toLowerCase().trim() && 
+           i.type === 'vocab' && 
+           (i.data as VocabCard).sense === currentVocab.sense)
+        );
+        if (!isVocabSaved && currentVocab.id) {
+          onSave({
+            data: currentVocab,
+            type: 'vocab',
+            savedAt: Date.now(),
+            srs: SRSAlgorithm.createNew(currentVocab.id, 'vocab')
+          });
+        }
+      }
+    },
+    enabled: aiSearchResult !== null && !aiSearchLoading,
+  });
+
+  // Trackpad wheel navigation for AI search results carousel
+  useWheelNavigation({
+    onScrollLeft: () => {
+      if (totalAIVocabs > 1 && vocabIndex > 0) {
+        setVocabIndex(prev => prev - 1);
+      }
+    },
+    onScrollRight: () => {
+      if (totalAIVocabs > 1 && vocabIndex < totalAIVocabs - 1) {
+        setVocabIndex(prev => prev + 1);
+      }
+    },
+    containerRef: aiSearchCarouselRef,
+    threshold: 80,
+    enabled: totalAIVocabs > 1,
+  });
+
+  // Cleanup on unmount
+  useEffect(() => {
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
+  }, []);
+
+  // Listen for external search requests (from App.tsx)
+  useEffect(() => {
+    const handleExternalSearch = (e: CustomEvent<{ query: string; forceAI: boolean }>) => {
+      const { query, forceAI } = e.detail;
+      setLocalSearchQuery(query);
+      if (forceAI) {
+        performAISearch(query);
+      }
+    };
+
+    window.addEventListener('notebook-search', handleExternalSearch as EventListener);
+    return () => window.removeEventListener('notebook-search', handleExternalSearch as EventListener);
+  }, []);
+
+  // Clear AI results when search query is cleared
+  useEffect(() => {
+    if (!localSearchQuery.trim()) {
+      setAiSearchResult(null);
+      setAiSearchError(null);
+      setVocabIndex(0);
+    }
+  }, [localSearchQuery]);
+
+  // Auto-pronounce when AI search result loads or when swiping between meanings
+  useEffect(() => {
+    if (aiSearchResult && aiSearchResult.vocabs && aiSearchResult.vocabs.length > 0) {
+      const currentVocab = aiSearchResult.vocabs[vocabIndex];
+      if (currentVocab?.word) {
+        // Small delay to ensure UI has updated
+        const timer = setTimeout(() => {
+          speak(currentVocab.word);
+        }, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [aiSearchResult, vocabIndex]);
+
+  const performAISearch = async (text: string) => {
+    if (!text.trim()) return;
+    
+    // Check if offline
+    if (!navigator.onLine) {
+      setAiSearchError("You're offline. AI search only works when connected.");
+      return;
+    }
+
+    const currentSearchId = ++searchRequestId.current;
+    setAiSearchLoading(true);
+    setAiSearchError(null);
+    setAiSearchResult(null);
+    setVocabIndex(0);
+
+    try {
+      const rawData = await analyzeInput(text);
+      if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
+
+      setAiSearchResult(rawData);
+      setAiSearchLoading(false);
+
+      // Generate images in background
+      if (rawData.visualKeyword) {
+        generateIllustration(rawData.visualKeyword, '16:9').then(img => {
+          if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
+          if (img) {
+            setAiSearchResult(prev => prev ? { ...prev, imageUrl: img } : null);
+          }
+        });
+      }
+
+      // Generate vocab images
+      for (const vocab of rawData.vocabs || []) {
+        if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
+        if (vocab.imagePrompt) {
+          generateIllustration(vocab.imagePrompt, '16:9').then(img => {
+            if (!isMounted.current || currentSearchId !== searchRequestId.current) return;
+            if (img) {
+              setAiSearchResult(prev => {
+                if (!prev) return null;
+                const newVocabs = (prev.vocabs || []).map(v =>
+                  v.id === vocab.id ? { ...v, imageUrl: img } : v
+                );
+                return { ...prev, vocabs: newVocabs };
+              });
+            }
+          });
+        }
+      }
+    } catch (err: any) {
+      if (isMounted.current && currentSearchId === searchRequestId.current) {
+        const msg = err.message || '';
+        if (msg === 'QUOTA_EXCEEDED') {
+          setAiSearchError("Daily AI limit reached. Please try again later.");
+        } else {
+          setAiSearchError("Search failed. Please check your connection and try again.");
+        }
+        setAiSearchLoading(false);
+      }
+    }
+  };
+
+  const handleSearchSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!localSearchQuery.trim()) return;
+    
+    // Trigger AI search (will be called when user presses enter or clicks arrow)
+    performAISearch(localSearchQuery);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSearchSubmit();
+    }
+  };
+
+  const handlePasteAndSearch = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && text.trim()) {
+        setLocalSearchQuery(text.trim());
+        // Trigger AI search immediately for pasted content
+        performAISearch(text.trim());
+        searchInputRef.current?.focus();
+      }
+    } catch (err) {
+      console.warn("Clipboard read failed, please paste manually", err);
+      searchInputRef.current?.focus();
+    }
+  };
+
+  const toggleSaveVocab = (vocab: VocabCard) => {
+    const word = vocab.word || '';
+    if (!word || !vocab.id) return;
+
+    // Check if already saved
+    const savedVocabMatch = items.find(item => 
+      item.data.id === vocab.id || 
+      (getItemTitle(item).toLowerCase().trim() === word.toLowerCase().trim() && 
+       item.type === 'vocab' && 
+       (item.data as VocabCard).sense === vocab.sense)
+    );
+
+    if (savedVocabMatch) {
+      onDelete(savedVocabMatch.data.id);
+    } else {
+      onSave({
+        data: vocab,
+        type: 'vocab',
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
+      });
+    }
+  };
+
+  // Scroll container ref for position restoration
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Restore scroll position on mount
+  useEffect(() => {
+    const savedScroll = localStorage.getItem('notebook_scroll_position');
+    if (savedScroll && scrollContainerRef.current) {
+      const scrollY = parseInt(savedScroll, 10);
+      // Delay to ensure content is rendered
+      setTimeout(() => {
+        scrollContainerRef.current?.scrollTo(0, scrollY);
+      }, 100);
+    }
+  }, []);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const currentScrollY = e.currentTarget.scrollTop;
@@ -353,10 +627,14 @@ export const NotebookView: React.FC<NotebookProps> = ({
     }
     
     lastScrollY.current = currentScrollY;
+    
+    // Save scroll position for iOS PWA resume
+    localStorage.setItem('notebook_scroll_position', currentScrollY.toString());
+    
     onScroll?.(e);
   };
   
-  const { displayItems, groupedItems, archivedItems, archivedGroups } = React.useMemo(() => {
+  const { displayItems, groupedItems, archivedItems, archivedGroups, hasExactMatch } = React.useMemo(() => {
     // 1. Fuzzy Search
     let processedItems = items;
     
@@ -471,36 +749,112 @@ export const NotebookView: React.FC<NotebookProps> = ({
       return groups;
     };
     
+    // Check for exact match (case-insensitive)
+    const queryLower = localSearchQuery.toLowerCase().trim();
+    const hasExactMatch = queryLower ? items.some(item => {
+      if (item.isDeleted) return false;
+      const title = item.type === 'phrase' 
+        ? (item.data as any).query?.toLowerCase().trim()
+        : (item.data as any).word?.toLowerCase().trim();
+      return title === queryLower;
+    }) : false;
+    
     return { 
       displayItems: activeFiltered, 
       groupedItems: groupByTitle(activeFiltered),
       archivedItems: archivedFiltered,
-      archivedGroups: groupByTitle(archivedFiltered)
+      archivedGroups: groupByTitle(archivedFiltered),
+      hasExactMatch
     };
   }, [items, sortMode, filterMode, localSearchQuery]);
 
-  if (displayItems.length === 0 && !localSearchQuery) {
+  if (displayItems.length === 0 && !localSearchQuery && !aiSearchResult && !aiSearchLoading) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50">
-        <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
-          <BookOpen size={32} className="text-indigo-300" />
+      <div className="h-full bg-slate-50 overflow-y-auto">
+        {/* Search Bar at top */}
+        <div className="sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md border-b border-slate-200/50 px-6 py-4">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
+              <p className="text-xs text-slate-500 font-medium">0 items saved</p>
+            </div>
+            <UserMenu 
+              user={user} 
+              onSignIn={onSignIn} 
+              onSignOut={onSignOut} 
+            />
+          </div>
+          <form onSubmit={handleSearchSubmit} className="relative group">
+            <button
+              type="button"
+              onClick={handlePasteAndSearch}
+              className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 text-slate-400 hover:text-indigo-600 rounded-lg flex items-center justify-center transition-all hover:bg-slate-100"
+              title="Paste and Search"
+            >
+              <Clipboard size={16} />
+            </button>
+            <input 
+              ref={searchInputRef}
+              type="text"
+              value={localSearchQuery}
+              onChange={(e) => setLocalSearchQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Search for words or phrases to learn..."
+              className="w-full pl-11 pr-20 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
+            />
+            <button 
+              type="submit"
+              disabled={!localSearchQuery.trim() || aiSearchLoading}
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-indigo-600 text-white rounded-lg flex items-center justify-center hover:bg-indigo-700 disabled:opacity-0 disabled:scale-90 transition-all shadow-sm"
+              title="Search online"
+            >
+              {aiSearchLoading ? <Loader2 className="animate-spin" size={16} /> : <ArrowRight size={16} />}
+            </button>
+          </form>
         </div>
-        <h3 className="text-xl font-bold text-slate-700 mb-2">Your notebook is empty</h3>
-        <p className="text-sm mb-8 max-w-xs mx-auto">Save words and phrases from your searches to build your personalized learning library.</p>
-        
-        <div className="flex justify-center">
-          <UserMenu 
-            user={user} 
-            onSignIn={onSignIn} 
-            onSignOut={onSignOut} 
-          />
+
+        {/* Empty state content */}
+        <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 text-center">
+          <div className="relative mb-8 group">
+            <div className="absolute inset-0 bg-indigo-500 rounded-3xl blur-2xl opacity-20 group-hover:opacity-30 transition-opacity duration-500"></div>
+            <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-3xl flex items-center justify-center text-white shadow-xl shadow-indigo-200 relative z-10 transform transition-transform duration-500 hover:rotate-3 hover:scale-105">
+              <Search size={48} strokeWidth={2.5} />
+            </div>
+          </div>
+          
+          <h1 className="text-3xl font-bold text-slate-900 mb-3 tracking-tight">
+            What would you like to learn?
+          </h1>
+          <p className="text-slate-500 max-w-xs mb-10 text-lg leading-relaxed">
+            Search for any word, phrase, or idiom to get instant AI-powered insights and examples.
+          </p>
+          
+          <div className="w-full max-w-md space-y-4">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Try These</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {[
+                { t: "serendipity", i: "📚" },
+                { t: "break the ice", i: "💬" },
+                { t: "ephemeral", i: "⏰" },
+                { t: "hit the nail on the head", i: "🎯" }
+              ].map((item) => (
+                <button 
+                  key={item.t}
+                  onClick={() => { setLocalSearchQuery(item.t); performAISearch(item.t); }}
+                  className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all active:scale-95 shadow-sm"
+                >
+                  <span className="mr-2 opacity-80">{item.i}</span> {item.t}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-y-auto overflow-x-hidden bg-slate-50" onScroll={handleScroll}>
+    <div ref={scrollContainerRef} className="h-full overflow-y-auto overflow-x-hidden bg-slate-50" onScroll={handleScroll}>
       {/* Header */}
       <div className={`sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md border-b border-slate-200/50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
         <div className="px-6 py-4 flex justify-between items-center">
@@ -576,25 +930,45 @@ export const NotebookView: React.FC<NotebookProps> = ({
         
         {/* Search Bar */}
         <div className="px-6 pb-4">
-          <div className="relative group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16} />
+          <form onSubmit={handleSearchSubmit} className="relative group">
+            {/* Paste button */}
+            <button
+              type="button"
+              onClick={handlePasteAndSearch}
+              className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 text-slate-400 hover:text-indigo-600 rounded-lg flex items-center justify-center transition-all hover:bg-slate-100"
+              title="Paste and Search"
+            >
+              <Clipboard size={16} />
+            </button>
             <input 
+              ref={searchInputRef}
               type="text"
               value={localSearchQuery}
               onChange={(e) => setLocalSearchQuery(e.target.value)}
-              placeholder="Search notebook..."
-              className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
+              onKeyDown={handleKeyDown}
+              placeholder="Search notebook or look up new words..."
+              className="w-full pl-11 pr-20 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
             />
             {localSearchQuery && (
               <button 
+                type="button"
                 onClick={() => setLocalSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100 transition-colors"
+                className="absolute right-10 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100 transition-colors"
                 title="Clear search"
               >
                 <X size={14} />
               </button>
             )}
-          </div>
+            {/* Search/Submit button */}
+            <button 
+              type="submit"
+              disabled={!localSearchQuery.trim() || aiSearchLoading}
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-indigo-600 text-white rounded-lg flex items-center justify-center hover:bg-indigo-700 disabled:opacity-0 disabled:scale-90 transition-all shadow-sm"
+              title="Search online"
+            >
+              {aiSearchLoading ? <Loader2 className="animate-spin" size={16} /> : <ArrowRight size={16} />}
+            </button>
+          </form>
         </div>
       </div>
 
@@ -622,6 +996,118 @@ export const NotebookView: React.FC<NotebookProps> = ({
       )}
 
       <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-3 w-full max-w-screen-md mx-auto">
+        {/* Show AI Search UI when no exact match OR when we already have AI search results */}
+        {/* Keep showing results even after saving (which creates an exact match) */}
+        {localSearchQuery.trim() && (!hasExactMatch || aiSearchResult || aiSearchLoading) && (
+          <>
+            {/* AI Search Loading */}
+            {aiSearchLoading && !aiSearchResult && (
+              <div className="flex flex-col items-center justify-center py-16 fade-in">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 animate-pulse"></div>
+                  <Loader2 className="animate-spin text-indigo-600 mb-4 relative z-10" size={40} />
+                </div>
+                <p className="text-slate-500 font-medium animate-pulse">Analyzing "{localSearchQuery}"...</p>
+              </div>
+            )}
+
+            {/* AI Search Error */}
+            {aiSearchError && (
+              <div className="p-6 text-center bg-red-50 rounded-2xl border border-red-100 flex flex-col items-center animate-in slide-in-from-bottom-4">
+                <div className="w-12 h-12 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-3">
+                  <AlertCircle size={24} />
+                </div>
+                <h3 className="font-bold text-slate-800 mb-1">Something went wrong</h3>
+                <p className="text-sm text-slate-600 mb-4">{aiSearchError}</p>
+                <Button variant="secondary" size="sm" className="text-red-600 hover:bg-red-100 border-red-200" onClick={() => performAISearch(localSearchQuery)}>
+                  Try Again
+                </Button>
+              </div>
+            )}
+
+            {/* AI Search Results */}
+            {aiSearchResult && (
+              <div ref={aiSearchCarouselRef} className="fade-in">
+                <div className="flex items-center gap-2 mb-3 px-1">
+                  <Search size={14} className="text-indigo-500" />
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Search Results</span>
+                </div>
+                
+                {/* Vocab Cards Carousel */}
+                {(aiSearchResult.vocabs || []).length > 0 && (
+                  <div className="space-y-3">
+                    {(() => {
+                      const vocabs = aiSearchResult.vocabs || [];
+                      const totalVocabs = vocabs.length;
+                      const currentVocab = vocabs[vocabIndex] || vocabs[0];
+                      
+                      if (!currentVocab) return null;
+                      
+                      const isVocabSaved = items.some(i => 
+                        i.data.id === currentVocab.id || 
+                        (getItemTitle(i).toLowerCase().trim() === (currentVocab.word || '').toLowerCase().trim() && 
+                         i.type === 'vocab' && 
+                         (i.data as VocabCard).sense === currentVocab.sense)
+                      );
+                      
+                      return (
+                        <>
+                          {/* Meaning number badge */}
+                          {totalVocabs > 1 && (
+                            <div className="flex items-center gap-2 px-1">
+                              <span className="text-xs text-slate-500">Meaning {vocabIndex + 1} of {totalVocabs}</span>
+                            </div>
+                          )}
+                          
+                          <VocabCardDisplay 
+                            data={currentVocab} 
+                            onSave={() => toggleSaveVocab(currentVocab)}
+                            isSaved={isVocabSaved}
+                            onSearch={onSearch}
+                            scrollable={false}
+                            className="border-slate-200 shadow-sm"
+                          />
+                          
+                          {/* Dot indicators */}
+                          {totalVocabs > 1 && (
+                            <div className="flex justify-center gap-1.5">
+                              {vocabs.map((_, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => setVocabIndex(idx)}
+                                  className={`w-2 h-2 rounded-full transition-all ${
+                                    idx === vocabIndex 
+                                      ? 'bg-indigo-600 w-4' 
+                                      : 'bg-slate-300 hover:bg-slate-400'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* No Matches Prompt - show when no local results at all and no AI search active */}
+            {!aiSearchLoading && !aiSearchResult && !aiSearchError && displayItems.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-12 text-center fade-in">
+                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
+                  <Search size={28} className="text-slate-400" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-700 mb-2">No matches in notebook</h3>
+                <p className="text-sm text-slate-500 mb-6 max-w-xs">
+                  "{localSearchQuery}" isn't saved yet. Press the arrow to search online.
+                </p>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Regular notebook items */}
         {groupedItems.map((group, index) => (
           <NotebookGroup
             key={group.title}

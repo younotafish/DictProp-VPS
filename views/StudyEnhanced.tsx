@@ -61,28 +61,136 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   userId,
   onLazyLoadImage
 }) => {
-  const [mode, setMode] = useState<StudyMode>('dashboard');
-  const [queue, setQueue] = useState<StoredItem[]>([]);
-  const [sessionStartTime, setSessionStartTime] = useState(0);
-  const [sessionTotal, setSessionTotal] = useState(0);
+  // Restore study session state from localStorage for iOS PWA resume
+  const [mode, setMode] = useState<StudyMode>(() => {
+    const saved = localStorage.getItem('study_mode');
+    // Only restore 'session' if we have a saved queue
+    if (saved === 'session' && localStorage.getItem('study_queue')) {
+      return 'session';
+    }
+    return 'dashboard';
+  });
+  
+  const [queue, setQueue] = useState<StoredItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('study_queue');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to restore study queue", e);
+    }
+    return [];
+  });
+  
+  const [sessionStartTime, setSessionStartTime] = useState(() => {
+    const saved = localStorage.getItem('study_session_start');
+    return saved ? parseInt(saved, 10) : 0;
+  });
+  
+  const [sessionTotal, setSessionTotal] = useState(() => {
+    const saved = localStorage.getItem('study_session_total');
+    return saved ? parseInt(saved, 10) : 0;
+  });
+  
   const [isFlipped, setIsFlipped] = useState(false);
-  const [cardStartTime, setCardStartTime] = useState(0);
+  const [cardStartTime, setCardStartTime] = useState(Date.now());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
-  const [meaningIndex, setMeaningIndex] = useState(0); // For carousel navigation within same-spelling words
+  
+  const [meaningIndex, setMeaningIndex] = useState(() => {
+    const saved = localStorage.getItem('study_meaning_index');
+    return saved ? parseInt(saved, 10) : 0;
+  });
+  
   const touchStartX = React.useRef<number | null>(null);
   const touchStartY = React.useRef<number | null>(null);
   const touchStartTime = React.useRef<number | null>(null);
   
-  const [sessionStats, setSessionStats] = useState({
-    reviews: 0,
-    correct: 0,
-    totalTime: 0
+  const [sessionStats, setSessionStats] = useState(() => {
+    try {
+      const saved = localStorage.getItem('study_session_stats');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          reviews: parsed.reviews || 0,
+          correct: parsed.correct || 0,
+          totalTime: parsed.totalTime || 0
+        };
+      }
+    } catch (e) {
+      console.warn("Failed to restore session stats", e);
+    }
+    return { reviews: 0, correct: 0, totalTime: 0 };
   });
+  
+  // Persist study session state for iOS PWA resume
+  useEffect(() => {
+    localStorage.setItem('study_mode', mode);
+    if (mode !== 'session') {
+      // Clear session data when not in session
+      localStorage.removeItem('study_queue');
+      localStorage.removeItem('study_session_start');
+      localStorage.removeItem('study_session_total');
+      localStorage.removeItem('study_session_stats');
+      localStorage.removeItem('study_meaning_index');
+    }
+  }, [mode]);
+  
+  useEffect(() => {
+    if (mode === 'session' && queue.length > 0) {
+      try {
+        localStorage.setItem('study_queue', JSON.stringify(queue));
+      } catch (e) {
+        console.warn("Failed to save study queue", e);
+      }
+    }
+  }, [queue, mode]);
+  
+  useEffect(() => {
+    if (sessionStartTime > 0) {
+      localStorage.setItem('study_session_start', sessionStartTime.toString());
+    }
+  }, [sessionStartTime]);
+  
+  useEffect(() => {
+    if (sessionTotal > 0) {
+      localStorage.setItem('study_session_total', sessionTotal.toString());
+    }
+  }, [sessionTotal]);
+  
+  useEffect(() => {
+    if (mode === 'session') {
+      localStorage.setItem('study_session_stats', JSON.stringify(sessionStats));
+    }
+  }, [sessionStats, mode]);
+  
+  useEffect(() => {
+    localStorage.setItem('study_meaning_index', meaningIndex.toString());
+  }, [meaningIndex]);
 
   // Historical session data from Firebase
   const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  
+  // Scroll container ref for position restoration
+  const dashboardScrollRef = React.useRef<HTMLDivElement>(null);
+  
+  // Restore dashboard scroll position on mount
+  useEffect(() => {
+    if (mode === 'dashboard') {
+      const savedScroll = localStorage.getItem('study_dashboard_scroll');
+      if (savedScroll && dashboardScrollRef.current) {
+        const scrollY = parseInt(savedScroll, 10);
+        setTimeout(() => {
+          dashboardScrollRef.current?.scrollTo(0, scrollY);
+        }, 100);
+      }
+    }
+  }, [mode]);
 
   // Helper to get the title/spelling of an item
   const getItemSpelling = (item: StoredItem): string => {
@@ -105,6 +213,24 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     
     return siblings.length > 0 ? siblings : [queue[0]];
   }, [queue, items]);
+
+  // Validate and sync restored queue with current items (in case items were deleted while app was in background)
+  useEffect(() => {
+    if (mode === 'session' && queue.length > 0 && items.length > 0) {
+      const itemIds = new Set(items.map(i => i.data.id));
+      const validQueue = queue.filter(q => itemIds.has(q.data.id));
+      
+      if (validQueue.length !== queue.length) {
+        console.log(`📋 Cleaned study queue: ${queue.length} → ${validQueue.length} items`);
+        if (validQueue.length === 0) {
+          // No valid items left, go back to dashboard
+          setMode('dashboard');
+        } else {
+          setQueue(validQueue);
+        }
+      }
+    }
+  }, [items, mode]); // Only run when items change or mode changes
 
   const siblingMeanings = getSiblingMeanings();
   const hasMutipleMeanings = siblingMeanings.length > 1;
@@ -751,7 +877,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const maxReviews = Math.max(...stats.last7Days.map(d => d.reviews), 1);
 
     return (
-      <div className="h-full overflow-y-auto bg-slate-50 p-6 pb-[calc(5rem+env(safe-area-inset-bottom))]" onScroll={onScroll}>
+      <div 
+        ref={dashboardScrollRef}
+        className="h-full overflow-y-auto bg-slate-50 p-6 pb-[calc(5rem+env(safe-area-inset-bottom))]" 
+        onScroll={(e) => {
+          localStorage.setItem('study_dashboard_scroll', e.currentTarget.scrollTop.toString());
+          onScroll?.(e);
+        }}
+      >
         <h2 className="text-3xl font-bold text-slate-800 mb-1">Today&apos;s Study</h2>
         <p className="text-slate-500 mb-8">Adaptive recall with spaced repetition</p>
 

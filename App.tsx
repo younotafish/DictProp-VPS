@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { SearchView } from './views/Search';
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
 import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, VocabCard, SearchResult, AppUser, ItemGroup } from './types';
-import { Search, Book, BrainCircuit, Keyboard } from 'lucide-react';
+import { Book, BrainCircuit, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash } from './services/firebase';
@@ -36,7 +35,10 @@ const ShortcutRow: React.FC<{ keys: string[], description: string }> = ({ keys, 
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
-    return (localStorage.getItem('app_current_view') as ViewState) || 'search';
+    const saved = localStorage.getItem('app_current_view') as ViewState;
+    // Default to notebook, and redirect 'search' to 'notebook' since search was removed
+    if (!saved || saved === 'search') return 'notebook';
+    return saved;
   });
 
   // Persist current view
@@ -45,8 +47,21 @@ const App: React.FC = () => {
   }, [currentView]);
   
   // Simplified sync state (items only)
-  const [syncState, setSyncState] = useState<SyncState>({
-    items: []
+  // Try to instantly restore from localStorage cache for faster perceived load
+  const [syncState, setSyncState] = useState<SyncState>(() => {
+    try {
+      const cached = localStorage.getItem('app_items_cache');
+      if (cached) {
+        const items = JSON.parse(cached);
+        if (Array.isArray(items) && items.length > 0) {
+          console.log(`⚡ Instant restore: ${items.length} items from cache`);
+          return { items };
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to restore items from cache", e);
+    }
+    return { items: [] };
   });
   
   // Track last successful sync timestamp to enable Delta Sync
@@ -61,23 +76,16 @@ const App: React.FC = () => {
   // Items available for study (excludes archived)
   const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived), [savedItems]);
   
-  const [recursiveQuery, setRecursiveQuery] = useState<string | undefined>(() => {
-      return localStorage.getItem('app_last_query') || undefined;
+  // Start as "loaded" if we have cached items (instant UI) 
+  // Full data will be loaded from IndexedDB in background
+  const [isLoaded, setIsLoaded] = useState(() => {
+    try {
+      const cached = localStorage.getItem('app_items_cache');
+      return cached ? JSON.parse(cached).length > 0 : false;
+    } catch {
+      return false;
+    }
   });
-  
-  // Force refresh flag - when true, SearchView will bypass local cache and call AI
-  const [forceRefreshSearch, setForceRefreshSearch] = useState(false);
-  
-  useEffect(() => {
-      if (recursiveQuery) {
-          localStorage.setItem('app_last_query', recursiveQuery);
-      } else {
-          localStorage.removeItem('app_last_query');
-      }
-  }, [recursiveQuery]);
-
-  const [selectedStoredItem, setSelectedStoredItem] = useState<StoredItem | undefined>(undefined);
-  const [isLoaded, setIsLoaded] = useState(false);
   const [showNav, setShowNav] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
   
@@ -133,24 +141,14 @@ const App: React.FC = () => {
 
   // Keyboard shortcuts help modal
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
-  const searchInputRef = useRef<HTMLTextAreaElement>(null);
   
-  // Global keyboard navigation for tab switching (1, 2, 3 keys)
+  // Global keyboard navigation for tab switching (1, 2 keys)
   useGlobalNavigation({
-    onNavigateToSearch: () => {
-      setCurrentView('search');
-      setRecursiveQuery(undefined);
-      setSelectedStoredItem(undefined);
-    },
     onNavigateToNotebook: () => {
       setCurrentView('notebook');
-      setRecursiveQuery(undefined);
-      setSelectedStoredItem(undefined);
     },
     onNavigateToStudy: () => {
       setCurrentView('study');
-      setRecursiveQuery(undefined);
-      setSelectedStoredItem(undefined);
     },
     enabled: !detailContext && !confirmModal && !showKeyboardHelp, // Disable when modals are open
   });
@@ -168,15 +166,15 @@ const App: React.FC = () => {
         }
       }
       
-      // Cmd+F to focus search
+      // Cmd+F to focus notebook search
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
         e.preventDefault();
-        setCurrentView('search');
-        // Focus will be handled by SearchView
+        setCurrentView('notebook');
+        // Focus notebook search input
         setTimeout(() => {
-          const textarea = document.querySelector('textarea[placeholder*="learn"]') as HTMLTextAreaElement;
-          textarea?.focus();
-          textarea?.select();
+          const input = document.querySelector('input[placeholder*="Search notebook"]') as HTMLInputElement;
+          input?.focus();
+          input?.select();
         }, 100);
       }
       
@@ -206,18 +204,21 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Force refresh logic for iOS PWA
+  // iOS PWA: Sync data when returning from background (instead of forcing reload)
   useEffect(() => {
-      const handleVisibilityChange = () => {
+      const handleVisibilityChange = async () => {
           if (document.visibilityState === 'visible') {
               const lastHiddenStr = localStorage.getItem('app_last_hidden');
               if (lastHiddenStr) {
                   const lastHidden = parseInt(lastHiddenStr, 10);
                   const now = Date.now();
-                  // If app was in background for more than 30 seconds, reload to refresh state
-                  if (now - lastHidden > 30 * 1000) {
-                      console.log("🔄 App was backgrounded for >30s, refreshing...");
-                      window.location.reload();
+                  // If app was in background for more than 30 seconds, trigger background sync
+                  // (instead of a jarring full page reload)
+                  if (now - lastHidden > 30 * 1000 && user && isOnline && isFirebaseConfigured) {
+                      console.log("🔄 App was backgrounded for >30s, syncing in background...");
+                      // Trigger a force sync instead of reloading the page
+                      // This keeps the UI responsive while updating data
+                      handleForceSync();
                   }
               }
               localStorage.removeItem('app_last_hidden');
@@ -228,7 +229,7 @@ const App: React.FC = () => {
       
       document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
+  }, [user, isOnline, isFirebaseConfigured]);
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
@@ -429,6 +430,31 @@ const App: React.FC = () => {
       unsubscribeAuth();
     };
   }, [isFirebaseConfigured]);
+
+  // Cache items to localStorage for instant restoration on iOS PWA reload
+  // Strip images to stay within 5MB localStorage limit
+  useEffect(() => {
+    if (!isLoaded || syncState.items.length === 0) return;
+    
+    try {
+      // Create a lightweight cache by stripping large base64 images
+      const cacheItems = syncState.items.map(item => ({
+        ...item,
+        data: {
+          ...item.data,
+          imageUrl: undefined, // Strip image
+          vocabs: item.type === 'phrase' && (item.data as any).vocabs 
+            ? (item.data as any).vocabs.map((v: any) => ({ ...v, imageUrl: undefined }))
+            : undefined
+        }
+      }));
+      
+      localStorage.setItem('app_items_cache', JSON.stringify(cacheItems));
+    } catch (e) {
+      // If quota exceeded, try to save just item count for UI feedback
+      console.warn("Failed to cache items to localStorage", e);
+    }
+  }, [syncState.items, isLoaded]);
 
   // 3. SAVE EFFECTS (Persistence + Simple Item Sync)
   useEffect(() => {
@@ -679,6 +705,8 @@ const App: React.FC = () => {
   const handleSignOut = async () => {
       await signOut();
       setUser(null);
+      // Clear cached items to prevent stale data on next load
+      localStorage.removeItem('app_items_cache');
   };
 
 
@@ -1061,21 +1089,25 @@ const App: React.FC = () => {
     });
   };
 
+  // Search handler - now triggers search in notebook
   const handleRecursiveSearch = (text: string) => {
-      setRecursiveQuery(text);
-      setSelectedStoredItem(undefined);
-      setCurrentView('search');
+      setCurrentView('notebook');
       setDetailContext(null);
-      setForceRefreshSearch(false); // Normal search, check local first
+      // The notebook will handle the search via its own search bar
+      // We dispatch a custom event to set the search query
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: false } }));
+      }, 100);
   };
 
   // Force refresh search - bypasses local cache and calls AI
   const handleForceRefreshSearch = (text: string) => {
-      setRecursiveQuery(text);
-      setSelectedStoredItem(undefined);
-      setCurrentView('search');
+      setCurrentView('notebook');
       setDetailContext(null);
-      setForceRefreshSearch(true); // Force real AI search
+      // Dispatch event to trigger AI search in notebook
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: true } }));
+      }, 100);
   };
 
   // Updated handler to support groups
@@ -1155,7 +1187,7 @@ const App: React.FC = () => {
 
   const NavButton = ({ view, icon: Icon, label }: { view: ViewState, icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, label: string }) => (
     <button 
-      onClick={() => { setCurrentView(view); setRecursiveQuery(undefined); setSelectedStoredItem(undefined); }}
+      onClick={() => setCurrentView(view)}
       className={`flex flex-col items-center justify-center flex-1 py-3 gap-1 transition-colors ${currentView === view ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
     >
       <Icon size={24} strokeWidth={currentView === view ? 2.5 : 2} />
@@ -1212,41 +1244,6 @@ const App: React.FC = () => {
       )}
 
       <main className="flex-1 relative w-full min-h-0 overflow-hidden">
-        <div className={`h-full w-full ${currentView === 'search' ? 'block' : 'hidden'}`}>
-             <SearchView 
-                onSave={handleSave} 
-                onUpdateStoredItem={handleUpdateStoredItem}
-                onDelete={handleDelete} 
-                savedItems={activeItems} 
-                initialQuery={recursiveQuery}
-                initialData={selectedStoredItem}
-                forceRefresh={forceRefreshSearch}
-                onForceRefreshComplete={() => setForceRefreshSearch(false)}
-                onViewDetail={(data, type) => {
-                    // For search view detail, we create a temporary group with just this item
-                    const id = (data as any).id || 'temp';
-                    const item: StoredItem = { 
-                        data, 
-                        type, 
-                        srs: SRSAlgorithm.createNew(id, type), 
-                        savedAt: 0 
-                    };
-                    const title = getItemTitle(item);
-                    
-                    setDetailContext({ 
-                        groups: [{ title, items: [item] }],
-                        groupIndex: 0,
-                        itemIndex: 0
-                    });
-                }}
-                onScroll={handleScroll}
-                onClear={() => {
-                    setRecursiveQuery(undefined);
-                    setSelectedStoredItem(undefined);
-                }}
-            />
-        </div>
-        
         {currentView === 'notebook' && (
           <NotebookView 
             items={activeItems} 
@@ -1264,6 +1261,8 @@ const App: React.FC = () => {
             bulkRefreshProgress={bulkRefreshProgress}
             onArchive={handleArchive}
             onUnarchive={handleUnarchive}
+            onSave={handleSave}
+            onUpdateStoredItem={handleUpdateStoredItem}
           />
         )}
         
@@ -1282,7 +1281,6 @@ const App: React.FC = () => {
       </main>
 
       <nav className={`fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
-        <NavButton view="search" icon={Search} label="Search" />
         <NavButton view="notebook" icon={Book} label="Notebook" />
         <NavButton view="study" icon={BrainCircuit} label="Study" />
         {/* Keyboard shortcuts hint - only visible on desktop */}
@@ -1321,9 +1319,8 @@ const App: React.FC = () => {
               <div>
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Navigation</h4>
                 <div className="space-y-2">
-                  <ShortcutRow keys={['1']} description="Go to Search" />
-                  <ShortcutRow keys={['2']} description="Go to Notebook" />
-                  <ShortcutRow keys={['3']} description="Go to Study" />
+                  <ShortcutRow keys={['1']} description="Go to Notebook" />
+                  <ShortcutRow keys={['2']} description="Go to Study" />
                   <ShortcutRow keys={['⌘', 'F']} description="Focus search input" />
                   <ShortcutRow keys={['Esc']} description="Close modal / Go back" />
                 </div>

@@ -84,7 +84,7 @@ export interface ItemGroup {
 
 export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
-export type ViewState = 'search' | 'notebook' | 'study';
+export type ViewState = 'notebook' | 'study';
 
 // Simplified sync state (operation-based sync was removed due to Firestore limits)
 export interface SyncState {
