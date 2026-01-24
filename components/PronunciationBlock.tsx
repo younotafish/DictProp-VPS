@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Volume2 } from 'lucide-react';
 import { speak } from '../services/speech';
+import { error as logError } from '../services/logger';
 
 interface PronunciationBlockProps {
   text: string; // Text to speak
@@ -38,14 +39,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
     };
   }, []);
 
-  useEffect(() => {
-    if (autoPlay) {
-      handlePlay();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoPlay]);
-
-  const handlePlay = (e?: React.MouseEvent) => {
+  const handlePlay = useCallback((e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
 
     if (!text) return;
@@ -62,15 +56,22 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
         onStart: () => setIsPlaying(true),
         onEnd: () => setIsPlaying(false),
         onError: (event) => {
-          console.error("Speech synthesis error", event);
+          logError("Speech synthesis error", event);
           setIsPlaying(false);
         }
       });
     } catch (err) {
-      console.error("Speech synthesis failed", err);
+      logError("Speech synthesis failed", err);
       setIsPlaying(false);
     }
-  };
+  }, [text, isPlaying]);
+
+  // Auto-play effect
+  useEffect(() => {
+    if (autoPlay && text) {
+      handlePlay();
+    }
+  }, [autoPlay, text, handlePlay]);
 
   return (
     <button 
@@ -97,4 +98,3 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
     </button>
   );
 };
-

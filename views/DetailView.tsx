@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { VocabCard, SearchResult, StoredItem, getItemTitle, ItemGroup } from '../types';
+import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, isVocabItem } from '../types';
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
 import { speak } from '../services/speech';
+import { log, warn } from '../services/logger';
 
 // Helper to format relative time for next review
 const formatRelativeTime = (timestamp: number): string => {
@@ -146,11 +147,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (!currentItem || !onLazyLoadImage) return;
     
     const itemId = currentItem.data.id;
-    const itemData = currentItem.data as any;
+    const imageUrl = getItemImageUrl(currentItem);
     
     // Check if this item is saved and missing an image
     const isSaved = savedItems.some(i => i.data.id === itemId);
-    const hasImage = itemData.imageUrl && itemData.imageUrl.startsWith('data:image/');
+    const hasImage = imageUrl && imageUrl.startsWith('data:image/');
     
     if (isSaved && !hasImage) {
       // Trigger lazy load from Firebase
@@ -158,8 +159,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
     
     // Also check vocab images for phrase type
-    if (isSaved && currentItem.type === 'phrase' && itemData.vocabs) {
-      itemData.vocabs.forEach((vocab: any) => {
+    if (isSaved && isPhraseItem(currentItem) && currentItem.data.vocabs) {
+      currentItem.data.vocabs.forEach((vocab: VocabCard) => {
         if (!vocab.imageUrl && vocab.id) {
           // The parent item ID is used - Firebase stores the whole phrase
           // so we only need to fetch the parent once
@@ -405,15 +406,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
 
   const handleSaveVocab = (vocab: VocabCard) => {
+    const vocabSpelling = (vocab.word || '').toLowerCase().trim();
     const isAlreadySaved = savedItems.some(i => 
-      getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() &&
-      (i.data as any).sense === vocab.sense
+      getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
     );
 
     if (isAlreadySaved) {
       const existingItem = savedItems.find(i => 
-        getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() &&
-        (i.data as any).sense === vocab.sense
+        getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
       );
       if (existingItem) {
         onDelete(existingItem.data.id);
@@ -432,11 +432,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // Use savedItemMatch ID if available, otherwise use currentItem's ID
     const idToDelete = savedItemMatch?.data.id || data.id;
     if (!idToDelete) {
-      console.warn('Delete failed: No valid ID found');
+      warn('Delete failed: No valid ID found');
       return;
     }
     
-    console.log('🗑️ DetailView: Deleting item:', idToDelete, title);
+    log('🗑️ DetailView: Deleting item:', idToDelete, title);
     setShowDeleteConfirm(false);
     setShowActionMenu(false);
     
@@ -450,11 +450,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // Use savedItemMatch ID if available, otherwise use currentItem's ID
     const idToArchive = savedItemMatch?.data.id || data.id;
     if (!idToArchive) {
-      console.warn('Archive failed: No valid ID found');
+      warn('Archive failed: No valid ID found');
       return;
     }
     
-    console.log('📦 DetailView: Archiving item:', idToArchive, title);
+    log('📦 DetailView: Archiving item:', idToArchive, title);
     setShowActionMenu(false);
     
     // App.tsx handles updating detailContext and navigation
@@ -465,7 +465,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // Reset SRS progress
     if (!data.id) return;
     
-    console.log('🔄 DetailView: Resetting SRS for item:', data.id, title);
+    log('🔄 DetailView: Resetting SRS for item:', data.id, title);
     
     const targetTitle = (title || '').toLowerCase().trim();
     // Find all siblings to reset them together (Shared SRS)
@@ -502,7 +502,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, [data, title, type, onSave, savedItems]);
 
   const handleRemember = useCallback(() => {
-    console.log('🧠 DetailView: Marking as remembered via shortcut/gesture');
+    log('🧠 DetailView: Marking as remembered via shortcut/gesture');
     
     // Trigger Success Animation
     setShowSuccessAnim(true);
@@ -562,7 +562,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
        return;
     }
 
-    console.log('👆👆 DetailView: Double click detected');
+    log('👆👆 DetailView: Double click detected');
     handleRemember();
   };
 
@@ -812,7 +812,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         key={vocab.id}
                         data={vocab} 
                         onSave={() => handleSaveVocab(vocab)}
-                        isSaved={savedItems.some(i => getItemTitle(i).toLowerCase().trim() === (vocab.word || '').toLowerCase().trim() && (i.data as any).sense === vocab.sense)}
+                        isSaved={savedItems.some(i => getItemSpelling(i) === (vocab.word || '').toLowerCase().trim() && getItemSense(i) === vocab.sense)}
                         onSearch={handleVocabSearch}
                         scrollable={false}
                         showSave={true}

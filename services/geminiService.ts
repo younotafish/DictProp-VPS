@@ -1,6 +1,7 @@
 import { httpsCallable } from "firebase/functions";
 import { functions } from "./firebase";
 import { SearchResult } from "../types";
+import { log, warn, error as logError } from "./logger";
 
 // Internal ID generator to avoid external dependency issues
 const generateId = (): string => {
@@ -42,7 +43,7 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
       originalQuery: data.originalQuery // Original Chinese input if translated
     };
   } catch (error: any) {
-    console.error("Analysis failed", error);
+    logError("Analysis failed", error);
     
     const msg = error.message || '';
     // Check for quota errors propagated from the server function
@@ -63,10 +64,10 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
  * Returns base64 image data directly (simpler and more reliable than blob storage)
  */
 export const generateIllustration = async (prompt: string, aspectRatio: '16:9' | '9:16' | '4:3' | '1:1' = '1:1'): Promise<string | undefined> => {
-  console.log(`[generateIllustration] Requesting image with aspect ratio: ${aspectRatio}`);
+  log(`[generateIllustration] Requesting image with aspect ratio: ${aspectRatio}`);
   
   if (!functions) {
-      console.warn("Firebase functions not initialized, skipping image generation");
+      warn("Firebase functions not initialized, skipping image generation");
       return undefined;
   }
 
@@ -77,13 +78,13 @@ export const generateIllustration = async (prompt: string, aspectRatio: '16:9' |
     const data = result.data as any;
     
     if (data.error === "QUOTA_EXCEEDED") {
-        console.warn("Image generation skipped: Quota exceeded.");
+        warn("Image generation skipped: Quota exceeded.");
         return undefined;
     }
     
     return data.imageData; // Return base64 directly
   } catch (error: any) {
-    console.warn("Image generation failed", error);
+    warn("Image generation failed", error);
     return undefined; 
   }
 };

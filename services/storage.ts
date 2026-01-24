@@ -1,4 +1,5 @@
 import { StoredItem } from '../types';
+import { log, warn, error as logError } from './logger';
 
 const DB_NAME = 'PopDictDB';
 const STORE_NAME = 'library';
@@ -51,7 +52,7 @@ const getDB = (): Promise<IDBDatabase> => {
     }
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onerror = () => {
-      console.warn("IndexedDB open failed, will use in-memory fallback");
+      warn("IndexedDB open failed, will use in-memory fallback");
       reject(request.error);
     };
     request.onsuccess = () => resolve(request.result);
@@ -76,7 +77,7 @@ export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> 
   const storageKey = getStorageKey(userId);
   
   if (!idbAvailable) {
-    console.warn("IndexedDB not available, using in-memory storage (iOS Safari private mode?)");
+    warn("IndexedDB not available, using in-memory storage (iOS Safari private mode?)");
     // Try to load from localStorage as fallback
     try {
       const localData = localStorage.getItem(`popdict_items_fallback_${userId}`);
@@ -92,7 +93,7 @@ export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> 
         }
       }
     } catch (e) {
-      console.warn("Failed to load from localStorage fallback", e);
+      warn("Failed to load from localStorage fallback", e);
     }
     return inMemoryStorage[userId] || [];
   }
@@ -118,7 +119,7 @@ export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> 
             const legacyRequest = store.get('user_items');
             legacyRequest.onsuccess = () => {
               if (legacyRequest.result && Array.isArray(legacyRequest.result)) {
-                console.log("📦 Found legacy data, migrating to guest storage...");
+                log("📦 Found legacy data, migrating to guest storage...");
                 const validLegacy = legacyRequest.result.filter((i: any) => 
                   i && i.data && i.data.id && i.type
                 );
@@ -137,7 +138,7 @@ export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> 
           const legacyRequest = store.get('user_items');
           legacyRequest.onsuccess = () => {
             if (legacyRequest.result && Array.isArray(legacyRequest.result)) {
-              console.log("📦 Found legacy data, migrating to guest storage...");
+              log("📦 Found legacy data, migrating to guest storage...");
               const validLegacy = legacyRequest.result.filter((i: any) => 
                 i && i.data && i.data.id && i.type
               );
@@ -154,7 +155,7 @@ export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> 
       request.onerror = () => reject(request.error);
     });
   } catch (error) {
-    console.error("IDB Load Error", error);
+    logError("IDB Load Error", error);
     // Fall back to in-memory storage
     return inMemoryStorage[userId] || [];
   }
@@ -165,13 +166,13 @@ export const saveData = async (items: StoredItem[], userId: string = 'guest'): P
   const storageKey = getStorageKey(userId);
   
   if (!idbAvailable) {
-    console.warn("IndexedDB not available, saving to in-memory storage");
+    warn("IndexedDB not available, saving to in-memory storage");
     inMemoryStorage[userId] = items;
     // Also try to save to localStorage as a fallback persistence layer
     try {
       localStorage.setItem(`popdict_items_fallback_${userId}`, JSON.stringify(items));
     } catch (e) {
-      console.warn("Failed to save to localStorage fallback (quota exceeded?)", e);
+      warn("Failed to save to localStorage fallback (quota exceeded?)", e);
     }
     return;
   }
@@ -188,13 +189,13 @@ export const saveData = async (items: StoredItem[], userId: string = 'guest'): P
       request.onerror = () => reject(request.error);
     });
   } catch (error) {
-    console.error("IDB Save Error", error);
+    logError("IDB Save Error", error);
     // Fall back to in-memory storage
     inMemoryStorage[userId] = items;
     try {
       localStorage.setItem(`popdict_items_fallback_${userId}`, JSON.stringify(items));
     } catch (e) {
-      console.warn("Failed to save to localStorage fallback", e);
+      warn("Failed to save to localStorage fallback", e);
     }
   }
 };
@@ -206,13 +207,13 @@ export const migrateFromLocalStorage = async (): Promise<StoredItem[] | null> =>
         try {
             const parsed = JSON.parse(localData);
             if (Array.isArray(parsed)) {
-                console.log("Migrating data from LocalStorage to IndexedDB...");
+                log("Migrating data from LocalStorage to IndexedDB...");
                 await saveData(parsed);
                 localStorage.removeItem('popdict_items'); // Clear old storage
                 return parsed;
             }
         } catch (e) {
-            console.warn("Migration failed", e);
+            warn("Migration failed", e);
         }
     }
     return null;

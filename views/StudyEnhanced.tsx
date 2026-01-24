@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { recordStudySession, loadSessionHistory, SessionRecord } from '../services/firebase';
+import { log, warn, error as logError } from '../services/logger';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
@@ -81,7 +82,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         }
       }
     } catch (e) {
-      console.warn("Failed to restore study queue", e);
+      warn("Failed to restore study queue", e);
     }
     return [];
   });
@@ -98,7 +99,6 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   
   const [isFlipped, setIsFlipped] = useState(false);
   const [cardStartTime, setCardStartTime] = useState(Date.now());
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   
   const [meaningIndex, setMeaningIndex] = useState(() => {
@@ -122,7 +122,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         };
       }
     } catch (e) {
-      console.warn("Failed to restore session stats", e);
+      warn("Failed to restore session stats", e);
     }
     return { reviews: 0, correct: 0, totalTime: 0 };
   });
@@ -145,7 +145,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       try {
         localStorage.setItem('study_queue', JSON.stringify(queue));
       } catch (e) {
-        console.warn("Failed to save study queue", e);
+        warn("Failed to save study queue", e);
       }
     }
   }, [queue, mode]);
@@ -221,7 +221,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       const validQueue = queue.filter(q => itemIds.has(q.data.id));
       
       if (validQueue.length !== queue.length) {
-        console.log(`📋 Cleaned study queue: ${queue.length} → ${validQueue.length} items`);
+        log(`📋 Cleaned study queue: ${queue.length} → ${validQueue.length} items`);
         if (validQueue.length === 0) {
           // No valid items left, go back to dashboard
           setMode('dashboard');
@@ -274,7 +274,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         const history = await loadSessionHistory(userId, 30);
         setSessionHistory(history);
       } catch (error) {
-        console.error('Failed to load session history:', error);
+        logError('Failed to load session history:', error);
       } finally {
         setIsLoadingHistory(false);
       }
@@ -349,14 +349,6 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     touchStartX.current = null;
     touchStartY.current = null;
     touchStartTime.current = null;
-  };
-
-  const handleMouseDown = () => {
-    // Long press disabled - archive uses button
-  };
-
-  const handleMouseUp = () => {
-    // Long press disabled - archive uses button
   };
   
   // Handle archive from button
@@ -1200,10 +1192,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         {/* Card Container */}
         <div 
           className="flex-1 relative perspective-1000 group w-full min-h-0 mb-1"
-        onTouchStart={handleMeaningTouchStart}
-        onTouchEnd={handleMeaningTouchEnd}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
+          onTouchStart={handleMeaningTouchStart}
+          onTouchEnd={handleMeaningTouchEnd}
         >
            <div className={`relative w-full h-full transition-all duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
               

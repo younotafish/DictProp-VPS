@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import Fuse from 'fuse.js';
-import { StoredItem, SyncStatus, AppUser, ItemGroup, SearchResult, VocabCard, getItemTitle } from '../types';
+import { StoredItem, SyncStatus, AppUser, ItemGroup, SearchResult, VocabCard, getItemTitle, getItemSpelling, getItemTranslation, getItemPronunciation, getItemSense, isPhraseItem, isVocabItem } from '../types';
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Clipboard, ArrowRight, AlertCircle, Bookmark } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
@@ -10,6 +10,7 @@ import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration } from '../services/geminiService';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { speak } from '../services/speech';
+import { warn } from '../services/logger';
 
 interface NotebookItemProps {
   item: StoredItem;
@@ -55,18 +56,13 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
     onViewDetail();
   };
 
-  const isPhrase = item.type === 'phrase';
-  const title = isPhrase 
-    ? (item.data as any).query 
-    : (item.data as any).word;
-  const subtitle = isPhrase 
-    ? (item.data as any).translation 
-    : (item.data as any).chinese;
-  
-  const ipa = isPhrase ? (item.data as any).pronunciation : (item.data as any).ipa;
-  const examples = !isPhrase ? (item.data as any).examples : [];
-  const history = !isPhrase ? (item.data as any).history : null;
-  const sense = !isPhrase ? (item.data as any).sense : null;
+  const isPhrase = isPhraseItem(item);
+  const title = getItemTitle(item);
+  const subtitle = getItemTranslation(item);
+  const ipa = getItemPronunciation(item);
+  const examples = isVocabItem(item) ? item.data.examples : [];
+  const history = isVocabItem(item) ? item.data.history : null;
+  const sense = getItemSense(item);
 
   const nextReview = item.srs.nextReview;
   const isDue = nextReview <= Date.now();
@@ -572,7 +568,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
         searchInputRef.current?.focus();
       }
     } catch (err) {
-      console.warn("Clipboard read failed, please paste manually", err);
+      warn("Clipboard read failed, please paste manually", err);
       searchInputRef.current?.focus();
     }
   };
@@ -666,9 +662,9 @@ export const NotebookView: React.FC<NotebookProps> = ({
       })
       .sort((a, b) => {
         if (sortMode === 'alphabetical') {
-          const titleA = a.type === 'phrase' ? (a.data as any).query : (a.data as any).word;
-          const titleB = b.type === 'phrase' ? (b.data as any).query : (b.data as any).word;
-          return (titleA || '').localeCompare(titleB || '');
+          const titleA = getItemTitle(a);
+          const titleB = getItemTitle(b);
+          return titleA.localeCompare(titleB);
         }
 
         // Sort by Priority (Due/Overdue first, then by Strength)
@@ -707,41 +703,37 @@ export const NotebookView: React.FC<NotebookProps> = ({
         return true;
       })
       .sort((a, b) => {
-        const titleA = a.type === 'phrase' ? (a.data as any).query : (a.data as any).word;
-        const titleB = b.type === 'phrase' ? (b.data as any).query : (b.data as any).word;
-        return (titleA || '').localeCompare(titleB || '');
+        const titleA = getItemTitle(a);
+        const titleB = getItemTitle(b);
+        return titleA.localeCompare(titleB);
       });
     
     // Helper to group items by title
     const groupByTitle = (itemList: StoredItem[]): ItemGroup[] => {
       const groupMap = new Map<string, StoredItem[]>();
       itemList.forEach(item => {
-        const title = item.type === 'phrase' 
-          ? (item.data as any).query?.toLowerCase().trim()
-          : (item.data as any).word?.toLowerCase().trim();
+        const spelling = getItemSpelling(item);
         
-        if (!title) return;
+        if (!spelling) return;
         
-        if (!groupMap.has(title)) {
-          groupMap.set(title, []);
+        if (!groupMap.has(spelling)) {
+          groupMap.set(spelling, []);
         }
-        groupMap.get(title)!.push(item);
+        groupMap.get(spelling)!.push(item);
       });
       
       const groups: ItemGroup[] = [];
       const seenTitles = new Set<string>();
       
       itemList.forEach(item => {
-        const title = item.type === 'phrase' 
-          ? (item.data as any).query?.toLowerCase().trim()
-          : (item.data as any).word?.toLowerCase().trim();
+        const spelling = getItemSpelling(item);
         
-        if (!title || seenTitles.has(title)) return;
-        seenTitles.add(title);
+        if (!spelling || seenTitles.has(spelling)) return;
+        seenTitles.add(spelling);
         
-        const groupItems = groupMap.get(title) || [];
+        const groupItems = groupMap.get(spelling) || [];
         groups.push({
-          title: title,
+          title: spelling,
           items: groupItems
         });
       });
@@ -753,10 +745,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
     const queryLower = localSearchQuery.toLowerCase().trim();
     const hasExactMatch = queryLower ? items.some(item => {
       if (item.isDeleted) return false;
-      const title = item.type === 'phrase' 
-        ? (item.data as any).query?.toLowerCase().trim()
-        : (item.data as any).word?.toLowerCase().trim();
-      return title === queryLower;
+      const spelling = getItemSpelling(item);
+      return spelling === queryLower;
     }) : false;
     
     return { 

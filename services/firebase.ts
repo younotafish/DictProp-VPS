@@ -23,6 +23,7 @@ import {
 } from "firebase/firestore";
 import { getFunctions, Functions } from "firebase/functions";
 import { StoredItem } from "../types";
+import { log, warn, error as logError } from "./logger";
 
 const CONFIG_KEY = 'popdict_firebase_config';
 
@@ -54,7 +55,7 @@ try {
                 config = parsed;
             }
         } catch (e) {
-            console.warn("Invalid stored config, reverting to default.");
+            warn("Invalid stored config, reverting to default.");
         }
     }
 
@@ -64,7 +65,7 @@ try {
     db = getFirestore(app);
     functions = getFunctions(app);
 } catch (e) {
-    console.error("Failed to initialize Firebase", e);
+    logError("Failed to initialize Firebase", e);
 }
 
 export { functions };
@@ -91,7 +92,7 @@ export const signIn = async () => {
   try {
     // iOS Safari on iPhone has issues with popups, use redirect instead
     if (isIOsSafari()) {
-      console.log("iOS Safari (iPhone) detected, using redirect method");
+      log("iOS Safari (iPhone) detected, using redirect method");
       // Set flag to detect silent failures (e.g. Cross-Site Tracking)
       localStorage.setItem('auth_redirect_pending', 'true');
       await signInWithRedirect(auth, provider);
@@ -108,10 +109,10 @@ export const signIn = async () => {
         code === 'auth/popup-closed-by-user' ||
         code === 'auth/cancelled-popup-request'
     ) {
-        throw error; // Re-throw for UI to handle, but don't console.error
+        throw error; // Re-throw for UI to handle, but don't logError
     }
     
-    console.error("Error signing in", error);
+    logError("Error signing in", error);
     throw error;
   }
 };
@@ -124,11 +125,11 @@ export const handleRedirectResult = async () => {
     const wasPending = localStorage.getItem('auth_redirect_pending');
     
     if (result) {
-      console.log("Redirect sign-in successful", result.user.uid);
+      log("Redirect sign-in successful", result.user.uid);
       localStorage.removeItem('auth_redirect_pending');
     } else if (wasPending) {
        // We expected a result but got none. This usually means the redirect flow failed silently.
-       console.warn("Redirect sign-in returned null despite pending flag. Likely Cross-Site Tracking issue.");
+       warn("Redirect sign-in returned null despite pending flag. Likely Cross-Site Tracking issue.");
        localStorage.removeItem('auth_redirect_pending');
        // We can throw an error here to inform the UI, or just log it.
        // Throwing allows the UI to show a "Try disabling Cross-Site Tracking" hint.
@@ -142,10 +143,10 @@ export const handleRedirectResult = async () => {
       throw error;
     }
     if (error.message === "REDIRECT_FAILED_SILENTLY") {
-        console.error("Redirect failed silently (likely Safari privacy settings)");
+        logError("Redirect failed silently (likely Safari privacy settings)");
         throw error;
     }
-    console.error("Error handling redirect result", error);
+    logError("Error handling redirect result", error);
     return null;
   }
 };
@@ -155,7 +156,7 @@ export const signOut = async () => {
   try {
     await firebaseSignOut(auth);
   } catch (error) {
-    console.error("Error signing out", error);
+    logError("Error signing out", error);
   }
 };
 
@@ -182,10 +183,10 @@ export const loadUserData = async (userId: string): Promise<StoredItem[]> => {
         items.push(data);
     });
     
-    console.log(`🔥 Firebase: Manual fetch retrieved ${items.length} items (including deleted)`);
+    log(`🔥 Firebase: Manual fetch retrieved ${items.length} items (including deleted)`);
     return items;
   } catch (error) {
-    console.error("🔥 Firebase: Error loading user data:", error);
+    logError("🔥 Firebase: Error loading user data:", error);
     throw error;
   }
 };
@@ -206,7 +207,7 @@ export const loadSingleItem = async (userId: string, itemId: string): Promise<St
     }
     return null;
   } catch (error) {
-    console.error("🔥 Firebase: Error loading single item:", error);
+    logError("🔥 Firebase: Error loading single item:", error);
     return null;
   }
 };
@@ -220,7 +221,7 @@ export const subscribeToUserData = (
   // Listen to the 'items' subcollection
   const itemsCollection = collection(db, "users", userId, "items");
   
-  console.log("🔥 Firebase: Subscribing to updates for user:", userId);
+  log("🔥 Firebase: Subscribing to updates for user:", userId);
 
   // OPTIMIZATION: Throttle snapshot processing to avoid rapid re-renders
   let throttleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -233,17 +234,17 @@ export const subscribeToUserData = (
         items.push(data);
     });
     
-    console.log(`🔥 Firebase: Parsed ${items.length} items from cloud (${snapshot.metadata.fromCache ? 'cache' : 'server'})`);
+    log(`🔥 Firebase: Parsed ${items.length} items from cloud (${snapshot.metadata.fromCache ? 'cache' : 'server'})`);
     onData(items);
   };
 
   const unsubscribe = onSnapshot(itemsCollection, (snapshot) => {
     // Log metadata for debugging
-    console.log("🔥 Firebase: Snapshot received, fromCache:", snapshot.metadata.fromCache, "size:", snapshot.size);
+    log("🔥 Firebase: Snapshot received, fromCache:", snapshot.metadata.fromCache, "size:", snapshot.size);
 
     // OPTIMIZATION: Skip processing if this is just a cache snapshot and we already processed it
     if (snapshot.metadata.fromCache && snapshot.metadata.hasPendingWrites) {
-      console.log("🔥 Firebase: Skipping cache snapshot with pending writes");
+      log("🔥 Firebase: Skipping cache snapshot with pending writes");
       return;
     }
     
@@ -261,8 +262,8 @@ export const subscribeToUserData = (
       }, 2000) as ReturnType<typeof setTimeout>;
     }
   }, (error) => {
-      console.error("🔥 Firestore subscription error:", error);
-      console.error("🔥 Firestore: Error code:", error.code, "Message:", error.message);
+      logError("🔥 Firestore subscription error:", error);
+      logError("🔥 Firestore: Error code:", error.code, "Message:", error.message);
   });
 
   // Return cleanup function that clears throttle timer and unsubscribes
@@ -315,7 +316,7 @@ const prepareItemForFirestore = (item: StoredItem): StoredItem => {
   if (data.imageUrl && data.imageUrl.startsWith('data:image/')) {
     const imageSize = data.imageUrl.length * 0.75; // Base64 is ~4/3 of actual bytes
     if (imageSize > MAX_IMAGE_SIZE) {
-      console.warn(`🔥 Firebase: Stripping oversized image (${Math.round(imageSize/1024)}KB) from ${data.word || data.query}`);
+      warn(`🔥 Firebase: Stripping oversized image (${Math.round(imageSize/1024)}KB) from ${data.word || data.query}`);
       delete data.imageUrl;
     }
   }
@@ -326,7 +327,7 @@ const prepareItemForFirestore = (item: StoredItem): StoredItem => {
       if (vocab.imageUrl && vocab.imageUrl.startsWith('data:image/')) {
         const imageSize = vocab.imageUrl.length * 0.75;
         if (imageSize > MAX_IMAGE_SIZE) {
-          console.warn(`🔥 Firebase: Stripping oversized vocab image from ${vocab.word}`);
+          warn(`🔥 Firebase: Stripping oversized vocab image from ${vocab.word}`);
           const { imageUrl, ...rest } = vocab;  // Remove imageUrl from object
           return rest;
         }
@@ -338,7 +339,7 @@ const prepareItemForFirestore = (item: StoredItem): StoredItem => {
   // Final size check
   const docSize = JSON.stringify(cloned).length;
   if (docSize > MAX_DOC_SIZE) {
-    console.warn(`🔥 Firebase: Document still too large (${Math.round(docSize/1024)}KB), stripping all images`);
+    warn(`🔥 Firebase: Document still too large (${Math.round(docSize/1024)}KB), stripping all images`);
     delete data.imageUrl;
     if (Array.isArray(data.vocabs)) {
       data.vocabs = data.vocabs.map((vocab: any) => {
@@ -386,7 +387,7 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
     const MAX_BATCH_SIZE = 100;
     
     if (activeItems.length === 0 && deletedItems.length === 0) {
-        console.log("🔥 Firebase: No changes to sync");
+        log("🔥 Firebase: No changes to sync");
         return;
     }
 
@@ -404,7 +405,7 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
       const start = batchIndex * MAX_BATCH_SIZE;
       const batchItems = allItems.slice(start, start + MAX_BATCH_SIZE);
       
-      console.log(`🔥 Firebase: Syncing batch ${batchIndex + 1}/${totalBatches} -> ${batchItems.length} items`);
+      log(`🔥 Firebase: Syncing batch ${batchIndex + 1}/${totalBatches} -> ${batchItems.length} items`);
 
       // Process items to fit within Firestore document size limits
       // Strip oversized images to stay under 1MB limit
@@ -423,17 +424,17 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
       
       if (batchWriteCount > 0) {
           await batch.commit();
-          console.log(`🔥 Firebase: ✅ Batch ${batchIndex + 1} committed (${batchWriteCount} writes)`);
+          log(`🔥 Firebase: ✅ Batch ${batchIndex + 1} committed (${batchWriteCount} writes)`);
           writeCountTotal += batchWriteCount;
       }
     }
 
-    console.log(`🔥 Firebase: ✅ Sync complete! Total writes: ${writeCountTotal}`);
+    log(`🔥 Firebase: ✅ Sync complete! Total writes: ${writeCountTotal}`);
   } catch (e: any) {
-    console.error("🔥 Firebase: ❌ Error saving to cloud:", e);
-    console.error("🔥 Firebase: Error details:", e.message, "Code:", e.code);
+    logError("🔥 Firebase: ❌ Error saving to cloud:", e);
+    logError("🔥 Firebase: Error details:", e.message, "Code:", e.code);
     if (e.code === 'permission-denied') {
-        console.error("🔥 Firebase: ⚠️  Check Firestore Rules!");
+        logError("🔥 Firebase: ⚠️  Check Firestore Rules!");
         throw new Error("Permission denied. Check database rules.");
     }
     throw e;
@@ -489,10 +490,10 @@ export const loadSessionHistory = async (
     // Sort by date descending (most recent first)
     sessions.sort((a, b) => b.timestamp - a.timestamp);
     
-    console.log(`🔥 Firebase: Loaded ${sessions.length} session records from last ${days} days`);
+    log(`🔥 Firebase: Loaded ${sessions.length} session records from last ${days} days`);
     return sessions;
   } catch (error) {
-    console.error("🔥 Firebase: Error loading session history:", error);
+    logError("🔥 Firebase: Error loading session history:", error);
     return [];
   }
 };
@@ -507,7 +508,7 @@ export const recordStudySession = async (
 ): Promise<void> => {
   // Skip if offline - session recording is not critical
   if (!navigator.onLine) {
-    console.log("📴 Offline: Skipping session recording");
+    log("📴 Offline: Skipping session recording");
     return;
   }
   
@@ -522,9 +523,9 @@ export const recordStudySession = async (
       timestamp: Date.now()
     }, { merge: true });
     
-    console.log("🔥 Firebase: Study session recorded for", today);
+    log("🔥 Firebase: Study session recorded for", today);
   } catch (error) {
-    console.error("🔥 Firebase: Error recording session:", error);
+    logError("🔥 Firebase: Error recording session:", error);
   }
 };
 

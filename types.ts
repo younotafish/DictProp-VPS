@@ -91,13 +91,88 @@ export interface SyncState {
   items: StoredItem[];
 }
 
-// Helper to get item title (word or query)
+/**
+ * Type guard to check if a StoredItem contains vocabulary data.
+ * When true, narrows the type to allow direct access to VocabCard properties.
+ */
+export const isVocabItem = (item: StoredItem): item is StoredItem & { type: 'vocab'; data: VocabCard } => 
+  item.type === 'vocab';
+
+/**
+ * Type guard to check if a StoredItem contains phrase/sentence data.
+ * When true, narrows the type to allow direct access to SearchResult properties.
+ */
+export const isPhraseItem = (item: StoredItem): item is StoredItem & { type: 'phrase'; data: SearchResult } => 
+  item.type === 'phrase';
+
+/**
+ * Gets the display title of a stored item (word for vocab, query for phrase).
+ * @param item - The stored item to get the title from
+ * @returns The word or query string, or empty string if not available
+ */
 export const getItemTitle = (item: StoredItem): string => {
   if (!item || !item.data) return '';
-  if (item.type === 'phrase') {
-    return (item.data as SearchResult).query || '';
+  if (isPhraseItem(item)) {
+    return item.data.query || '';
   }
   return (item.data as VocabCard).word || '';
+};
+
+/**
+ * Gets the normalized spelling of an item (lowercase, trimmed title).
+ * Useful for case-insensitive comparisons and grouping items by word.
+ * @param item - The stored item
+ * @returns Lowercase, trimmed title string
+ */
+export const getItemSpelling = (item: StoredItem): string => {
+  return getItemTitle(item).toLowerCase().trim();
+};
+
+/**
+ * Gets the translation of an item (Chinese for vocab, translation for phrase).
+ * @param item - The stored item
+ * @returns Translation string or empty string if not available
+ */
+export const getItemTranslation = (item: StoredItem): string => {
+  if (!item || !item.data) return '';
+  if (isPhraseItem(item)) {
+    return item.data.translation || '';
+  }
+  return (item.data as VocabCard).chinese || '';
+};
+
+/**
+ * Gets the pronunciation/IPA of an item.
+ * @param item - The stored item
+ * @returns IPA or pronunciation string, or empty string if not available
+ */
+export const getItemPronunciation = (item: StoredItem): string => {
+  if (!item || !item.data) return '';
+  if (isPhraseItem(item)) {
+    return item.data.pronunciation || '';
+  }
+  return (item.data as VocabCard).ipa || '';
+};
+
+/**
+ * Gets the sense/meaning label of a vocab item.
+ * Returns empty string for phrase items or if sense is not defined.
+ * @param item - The stored item
+ * @returns Sense string (e.g., "noun: emotion") or empty string
+ */
+export const getItemSense = (item: StoredItem): string => {
+  if (!item || !item.data || !isVocabItem(item)) return '';
+  return item.data.sense || '';
+};
+
+/**
+ * Gets the image URL of a stored item (base64 data URI).
+ * @param item - The stored item
+ * @returns Base64 image data URI or undefined if no image
+ */
+export const getItemImageUrl = (item: StoredItem): string | undefined => {
+  if (!item || !item.data) return undefined;
+  return item.data.imageUrl;
 };
 
 // Simplified Firebase User type for props

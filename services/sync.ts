@@ -1,4 +1,5 @@
 import { StoredItem } from '../types';
+import { warn } from './logger';
 
 // Smart Merge: Combines Local and Remote data
 export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): StoredItem[] => {
@@ -36,7 +37,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
            }
            // If local update is SIGNIFICANTLY newer (>5s), keep the local update
            // This handles the edge case of offline edits happening after deletion
-           console.warn(`⚠️ Deletion conflict: Remote deleted at ${remoteTime}, but local updated at ${localTime}. Keeping local update.`);
+           warn(`⚠️ Deletion conflict: Remote deleted at ${remoteTime}, but local updated at ${localTime}. Keeping local update.`);
       }
       
       if (localItem.isDeleted && !remoteItem.isDeleted) {
@@ -49,7 +50,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
                return;
            }
            // If remote update is SIGNIFICANTLY newer, keep the remote update
-           console.warn(`⚠️ Deletion conflict: Local deleted at ${localTime}, but remote updated at ${remoteTime}. Keeping remote update.`);
+           warn(`⚠️ Deletion conflict: Local deleted at ${localTime}, but remote updated at ${remoteTime}. Keeping remote update.`);
       }
       
       // If BOTH are deleted, use the newest deletion timestamp

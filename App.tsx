@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, VocabCard, SearchResult, AppUser, ItemGroup } from './types';
+import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
 import { Book, BrainCircuit, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
@@ -13,6 +13,7 @@ import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { analyzeInput } from './services/geminiService';
 import { useGlobalNavigation } from './hooks';
+import { log, warn, error as logError } from './services/logger';
 
 // Keyboard shortcut display component
 const DETAIL_CONTEXT_KEY = 'app_detail_context';
@@ -35,10 +36,12 @@ const ShortcutRow: React.FC<{ keys: string[], description: string }> = ({ keys, 
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
-    const saved = localStorage.getItem('app_current_view') as ViewState;
-    // Default to notebook, and redirect 'search' to 'notebook' since search was removed
-    if (!saved || saved === 'search') return 'notebook';
-    return saved;
+    const saved = localStorage.getItem('app_current_view');
+    // Default to notebook, and handle legacy 'search' value from old localStorage
+    if (!saved || saved === 'search' || (saved !== 'notebook' && saved !== 'study')) {
+      return 'notebook';
+    }
+    return saved as ViewState;
   });
 
   // Persist current view
@@ -54,12 +57,12 @@ const App: React.FC = () => {
       if (cached) {
         const items = JSON.parse(cached);
         if (Array.isArray(items) && items.length > 0) {
-          console.log(`⚡ Instant restore: ${items.length} items from cache`);
+          log(`⚡ Instant restore: ${items.length} items from cache`);
           return { items };
         }
       }
     } catch (e) {
-      console.warn("Failed to restore items from cache", e);
+      warn("Failed to restore items from cache", e);
     }
     return { items: [] };
   });
@@ -103,7 +106,7 @@ const App: React.FC = () => {
       const saved = localStorage.getItem(DETAIL_CONTEXT_KEY);
       return saved ? JSON.parse(saved) : null;
     } catch (e) {
-      console.warn("Failed to restore detail context", e);
+      warn("Failed to restore detail context", e);
       return null;
     }
   });
@@ -117,7 +120,7 @@ const App: React.FC = () => {
         localStorage.removeItem(DETAIL_CONTEXT_KEY);
       }
     } catch (e) {
-      console.warn("Failed to save detail context (quota exceeded?)", e);
+      warn("Failed to save detail context (quota exceeded?)", e);
     }
   }, [detailContext]);
 
@@ -215,7 +218,7 @@ const App: React.FC = () => {
                   // If app was in background for more than 30 seconds, trigger background sync
                   // (instead of a jarring full page reload)
                   if (now - lastHidden > 30 * 1000 && user && isOnline && isFirebaseConfigured) {
-                      console.log("🔄 App was backgrounded for >30s, syncing in background...");
+                      log("🔄 App was backgrounded for >30s, syncing in background...");
                       // Trigger a force sync instead of reloading the page
                       // This keeps the UI responsive while updating data
                       handleForceSync();
@@ -287,7 +290,7 @@ const App: React.FC = () => {
                 await saveData(processedItems);
             }
         } catch (e) {
-            console.error("Failed to initialize storage", e);
+            logError("Failed to initialize storage", e);
         } finally {
             setIsLoaded(true);
         }
@@ -331,7 +334,7 @@ const App: React.FC = () => {
             message: "Sign-in failed due to Safari privacy settings. Please disable 'Prevent Cross-Site Tracking' in Settings > Safari and try again." 
         });
       } else if (error) {
-        console.error("Redirect result error:", error);
+        logError("Redirect result error:", error);
       }
     });
 
@@ -385,11 +388,11 @@ const App: React.FC = () => {
             }));
             
           } catch (error) {
-            console.error("Initial sync failed:", error);
+            logError("Initial sync failed:", error);
             // Local items already set above, no action needed
           }
         } else {
-          console.log("📴 Offline: Using local data only");
+          log("📴 Offline: Using local data only");
         }
         
         // Subscribe to real-time updates
@@ -443,8 +446,8 @@ const App: React.FC = () => {
         data: {
           ...item.data,
           imageUrl: undefined, // Strip image
-          vocabs: item.type === 'phrase' && (item.data as any).vocabs 
-            ? (item.data as any).vocabs.map((v: any) => ({ ...v, imageUrl: undefined }))
+          vocabs: isPhraseItem(item) && item.data.vocabs 
+            ? item.data.vocabs.map((v: VocabCard) => ({ ...v, imageUrl: undefined }))
             : undefined
         }
       }));
@@ -452,7 +455,7 @@ const App: React.FC = () => {
       localStorage.setItem('app_items_cache', JSON.stringify(cacheItems));
     } catch (e) {
       // If quota exceeded, try to save just item count for UI feedback
-      console.warn("Failed to cache items to localStorage", e);
+      warn("Failed to cache items to localStorage", e);
     }
   }, [syncState.items, isLoaded]);
 
@@ -490,7 +493,7 @@ const App: React.FC = () => {
           }
 
           setSyncStatus('syncing');
-          console.log(`🔥 Firebase: ${itemsWithHashes.length} items actually changed (hash check)`);
+          log(`🔥 Firebase: ${itemsWithHashes.length} items actually changed (hash check)`);
           
           try {
             await saveUserData(user.uid, itemsWithHashes.map(i => i.item));
@@ -514,7 +517,7 @@ const App: React.FC = () => {
 
             setSyncStatus('saved');
           } catch (e) {
-            console.error("Sync error:", e);
+            logError("Sync error:", e);
             setSyncStatus('error');
           }
       } else if (!isOnline) {
@@ -565,7 +568,7 @@ const App: React.FC = () => {
       setSyncStatus('saved');
       
     } catch (e) {
-      console.error("Force Sync Failed:", e);
+      logError("Force Sync Failed:", e);
       setSyncStatus('error');
     }
   };
@@ -638,7 +641,7 @@ const App: React.FC = () => {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
       } catch (error) {
-        console.error(`Failed to refresh "${searchQuery}":`, error);
+        logError(`Failed to refresh "${searchQuery}":`, error);
         errors++;
         processed++;
         setBulkRefreshProgress({ current: processed, total: uniqueTitles.length, isRunning: true });
@@ -734,16 +737,16 @@ const App: React.FC = () => {
         
         // If not found by ID, check by Title AND Sense (for vocab items with multiple meanings)
         if (existingIndex === -1 && incomingTitle) {
-            const incomingSense = item.type === 'vocab' ? ((item.data as any).sense || '') : '';
+            const incomingSense = isVocabItem(item) ? (item.data.sense || '') : '';
             
             existingIndex = prevState.items.findIndex(i => {
-              const titleMatch = String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle;
+              const titleMatch = getItemSpelling(i) === incomingTitle;
               if (!titleMatch) return false;
               
               // For vocab items, also check if the sense matches
               // This allows saving multiple meanings of the same word
-              if (item.type === 'vocab' && i.type === 'vocab') {
-                const existingSense = (i.data as any).sense || '';
+              if (isVocabItem(item) && isVocabItem(i)) {
+                const existingSense = i.data.sense || '';
                 return existingSense === incomingSense;
               }
               
@@ -819,7 +822,7 @@ const App: React.FC = () => {
         }
       });
     } catch (err) {
-      console.error("Error during save operation:", err);
+      logError("Error during save operation:", err);
     }
   };
 
@@ -845,7 +848,7 @@ const App: React.FC = () => {
             ...existingItem.data,
             ...item.data,
             // Preserve existing imageUrl if incoming doesn't have one
-            imageUrl: (item.data as any).imageUrl || (existingItem.data as any).imageUrl
+            imageUrl: getItemImageUrl(item) || getItemImageUrl(existingItem)
           },
           updatedAt: Date.now()
         };
@@ -911,8 +914,8 @@ const App: React.FC = () => {
       const remoteItem = await loadSingleItem(user.uid, itemId);
       if (!remoteItem) return;
       
-      const remoteData = remoteItem.data as any;
-      const hasRemoteImage = remoteData.imageUrl && remoteData.imageUrl.startsWith('data:image/');
+      const remoteImageUrl = getItemImageUrl(remoteItem);
+      const hasRemoteImage = remoteImageUrl && remoteImageUrl.startsWith('data:image/');
       
       if (!hasRemoteImage) return;
       
@@ -920,28 +923,36 @@ const App: React.FC = () => {
       setSyncState(prevState => {
         const index = prevState.items.findIndex(i => i.data.id === itemId);
         if (index >= 0) {
-          const localData = prevState.items[index].data as any;
-          const hasLocalImage = localData.imageUrl && localData.imageUrl.startsWith('data:image/');
+          const localItem = prevState.items[index];
+          const localImageUrl = getItemImageUrl(localItem);
+          const hasLocalImage = localImageUrl && localImageUrl.startsWith('data:image/');
           
           if (!hasLocalImage) {
-            console.log(`🖼️ Lazy-loaded image from Firebase for: ${remoteData.word || remoteData.query}`);
+            log(`🖼️ Lazy-loaded image from Firebase for: ${getItemTitle(remoteItem)}`);
             const newItems = [...prevState.items];
-            newItems[index] = {
-              ...prevState.items[index],
-              data: {
-                ...localData,
-                imageUrl: remoteData.imageUrl,
-                // Also update vocab images if this is a phrase
-                ...(remoteItem.type === 'phrase' && remoteData.vocabs && {
-                  vocabs: (localData.vocabs || []).map((localVocab: any, i: number) => {
-                    const remoteVocab = remoteData.vocabs[i];
+            
+            // Handle vocab images for phrase items
+            let updatedData = { ...localItem.data, imageUrl: remoteImageUrl };
+            if (isPhraseItem(remoteItem) && isPhraseItem(localItem)) {
+              const remoteVocabs = remoteItem.data.vocabs;
+              const localVocabs = localItem.data.vocabs || [];
+              if (remoteVocabs) {
+                updatedData = {
+                  ...updatedData,
+                  vocabs: localVocabs.map((localVocab: VocabCard, i: number) => {
+                    const remoteVocab = remoteVocabs[i];
                     if (remoteVocab?.imageUrl && !localVocab.imageUrl) {
                       return { ...localVocab, imageUrl: remoteVocab.imageUrl };
                     }
                     return localVocab;
                   })
-                })
-              },
+                };
+              }
+            }
+            
+            newItems[index] = {
+              ...prevState.items[index],
+              data: updatedData,
               updatedAt: Date.now()
             };
             return { ...prevState, items: newItems };
@@ -950,12 +961,12 @@ const App: React.FC = () => {
         return prevState;
       });
     } catch (e) {
-      console.warn("Failed to lazy-load image from Firebase:", e);
+      warn("Failed to lazy-load image from Firebase:", e);
     }
   }, [user, isOnline]);
 
   const handleDelete = (id: string) => {
-    console.log('🗑️ App: Deleting item', id);
+    log('🗑️ App: Deleting item', id);
     
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
@@ -973,7 +984,7 @@ const App: React.FC = () => {
           items: newItems
         };
       }
-      console.warn('🗑️ App: Item not found for deletion:', id);
+      warn('🗑️ App: Item not found for deletion:', id);
       return prevState;
     });
     
@@ -1015,7 +1026,7 @@ const App: React.FC = () => {
   };
 
   const handleArchive = (id: string) => {
-    console.log('📦 App: Archiving item', id);
+    log('📦 App: Archiving item', id);
     
     setSyncState(prevState => {
       const index = prevState.items.findIndex(i => i.data.id === id);
@@ -1032,7 +1043,7 @@ const App: React.FC = () => {
           items: newItems
         };
       }
-      console.warn('📦 App: Item not found for archiving:', id);
+      warn('📦 App: Item not found for archiving:', id);
       return prevState;
     });
     
