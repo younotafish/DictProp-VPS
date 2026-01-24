@@ -386,6 +386,25 @@ const TRANSLATION_INSTRUCTION = TRANSLATION_INSTRUCTION_BASE;
 // Helper function to detect if input is a word/phrase or a sentence
 function isWordOrPhrase(text: string): boolean {
   const trimmed = text.trim();
+  
+  // Handle Chinese text specially (no spaces between words)
+  if (containsChinese(trimmed)) {
+    // Check for Chinese sentence-ending punctuation
+    const hasChinesePunctuation = /[。！？]$/.test(trimmed);
+    if (hasChinesePunctuation) return false; // Explicit sentence ending
+    
+    // Count Chinese characters (excluding punctuation)
+    const chineseChars = trimmed.match(/[\u4e00-\u9fff]/g) || [];
+    
+    // 5+ Chinese characters likely indicates a sentence
+    // (average Chinese word is 1-2 characters, so 5+ chars = 3+ words)
+    if (chineseChars.length >= 5) return false;
+    
+    // Short Chinese input (1-4 chars) is likely a word/phrase
+    return true;
+  }
+  
+  // English logic: split by spaces
   const words = trimmed.split(/\s+/).filter(w => w.length > 0);
   
   // Single word is definitely word mode

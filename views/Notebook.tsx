@@ -382,6 +382,47 @@ export const NotebookView: React.FC<NotebookProps> = ({
   const isMounted = useRef(true);
   const searchRequestId = useRef(0);
 
+  // Touch swipe handling for AI search results carousel
+  const aiTouchStart = useRef<{x: number, y: number} | null>(null);
+  const AI_SWIPE_THRESHOLD = 50;
+
+  const handleAISwipeTouchStart = (e: React.TouchEvent) => {
+    aiTouchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+
+  const handleAISwipeTouchEnd = (e: React.TouchEvent) => {
+    if (!aiTouchStart.current || !aiSearchResult?.vocabs) return;
+    const totalVocabs = aiSearchResult.vocabs.length;
+    if (totalVocabs <= 1) {
+      aiTouchStart.current = null;
+      return;
+    }
+    
+    // Check if user is selecting text - don't interfere with text selection on iOS
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) {
+      aiTouchStart.current = null;
+      return;
+    }
+    
+    const diffX = e.changedTouches[0].clientX - aiTouchStart.current.x;
+    const diffY = e.changedTouches[0].clientY - aiTouchStart.current.y;
+    const absX = Math.abs(diffX);
+    const absY = Math.abs(diffY);
+    
+    // Only trigger swipe if horizontal movement is significantly greater than vertical
+    if (absX > absY * 1.5 && absX > AI_SWIPE_THRESHOLD) {
+      if (diffX < 0) {
+        // Swipe left - go to next
+        setVocabIndex(prev => Math.min(prev + 1, totalVocabs - 1));
+      } else {
+        // Swipe right - go to previous
+        setVocabIndex(prev => Math.max(prev - 1, 0));
+      }
+    }
+    aiTouchStart.current = null;
+  };
+
   // Calculate total vocabs for keyboard/wheel navigation
   const totalAIVocabs = aiSearchResult?.vocabs?.length || 0;
 
@@ -1049,14 +1090,21 @@ export const NotebookView: React.FC<NotebookProps> = ({
                             </div>
                           )}
                           
-                          <VocabCardDisplay 
-                            data={currentVocab} 
-                            onSave={() => toggleSaveVocab(currentVocab)}
-                            isSaved={isVocabSaved}
-                            onSearch={onSearch}
-                            scrollable={false}
-                            className="border-slate-200 shadow-sm"
-                          />
+                          {/* Swipeable card container */}
+                          <div 
+                            onTouchStart={handleAISwipeTouchStart}
+                            onTouchEnd={handleAISwipeTouchEnd}
+                            style={{ touchAction: 'pan-y' }}
+                          >
+                            <VocabCardDisplay 
+                              data={currentVocab} 
+                              onSave={() => toggleSaveVocab(currentVocab)}
+                              isSaved={isVocabSaved}
+                              onSearch={onSearch}
+                              scrollable={false}
+                              className="border-slate-200 shadow-sm"
+                            />
+                          </div>
                           
                           {/* Dot indicators */}
                           {totalVocabs > 1 && (
