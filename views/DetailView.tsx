@@ -725,10 +725,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
           </div>
         </div>
 
-        <div className="p-4 pb-24">
-          {/* Memory Progress Bar - shown for saved items */}
-          {isSaved && savedItemMatch && mastery && masteryColors && (
-            <div className="max-w-3xl mx-auto mb-4">
+        {/* Memory Progress Bar - shown for saved items, hidden with header */}
+        {showHeader && isSaved && savedItemMatch && mastery && masteryColors && (
+          <div className="sticky top-[60px] z-20 bg-slate-50/90 backdrop-blur-sm px-4 py-2 transition-all duration-300">
+            <div className="max-w-3xl mx-auto">
               <div className="flex items-center gap-2 text-xs">
                 {/* Mastery badge with percentage */}
                 <span className={`${masteryColors.bg} ${masteryColors.text} px-2 py-0.5 rounded-full font-semibold`}>
@@ -769,8 +769,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 </span>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
+        <div className={`pb-24 px-4 transition-all duration-300 ${showHeader ? 'pt-0' : 'pt-4'}`}>
           {type === 'vocab' && (
             <VocabCardDisplay 
               data={data as VocabCard}
@@ -780,13 +782,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
               onExpand={undefined}
               onSearch={handleVocabSearch}
               scrollable={false}
-              className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
+              className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto w-full"
               showRefresh={false}
             />
           )}
 
           {type === 'phrase' && (
-            <div className="space-y-6 max-w-3xl mx-auto">
+            <div className="space-y-6 max-w-3xl mx-auto w-full">
               <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group">
                   {(data as SearchResult).imageUrl ? (
