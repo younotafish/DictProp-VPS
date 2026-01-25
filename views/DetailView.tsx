@@ -772,7 +772,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
           </div>
         )}
 
-        <div className="pb-24 px-4 pt-4">
+        {/* Content area - add top padding when header is visible to avoid being blocked */}
+        <div className={`pb-24 px-4 transition-all duration-300 ${showHeader && isSaved ? 'pt-24' : showHeader ? 'pt-16' : 'pt-4'}`}>
           {type === 'vocab' && (
             <VocabCardDisplay 
               data={data as VocabCard}
