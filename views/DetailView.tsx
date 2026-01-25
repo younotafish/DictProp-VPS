@@ -83,7 +83,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [currentItemIndex, setCurrentItemIndex] = useState(groups ? initialItemIndex : initialIndex);
   
   const [isAnimating, setIsAnimating] = useState(false);
-  const [showHeader, setShowHeader] = useState(false); // Hidden by default, show on swipe down
+  const [showHeader, setShowHeader] = useState(true);
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
@@ -181,14 +181,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const target = e.currentTarget;
     const currentScrollY = target.scrollTop;
 
-    // Header show/hide logic - hidden by default, show on swipe down (scroll up)
-    const scrollDelta = currentScrollY - lastScrollY.current;
-    const minScrollDelta = 10; // Minimum scroll distance to trigger show/hide
-    
-    if (Math.abs(scrollDelta) > minScrollDelta) {
-      // Scrolling up (swipe down gesture) -> show header
-      // Scrolling down (swipe up gesture) -> hide header
-      setShowHeader(scrollDelta < 0);
+    // Header auto-hide logic
+    if (currentScrollY < 50) {
+      if (!showHeader) setShowHeader(true);
+    } else if (Math.abs(currentScrollY - lastScrollY.current) > 10) {
+      setShowHeader(currentScrollY < lastScrollY.current);
     }
     
     lastScrollY.current = currentScrollY;
@@ -250,22 +247,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // Horizontal Swipe (Meanings)
     const isHorizontalSwipe = absX > absY * 1.5 && absX > swipeThreshold;
 
-    // Pull down at top to show header (when scroll position is at top)
-    if (isVerticalSwipe && diffY > swipeThreshold && isAtTop) {
-      // If no previous group to navigate to, show the header
-      if (!hasPrevGroup || !groups) {
-        setShowHeader(true);
-        touchStartX.current = null;
-        touchStartY.current = null;
-        return;
-      }
-    }
-
     if (isVerticalSwipe && isFastSwipe && groups) {
       // Swipe UP -> Next Group (Word) - only when at bottom or content is short
       if (diffY < -swipeThreshold && hasNextGroup && (isAtBottom || scrollHeight <= clientHeight)) {
         setIsAnimating(true);
-        setShowHeader(false); // Hide header when navigating
         setCurrentGroupIndex(prev => prev + 1);
         setCurrentItemIndex(0); // Reset to first meaning
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -274,7 +259,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // Swipe DOWN -> Previous Group (Word) - only when at top
       else if (diffY > swipeThreshold && hasPrevGroup && isAtTop) {
         setIsAnimating(true);
-        setShowHeader(false); // Hide header when navigating
         setCurrentGroupIndex(prev => prev - 1);
         setCurrentItemIndex(0); // Reset to first meaning
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -285,7 +269,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // Swipe LEFT -> Next Item (Meaning)
       if (diffX < -swipeThreshold && hasNextItem) {
         setIsAnimating(true);
-        setShowHeader(false); // Hide header when navigating
         setCurrentItemIndex(prev => prev + 1);
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
         setTimeout(() => setIsAnimating(false), 300);
@@ -295,7 +278,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (diffX > swipeThreshold) {
         if (hasPrevItem) {
           setIsAnimating(true);
-          setShowHeader(false); // Hide header when navigating
           setCurrentItemIndex(prev => prev - 1);
           if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
           setTimeout(() => setIsAnimating(false), 300);
@@ -363,7 +345,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handlePrevItem = useCallback(() => {
     if (hasPrevItem && !isAnimating) {
       setIsAnimating(true);
-      setShowHeader(false); // Hide header when navigating
       setCurrentItemIndex(prev => prev - 1);
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       setTimeout(() => setIsAnimating(false), 300);
@@ -373,7 +354,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handleNextItem = useCallback(() => {
     if (hasNextItem && !isAnimating) {
       setIsAnimating(true);
-      setShowHeader(false); // Hide header when navigating
       setCurrentItemIndex(prev => prev + 1);
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       setTimeout(() => setIsAnimating(false), 300);
@@ -383,7 +363,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handlePrevGroup = useCallback(() => {
     if (hasPrevGroup && !isAnimating && groups) {
       setIsAnimating(true);
-      setShowHeader(false); // Hide header when navigating
       setCurrentGroupIndex(prev => prev - 1);
       setCurrentItemIndex(0);
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -394,7 +373,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handleNextGroup = useCallback(() => {
     if (hasNextGroup && !isAnimating && groups) {
       setIsAnimating(true);
-      setShowHeader(false); // Hide header when navigating
       setCurrentGroupIndex(prev => prev + 1);
       setCurrentItemIndex(0);
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -631,8 +609,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
         onTouchEnd={onContentTouchEnd}
         onDoubleClick={handleDoubleClick}
       >
-        {/* Header - fixed overlay, hidden by default */}
-        <div className={`fixed top-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/60 px-4 py-3 flex justify-between items-center transition-all duration-300 ${showHeader ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'}`}>
+        {/* Header - minimal (close + quick actions) with meaning indicator */}
+        <div className={`sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-4 py-3 flex justify-between items-center shrink-0 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
               <ArrowLeft size={20} className="mr-1" /> Close
@@ -725,10 +703,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
           </div>
         </div>
 
-        {/* Memory Progress Bar - fixed overlay below header, shown with header */}
-        {showHeader && isSaved && savedItemMatch && mastery && masteryColors && (
-          <div className="fixed top-[52px] left-0 right-0 z-20 bg-slate-50/95 backdrop-blur-sm px-4 py-2 border-b border-slate-100 transition-all duration-300">
-            <div className="max-w-3xl mx-auto">
+        <div className="p-4 pb-24">
+          {/* Memory Progress Bar - shown for saved items */}
+          {isSaved && savedItemMatch && mastery && masteryColors && (
+            <div className="max-w-3xl mx-auto mb-4">
               <div className="flex items-center gap-2 text-xs">
                 {/* Mastery badge with percentage */}
                 <span className={`${masteryColors.bg} ${masteryColors.text} px-2 py-0.5 rounded-full font-semibold`}>
@@ -769,11 +747,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 </span>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Content area - add top padding when header is visible to avoid being blocked */}
-        <div className={`pb-24 px-4 transition-all duration-300 ${showHeader && isSaved ? 'pt-24' : showHeader ? 'pt-16' : 'pt-4'}`}>
           {type === 'vocab' && (
             <VocabCardDisplay 
               data={data as VocabCard}
@@ -783,13 +758,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
               onExpand={undefined}
               onSearch={handleVocabSearch}
               scrollable={false}
-              className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto w-full"
+              className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
               showRefresh={false}
             />
           )}
 
           {type === 'phrase' && (
-            <div className="space-y-6 max-w-3xl mx-auto w-full">
+            <div className="space-y-6 max-w-3xl mx-auto">
               <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group">
                   {(data as SearchResult).imageUrl ? (
