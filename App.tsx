@@ -965,8 +965,11 @@ const App: React.FC = () => {
     }
   }, [user, isOnline]);
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     log('🗑️ App: Deleting item', id);
+    
+    const now = Date.now();
+    let deletedItem: StoredItem | null = null;
     
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
@@ -976,8 +979,9 @@ const App: React.FC = () => {
         newItems[index] = {
           ...newItems[index],
           isDeleted: true,
-          updatedAt: Date.now()
+          updatedAt: now
         };
+        deletedItem = newItems[index];
         
         return {
           ...prevState,
@@ -987,6 +991,23 @@ const App: React.FC = () => {
       warn('🗑️ App: Item not found for deletion:', id);
       return prevState;
     });
+    
+    // Immediately sync deletion to Firebase (don't wait for 5s debounce)
+    // This ensures deletions propagate even if user closes app quickly
+    if (user && isFirebaseConfigured && isOnline) {
+      try {
+        // Find the item in current state and sync it immediately
+        const itemToSync = syncState.items.find(i => i.data.id === id);
+        if (itemToSync) {
+          const itemWithDelete = { ...itemToSync, isDeleted: true, updatedAt: now };
+          log('🗑️ App: Immediately syncing deletion to Firebase');
+          await saveUserData(user.uid, [itemWithDelete]);
+        }
+      } catch (e) {
+        logError('🗑️ App: Failed to sync deletion to Firebase:', e);
+        // Deletion is still saved locally, will retry on next sync
+      }
+    }
     
     // Update detailContext to remove the deleted item (instead of closing entirely)
     setDetailContext(prev => {
@@ -1025,8 +1046,10 @@ const App: React.FC = () => {
     });
   };
 
-  const handleArchive = (id: string) => {
+  const handleArchive = async (id: string) => {
     log('📦 App: Archiving item', id);
+    
+    const now = Date.now();
     
     setSyncState(prevState => {
       const index = prevState.items.findIndex(i => i.data.id === id);
@@ -1035,7 +1058,7 @@ const App: React.FC = () => {
         newItems[index] = {
           ...newItems[index],
           isArchived: true,
-          updatedAt: Date.now()
+          updatedAt: now
         };
         
         return {
@@ -1046,6 +1069,20 @@ const App: React.FC = () => {
       warn('📦 App: Item not found for archiving:', id);
       return prevState;
     });
+    
+    // Immediately sync archive to Firebase (don't wait for 5s debounce)
+    if (user && isFirebaseConfigured && isOnline) {
+      try {
+        const itemToSync = syncState.items.find(i => i.data.id === id);
+        if (itemToSync) {
+          const itemWithArchive = { ...itemToSync, isArchived: true, updatedAt: now };
+          log('📦 App: Immediately syncing archive to Firebase');
+          await saveUserData(user.uid, [itemWithArchive]);
+        }
+      } catch (e) {
+        logError('📦 App: Failed to sync archive to Firebase:', e);
+      }
+    }
     
     // Update detailContext to remove the archived item (instead of closing entirely)
     setDetailContext(prev => {
@@ -1080,7 +1117,11 @@ const App: React.FC = () => {
     });
   };
 
-  const handleUnarchive = (id: string) => {
+  const handleUnarchive = async (id: string) => {
+    log('📦 App: Unarchiving item', id);
+    
+    const now = Date.now();
+    
     setSyncState(prevState => {
       const index = prevState.items.findIndex(i => i.data.id === id);
       if (index >= 0) {
@@ -1088,7 +1129,7 @@ const App: React.FC = () => {
         newItems[index] = {
           ...newItems[index],
           isArchived: false,
-          updatedAt: Date.now()
+          updatedAt: now
         };
         
         return {
@@ -1098,6 +1139,20 @@ const App: React.FC = () => {
       }
       return prevState;
     });
+    
+    // Immediately sync unarchive to Firebase
+    if (user && isFirebaseConfigured && isOnline) {
+      try {
+        const itemToSync = syncState.items.find(i => i.data.id === id);
+        if (itemToSync) {
+          const itemWithUnarchive = { ...itemToSync, isArchived: false, updatedAt: now };
+          log('📦 App: Immediately syncing unarchive to Firebase');
+          await saveUserData(user.uid, [itemWithUnarchive]);
+        }
+      } catch (e) {
+        logError('📦 App: Failed to sync unarchive to Firebase:', e);
+      }
+    }
   };
 
   // Search handler - now triggers search in notebook

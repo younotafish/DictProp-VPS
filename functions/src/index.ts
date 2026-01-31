@@ -264,6 +264,15 @@ The user has entered a SINGLE WORD or SHORT PHRASE (not a full sentence).
 
 Your task: Create comprehensive vocabulary cards for this word/phrase.
 
+CRITICAL - USE BASE/DICTIONARY FORMS:
+If the input is an inflected form, you MUST normalize it to the base/lemma form (the dictionary entry form):
+- Verbs: "hidden" → "hide", "running" → "run", "went" → "go", "touted" → "tout", "eaten" → "eat"
+- Adjectives: "happier" → "happy", "best" → "good", "worse" → "bad"
+- Nouns: "children" → "child", "mice" → "mouse" (irregular plurals only)
+- Adverbs: "better" (as adverb) → "well"
+The 'word' field in your response should contain the BASE FORM that a learner would look up in a dictionary.
+Include the original input form in the 'forms' array.
+
 CRITICAL - MULTIPLE MEANINGS:
 You MUST create SEPARATE vocab cards for EACH distinct, uncommon meaning or sense of the word/phrase.
 - Different parts of speech = different cards (noun vs verb vs adjective)
@@ -277,7 +286,7 @@ Example: "bank" should produce 3+ cards:
 4. bank (verb: aviation) - "To tilt an aircraft..."
 
 Each card MUST have:
-- The SAME 'word' field (the original input)
+- The SAME 'word' field (the BASE/DICTIONARY form, not the original inflected input)
 - A UNIQUE 'sense' field (e.g., "noun: emotion", "verb: to cause", "adj: describing")
 - Definition, examples, synonyms, antonyms specific to THAT meaning only
 - Different Chinese translations for each sense

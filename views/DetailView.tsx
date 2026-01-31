@@ -83,7 +83,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [currentItemIndex, setCurrentItemIndex] = useState(groups ? initialItemIndex : initialIndex);
   
   const [isAnimating, setIsAnimating] = useState(false);
-  const [showHeader, setShowHeader] = useState(true);
+  const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
@@ -181,11 +181,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const target = e.currentTarget;
     const currentScrollY = target.scrollTop;
 
-    // Header auto-hide logic
-    if (currentScrollY < 50) {
-      if (!showHeader) setShowHeader(true);
-    } else if (Math.abs(currentScrollY - lastScrollY.current) > 10) {
-      setShowHeader(currentScrollY < lastScrollY.current);
+    // Header auto-hide logic: hide when scrolling down, but only show via gesture or keyboard
+    if (showHeader && currentScrollY > lastScrollY.current && currentScrollY > 50) {
+      setShowHeader(false);
     }
     
     lastScrollY.current = currentScrollY;
@@ -194,14 +192,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
-  const touchStartScrollTop = useRef<number>(0);
-  const touchStartTime = useRef<number>(0);
   
   const onContentTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
-    touchStartScrollTop.current = scrollContainerRef.current?.scrollTop || 0;
-    touchStartTime.current = Date.now();
   };
   
   const onContentTouchEnd = (e: React.TouchEvent) => {
@@ -221,16 +215,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const absX = Math.abs(diffX);
     const absY = Math.abs(diffY);
     const swipeThreshold = 50;
-    const swipeDuration = Date.now() - touchStartTime.current;
-    
-    // Skip if touch duration is too long (likely text selection attempt, not swipe)
-    // Text selection gestures take longer than quick navigation swipes
-    const maxSwipeDuration = 300;
-    if (swipeDuration > maxSwipeDuration) {
-      touchStartX.current = null;
-      touchStartY.current = null;
-      return;
-    }
     
     // Check scroll position for edge-based navigation
     const container = scrollContainerRef.current;
@@ -242,14 +226,38 @@ export const DetailView: React.FC<DetailViewProps> = ({
     
     // Vertical Swipe (Groups/Words) - edge-based detection
     const isVerticalSwipe = absY > absX * 1.5 && absY > swipeThreshold;
-    const isFastSwipe = swipeDuration < 300;
+    
+    // Use distance to distinguish short vs long swipes
+    // Short swipe down (50-120px): show header
+    // Long swipe down (>120px): navigate to previous item
+    const shortSwipeMin = 50;
+    const shortSwipeMax = 120;
+    const longSwipeMin = 120;
+    const isShortSwipe = absY >= shortSwipeMin && absY < shortSwipeMax;
+    const isLongSwipe = absY >= longSwipeMin;
     
     // Horizontal Swipe (Meanings)
     const isHorizontalSwipe = absX > absY * 1.5 && absX > swipeThreshold;
 
-    if (isVerticalSwipe && isFastSwipe && groups) {
+    // Short swipe down at top -> show header bar
+    if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
+      setShowHeader(true);
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
+    
+    // Skip if swipe is too short for navigation
+    if (!isLongSwipe && isVerticalSwipe) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
+
+    if (isVerticalSwipe && isLongSwipe && groups) {
       // Swipe UP -> Next Group (Word) - only when at bottom or content is short
-      if (diffY < -swipeThreshold && hasNextGroup && (isAtBottom || scrollHeight <= clientHeight)) {
+      if (diffY < -longSwipeMin && hasNextGroup && (isAtBottom || scrollHeight <= clientHeight)) {
+        setShowHeader(false); // Hide header on navigation
         setIsAnimating(true);
         setCurrentGroupIndex(prev => prev + 1);
         setCurrentItemIndex(0); // Reset to first meaning
@@ -257,7 +265,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
         setTimeout(() => setIsAnimating(false), 300);
       }
       // Swipe DOWN -> Previous Group (Word) - only when at top
-      else if (diffY > swipeThreshold && hasPrevGroup && isAtTop) {
+      else if (diffY > longSwipeMin && hasPrevGroup && isAtTop) {
+        setShowHeader(false); // Hide header on navigation
         setIsAnimating(true);
         setCurrentGroupIndex(prev => prev - 1);
         setCurrentItemIndex(0); // Reset to first meaning
@@ -265,9 +274,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
         setTimeout(() => setIsAnimating(false), 300);
       }
     }
-    else if (isHorizontalSwipe) {
+    else if (isHorizontalSwipe && absX >= longSwipeMin) {
       // Swipe LEFT -> Next Item (Meaning)
-      if (diffX < -swipeThreshold && hasNextItem) {
+      if (diffX < -longSwipeMin && hasNextItem) {
+        setShowHeader(false); // Hide header on navigation
         setIsAnimating(true);
         setCurrentItemIndex(prev => prev + 1);
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -275,8 +285,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
       
       // Swipe RIGHT -> Prev Item (Meaning) or Close
-      if (diffX > swipeThreshold) {
+      if (diffX > longSwipeMin) {
         if (hasPrevItem) {
+          setShowHeader(false); // Hide header on navigation
           setIsAnimating(true);
           setCurrentItemIndex(prev => prev - 1);
           if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
@@ -575,6 +586,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
+      // H: Toggle header visibility
+      if (e.key === 'h' || e.key === 'H') {
+        e.preventDefault();
+        setShowHeader(prev => !prev);
+      }
+
       // P: Pronounce
       if (e.key === 'p' || e.key === 'P') {
         e.preventDefault();
@@ -591,11 +608,19 @@ export const DetailView: React.FC<DetailViewProps> = ({
              handleRemember();
          }
       }
+      
+      // S: Toggle save
+      if (e.key === 's' || e.key === 'S') {
+        if (!e.metaKey && !e.ctrlKey) { // Don't interfere with Cmd+S
+          e.preventDefault();
+          handleToggleSave();
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showDeleteConfirm, showActionMenu, handleRemember, handleResetSRS]);
+  }, [title, showDeleteConfirm, showActionMenu, handleRemember, handleResetSRS, handleToggleSave]);
 
   return (
     <div 
@@ -609,104 +634,68 @@ export const DetailView: React.FC<DetailViewProps> = ({
         onTouchEnd={onContentTouchEnd}
         onDoubleClick={handleDoubleClick}
       >
-        {/* Header - minimal (close + quick actions) with meaning indicator */}
-        <div className={`sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-4 py-3 flex justify-between items-center shrink-0 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
-              <ArrowLeft size={20} className="mr-1" /> Close
-            </Button>
-            {/* Meaning position indicator - shows which card in the group */}
-            {currentGroup && currentGroup.items.length > 1 && (
-              <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100">
-                {currentItemIndex + 1}/{currentGroup.items.length}
-              </span>
-            )}
+        {/* Header - combined with progress bar */}
+        <div className={`sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/60 shrink-0 transition-all duration-300 overflow-hidden ${showHeader ? 'max-h-32 opacity-100' : 'max-h-0 opacity-0 border-b-0'}`}>
+          {/* Top row: navigation and actions */}
+          <div className="px-4 py-2 flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
+                <ArrowLeft size={20} className="mr-1" /> Close
+              </Button>
+              {/* Meaning position indicator - shows which card in the group */}
+              {currentGroup && currentGroup.items.length > 1 && (
+                <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100">
+                  {currentItemIndex + 1}/{currentGroup.items.length}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => {
+                  const searchText = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
+                  // Use onRefresh if available (forces real AI search), otherwise fall back to onSearch
+                  if (onRefresh) {
+                    onRefresh(searchText);
+                  } else {
+                    onSearch(searchText);
+                  }
+                }}
+                className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                title="Refresh with AI"
+              >
+                <RefreshCw size={18} />
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handleToggleSave}
+                className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+              >
+                {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
+                <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
+              </Button>
+              {/* Action menu for saved items */}
+              {isSaved && (
+                <div className="relative">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowActionMenu(!showActionMenu)}
+                    className="text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                    title="More actions"
+                  >
+                    <MoreVertical size={18} />
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => {
-                const searchText = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
-                // Use onRefresh if available (forces real AI search), otherwise fall back to onSearch
-                if (onRefresh) {
-                  onRefresh(searchText);
-                } else {
-                  onSearch(searchText);
-                }
-              }}
-              className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
-              title="Refresh with AI"
-            >
-              <RefreshCw size={18} />
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={handleToggleSave}
-              className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
-            >
-              {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
-              <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
-            </Button>
-            {/* Action menu for saved items */}
-            {isSaved && (
-              <div className="relative">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => setShowActionMenu(!showActionMenu)}
-                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                  title="More actions"
-                >
-                  <MoreVertical size={18} />
-                </Button>
-                {/* Dropdown menu */}
-                {showActionMenu && (
-                  <>
-                    <div 
-                      className="fixed inset-0 z-40" 
-                      onClick={() => setShowActionMenu(false)}
-                    />
-                    <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-xl shadow-xl border border-slate-200 py-1 min-w-[160px] animate-in fade-in zoom-in-95 duration-150">
-                      {onArchive && (
-                        <button
-                          onClick={handleArchiveItem}
-                          className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-amber-50 hover:text-amber-700 flex items-center gap-2.5 transition-colors"
-                        >
-                          <Archive size={16} />
-                          Archive
-                        </button>
-                      )}
-                      <button
-                        onClick={handleResetSRS}
-                        className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2.5 transition-colors"
-                      >
-                        <RotateCcw size={16} />
-                        Reset Memory Strength
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowActionMenu(false);
-                          setShowDeleteConfirm(true);
-                        }}
-                        className="w-full px-4 py-2.5 text-left text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 transition-colors"
-                      >
-                        <Trash2 size={16} />
-                        Delete
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="p-4 pb-24">
-          {/* Memory Progress Bar - shown for saved items */}
+          
+          {/* Bottom row: Progress bar - shown for saved items */}
           {isSaved && savedItemMatch && mastery && masteryColors && (
-            <div className="max-w-3xl mx-auto mb-4">
+            <div className="px-4 pb-2">
               <div className="flex items-center gap-2 text-xs">
                 {/* Mastery badge with percentage */}
                 <span className={`${masteryColors.bg} ${masteryColors.text} px-2 py-0.5 rounded-full font-semibold`}>
@@ -721,7 +710,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   />
                 </div>
                 
-                {/* Stats row */}
+                {/* Stats */}
                 <span className="text-slate-400 whitespace-nowrap">
                   {savedItemMatch.srs.totalReviews}×
                 </span>
@@ -748,6 +737,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+
+        <div className="p-4 pb-24">
 
           {type === 'vocab' && (
             <VocabCardDisplay 
@@ -893,6 +885,44 @@ export const DetailView: React.FC<DetailViewProps> = ({
             <span className="text-slate-800 font-bold text-lg">Remembered!</span>
           </div>
         </div>
+      )}
+
+      {/* Action menu dropdown - positioned fixed to escape overflow */}
+      {showActionMenu && (
+        <>
+          <div 
+            className="fixed inset-0 z-[55]" 
+            onClick={() => setShowActionMenu(false)}
+          />
+          <div className="fixed right-4 top-12 z-[56] bg-white rounded-xl shadow-xl border border-slate-200 py-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-150">
+            {onArchive && (
+              <button
+                onClick={handleArchiveItem}
+                className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-amber-50 hover:text-amber-700 flex items-center gap-2.5 transition-colors"
+              >
+                <Archive size={16} />
+                Archive
+              </button>
+            )}
+            <button
+              onClick={handleResetSRS}
+              className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2.5 transition-colors"
+            >
+              <RotateCcw size={16} />
+              Reset Memory Strength
+            </button>
+            <button
+              onClick={() => {
+                setShowActionMenu(false);
+                setShowDeleteConfirm(true);
+              }}
+              className="w-full px-4 py-2.5 text-left text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 transition-colors"
+            >
+              <Trash2 size={16} />
+              Delete
+            </button>
+          </div>
+        </>
       )}
 
       {/* Delete confirmation modal */}
