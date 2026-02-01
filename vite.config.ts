@@ -8,6 +8,14 @@ export default defineConfig({
     host: '0.0.0.0',
     // Disable HTTPS for local development (use HTTP)
     https: false,
+    // Ignore playwright test output directories
+    watch: {
+      ignored: ['**/test-results/**', '**/playwright-report/**', '**/.playwright/**']
+    },
+    // Disable error overlay for e2e testing
+    hmr: {
+      overlay: process.env.CI ? false : true
+    }
   },
   plugins: [
     react(),
