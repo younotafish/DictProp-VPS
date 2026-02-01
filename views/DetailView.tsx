@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, isVocabItem, TaskType } from '../types';
+import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, TaskType } from '../types';
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
@@ -47,8 +47,8 @@ interface DetailViewProps {
   initialGroupIndex?: number;
   initialItemIndex?: number;
 
-  // Legacy single item mode (for Search view)
-  items?: StoredItem[]; // Fallback if groups not provided
+  // Legacy flat list mode (deprecated - use groups instead)
+  items?: StoredItem[]; // Kept for backwards compatibility, not currently used
   initialIndex?: number;
   
   onClose: () => void;

@@ -27,13 +27,10 @@ import {
   Zap,
   Target,
   Clock,
-  Trash2,
   Archive,
   Play,
   Search as SearchIcon,
-  RefreshCw,
-  ChevronLeft,
-  ChevronRight
+  RefreshCw
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { recordStudySession, loadSessionHistory, SessionRecord } from '../services/firebase';

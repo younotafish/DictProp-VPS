@@ -10,7 +10,6 @@
     "deploy": "firebase deploy --only hosting"
   },
   "dependencies": {
-    "@google/genai": "^1.30.0",
     "canvas-confetti": "^1.9.4",
     "firebase": "^12.6.0",
     "fuse.js": "^7.1.0",

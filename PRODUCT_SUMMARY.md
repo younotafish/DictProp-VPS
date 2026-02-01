@@ -245,7 +245,7 @@ User Searches "bank"
         ├── Match Found ──────────► Show saved content instantly
         │                           (No API call, works offline)
         │
-        └── No Match ─────────────► Call Gemini AI API
+        └── No Match ─────────────► Call AI API (DeepSeek-V3 via DeepInfra)
                                     (Requires network, 2-5 sec)
 ```
 
@@ -1114,7 +1114,7 @@ When the same item is edited on two devices:
 ### Navigation
 
 **Bottom Tab Bar:**
-- Three tabs: Search | Notebook | Study
+- Two tabs: Notebook | Study (search is integrated into Notebook)
 - Icons with labels
 - Active state: indigo color, thicker icon
 - Hides when scrolling down (more content space)
@@ -1176,7 +1176,7 @@ When the same item is edited on two devices:
 ### The AI Engine
 
 **Model Used:**
-- Google Gemini 2.5 Flash
+- DeepSeek-V3 (via DeepInfra)
 - Optimized for speed and accuracy
 - Structured JSON output for consistent formatting
 
@@ -1280,7 +1280,7 @@ Create separate cards for each relevant meaning.
 ### How Illustrations Are Created
 
 **Model Used:**
-- Gemini 2.5 Flash Image
+- FLUX Schnell (via DeepInfra or Replicate as fallback)
 - Generates vector-style icons
 - Minimal, flat design aesthetic
 
@@ -1460,7 +1460,7 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 - Input validation prevents accidental submissions
 
 **API Quota Exceeded:**
-- Gemini has daily usage limits
+- DeepInfra has usage limits based on your plan
 - When exceeded: "Daily AI limit reached. Please check your plan or try again later."
 - Red error card with retry button
 - User can still browse saved items
@@ -1837,7 +1837,7 @@ users/{userId}/vocab_items/{itemId}
 
 | Shortcut | Action |
 |----------|--------|
-| `1` | Go to Search tab |
+| `1` | Go to Notebook tab |
 | `2` | Go to Notebook tab |
 | `3` | Go to Study tab |
 | `⌘F` / `Ctrl+F` | Focus search input |
@@ -2054,7 +2054,7 @@ users/{userId}/vocab_items/{itemId}
 **Context:** Sarah downloads DictProp after seeing it recommended for vocabulary learning.
 
 ### Step 1: First Launch
-- Opens app → Sees Search view
+- Opens app → Sees Notebook view
 - Large search box at top
 - "What would you like to learn?" message
 - Four suggested words with icons
@@ -2557,7 +2557,7 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ### Keyboard Shortcuts (Desktop)
 | Shortcut | Action |
 |----------|--------|
-| `1` / `2` / `3` | Switch tabs (Search/Notebook/Study) |
+| `1` / `2` | Switch tabs (Notebook/Study) |
 | `⌘F` | Focus search |
 | `←` `→` | Navigate cards |
 | `↑` `↓` | Navigate words |
@@ -2594,7 +2594,7 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 | Styling | Tailwind CSS |
 | Icons | Lucide React |
 | Backend | Firebase (Auth, Firestore, Functions) |
-| AI | Google Gemini 2.5 Flash |
+| AI | DeepSeek-V3 via DeepInfra (text), FLUX Schnell (images) |
 | Hosting | Firebase Hosting |
 | PWA | vite-plugin-pwa |
 
@@ -2618,13 +2618,12 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 │   ├── UserMenu.tsx        # Account dropdown
 │   └── ...
 ├── views/
-│   ├── Search.tsx          # Search view
-│   ├── Notebook.tsx        # Notebook view
+│   ├── Notebook.tsx        # Notebook view (includes integrated search)
 │   ├── StudyEnhanced.tsx   # Study session view
 │   └── DetailView.tsx      # Full card view
 ├── services/
 │   ├── firebase.ts         # Firebase initialization & auth
-│   ├── geminiService.ts    # AI API calls (client-side)
+│   ├── aiService.ts        # AI API calls (via Firebase Functions)
 │   ├── storage.ts          # IndexedDB operations
 │   ├── sync.ts             # Cloud sync logic
 │   ├── srsAlgorithm.ts     # Spaced repetition algorithm
@@ -2693,35 +2692,40 @@ Add your hosting domain to Firebase Console → Authentication → Settings → 
 
 ---
 
-## Gemini AI Setup
+## AI API Setup
 
-### 1. Get API Key
+### 1. Get API Keys
 
-1. Go to [Google AI Studio](https://aistudio.google.com)
-2. Create API key
+1. Go to [DeepInfra](https://deepinfra.com) for DeepSeek-V3 (text) and FLUX Schnell (images)
+2. Optionally get [Replicate](https://replicate.com) API key as fallback for images
 3. Store securely (never commit to git)
 
-### 2. Set Firebase Secret
+### 2. Set Firebase Secrets
 
 ```bash
-# Set the API key as a Firebase secret
-firebase functions:secrets:set GEMINI_API_KEY
-# Paste your API key when prompted
+# Set the API keys as Firebase secrets
+firebase functions:secrets:set DEEPINFRA_API_KEY
+firebase functions:secrets:set REPLICATE_API_TOKEN  # Optional fallback
+# Paste your API keys when prompted
 ```
 
 ### 3. Cloud Functions
 
-The app uses two Cloud Functions:
+The app uses three Cloud Functions:
 
 **analyzeInput** — Vocabulary/sentence analysis
 - Detects word vs. sentence mode
-- Uses Gemini 2.5 Flash with structured JSON output
+- Uses DeepSeek-V3 with structured JSON output
 - Returns vocabulary cards with all fields
 
 **generateIllustration** — Image generation
-- Uses Gemini 2.5 Flash Image model
+- Uses FLUX Schnell (DeepInfra primary, Replicate fallback)
 - Generates minimal vector icons
 - Returns base64 data URI
+
+**transcribeAudio** — Voice-to-text
+- Uses Whisper Large V3 Turbo via DeepInfra
+- Transcribes voice recordings for voice search
 
 Deploy functions:
 ```bash
@@ -2959,7 +2963,8 @@ interface SRSData {
 - [ ] Google Sign-In enabled in Firebase Auth
 - [ ] Hosting domain added to authorized domains
 - [ ] Firestore rules deployed
-- [ ] Gemini API key set as Firebase secret
+- [ ] DeepInfra API key set as Firebase secret (DEEPINFRA_API_KEY)
+- [ ] Replicate API key set as Firebase secret (optional, REPLICATE_API_TOKEN)
 - [ ] Cloud Functions deployed
 - [ ] PWA icons in `/public` (192x192, 512x512)
 - [ ] Build passes (`npm run build`)
