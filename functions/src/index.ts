@@ -1,15 +1,13 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { GoogleGenAI, Schema, Type } from "@google/genai";
 import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 
 // Define the secret parameters
-const geminiApiKey = defineSecret("GEMINI_API_KEY");
 const replicateApiKey = defineSecret("REPLICATE_API_TOKEN");
 const deepinfraApiKey = defineSecret("DEEPINFRA_API_KEY");
 
 // ============================================================================
-// DeepSeek-V3 Helper (Primary text model via DeepInfra)
+// DeepSeek-V3 Helper (Text model via DeepInfra)
 // ============================================================================
 
 const DEEPSEEK_TIMEOUT_MS = 30000; // 30 second timeout
@@ -79,7 +77,7 @@ async function callDeepSeek(
 }
 
 // ============================================================================
-// Response Validation (derisk DeepSeek's lack of native schema enforcement)
+// Response Validation
 // ============================================================================
 
 function validateTranslationResponse(data: any): boolean {
@@ -130,29 +128,6 @@ function validateSentenceModeResponse(data: any): boolean {
 }
 
 // ============================================================================
-// Gemini Helper (Fallback text model)
-// ============================================================================
-
-async function callGemini(
-  ai: GoogleGenAI,
-  systemPrompt: string,
-  userPrompt: string,
-  schema: Schema
-): Promise<any> {
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: userPrompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: schema,
-      systemInstruction: systemPrompt,
-    }
-  });
-
-  return JSON.parse(response.text || "{}");
-}
-
-// ============================================================================
 // JSON Schema descriptions for DeepSeek prompts
 // ============================================================================
 
@@ -162,9 +137,10 @@ Each vocab object MUST have these fields:
   "word": "string - The vocabulary word or phrase",
   "sense": "string - Brief label for this specific meaning (e.g., 'noun: financial', 'verb: to rely on')",
   "chinese": "string - Chinese translation for THIS specific meaning only",
-  "ipa": "string - American IPA with stress marks",
+  "ipa": "string - American English IPA pronunciation with stress marks (use General American accent, NOT British)",
   "definition": "string - Original English definition for THIS specific meaning/sense",
   "forms": ["array of strings - Different grammatical forms (e.g., runs, running, ran)"],
+  "wordFamily": ["array of objects - Related words of different parts of speech, each with { word, pos, chinese }"],
   "synonyms": ["array of strings - Synonyms for THIS specific meaning"],
   "antonyms": ["array of strings - Antonyms for THIS specific meaning"],
   "confusables": ["array of strings - Words easily confused with this (similar spelling, sound, or meaning)"],
@@ -189,7 +165,7 @@ You MUST respond with valid JSON in this exact format:
   "translation": "string - Precise Chinese translation of the full sentence",
   "grammar": "string - Markdown explanation of grammar, nuance, tone, and register",
   "visualKeyword": "string - One single visual keyword to represent the whole concept for image generation",
-  "pronunciation": "string - IPA or phonetic breakdown of the full input",
+  "pronunciation": "string - American English IPA pronunciation of the full input (use General American accent, NOT British)",
   "vocabs": [
     ${VOCAB_SCHEMA_DESCRIPTION}
   ]
@@ -201,68 +177,21 @@ You MUST respond with valid JSON in this exact format:
   "english": "string - Best natural English translation"
 }`;
 
-// ============================================================================
-// Gemini Schema definitions (used for fallback with native schema enforcement)
-// ============================================================================
-
-// Vocab card schema (shared between both modes)
-const vocabSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    word: { type: Type.STRING, description: "The vocabulary word or phrase" },
-    sense: { type: Type.STRING, description: "Brief label for this specific meaning (e.g., 'noun: financial', 'verb: to rely on')" },
-    chinese: { type: Type.STRING, description: "Chinese translation for THIS specific meaning only" },
-    ipa: { type: Type.STRING, description: "American IPA with stress marks" },
-    definition: { type: Type.STRING, description: "Original English definition for THIS specific meaning/sense" },
-    forms: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Different grammatical forms of the word (e.g., for 'run': runs, running, ran, run). Include verb conjugations, noun plurals, adjective forms, etc." },
-    synonyms: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Synonyms for THIS specific meaning" },
-    antonyms: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Antonyms for THIS specific meaning" },
-    confusables: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Words easily confused with this word (similar spelling, sound, or meaning). E.g., affect/effect, accept/except, complement/compliment" },
-    examples: { type: Type.ARRAY, items: { type: Type.STRING }, description: "2 natural contemporary sentences showing THIS specific meaning" },
-    history: { type: Type.STRING, description: "Etymology and semantic evolution: Where the word comes from AND how/why it evolved to its current meaning. Explain the journey from original meaning to modern usage (2-3 sentences)" },
-    register: { type: Type.STRING, description: "Frequency/register note (formal, slang, etc.)" },
-    mnemonic: { type: Type.STRING, description: "A simple memory aid for THIS specific meaning" },
-    imagePrompt: { type: Type.STRING, description: "A prompt to generate an illustrative image for THIS specific meaning" }
-  },
-  required: ["word", "sense", "chinese", "ipa", "definition", "forms", "synonyms", "antonyms", "confusables", "examples", "history", "register", "mnemonic", "imagePrompt"]
-};
-
-// Schema for WORD/PHRASE mode - vocabulary only
-const wordModeSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    vocabs: { 
-      type: Type.ARRAY, 
-      items: vocabSchema,
-      description: "All meanings/senses of this word or phrase as separate cards"
-    }
-  },
-  required: ["vocabs"]
-};
-
-// Schema for SENTENCE mode - full analysis
-const sentenceModeSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    translation: { type: Type.STRING, description: "Precise Chinese translation of the full sentence" },
-    grammar: { type: Type.STRING, description: "Markdown explanation of grammar, nuance, tone, and register." },
-    visualKeyword: { type: Type.STRING, description: "One single visual keyword to represent the whole concept for image generation" },
-    pronunciation: { type: Type.STRING, description: "IPA or phonetic breakdown of the full input" },
-    vocabs: { 
-      type: Type.ARRAY, 
-      items: vocabSchema,
-      description: "List of interesting/uncommon/C1 vocabulary found in the sentence. Include phrasal verbs (e.g., 'bank on'), idioms, and multi-word expressions as complete phrases, not individual words. Each item gets full vocabulary card treatment."
-    }
-  },
-  required: ["translation", "grammar", "visualKeyword", "pronunciation", "vocabs"]
-};
-
-// System instruction for WORD/PHRASE mode (base instruction)
-const WORD_MODE_INSTRUCTION_BASE = `
+// System instruction for WORD/PHRASE mode
+const WORD_MODE_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach.
 The user has entered a SINGLE WORD or SHORT PHRASE (not a full sentence).
 
 Your task: Create comprehensive vocabulary cards for this word/phrase.
+
+CRITICAL - HANDLE TYPOS AND MISSPELLINGS:
+If the input appears to be misspelled or contains a typo, AUTOMATICALLY CORRECT IT to the most likely intended word.
+- "potabel" → "potable"
+- "recieve" → "receive"  
+- "accomodate" → "accommodate"
+- "definately" → "definitely"
+- "occured" → "occurred"
+Use your best judgment to determine what the user meant. The 'word' field should contain the CORRECT spelling.
 
 CRITICAL - USE BASE/DICTIONARY FORMS:
 If the input is an inflected form, you MUST normalize it to the base/lemma form (the dictionary entry form):
@@ -297,20 +226,27 @@ Each card MUST have:
   For verbs: base, 3rd person singular, past tense, past participle, present participle (e.g., run → runs, ran, run, running)
   For nouns: singular, plural (e.g., child → children)
   For adjectives: comparative, superlative (e.g., big → bigger, biggest)
+- Word Family: related words derived from the same root but different parts of speech
+  Each entry has { "word": "string", "pos": "noun/verb/adj/adv", "chinese": "string" }
+  Examples for "create" (verb):
+    { "word": "creation", "pos": "noun", "chinese": "创造（物）" }
+    { "word": "creative", "pos": "adj", "chinese": "有创意的" }
+    { "word": "creatively", "pos": "adv", "chinese": "创造性地" }
+    { "word": "creator", "pos": "noun", "chinese": "创造者" }
+    { "word": "creativity", "pos": "noun", "chinese": "创造力" }
 
 Be thorough - include common AND less common meanings. This helps learners master all usages.
-`;
 
-// DeepSeek version (with JSON schema embedded)
-const WORD_MODE_INSTRUCTION_DEEPSEEK = WORD_MODE_INSTRUCTION_BASE + WORD_MODE_JSON_SCHEMA;
+${WORD_MODE_JSON_SCHEMA}`;
 
-// Gemini version (uses native schema, no need to embed)
-const WORD_MODE_INSTRUCTION = WORD_MODE_INSTRUCTION_BASE;
-
-// System instruction for SENTENCE mode (base instruction)
-const SENTENCE_MODE_INSTRUCTION_BASE = `
+// System instruction for SENTENCE mode
+const SENTENCE_MODE_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach.
 The user has entered a SENTENCE or longer text.
+
+CRITICAL - HANDLE TYPOS AND MISSPELLINGS:
+If the input contains misspelled words or typos, AUTOMATICALLY CORRECT THEM when analyzing.
+Treat the sentence as if it were spelled correctly. Extract vocabulary based on the corrected words.
 
 Your task: Provide a comprehensive analysis including:
 1. translation - Precise Chinese translation
@@ -355,42 +291,23 @@ Each card MUST include ALL fields with the SAME depth as Word Mode:
 
 Only extract words/phrases that are C1/C2 level, idiomatic, or have interesting nuance.
 Be thorough - the user should get the same quality whether they search a word directly or extract it from a sentence.
-`;
 
-// DeepSeek version (with JSON schema embedded)
-const SENTENCE_MODE_INSTRUCTION_DEEPSEEK = SENTENCE_MODE_INSTRUCTION_BASE + SENTENCE_MODE_JSON_SCHEMA;
+${SENTENCE_MODE_JSON_SCHEMA}`;
 
-// Gemini version (uses native schema, no need to embed)
-const SENTENCE_MODE_INSTRUCTION = SENTENCE_MODE_INSTRUCTION_BASE;
-
-// Helper function to detect if input contains Chinese characters
-function containsChinese(text: string): boolean {
-  return /[\u4e00-\u9fff]/.test(text);
-}
-
-// Schema for Chinese to English translation
-const translationSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    english: { type: Type.STRING, description: "Best natural English translation" }
-  },
-  required: ["english"]
-};
-
-// Translation instruction (base)
-const TRANSLATION_INSTRUCTION_BASE = `
+// Translation instruction
+const TRANSLATION_INSTRUCTION = `
 You are a professional Chinese-English translator.
 Translate the Chinese text to natural English.
 Provide the single best translation that captures the meaning.
 If the input contains both Chinese and English, translate only the Chinese parts and preserve the English.
 For single words or short phrases, provide the most common English equivalent.
-`;
 
-// DeepSeek version (with JSON schema embedded)
-const TRANSLATION_INSTRUCTION_DEEPSEEK = TRANSLATION_INSTRUCTION_BASE + TRANSLATION_JSON_SCHEMA;
+${TRANSLATION_JSON_SCHEMA}`;
 
-// Gemini version (uses native schema)
-const TRANSLATION_INSTRUCTION = TRANSLATION_INSTRUCTION_BASE;
+// Helper function to detect if input contains Chinese characters
+function containsChinese(text: string): boolean {
+  return /[\u4e00-\u9fff]/.test(text);
+}
 
 // Helper function to detect if input is a word/phrase or a sentence
 function isWordOrPhrase(text: string): boolean {
@@ -435,13 +352,11 @@ function isWordOrPhrase(text: string): boolean {
   return true;
 }
 
-export const analyzeInput = onCall({ secrets: [geminiApiKey, deepinfraApiKey], cors: true }, async (request) => {
-  const geminiKey = geminiApiKey.value();
+export const analyzeInput = onCall({ secrets: [deepinfraApiKey], cors: true }, async (request) => {
   const deepinfraKey = deepinfraApiKey.value();
   
-  // We need at least one API key
-  if (!geminiKey && !deepinfraKey) {
-    throw new HttpsError('failed-precondition', 'No API keys configured (GEMINI_API_KEY or DEEPINFRA_API_KEY required)');
+  if (!deepinfraKey) {
+    throw new HttpsError('failed-precondition', 'DEEPINFRA_API_KEY not configured');
   }
   
   let text = request.data.text;
@@ -449,9 +364,6 @@ export const analyzeInput = onCall({ secrets: [geminiApiKey, deepinfraApiKey], c
     throw new HttpsError('invalid-argument', 'The function must be called with one argument "text" containing the input text.');
   }
 
-  // Initialize Gemini AI for fallback (only if key available)
-  const ai = geminiKey ? new GoogleGenAI({ apiKey: geminiKey }) : null;
-  
   // Track original query if we need to translate from Chinese
   let originalQuery: string | undefined;
   
@@ -463,55 +375,26 @@ export const analyzeInput = onCall({ secrets: [geminiApiKey, deepinfraApiKey], c
     originalQuery = text;
     
     const translationPrompt = `Translate this to English: "${text}"`;
-    let translationSuccess = false;
     
-    // Try DeepSeek first for translation
-    if (deepinfraKey) {
-      try {
-        logger.info("Translating with DeepSeek-V3...");
-        const translationData = await callDeepSeek(
-          deepinfraKey,
-          TRANSLATION_INSTRUCTION_DEEPSEEK,
-          translationPrompt
-        );
-        
-        // Validate response structure
-        if (validateTranslationResponse(translationData)) {
-          text = translationData.english;
-          logger.info(`DeepSeek translated to: "${text}"`);
-          translationSuccess = true;
-        } else {
-          logger.warn("DeepSeek translation response failed validation, trying Gemini fallback");
-        }
-      } catch (deepseekError: any) {
-        const isTimeout = deepseekError.name === 'AbortError';
-        logger.warn(`DeepSeek translation failed (${isTimeout ? 'timeout' : 'error'}), trying Gemini fallback:`, deepseekError.message);
+    try {
+      logger.info("Translating with DeepSeek-V3...");
+      const translationData = await callDeepSeek(
+        deepinfraKey,
+        TRANSLATION_INSTRUCTION,
+        translationPrompt
+      );
+      
+      // Validate response structure
+      if (validateTranslationResponse(translationData)) {
+        text = translationData.english;
+        logger.info(`Translated to: "${text}"`);
+      } else {
+        logger.warn("Translation response failed validation, proceeding with original text");
+        originalQuery = undefined;
       }
-    }
-    
-    // Fallback to Gemini for translation
-    if (!translationSuccess && ai) {
-      try {
-        logger.info("Translating with Gemini Flash (fallback)...");
-        const translationData = await callGemini(
-          ai,
-          TRANSLATION_INSTRUCTION,
-          translationPrompt,
-          translationSchema
-        );
-        if (translationData.english) {
-          text = translationData.english;
-          logger.info(`Gemini translated to: "${text}"`);
-          translationSuccess = true;
-        }
-      } catch (geminiError: any) {
-        logger.warn("Gemini translation also failed:", geminiError.message);
-      }
-    }
-    
-    // If all translation failed, proceed with original text
-    if (!translationSuccess) {
-      logger.warn("Translation failed, proceeding with original text");
+    } catch (translationError: any) {
+      const isTimeout = translationError.name === 'AbortError';
+      logger.warn(`Translation failed (${isTimeout ? 'timeout' : 'error'}):`, translationError.message);
       originalQuery = undefined;
     }
   }
@@ -526,82 +409,56 @@ export const analyzeInput = onCall({ secrets: [geminiApiKey, deepinfraApiKey], c
     ? `Analyze this English word or phrase for a C1 learner. Create vocabulary cards for ALL its meanings: "${text}"`
     : `Analyze this English sentence for a C1 learner: "${text}"`;
 
-  let analysisData: any = null;
-  let analysisError: any = null;
-
-  // Try DeepSeek first
-  if (deepinfraKey) {
-    try {
-      logger.info(`Analyzing with DeepSeek-V3 (${isWord ? 'word' : 'sentence'} mode)...`);
-      const systemPrompt = isWord ? WORD_MODE_INSTRUCTION_DEEPSEEK : SENTENCE_MODE_INSTRUCTION_DEEPSEEK;
-      const rawData = await callDeepSeek(deepinfraKey, systemPrompt, userPrompt);
-      
-      // Validate response structure before accepting
-      const isValid = isWord 
-        ? validateWordModeResponse(rawData)
-        : validateSentenceModeResponse(rawData);
-      
-      if (isValid) {
-        analysisData = rawData;
-        logger.info("DeepSeek analysis succeeded and validated");
-      } else {
-        logger.warn("DeepSeek response failed validation, trying Gemini fallback");
-        analysisError = new Error("DeepSeek response validation failed");
-      }
-    } catch (deepseekError: any) {
-      const isTimeout = deepseekError.name === 'AbortError';
-      logger.warn(`DeepSeek analysis failed (${isTimeout ? 'timeout' : 'error'}), trying Gemini fallback:`, deepseekError.message);
-      analysisError = deepseekError;
+  try {
+    logger.info(`Analyzing with DeepSeek-V3 (${isWord ? 'word' : 'sentence'} mode)...`);
+    const systemPrompt = isWord ? WORD_MODE_INSTRUCTION : SENTENCE_MODE_INSTRUCTION;
+    const rawData = await callDeepSeek(deepinfraKey, systemPrompt, userPrompt);
+    
+    // Validate response structure before accepting
+    const isValid = isWord 
+      ? validateWordModeResponse(rawData)
+      : validateSentenceModeResponse(rawData);
+    
+    if (!isValid) {
+      logger.error("DeepSeek response failed validation");
+      throw new HttpsError('internal', 'Analysis response validation failed');
     }
-  }
+    
+    logger.info("DeepSeek analysis succeeded and validated");
 
-  // Fallback to Gemini
-  if (!analysisData && ai) {
-    try {
-      logger.info(`Analyzing with Gemini Flash (${isWord ? 'word' : 'sentence'} mode, fallback)...`);
-      const systemPrompt = isWord ? WORD_MODE_INSTRUCTION : SENTENCE_MODE_INSTRUCTION;
-      const schema = isWord ? wordModeSchema : sentenceModeSchema;
-      analysisData = await callGemini(ai, systemPrompt, userPrompt, schema);
-      logger.info("Gemini analysis succeeded");
-    } catch (geminiError: any) {
-      logger.error("Gemini analysis also failed:", geminiError.message);
-      analysisError = geminiError;
+    // Format response
+    if (isWord) {
+      return {
+        translation: "", // Empty indicates word mode
+        grammar: "",
+        visualKeyword: rawData.vocabs?.[0]?.word || text,
+        pronunciation: rawData.vocabs?.[0]?.ipa || "",
+        vocabs: rawData.vocabs || [],
+        originalQuery,
+        query: text
+      };
+    } else {
+      return {
+        ...rawData,
+        originalQuery,
+        query: text
+      };
     }
-  }
-
-  // If all providers failed, throw error
-  if (!analysisData) {
-    const msg = analysisError?.message || 'Analysis failed';
+  } catch (error: any) {
+    const msg = error.message || 'Analysis failed';
     const isQuota = 
         msg.includes('429') || 
         msg.includes('quota') || 
         msg.includes('RESOURCE_EXHAUSTED') || 
-        analysisError?.status === 429 || 
-        analysisError?.status === 'RESOURCE_EXHAUSTED';
+        error?.status === 429 || 
+        error?.status === 'RESOURCE_EXHAUSTED';
 
     if (isQuota) {
       throw new HttpsError('resource-exhausted', "QUOTA_EXCEEDED");
     }
+    
+    logger.error("Analysis failed:", msg);
     throw new HttpsError('internal', msg);
-  }
-
-  // Format response
-  if (isWord) {
-    return {
-      translation: "", // Empty indicates word mode
-      grammar: "",
-      visualKeyword: analysisData.vocabs?.[0]?.word || text,
-      pronunciation: analysisData.vocabs?.[0]?.ipa || "",
-      vocabs: analysisData.vocabs || [],
-      originalQuery,
-      query: text
-    };
-  } else {
-    return {
-      ...analysisData,
-      originalQuery,
-      query: text
-    };
   }
 });
 
@@ -617,6 +474,77 @@ const getImageDimensions = (aspectRatio: string): { width: number; height: numbe
   }
 };
 
+// ============================================================================
+// Speech-to-Text with Whisper Large V3 Turbo (DeepInfra)
+// ============================================================================
+
+export const transcribeAudio = onCall({ secrets: [deepinfraApiKey], cors: true }, async (request) => {
+  const deepinfraKey = deepinfraApiKey.value();
+  
+  if (!deepinfraKey) {
+    throw new HttpsError('failed-precondition', 'DEEPINFRA_API_KEY not configured');
+  }
+  
+  const audioData = request.data.audio; // Base64 encoded audio
+  const mimeType = request.data.mimeType || 'audio/webm';
+  
+  if (!audioData) {
+    throw new HttpsError('invalid-argument', 'The function must be called with "audio" containing base64 encoded audio data.');
+  }
+
+  try {
+    logger.info("Transcribing audio with Whisper Large V3 Turbo...");
+    
+    // Convert base64 to binary
+    const audioBuffer = Buffer.from(audioData, 'base64');
+    
+    // Create form data for the API
+    const formData = new FormData();
+    const blob = new Blob([audioBuffer], { type: mimeType });
+    formData.append('audio', blob, `audio.${mimeType.split('/')[1] || 'webm'}`);
+    
+    const response = await fetchWithTimeout(
+      'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${deepinfraKey}`,
+        },
+        body: formData,
+      },
+      30000 // 30 second timeout
+    );
+
+    if (!response.ok) {
+      const status = response.status;
+      const errorData = await response.json().catch(() => ({}));
+      logger.warn("Whisper API error:", status, errorData);
+      
+      if (status === 429 || status === 402) {
+        throw new HttpsError('resource-exhausted', 'QUOTA_EXCEEDED');
+      }
+      
+      throw new Error(`Whisper API error: ${status}`);
+    }
+
+    const data = await response.json();
+    const transcribedText = data.text?.trim() || '';
+    
+    logger.info(`Transcription successful: "${transcribedText.substring(0, 50)}..."`);
+    
+    return { text: transcribedText };
+  } catch (error: any) {
+    const msg = error.message || 'Transcription failed';
+    logger.error("Transcription failed:", msg);
+    
+    if (error.code) {
+      throw error; // Re-throw HttpsError as-is
+    }
+    
+    throw new HttpsError('internal', msg);
+  }
+});
+
 export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicateApiKey], cors: true }, async (request) => {
   const prompt = request.data.prompt;
   const aspectRatio = request.data.aspectRatio || '1:1';
@@ -630,11 +558,11 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
   
   logger.info(`Generating image with aspect ratio: ${aspectRatio} (${dimensions.width}x${dimensions.height})`);
 
-  // Try DeepInfra first (primary)
+  // Try DeepInfra FLUX Schnell (primary)
   const deepinfraKey = deepinfraApiKey.value();
   if (deepinfraKey) {
     try {
-      logger.info("Trying DeepInfra FLUX Schnell...");
+      logger.info("Generating with DeepInfra FLUX Schnell...");
       const response = await fetch('https://api.deepinfra.com/v1/inference/black-forest-labs/FLUX-1-schnell', {
         method: 'POST',
         headers: {
@@ -658,36 +586,36 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
           const imageData = base64Image.startsWith('data:') 
             ? base64Image 
             : `data:image/png;base64,${base64Image}`;
-          logger.info("DeepInfra succeeded");
+          logger.info("DeepInfra FLUX succeeded");
           return { imageData };
         }
       } else {
         const status = response.status;
         const errorData = await response.json().catch(() => ({}));
-        logger.warn("DeepInfra failed, falling back to Replicate:", status, errorData);
+        logger.warn("DeepInfra FLUX failed:", status, errorData);
         
-        // Check for quota issues - don't fallback, just return
+        // Check for quota issues
         if (status == 429 || status == 402) {
           logger.warn("DeepInfra quota exceeded");
-          // Still try fallback for quota issues
+          return { imageData: undefined, error: "QUOTA_EXCEEDED" };
         }
       }
     } catch (deepinfraError: any) {
-      logger.warn("DeepInfra error, falling back to Replicate:", deepinfraError.message);
+      logger.warn("DeepInfra FLUX error:", deepinfraError.message);
     }
   } else {
-    logger.warn("DEEPINFRA_API_KEY not set, using Replicate directly");
+    logger.warn("DEEPINFRA_API_KEY not set");
   }
 
-  // Fallback to Replicate
+  // Fallback to Replicate FLUX Schnell
   const replicateKey = replicateApiKey.value();
   if (!replicateKey) {
-    logger.error("Neither DeepInfra nor Replicate API keys are available");
+    logger.error("No image generation API keys available");
     return { imageData: undefined, error: "NO_API_KEY" };
   }
 
   try {
-    logger.info("Trying Replicate Flux Schnell (fallback)...");
+    logger.info("Trying Replicate FLUX Schnell (fallback)...");
     const response = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
       method: 'POST',
       headers: {
@@ -733,7 +661,7 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
       const base64 = Buffer.from(arrayBuffer).toString('base64');
       const mimeType = imageResponse.headers.get('content-type') || 'image/webp';
       
-      logger.info("Replicate succeeded");
+      logger.info("Replicate FLUX succeeded");
       return { imageData: `data:${mimeType};base64,${base64}` };
     }
 
@@ -762,4 +690,3 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
     }
   }
 });
-

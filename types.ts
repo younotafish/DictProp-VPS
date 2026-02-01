@@ -1,3 +1,10 @@
+// Word family entry - related words of different parts of speech
+export interface WordFamilyEntry {
+  word: string;
+  pos: string; // Part of speech: noun, verb, adj, adv, etc.
+  chinese: string;
+}
+
 export interface VocabCard {
   id: string; // Unique ID
   word: string;
@@ -6,6 +13,7 @@ export interface VocabCard {
   ipa: string;
   definition: string;
   forms?: string[]; // Different forms of the word (e.g., run → runs, running, ran)
+  wordFamily?: WordFamilyEntry[]; // Related words of different parts of speech
   synonyms: string[];
   antonyms: string[];
   confusables: string[]; // Words easily confused with this word (similar spelling, sound, or meaning)

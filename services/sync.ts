@@ -86,17 +86,27 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       }
 
       // B. SRS MERGE (Learning Progress)
-      // Always keep the history with MORE reviews. 
-      // If I studied on iPhone (5 reviews) and iPad has old data (2 reviews), iPhone wins regardless of timestamp.
-      // If I studied on both offline... this is hard, but "Total Reviews" is a good proxy for "most progress".
+      // Priority order for conflict resolution:
+      // 1. Keep the one with MORE reviews (most progress)
+      // 2. If equal reviews, keep the one with HIGHER memory strength (most learning)
+      // 3. If still equal, keep the one with MORE RECENT lastReviewDate (latest update)
+      // This ensures learning progress is never accidentally overwritten
       if (localHistory > remoteHistory) {
           mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
       } else if (localHistory === remoteHistory) {
-          // Tie-breaker: Recency of last review
-          const localReview = localItem.srs?.lastReviewDate || 0;
-          const remoteReview = remoteItem.srs?.lastReviewDate || 0;
-          if (localReview > remoteReview) {
-               mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
+          // Tie-breaker 1: Memory strength (higher = more progress)
+          const localStrength = localItem.srs?.memoryStrength || 0;
+          const remoteStrength = remoteItem.srs?.memoryStrength || 0;
+          
+          if (localStrength > remoteStrength) {
+              mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
+          } else if (localStrength === remoteStrength) {
+              // Tie-breaker 2: Recency of last review
+              const localReview = localItem.srs?.lastReviewDate || 0;
+              const remoteReview = remoteItem.srs?.lastReviewDate || 0;
+              if (localReview > remoteReview) {
+                   mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
+              }
           }
       }
 

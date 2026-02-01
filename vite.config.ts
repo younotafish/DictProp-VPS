@@ -6,6 +6,8 @@ export default defineConfig({
   server: {
     port: 3000,
     host: '0.0.0.0',
+    // Disable HTTPS for local development (use HTTP)
+    https: false,
   },
   plugins: [
     react(),

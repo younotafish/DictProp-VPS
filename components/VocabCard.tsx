@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
-import { VocabCard as VocabType } from '../types';
-import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes } from 'lucide-react';
+import { VocabCard as VocabType, WordFamilyEntry } from '../types';
+import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, Network } from 'lucide-react';
 import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
@@ -142,6 +142,31 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                 className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-lg text-sm font-medium hover:bg-indigo-100 transition-colors cursor-pointer border border-indigo-100"
               >
                 {form}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Word Family - Related words of different parts of speech */}
+      {data.wordFamily && data.wordFamily.length > 0 && (
+        <div className="mb-4 shrink-0">
+          <div className="flex items-center gap-2 text-xs font-bold text-purple-400 uppercase mb-2">
+            <Network size={12} /> Word Family
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {data.wordFamily.map((entry: WordFamilyEntry, idx: number) => (
+              <button
+                key={`${entry.word}-${idx}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSearch?.(entry.word);
+                }}
+                className="inline-flex items-center gap-1.5 bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg text-sm hover:bg-purple-100 transition-colors cursor-pointer border border-purple-100"
+              >
+                <span className="font-medium">{entry.word}</span>
+                <span className="text-purple-400 text-xs">({entry.pos})</span>
+                <span className="text-purple-500 text-xs">{entry.chinese}</span>
               </button>
             ))}
           </div>

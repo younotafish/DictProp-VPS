@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import Fuse from 'fuse.js';
-import { StoredItem, SyncStatus, AppUser, ItemGroup } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X } from 'lucide-react';
+import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
+import { VocabCardDisplay } from '../components/VocabCard';
 import { useWheelNavigation } from '../hooks';
+import { analyzeInput, generateIllustration, transcribeAudio } from '../services/aiService';
+import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { speak } from '../services/speech';
 
 interface NotebookItemProps {
   item: StoredItem;
@@ -311,6 +315,148 @@ const NotebookGroup: React.FC<NotebookGroupProps> = ({
   );
 };
 
+// Search results carousel component
+interface SearchResultsCarouselProps {
+  vocabs: VocabCard[];
+  onSave: (vocab: VocabCard) => void;
+  isVocabSaved: (vocab: VocabCard) => boolean;
+  onSearch: (text: string) => void;
+}
+
+const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
+  vocabs, onSave, isVocabSaved, onSearch
+}) => {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const totalItems = vocabs.length;
+  
+  const touchStart = useRef<{x: number, y: number} | null>(null);
+  const SWIPE_THRESHOLD = 50;
+  
+  // Navigate and pronounce - called by user interactions
+  const navigateTo = useCallback((newIndex: number) => {
+    setCurrentIndex(newIndex);
+    const vocab = vocabs[newIndex];
+    if (vocab?.word) {
+      speak(vocab.word);
+    }
+  }, [vocabs]);
+  
+  // Trackpad wheel navigation
+  // Left scroll (wheel right) loops, right scroll (wheel left) stops at first
+  useWheelNavigation({
+    onScrollLeft: () => { if (currentIndex > 0) navigateTo(currentIndex - 1); },
+    onScrollRight: () => navigateTo((currentIndex + 1) % totalItems),
+    containerRef: carouselRef,
+    threshold: 80,
+    enabled: totalItems > 1,
+  });
+  
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStart.current) return;
+    
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) {
+      touchStart.current = null;
+      return;
+    }
+    
+    const diffX = e.changedTouches[0].clientX - touchStart.current.x;
+    const diffY = e.changedTouches[0].clientY - touchStart.current.y;
+    const absX = Math.abs(diffX);
+    const absY = Math.abs(diffY);
+    if (absX > absY * 1.5 && absX > SWIPE_THRESHOLD) {
+      if (diffX < 0) {
+        // Left swipe -> next item, loops forever
+        navigateTo((currentIndex + 1) % totalItems);
+      } else {
+        // Right swipe -> previous item, stops at first
+        if (currentIndex > 0) {
+          navigateTo(currentIndex - 1);
+        }
+      }
+    }
+    touchStart.current = null;
+  };
+  
+  const currentVocab = vocabs[currentIndex];
+  
+  return (
+    <div className="px-3 pt-3 pb-2">
+      <div className="flex items-center justify-between mb-3 px-1">
+        <div className="flex items-center gap-2">
+          <Wand2 size={14} className="text-violet-500" />
+          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Search Results</span>
+        </div>
+        {totalItems > 1 && (
+          <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100">
+            {currentIndex + 1}/{totalItems}
+          </span>
+        )}
+      </div>
+      
+      <div ref={carouselRef} className="relative max-w-screen-md mx-auto" style={{ touchAction: 'pan-y' }}>
+        {/* Navigation arrows for desktop */}
+        {/* Previous arrow - only shows when not at first item */}
+        {totalItems > 1 && currentIndex > 0 && (
+          <button
+            onClick={(e) => { e.stopPropagation(); navigateTo(currentIndex - 1); }}
+            className="absolute -left-2 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-violet-600 rounded-full flex items-center justify-center shadow-md hover:bg-violet-50 transition-colors hidden md:flex"
+            aria-label="Previous meaning"
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
+        {/* Next arrow - always shows (loops forever) */}
+        {totalItems > 1 && (
+          <button
+            onClick={(e) => { e.stopPropagation(); navigateTo((currentIndex + 1) % totalItems); }}
+            className="absolute -right-2 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-violet-600 rounded-full flex items-center justify-center shadow-md hover:bg-violet-50 transition-colors hidden md:flex"
+            aria-label="Next meaning"
+          >
+            <ChevronRight size={16} />
+          </button>
+        )}
+        
+        <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+          <VocabCardDisplay
+            data={currentVocab}
+            isSaved={isVocabSaved(currentVocab)}
+            onSave={() => onSave(currentVocab)}
+            showSave={true}
+            onSearch={onSearch}
+            scrollable={false}
+            className="!h-auto !overflow-visible border-violet-200 shadow-sm hover:shadow-md transition-shadow bg-white"
+          />
+        </div>
+        
+        {/* Dot indicators */}
+        {totalItems > 1 && (
+          <div className="flex justify-center gap-1.5 mt-3">
+            {vocabs.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={(e) => { e.stopPropagation(); navigateTo(idx); }}
+                className={`w-2 h-2 rounded-full transition-all ${
+                  idx === currentIndex 
+                    ? 'bg-violet-500 w-4' 
+                    : 'bg-slate-300 hover:bg-slate-400'
+                }`}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      
+      <div className="border-b border-slate-200 mt-4 mb-2" />
+    </div>
+  );
+};
+
 interface NotebookProps {
   items: StoredItem[];
   onDelete: (id: string) => void;
@@ -327,12 +473,14 @@ interface NotebookProps {
   bulkRefreshProgress?: { current: number; total: number; isRunning: boolean } | null;
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
+  onSave?: (item: StoredItem) => void;
+  onUpdateStoredItem?: (item: StoredItem) => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({ 
     items, onDelete, onSearch, onViewDetail, 
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive
+    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -341,6 +489,228 @@ export const NotebookView: React.FC<NotebookProps> = ({
   const [showHeader, setShowHeader] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const lastScrollY = useRef(0);
+  
+  // AI Search state
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  
+  // Voice recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  // Touch swipe handling to clear search
+  const touchStart = useRef<{x: number, y: number} | null>(null);
+  const SWIPE_THRESHOLD = 50;
+
+  const handleSwipeTouchStart = (e: React.TouchEvent) => {
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+
+  const handleSwipeTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStart.current) return;
+    
+    // Check if user is selecting text - don't interfere with text selection
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) {
+      touchStart.current = null;
+      return;
+    }
+    
+    const diffX = e.changedTouches[0].clientX - touchStart.current.x;
+    const diffY = e.changedTouches[0].clientY - touchStart.current.y;
+    const absX = Math.abs(diffX);
+    const absY = Math.abs(diffY);
+    
+    // Only trigger swipe if horizontal movement is significantly greater than vertical
+    // and swipe is to the right (positive diffX)
+    if (diffX > 0 && absX > absY * 1.5 && absX > SWIPE_THRESHOLD && localSearchQuery.trim()) {
+      setLocalSearchQuery('');
+      setSearchResults(null);
+      setSearchError(null);
+    }
+    touchStart.current = null;
+  };
+
+  // AI Search function
+  const performAISearch = useCallback(async (query: string) => {
+    if (!query.trim() || !isOnline) return;
+    
+    setIsSearching(true);
+    setSearchError(null);
+    setSearchResults(null);
+    
+    try {
+      const result = await analyzeInput(query.trim());
+      setSearchResults(result);
+      
+      // Auto-pronounce the word once when results arrive
+      if (result.vocabs && result.vocabs.length > 0) {
+        const wordToSpeak = result.vocabs[0].word || query.trim();
+        setTimeout(() => speak(wordToSpeak), 100);
+        
+        // Generate images asynchronously for each vocab (don't block UI)
+        result.vocabs.forEach(async (vocab, index) => {
+          if (vocab.imagePrompt && !vocab.imageUrl) {
+            try {
+              const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
+              if (imageData) {
+                // Update the search results with the generated image
+                setSearchResults(prev => {
+                  if (!prev || !prev.vocabs) return prev;
+                  const updatedVocabs = [...prev.vocabs];
+                  if (updatedVocabs[index]) {
+                    updatedVocabs[index] = { ...updatedVocabs[index], imageUrl: imageData };
+                  }
+                  return { ...prev, vocabs: updatedVocabs };
+                });
+              }
+            } catch (imgErr) {
+              console.warn('Image generation failed for vocab:', vocab.word, imgErr);
+            }
+          }
+        });
+      }
+    } catch (err: any) {
+      console.error('AI Search failed:', err);
+      setSearchError(err.message || 'Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
+  }, [isOnline]);
+
+  // Handle keyboard Enter to trigger AI search
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && localSearchQuery.trim()) {
+      e.preventDefault();
+      performAISearch(localSearchQuery);
+    }
+  };
+
+  // Voice recording functions
+  const startRecording = useCallback(async () => {
+    if (!isOnline) return;
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Try to use audio/webm with opus codec, fallback to default
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4';
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = async () => {
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
+        
+        if (audioChunksRef.current.length === 0) return;
+        
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        audioChunksRef.current = [];
+        
+        // Transcribe the audio
+        setIsTranscribing(true);
+        setSearchError(null);
+        
+        try {
+          const transcribedText = await transcribeAudio(audioBlob);
+          if (transcribedText.trim()) {
+            setLocalSearchQuery(transcribedText.trim());
+            // Auto-search after transcription
+            performAISearch(transcribedText.trim());
+          }
+        } catch (err: any) {
+          console.error('Transcription failed:', err);
+          setSearchError(err.message === 'QUOTA_EXCEEDED' 
+            ? 'Voice transcription quota exceeded. Please type your search.' 
+            : 'Voice transcription failed. Please try again.');
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+      
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err: any) {
+      console.error('Failed to start recording:', err);
+      setSearchError('Microphone access denied. Please enable microphone permissions.');
+    }
+  }, [isOnline, performAISearch]);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  }, [isRecording]);
+
+  const toggleRecording = useCallback(() => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }, [isRecording, startRecording, stopRecording]);
+
+  // Listen for notebook-search events from App.tsx
+  useEffect(() => {
+    const handleNotebookSearch = (e: CustomEvent<{ query: string; forceAI: boolean }>) => {
+      const { query, forceAI } = e.detail;
+      setLocalSearchQuery(query);
+      if (forceAI && query.trim()) {
+        performAISearch(query);
+      }
+    };
+
+    window.addEventListener('notebook-search', handleNotebookSearch as EventListener);
+    return () => window.removeEventListener('notebook-search', handleNotebookSearch as EventListener);
+  }, [performAISearch]);
+
+  // Clear search results when query is cleared
+  useEffect(() => {
+    if (!localSearchQuery.trim()) {
+      setSearchResults(null);
+      setSearchError(null);
+    }
+  }, [localSearchQuery]);
+
+  // Save a vocab from search results
+  const handleSaveVocab = useCallback((vocab: VocabCard) => {
+    if (!onSave) return;
+    
+    onSave({
+      data: vocab,
+      type: 'vocab',
+      savedAt: Date.now(),
+      srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
+    });
+  }, [onSave]);
+
+  // Check if a vocab is already saved
+  const isVocabSaved = useCallback((vocab: VocabCard) => {
+    const vocabWord = (vocab.word || '').toLowerCase().trim();
+    return items.some(i => {
+      if (i.type !== 'vocab') return false;
+      const savedWord = ((i.data as VocabCard).word || '').toLowerCase().trim();
+      const savedSense = (i.data as VocabCard).sense || '';
+      return savedWord === vocabWord && savedSense === vocab.sense;
+    });
+  }, [items]);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const currentScrollY = e.currentTarget.scrollTop;
@@ -500,7 +870,10 @@ export const NotebookView: React.FC<NotebookProps> = ({
   }
 
   return (
-    <div className="h-full overflow-y-auto overflow-x-hidden bg-slate-50" onScroll={handleScroll}>
+    <div 
+      className="h-full overflow-y-auto overflow-x-hidden bg-slate-50" 
+      onScroll={handleScroll}
+    >
       {/* Header */}
       <div className={`sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md border-b border-slate-200/50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
         <div className="px-6 py-4 flex justify-between items-center">
@@ -574,26 +947,72 @@ export const NotebookView: React.FC<NotebookProps> = ({
           </div>
         </div>
         
-        {/* Search Bar */}
-        <div className="px-6 pb-4">
+        {/* Search Bar - swipe right to clear */}
+        <div 
+          className="px-6 pb-4"
+          onTouchStart={handleSwipeTouchStart}
+          onTouchEnd={handleSwipeTouchEnd}
+        >
           <div className="relative group">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16} />
             <input 
+              ref={searchInputRef}
               type="text"
               value={localSearchQuery}
               onChange={(e) => setLocalSearchQuery(e.target.value)}
-              placeholder="Search notebook..."
-              className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
+              onKeyDown={handleSearchKeyDown}
+              placeholder={isRecording ? "Listening..." : "Search or look up new word"}
+              className="w-full pl-10 pr-20 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
             />
-            {localSearchQuery && (
-              <button 
-                onClick={() => setLocalSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100 transition-colors"
-                title="Clear search"
-              >
-                <X size={14} />
-              </button>
-            )}
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              {/* Voice recording button */}
+              {!localSearchQuery && !isSearching && !isTranscribing && (
+                <button 
+                  onClick={toggleRecording}
+                  className={`p-1.5 rounded-lg transition-all ${
+                    isRecording 
+                      ? 'text-rose-500 bg-rose-50 animate-pulse' 
+                      : 'text-slate-400 hover:text-violet-600 hover:bg-violet-50'
+                  }`}
+                  title={isRecording ? 'Stop recording' : 'Voice search'}
+                  disabled={!isOnline}
+                >
+                  {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
+                </button>
+              )}
+              {isTranscribing && (
+                <div className="flex items-center gap-1.5 text-violet-500">
+                  <Loader2 className="animate-spin" size={16} />
+                  <span className="text-xs font-medium">Transcribing...</span>
+                </div>
+              )}
+              {localSearchQuery && !isSearching && !isTranscribing && (
+                <button 
+                  onClick={() => performAISearch(localSearchQuery)}
+                  className="text-violet-500 hover:text-violet-700 p-1.5 rounded-lg hover:bg-violet-50 transition-colors"
+                  title="Search with AI (Enter)"
+                  disabled={!isOnline}
+                >
+                  <Wand2 size={16} />
+                </button>
+              )}
+              {isSearching && (
+                <Loader2 className="animate-spin text-violet-500" size={16} />
+              )}
+              {localSearchQuery && !isSearching && !isTranscribing && (
+                <button 
+                  onClick={() => {
+                    setLocalSearchQuery('');
+                    setSearchResults(null);
+                    setSearchError(null);
+                  }}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100 transition-colors"
+                  title="Clear search"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -619,6 +1038,22 @@ export const NotebookView: React.FC<NotebookProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* AI Search Results */}
+      {searchError && (
+        <div className="px-4 py-3 mx-3 mt-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm">
+          {searchError}
+        </div>
+      )}
+      
+      {searchResults && searchResults.vocabs && searchResults.vocabs.length > 0 && (
+        <SearchResultsCarousel
+          vocabs={searchResults.vocabs}
+          onSave={handleSaveVocab}
+          isVocabSaved={isVocabSaved}
+          onSearch={onSearch}
+        />
       )}
 
       <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-3 w-full max-w-screen-md mx-auto">

@@ -11,7 +11,7 @@ import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
-import { analyzeInput } from './services/geminiService';
+import { analyzeInput } from './services/aiService';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 
@@ -597,7 +597,7 @@ const App: React.FC = () => {
       const searchQuery = getItemTitle(originalItem);
 
       try {
-        // Re-search with the updated Gemini prompts
+        // Re-search with AI
         const newResult = await analyzeInput(searchQuery);
         
         // Update each item with matching title
@@ -1182,7 +1182,11 @@ const App: React.FC = () => {
   };
 
   // Enhanced SRS update with new algorithm (using operations)
-  const updateSRS = (itemId: string, quality: number, taskType: TaskType = 'recall', responseTime: number = 3000) => {
+  // This function handles shared SRS atomically - all items with the same title are updated together
+  const updateSRS = async (itemId: string, quality: number, taskType: TaskType = 'recall', responseTime: number = 3000) => {
+    const now = Date.now();
+    let itemsToSync: StoredItem[] = [];
+    
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
       const targetItem = prevState.items.find(i => i.data.id === itemId);
@@ -1212,17 +1216,24 @@ const App: React.FC = () => {
         responseTime
       );
       
+      log(`🧠 SRS Update: ${targetTitle} - quality=${quality}, strength=${migratedSRS.memoryStrength}→${updatedSRS.memoryStrength}, next review in ${Math.round(updatedSRS.interval)} min`);
+      
       // Update ALL matching items with the NEW SRS state
       const newItems = prevState.items.map(item => {
           if (idsToUpdate.has(item.data.id)) {
               // Create a copy of the updated SRS with the correct ID for this specific item
               const itemSpecificSRS = { ...updatedSRS, id: item.data.id };
               
-              return {
+              const updatedItem = {
                   ...item,
                   srs: itemSpecificSRS,
-                  updatedAt: Date.now()
+                  updatedAt: now
               };
+              
+              // Collect items to sync immediately
+              itemsToSync.push(updatedItem);
+              
+              return updatedItem;
           }
           return item;
       });
@@ -1232,6 +1243,18 @@ const App: React.FC = () => {
           items: newItems
       };
     });
+    
+    // Immediately sync SRS updates to Firebase (don't wait for 5s debounce)
+    // This ensures learning progress is never lost even if app is closed quickly
+    if (user && isFirebaseConfigured && isOnline && itemsToSync.length > 0) {
+      try {
+        log(`🔥 Firebase: Immediately syncing ${itemsToSync.length} SRS updates`);
+        await saveUserData(user.uid, itemsToSync);
+      } catch (e) {
+        logError('🔥 Firebase: Failed to sync SRS updates:', e);
+        // Local state is already updated, will retry on next regular sync
+      }
+    }
   };
 
   // Handle scroll to hide/show nav bar
@@ -1306,6 +1329,7 @@ const App: React.FC = () => {
               onSearch={handleRecursiveSearch}
               onRefresh={handleForceRefreshSearch}
               onLazyLoadImage={handleLazyLoadImage}
+              onUpdateSRS={updateSRS}
           />
       )}
 

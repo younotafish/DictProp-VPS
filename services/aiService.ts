@@ -60,8 +60,48 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
 };
 
 /**
- * Generate an illustration
- * Returns base64 image data directly (simpler and more reliable than blob storage)
+ * Transcribe audio using DeepInfra Whisper Large V3 Turbo
+ * @param audioBlob - The recorded audio blob
+ * @returns Transcribed text
+ */
+export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
+  if (!functions) {
+    throw new Error("Firebase functions not initialized. Check your Firebase configuration.");
+  }
+
+  log("[transcribeAudio] Starting transcription...");
+
+  // Convert blob to base64
+  const arrayBuffer = await audioBlob.arrayBuffer();
+  const base64 = btoa(
+    new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+  );
+
+  const transcribeAudioFn = httpsCallable(functions, 'transcribeAudio');
+
+  try {
+    const result = await transcribeAudioFn({ 
+      audio: base64, 
+      mimeType: audioBlob.type || 'audio/webm' 
+    });
+    const data = result.data as any;
+    
+    log("[transcribeAudio] Transcription successful:", data.text);
+    return data.text || '';
+  } catch (error: any) {
+    logError("Transcription failed", error);
+    
+    const msg = error.message || '';
+    if (msg.includes('QUOTA_EXCEEDED') || error.code === 'resource-exhausted') {
+      throw new Error("QUOTA_EXCEEDED");
+    }
+    throw error;
+  }
+};
+
+/**
+ * Generate an illustration using DeepInfra FLUX Schnell
+ * Returns base64 image data directly
  */
 export const generateIllustration = async (prompt: string, aspectRatio: '16:9' | '9:16' | '4:3' | '1:1' = '1:1'): Promise<string | undefined> => {
   log(`[generateIllustration] Requesting image with aspect ratio: ${aspectRatio}`);

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, isVocabItem } from '../types';
+import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, isVocabItem, TaskType } from '../types';
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
@@ -59,6 +59,7 @@ interface DetailViewProps {
   onSearch: (text: string) => void;
   onRefresh?: (text: string) => void; // Force a real AI search, bypassing local cache
   onLazyLoadImage?: (itemId: string) => void; // Fetch image from Firebase if missing locally
+  onUpdateSRS?: (itemId: string, quality: number, taskType: TaskType, responseTime: number) => void; // Direct SRS update
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
@@ -74,7 +75,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   savedItems,
   onSearch,
   onRefresh,
-  onLazyLoadImage
+  onLazyLoadImage,
+  onUpdateSRS
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
@@ -229,15 +231,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
     
     // Use distance to distinguish short vs long swipes
     // Short swipe down (50-120px): show header
-    // Long swipe down (>120px): navigate to previous item
+    // Long swipe down (>120px): navigate to previous/next word
     const shortSwipeMin = 50;
     const shortSwipeMax = 120;
     const longSwipeMin = 120;
+    const horizontalSwipeMin = 60; // More sensitive for horizontal navigation
     const isShortSwipe = absY >= shortSwipeMin && absY < shortSwipeMax;
     const isLongSwipe = absY >= longSwipeMin;
     
-    // Horizontal Swipe (Meanings)
-    const isHorizontalSwipe = absX > absY * 1.5 && absX > swipeThreshold;
+    // Horizontal Swipe (Meanings) - more sensitive threshold
+    const isHorizontalSwipe = absX > absY * 1.5 && absX > horizontalSwipeMin;
 
     // Short swipe down at top -> show header bar
     if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
@@ -274,18 +277,28 @@ export const DetailView: React.FC<DetailViewProps> = ({
         setTimeout(() => setIsAnimating(false), 300);
       }
     }
-    else if (isHorizontalSwipe && absX >= longSwipeMin) {
-      // Swipe LEFT -> Next Item (Meaning)
-      if (diffX < -longSwipeMin && hasNextItem) {
+    else if (isHorizontalSwipe) {
+      const totalItems = currentGroup ? currentGroup.items.length : (items ? items.length : 0);
+      
+      // Swipe LEFT -> Next Item (Meaning) - loops forever (even with 1 item for consistent UX)
+      if (diffX < -horizontalSwipeMin && totalItems >= 1) {
         setShowHeader(false); // Hide header on navigation
         setIsAnimating(true);
-        setCurrentItemIndex(prev => prev + 1);
+        setCurrentItemIndex(prev => (prev + 1) % totalItems); // Loop back to 0 when at end
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
         setTimeout(() => setIsAnimating(false), 300);
+        
+        // Only pronounce directly when single item (index doesn't change, so useEffect won't trigger)
+        if (totalItems === 1 && currentItem) {
+          const wordToSpeak = currentItem.type === 'phrase' 
+            ? (currentItem.data as SearchResult).query 
+            : (currentItem.data as VocabCard).word;
+          if (wordToSpeak) speak(wordToSpeak);
+        }
       }
       
       // Swipe RIGHT -> Prev Item (Meaning) or Close
-      if (diffX > longSwipeMin) {
+      if (diffX > horizontalSwipeMin) {
         if (hasPrevItem) {
           setShowHeader(false); // Hide header on navigation
           setIsAnimating(true);
@@ -363,13 +376,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, [hasPrevItem, isAnimating]);
 
   const handleNextItem = useCallback(() => {
-    if (hasNextItem && !isAnimating) {
+    const totalItems = currentGroup ? currentGroup.items.length : (items ? items.length : 0);
+    if (totalItems >= 1 && !isAnimating) {
       setIsAnimating(true);
-      setCurrentItemIndex(prev => prev + 1);
+      setCurrentItemIndex(prev => (prev + 1) % totalItems); // Loop back to 0 when at end
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       setTimeout(() => setIsAnimating(false), 300);
+      
+      // Only pronounce directly when single item (index doesn't change, so useEffect won't trigger)
+      if (totalItems === 1 && currentItem) {
+        const wordToSpeak = currentItem.type === 'phrase' 
+          ? (currentItem.data as SearchResult).query 
+          : (currentItem.data as VocabCard).word;
+        if (wordToSpeak) speak(wordToSpeak);
+      }
     }
-  }, [hasNextItem, isAnimating]);
+  }, [currentGroup, items, isAnimating, currentItem]);
 
   const handlePrevGroup = useCallback(() => {
     if (hasPrevGroup && !isAnimating && groups) {
@@ -408,7 +430,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onScrollRight: handleNextItem,
     containerRef: scrollContainerRef,
     threshold: 80,
-    enabled: !!(currentGroup && currentGroup.items.length > 1),
+    enabled: !!(currentGroup && currentGroup.items.length >= 1),
   });
 
   const handleVocabSearch = (term: string) => {
@@ -529,20 +551,28 @@ export const DetailView: React.FC<DetailViewProps> = ({
     );
     
     if (siblings.length > 0) {
-      // Update existing items (all siblings)
-      siblings.forEach(sibling => {
-        const updatedSRS = SRSAlgorithm.updateAfterReview(
-          sibling.srs,
-          4, // Quality: Memorized (Good/Easy)
-          'recall',
-          DEFAULT_RESPONSE_TIME
-        );
-        
-        onSave({
-          ...sibling,
-          srs: updatedSRS
+      // Use the dedicated onUpdateSRS if available (preferred - handles shared SRS atomically)
+      if (onUpdateSRS) {
+        // Update using the first sibling's ID - onUpdateSRS handles all siblings with same title
+        log('🧠 DetailView: Using onUpdateSRS for atomic shared SRS update');
+        onUpdateSRS(siblings[0].data.id, 4, 'recall', DEFAULT_RESPONSE_TIME);
+      } else {
+        // Fallback: Update existing items (all siblings) via onSave
+        log('🧠 DetailView: Using onSave fallback for SRS update');
+        siblings.forEach(sibling => {
+          const updatedSRS = SRSAlgorithm.updateAfterReview(
+            sibling.srs,
+            4, // Quality: Memorized (Good/Easy)
+            'recall',
+            DEFAULT_RESPONSE_TIME
+          );
+          
+          onSave({
+            ...sibling,
+            srs: updatedSRS
+          });
         });
-      });
+      }
     } else {
       // Create new item and immediately mark as remembered
       if (!data.id) return;
@@ -564,7 +594,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         srs: newSRS
       });
     }
-  }, [data, type, savedItems, onSave, title]);
+  }, [data, type, savedItems, onSave, onUpdateSRS, title]);
 
   const handleDoubleClick = () => {
     // Avoid triggering when selecting text
@@ -634,6 +664,24 @@ export const DetailView: React.FC<DetailViewProps> = ({
         onTouchEnd={onContentTouchEnd}
         onDoubleClick={handleDoubleClick}
       >
+        {/* Minimal meaning indicator when header is hidden */}
+        {!showHeader && currentGroup && currentGroup.items.length > 1 && (
+          <div className="sticky top-0 z-20 flex justify-center pt-2 pb-1">
+            <div className="flex items-center gap-1">
+              {currentGroup.items.map((_, idx) => (
+                <div
+                  key={idx}
+                  className={`rounded-full transition-all duration-200 ${
+                    idx === currentItemIndex 
+                      ? 'w-1.5 h-1.5 bg-violet-400' 
+                      : 'w-1 h-1 bg-slate-300'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Header - combined with progress bar */}
         <div className={`sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/60 shrink-0 transition-all duration-300 overflow-hidden ${showHeader ? 'max-h-32 opacity-100' : 'max-h-0 opacity-0 border-b-0'}`}>
           {/* Top row: navigation and actions */}
@@ -850,8 +898,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
               </span>
             )}
             
-            {/* Next meaning */}
-            {hasNextItem && (
+            {/* Next meaning - always available for looping (even with 1 item) */}
+            {currentGroup && currentGroup.items.length >= 1 && (
               <button
                 onClick={handleNextItem}
                 className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1"
