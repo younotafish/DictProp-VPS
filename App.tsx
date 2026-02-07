@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { DetailView } from './views/DetailView';
-import { StoredItem, ViewState, SyncStatus, TaskType, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
+import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
 import { Book, BrainCircuit, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
@@ -67,11 +67,23 @@ const App: React.FC = () => {
     return { items: [] };
   });
   
+  // Ref to track the latest items - avoids stale closure issues in event handlers
+  // This is updated synchronously whenever syncState changes
+  const latestItemsRef = useRef<StoredItem[]>(syncState.items);
+  
+  // Track when we last saved to avoid redundant saves from event handlers
+  const lastSaveTimeRef = useRef<number>(0);
+  
   // Track last successful sync timestamp to enable Delta Sync
   const [lastSyncTime, setLastSyncTime] = useState<number>(() => {
       const saved = localStorage.getItem('last_successful_sync');
       return saved ? parseInt(saved, 10) : 0;
   });
+  
+  // Keep latestItemsRef in sync with state (synchronously, so event handlers always have current data)
+  useEffect(() => {
+    latestItemsRef.current = syncState.items;
+  }, [syncState.items]);
   
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
@@ -207,7 +219,51 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Save data before page unload (refresh, close tab, navigate away)
+  // This is a critical safety net to prevent data loss
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Use ref to get latest items (avoids stale closure)
+      const currentItems = latestItemsRef.current;
+      
+      if (isLoaded && currentItems.length > 0) {
+        const targetUserId = user?.uid || 'guest';
+        
+        // Skip if we just saved (within last 500ms) to avoid redundant writes
+        const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
+        if (timeSinceLastSave < 500) {
+          log("💾 Skipping beforeunload save (recently saved)");
+          return;
+        }
+        
+        // Use synchronous localStorage as a backup (IndexedDB is async and may not complete)
+        try {
+          const cacheItems = currentItems.map(item => ({
+            ...item,
+            data: {
+              ...item.data,
+              imageUrl: undefined, // Strip images to fit in localStorage
+              vocabs: isPhraseItem(item) && (item.data as SearchResult).vocabs 
+                ? (item.data as SearchResult).vocabs.map((v: VocabCard) => ({ ...v, imageUrl: undefined }))
+                : undefined
+            }
+          }));
+          localStorage.setItem('app_items_cache', JSON.stringify(cacheItems));
+          log("💾 Saved items cache on beforeunload");
+        } catch (e) {
+          warn("Failed to save cache on beforeunload:", e);
+        }
+        // Also try IndexedDB (may not complete but worth trying)
+        saveData(currentItems, targetUserId);
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isLoaded, user]); // Removed syncState.items - we use ref instead
+
   // iOS PWA: Sync data when returning from background (instead of forcing reload)
+  // CRITICAL: Also save to IndexedDB when going to background to prevent data loss
   useEffect(() => {
       const handleVisibilityChange = async () => {
           if (document.visibilityState === 'visible') {
@@ -226,35 +282,75 @@ const App: React.FC = () => {
               }
               localStorage.removeItem('app_last_hidden');
           } else {
+              // CRITICAL: Save to IndexedDB immediately when app goes to background
+              // This prevents data loss when user switches apps quickly
               localStorage.setItem('app_last_hidden', Date.now().toString());
+              
+              // Use ref to get latest items (avoids stale closure)
+              const currentItems = latestItemsRef.current;
+              
+              // Skip if we just saved (within last 500ms) to avoid redundant writes
+              // and to prevent overwriting fresher data from updateSRS
+              const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
+              if (timeSinceLastSave < 500) {
+                  log("💾 Skipping visibility change save (recently saved)");
+                  return;
+              }
+              
+              if (isLoaded && currentItems.length > 0) {
+                  const targetUserId = user?.uid || 'guest';
+                  log("💾 App going to background, saving data immediately...");
+                  // Don't await - we want this to start but the page might be killed
+                  saveData(currentItems, targetUserId).catch(e => {
+                      warn("Failed to save on visibility change:", e);
+                  });
+              }
           }
       };
       
       document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [user, isOnline, isFirebaseConfigured]);
+  }, [user, isOnline, isFirebaseConfigured, isLoaded]); // Removed syncState.items - we use ref instead
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
     const initStorage = async () => {
         try {
             const migrated = await migrateFromLocalStorage();
-            let itemsToLoad: StoredItem[] = [];
+            let itemsFromIDB: StoredItem[] = [];
             
             if (migrated && migrated.length > 0) {
-                itemsToLoad = migrated;
+                itemsFromIDB = migrated;
             } else {
                 // Initially load guest data (user is not logged in yet)
                 const items = await loadData('guest');
                 if (items && Array.isArray(items)) {
-                    itemsToLoad = items.filter((i: any) => 
+                    itemsFromIDB = items.filter((i: any) => 
                         i && i.data && i.data.id && i.srs && i.type && !i.isDeleted
                     );
                 }
             }
             
-            // Auto-migrate SRS data to new format if needed
-            let processedItems = [...itemsToLoad];
+            // CRITICAL: Merge IndexedDB data with localStorage cache
+            // localStorage cache may have fresher data (from immediate saves before app was killed)
+            // Use mergeDatasets to pick the best version of each item
+            const cachedItems = syncState.items; // Current state was initialized from localStorage cache
+            let processedItems: StoredItem[];
+            
+            if (cachedItems.length > 0 && itemsFromIDB.length > 0) {
+                // Both sources have data - merge them
+                // mergeDatasets will pick the item with more progress/newer updates
+                processedItems = mergeDatasets(cachedItems, itemsFromIDB);
+                log(`📦 Merged localStorage cache (${cachedItems.length}) with IndexedDB (${itemsFromIDB.length}) → ${processedItems.length} items`);
+            } else if (cachedItems.length > 0) {
+                // Only cache has data (IndexedDB empty or failed)
+                processedItems = cachedItems;
+                log(`📦 Using localStorage cache only: ${processedItems.length} items`);
+            } else {
+                // Only IndexedDB has data (normal case for fresh load)
+                processedItems = itemsFromIDB;
+            }
+            
             let hasChanges = false;
 
             // 1. SRS Migration
@@ -280,13 +376,17 @@ const App: React.FC = () => {
                 hasChanges = true;
             }
 
-            // 3. Initialize sync state
+            // 3. Initialize sync state with merged data
             setSyncState({
                 items: processedItems
             });
             
-            // 5. Save if we made changes
-            if (hasChanges) {
+            // Also update the ref
+            latestItemsRef.current = processedItems;
+            
+            // 4. Save merged result back to IndexedDB if we merged or made changes
+            // This ensures IndexedDB is up-to-date with any fresher data from cache
+            if (hasChanges || (cachedItems.length > 0 && itemsFromIDB.length > 0)) {
                 await saveData(processedItems);
             }
         } catch (e) {
@@ -355,6 +455,10 @@ const App: React.FC = () => {
         
         // Set user and local items FIRST (instant, works offline)
         setUser(currentUser);
+        
+        // Update ref immediately so event handlers have fresh data
+        latestItemsRef.current = userLocalItems;
+        
         setSyncState(prevState => ({
             ...prevState,
             items: userLocalItems
@@ -381,6 +485,9 @@ const App: React.FC = () => {
                 return newTime;
             });
 
+            // Update ref immediately so event handlers have fresh data
+            latestItemsRef.current = mergedItems;
+            
             // Update state with merged data
             setSyncState(prevState => ({
               ...prevState,
@@ -408,6 +515,9 @@ const App: React.FC = () => {
           setSyncState(prevState => {
             // Merge with ALL items including deleted to propagate deletions
             const mergedItems = mergeDatasets(prevState.items, remoteItems);
+            
+            // Update ref immediately so event handlers have fresh data
+            latestItemsRef.current = mergedItems;
             
             return {
               ...prevState,
@@ -464,10 +574,13 @@ const App: React.FC = () => {
     if (!isLoaded) return; 
 
     const timer = setTimeout(async () => {
+      // Use ref to get latest items (avoids stale closure in setTimeout)
+      const currentItems = latestItemsRef.current;
+      
       // 1. Save to Local IDB FIRST (always, works offline)
       // Save to user-specific storage or guest storage
       const targetUserId = user?.uid || 'guest';
-      await saveData(syncState.items, targetUserId);
+      await saveData(currentItems, targetUserId);
       
       // 2. Push items to Cloud (Firebase) - Delta Sync with Hash Comparison
       // Skip cloud sync when offline - will sync when back online
@@ -477,7 +590,7 @@ const App: React.FC = () => {
           // 2. Content hash must differ from last synced hash (prevents redundant writes)
           const itemsWithHashes: { item: StoredItem; hash: string }[] = [];
           
-          syncState.items.forEach(item => {
+          currentItems.forEach(item => {
               const updated = item.updatedAt || 0;
               if (updated <= lastSyncTime) return; // Skip if not updated since last sync
               
@@ -536,8 +649,11 @@ const App: React.FC = () => {
     setSyncStatus('syncing');
     
     try {
+      // Use ref to get latest items (avoids stale closure)
+      const currentItems = latestItemsRef.current;
+      
       // 1. Upload local items to Firebase
-      await saveUserData(user.uid, syncState.items);
+      await saveUserData(user.uid, currentItems);
       
       // Update last sync time after force sync
       const now = Date.now();
@@ -548,7 +664,6 @@ const App: React.FC = () => {
       const remoteItems = await loadUserData(user.uid);
       
       // 3. Merge (including deleted items to propagate deletions)
-      const currentItems = syncState.items;
       let mergedItems = mergeDatasets(currentItems, remoteItems);
       
       // 4. Clean up old deleted items (hard delete after retention period)
@@ -559,6 +674,9 @@ const App: React.FC = () => {
         ...item,
         lastSyncedHash: getItemContentHash(item)
       }));
+      
+      // Update ref immediately so event handlers have fresh data
+      latestItemsRef.current = itemsWithHashes;
       
       setSyncState(prevState => ({
         ...prevState,
@@ -1181,11 +1299,11 @@ const App: React.FC = () => {
       setDetailContext({ groups, groupIndex, itemIndex });
   };
 
-  // Enhanced SRS update with new algorithm (using operations)
-  // This function handles shared SRS atomically - all items with the same title are updated together
-  const updateSRS = async (itemId: string, quality: number, taskType: TaskType = 'recall', responseTime: number = 3000) => {
+  // SRS update — handles shared SRS atomically (all items with same title updated together)
+  const updateSRS = async (itemId: string) => {
     const now = Date.now();
     let itemsToSync: StoredItem[] = [];
+    let allUpdatedItems: StoredItem[] = [];
     
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
@@ -1193,10 +1311,8 @@ const App: React.FC = () => {
       if (!targetItem) return prevState;
       
       // Find ALL items with the same word/query to update them together (Shared SRS)
-      // Case-insensitive matching
       const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
       
-      // Identify IDs to update (current + siblings)
       const idsToUpdate = new Set<string>();
       idsToUpdate.add(itemId);
       
@@ -1207,16 +1323,10 @@ const App: React.FC = () => {
       });
       
       // Calculate NEW SRS state based on the target item's current state
-      // We use the target item as the "source of truth" for the previous state
       const migratedSRS = SRSAlgorithm.migrate(targetItem.srs);
-      const updatedSRS = SRSAlgorithm.updateAfterReview(
-        migratedSRS,
-        quality,
-        taskType,
-        responseTime
-      );
+      const updatedSRS = SRSAlgorithm.updateAfterRemember(migratedSRS);
       
-      log(`🧠 SRS Update: ${targetTitle} - quality=${quality}, strength=${migratedSRS.memoryStrength}→${updatedSRS.memoryStrength}, next review in ${Math.round(updatedSRS.interval)} min`);
+      log(`🧠 SRS Update: ${targetTitle} - step ${migratedSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);
       
       // Update ALL matching items with the NEW SRS state
       const newItems = prevState.items.map(item => {
@@ -1238,21 +1348,60 @@ const App: React.FC = () => {
           return item;
       });
       
+      // Store full items list for immediate local save
+      allUpdatedItems = newItems;
+      
+      // Update ref immediately so event handlers have fresh data
+      // (React's state update is async, but this ref update is sync)
+      latestItemsRef.current = newItems;
+      
       return {
           ...prevState,
           items: newItems
       };
     });
     
-    // Immediately sync SRS updates to Firebase (don't wait for 5s debounce)
-    // This ensures learning progress is never lost even if app is closed quickly
+    // CRITICAL: Save to IndexedDB IMMEDIATELY after SRS update
+    // This ensures learning progress is never lost even if user switches apps quickly
+    // This is the primary persistence layer - Firebase sync is secondary
+    const targetUserId = user?.uid || 'guest';
+    if (allUpdatedItems.length > 0) {
+      // Also update localStorage cache synchronously (backup for iOS PWA)
+      try {
+        const cacheItems = allUpdatedItems.map(item => ({
+          ...item,
+          data: {
+            ...item.data,
+            imageUrl: undefined, // Strip images to fit in localStorage
+            vocabs: isPhraseItem(item) && item.data.vocabs 
+              ? item.data.vocabs.map((v: VocabCard) => ({ ...v, imageUrl: undefined }))
+              : undefined
+          }
+        }));
+        localStorage.setItem('app_items_cache', JSON.stringify(cacheItems));
+      } catch (e) {
+        warn("Failed to update cache after SRS:", e);
+      }
+      
+      try {
+        await saveData(allUpdatedItems, targetUserId);
+        log(`💾 Immediately saved SRS update to IndexedDB`);
+        // Record save time so event handlers can skip redundant saves
+        lastSaveTimeRef.current = Date.now();
+      } catch (e) {
+        logError('💾 Failed to save SRS update to IndexedDB:', e);
+      }
+    }
+    
+    // Also sync SRS updates to Firebase (don't wait for 5s debounce)
+    // This ensures learning progress syncs across devices
     if (user && isFirebaseConfigured && isOnline && itemsToSync.length > 0) {
       try {
         log(`🔥 Firebase: Immediately syncing ${itemsToSync.length} SRS updates`);
         await saveUserData(user.uid, itemsToSync);
       } catch (e) {
         logError('🔥 Firebase: Failed to sync SRS updates:', e);
-        // Local state is already updated, will retry on next regular sync
+        // Local state is already saved, will retry on next regular sync
       }
     }
   };

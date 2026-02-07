@@ -38,38 +38,21 @@ export interface SearchResult {
   originalQuery?: string; // Original Chinese input if translated
 }
 
-// Enhanced SRS with Memory Strength Model
+// SRS Data — Fixed-schedule spaced repetition
 export interface SRSData {
   id: string; // References SearchResult.id or VocabCard.id
   type: 'vocab' | 'phrase';
   nextReview: number; // Timestamp
   interval: number; // In minutes
-  easeFactor: number;
-  history: number[]; // 0 for fail, 1 for success (legacy)
   
-  // Memory Strength System (Shanbay-like)
-  memoryStrength: number; // 0-100, hidden from user
+  // Display-only mastery score derived from stability
+  memoryStrength: number; // 0-100, derived from stability via log mapping
   lastReviewDate: number; // Timestamp of last review
-  totalReviews: number; // Total number of reviews
-  correctStreak: number; // Current streak of correct answers
+  totalReviews: number; // Total number of successful "remember" taps (= schedule step)
+  correctStreak: number; // Current streak of consecutive remembers
   
-  // Task-specific performance tracking
-  taskHistory: TaskPerformance[];
-  
-  // Forgetting curve parameters
-  stability: number; // How stable the memory is (days)
-  difficulty: number; // Inherent difficulty of this item (0-10)
-}
-
-// Different study task types with different difficulty levels
-export type TaskType = 'recognition' | 'recall' | 'typing' | 'listening' | 'sentence';
-
-export interface TaskPerformance {
-  taskType: TaskType;
-  timestamp: number;
-  quality: number; // 0-5 (SuperMemo-like)
-  responseTime: number; // milliseconds
-  strength: number; // Memory strength at time of review
+  // Core scheduling parameter
+  stability: number; // Current interval in days (= SCHEDULE[step])
 }
 
 // Combined type for storage

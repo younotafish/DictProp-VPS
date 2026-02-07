@@ -139,21 +139,18 @@ export const createMockSRS = (
     nextReview?: number;
     totalReviews?: number;
     correctStreak?: number;
+    stability?: number;
   } = {}
 ) => ({
   id,
   type,
   nextReview: options.nextReview ?? Date.now(), // Due now by default
   interval: 0,
-  easeFactor: 2.5,
-  history: [],
   memoryStrength: options.memoryStrength ?? 0,
   lastReviewDate: Date.now(),
   totalReviews: options.totalReviews ?? 0,
   correctStreak: options.correctStreak ?? 0,
-  taskHistory: [],
-  stability: 0.5,
-  difficulty: 5,
+  stability: options.stability ?? 0.5,
 });
 
 // Helper to create a stored item

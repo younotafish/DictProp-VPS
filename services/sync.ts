@@ -68,8 +68,8 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // 1. Smart Field-Level Merging
       // Instead of picking one winner, we merge the best parts of both.
       
-      const localHistory = localItem.srs?.totalReviews || localItem.srs?.history?.length || 0;
-      const remoteHistory = remoteItem.srs?.totalReviews || remoteItem.srs?.history?.length || 0;
+      const localHistory = localItem.srs?.totalReviews || 0;
+      const remoteHistory = remoteItem.srs?.totalReviews || 0;
       
       const localTime = localItem.updatedAt || localItem.savedAt || 0;
       const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || 0;

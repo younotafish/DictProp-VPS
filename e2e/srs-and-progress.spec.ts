@@ -3,11 +3,15 @@ import { test, expect, mockVocabCard, mockVocabCard2, mockBankNounFinance, mockB
 /**
  * E2E Tests for SRS (Spaced Repetition System) and Learning Progress
  * 
+ * Algorithm: Fixed-schedule with positive-signal-only.
+ * Schedule: [1, 2, 3, 5, 7, 12, 20, 25, 47, 84, 143, 180] days
+ * "Remember" (ArrowRight) = advance schedule step
+ * "Skip" (ArrowLeft) = re-queue card, no SRS update
+ * 
  * Tests cover:
- * - Memory strength visualization
  * - Mastery level indicators
  * - Due status indicators
- * - SRS updates after review
+ * - SRS updates after remember
  * - Shared SRS for multiple meanings
  * - Progress persistence
  * - Session statistics
@@ -41,11 +45,11 @@ test.describe('SRS - Mastery Level Display', () => {
 
 test.describe('SRS - Due Status', () => {
   test('shows Due badge for items due for review', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     // Seed with item that is due now
     const dueItem = createStoredItem(mockVocabCard, 'vocab', {
@@ -61,11 +65,11 @@ test.describe('SRS - Due Status', () => {
   });
 
   test('due items sorted by priority', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     // Seed with items: one due with low strength, one due with high strength
     const weakDue = createStoredItem(mockVocabCard, 'vocab', {
@@ -94,11 +98,12 @@ test.describe('SRS - Due Status', () => {
 
 test.describe('SRS - Study Session Updates', () => {
   test('memory strength increases after correct answer', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
+    // Must navigate first before accessing storage APIs
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     // Seed with one item at low strength
     const testItem = createStoredItem(mockVocabCard, 'vocab', {
@@ -124,12 +129,13 @@ test.describe('SRS - Study Session Updates', () => {
     await expect(page.getByText(/100%/)).toBeVisible(); // 100% accuracy for 1 correct
   });
 
-  test('memory strength decreases after wrong answer', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
+  test('skip re-queues card without SRS update, then remember completes', async ({ page }) => {
+    // Must navigate first before accessing storage APIs
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     const testItem = createStoredItem(mockVocabCard, 'vocab', {
       memoryStrength: 50,
@@ -142,14 +148,14 @@ test.describe('SRS - Study Session Updates', () => {
     await page.getByRole('button', { name: /study/i }).click();
     await page.getByRole('button', { name: /Start Session|Practice/i }).click();
     
-    // Rate as incorrect
+    // Skip (no SRS update, card re-queued)
     await page.keyboard.press('ArrowLeft');
     await page.waitForTimeout(500);
     
     // Card should be re-queued
     await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
     
-    // Now rate as correct to complete
+    // Now remember to complete
     await page.keyboard.press('ArrowRight');
     
     // Session should complete
@@ -162,11 +168,11 @@ test.describe('SRS - Study Session Updates', () => {
 
 test.describe('SRS - Shared SRS for Multiple Meanings', () => {
   test('reviewing one meaning updates all meanings of same word', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     // Seed with multiple meanings of "bank"
     const bankFinance = createStoredItem(mockBankNounFinance, 'vocab', {
@@ -258,11 +264,11 @@ test.describe('SRS - Reset Memory Strength', () => {
 
 test.describe('SRS - Session Statistics', () => {
   test('session completion shows review count', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     const testItem = createStoredItem(mockVocabCard, 'vocab', { memoryStrength: 10 });
     await seedIndexedDB(page, [testItem]);
@@ -280,11 +286,11 @@ test.describe('SRS - Session Statistics', () => {
   });
 
   test('session completion shows accuracy', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     const testItems = [
       createStoredItem(mockVocabCard, 'vocab', { memoryStrength: 10 }),
@@ -313,11 +319,11 @@ test.describe('SRS - Session Statistics', () => {
 
 test.describe('SRS - Dashboard Statistics', () => {
   test('dashboard shows mastery breakdown', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     // Seed with items at various mastery levels
     const newItem = createStoredItem({ ...mockVocabCard, id: 'new-1', word: 'new1' }, 'vocab', { memoryStrength: 5 });
@@ -368,11 +374,11 @@ test.describe('SRS - Dashboard Statistics', () => {
 
 test.describe('SRS - Interval Scheduling', () => {
   test('correctly scheduled items do not appear in due list', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     // Seed with item scheduled for future
     const futureItem = createStoredItem(mockVocabCard, 'vocab', {
@@ -392,11 +398,11 @@ test.describe('SRS - Interval Scheduling', () => {
 
 test.describe('SRS - Review Count Tracking', () => {
   test('total reviews incremented after study', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     const testItem = createStoredItem(mockVocabCard, 'vocab', { memoryStrength: 10, totalReviews: 0 });
     await seedIndexedDB(page, [testItem]);
@@ -427,11 +433,11 @@ test.describe('SRS - Review Count Tracking', () => {
 
 test.describe('SRS - Correct Streak', () => {
   test('streak displayed in detail view', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
     
     // Seed with item that has a streak
     const testItem = createStoredItem(mockVocabCard, 'vocab', { 
@@ -452,5 +458,113 @@ test.describe('SRS - Correct Streak', () => {
     
     // Should show streak indicator (flame icon)
     // The exact display depends on implementation
+  });
+});
+
+test.describe('SRS - Persistence After Reload', () => {
+  test('SRS updates persist after page reload (simulating app switch)', async ({ page }) => {
+    await mockFirebaseFunctions(page);
+    await page.goto('/');
+    await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
+    
+    // Seed with item at known low strength
+    const initialStrength = 10;
+    const testItem = createStoredItem(mockVocabCard, 'vocab', { 
+      memoryStrength: initialStrength,
+      totalReviews: 0 
+    });
+    await seedIndexedDB(page, [testItem]);
+    await page.reload();
+    await waitForAppLoad(page);
+    
+    // Study the card and mark as remembered
+    await page.getByRole('button', { name: /study/i }).click();
+    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
+    
+    // Rate as correct
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(1000); // Wait for save to complete
+    
+    await expect(page.getByText(/Brilliant Session/i)).toBeVisible();
+    
+    // Simulate app switch by reloading the page
+    await page.reload();
+    await waitForAppLoad(page);
+    
+    // Check that the SRS data persisted by verifying in IndexedDB
+    const persistedData = await page.evaluate(async () => {
+      return new Promise((resolve) => {
+        const request = indexedDB.open('PopDictDB', 2);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction('library', 'readonly');
+          const store = tx.objectStore('library');
+          const getRequest = store.get('items_guest');
+          getRequest.onsuccess = () => {
+            const items = getRequest.result || [];
+            const item = items.find((i: any) => i.data?.id === 'test-vocab-1');
+            resolve({
+              found: !!item,
+              memoryStrength: item?.srs?.memoryStrength,
+              totalReviews: item?.srs?.totalReviews
+            });
+            db.close();
+          };
+          getRequest.onerror = () => {
+            resolve({ found: false, error: 'Failed to read' });
+          };
+        };
+        request.onerror = () => {
+          resolve({ found: false, error: 'Failed to open DB' });
+        };
+      });
+    });
+    
+    // Verify the data persisted
+    const data = persistedData as any;
+    expect(data.found).toBe(true);
+    expect(data.totalReviews).toBeGreaterThan(0);
+    expect(data.memoryStrength).toBeGreaterThan(initialStrength);
+  });
+
+  test('SRS updates persist in localStorage cache after study', async ({ page }) => {
+    await mockFirebaseFunctions(page);
+    await page.goto('/');
+    await waitForAppLoad(page);
+    await clearIndexedDB(page);
+    await clearLocalStorage(page);
+    
+    const testItem = createStoredItem(mockVocabCard, 'vocab', { 
+      memoryStrength: 10,
+      totalReviews: 0 
+    });
+    await seedIndexedDB(page, [testItem]);
+    await page.reload();
+    await waitForAppLoad(page);
+    
+    // Study and mark as remembered
+    await page.getByRole('button', { name: /study/i }).click();
+    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(500);
+    
+    // Check localStorage cache was updated
+    const cacheData = await page.evaluate(() => {
+      const cache = localStorage.getItem('app_items_cache');
+      if (!cache) return null;
+      const items = JSON.parse(cache);
+      const item = items.find((i: any) => i.data?.id === 'test-vocab-1');
+      return {
+        found: !!item,
+        memoryStrength: item?.srs?.memoryStrength,
+        totalReviews: item?.srs?.totalReviews
+      };
+    });
+    
+    expect(cacheData).not.toBeNull();
+    expect(cacheData?.found).toBe(true);
+    expect(cacheData?.totalReviews).toBeGreaterThan(0);
   });
 });

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, TaskType } from '../types';
+import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
@@ -59,7 +59,7 @@ interface DetailViewProps {
   onSearch: (text: string) => void;
   onRefresh?: (text: string) => void; // Force a real AI search, bypassing local cache
   onLazyLoadImage?: (itemId: string) => void; // Fetch image from Firebase if missing locally
-  onUpdateSRS?: (itemId: string, quality: number, taskType: TaskType, responseTime: number) => void; // Direct SRS update
+  onUpdateSRS?: (itemId: string) => void; // Direct SRS update (triggers "remember")
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
@@ -541,9 +541,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     setShowSuccessAnim(true);
     setTimeout(() => setShowSuccessAnim(false), 1500);
 
-    // Default response time for manual "I know this" action
-    const DEFAULT_RESPONSE_TIME = 1000;  
-    
     const targetTitle = (title || '').toLowerCase().trim();
     // Find all siblings to update them together (Shared SRS)
     const siblings = savedItems.filter(item => 
@@ -555,17 +552,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (onUpdateSRS) {
         // Update using the first sibling's ID - onUpdateSRS handles all siblings with same title
         log('🧠 DetailView: Using onUpdateSRS for atomic shared SRS update');
-        onUpdateSRS(siblings[0].data.id, 4, 'recall', DEFAULT_RESPONSE_TIME);
+        onUpdateSRS(siblings[0].data.id);
       } else {
         // Fallback: Update existing items (all siblings) via onSave
         log('🧠 DetailView: Using onSave fallback for SRS update');
         siblings.forEach(sibling => {
-          const updatedSRS = SRSAlgorithm.updateAfterReview(
-            sibling.srs,
-            4, // Quality: Memorized (Good/Easy)
-            'recall',
-            DEFAULT_RESPONSE_TIME
-          );
+          const updatedSRS = SRSAlgorithm.updateAfterRemember(sibling.srs);
           
           onSave({
             ...sibling,
@@ -580,12 +572,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       let newSRS = SRSAlgorithm.createNew(data.id, type);
       
       // Apply the "remembered" update immediately
-      newSRS = SRSAlgorithm.updateAfterReview(
-        newSRS,
-        4, // Quality: Memorized
-        'recall',
-        DEFAULT_RESPONSE_TIME
-      );
+      newSRS = SRSAlgorithm.updateAfterRemember(newSRS);
       
       onSave({
         data: data,

@@ -1,16 +1,16 @@
 /**
- * Enhanced Study View with Advanced SRS and Flashcard Interface
+ * Enhanced Study View with Fixed-Schedule SRS and Flashcard Interface
  * 
  * Features:
- * - "Simplified SuperMemo" logic: Memory Strength + Stability
+ * - Fixed-schedule spaced repetition (1, 2, 3, 5, 7, 12, 20, 25, 47, 84, 143, 180 days)
  * - Simple Flashcard UI: Front (Question) / Back (Answer)
- * - Binary Choice: Memorized vs Not Memorized
+ * - Positive-signal-only: "Remember" updates SRS, "Skip" just re-queues
  * - Real-time learning analytics
  * - Memory strength visualization
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { StoredItem, TaskType, VocabCard, SearchResult } from '../types';
+import { StoredItem, VocabCard, SearchResult } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { Button } from '../components/Button';
 import { OfflineImage } from '../components/OfflineImage';
@@ -38,7 +38,7 @@ import { log, warn, error as logError } from '../services/logger';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
-  onUpdateSRS: (itemId: string, quality: number, taskType: TaskType, responseTime: number) => void;
+  onUpdateSRS: (itemId: string) => void;
   onSearch: (text: string) => void;
   onDelete: (id: string) => void;
   onArchive?: (id: string) => void;
@@ -416,9 +416,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       ? Math.max(...items.map(i => i.srs.correctStreak || 0))
       : 0;
     
-    const hardestCards = [...items]
-      .sort((a, b) => (b.srs.difficulty || 0) - (a.srs.difficulty || 0))
-      .slice(0, 3);
+    const hardestCards: StoredItem[] = [];
     
     const mostReviewed = [...items]
       .sort((a, b) => (b.srs.totalReviews || 0) - (a.srs.totalReviews || 0))
@@ -527,19 +525,15 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     if (!queue[0] || !currentMeaningItem) return;
 
     const responseTime = Date.now() - cardStartTime;
-    
-    // Map binary choice to quality score per PRODUCT_SUMMARY.md spec:
-    // Memorized -> 4 (Very good - moderate gain)
-    // Not Memorized -> 1 (Hard Fail - moderate loss)
-    const quality = isMemorized ? 4 : 1;
 
-    // Update SRS for ALL sibling meanings - per PRODUCT_SUMMARY.md:
-    // "All meanings share one SRS score"
-    // "Single review updates all meanings of that word"
-    // We use 'recall' as the standard task type for flashcards (tap to flip, self-grade)
-    siblingMeanings.forEach(sibling => {
-      onUpdateSRS(sibling.data.id, quality, 'recall', responseTime);
-    });
+    if (isMemorized) {
+      // "Remember" — update SRS for ALL sibling meanings
+      // "All meanings share one SRS score"
+      siblingMeanings.forEach(sibling => {
+        onUpdateSRS(sibling.data.id);
+      });
+    }
+    // Skip (not memorized) — no SRS event, card re-queued below
 
     // Update session stats
     setSessionStats(prev => ({
@@ -551,8 +545,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     // Move to next item
     const nextQueue = queue.slice(1);
     
-    // Re-queue if failed (so we see it again this session)
-    // Re-queue the first meaning as representative of the group
+    // Re-queue if skipped (so we see it again this session)
     if (!isMemorized) {
        nextQueue.push(queue[0]);
     }
@@ -1043,23 +1036,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             </div>
           </div>
 
-          {/* Hardest Cards */}
-          {stats.hardestCards.length > 0 && stats.hardestCards[0].srs.difficulty > 5 && (
-            <div className="mt-4 pt-4 border-t border-slate-100">
-              <p className="text-xs font-medium text-slate-600 mb-2">Challenging Cards</p>
-              <div className="flex flex-wrap gap-2">
-                {stats.hardestCards.slice(0, 3).map((item, idx) => (
-                  <button 
-                    key={idx}
-                    onClick={() => onSearch(getItemTitle(item))}
-                    className="px-2 py-1 bg-rose-50 text-rose-700 text-xs rounded-full font-medium hover:bg-rose-100 active:scale-95 transition-all cursor-pointer"
-                  >
-                    {getItemTitle(item)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Hardest Cards section removed — no difficulty tracking in positive-signal-only SRS */}
 
           {/* Most Reviewed */}
           {stats.mostReviewed.length > 0 && stats.mostReviewed[0].srs.totalReviews > 0 && (
