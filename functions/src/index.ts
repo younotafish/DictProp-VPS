@@ -138,10 +138,6 @@ async function callDeepSeek(
 // Response Validation
 // ============================================================================
 
-function validateTranslationResponse(data: any): boolean {
-  return data && typeof data.english === 'string' && data.english.length > 0;
-}
-
 function validateVocabCard(vocab: any): boolean {
   if (!vocab || typeof vocab !== 'object') return false;
   
@@ -212,6 +208,7 @@ Each vocab object MUST have these fields:
 const WORD_MODE_JSON_SCHEMA = `
 You MUST respond with valid JSON in this exact format:
 {
+  "query": "string - The English word/phrase being analyzed. If the input was Chinese, this is the English equivalent you identified.",
   "vocabs": [
     ${VOCAB_SCHEMA_DESCRIPTION}
   ]
@@ -220,6 +217,7 @@ You MUST respond with valid JSON in this exact format:
 const SENTENCE_MODE_JSON_SCHEMA = `
 You MUST respond with valid JSON in this exact format:
 {
+  "query": "string - The English sentence being analyzed. If the input was Chinese, this is the English translation.",
   "translation": "string - Precise Chinese translation of the full sentence",
   "grammar": "string - Markdown explanation of grammar, nuance, tone, and register",
   "visualKeyword": "string - One single visual keyword to represent the whole concept for image generation",
@@ -227,12 +225,6 @@ You MUST respond with valid JSON in this exact format:
   "vocabs": [
     ${VOCAB_SCHEMA_DESCRIPTION}
   ]
-}`;
-
-const TRANSLATION_JSON_SCHEMA = `
-You MUST respond with valid JSON in this exact format:
-{
-  "english": "string - Best natural English translation"
 }`;
 
 // System instruction for WORD/PHRASE mode
@@ -250,6 +242,15 @@ If the input appears to be misspelled or contains a typo, AUTOMATICALLY CORRECT 
 - "definately" → "definitely"
 - "occured" → "occurred"
 Use your best judgment to determine what the user meant. The 'word' field should contain the CORRECT spelling.
+
+CRITICAL - CHINESE INPUT:
+If the input is in Chinese (e.g., 坚韧, 银行, 不屈不挠), identify the best English word or phrase equivalent and analyze THAT English word.
+- "坚韧" → analyze "tenacity" / "resilience"
+- "银行" → analyze "bank"
+- "不屈不挠" → analyze "perseverance" or "indomitable"
+- "打破僵局" → analyze "break the ice"
+Set the 'query' field in your response to the English word/phrase you identified.
+Create vocabulary cards for the English word, exactly as if the user had typed it in English.
 
 CRITICAL - USE BASE/DICTIONARY FORMS:
 If the input is an inflected form, you MUST normalize it to the base/lemma form (the dictionary entry form):
@@ -306,6 +307,13 @@ CRITICAL - HANDLE TYPOS AND MISSPELLINGS:
 If the input contains misspelled words or typos, AUTOMATICALLY CORRECT THEM when analyzing.
 Treat the sentence as if it were spelled correctly. Extract vocabulary based on the corrected words.
 
+CRITICAL - CHINESE INPUT:
+If the input is in Chinese, translate it to natural English and analyze the English version.
+- Set the 'query' field to the English translation of the sentence
+- Set the 'translation' field to the original Chinese (or a refined version)
+- Analyze grammar, pronunciation, and vocabulary based on the English equivalent
+Treat the analysis exactly as if the user had entered the English sentence directly.
+
 Your task: Provide a comprehensive analysis including:
 1. translation - Precise Chinese translation
 2. grammar - Markdown explanation of grammar points, nuance, tone, and register
@@ -351,16 +359,6 @@ Only extract words/phrases that are C1/C2 level, idiomatic, or have interesting 
 Be thorough - the user should get the same quality whether they search a word directly or extract it from a sentence.
 
 ${SENTENCE_MODE_JSON_SCHEMA}`;
-
-// Translation instruction
-const TRANSLATION_INSTRUCTION = `
-You are a professional Chinese-English translator.
-Translate the Chinese text to natural English.
-Provide the single best translation that captures the meaning.
-If the input contains both Chinese and English, translate only the Chinese parts and preserve the English.
-For single words or short phrases, provide the most common English equivalent.
-
-${TRANSLATION_JSON_SCHEMA}`;
 
 // Helper function to detect if input contains Chinese characters
 function containsChinese(text: string): boolean {
@@ -417,55 +415,23 @@ export const analyzeInput = onCall({ secrets: [deepinfraApiKey], cors: true, tim
     throw new HttpsError('failed-precondition', 'DEEPINFRA_API_KEY not configured');
   }
   
-  let text = request.data.text;
+  const text = request.data.text;
   if (!text) {
     throw new HttpsError('invalid-argument', 'The function must be called with one argument "text" containing the input text.');
   }
 
-  // Track original query if we need to translate from Chinese
-  let originalQuery: string | undefined;
+  // Track original query if input contains Chinese (for display purposes on client)
+  const originalQuery = containsChinese(text) ? text : undefined;
   
   // ============================================================================
-  // TRANSLATION (if input contains Chinese)
-  // ============================================================================
-  if (containsChinese(text)) {
-    logger.info(`Input "${text}" contains Chinese, translating first...`);
-    originalQuery = text;
-    
-    const translationPrompt = `Translate this to English: "${text}"`;
-    
-    try {
-      logger.info("Translating with DeepSeek-V3...");
-      const translationData = await callDeepSeek(
-        deepinfraKey,
-        TRANSLATION_INSTRUCTION,
-        translationPrompt
-      );
-      
-      // Validate response structure
-      if (validateTranslationResponse(translationData)) {
-        text = translationData.english;
-        logger.info(`Translated to: "${text}"`);
-      } else {
-        logger.warn("Translation response failed validation, proceeding with original text");
-        originalQuery = undefined;
-      }
-    } catch (translationError: any) {
-      const isTimeout = translationError.name === 'AbortError';
-      logger.warn(`Translation failed (${isTimeout ? 'timeout' : 'error'}):`, translationError.message);
-      originalQuery = undefined;
-    }
-  }
-  
-  // ============================================================================
-  // ANALYSIS (Word/Phrase or Sentence mode)
+  // ANALYSIS — single LLM call handles both English and Chinese input
   // ============================================================================
   const isWord = isWordOrPhrase(text);
-  logger.info(`Input "${text}" detected as: ${isWord ? 'WORD/PHRASE' : 'SENTENCE'}`);
+  logger.info(`Input "${text}" detected as: ${isWord ? 'WORD/PHRASE' : 'SENTENCE'}${originalQuery ? ' (Chinese input)' : ''}`);
 
   const userPrompt = isWord
-    ? `Analyze this English word or phrase for a C1 learner. Create vocabulary cards for ALL its meanings: "${text}"`
-    : `Analyze this English sentence for a C1 learner: "${text}"`;
+    ? `Analyze this word or phrase for a C1 learner. Create vocabulary cards for ALL its meanings: "${text}"`
+    : `Analyze this sentence for a C1 learner: "${text}"`;
 
   try {
     logger.info(`Analyzing with DeepSeek-V3 (${isWord ? 'word' : 'sentence'} mode)...`);
@@ -484,22 +450,26 @@ export const analyzeInput = onCall({ secrets: [deepinfraApiKey], cors: true, tim
     
     logger.info("DeepSeek analysis succeeded and validated");
 
+    // The model returns a `query` field with the English word/sentence it analyzed
+    // This is especially important when input was Chinese
+    const resolvedQuery = rawData.query || text;
+
     // Format response
     if (isWord) {
       return {
         translation: "", // Empty indicates word mode
         grammar: "",
-        visualKeyword: rawData.vocabs?.[0]?.word || text,
+        visualKeyword: rawData.vocabs?.[0]?.word || resolvedQuery,
         pronunciation: rawData.vocabs?.[0]?.ipa || "",
         vocabs: rawData.vocabs || [],
         originalQuery,
-        query: text
+        query: resolvedQuery
       };
     } else {
       return {
         ...rawData,
         originalQuery,
-        query: text
+        query: resolvedQuery
       };
     }
   } catch (error: any) {
