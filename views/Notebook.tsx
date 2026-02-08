@@ -669,17 +669,30 @@ export const NotebookView: React.FC<NotebookProps> = ({
 
   // Listen for notebook-search events from App.tsx
   useEffect(() => {
-    const handleNotebookSearch = (e: CustomEvent<{ query: string; forceAI: boolean }>) => {
-      const { query, forceAI } = e.detail;
+    const handleNotebookSearch = (e: CustomEvent<{ query: string; forceAI: boolean; autoAIIfNoMatch?: boolean }>) => {
+      const { query, forceAI, autoAIIfNoMatch } = e.detail;
       setLocalSearchQuery(query);
       if (forceAI && query.trim()) {
         performAISearch(query);
+      } else if (autoAIIfNoMatch && query.trim()) {
+        // Check if any saved item has an exact word match
+        const queryLower = query.toLowerCase().trim();
+        const hasExactMatch = items.some(item => {
+          const title = item.type === 'phrase'
+            ? (item.data as SearchResult).query
+            : (item.data as VocabCard).word;
+          return (title || '').toLowerCase().trim() === queryLower;
+        });
+
+        if (!hasExactMatch) {
+          performAISearch(query);
+        }
       }
     };
 
     window.addEventListener('notebook-search', handleNotebookSearch as EventListener);
     return () => window.removeEventListener('notebook-search', handleNotebookSearch as EventListener);
-  }, [performAISearch]);
+  }, [performAISearch, items]);
 
   // Clear search results when query is cleared
   useEffect(() => {

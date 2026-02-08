@@ -1280,7 +1280,7 @@ const App: React.FC = () => {
       // The notebook will handle the search via its own search bar
       // We dispatch a custom event to set the search query
       setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: false } }));
+        window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: false, autoAIIfNoMatch: true } }));
       }, 100);
   };
 
