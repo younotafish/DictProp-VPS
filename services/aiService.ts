@@ -20,9 +20,9 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
       throw new Error("Firebase functions not initialized. Check your Firebase configuration.");
   }
 
-  const analyzeInputFn = httpsCallable(functions, 'analyzeInput');
+  const analyzeInputFn = httpsCallable(functions, 'analyzeInput', { timeout: 300000 });
   
-  try {
+  const attemptCall = async (): Promise<SearchResult> => {
     const result = await analyzeInputFn({ text });
     const data = result.data as any;
     
@@ -33,29 +33,53 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
 
     return {
       id: generateId(),
-      query: data.query || text, // Use translated query from server if available
+      query: data.query || text,
       translation: data.translation,
       grammar: data.grammar,
       visualKeyword: data.visualKeyword,
       pronunciation: data.pronunciation,
       vocabs: vocabs,
       timestamp: Date.now(),
-      originalQuery: data.originalQuery // Original Chinese input if translated
+      originalQuery: data.originalQuery
     };
+  };
+  
+  try {
+    return await attemptCall();
   } catch (error: any) {
-    logError("Analysis failed", error);
-    
     const msg = error.message || '';
-    // Check for quota errors propagated from the server function
+    const code = error.code || '';
+    
+    // Check for quota errors
     const isQuota = 
         msg.includes('QUOTA_EXCEEDED') || 
         msg.includes('resource-exhausted') ||
-        error.code === 'resource-exhausted';
-
+        code === 'functions/resource-exhausted';
     if (isQuota) {
         throw new Error("QUOTA_EXCEEDED");
     }
-    throw error;
+    
+    // Check for timeout/abort errors — retry once
+    const isAbort = 
+        msg.includes('aborted') ||
+        msg.includes('deadline-exceeded') ||
+        msg.includes('timed out') ||
+        msg.includes('DEADLINE_EXCEEDED') ||
+        code === 'functions/deadline-exceeded' ||
+        error.name === 'AbortError';
+    
+    if (isAbort) {
+      warn("Search timed out, retrying once...");
+      try {
+        return await attemptCall();
+      } catch (retryError: any) {
+        logError("Retry also failed", retryError);
+        throw new Error("Search timed out. The AI service may be busy — please try again.");
+      }
+    }
+    
+    logError("Analysis failed", error);
+    throw new Error(msg || 'Search failed. Please try again.');
   }
 };
 

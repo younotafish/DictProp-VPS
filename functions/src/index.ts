@@ -10,7 +10,7 @@ const deepinfraApiKey = defineSecret("DEEPINFRA_API_KEY");
 // DeepSeek-V3 Helper (Text model via DeepInfra)
 // ============================================================================
 
-const DEEPSEEK_TIMEOUT_MS = 30000; // 30 second timeout
+const DEEPSEEK_TIMEOUT_MS = 100000; // 100 second timeout
 
 interface DeepSeekResponse {
   choices: Array<{
@@ -33,20 +33,24 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
   }
 }
 
-async function callDeepSeek(
+async function callDeepSeekOnce(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string
 ): Promise<any> {
-  const response = await fetchWithTimeout(
-    'https://api.deepinfra.com/v1/openai/chat/completions',
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+  logger.info(`DeepSeek: calling API (key starts with ${apiKey.substring(0, 8)}..., timeout ${DEEPSEEK_TIMEOUT_MS}ms)`);
+  
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      'https://api.deepinfra.com/v1/openai/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
         model: 'deepseek-ai/DeepSeek-V3',
         messages: [
           { role: 'system', content: systemPrompt },
@@ -54,15 +58,21 @@ async function callDeepSeek(
         ],
         response_format: { type: 'json_object' },
         temperature: 0.7,
-      }),
-    },
-    DEEPSEEK_TIMEOUT_MS
-  );
+        }),
+      },
+      DEEPSEEK_TIMEOUT_MS
+    );
+  } catch (fetchErr: any) {
+    logger.error(`DeepSeek: fetch failed - name: ${fetchErr.name}, message: ${fetchErr.message}`);
+    throw fetchErr;
+  }
+  
+  logger.info(`DeepSeek: got response status ${response.status}`);
 
   if (!response.ok) {
     const status = response.status;
     const errorData = await response.json().catch(() => ({}));
-    logger.warn("DeepSeek API error:", status, errorData);
+    logger.warn("DeepSeek API error:", status, JSON.stringify(errorData));
     throw new Error(`DeepSeek API error: ${status}`);
   }
 
@@ -73,7 +83,55 @@ async function callDeepSeek(
     throw new Error("DeepSeek returned empty response");
   }
 
-  return JSON.parse(content);
+  // Extract JSON — model may wrap it in markdown code fences
+  let jsonStr = content.trim();
+  const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (fenceMatch) {
+    jsonStr = fenceMatch[1].trim();
+  }
+
+  try {
+    return JSON.parse(jsonStr);
+  } catch (parseErr) {
+    logger.warn("JSON parse failed, attempting to extract JSON object from response");
+    // Last resort: find first { ... } block
+    const objMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      return JSON.parse(objMatch[0]);
+    }
+    throw new Error("Failed to parse JSON from DeepSeek response");
+  }
+}
+
+// Retry wrapper for transient failures (timeout, 5xx errors)
+async function callDeepSeek(
+  apiKey: string,
+  systemPrompt: string,
+  userPrompt: string,
+  maxRetries: number = 1
+): Promise<any> {
+  let lastError: any;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await callDeepSeekOnce(apiKey, systemPrompt, userPrompt);
+    } catch (error: any) {
+      lastError = error;
+      const msg = error.message || '';
+      const isRetryable = 
+        error.name === 'AbortError' || 
+        msg.includes('aborted') ||
+        msg.includes('DeepSeek API error: 5') || // 5xx server errors
+        msg.includes('DeepSeek API error: 429') ||
+        msg.includes('fetch failed');
+      
+      if (attempt < maxRetries && isRetryable) {
+        logger.warn(`DeepSeek attempt ${attempt + 1} failed (${msg}), retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2s backoff
+        continue;
+      }
+    }
+  }
+  throw lastError;
 }
 
 // ============================================================================
@@ -352,7 +410,7 @@ function isWordOrPhrase(text: string): boolean {
   return true;
 }
 
-export const analyzeInput = onCall({ secrets: [deepinfraApiKey], cors: true }, async (request) => {
+export const analyzeInput = onCall({ secrets: [deepinfraApiKey], cors: true, timeoutSeconds: 300 }, async (request) => {
   const deepinfraKey = deepinfraApiKey.value();
   
   if (!deepinfraKey) {
@@ -446,6 +504,14 @@ export const analyzeInput = onCall({ secrets: [deepinfraApiKey], cors: true }, a
     }
   } catch (error: any) {
     const msg = error.message || 'Analysis failed';
+    
+    // Detect timeout/abort errors
+    const isAbort = error.name === 'AbortError' || msg.includes('aborted');
+    if (isAbort) {
+      logger.error("Analysis timed out after retries:", msg);
+      throw new HttpsError('deadline-exceeded', 'The AI service is taking too long to respond. Please try again.');
+    }
+    
     const isQuota = 
         msg.includes('429') || 
         msg.includes('quota') || 
