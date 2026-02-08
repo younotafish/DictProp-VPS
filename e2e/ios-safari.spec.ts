@@ -166,90 +166,6 @@ test.describe('iOS Safari - Touch Gestures', () => {
   });
 });
 
-test.describe('iOS Safari - Study Mode Touch', () => {
-  test('tap to flip flashcard', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Tap on card to flip
-    const card = page.locator('[class*="cursor-pointer"]').first();
-    await card.tap();
-    
-    await page.waitForTimeout(500);
-    
-    // Should show rating buttons
-    const gotItButton = page.locator('button[class*="bg-emerald"]');
-    await expect(gotItButton).toBeVisible();
-  });
-
-  test('swipe left rates as forgot on front of card', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Swipe left on front of card
-    const card = page.locator('[class*="cursor-pointer"]').first();
-    const box = await card.boundingBox();
-    
-    if (box) {
-      await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 10 });
-      await page.mouse.up();
-    }
-    
-    await page.waitForTimeout(500);
-    // Card should be re-queued (still in session)
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-  });
-
-  test('swipe right rates as got it on front of card', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Swipe right on front of card
-    const card = page.locator('[class*="cursor-pointer"]').first();
-    const box = await card.boundingBox();
-    
-    if (box) {
-      await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 10 });
-      await page.mouse.up();
-    }
-    
-    await page.waitForTimeout(500);
-    
-    // Should advance to next card or complete
-    const hasNext = await page.getByText(/Card 2\//).isVisible();
-    const isComplete = await page.getByText(/Brilliant/i).isVisible();
-    expect(hasNext || isComplete).toBe(true);
-  });
-
-  test('text selection works on back of flipped card', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Flip card
-    await page.keyboard.press('Space');
-    await page.waitForTimeout(500);
-    
-    // Should show back of card with definition
-    const gotItButton = page.locator('button[class*="bg-emerald"]');
-    await expect(gotItButton).toBeVisible();
-    
-    // Text selection should work on flipped card (not trigger swipe)
-    // This is tested by verifying text is visible and selectable
-  });
-});
-
 test.describe('iOS Safari - Input Behavior', () => {
   test('search input has 16px font size to prevent zoom', async ({ seededApp: page }) => {
     const searchInput = page.getByPlaceholder(/Search/);
@@ -298,21 +214,6 @@ test.describe('iOS Safari - Input Behavior', () => {
 });
 
 test.describe('iOS Safari - PWA Behavior', () => {
-  test('session state persists in localStorage', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Check that session state is saved to localStorage
-    const sessionState = await page.evaluate(() => {
-      return localStorage.getItem('study_session_state');
-    });
-    
-    // Should have saved session state
-    expect(sessionState).not.toBeNull();
-  });
-
   test('app restores state after simulated background/foreground', async ({ seededApp: page }) => {
     // Navigate to study
     await page.getByRole('button', { name: /study/i }).click();
@@ -363,25 +264,6 @@ test.describe('iOS Safari - Touch Targets', () => {
         // iOS minimum is 44pt (roughly 44px on 1x displays)
         expect(box.height).toBeGreaterThanOrEqual(40);
         expect(box.width).toBeGreaterThanOrEqual(40);
-      }
-    }
-  });
-
-  test('rating buttons in study mode are large enough', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Rating buttons
-    const forgotBtn = page.locator('button[class*="bg-rose"]');
-    const gotItBtn = page.locator('button[class*="bg-emerald"]');
-    
-    for (const btn of [forgotBtn, gotItBtn]) {
-      const box = await btn.boundingBox();
-      if (box) {
-        expect(box.height).toBeGreaterThanOrEqual(44);
-        expect(box.width).toBeGreaterThanOrEqual(44);
       }
     }
   });
@@ -465,21 +347,6 @@ test.describe('iOS Safari - Visual Polish', () => {
     expect(hasNoCallout).toBe(true);
   });
 
-  test('3D card flip uses hardware acceleration', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Check for backface-visibility on flip cards
-    const hasBackfaceHidden = await page.evaluate(() => {
-      const elements = document.querySelectorAll('[class*="backface"]');
-      return elements.length > 0;
-    });
-    
-    // Should have elements with backface-visibility for 3D transforms
-    expect(hasBackfaceHidden).toBe(true);
-  });
 });
 
 test.describe('iOS Safari - Offline Support', () => {

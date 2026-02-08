@@ -71,59 +71,6 @@ test.describe('Mobile - Swipe Gestures', () => {
   });
 });
 
-test.describe('Mobile - Study Session', () => {
-  test('rating buttons are visible on mobile', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // All three rating buttons visible
-    const forgotButton = page.locator('button[class*="bg-rose"]');
-    const archiveButton = page.locator('button[class*="bg-amber"]');
-    const gotItButton = page.locator('button[class*="bg-emerald"]');
-    
-    await expect(forgotButton).toBeVisible();
-    await expect(archiveButton).toBeVisible();
-    await expect(gotItButton).toBeVisible();
-  });
-
-  test('tap to flip card works', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session/i }).click();
-    
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Find the card and tap
-    const cardFront = page.locator('[class*="cursor-pointer"]').filter({ has: page.getByText(/reveal|tap/i) });
-    if (await cardFront.isVisible()) {
-      await cardFront.click();
-      await page.waitForTimeout(500);
-    }
-    
-    // Should be flipped
-    const gotItButton = page.locator('button[class*="bg-emerald"]');
-    await expect(gotItButton).toBeVisible();
-  });
-
-  test('flashcard takes full width on mobile', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session/i }).click();
-    
-    const flashcard = page.locator('[class*="rounded-"]').first();
-    const box = await flashcard.boundingBox();
-    
-    if (box) {
-      // On mobile, card should be nearly full width
-      const viewportSize = page.viewportSize();
-      if (viewportSize && viewportSize.width < 768) {
-        // Card should be at least 80% of viewport width on mobile
-        expect(box.width).toBeGreaterThan(viewportSize.width * 0.6);
-      }
-    }
-  });
-});
-
 test.describe('Mobile - Notebook View', () => {
   test('search bar is full width', async ({ seededApp: page }) => {
     const searchInput = page.getByPlaceholder(/Search/);
@@ -306,30 +253,3 @@ test.describe('Mobile - PWA Behavior', () => {
   });
 });
 
-test.describe('Mobile - Gestures in Study Mode', () => {
-  test('meaning dots visible in study mode for multi-meaning words', async ({ page }) => {
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
-    await mockFirebaseFunctions(page);
-    await page.goto('/');
-    await waitForAppLoad(page);
-    
-    const testItems = [
-      createStoredItem(mockBankNounFinance, 'vocab', { memoryStrength: 10 }),
-      createStoredItem(mockBankNounGeography, 'vocab', { memoryStrength: 10 }),
-    ];
-    await seedIndexedDB(page, testItems);
-    await page.reload();
-    await waitForAppLoad(page);
-    
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    // Should show meaning dots if the current word has multiple meanings
-    await page.waitForTimeout(500);
-    
-    // Look for dot indicators
-    const dots = page.locator('button[class*="rounded-full"][class*="h-2"]');
-    // May or may not show depending on which word comes first
-  });
-});

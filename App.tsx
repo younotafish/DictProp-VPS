@@ -1508,13 +1508,7 @@ const App: React.FC = () => {
         {currentView === 'study' && (
           <StudyEnhanced
             items={studyItems} 
-            onUpdateSRS={updateSRS}
-            onSearch={handleRecursiveSearch} 
-            onDelete={handleDelete}
-            onArchive={handleArchive}
             onScroll={handleScroll}
-            userId={user?.uid}
-            onLazyLoadImage={handleLazyLoadImage}
           />
         )}
       </main>
@@ -1576,16 +1570,6 @@ const App: React.FC = () => {
                   <ShortcutRow keys={['P']} description="Pronounce current word" />
                   <ShortcutRow keys={['R']} description="Mark as Remembered" />
                   <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />
-                </div>
-              </div>
-
-              {/* Study Mode */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Study Mode</h4>
-                <div className="space-y-2">
-                  <ShortcutRow keys={['←']} description="Mark as Forgot" />
-                  <ShortcutRow keys={['→']} description="Mark as Got it" />
-                  <ShortcutRow keys={['Space']} description="Flip card to reveal answer" />
                 </div>
               </div>
 

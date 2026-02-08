@@ -5,16 +5,15 @@ import { test, expect, mockVocabCard, mockVocabCard2, mockBankNounFinance, mockB
  * 
  * Algorithm: Fixed-schedule with positive-signal-only.
  * Schedule: [1, 2, 3, 5, 7, 12, 20, 25, 47, 84, 143, 180] days
- * "Remember" (ArrowRight) = advance schedule step
- * "Skip" (ArrowLeft) = re-queue card, no SRS update
+ * "Remember" (R key or double-click in DetailView) = advance schedule step
  * 
  * Tests cover:
  * - Mastery level indicators
  * - Due status indicators
- * - SRS updates after remember
+ * - SRS updates after remember (via DetailView)
  * - Shared SRS for multiple meanings
  * - Progress persistence
- * - Session statistics
+ * - Dashboard statistics
  */
 
 test.describe('SRS - Mastery Level Display', () => {
@@ -96,9 +95,8 @@ test.describe('SRS - Due Status', () => {
   });
 });
 
-test.describe('SRS - Study Session Updates', () => {
-  test('memory strength increases after correct answer', async ({ page }) => {
-    // Must navigate first before accessing storage APIs
+test.describe('SRS - DetailView Remember Updates', () => {
+  test('memory strength increases after R key remember', async ({ page }) => {
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
@@ -114,55 +112,42 @@ test.describe('SRS - Study Session Updates', () => {
     await page.reload();
     await waitForAppLoad(page);
     
-    // Start study session
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
+    // Open detail view and mark as remembered
+    await page.getByText('serendipity').first().click();
+    await page.keyboard.press('r');
     
-    // Rate as correct
-    await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(500);
+    // Should show success animation
+    await expect(page.getByText(/Remembered/i)).toBeVisible();
+    await page.waitForTimeout(1000);
     
-    // Session should complete
-    await expect(page.getByText(/Brilliant Session/i)).toBeVisible();
-    
-    // Check that stats updated - should show accuracy
-    await expect(page.getByText(/100%/)).toBeVisible(); // 100% accuracy for 1 correct
-  });
-
-  test('skip re-queues card without SRS update, then remember completes', async ({ page }) => {
-    // Must navigate first before accessing storage APIs
-    await mockFirebaseFunctions(page);
-    await page.goto('/');
-    await waitForAppLoad(page);
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
-    
-    const testItem = createStoredItem(mockVocabCard, 'vocab', {
-      memoryStrength: 50,
-      totalReviews: 3,
+    // Check that SRS data was updated in IndexedDB
+    const persistedData = await page.evaluate(async () => {
+      return new Promise((resolve) => {
+        const request = indexedDB.open('PopDictDB', 2);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction('library', 'readonly');
+          const store = tx.objectStore('library');
+          const getRequest = store.get('items_guest');
+          getRequest.onsuccess = () => {
+            const items = getRequest.result || [];
+            const item = items.find((i: any) => i.data?.id === 'test-vocab-1');
+            resolve({
+              found: !!item,
+              memoryStrength: item?.srs?.memoryStrength,
+              totalReviews: item?.srs?.totalReviews
+            });
+            db.close();
+          };
+          getRequest.onerror = () => resolve({ found: false });
+        };
+        request.onerror = () => resolve({ found: false });
+      });
     });
-    await seedIndexedDB(page, [testItem]);
-    await page.reload();
-    await waitForAppLoad(page);
     
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    // Skip (no SRS update, card re-queued)
-    await page.keyboard.press('ArrowLeft');
-    await page.waitForTimeout(500);
-    
-    // Card should be re-queued
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Now remember to complete
-    await page.keyboard.press('ArrowRight');
-    
-    // Session should complete
-    await expect(page.getByText(/Brilliant Session/i)).toBeVisible();
-    
-    // Accuracy should be less than 100%
-    await expect(page.getByText(/50%/)).toBeVisible();
+    const data = persistedData as any;
+    expect(data.found).toBe(true);
+    expect(data.totalReviews).toBeGreaterThan(1);
   });
 });
 
@@ -185,18 +170,43 @@ test.describe('SRS - Shared SRS for Multiple Meanings', () => {
     await page.reload();
     await waitForAppLoad(page);
     
-    // Start study
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
+    // Open detail view for bank and mark as remembered
+    await page.getByText('bank').first().click();
+    await page.keyboard.press('r');
     
-    // Complete review
-    await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(500);
+    // Should show success animation
+    await expect(page.getByText(/Remembered/i)).toBeVisible();
+    await page.waitForTimeout(1000);
     
     // Both meanings should be updated (shared SRS)
-    // The exact verification would require checking IndexedDB
-    // But the session should complete normally
-    await expect(page.getByText(/Brilliant Session/i)).toBeVisible();
+    const persistedData = await page.evaluate(async () => {
+      return new Promise((resolve) => {
+        const request = indexedDB.open('PopDictDB', 2);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction('library', 'readonly');
+          const store = tx.objectStore('library');
+          const getRequest = store.get('items_guest');
+          getRequest.onsuccess = () => {
+            const items = getRequest.result || [];
+            const bankItems = items.filter((i: any) => 
+              i.data?.word?.toLowerCase() === 'bank' && !i.isDeleted
+            );
+            resolve({
+              count: bankItems.length,
+              allUpdated: bankItems.every((i: any) => i.srs?.totalReviews > 0)
+            });
+            db.close();
+          };
+          getRequest.onerror = () => resolve({ count: 0, allUpdated: false });
+        };
+        request.onerror = () => resolve({ count: 0, allUpdated: false });
+      });
+    });
+    
+    const data = persistedData as any;
+    expect(data.count).toBe(2);
+    expect(data.allUpdated).toBe(true);
   });
 });
 
@@ -259,61 +269,6 @@ test.describe('SRS - Reset Memory Strength', () => {
         }
       }
     }
-  });
-});
-
-test.describe('SRS - Session Statistics', () => {
-  test('session completion shows review count', async ({ page }) => {
-    await mockFirebaseFunctions(page);
-    await page.goto('/');
-    await waitForAppLoad(page);
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
-    
-    const testItem = createStoredItem(mockVocabCard, 'vocab', { memoryStrength: 10 });
-    await seedIndexedDB(page, [testItem]);
-    await page.reload();
-    await waitForAppLoad(page);
-    
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    await page.keyboard.press('ArrowRight');
-    
-    await expect(page.getByText(/Brilliant Session/i)).toBeVisible();
-    
-    // Should show "1" card reviewed
-    await expect(page.getByText(/1/).first()).toBeVisible();
-  });
-
-  test('session completion shows accuracy', async ({ page }) => {
-    await mockFirebaseFunctions(page);
-    await page.goto('/');
-    await waitForAppLoad(page);
-    await clearIndexedDB(page);
-    await clearLocalStorage(page);
-    
-    const testItems = [
-      createStoredItem(mockVocabCard, 'vocab', { memoryStrength: 10 }),
-      createStoredItem(mockVocabCard2, 'vocab', { memoryStrength: 10 }),
-    ];
-    await seedIndexedDB(page, testItems);
-    await page.reload();
-    await waitForAppLoad(page);
-    
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    
-    // Get one wrong, one right
-    await page.keyboard.press('ArrowLeft'); // Wrong - re-queued
-    await page.waitForTimeout(500);
-    await page.keyboard.press('ArrowRight'); // Right
-    await page.waitForTimeout(500);
-    await page.keyboard.press('ArrowRight'); // Right (re-queued card)
-    
-    await expect(page.getByText(/Brilliant Session/i)).toBeVisible();
-    
-    // Accuracy should be shown (2/3 = 67%)
-    await expect(page.getByText(/Accuracy/i)).toBeVisible();
   });
 });
 
@@ -392,12 +347,12 @@ test.describe('SRS - Interval Scheduling', () => {
     await page.getByRole('button', { name: /study/i }).click();
     
     // Should show 0 due
-    await expect(page.getByText(/0.*due/i).or(page.getByText(/Practice Mode/i))).toBeVisible();
+    await expect(page.getByText(/0.*due/i)).toBeVisible();
   });
 });
 
 test.describe('SRS - Review Count Tracking', () => {
-  test('total reviews incremented after study', async ({ page }) => {
+  test('total reviews incremented after remember in detail view', async ({ page }) => {
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
@@ -409,25 +364,17 @@ test.describe('SRS - Review Count Tracking', () => {
     await page.reload();
     await waitForAppLoad(page);
     
-    // Study the card
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    await page.keyboard.press('ArrowRight');
-    
-    await expect(page.getByText(/Brilliant Session/i)).toBeVisible();
-    
-    // Return to notebook and check review count
-    await page.getByRole('button', { name: /View Progress/i }).click();
-    await page.waitForTimeout(500);
-    await page.keyboard.press('1'); // Go to notebook
-    
-    // Open detail view
+    // Open detail view and mark as remembered
     await page.getByText('serendipity').first().click();
+    await page.keyboard.press('r');
+    
+    // Should show success animation
+    await expect(page.getByText(/Remembered/i)).toBeVisible();
+    await page.waitForTimeout(1000);
+    
+    // Show header to check review info
     await page.keyboard.press('h');
     await page.waitForTimeout(300);
-    
-    // Should show review count
-    // The exact display may vary, but reviews should be tracked
   });
 });
 
@@ -457,7 +404,6 @@ test.describe('SRS - Correct Streak', () => {
     await page.waitForTimeout(300);
     
     // Should show streak indicator (flame icon)
-    // The exact display depends on implementation
   });
 });
 
@@ -479,15 +425,17 @@ test.describe('SRS - Persistence After Reload', () => {
     await page.reload();
     await waitForAppLoad(page);
     
-    // Study the card and mark as remembered
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
+    // Mark as remembered via DetailView
+    await page.getByText('serendipity').first().click();
+    await page.keyboard.press('r');
     
-    // Rate as correct
-    await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(1000); // Wait for save to complete
+    // Should show success animation
+    await expect(page.getByText(/Remembered/i)).toBeVisible();
+    await page.waitForTimeout(1000);
     
-    await expect(page.getByText(/Brilliant Session/i)).toBeVisible();
+    // Close detail view
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
     
     // Simulate app switch by reloading the page
     await page.reload();
@@ -512,13 +460,9 @@ test.describe('SRS - Persistence After Reload', () => {
             });
             db.close();
           };
-          getRequest.onerror = () => {
-            resolve({ found: false, error: 'Failed to read' });
-          };
+          getRequest.onerror = () => resolve({ found: false, error: 'Failed to read' });
         };
-        request.onerror = () => {
-          resolve({ found: false, error: 'Failed to open DB' });
-        };
+        request.onerror = () => resolve({ found: false, error: 'Failed to open DB' });
       });
     });
     
@@ -529,7 +473,7 @@ test.describe('SRS - Persistence After Reload', () => {
     expect(data.memoryStrength).toBeGreaterThan(initialStrength);
   });
 
-  test('SRS updates persist in localStorage cache after study', async ({ page }) => {
+  test('SRS updates persist in localStorage cache after remember', async ({ page }) => {
     await mockFirebaseFunctions(page);
     await page.goto('/');
     await waitForAppLoad(page);
@@ -544,11 +488,10 @@ test.describe('SRS - Persistence After Reload', () => {
     await page.reload();
     await waitForAppLoad(page);
     
-    // Study and mark as remembered
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session|Practice/i }).click();
-    await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(500);
+    // Mark as remembered via DetailView
+    await page.getByText('serendipity').first().click();
+    await page.keyboard.press('r');
+    await page.waitForTimeout(1000);
     
     // Check localStorage cache was updated
     const cacheData = await page.evaluate(() => {

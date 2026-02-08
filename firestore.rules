@@ -20,9 +20,10 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
       
-      // Allow access to user's sessions subcollection
+      // Sessions subcollection — deprecated (stats derived from item-level SRS data).
+      // Read-only access retained for historical data; no new writes.
       match /sessions/{sessionId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if request.auth != null && request.auth.uid == userId;
       }
     }
   }

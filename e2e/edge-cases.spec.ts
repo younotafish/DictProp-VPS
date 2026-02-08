@@ -269,23 +269,8 @@ test.describe('Edge Cases - Study Session', () => {
     
     await page.getByRole('button', { name: /study/i }).click();
     
-    // Dashboard should show 0 due or offer practice mode
-    await expect(page.getByText(/0.*due|Practice/i)).toBeVisible();
-  });
-
-  test('handles study session interrupted by page refresh', async ({ seededApp: page }) => {
-    await page.getByRole('button', { name: /study/i }).click();
-    await page.getByRole('button', { name: /Start Session/i }).click();
-    
-    // In mid-session
-    await expect(page.getByText(/Card \d+\/\d+/)).toBeVisible();
-    
-    // Refresh page
-    await page.reload();
-    await waitForAppLoad(page);
-    
-    // Should restore to study view (session may or may not persist)
-    // The app should handle this gracefully
+    // Dashboard should show 0 due
+    await expect(page.getByText(/0.*due/i)).toBeVisible();
   });
 });
 

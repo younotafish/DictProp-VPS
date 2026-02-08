@@ -539,7 +539,6 @@ Archived words appear in a **separate section** at the bottom of Notebook:
 **Triggered by:**
 - Tapping a notebook item
 - Tapping "Expand" on any vocabulary card
-- Tapping a study flashcard to see details
 
 **TikTok-Style Vertical Navigation:**
 Browse through vocabulary cards with a familiar, immersive experience:
@@ -675,10 +674,9 @@ An item's inherent difficulty (0-10):
 | 4 | Correct, fairly easy | +12 memory strength |
 | 5 | Instant, effortless recall | +20 memory strength |
 
-**Study Mode:**
-- Single mode: Recall (tap to flip, self-grade)
-- Consistent experience across all reviews
-- Green bar = knew it, red bar = didn't know
+**Review Mode:**
+- Reviews happen in Detail View (open item, press `R` or tap Remember)
+- Dashboard shows analytics derived from item-level SRS data
 
 **Speed Bonus:**
 Faster correct answers slightly boost memory strength:
@@ -709,158 +707,55 @@ Current Strength = Original Strength × e^(-days / (stability × 2))
 
 ---
 
-### Study Session Flow
+### Study Dashboard
 
-#### Dashboard View (Start Screen)
+The Study tab shows a dashboard with learning analytics derived from item-level SRS data. There is no separate study session — SRS reviews happen through the Detail View (double-click a card, or press `R`).
 
-**Session Overview:**
+#### Dashboard Layout
+
 ```
 ┌─────────────────────────────────────────┐
 │           TODAY'S STUDY                 │
 │                                         │
 │   🔥 15 words due                       │
 │   📊 85% average retention              │
-│   ⏱️ Estimated: 8 minutes               │
-│                                         │
-│   [ START SESSION ]                     │
 │                                         │
 ├─────────────────────────────────────────┤
 │   WEEKLY STATS                          │
-│   Reviews: 127 | Accuracy: 82%          │
+│   Reviews: 12 | Avg Strength: 64%       │
 │   Streak: 5 days                        │
+├─────────────────────────────────────────┤
+│   MASTERY BREAKDOWN                     │
+│   [stacked progress bar by level]       │
+├─────────────────────────────────────────┤
+│   7-DAY ACTIVITY                        │
+│   [bar chart of items reviewed/day]     │
+├─────────────────────────────────────────┤
+│   ACHIEVEMENTS                          │
+│   Best Streak: 8 | Total Reviews: 142   │
+│   Most Practiced: bank (12x), ...       │
 └─────────────────────────────────────────┘
 ```
 
-**Start Session Button:**
-- Shows number of due items
-- Creates study queue from due items
-- Prioritizes: lowest memory strength first, then oldest due
+**Weekly Stats:**
+- Reviews: number of items reviewed in the last 7 days
+- Avg Strength: average memory strength of items reviewed this week
+- Day Streak: consecutive days with at least one review
 
-#### Active Study Session
+**7-Day Activity Chart:**
+- Bar chart showing items reviewed per day
+- Derived from each item's `lastReviewDate`
 
-**Flashcard Front:**
-Shows the word/content to recall (no explicit "question" label):
-- The word and its pronunciation
-- Audio playback (tap IPA to hear)
-- Card number: "3 of 15"
-- Minimal UI — focus on the word itself
+**Achievements:**
+- Best Streak: longest consecutive correct answers on any single card
+- Total Reviews: lifetime review count across all items
+- Most Practiced: top 3 items by total review count
 
-**Flashcard Back:**
-Revealed after tapping the card:
-- Full vocabulary card content
-- Chinese translation
-- Definition and examples
-- Green/red bars for self-grading
-
-**Self-Grading:**
-Two simple color bars (no text labels):
-
-```
-┌─────────────────────────────────────────────┐
-│                                             │
-│   ████████████████   ████████████████       │
-│      (green bar)        (red bar)           │
-│       = Memorized      = Not Memorized      │
-│                                             │
-└─────────────────────────────────────────────┘
-```
-
-| Bar | Meaning | Effect |
-|-----|---------|--------|
-| 🟩 Green | Memorized / Correct | Maps to quality 4, increases memory strength |
-| 🟥 Red | Not Memorized / Incorrect | Maps to quality 1, decreases memory strength |
-
-- Clean, minimal UI — no text clutter
-- Intuitive color coding (green = good, red = bad)
-- Large tap targets for easy interaction
-
-**Archive During Study:**
-- Long press the flashcard to reveal Archive option
-- Archived words are removed from the current session
-- Won't appear in future study sessions
-- Can be unarchived later from Notebook
-
-**Post-Answer Feedback:**
-Brief moment showing:
-- Memory strength change (+15 or -10)
-- New mastery level (if changed)
-- Auto-advances to next card
-
----
-
-### Study Mode — Recall
-
-**Card Front:**
-```
-┌─────────────────────────────────────────────┐
-│                                             │
-│              BANK                           │
-│              /bæŋk/ 🔊                       │
-│                                             │
-└─────────────────────────────────────────────┘
-```
-
-**Card Back (after tap):**
-
-Full vocabulary card revealed — same detail as Search and Notebook:
-
-```
-┌─────────────────────────────────────────────┐
-│                                             │
-│  BANK                                       │
-│  /bæŋk/ 🔊        [noun: finance]           │
-│                                             │
-│  ┌───────────────────────────────────────┐  │
-│  │        [AI Generated Image]           │  │
-│  └───────────────────────────────────────┘  │
-│                                             │
-│  银行                                        │
-│  A financial institution that holds         │
-│  deposits, makes loans, and provides        │
-│  other financial services                   │
-│                                             │
-│  ─────────────────────────────────────────  │
-│  📖 USAGE                                   │
-│  "I need to go to the bank to deposit..."   │
-│  "The bank approved our mortgage..."        │
-│                                             │
-│  ─────────────────────────────────────────  │
-│  📜 ORIGINS                                 │
-│  From Italian "banca" meaning bench...      │
-│                                             │
-│  💡 MNEMONIC                                │
-│  Think of a piggy BANK where you store...  │
-│                                             │
-│  ─────────────────────────────────────────  │
-│  Synonyms: financial institution, lender    │
-│  Antonyms: debtor, borrower                 │
-│  Confusables: bench, blank                  │
-│                                             │
-│  ─────────────────────────────────────────  │
-│                                             │
-│   ████████████████   ████████████████       │
-│      (green)            (red)               │
-│                                             │
-└─────────────────────────────────────────────┘
-```
-
-**Card Back Contains:**
-- Word + IPA (clickable for audio)
-- Sense label (if multiple meanings)
-- AI-generated image
-- Chinese translation
-- English definition
-- Example sentences
-- Etymology/Origins
-- Mnemonic
-- Synonyms, Antonyms, Confusables
-- Green/red bars at bottom for self-grading
-
-**Interaction:**
-- Tap card to flip and reveal full content
-- Scroll if content is long
-- Tap IPA to hear pronunciation
-- Green bar = knew it, red bar = didn't know
+**How Reviews Work:**
+- Open any due item in Detail View (tap in Notebook, or double-click)
+- Press `R` or tap the "Remember" button to mark as recalled
+- SRS algorithm updates the item's memory strength, interval, and next review date
+- Dashboard stats update automatically from item-level data
 
 ---
 
@@ -868,34 +763,8 @@ Full vocabulary card revealed — same detail as Search and Notebook:
 
 **When words appear for review:**
 - Based on SRS algorithm (spaced repetition)
-- Due items prioritized by memory strength (weakest first)
-- Consistent Recall mode for all reviews
-
----
-
-### Session Completion
-
-**Summary Screen:**
-```
-┌─────────────────────────────────────────┐
-│           SESSION COMPLETE! 🎉          │
-│                                         │
-│   ✓ 15 words reviewed                   │
-│   ⏱️ 7 minutes 23 seconds               │
-│   📊 87% accuracy                       │
-│                                         │
-│   MASTERY CHANGES                       │
-│   ↑ 3 words improved                    │
-│   ↓ 1 word needs work                   │
-│                                         │
-│   [ RETURN TO DASHBOARD ]               │
-└─────────────────────────────────────────┘
-```
-
-**Confetti Animation:**
-- Triggers on session complete
-- Celebratory moment for finishing review
-- Positive reinforcement
+- Due items shown on the dashboard with count and average retention
+- Reviews happen in Detail View: open a due item and press `R` to mark as recalled
 
 **Stats Recorded:**
 - Session saved to Firebase (if signed in)
@@ -1078,7 +947,6 @@ When the same item is edited on two devices:
 **Touch Gestures:**
 - **Vocabulary carousels:** Swipe left/right to browse meanings
 - **Notebook cards:** Long press to reveal Refresh/Delete
-- **Study flashcards:** Tap to flip, swipe to navigate
 
 **Tap Targets:**
 - All buttons minimum 44x44 pixels
@@ -1435,7 +1303,6 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 | Sentence analysis | Full phrase | In hero card |
 | Vocabulary cards | Word | Each card has its own IPA |
 | Notebook items | Word | Compact display |
-| Study flashcards | Word | Before revealing answer |
 | Detail view | Word | Larger, more prominent |
 
 ### Why IPA + Audio Together?
@@ -1491,28 +1358,20 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 - Error icon in header (if persistent)
 - "Sync error" status shown
 
-### Study Session Edge Cases
+### Study Dashboard Edge Cases
 
-**Empty Queue:**
-- "No words due for review!"
-- Encourages user to add more words
-- Shows time until next review
+**No Items:**
+- Dashboard shows empty state: "Your Study Space"
+- Encourages user to add vocabulary to begin
 
-**All Words Mastered:**
-- Celebratory message
-- Shows mastery statistics
-- Suggests adding new words
-
-**Mid-Session Interruption:**
-- If user closes app during study
-- Progress up to that point is saved
-- Queue resets on next session start
+**No Due Items:**
+- Dashboard shows "0 due now"
+- All other stats (mastery breakdown, activity chart) still display
 
 **Same Word, Multiple Meanings:**
-- All meanings appear together as a **grouped carousel**
-- User reviews all meanings of "bank" in one session (finance, river, aviation)
-- Swipe through carousel to see each meaning
-- Single SRS update applies to all meanings
+- All meanings share the same SRS schedule
+- Reviewing one meaning via Detail View updates all meanings together
+- Dashboard counts each item group once
 
 ---
 
@@ -1585,11 +1444,6 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 └─────────────────────────────────────┘
 ```
 
-**Session Complete:**
-- Confetti animation
-- Stats summary
-- Return button
-
 ---
 
 ## 12. Animations & Transitions
@@ -1627,26 +1481,6 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 - Smooth scroll with momentum
 - Snap-to-card behavior
 - Dot indicators update instantly
-
-### Flashcard Flip
-
-**Reveal Animation:**
-- 3D flip effect (Y-axis rotation)
-- Front fades out, back fades in
-- 0.3s duration
-- Smooth easing curve
-
-### Confetti Celebration
-
-**Trigger:**
-- Session completion
-- Major milestone (e.g., 100 words mastered)
-
-**Effect:**
-- Colorful confetti bursts from center
-- Multiple colors (indigo, violet, amber, emerald)
-- Gravity-affected fall
-- Fades after 2-3 seconds
 
 ### Navigation Transitions
 
@@ -1761,17 +1595,13 @@ users/{userId}/vocab_items/{itemId}
 - Images load asynchronously
 - Results usable before images finish
 
-### Study Session Performance
+### Study Dashboard Performance
 
-**Queue Building:**
-- Filters due items: O(n)
-- Sorts by priority: O(n log n)
-- Typically <50ms for 500 items
-
-**Card Rendering:**
-- Single card in view at a time
-- Minimal DOM updates
-- Smooth 60fps animations
+**Stats Computation:**
+- Memoized via `useMemo` — only recalculates when items change
+- Single pass over items for mastery categories
+- 7-day chart derived from `lastReviewDate` per item
+- Typically <10ms for 1700+ items
 
 ### Memory Usage
 
@@ -1845,21 +1675,10 @@ users/{userId}/vocab_items/{itemId}
 | `?` | Show keyboard shortcuts help |
 | `←` `→` | Navigate between cards/meanings |
 | `↑` `↓` | Navigate between words (Detail View) |
-| `Space` | Flip flashcard |
 | `Enter` | Submit search / Open selected card |
 | `P` | Pronounce current word |
 | `R` | Mark as Remembered (Detail View) |
 | `Shift + R` | Reset Memory Strength (Detail View) |
-
-**Study Mode Shortcuts:**
-
-| Shortcut | Action |
-|----------|--------|
-| `←` or `1` | Mark as Forgot |
-| `→` or `3` | Mark as Got it |
-| `2` | Archive card |
-| `Space` | Flip card to reveal answer |
-| `Esc` | Exit session |
 
 **Trackpad Gestures (Chrome macOS):**
 
@@ -1908,7 +1727,7 @@ users/{userId}/vocab_items/{itemId}
 - Full keyboard control for all features:
   - Number keys (`1`, `2`, `3`) switch tabs
   - Arrow keys navigate carousels and cards
-  - `Space` flips flashcards
+  - `R` marks current item as remembered (Detail View)
   - `P` pronounces current word
   - `Esc` closes modals/views
   - `?` shows keyboard shortcuts help
@@ -1930,7 +1749,6 @@ users/{userId}/vocab_items/{itemId}
 
 **Respects System Preference:**
 - Detects `prefers-reduced-motion`
-- Disables confetti animation
 - Reduces transition effects
 
 ---
@@ -2085,20 +1903,18 @@ users/{userId}/vocab_items/{itemId}
 - Card shows pronunciation, Chinese, example
 - Orange status strip: "Due for review"
 
-### Step 6: First Study Session
+### Step 6: Checking the Study Dashboard
 - Taps "Study" tab
 - Dashboard shows: "1 word due"
-- Taps "Start Session"
-- Recall mode (tap to flip)
+- Sees mastery breakdown (1 new item)
 
 ### Step 7: First Review
-- Sees flashcard front: "SERENDIPITY" with IPA
-- Thinks about the meaning
-- Taps card to reveal answer
-- Sees full vocabulary card with definition
-- Taps green bar (knew it)
+- Goes back to Notebook
+- Taps "serendipity" to open Detail View
+- Reviews the card content
+- Taps "Remember" button (or presses `R`)
 - Memory strength increases
-- Session complete (1/1)
+- Dashboard stats update automatically
 
 ### Step 8: Signing In
 - Goes to Notebook
@@ -2111,9 +1927,8 @@ users/{userId}/vocab_items/{itemId}
 ### Step 9: Next Day
 - Opens app
 - "serendipity" is due again (spaced repetition)
-- Same Recall mode: tap to flip, self-grade
+- Opens Detail View and taps Remember (or presses `R`)
 - Memory reinforced with each review
-- Self-grades: green bar (knew it)
 
 ### Step 10: Building Habit
 - Searches new words daily
@@ -2435,7 +2250,7 @@ Mnemonic: Picture a speedometer needle moving from 0 to 100
 | **Mastery Level** | User-friendly label (New → Grandmaster) based on memory strength |
 | **Due Item** | Word scheduled for review (memory has decayed to target level) |
 | **Quality Score** | 0-5 rating of recall quality during review |
-| **Task Type** | Study exercise mode (Recall — tap to flip, self-grade) |
+| **Task Type** | Review mode (recall via Detail View Remember button or `R` key) |
 | **Interval** | Time until next scheduled review |
 
 ## Technical Terms (Simplified)
@@ -2469,7 +2284,7 @@ Mnemonic: Picture a speedometer needle moving from 0 to 100
 1. **Search** — AI analyzes any word or sentence instantly
 2. **Understand** — Get every meaning with examples, etymology, and mnemonics
 3. **Save** — Build a personal vocabulary library with multiple meanings
-4. **Study** — Adaptive flashcards with spaced repetition
+4. **Study** — Review with spaced repetition and track progress on the dashboard
 5. **Master** — Track progress from New → Grandmaster
 
 ## The Learning Cycle
@@ -2489,7 +2304,7 @@ Mnemonic: Picture a speedometer needle moving from 0 to 100
 | Encounter | See unfamiliar word while reading |
 | Understand | Search in DictProp, get deep AI analysis |
 | Save | Tap star to add to notebook |
-| Study | Review with adaptive flashcards |
+| Study | Review in Detail View with adaptive spaced repetition |
 | Retain | Memory strength builds over time |
 | Master | Word becomes permanent vocabulary |
 
@@ -2502,7 +2317,7 @@ Mnemonic: Picture a speedometer needle moving from 0 to 100
 | Visual Learning | AI illustrations | Text only |
 | Pronunciation | IPA + audio | Often missing |
 | Memory Science | Strength + stability + decay | Basic intervals |
-| Study Mode | Recall (tap to flip) | Same for all words |
+| Study Mode | SRS review via Detail View + dashboard analytics | Same for all words |
 | Input Flexibility | Words, phrases, sentences | Limited |
 | Setup Required | None | Significant |
 
@@ -2524,7 +2339,7 @@ DictProp occupies a unique position: more depth than translation apps, less work
 
 **Stop forgetting. Start remembering.**
 
-DictProp transforms vocabulary learning from passive lookup to active mastery. It's the dictionary that teaches you, the flashcard app that adapts to you, and the study partner that knows exactly what you need to review — all in one beautiful, free app.
+DictProp transforms vocabulary learning from passive lookup to active mastery. It's the dictionary that teaches you, the spaced repetition system that adapts to you, and the study partner that knows exactly what you need to review — all in one beautiful, free app.
 
 ---
 
@@ -2561,7 +2376,7 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 | `⌘F` | Focus search |
 | `←` `→` | Navigate cards |
 | `↑` `↓` | Navigate words |
-| `Space` | Flip flashcard |
+| `R` | Remember (Detail View) |
 | `P` | Pronounce word |
 | `Esc` | Close/Go back |
 | `?` | Show shortcuts help |
@@ -2579,7 +2394,7 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ### Study Mode
 | Mode | Description |
 |------|-------------|
-| Recall | Tap to flip, self-grade with green/red bars |
+| Dashboard | View learning analytics; reviews happen in Detail View via `R` key or Remember button |
 
 ---
 
@@ -2786,7 +2601,6 @@ firebase deploy --only functions
 {
   "dependencies": {
     "@google/genai": "^1.30.0",
-    "canvas-confetti": "^1.9.4",
     "firebase": "^12.6.0",
     "lucide-react": "^0.554.0",
     "react": "^19.2.0",
