@@ -739,7 +739,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     onScroll?.(e);
   };
   
-  const { displayItems, groupedItems, archivedItems, archivedGroups } = React.useMemo(() => {
+  const { displayItems, groupedItems, archivedItems, archivedGroups, dueForReviewGroups } = React.useMemo(() => {
     // 1. Fuzzy Search
     let processedItems = items;
     
@@ -755,7 +755,24 @@ export const NotebookView: React.FC<NotebookProps> = ({
         ignoreLocation: true
       });
       
-      processedItems = fuse.search(localSearchQuery).map(result => result.item);
+      const fuseResults = fuse.search(localSearchQuery).map(result => result.item);
+      
+      // Chinese input: Fuse.js Bitap algorithm doesn't work well with CJK characters.
+      // Fall back to substring matching against chinese/translation fields.
+      const containsChinese = /[\u4e00-\u9fff]/.test(localSearchQuery);
+      if (containsChinese) {
+        const query = localSearchQuery.trim();
+        const fuseIds = new Set(fuseResults.map(i => i.data.id));
+        const chineseMatches = items.filter(item => {
+          if (fuseIds.has(item.data.id)) return false; // Already in Fuse results
+          const chinese = (item.data as any).chinese || '';
+          const translation = (item.data as any).translation || '';
+          return chinese.includes(query) || translation.includes(query);
+        });
+        processedItems = [...fuseResults, ...chineseMatches];
+      } else {
+        processedItems = fuseResults;
+      }
     }
 
     // Separate active and archived items
@@ -854,11 +871,41 @@ export const NotebookView: React.FC<NotebookProps> = ({
       return groups;
     };
     
+    // "Due for Review" backfill: when searching and fuzzy results < 20,
+    // show top due items to fill the screen while user waits for AI search
+    let dueForReview: ItemGroup[] = [];
+    if (localSearchQuery.trim() && activeFiltered.length < 20) {
+      const now = Date.now();
+      const fuzzyIds = new Set(activeFiltered.map(i => i.data.id));
+      const slotsToFill = 20 - activeFiltered.length;
+      
+      const dueItems = items
+        .filter(i => {
+          if (!i || !i.data || !i.data.id || i.isDeleted || i.isArchived) return false;
+          if (fuzzyIds.has(i.data.id)) return false; // Already shown in fuzzy results
+          if ((i.srs?.nextReview || 0) > now) return false; // Not due yet
+          if (filterMode === 'vocab' && i.type !== 'vocab') return false;
+          if (filterMode === 'phrase' && i.type !== 'phrase') return false;
+          return true;
+        })
+        .sort((a, b) => {
+          // Weakest memory first, then oldest due date
+          const strengthA = a.srs?.memoryStrength || 0;
+          const strengthB = b.srs?.memoryStrength || 0;
+          if (strengthA !== strengthB) return strengthA - strengthB;
+          return (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0);
+        })
+        .slice(0, slotsToFill);
+      
+      dueForReview = groupByTitle(dueItems);
+    }
+
     return { 
       displayItems: activeFiltered, 
       groupedItems: groupByTitle(activeFiltered),
       archivedItems: archivedFiltered,
-      archivedGroups: groupByTitle(archivedFiltered)
+      archivedGroups: groupByTitle(archivedFiltered),
+      dueForReviewGroups: dueForReview
     };
   }, [items, sortMode, filterMode, localSearchQuery]);
 
@@ -1093,6 +1140,33 @@ export const NotebookView: React.FC<NotebookProps> = ({
             onUnarchive={onUnarchive}
           />
         ))}
+
+        {/* Due for Review backfill — shown when fuzzy results < 20 during search */}
+        {dueForReviewGroups.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-dashed border-orange-200">
+            <div className="flex items-center gap-2 px-1 mb-3">
+              <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide">Due for Review</span>
+              <span className="text-xs text-slate-400">{dueForReviewGroups.reduce((sum, g) => sum + g.items.length, 0)} items to revisit</span>
+            </div>
+            <div className="grid gap-3">
+              {dueForReviewGroups.map((group, index) => (
+                <NotebookGroup
+                  key={`due-${group.title}`}
+                  group={group}
+                  groups={dueForReviewGroups}
+                  groupIndex={index}
+                  openItemId={openItemId}
+                  setOpenItemId={setOpenItemId}
+                  onDelete={onDelete}
+                  onSearch={onSearch}
+                  onViewDetail={onViewDetail}
+                  onArchive={onArchive}
+                  onUnarchive={onUnarchive}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Archived Section */}
         {archivedItems.length > 0 && (
