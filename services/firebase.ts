@@ -495,3 +495,52 @@ export const getPodcastAudioUrl = async (audioPath: string): Promise<string> => 
   return url;
 };
 
+// ============================================================================
+// Podcast Queue (Firestore-backed)
+// ============================================================================
+
+/**
+ * Save the podcast queue to Firestore (merge into user doc).
+ * This persists the queue so the server-side daily job can read it.
+ */
+export const savePodcastQueue = async (userId: string, ids: string[]): Promise<void> => {
+  if (!db || !userId) return;
+
+  try {
+    const userDocRef = doc(db, "users", userId);
+    await setDoc(userDocRef, { podcastQueue: ids }, { merge: true });
+    log("Podcast queue: Saved", ids.length, "items to Firestore");
+  } catch (e: any) {
+    logError("Podcast queue: Failed to save to Firestore:", e.message);
+  }
+};
+
+/**
+ * Subscribe to podcast queue changes from Firestore (real-time).
+ * This allows the client to pick up queue clears performed by the daily job.
+ */
+export const subscribeToPodcastQueue = (
+  userId: string,
+  onData: (ids: string[]) => void
+) => {
+  if (!db) return () => {};
+
+  const userDocRef = doc(db, "users", userId);
+
+  log("Podcast queue: Subscribing for user:", userId);
+
+  const unsubscribe = onSnapshot(userDocRef, (snapshot) => {
+    if (snapshot.exists()) {
+      const data = snapshot.data();
+      const queue: string[] = Array.isArray(data.podcastQueue) ? data.podcastQueue : [];
+      onData(queue);
+    } else {
+      onData([]);
+    }
+  }, (error) => {
+    logError("Podcast queue subscription error:", error);
+  });
+
+  return unsubscribe;
+};
+

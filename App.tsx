@@ -8,7 +8,7 @@ import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpel
 import { Book, BrainCircuit, Headphones, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash } from './services/firebase';
+import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash, savePodcastQueue, subscribeToPodcastQueue } from './services/firebase';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -160,17 +160,25 @@ const App: React.FC = () => {
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
 
   // Podcast generation queue — words added during review
+  // Initialized from localStorage (offline fallback), synced to/from Firestore
   const [podcastQueue, setPodcastQueue] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('podcast_queue');
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
+  // Track whether the latest update came from Firestore to avoid echo writes
+  const podcastQueueFromFirestore = useRef(false);
 
-  // Persist podcast queue
+  // Persist podcast queue to localStorage + Firestore
   useEffect(() => {
     localStorage.setItem('podcast_queue', JSON.stringify(podcastQueue));
-  }, [podcastQueue]);
+    // Write to Firestore unless the change originated from the Firestore subscription
+    if (!podcastQueueFromFirestore.current && user) {
+      savePodcastQueue(user.uid, podcastQueue);
+    }
+    podcastQueueFromFirestore.current = false;
+  }, [podcastQueue, user]);
 
   // Word comparison mode — 2-3 words to compare side-by-side
   const [comparisonWords, setComparisonWords] = useState<string[] | null>(null);
@@ -462,13 +470,18 @@ const App: React.FC = () => {
     });
 
     let unsubscribeOps: (() => void) | undefined;
+    let unsubscribeQueue: (() => void) | undefined;
 
     const unsubscribeAuth = subscribeToAuth(async (currentUser) => {
       
-      // Clean up previous subscription if it exists
+      // Clean up previous subscriptions if they exist
       if (unsubscribeOps) {
         unsubscribeOps();
         unsubscribeOps = undefined;
+      }
+      if (unsubscribeQueue) {
+        unsubscribeQueue();
+        unsubscribeQueue = undefined;
       }
       
       if (currentUser) {
@@ -548,6 +561,13 @@ const App: React.FC = () => {
             };
           });
         });
+
+        // Subscribe to podcast queue changes from Firestore
+        // (e.g. daily job clears the queue after consuming it)
+        unsubscribeQueue = subscribeToPodcastQueue(currentUser.uid, (remoteQueue) => {
+          podcastQueueFromFirestore.current = true;
+          setPodcastQueue(remoteQueue);
+        });
       } else {
           // LOGGED OUT
           setUser(null);
@@ -563,6 +583,7 @@ const App: React.FC = () => {
 
     return () => {
       if (unsubscribeOps) unsubscribeOps();
+      if (unsubscribeQueue) unsubscribeQueue();
       unsubscribeAuth();
     };
   }, [isFirebaseConfigured]);

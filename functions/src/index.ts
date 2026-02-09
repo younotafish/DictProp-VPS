@@ -1399,7 +1399,7 @@ async function generatePodcastCore(
 
 // --- Word selection for daily mode ---
 
-async function selectWeakestWords(userId: string, count: number = 30): Promise<PodcastWord[]> {
+async function selectWeakestWords(userId: string, count: number = 30, excludeIds?: Set<string>): Promise<PodcastWord[]> {
   const itemsSnapshot = await adminDb.collection(`users/${userId}/items`).get();
 
   const vocabItems: any[] = [];
@@ -1408,6 +1408,8 @@ async function selectWeakestWords(userId: string, count: number = 30): Promise<P
     if (data.isDeleted || data.isArchived) return;
     if (data.type !== 'vocab') return;
     if (!data.data || !data.srs) return;
+    // Skip items already selected (e.g. from the podcast queue)
+    if (excludeIds && excludeIds.has(data.data.id)) return;
     vocabItems.push(data);
   });
 
@@ -1434,6 +1436,60 @@ async function selectWeakestWords(userId: string, count: number = 30): Promise<P
     mnemonic: item.data.mnemonic || '',
     memoryStrength: item.srs?.memoryStrength ?? 100,
   }));
+}
+
+// --- Word selection for daily auto-podcast: queue + weakest backfill ---
+
+async function selectDailyWords(userId: string, count: number = 30): Promise<PodcastWord[]> {
+  // 1. Read the user's podcast queue from Firestore
+  const userDoc = await adminDb.doc(`users/${userId}`).get();
+  const queuedIds: string[] = userDoc.exists ? (userDoc.data()?.podcastQueue || []) : [];
+
+  // 2. Fetch queued items (skip missing/deleted/archived)
+  const queuedWords: PodcastWord[] = [];
+  const usedIds = new Set<string>();
+
+  for (const itemId of queuedIds) {
+    if (queuedWords.length >= count) break; // Cap at count
+    const docSnap = await adminDb.doc(`users/${userId}/items/${itemId}`).get();
+    if (!docSnap.exists) continue;
+    const data = docSnap.data() as any;
+    if (data.isDeleted || data.isArchived) continue;
+    if (data.type !== 'vocab') continue;
+    if (!data.data || !data.srs) continue;
+
+    queuedWords.push({
+      word: data.data.word || '',
+      chinese: data.data.chinese || '',
+      sense: data.data.sense || '',
+      definition: data.data.definition || '',
+      example: data.data.examples?.[0] || '',
+      mnemonic: data.data.mnemonic || '',
+      memoryStrength: data.srs?.memoryStrength ?? 100,
+    });
+    usedIds.add(itemId);
+  }
+
+  logger.info(`selectDailyWords: ${queuedWords.length} words from queue for user ${userId}`);
+
+  // 3. Fill remaining slots with weakest words (excluding already-queued items)
+  const remaining = count - queuedWords.length;
+  if (remaining > 0) {
+    try {
+      const backfill = await selectWeakestWords(userId, remaining, usedIds.size > 0 ? usedIds : undefined);
+      logger.info(`selectDailyWords: ${backfill.length} weakest words as backfill`);
+      return [...queuedWords, ...backfill];
+    } catch {
+      // If no vocab items exist at all and queue was also empty, propagate the error
+      if (queuedWords.length === 0) {
+        throw new HttpsError('failed-precondition', 'No vocabulary items found. Add some words to your notebook first.');
+      }
+      // Otherwise just return the queued words
+      logger.info(`selectDailyWords: No additional vocab items for backfill, using ${queuedWords.length} queued words only`);
+    }
+  }
+
+  return queuedWords;
 }
 
 // --- Callable function: generatePodcast (async — returns immediately) ---
@@ -1693,7 +1749,8 @@ export const dailyPodcastJob = onSchedule({
     logger.info(`dailyPodcastJob: Processing user ${userId}...`);
 
     try {
-      const words = await selectWeakestWords(userId, 30);
+      // Use queue + weakest backfill for daily auto-podcast
+      const words = await selectDailyWords(userId, 30);
       if (words.length === 0) {
         logger.info(`dailyPodcastJob: User ${userId} has no vocab items, skipping`);
         continue;
@@ -1714,6 +1771,9 @@ export const dailyPodcastJob = onSchedule({
         _wordsForGeneration: words,
       });
 
+      // Clear the podcast queue after consuming it
+      await adminDb.doc(`users/${userId}`).set({ podcastQueue: [] }, { merge: true });
+
       logger.info(`dailyPodcastJob: Created podcast ${podcastId} for user ${userId} (trigger will process)`);
     } catch (error: any) {
       logger.error(`dailyPodcastJob: Failed for user ${userId}:`, error.message);
@@ -1721,4 +1781,60 @@ export const dailyPodcastJob = onSchedule({
   }
 
   logger.info("dailyPodcastJob: Completed (triggers will handle generation)");
+});
+
+// --- Scheduled function: cleanupOldPodcasts (auto-delete after 14 days) ---
+
+const PODCAST_RETENTION_DAYS = 14;
+
+export const cleanupOldPodcasts = onSchedule({
+  schedule: "every day 03:00",
+  timeZone: "UTC",
+  timeoutSeconds: 300,
+  memory: '256MiB',
+}, async () => {
+  const cutoff = Date.now() - PODCAST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  logger.info(`cleanupOldPodcasts: Deleting podcasts older than ${PODCAST_RETENTION_DAYS} days (before ${new Date(cutoff).toISOString()})`);
+
+  const usersSnapshot = await adminDb.collection('users').listDocuments();
+  let totalDeleted = 0;
+
+  for (const userDoc of usersSnapshot) {
+    const userId = userDoc.id;
+
+    try {
+      const expiredSnapshot = await adminDb
+        .collection(`users/${userId}/podcasts`)
+        .where('generatedAt', '<', cutoff)
+        .get();
+
+      if (expiredSnapshot.empty) continue;
+
+      for (const podcastDoc of expiredSnapshot.docs) {
+        const data = podcastDoc.data();
+
+        // Delete audio file from Storage
+        if (data.audioPath) {
+          try {
+            const bucket = adminStorage.bucket();
+            const file = bucket.file(data.audioPath);
+            await file.delete();
+          } catch (e: any) {
+            // File might already be gone — that's OK
+            logger.warn(`cleanupOldPodcasts: Could not delete audio ${data.audioPath}: ${e.message}`);
+          }
+        }
+
+        // Delete the Firestore document
+        await podcastDoc.ref.delete();
+        totalDeleted++;
+      }
+
+      logger.info(`cleanupOldPodcasts: Deleted ${expiredSnapshot.size} expired podcasts for user ${userId}`);
+    } catch (error: any) {
+      logger.error(`cleanupOldPodcasts: Failed for user ${userId}:`, error.message);
+    }
+  }
+
+  logger.info(`cleanupOldPodcasts: Completed. Total deleted: ${totalDeleted}`);
 });
