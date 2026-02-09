@@ -120,32 +120,6 @@ export const getItemSpelling = (item: StoredItem): string => {
 };
 
 /**
- * Gets the translation of an item (Chinese for vocab, translation for phrase).
- * @param item - The stored item
- * @returns Translation string or empty string if not available
- */
-export const getItemTranslation = (item: StoredItem): string => {
-  if (!item || !item.data) return '';
-  if (isPhraseItem(item)) {
-    return item.data.translation || '';
-  }
-  return (item.data as VocabCard).chinese || '';
-};
-
-/**
- * Gets the pronunciation/IPA of an item.
- * @param item - The stored item
- * @returns IPA or pronunciation string, or empty string if not available
- */
-export const getItemPronunciation = (item: StoredItem): string => {
-  if (!item || !item.data) return '';
-  if (isPhraseItem(item)) {
-    return item.data.pronunciation || '';
-  }
-  return (item.data as VocabCard).ipa || '';
-};
-
-/**
  * Gets the sense/meaning label of a vocab item.
  * Returns empty string for phrase items or if sense is not defined.
  * @param item - The stored item

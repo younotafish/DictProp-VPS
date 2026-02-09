@@ -982,7 +982,7 @@ When the same item is edited on two devices:
 ### Navigation
 
 **Bottom Tab Bar:**
-- Two tabs: Notebook | Study (search is integrated into Notebook)
+- Three tabs: Notebook | Study | Podcast (search is integrated into Notebook)
 - Icons with labels
 - Active state: indigo color, thicker icon
 - Hides when scrolling down (more content space)
@@ -1317,7 +1317,89 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 
 ---
 
-## 10. Error Handling & Edge Cases
+## 10. Text Analyzer — Vocabulary Extraction from Passages
+
+### Overview
+Users can paste any block of English text (articles, book excerpts, emails) and the AI automatically identifies interesting or challenging vocabulary within it.
+
+### How It Works
+1. User opens the Text Analyzer modal from the Notebook view
+2. Pastes or types a passage of text
+3. AI (`detectVocabulary`) scans the passage and returns a list of notable words
+4. User selects which words to analyze in detail
+5. Each selected word is sent through the full `analyzeInput` pipeline
+6. Results are saved directly to the user's notebook
+
+### Use Cases
+- Reading an article and wanting to learn all the advanced vocabulary
+- Preparing for an exam by analyzing practice passages
+- Building vocabulary from real-world context rather than word lists
+
+---
+
+## 11. Word Comparison — AI-Powered Nuance Analysis
+
+### Overview
+Users can select 2-3 similar words and get a detailed AI-generated comparison showing exactly how they differ in meaning, usage, register, and context.
+
+### How It Works
+1. User enters "compare mode" from the Notebook view
+2. Taps 2-3 words from their saved vocabulary to select them
+3. AI (`compareWords`) generates a structured comparison
+4. Results display in a dedicated `ComparisonView`
+
+### Comparison Dimensions
+| Dimension | What It Shows |
+|-----------|---------------|
+| Meaning | Precise definition differences |
+| Register | Formality level differences |
+| Collocations | What words naturally pair with each |
+| Connotation | Positive, negative, or neutral feel |
+| Grammar | Structural usage differences |
+
+### Output Structure
+- **Summary**: Brief overview of how the words relate
+- **Dimensions**: Detailed per-word breakdown across multiple axes
+- **Contextual Examples**: Sentences showing each word in the same scenario
+- **Common Mistakes**: Typical errors learners make with these words
+- **Verdict**: Concise guidance on when to use each word
+
+---
+
+## 12. Podcast — AI-Generated Vocabulary Audio Lessons
+
+### Overview
+DictProp generates personalized podcast episodes that teach vocabulary through engaging audio lessons. Podcasts target the user's weakest words using SRS data.
+
+### How It Works
+1. **Word Selection**: System picks up to 30 words with the lowest memory strength, or user manually selects words
+2. **Script Generation**: GPT-4o creates a natural, conversational podcast script covering definitions, usage, examples, and mnemonics
+3. **Audio Generation**: OpenAI TTS converts the script to spoken audio
+4. **Storage**: Audio uploaded to Firebase Storage, metadata saved to Firestore
+
+### Podcast View Features
+- List of generated podcasts with word count and generation date
+- Expandable cards showing full read-along script
+- Audio player with playback speed control (0.75x–2x)
+- Manual queue builder: add specific words to generate a custom podcast
+- "Add 30 weakest words" button for automatic selection
+- Generation status tracking (generating/ready/failed)
+- Delete and retry capabilities
+
+### Technical Flow
+1. Frontend calls `generatePodcast` Cloud Function with list of word objects
+2. Cloud Function uses GPT-4o to generate a teaching script
+3. Script is converted to audio via OpenAI TTS (alloy voice)
+4. Audio is uploaded to Firebase Storage at `podcasts/{userId}/{podcastId}.mp3`
+5. Metadata (script, word list, duration, status) is stored in Firestore
+6. Frontend polls/subscribes for completion and fetches signed audio URL
+
+### Daily Auto-Generation
+A scheduled Cloud Function (`dailyPodcastJob`) can automatically generate podcasts for active users using their weakest vocabulary.
+
+---
+
+## 13. Error Handling & Edge Cases
 
 ### Search Errors
 
@@ -1375,7 +1457,7 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 
 ---
 
-## 11. Confirmation Dialogs & Modals
+## 14. Confirmation Dialogs & Modals
 
 ### Delete Confirmation
 
@@ -1446,7 +1528,7 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 
 ---
 
-## 12. Animations & Transitions
+## 15. Animations & Transitions
 
 ### Loading Animations
 
@@ -1500,7 +1582,7 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 
 ---
 
-## 13. Data Persistence & Storage
+## 16. Data Persistence & Storage
 
 ### Local Storage (IndexedDB)
 
@@ -1564,7 +1646,7 @@ users/{userId}/vocab_items/{itemId}
 
 ---
 
-## 14. Performance Considerations
+## 17. Performance Considerations
 
 ### Initial Load
 
@@ -1618,7 +1700,7 @@ users/{userId}/vocab_items/{itemId}
 
 ---
 
-## 15. Platform-Specific Behaviors
+## 18. Platform-Specific Behaviors
 
 ### iOS Safari
 
@@ -1668,8 +1750,8 @@ users/{userId}/vocab_items/{itemId}
 | Shortcut | Action |
 |----------|--------|
 | `1` | Go to Notebook tab |
-| `2` | Go to Notebook tab |
-| `3` | Go to Study tab |
+| `2` | Go to Study tab |
+| `3` | Go to Podcast tab |
 | `⌘F` / `Ctrl+F` | Focus search input |
 | `Esc` | Close modal / Go back |
 | `?` | Show keyboard shortcuts help |
@@ -1694,7 +1776,7 @@ users/{userId}/vocab_items/{itemId}
 
 ---
 
-## 16. Accessibility Features
+## 19. Accessibility Features
 
 ### Visual Accessibility
 
@@ -1725,7 +1807,7 @@ users/{userId}/vocab_items/{itemId}
 - Focus indicators visible
 - Enter activates focused elements
 - Full keyboard control for all features:
-  - Number keys (`1`, `2`, `3`) switch tabs
+  - Number keys (`1`, `2`, `3`) switch tabs (Notebook, Study, Podcast)
   - Arrow keys navigate carousels and cards
   - `R` marks current item as remembered (Detail View)
   - `P` pronounces current word
@@ -1753,7 +1835,7 @@ users/{userId}/vocab_items/{itemId}
 
 ---
 
-## 17. Security & Privacy
+## 20. Security & Privacy
 
 ### Data Privacy
 
@@ -1794,7 +1876,7 @@ users/{userId}/vocab_items/{itemId}
 
 ---
 
-## 18. Limitations & Known Issues
+## 21. Limitations & Known Issues
 
 ### Current Limitations
 
@@ -1831,7 +1913,7 @@ users/{userId}/vocab_items/{itemId}
 
 ---
 
-## 19. Future Considerations
+## 22. Future Considerations
 
 ### Potential Enhancements
 
@@ -2350,9 +2432,9 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ### Navigation
 | Tab | Purpose |
 |-----|---------|
-| Search | Look up words and phrases |
-| Notebook | View and manage saved items |
-| Study | Review due vocabulary |
+| Notebook | Look up, save, and manage vocabulary (includes integrated search) |
+| Study | View learning analytics and review due vocabulary |
+| Podcast | Listen to AI-generated vocabulary audio lessons |
 
 ### Actions
 | Action | How |
@@ -2372,7 +2454,7 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ### Keyboard Shortcuts (Desktop)
 | Shortcut | Action |
 |----------|--------|
-| `1` / `2` | Switch tabs (Notebook/Study) |
+| `1` / `2` / `3` | Switch tabs (Notebook/Study/Podcast) |
 | `⌘F` | Focus search |
 | `←` `→` | Navigate cards |
 | `↑` `↓` | Navigate words |
@@ -2408,8 +2490,9 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 | Build Tool | Vite |
 | Styling | Tailwind CSS |
 | Icons | Lucide React |
-| Backend | Firebase (Auth, Firestore, Functions) |
-| AI | DeepSeek-V3 via DeepInfra (text), FLUX Schnell (images) |
+| Backend | Firebase (Auth, Firestore, Storage, Functions) |
+| AI | DeepSeek-V3 via DeepInfra (text), FLUX Schnell (images), Whisper Large V3 Turbo (transcription), GPT-4o (podcast scripts), OpenAI TTS (podcast audio) |
+| Search | Fuse.js (fuzzy local search) |
 | Hosting | Firebase Hosting |
 | PWA | vite-plugin-pwa |
 
@@ -2427,25 +2510,34 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ├── components/
 │   ├── VocabCard.tsx       # Vocabulary card display
 │   ├── PronunciationBlock.tsx  # Clickable IPA component
+│   ├── OfflineImage.tsx    # Image with offline/error fallback
+│   ├── TextAnalyzer.tsx    # Paste text → extract vocabulary modal
 │   ├── Button.tsx          # Reusable button
 │   ├── ConfirmModal.tsx    # Confirmation dialogs
 │   ├── ErrorModal.tsx      # Error display
-│   ├── UserMenu.tsx        # Account dropdown
-│   └── ...
+│   ├── AuthDomainErrorModal.tsx  # Firebase auth domain fix instructions
+│   └── UserMenu.tsx        # Account dropdown
 ├── views/
 │   ├── Notebook.tsx        # Notebook view (includes integrated search)
-│   ├── StudyEnhanced.tsx   # Study session view
-│   └── DetailView.tsx      # Full card view
+│   ├── StudyEnhanced.tsx   # Study analytics dashboard
+│   ├── DetailView.tsx      # Full card view with 2D navigation
+│   ├── Podcast.tsx         # AI-generated podcast view
+│   └── ComparisonView.tsx  # Side-by-side word comparison view
+├── hooks/
+│   ├── index.ts            # Hook re-exports
+│   └── useKeyboardNavigation.ts  # Keyboard, global nav, wheel hooks
 ├── services/
 │   ├── firebase.ts         # Firebase initialization & auth
 │   ├── aiService.ts        # AI API calls (via Firebase Functions)
+│   ├── podcastService.ts   # Podcast generation/deletion via Cloud Functions
 │   ├── storage.ts          # IndexedDB operations
 │   ├── sync.ts             # Cloud sync logic
 │   ├── srsAlgorithm.ts     # Spaced repetition algorithm
-│   └── speech.ts           # Text-to-speech
+│   ├── speech.ts           # Text-to-speech
+│   └── logger.ts           # Development/production logging utility
 └── functions/
     └── src/
-        └── index.ts        # Firebase Cloud Functions (AI endpoints)
+        └── index.ts        # Firebase Cloud Functions (AI + podcast endpoints)
 ```
 
 ---
@@ -2459,6 +2551,7 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 3. Enable these services:
    - **Authentication** → Google Sign-In
    - **Firestore Database** → Start in production mode
+   - **Storage** → For podcast audio files
    - **Functions** → Blaze plan required
    - **Hosting** → For deployment
 
@@ -2542,6 +2635,29 @@ The app uses three Cloud Functions:
 - Uses Whisper Large V3 Turbo via DeepInfra
 - Transcribes voice recordings for voice search
 
+**detectVocabulary** — Text analysis for vocabulary extraction
+- Accepts a passage of text
+- Returns a list of interesting/challenging words found in the text
+- Used by the Text Analyzer feature
+
+**compareWords** — Side-by-side word comparison
+- Accepts 2-3 words
+- Uses DeepSeek-V3 to generate structured comparison
+- Returns dimensions, examples, common mistakes, and verdict
+
+**generatePodcast** — AI podcast generation
+- Accepts a list of word objects (word, chinese, sense)
+- Generates teaching script via GPT-4o
+- Converts script to audio via OpenAI TTS
+- Uploads audio to Firebase Storage
+- Returns podcast metadata
+
+**deletePodcast** — Remove a podcast
+- Deletes audio from Storage and metadata from Firestore
+
+**retryPodcast** — Retry failed podcast generation
+- Re-runs generation for a podcast that previously failed
+
 Deploy functions:
 ```bash
 cd functions
@@ -2600,16 +2716,19 @@ firebase deploy --only functions
 ```json
 {
   "dependencies": {
-    "@google/genai": "^1.30.0",
     "firebase": "^12.6.0",
+    "fuse.js": "^7.1.0",
     "lucide-react": "^0.554.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.1",
+    "@tailwindcss/postcss": "^4.1.17",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^4.1.17",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "vite-plugin-pwa": "^1.2.0"
@@ -2778,6 +2897,7 @@ interface SRSData {
 - [ ] Hosting domain added to authorized domains
 - [ ] Firestore rules deployed
 - [ ] DeepInfra API key set as Firebase secret (DEEPINFRA_API_KEY)
+- [ ] OpenAI API key set as Firebase secret (OPENAI_API_KEY) — required for podcast generation
 - [ ] Replicate API key set as Firebase secret (optional, REPLICATE_API_TOKEN)
 - [ ] Cloud Functions deployed
 - [ ] PWA icons in `/public` (192x192, 512x512)
@@ -2786,7 +2906,7 @@ interface SRSData {
 
 ---
 
-*Document Version: 2.0*
-*Last Updated: December 2024*
-*Total Sections: 19 + Appendix + Technical Guide*
-*Estimated Reading Time: 50-65 minutes*
+*Document Version: 3.0*
+*Last Updated: February 2025*
+*Total Sections: 22 + Appendix + Technical Guide*
+*Estimated Reading Time: 55-70 minutes*

@@ -25,19 +25,3 @@ export const warn = (...args: unknown[]): void => {
 export const error = (...args: unknown[]): void => {
   console.error(...args);
 };
-
-/**
- * Log debug messages with a prefix (development only)
- */
-export const debug = (prefix: string, ...args: unknown[]): void => {
-  if (isDev) console.log(`[${prefix}]`, ...args);
-};
-
-export const logger = {
-  log,
-  warn,
-  error,
-  debug,
-};
-
-export default logger;

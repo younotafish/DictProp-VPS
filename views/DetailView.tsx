@@ -42,14 +42,9 @@ const getMasteryColors = (color: string) => {
 };
 
 interface DetailViewProps {
-  // New group-based navigation props
   groups?: ItemGroup[];
   initialGroupIndex?: number;
   initialItemIndex?: number;
-
-  // Legacy flat list mode (deprecated - use groups instead)
-  items?: StoredItem[]; // Kept for backwards compatibility, not currently used
-  initialIndex?: number;
   
   onClose: () => void;
   onSave: (item: StoredItem) => void;
@@ -70,8 +65,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   groups,
   initialGroupIndex = 0,
   initialItemIndex = 0,
-  items, // Legacy support
-  initialIndex = 0,
   onClose, 
   onSave, 
   onDelete,
@@ -89,8 +82,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
   // State for 2D navigation
-  const [currentGroupIndex, setCurrentGroupIndex] = useState(groups ? initialGroupIndex : 0);
-  const [currentItemIndex, setCurrentItemIndex] = useState(groups ? initialItemIndex : initialIndex);
+  const [currentGroupIndex, setCurrentGroupIndex] = useState(initialGroupIndex);
+  const [currentItemIndex, setCurrentItemIndex] = useState(initialItemIndex);
   
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
@@ -138,11 +131,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
       hasNextItem = safeItemIndex < currentGroup.items.length - 1;
       hasPrevItem = safeItemIndex > 0;
     }
-  } else if (items && items.length > 0) {
-    // Legacy flat list mode
-    currentItem = items[currentItemIndex];
-    hasNextItem = currentItemIndex < items.length - 1;
-    hasPrevItem = currentItemIndex > 0;
   }
   
   // Reset item index when group changes
@@ -286,7 +274,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
     }
     else if (isHorizontalSwipe) {
-      const totalItems = currentGroup ? currentGroup.items.length : (items ? items.length : 0);
+      const totalItems = currentGroup ? currentGroup.items.length : 0;
       
       // Swipe LEFT -> Next Item (Meaning) - loops forever (even with 1 item for consistent UX)
       if (diffX < -horizontalSwipeMin && totalItems >= 1) {
@@ -384,7 +372,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, [hasPrevItem, isAnimating]);
 
   const handleNextItem = useCallback(() => {
-    const totalItems = currentGroup ? currentGroup.items.length : (items ? items.length : 0);
+    const totalItems = currentGroup ? currentGroup.items.length : 0;
     if (totalItems >= 1 && !isAnimating) {
       setIsAnimating(true);
       setCurrentItemIndex(prev => (prev + 1) % totalItems); // Loop back to 0 when at end
@@ -399,7 +387,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         if (wordToSpeak) speak(wordToSpeak);
       }
     }
-  }, [currentGroup, items, isAnimating, currentItem]);
+  }, [currentGroup, isAnimating, currentItem]);
 
   const handlePrevGroup = useCallback(() => {
     if (hasPrevGroup && !isAnimating && groups) {

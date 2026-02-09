@@ -1110,7 +1110,6 @@ const App: React.FC = () => {
     log('🗑️ App: Deleting item', id);
     
     const now = Date.now();
-    let deletedItem: StoredItem | null = null;
     
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
@@ -1122,7 +1121,6 @@ const App: React.FC = () => {
           isDeleted: true,
           updatedAt: now
         };
-        deletedItem = newItems[index];
         
         return {
           ...prevState,
@@ -1137,8 +1135,8 @@ const App: React.FC = () => {
     // This ensures deletions propagate even if user closes app quickly
     if (user && isFirebaseConfigured && isOnline) {
       try {
-        // Find the item in current state and sync it immediately
-        const itemToSync = syncState.items.find(i => i.data.id === id);
+        // Use ref to get latest items (avoids stale closure)
+        const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
         if (itemToSync) {
           const itemWithDelete = { ...itemToSync, isDeleted: true, updatedAt: now };
           log('🗑️ App: Immediately syncing deletion to Firebase');
@@ -1214,7 +1212,8 @@ const App: React.FC = () => {
     // Immediately sync archive to Firebase (don't wait for 5s debounce)
     if (user && isFirebaseConfigured && isOnline) {
       try {
-        const itemToSync = syncState.items.find(i => i.data.id === id);
+        // Use ref to get latest items (avoids stale closure)
+        const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
         if (itemToSync) {
           const itemWithArchive = { ...itemToSync, isArchived: true, updatedAt: now };
           log('📦 App: Immediately syncing archive to Firebase');
@@ -1284,7 +1283,8 @@ const App: React.FC = () => {
     // Immediately sync unarchive to Firebase
     if (user && isFirebaseConfigured && isOnline) {
       try {
-        const itemToSync = syncState.items.find(i => i.data.id === id);
+        // Use ref to get latest items (avoids stale closure)
+        const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
         if (itemToSync) {
           const itemWithUnarchive = { ...itemToSync, isArchived: false, updatedAt: now };
           log('📦 App: Immediately syncing unarchive to Firebase');
