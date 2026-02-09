@@ -1,10 +1,19 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
+import * as admin from "firebase-admin";
+
+// Initialize Firebase Admin SDK
+admin.initializeApp();
+const adminDb = admin.firestore();
+const adminStorage = admin.storage();
 
 // Define the secret parameters
 const replicateApiKey = defineSecret("REPLICATE_API_TOKEN");
 const deepinfraApiKey = defineSecret("DEEPINFRA_API_KEY");
+const openaiApiKey = defineSecret("OPENAI_API_KEY");
 
 // ============================================================================
 // DeepSeek-V3 Helper (Text model via DeepInfra)
@@ -725,4 +734,720 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
       throw new HttpsError('internal', error.message);
     }
   }
+});
+
+// ============================================================================
+// Podcast Generation — GPT-4o Script + OpenAI TTS
+// ============================================================================
+
+interface PodcastWord {
+  word: string;
+  chinese: string;
+  sense: string;
+  definition?: string;
+  example?: string;
+  mnemonic?: string;
+  memoryStrength?: number; // 0-100, lower = weaker
+}
+
+interface PodcastMetadata {
+  id: string;
+  generatedAt: number;
+  mode: 'daily' | 'manual';
+  status: 'generating' | 'ready' | 'failed';
+  audioPath: string;
+  duration: number;
+  wordCount: number;
+  words: { word: string; chinese: string; sense: string }[];
+  script: string;
+}
+
+// --- Prompt templates ---
+
+const PODCAST_SCRIPT_PROMPT_DAILY = `You are the host of "Word Power Daily", a warm and engaging English vocabulary podcast for Chinese-speaking learners at the C1/C2 level.
+
+Write a complete podcast episode script of approximately 4000 words (20 minutes when read aloud).
+
+FORMAT — LAYERED REPETITION:
+The episode uses a wave-based structure that repeats words multiple times for memorization. Follow this structure exactly:
+
+  Wave 1 — Introduce words 1 through 6:
+    For each word: say it clearly, spell it out, explain the definition in plain English, paint a vivid scenario or example, and share the memory trick.
+    Spend about 80 to 100 words per word.
+
+  Review 1 — Quick recap of words 1 through 6:
+    Rapid fire: say the word, one-sentence meaning. About 60 words total.
+    Make it feel like a fun quiz ("Alright, let's see how many you remember...")
+
+  Wave 2 — Introduce words 7 through 12:
+    Same depth as Wave 1.
+
+  Review 2 — Recap of ALL words covered so far (1 through 12):
+    Rapid fire recap. About 120 words total.
+
+  Wave 3 — Introduce words 13 through 18:
+    Same depth as Wave 1.
+
+  Review 3 — Recap of ALL words so far (1 through 18):
+    Rapid fire recap. About 180 words total.
+
+  Wave 4 — Introduce words 19 through 24:
+    Same depth as Wave 1.
+
+  Review 4 — Recap of ALL words so far (1 through 24):
+    Rapid fire recap. About 240 words total.
+
+  Wave 5 — Introduce words 25 through 30:
+    Same depth as Wave 1.
+
+  Final Review — ALL 30 words:
+    Go through all 30 one more time. For each: say the word and a one-sentence meaning. About 350 words total.
+    End with a warm sign-off.
+
+VOICE AND TONE:
+- Speak naturally, like a knowledgeable friend
+- Be warm, encouraging, and occasionally witty
+- Vary transitions between waves
+- During reviews, keep energy up — make it feel like a fun quiz, not a chore
+- During introductions, take your time — be vivid and memorable
+
+ADAPTIVE DIFFICULTY:
+Each word includes a Memory Strength percentage (0-100%). Lower values mean the learner struggles more with this word.
+- Words below 30%: Spend extra time, give more vivid examples, repeat more often in reviews
+- Words 30-60%: Normal coverage
+- Words above 60%: Can be slightly briefer during introduction, but still include in all reviews
+
+CRITICAL RULES:
+- Do NOT include any Chinese characters, Chinese words, or pinyin anywhere in the script. This is an English-only audio podcast. The Chinese translations are displayed separately on screen.
+- No markdown, no bullet points, no asterisks, no special formatting of any kind
+- No stage directions like [pause] or (laughs)
+- Write pure spoken prose — every single word will be read aloud exactly as written
+- The script MUST be between 3800 and 4200 words. This is critical for timing.`;
+
+const PODCAST_SCRIPT_PROMPT_MANUAL = `You are the host of "Word Power Daily", a warm and engaging English vocabulary podcast for Chinese-speaking learners at the C1/C2 level.
+
+Write a focused deep-dive podcast episode script of approximately 800 to 1200 words (5-7 minutes when read aloud).
+
+FORMAT — DEEP CONVERSATIONAL DIVE:
+Since there are only a few words, go deep on each one:
+
+For each word:
+- Say it clearly, spell it out
+- Give a thorough English definition
+- Explain the etymology and how the meaning evolved
+- Provide 2-3 vivid example scenarios showing different contexts
+- Share common mistakes learners make with this word
+- Mention related words and how they differ
+- Give a memorable mnemonic or memory trick
+- End with a quick recap sentence
+
+VOICE AND TONE:
+- Speak naturally, like a knowledgeable friend
+- Be warm, encouraging, and occasionally witty
+- Take your time — this is a focused session
+
+ADAPTIVE DIFFICULTY:
+Each word includes a Memory Strength percentage (0-100%). Lower values mean the learner struggles more with this word.
+Spend proportionally more time, more examples, and more repetitions on weaker words.
+
+CRITICAL RULES:
+- Do NOT include any Chinese characters, Chinese words, or pinyin anywhere in the script. This is an English-only audio podcast. The Chinese translations are displayed separately on screen.
+- No markdown, no bullet points, no asterisks, no special formatting of any kind
+- No stage directions like [pause] or (laughs)
+- Write pure spoken prose — every single word will be read aloud exactly as written`;
+
+// --- GPT-4o Script Generation ---
+
+async function callGPT4o(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  logger.info("Podcast: Calling GPT-4o for script generation...");
+
+  const response = await fetchWithTimeout(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.8,
+        max_tokens: 16384,
+      }),
+    },
+    300000 // 5 minute timeout
+  );
+
+  if (!response.ok) {
+    const status = response.status;
+    const errorData = await response.json().catch(() => ({}));
+    logger.error("GPT-4o API error:", status, JSON.stringify(errorData));
+    throw new Error(`GPT-4o API error: ${status}`);
+  }
+
+  const data = await response.json();
+  const script = data.choices?.[0]?.message?.content;
+  if (!script) {
+    throw new Error("GPT-4o returned empty response");
+  }
+
+  // Clean any markdown that leaked through
+  const clean = script
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/^#+\s+/gm, '')
+    .replace(/^[-*]\s+/gm, '')
+    .replace(/^\d+\.\s+/gm, '');
+
+  const wordCount = clean.split(/\s+/).length;
+  logger.info(`Podcast: Script generated (${wordCount} words)`);
+  return clean;
+}
+
+// --- OpenAI TTS ---
+
+function splitIntoParagraphChunks(text: string, maxChars: number = 4096): string[] {
+  const paragraphs = text.split(/\n\n+/);
+  const chunks: string[] = [];
+  let current = '';
+
+  for (const para of paragraphs) {
+    if (para.length > maxChars) {
+      if (current.trim()) {
+        chunks.push(current.trim());
+        current = '';
+      }
+      const sentences = para.match(/[^.!?]+[.!?]+/g) || [para];
+      let sentChunk = '';
+      for (const sent of sentences) {
+        if ((sentChunk + ' ' + sent).length > maxChars && sentChunk.trim()) {
+          chunks.push(sentChunk.trim());
+          sentChunk = sent;
+        } else {
+          sentChunk += (sentChunk ? ' ' : '') + sent;
+        }
+      }
+      if (sentChunk.trim()) {
+        current = sentChunk;
+      }
+      continue;
+    }
+
+    if ((current + '\n\n' + para).length > maxChars && current.trim()) {
+      chunks.push(current.trim());
+      current = para;
+    } else {
+      current += (current ? '\n\n' : '') + para;
+    }
+  }
+
+  if (current.trim()) {
+    chunks.push(current.trim());
+  }
+
+  return chunks;
+}
+
+async function callOpenAITTS(apiKey: string, text: string): Promise<Buffer> {
+  const response = await fetchWithTimeout(
+    'https://api.openai.com/v1/audio/speech',
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'tts-1-hd',
+        input: text,
+        voice: 'nova',
+        response_format: 'mp3',
+      }),
+    },
+    120000 // 2 minute timeout per chunk
+  );
+
+  if (!response.ok) {
+    const status = response.status;
+    const errorData = await response.text().catch(() => '');
+    logger.error("OpenAI TTS error:", status, errorData);
+    throw new Error(`OpenAI TTS error: ${status}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+async function generatePodcastAudio(apiKey: string, script: string): Promise<Buffer> {
+  logger.info(`Podcast: Generating audio (${script.length} chars)...`);
+
+  const MAX_CHARS = 4096;
+
+  if (script.length <= MAX_CHARS) {
+    return await callOpenAITTS(apiKey, script);
+  }
+
+  const chunks = splitIntoParagraphChunks(script, MAX_CHARS);
+  logger.info(`Podcast: Splitting into ${chunks.length} TTS chunks...`);
+
+  const audioBuffers: Buffer[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    logger.info(`Podcast: TTS chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)...`);
+    const buffer = await callOpenAITTS(apiKey, chunks[i]);
+    audioBuffers.push(buffer);
+    logger.info(`Podcast: TTS chunk ${i + 1} done (${(buffer.length / 1024).toFixed(0)} KB)`);
+  }
+
+  const combined = Buffer.concat(audioBuffers);
+  logger.info(`Podcast: Audio complete (${(combined.length / 1024 / 1024).toFixed(1)} MB)`);
+  return combined;
+}
+
+// --- Retry wrapper for podcast generation ---
+
+function isTransientError(error: any): boolean {
+  const msg = (error.message || '').toLowerCase();
+  return (
+    error.name === 'AbortError' ||
+    msg.includes('aborted') ||
+    msg.includes('timeout') ||
+    msg.includes('api error: 5') || // 5xx
+    msg.includes('api error: 429') ||
+    msg.includes('rate limit') ||
+    msg.includes('fetch failed') ||
+    msg.includes('econnreset') ||
+    msg.includes('enotfound')
+  );
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3,
+  label: string = 'operation'
+): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      logger.info(`${label}: attempt ${attempt}/${maxAttempts}`);
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      if (attempt < maxAttempts && isTransientError(error)) {
+        const backoffMs = attempt * 3000;
+        logger.warn(`${label}: attempt ${attempt} failed (${error.message}), retrying in ${backoffMs}ms...`);
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+        continue;
+      }
+      // Non-retryable error or final attempt
+      break;
+    }
+  }
+  throw lastError;
+}
+
+// --- Core generation function (runs in background trigger) ---
+
+async function generatePodcastCore(
+  apiKey: string,
+  words: PodcastWord[],
+  userId: string,
+  podcastId: string,
+  mode: 'daily' | 'manual'
+): Promise<void> {
+  const docRef = adminDb.doc(`users/${userId}/podcasts/${podcastId}`);
+
+  try {
+    // 1. Generate script
+    const isDaily = mode === 'daily' || words.length > 3;
+    const systemPrompt = isDaily ? PODCAST_SCRIPT_PROMPT_DAILY : PODCAST_SCRIPT_PROMPT_MANUAL;
+
+    const wordList = words
+      .map((w, i) => {
+        const strength = w.memoryStrength !== undefined ? w.memoryStrength : -1;
+        const strengthLine = strength >= 0
+          ? `\nMemory Strength: ${Math.round(strength)}%${strength < 30 ? ' (very weak — spend extra time here)' : strength < 60 ? ' (moderate)' : ' (stronger)'}`
+          : '';
+        return `Word ${i + 1}: ${w.word}\nSense: ${w.sense}\nDefinition: ${w.definition || 'N/A'}\nExample: ${w.example || 'N/A'}\nMnemonic: ${w.mnemonic || 'N/A'}${strengthLine}`;
+      })
+      .join('\n\n');
+
+    const userPrompt = isDaily
+      ? `Here are today's ${words.length} vocabulary words. Write the complete podcast episode following the layered repetition structure in your instructions:\n\n${wordList}`
+      : `Here are ${words.length} vocabulary word${words.length > 1 ? 's' : ''} for a focused deep-dive episode:\n\n${wordList}`;
+
+    const script = await callGPT4o(apiKey, systemPrompt, userPrompt);
+
+    // 2. Generate audio
+    const audioBuffer = await generatePodcastAudio(apiKey, script);
+
+    // 3. Upload audio to Firebase Storage
+    const audioPath = `podcasts/${userId}/${podcastId}.mp3`;
+    const bucket = adminStorage.bucket();
+    const file = bucket.file(audioPath);
+    await file.save(audioBuffer, {
+      metadata: {
+        contentType: 'audio/mpeg',
+        metadata: {
+          podcastId,
+          userId,
+          mode,
+          generatedAt: Date.now().toString(),
+        }
+      }
+    });
+    logger.info(`Podcast: Audio uploaded to ${audioPath} (${(audioBuffer.length / 1024 / 1024).toFixed(1)} MB)`);
+
+    // 4. Estimate duration (~150 words per minute for TTS)
+    const scriptWordCount = script.split(/\s+/).length;
+    const estimatedDuration = Math.round((scriptWordCount / 150) * 60);
+
+    // 5. Update metadata to 'ready'
+    await docRef.update({
+      status: 'ready',
+      audioPath,
+      duration: estimatedDuration,
+      script,
+    });
+    logger.info(`Podcast: Generation complete for ${podcastId}`);
+
+  } catch (error: any) {
+    logger.error(`Podcast: Generation failed for ${podcastId}:`, error.message);
+    // Update status to 'failed' so the UI knows
+    await docRef.update({
+      status: 'failed',
+    }).catch(e => logger.error("Failed to update status to failed:", e));
+    throw error; // Re-throw for retry logic
+  }
+}
+
+// --- Word selection for daily mode ---
+
+async function selectWeakestWords(userId: string, count: number = 30): Promise<PodcastWord[]> {
+  const itemsSnapshot = await adminDb.collection(`users/${userId}/items`).get();
+
+  const vocabItems: any[] = [];
+  itemsSnapshot.forEach(doc => {
+    const data = doc.data();
+    if (data.isDeleted || data.isArchived) return;
+    if (data.type !== 'vocab') return;
+    if (!data.data || !data.srs) return;
+    vocabItems.push(data);
+  });
+
+  if (vocabItems.length === 0) {
+    throw new HttpsError('failed-precondition', 'No vocabulary items found. Add some words to your notebook first.');
+  }
+
+  // Sort by memoryStrength ASC (weakest first)
+  vocabItems.sort((a, b) => {
+    const strengthA = a.srs?.memoryStrength ?? 100;
+    const strengthB = b.srs?.memoryStrength ?? 100;
+    return strengthA - strengthB;
+  });
+
+  // Take top N
+  const selected = vocabItems.slice(0, count);
+
+  return selected.map(item => ({
+    word: item.data.word || '',
+    chinese: item.data.chinese || '',
+    sense: item.data.sense || '',
+    definition: item.data.definition || '',
+    example: item.data.examples?.[0] || '',
+    mnemonic: item.data.mnemonic || '',
+    memoryStrength: item.srs?.memoryStrength ?? 100,
+  }));
+}
+
+// --- Callable function: generatePodcast (async — returns immediately) ---
+
+export const generatePodcast = onCall({
+  cors: true,
+  timeoutSeconds: 60,
+}, async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new HttpsError('unauthenticated', 'Must be signed in');
+  }
+
+  const wordIds: string[] | undefined = request.data.wordIds;
+  let words: PodcastWord[];
+  let mode: 'daily' | 'manual';
+
+  if (wordIds && Array.isArray(wordIds) && wordIds.length > 0) {
+    if (wordIds.length > 30) {
+      throw new HttpsError('invalid-argument', 'Maximum 30 words for manual podcast');
+    }
+
+    mode = wordIds.length <= 3 ? 'manual' : 'daily';
+    words = [];
+
+    for (const wordId of wordIds) {
+      const docSnap = await adminDb.doc(`users/${userId}/items/${wordId}`).get();
+      if (!docSnap.exists) {
+        throw new HttpsError('not-found', `Item ${wordId} not found`);
+      }
+      const data = docSnap.data() as any;
+      words.push({
+        word: data.data?.word || '',
+        chinese: data.data?.chinese || '',
+        sense: data.data?.sense || '',
+        definition: data.data?.definition || '',
+        example: data.data?.examples?.[0] || '',
+        mnemonic: data.data?.mnemonic || '',
+        memoryStrength: data.srs?.memoryStrength ?? 100,
+      });
+    }
+  } else {
+    // Auto mode: select 30 weakest words
+    mode = 'daily';
+    words = await selectWeakestWords(userId, 30);
+  }
+
+  // Create podcast document with status: 'generating' and return immediately
+  const podcastId = `podcast_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+  const metadata: PodcastMetadata = {
+    id: podcastId,
+    generatedAt: Date.now(),
+    mode,
+    status: 'generating',
+    audioPath: '',
+    duration: 0,
+    wordCount: words.length,
+    words: words.map(w => ({ word: w.word, chinese: w.chinese, sense: w.sense })),
+    script: '',
+  };
+
+  // Store full word data in a separate field for the trigger to use
+  const docData = {
+    ...metadata,
+    _wordsForGeneration: words, // Internal field consumed by the trigger
+  };
+
+  await adminDb.doc(`users/${userId}/podcasts/${podcastId}`).set(docData);
+  logger.info(`Podcast: Created ${podcastId} with status 'generating' for user ${userId} (${words.length} words)`);
+
+  // Return immediately — the Firestore trigger will handle the rest
+  return { id: podcastId, status: 'generating' };
+});
+
+// --- Firestore trigger: processPodcast (does the actual generation) ---
+
+export const processPodcast = onDocumentCreated({
+  document: "users/{userId}/podcasts/{podcastId}",
+  secrets: [openaiApiKey],
+  timeoutSeconds: 540,
+  memory: '512MiB',
+}, async (event) => {
+  const snapshot = event.data;
+  if (!snapshot) return;
+
+  const data = snapshot.data();
+  if (data.status !== 'generating') {
+    logger.info(`processPodcast: Skipping ${event.params.podcastId} (status: ${data.status})`);
+    return;
+  }
+
+  const apiKey = openaiApiKey.value();
+  if (!apiKey) {
+    logger.error("processPodcast: OPENAI_API_KEY not configured");
+    await snapshot.ref.update({ status: 'failed' });
+    return;
+  }
+
+  const userId = event.params.userId;
+  const podcastId = event.params.podcastId;
+  const words: PodcastWord[] = data._wordsForGeneration || [];
+  const mode = data.mode || 'daily';
+
+  if (words.length === 0) {
+    logger.error(`processPodcast: No words found in doc ${podcastId}`);
+    await snapshot.ref.update({ status: 'failed' });
+    return;
+  }
+
+  logger.info(`processPodcast: Starting generation for ${podcastId} (${words.length} words, mode: ${mode})`);
+
+  await withRetry(
+    () => generatePodcastCore(apiKey, words, userId, podcastId, mode),
+    3,
+    `processPodcast[${podcastId}]`
+  );
+
+  // Clean up the internal field after successful generation
+  await snapshot.ref.update({
+    _wordsForGeneration: admin.firestore.FieldValue.delete(),
+  });
+});
+
+// --- Callable function: deletePodcast ---
+
+export const deletePodcast = onCall({
+  cors: true,
+  timeoutSeconds: 30,
+}, async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new HttpsError('unauthenticated', 'Must be signed in');
+  }
+
+  const podcastId: string = request.data.podcastId;
+  if (!podcastId) {
+    throw new HttpsError('invalid-argument', 'podcastId is required');
+  }
+
+  const docRef = adminDb.doc(`users/${userId}/podcasts/${podcastId}`);
+  const docSnap = await docRef.get();
+
+  if (!docSnap.exists) {
+    throw new HttpsError('not-found', 'Podcast not found');
+  }
+
+  const data = docSnap.data();
+
+  // Delete audio file from Storage if it exists
+  if (data?.audioPath) {
+    try {
+      const bucket = adminStorage.bucket();
+      const file = bucket.file(data.audioPath);
+      await file.delete();
+      logger.info(`deletePodcast: Deleted audio file ${data.audioPath}`);
+    } catch (e: any) {
+      // File might not exist (e.g., failed generation) — that's OK
+      logger.warn(`deletePodcast: Could not delete audio file: ${e.message}`);
+    }
+  }
+
+  // Delete the Firestore document
+  await docRef.delete();
+  logger.info(`deletePodcast: Deleted podcast ${podcastId} for user ${userId}`);
+
+  return { success: true };
+});
+
+// --- Callable function: retryPodcast ---
+
+export const retryPodcast = onCall({
+  cors: true,
+  timeoutSeconds: 30,
+}, async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new HttpsError('unauthenticated', 'Must be signed in');
+  }
+
+  const podcastId: string = request.data.podcastId;
+  if (!podcastId) {
+    throw new HttpsError('invalid-argument', 'podcastId is required');
+  }
+
+  const docRef = adminDb.doc(`users/${userId}/podcasts/${podcastId}`);
+  const docSnap = await docRef.get();
+
+  if (!docSnap.exists) {
+    throw new HttpsError('not-found', 'Podcast not found');
+  }
+
+  const data = docSnap.data();
+  if (data?.status !== 'failed') {
+    throw new HttpsError('failed-precondition', 'Can only retry failed podcasts');
+  }
+
+  // Reconstruct _wordsForGeneration from the stored words metadata
+  const wordsForGen: PodcastWord[] = (data.words || []).map((w: any) => ({
+    word: w.word || '',
+    chinese: w.chinese || '',
+    sense: w.sense || '',
+    definition: w.definition || '',
+    example: w.example || '',
+    mnemonic: w.mnemonic || '',
+    memoryStrength: w.memoryStrength,
+  }));
+
+  if (wordsForGen.length === 0) {
+    throw new HttpsError('failed-precondition', 'No words found in podcast to retry');
+  }
+
+  // Delete the old failed doc, then re-create to trigger onDocumentCreated
+  await docRef.delete();
+
+  const newDocData = {
+    id: podcastId,
+    generatedAt: Date.now(),
+    mode: data.mode || 'manual',
+    status: 'generating',
+    audioPath: '',
+    duration: 0,
+    wordCount: wordsForGen.length,
+    words: wordsForGen.map(w => ({ word: w.word, chinese: w.chinese, sense: w.sense })),
+    script: '',
+    _wordsForGeneration: wordsForGen,
+  };
+
+  await docRef.set(newDocData);
+  logger.info(`retryPodcast: Re-created podcast ${podcastId} for user ${userId} (trigger will process)`);
+
+  return { success: true };
+});
+
+// --- Scheduled function: dailyPodcastJob ---
+
+export const dailyPodcastJob = onSchedule({
+  schedule: "every day 14:00",
+  timeZone: "UTC",
+  secrets: [openaiApiKey],
+  timeoutSeconds: 540,
+  memory: '512MiB',
+}, async () => {
+  const apiKey = openaiApiKey.value();
+  if (!apiKey) {
+    logger.error("dailyPodcastJob: OPENAI_API_KEY not configured, skipping");
+    return;
+  }
+
+  logger.info("dailyPodcastJob: Starting daily podcast generation...");
+
+  // Find all users who have items
+  const usersSnapshot = await adminDb.collection('users').listDocuments();
+
+  for (const userDoc of usersSnapshot) {
+    const userId = userDoc.id;
+    logger.info(`dailyPodcastJob: Processing user ${userId}...`);
+
+    try {
+      const words = await selectWeakestWords(userId, 30);
+      if (words.length === 0) {
+        logger.info(`dailyPodcastJob: User ${userId} has no vocab items, skipping`);
+        continue;
+      }
+
+      // Create a 'generating' doc — the Firestore trigger will pick it up
+      const podcastId = `podcast_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      await adminDb.doc(`users/${userId}/podcasts/${podcastId}`).set({
+        id: podcastId,
+        generatedAt: Date.now(),
+        mode: 'daily',
+        status: 'generating',
+        audioPath: '',
+        duration: 0,
+        wordCount: words.length,
+        words: words.map(w => ({ word: w.word, chinese: w.chinese, sense: w.sense })),
+        script: '',
+        _wordsForGeneration: words,
+      });
+
+      logger.info(`dailyPodcastJob: Created podcast ${podcastId} for user ${userId} (trigger will process)`);
+    } catch (error: any) {
+      logger.error(`dailyPodcastJob: Failed for user ${userId}:`, error.message);
+    }
+  }
+
+  logger.info("dailyPodcastJob: Completed (triggers will handle generation)");
 });

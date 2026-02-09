@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
+import { PodcastView } from './views/Podcast';
 import { DetailView } from './views/DetailView';
 import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
-import { Book, BrainCircuit, Keyboard } from 'lucide-react';
+import { Book, BrainCircuit, Headphones, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash } from './services/firebase';
@@ -38,7 +39,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
     const saved = localStorage.getItem('app_current_view');
     // Default to notebook, and handle legacy 'search' value from old localStorage
-    if (!saved || saved === 'search' || (saved !== 'notebook' && saved !== 'study')) {
+    if (!saved || saved === 'search' || (saved !== 'notebook' && saved !== 'study' && saved !== 'podcast')) {
       return 'notebook';
     }
     return saved as ViewState;
@@ -156,14 +157,30 @@ const App: React.FC = () => {
 
   // Keyboard shortcuts help modal
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+
+  // Podcast generation queue — words added during review
+  const [podcastQueue, setPodcastQueue] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('podcast_queue');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  // Persist podcast queue
+  useEffect(() => {
+    localStorage.setItem('podcast_queue', JSON.stringify(podcastQueue));
+  }, [podcastQueue]);
   
-  // Global keyboard navigation for tab switching (1, 2 keys)
+  // Global keyboard navigation for tab switching (1, 2, 3 keys)
   useGlobalNavigation({
     onNavigateToNotebook: () => {
       setCurrentView('notebook');
     },
     onNavigateToStudy: () => {
       setCurrentView('study');
+    },
+    onNavigateToPodcast: () => {
+      setCurrentView('podcast');
     },
     enabled: !detailContext && !confirmModal && !showKeyboardHelp, // Disable when modals are open
   });
@@ -1273,6 +1290,30 @@ const App: React.FC = () => {
     }
   };
 
+  // Podcast queue handlers
+  const handleAddToPodcastQueue = useCallback((itemId: string) => {
+    setPodcastQueue(prev => {
+      if (prev.includes(itemId)) return prev;
+      if (prev.length >= 30) return prev; // Max 30
+      return [...prev, itemId];
+    });
+  }, []);
+
+  const handleAddMultipleToPodcastQueue = useCallback((itemIds: string[]) => {
+    setPodcastQueue(prev => {
+      const newIds = itemIds.filter(id => !prev.includes(id));
+      return [...prev, ...newIds].slice(0, 30);
+    });
+  }, []);
+
+  const handleRemoveFromPodcastQueue = useCallback((itemId: string) => {
+    setPodcastQueue(prev => prev.filter(id => id !== itemId));
+  }, []);
+
+  const handleClearPodcastQueue = useCallback(() => {
+    setPodcastQueue([]);
+  }, []);
+
   // Search handler - now triggers search in notebook
   const handleRecursiveSearch = (text: string) => {
       setCurrentView('notebook');
@@ -1423,12 +1464,19 @@ const App: React.FC = () => {
     setLastScrollY(currentScrollY);
   };
 
-  const NavButton = ({ view, icon: Icon, label }: { view: ViewState, icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, label: string }) => (
+  const NavButton = ({ view, icon: Icon, label, badge }: { view: ViewState, icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, label: string, badge?: number }) => (
     <button 
       onClick={() => setCurrentView(view)}
-      className={`flex flex-col items-center justify-center flex-1 py-3 gap-1 transition-colors ${currentView === view ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
+      className={`flex flex-col items-center justify-center flex-1 py-3 gap-1 transition-colors relative ${currentView === view ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
     >
-      <Icon size={24} strokeWidth={currentView === view ? 2.5 : 2} />
+      <div className="relative">
+        <Icon size={24} strokeWidth={currentView === view ? 2.5 : 2} />
+        {badge !== undefined && badge > 0 && (
+          <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 bg-violet-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
+      </div>
       <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
     </button>
   );
@@ -1479,6 +1527,9 @@ const App: React.FC = () => {
               onRefresh={handleForceRefreshSearch}
               onLazyLoadImage={handleLazyLoadImage}
               onUpdateSRS={updateSRS}
+              podcastQueue={podcastQueue}
+              onAddToPodcastQueue={handleAddToPodcastQueue}
+              onRemoveFromPodcastQueue={handleRemoveFromPodcastQueue}
           />
       )}
 
@@ -1511,11 +1562,25 @@ const App: React.FC = () => {
             onScroll={handleScroll}
           />
         )}
+
+        {currentView === 'podcast' && (
+          <PodcastView
+            user={user}
+            isOnline={isOnline}
+            items={activeItems}
+            onScroll={handleScroll}
+            podcastQueue={podcastQueue}
+            onAddToQueue={handleAddMultipleToPodcastQueue}
+            onRemoveFromQueue={handleRemoveFromPodcastQueue}
+            onClearQueue={handleClearPodcastQueue}
+          />
+        )}
       </main>
 
       <nav className={`fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
         <NavButton view="notebook" icon={Book} label="Notebook" />
         <NavButton view="study" icon={BrainCircuit} label="Study" />
+        <NavButton view="podcast" icon={Headphones} label="Podcast" badge={podcastQueue.length} />
         {/* Keyboard shortcuts hint - only visible on desktop */}
         <button 
           onClick={() => setShowKeyboardHelp(true)}
@@ -1554,6 +1619,7 @@ const App: React.FC = () => {
                 <div className="space-y-2">
                   <ShortcutRow keys={['1']} description="Go to Notebook" />
                   <ShortcutRow keys={['2']} description="Go to Study" />
+                  <ShortcutRow keys={['3']} description="Go to Podcast" />
                   <ShortcutRow keys={['⌘', 'F']} description="Focus search input" />
                   <ShortcutRow keys={['Esc']} description="Close modal / Go back" />
                 </div>

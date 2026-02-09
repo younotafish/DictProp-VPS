@@ -25,6 +25,12 @@ service cloud.firestore {
       match /sessions/{sessionId} {
         allow read: if request.auth != null && request.auth.uid == userId;
       }
+      
+      // Podcasts subcollection — read-only for clients; Cloud Functions write
+      match /podcasts/{podcastId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if false; // Only Cloud Functions write
+      }
     }
   }
 }

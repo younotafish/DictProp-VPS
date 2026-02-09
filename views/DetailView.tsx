@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, Headphones } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -60,6 +60,9 @@ interface DetailViewProps {
   onRefresh?: (text: string) => void; // Force a real AI search, bypassing local cache
   onLazyLoadImage?: (itemId: string) => void; // Fetch image from Firebase if missing locally
   onUpdateSRS?: (itemId: string) => void; // Direct SRS update (triggers "remember")
+  podcastQueue?: string[]; // IDs of items in podcast generation queue
+  onAddToPodcastQueue?: (itemId: string) => void;
+  onRemoveFromPodcastQueue?: (itemId: string) => void;
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
@@ -76,7 +79,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onSearch,
   onRefresh,
   onLazyLoadImage,
-  onUpdateSRS
+  onUpdateSRS,
+  podcastQueue,
+  onAddToPodcastQueue,
+  onRemoveFromPodcastQueue,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
@@ -930,6 +936,27 @@ export const DetailView: React.FC<DetailViewProps> = ({
             onClick={() => setShowActionMenu(false)}
           />
           <div className="fixed right-4 top-12 z-[56] bg-white rounded-xl shadow-xl border border-slate-200 py-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-150">
+            {onAddToPodcastQueue && currentItem && (() => {
+              const itemId = currentItem.data.id;
+              const isInQueue = podcastQueue?.includes(itemId);
+              return isInQueue ? (
+                <button
+                  onClick={() => { onRemoveFromPodcastQueue?.(itemId); setShowActionMenu(false); }}
+                  className="w-full px-4 py-2.5 text-left text-sm text-violet-600 hover:bg-violet-50 flex items-center gap-2.5 transition-colors"
+                >
+                  <Headphones size={16} />
+                  Remove from Podcast
+                </button>
+              ) : (
+                <button
+                  onClick={() => { onAddToPodcastQueue(itemId); setShowActionMenu(false); }}
+                  className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-violet-50 hover:text-violet-700 flex items-center gap-2.5 transition-colors"
+                >
+                  <Headphones size={16} />
+                  Add to Podcast
+                </button>
+              );
+            })()}
             {onArchive && (
               <button
                 onClick={handleArchiveItem}

@@ -19,10 +19,13 @@ import {
   collection,
   onSnapshot,
   writeBatch,
+  query,
+  orderBy,
   Firestore
 } from "firebase/firestore";
+import { getStorage, ref, getDownloadURL, FirebaseStorage } from "firebase/storage";
 import { getFunctions, Functions } from "firebase/functions";
-import { StoredItem } from "../types";
+import { StoredItem, PodcastMetadata } from "../types";
 import { log, warn, error as logError } from "./logger";
 
 const CONFIG_KEY = 'popdict_firebase_config';
@@ -41,6 +44,7 @@ let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
 let functions: Functions | undefined;
+let storage: FirebaseStorage | undefined;
 
 // Initialize Firebase
 try {
@@ -64,6 +68,7 @@ try {
     auth = getAuth(app);
     db = getFirestore(app);
     functions = getFunctions(app);
+    storage = getStorage(app);
 } catch (e) {
     logError("Failed to initialize Firebase", e);
 }
@@ -444,4 +449,49 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
 // Study session recording and history have been removed.
 // All dashboard stats are now derived from item-level SRS data (lastReviewDate, totalReviews).
 // SRS updates happen through DetailView (double-click or R key).
+
+// ============================================================================
+// Podcast Functions
+// ============================================================================
+
+/**
+ * Subscribe to podcast list from Firestore (real-time).
+ * Returns podcasts ordered by generatedAt descending (newest first).
+ */
+export const subscribeToPodcasts = (
+  userId: string,
+  onData: (podcasts: PodcastMetadata[]) => void
+) => {
+  if (!db) return () => {};
+
+  const podcastsCollection = collection(db, "users", userId, "podcasts");
+  const podcastsQuery = query(podcastsCollection, orderBy("generatedAt", "desc"));
+
+  log("Podcast: Subscribing to podcasts for user:", userId);
+
+  const unsubscribe = onSnapshot(podcastsQuery, (snapshot) => {
+    const podcasts: PodcastMetadata[] = [];
+    snapshot.forEach((doc: any) => {
+      const data = doc.data() as PodcastMetadata;
+      podcasts.push(data);
+    });
+    log(`Podcast: Received ${podcasts.length} podcasts`);
+    onData(podcasts);
+  }, (error) => {
+    logError("Podcast subscription error:", error);
+  });
+
+  return unsubscribe;
+};
+
+/**
+ * Get a download URL for a podcast audio file from Firebase Storage.
+ */
+export const getPodcastAudioUrl = async (audioPath: string): Promise<string> => {
+  if (!storage) throw new Error("Firebase Storage not initialized");
+
+  const audioRef = ref(storage, audioPath);
+  const url = await getDownloadURL(audioRef);
+  return url;
+};
 
