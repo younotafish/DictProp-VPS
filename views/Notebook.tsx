@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
+import { TextAnalyzer } from '../components/TextAnalyzer';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/aiService';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
@@ -496,6 +497,9 @@ export const NotebookView: React.FC<NotebookProps> = ({
   const [searchError, setSearchError] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   
+  // Text Analyzer modal state
+  const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
+
   // Voice recording state
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -942,6 +946,16 @@ export const NotebookView: React.FC<NotebookProps> = ({
             <p className="text-xs text-slate-500 font-medium">{displayItems.length} {displayItems.length === 1 ? 'item' : 'items'} saved</p>
           </div>
           <div className="flex items-center gap-1 bg-white rounded-full p-1 border border-slate-100 shadow-sm flex-nowrap shrink-0">
+            {/* Text Analyzer button */}
+            {isOnline && (
+              <button
+                onClick={() => setShowTextAnalyzer(true)}
+                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                title="Text Analyzer — Extract vocabulary from pasted text"
+              >
+                <ScanText size={16} />
+              </button>
+            )}
             <button
               onClick={() => setFilterMode(prev => {
                 if (prev === 'all') return 'vocab';
@@ -1211,6 +1225,18 @@ export const NotebookView: React.FC<NotebookProps> = ({
           </div>
         )}
       </div>
+
+      {/* Text Analyzer Modal */}
+      {onSave && (
+        <TextAnalyzer
+          isOpen={showTextAnalyzer}
+          onClose={() => setShowTextAnalyzer(false)}
+          onSave={onSave}
+          onUpdateStoredItem={onUpdateStoredItem}
+          savedItems={items}
+          isOnline={isOnline}
+        />
+      )}
     </div>
   );
 };

@@ -417,6 +417,142 @@ function isWordOrPhrase(text: string): boolean {
   return true;
 }
 
+// ============================================================================
+// Text Analyzer — Lightweight vocabulary detection from pasted text
+// Step 1 only: Detect interesting words. Full analysis is done per-word
+// via the existing analyzeInput function on the client side.
+// ============================================================================
+
+const TEXT_DETECT_INSTRUCTION = `
+You are PopDict, an expert ESL vocabulary scanner.
+
+Scan the user's text and identify all rare, advanced (C1/C2+), idiomatic, or interesting English vocabulary that would be worth studying for an intermediate-to-advanced learner.
+
+## WHAT TO DETECT (in order of priority)
+- Idioms and idiomatic expressions ("break the ice", "bite the bullet")
+- Phrasal verbs with non-obvious meanings ("bank on", "come across")
+- C1/C2 level vocabulary (tenacity, ephemeral, ubiquitous, etc.)
+- Academic or formal register words
+- Domain-specific terminology a learner might not know
+- Words used in figurative, metaphorical, or unusual ways
+- Interesting collocations and fixed expressions
+
+## WHAT TO SKIP
+- Common everyday words (go, make, have, take, get, do, say, think, know, want, like, etc.)
+- Basic B1/B2 vocabulary that intermediate learners already know comfortably
+- Proper nouns (names of people, places, brands)
+- Function words (the, a, an, is, are, was, were, this, that, which, etc.)
+
+## EXTRACTION COUNT
+- Short text (under 50 words): 3-8 items
+- Medium text (50-150 words): 5-12 items
+- Long text (150+ words): 8-20 items
+
+## CRITICAL RULES
+
+USE BASE/DICTIONARY FORMS:
+- Verbs: "hidden" → "hide", "running" → "run", "went" → "go", "touted" → "tout"
+- Adjectives: "happier" → "happy", "best" → "good"
+- Nouns: Irregular plurals only: "children" → "child"
+- Phrasal verbs: "banked on" → "bank on", "looking forward to" → "look forward to"
+
+CHINESE INPUT:
+If the text is in Chinese, translate it to English first, then detect interesting English vocabulary.
+
+You MUST respond with valid JSON in this exact format:
+{
+  "words": [
+    {
+      "word": "string - The word or expression in base/dictionary form",
+      "context": "string - The original phrase from the text where this appears (5-15 words around it)",
+      "level": "string - e.g. C1, C2, idiom, phrasal verb, formal, academic, literary",
+      "reason": "string - One-line explanation of why this is worth studying"
+    }
+  ]
+}
+
+Return ONLY the word list. Do NOT provide full definitions, examples, etymology, or detailed analysis.
+This is a quick scan — the user will choose which words to study in depth.`;
+
+function validateDetectedWord(word: any): boolean {
+  if (!word || typeof word !== 'object') return false;
+  return (
+    typeof word.word === 'string' && word.word.trim().length > 0 &&
+    typeof word.context === 'string' &&
+    typeof word.level === 'string' &&
+    typeof word.reason === 'string'
+  );
+}
+
+export const extractVocabulary = onCall({ secrets: [deepinfraApiKey], cors: true, timeoutSeconds: 120 }, async (request) => {
+  const deepinfraKey = deepinfraApiKey.value();
+
+  if (!deepinfraKey) {
+    throw new HttpsError('failed-precondition', 'DEEPINFRA_API_KEY not configured');
+  }
+
+  const text = request.data.text;
+  if (!text || typeof text !== 'string' || text.trim().length < 10) {
+    throw new HttpsError('invalid-argument', 'Please provide a text passage of at least 10 characters.');
+  }
+
+  // Truncate very long texts to avoid token limits
+  const maxChars = 5000;
+  const truncatedText = text.length > maxChars ? text.substring(0, maxChars) + '...' : text;
+
+  const userPrompt = `Scan this text and identify all rare, advanced, or interesting vocabulary worth studying:\n\n"${truncatedText}"`;
+
+  try {
+    logger.info(`DetectVocabulary: Scanning text (${text.length} chars)...`);
+    const rawData = await callDeepSeek(deepinfraKey, TEXT_DETECT_INSTRUCTION, userPrompt);
+
+    // Validate
+    if (!rawData || !Array.isArray(rawData.words) || rawData.words.length === 0) {
+      logger.error("DetectVocabulary: No words detected");
+      throw new HttpsError('internal', 'No interesting vocabulary found in the text. Try a text with more advanced or uncommon words.');
+    }
+
+    // Filter valid entries
+    const validWords = rawData.words.filter(validateDetectedWord);
+
+    if (validWords.length === 0) {
+      logger.error("DetectVocabulary: All entries failed validation");
+      throw new HttpsError('internal', 'Vocabulary detection failed. Please try again.');
+    }
+
+    logger.info(`DetectVocabulary: Found ${validWords.length} interesting words`);
+
+    return { words: validWords };
+  } catch (error: any) {
+    if (error instanceof HttpsError) throw error;
+
+    const msg = error.message || 'Detection failed';
+
+    const isAbort = error.name === 'AbortError' || msg.includes('aborted');
+    if (isAbort) {
+      logger.error("DetectVocabulary: Timed out:", msg);
+      throw new HttpsError('deadline-exceeded', 'The AI service is taking too long. Please try again with a shorter text.');
+    }
+
+    const isQuota =
+      msg.includes('429') ||
+      msg.includes('quota') ||
+      msg.includes('RESOURCE_EXHAUSTED') ||
+      error?.status === 429;
+
+    if (isQuota) {
+      throw new HttpsError('resource-exhausted', 'QUOTA_EXCEEDED');
+    }
+
+    logger.error("DetectVocabulary failed:", msg);
+    throw new HttpsError('internal', msg);
+  }
+});
+
+// ============================================================================
+// Analyze Input — Single word/phrase or sentence analysis
+// ============================================================================
+
 export const analyzeInput = onCall({ secrets: [deepinfraApiKey], cors: true, timeoutSeconds: 300 }, async (request) => {
   const deepinfraKey = deepinfraApiKey.value();
   

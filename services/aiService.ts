@@ -84,6 +84,71 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
 };
 
 /**
+ * A word detected in text by the AI scanner (lightweight — no full analysis).
+ */
+export interface DetectedWord {
+  word: string;    // Base/dictionary form
+  context: string; // Fragment from the original text
+  level: string;   // e.g. "C1", "C2", "idiom", "phrasal verb"
+  reason: string;  // Why it's worth studying
+}
+
+/**
+ * Lightweight vocabulary detection from a pasted text passage.
+ * Step 1 of the Text Analyzer: AI scans and identifies interesting words.
+ * Step 2 uses the existing analyzeInput() per selected word.
+ */
+export const detectVocabulary = async (text: string): Promise<DetectedWord[]> => {
+  if (!text || text.trim().length < 10) {
+    throw new Error("Please provide a longer text passage to analyze.");
+  }
+
+  if (!functions) {
+    throw new Error("Firebase functions not initialized. Check your Firebase configuration.");
+  }
+
+  const detectFn = httpsCallable(functions, 'extractVocabulary', { timeout: 120000 });
+
+  try {
+    log("[detectVocabulary] Scanning text...");
+    const result = await detectFn({ text });
+    const data = result.data as any;
+
+    const words: DetectedWord[] = (data.words || [])
+      .filter((w: any) => w && typeof w.word === 'string' && w.word.trim().length > 0)
+      .map((w: any) => ({
+        word: w.word.trim(),
+        context: w.context || '',
+        level: w.level || 'C1',
+        reason: w.reason || '',
+      }));
+
+    log(`[detectVocabulary] Detected ${words.length} interesting words`);
+    return words;
+  } catch (error: any) {
+    const msg = error.message || '';
+    const code = error.code || '';
+
+    if (msg.includes('QUOTA_EXCEEDED') || code === 'functions/resource-exhausted') {
+      throw new Error("QUOTA_EXCEEDED");
+    }
+
+    const isAbort =
+      msg.includes('aborted') ||
+      msg.includes('deadline-exceeded') ||
+      msg.includes('timed out') ||
+      code === 'functions/deadline-exceeded';
+
+    if (isAbort) {
+      throw new Error("Scanning timed out. Try again with a shorter text.");
+    }
+
+    logError("Vocabulary detection failed", error);
+    throw new Error(msg || 'Vocabulary detection failed. Please try again.');
+  }
+};
+
+/**
  * Transcribe audio using DeepInfra Whisper Large V3 Turbo
  * @param audioBlob - The recorded audio blob
  * @returns Transcribed text
