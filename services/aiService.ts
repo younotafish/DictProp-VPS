@@ -1,6 +1,6 @@
 import { httpsCallable } from "firebase/functions";
 import { functions } from "./firebase";
-import { SearchResult } from "../types";
+import { SearchResult, ComparisonResult } from "../types";
 import { log, warn, error as logError } from "./logger";
 
 // Internal ID generator to avoid external dependency issues
@@ -185,6 +185,69 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
       throw new Error("QUOTA_EXCEEDED");
     }
     throw error;
+  }
+};
+
+/**
+ * Compare 2-3 words with AI-generated nuance analysis.
+ * Returns structured comparison with dimensions, examples, and verdict.
+ */
+export const compareWords = async (words: string[]): Promise<ComparisonResult> => {
+  if (!words || words.length < 2 || words.length > 3) {
+    throw new Error("Please provide 2-3 words to compare.");
+  }
+
+  if (!functions) {
+    throw new Error("Firebase functions not initialized. Check your Firebase configuration.");
+  }
+
+  const compareWordsFn = httpsCallable(functions, 'compareWords', { timeout: 120000 });
+
+  const attemptCall = async (): Promise<ComparisonResult> => {
+    log(`[compareWords] Comparing: ${words.join(', ')}`);
+    const result = await compareWordsFn({ words });
+    const data = result.data as any;
+
+    return {
+      words: data.words || words,
+      summary: data.summary || '',
+      dimensions: Array.isArray(data.dimensions) ? data.dimensions : [],
+      examples: Array.isArray(data.examples) ? data.examples : [],
+      commonMistakes: Array.isArray(data.commonMistakes) ? data.commonMistakes : [],
+      verdict: data.verdict || '',
+    };
+  };
+
+  try {
+    return await attemptCall();
+  } catch (error: any) {
+    const msg = error.message || '';
+    const code = error.code || '';
+
+    if (msg.includes('QUOTA_EXCEEDED') || msg.includes('resource-exhausted') || code === 'functions/resource-exhausted') {
+      throw new Error("QUOTA_EXCEEDED");
+    }
+
+    const isAbort =
+      msg.includes('aborted') ||
+      msg.includes('deadline-exceeded') ||
+      msg.includes('timed out') ||
+      msg.includes('DEADLINE_EXCEEDED') ||
+      code === 'functions/deadline-exceeded' ||
+      error.name === 'AbortError';
+
+    if (isAbort) {
+      warn("Comparison timed out, retrying once...");
+      try {
+        return await attemptCall();
+      } catch (retryError: any) {
+        logError("Comparison retry also failed", retryError);
+        throw new Error("Comparison timed out. The AI service may be busy — please try again.");
+      }
+    }
+
+    logError("Word comparison failed", error);
+    throw new Error(msg || 'Word comparison failed. Please try again.');
   }
 };
 

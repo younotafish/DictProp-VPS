@@ -550,6 +550,141 @@ export const extractVocabulary = onCall({ secrets: [deepinfraApiKey], cors: true
 });
 
 // ============================================================================
+// Compare Words — Side-by-side analysis of 2-3 similar words
+// ============================================================================
+
+const COMPARE_WORDS_INSTRUCTION = `
+You are PopDict, an expert C1 Advanced ESL coach specializing in vocabulary nuance.
+The user will give you 2-3 English words that are similar in meaning.
+
+Your task: Create a detailed, structured comparison that helps a Chinese-speaking learner understand EXACTLY when to use each word.
+
+Analyze the words across these dimensions:
+1. Core Meaning — What each word fundamentally means and how the meanings differ
+2. Register & Formality — Is one more formal, literary, casual, or technical?
+3. Collocations — What words commonly appear WITH each one? (e.g., "fleeting glance" but NOT "transient glance")
+4. Connotation & Emotion — Does one carry positive, negative, or neutral weight?
+5. Grammar & Usage — Are there syntactic differences? (e.g., one is used predicatively only)
+
+Provide 2-3 contextual examples showing the SAME scenario but using each word, so the learner can see the difference in practice.
+
+List common mistakes Chinese learners make when choosing between these words.
+
+End with a clear, memorable verdict/rule of thumb.
+
+You MUST respond with valid JSON in this exact format:
+{
+  "words": ["word1", "word2", "word3"],
+  "summary": "string - One concise sentence capturing the KEY difference",
+  "dimensions": [
+    {
+      "label": "string - Dimension name (e.g., 'Core Meaning')",
+      "analysis": "string - 2-3 sentence overview comparing all words on this dimension",
+      "perWord": {
+        "word1": "string - How word1 relates to this dimension",
+        "word2": "string - How word2 relates to this dimension",
+        "word3": "string - How word3 relates to this dimension (omit key if only 2 words)"
+      }
+    }
+  ],
+  "examples": [
+    {
+      "context": "string - The scenario (e.g., 'Describing a brief moment of happiness')",
+      "sentences": {
+        "word1": "string - Natural sentence using word1",
+        "word2": "string - Natural sentence using word2",
+        "word3": "string - Natural sentence using word3 (omit key if only 2 words)"
+      }
+    }
+  ],
+  "commonMistakes": ["string - A specific mistake learners make and the correction"],
+  "verdict": "string - A memorable rule of thumb (2-3 sentences) for choosing between these words"
+}
+
+IMPORTANT:
+- Include 4-5 dimensions covering meaning, register, collocation, connotation, and grammar
+- Include 2-3 contextual examples
+- Include 2-4 common mistakes
+- The verdict should be practical and memorable
+- Use Chinese translations in parentheses where helpful for the Chinese-speaking learner
+- Be specific and concrete, not vague`;
+
+export const compareWords = onCall({ secrets: [deepinfraApiKey], cors: true, timeoutSeconds: 120 }, async (request) => {
+  const deepinfraKey = deepinfraApiKey.value();
+
+  if (!deepinfraKey) {
+    throw new HttpsError('failed-precondition', 'DEEPINFRA_API_KEY not configured');
+  }
+
+  const words = request.data.words;
+  if (!words || !Array.isArray(words) || words.length < 2 || words.length > 3) {
+    throw new HttpsError('invalid-argument', 'Please provide 2-3 words to compare.');
+  }
+
+  // Validate each word is a non-empty string
+  const cleanWords = words
+    .map((w: any) => (typeof w === 'string' ? w.trim() : ''))
+    .filter((w: string) => w.length > 0);
+
+  if (cleanWords.length < 2) {
+    throw new HttpsError('invalid-argument', 'Please provide at least 2 valid words to compare.');
+  }
+
+  const userPrompt = `Compare these words: ${cleanWords.join(', ')}`;
+
+  try {
+    logger.info(`CompareWords: Comparing [${cleanWords.join(', ')}]`);
+    const rawData = await callDeepSeek(deepinfraKey, COMPARE_WORDS_INSTRUCTION, userPrompt);
+
+    // Validate response structure
+    if (!rawData || !Array.isArray(rawData.dimensions) || rawData.dimensions.length === 0) {
+      logger.error("CompareWords: Invalid response structure");
+      throw new HttpsError('internal', 'Comparison failed — invalid AI response. Please try again.');
+    }
+
+    // Ensure required fields exist with fallbacks
+    const result = {
+      words: Array.isArray(rawData.words) ? rawData.words : cleanWords,
+      summary: typeof rawData.summary === 'string' ? rawData.summary : '',
+      dimensions: rawData.dimensions.filter((d: any) =>
+        d && typeof d.label === 'string' && typeof d.analysis === 'string' && d.perWord && typeof d.perWord === 'object'
+      ),
+      examples: Array.isArray(rawData.examples) ? rawData.examples.filter((e: any) =>
+        e && typeof e.context === 'string' && e.sentences && typeof e.sentences === 'object'
+      ) : [],
+      commonMistakes: Array.isArray(rawData.commonMistakes) ? rawData.commonMistakes.filter((m: any) => typeof m === 'string') : [],
+      verdict: typeof rawData.verdict === 'string' ? rawData.verdict : '',
+    };
+
+    logger.info(`CompareWords: Success — ${result.dimensions.length} dimensions, ${result.examples.length} examples`);
+    return result;
+  } catch (error: any) {
+    if (error instanceof HttpsError) throw error;
+
+    const msg = error.message || 'Comparison failed';
+
+    const isAbort = error.name === 'AbortError' || msg.includes('aborted');
+    if (isAbort) {
+      logger.error("CompareWords: Timed out:", msg);
+      throw new HttpsError('deadline-exceeded', 'The AI service is taking too long. Please try again.');
+    }
+
+    const isQuota =
+      msg.includes('429') ||
+      msg.includes('quota') ||
+      msg.includes('RESOURCE_EXHAUSTED') ||
+      error?.status === 429;
+
+    if (isQuota) {
+      throw new HttpsError('resource-exhausted', 'QUOTA_EXCEEDED');
+    }
+
+    logger.error("CompareWords failed:", msg);
+    throw new HttpsError('internal', msg);
+  }
+});
+
+// ============================================================================
 // Analyze Input — Single word/phrase or sentence analysis
 // ============================================================================
 

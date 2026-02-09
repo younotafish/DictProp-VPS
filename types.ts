@@ -166,6 +166,27 @@ export const getItemImageUrl = (item: StoredItem): string | undefined => {
   return item.data.imageUrl;
 };
 
+// Word Comparison — AI-generated side-by-side analysis of 2-3 similar words
+export interface ComparisonDimension {
+  label: string;
+  analysis: string;
+  perWord: Record<string, string>;
+}
+
+export interface ComparisonExample {
+  context: string;
+  sentences: Record<string, string>;
+}
+
+export interface ComparisonResult {
+  words: string[];
+  summary: string;
+  dimensions: ComparisonDimension[];
+  examples: ComparisonExample[];
+  commonMistakes: string[];
+  verdict: string;
+}
+
 // Podcast metadata — stored in Firestore at users/{userId}/podcasts/{podcastId}
 export interface PodcastMetadata {
   id: string;

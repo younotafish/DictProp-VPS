@@ -1,6 +1,6 @@
-import React, { memo } from 'react';
+import React, { memo, useState, useCallback } from 'react';
 import { VocabCard as VocabType, WordFamilyEntry } from '../types';
-import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, Network } from 'lucide-react';
+import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, Network, Scale, Check, X } from 'lucide-react';
 import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
@@ -17,6 +17,7 @@ interface Props {
   showAudio?: boolean;
   showPronunciation?: boolean;
   showRefresh?: boolean;
+  onCompare?: (words: string[]) => void;
 }
 
 // Memoize to prevent re-renders when other cards in the list update
@@ -31,9 +32,20 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   scrollable = true,
   showAudio = true,
   showPronunciation = true,
-  showRefresh = true
+  showRefresh = true,
+  onCompare,
 }) => {
   
+  // Compare-pick mode state
+  const [comparePicking, setComparePicking] = useState<'synonyms' | 'confusables' | null>(null);
+  const [compareSelected, setCompareSelected] = useState<Set<string>>(new Set());
+
+  // Reset compare-pick state when the card changes (e.g., navigating in DetailView)
+  React.useEffect(() => {
+    setComparePicking(null);
+    setCompareSelected(new Set());
+  }, [data.id]);
+
   // Robust helper to ensure we always map over an array
   const ensureArray = (items: any): string[] => {
     if (Array.isArray(items)) return items;
@@ -41,18 +53,71 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
     return [];
   };
 
-  const renderPills = (items: any) => ensureArray(items).map((item, idx) => (
-    <button 
-      key={`${item}-${idx}`}
-      onClick={(e) => {
-        e.stopPropagation();
-        onSearch?.(item);
-      }}
-      className="inline-block bg-slate-100 text-slate-600 px-2 py-0.5 rounded mr-1 mb-1 hover:bg-indigo-100 hover:text-indigo-700 transition-colors cursor-pointer text-left"
-    >
-      {item}
-    </button>
-  ));
+  const toggleCompareSelection = useCallback((word: string) => {
+    setCompareSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(word)) {
+        next.delete(word);
+      } else if (next.size < 2) { // Max 2 picks + current word = 3 total
+        next.add(word);
+      }
+      return next;
+    });
+  }, []);
+
+  const startComparePick = useCallback((section: 'synonyms' | 'confusables') => {
+    setComparePicking(section);
+    setCompareSelected(new Set());
+  }, []);
+
+  const cancelComparePick = useCallback(() => {
+    setComparePicking(null);
+    setCompareSelected(new Set());
+  }, []);
+
+  const executeCompare = useCallback(() => {
+    if (onCompare && compareSelected.size >= 1) {
+      const words = [data.word, ...Array.from(compareSelected)];
+      onCompare(words);
+      setComparePicking(null);
+      setCompareSelected(new Set());
+    }
+  }, [onCompare, compareSelected, data.word]);
+
+  const renderPills = (items: any, isPickMode: boolean = false) => ensureArray(items).map((item, idx) => {
+    if (isPickMode) {
+      const isSelected = compareSelected.has(item);
+      return (
+        <button
+          key={`${item}-${idx}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleCompareSelection(item);
+          }}
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded mr-1 mb-1 transition-colors cursor-pointer text-left border ${
+            isSelected
+              ? 'bg-indigo-100 text-indigo-700 border-indigo-300'
+              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:border-indigo-200'
+          }`}
+        >
+          {isSelected && <Check size={12} className="shrink-0" />}
+          {item}
+        </button>
+      );
+    }
+    return (
+      <button 
+        key={`${item}-${idx}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSearch?.(item);
+        }}
+        className="inline-block bg-slate-100 text-slate-600 px-2 py-0.5 rounded mr-1 mb-1 hover:bg-indigo-100 hover:text-indigo-700 transition-colors cursor-pointer text-left"
+      >
+        {item}
+      </button>
+    );
+  });
 
   return (
     <div 
@@ -223,19 +288,92 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
         {/* Synonyms/Antonyms/Confusables */}
         <div className="text-sm">
-           <p className="mb-1 flex flex-wrap items-baseline gap-2">
-             <span className="text-slate-400 font-semibold text-xs uppercase mr-1">Synonyms</span> 
-             <span className="inline">{renderPills(data.synonyms)}</span>
-           </p>
+           {/* Synonyms */}
+           <div className="mb-1">
+             <div className="flex flex-wrap items-baseline gap-2">
+               <span className="text-slate-400 font-semibold text-xs uppercase mr-1">Synonyms</span>
+               {onCompare && ensureArray(data.synonyms).length > 0 && comparePicking !== 'synonyms' && (
+                 <button
+                   onClick={(e) => { e.stopPropagation(); startComparePick('synonyms'); }}
+                   className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-400 hover:text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded-full transition-colors uppercase tracking-wider"
+                   title="Compare with synonyms"
+                 >
+                   <Scale size={10} /> Compare
+                 </button>
+               )}
+               {comparePicking === 'synonyms' && (
+                 <span className="inline-flex items-center gap-1.5">
+                   <button
+                     onClick={(e) => { e.stopPropagation(); executeCompare(); }}
+                     disabled={compareSelected.size < 1}
+                     className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors uppercase tracking-wider ${
+                       compareSelected.size >= 1
+                         ? 'text-white bg-indigo-500 hover:bg-indigo-600'
+                         : 'text-slate-400 bg-slate-100 cursor-not-allowed'
+                     }`}
+                     title="Run comparison"
+                   >
+                     <Scale size={10} /> Go ({compareSelected.size + 1})
+                   </button>
+                   <button
+                     onClick={(e) => { e.stopPropagation(); cancelComparePick(); }}
+                     className="text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                     title="Cancel"
+                   >
+                     <X size={12} />
+                   </button>
+                 </span>
+               )}
+               <span className="inline">{renderPills(data.synonyms, comparePicking === 'synonyms')}</span>
+             </div>
+           </div>
+
+           {/* Antonyms */}
            <p className="mb-1 flex flex-wrap items-baseline gap-2">
              <span className="text-slate-400 font-semibold text-xs uppercase mr-1">Antonyms</span>
              <span className="inline">{renderPills(data.antonyms)}</span>
            </p>
+
+           {/* Confusables */}
            {ensureArray(data.confusables).length > 0 && (
-             <p className="flex flex-wrap items-baseline gap-2">
-               <span className="text-amber-500 font-semibold text-xs uppercase mr-1">Confusables</span>
-               <span className="inline">{renderPills(data.confusables)}</span>
-             </p>
+             <div>
+               <div className="flex flex-wrap items-baseline gap-2">
+                 <span className="text-amber-500 font-semibold text-xs uppercase mr-1">Confusables</span>
+                 {onCompare && comparePicking !== 'confusables' && (
+                   <button
+                     onClick={(e) => { e.stopPropagation(); startComparePick('confusables'); }}
+                     className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 hover:text-amber-600 bg-amber-50 hover:bg-amber-100 px-1.5 py-0.5 rounded-full transition-colors uppercase tracking-wider"
+                     title="Compare with confusables"
+                   >
+                     <Scale size={10} /> Compare
+                   </button>
+                 )}
+                 {comparePicking === 'confusables' && (
+                   <span className="inline-flex items-center gap-1.5">
+                     <button
+                       onClick={(e) => { e.stopPropagation(); executeCompare(); }}
+                       disabled={compareSelected.size < 1}
+                       className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors uppercase tracking-wider ${
+                         compareSelected.size >= 1
+                           ? 'text-white bg-amber-500 hover:bg-amber-600'
+                           : 'text-slate-400 bg-slate-100 cursor-not-allowed'
+                       }`}
+                       title="Run comparison"
+                     >
+                       <Scale size={10} /> Go ({compareSelected.size + 1})
+                     </button>
+                     <button
+                       onClick={(e) => { e.stopPropagation(); cancelComparePick(); }}
+                       className="text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                       title="Cancel"
+                     >
+                       <X size={12} />
+                     </button>
+                   </span>
+                 )}
+                 <span className="inline">{renderPills(data.confusables, comparePicking === 'confusables')}</span>
+               </div>
+             </div>
            )}
         </div>
         
@@ -251,6 +389,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
     prevProps.data.id === nextProps.data.id &&
     prevProps.data.imageUrl === nextProps.data.imageUrl &&
     prevProps.isSaved === nextProps.isSaved &&
-    prevProps.className === nextProps.className
+    prevProps.className === nextProps.className &&
+    prevProps.onCompare === nextProps.onCompare
   );
 });

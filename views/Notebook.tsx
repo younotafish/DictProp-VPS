@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -476,12 +476,13 @@ interface NotebookProps {
   onUnarchive?: (id: string) => void;
   onSave?: (item: StoredItem) => void;
   onUpdateStoredItem?: (item: StoredItem) => void;
+  onCompare?: (words: string[]) => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({ 
     items, onDelete, onSearch, onViewDetail, 
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem
+    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -499,6 +500,10 @@ export const NotebookView: React.FC<NotebookProps> = ({
   
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
+
+  // Compare mode state
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
 
   // Voice recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -697,6 +702,19 @@ export const NotebookView: React.FC<NotebookProps> = ({
     window.addEventListener('notebook-search', handleNotebookSearch as EventListener);
     return () => window.removeEventListener('notebook-search', handleNotebookSearch as EventListener);
   }, [performAISearch, items]);
+
+  // Escape key to exit compare mode
+  useEffect(() => {
+    if (!compareMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setCompareMode(false);
+        setSelectedForCompare([]);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [compareMode]);
 
   // Clear search results when query is cleared
   useEffect(() => {
@@ -956,6 +974,23 @@ export const NotebookView: React.FC<NotebookProps> = ({
                 <ScanText size={16} />
               </button>
             )}
+            {/* Compare mode toggle */}
+            {onCompare && isOnline && (
+              <button
+                onClick={() => {
+                  setCompareMode(prev => !prev);
+                  setSelectedForCompare([]);
+                }}
+                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${
+                  compareMode 
+                    ? 'text-indigo-600 bg-indigo-100' 
+                    : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+                }`}
+                title={compareMode ? 'Exit compare mode' : 'Compare words — select 2-3 to compare'}
+              >
+                <Scale size={16} />
+              </button>
+            )}
             <button
               onClick={() => setFilterMode(prev => {
                 if (prev === 'all') return 'vocab';
@@ -1139,21 +1174,98 @@ export const NotebookView: React.FC<NotebookProps> = ({
       )}
 
       <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-3 w-full max-w-screen-md mx-auto">
-        {groupedItems.map((group, index) => (
-          <NotebookGroup
-            key={group.title}
-            group={group}
-            groups={groupedItems}
-            groupIndex={index}
-            openItemId={openItemId}
-            setOpenItemId={setOpenItemId}
-            onDelete={onDelete}
-            onSearch={onSearch}
-            onViewDetail={onViewDetail}
-            onArchive={onArchive}
-            onUnarchive={onUnarchive}
-          />
-        ))}
+        {/* Compare mode banner */}
+        {compareMode && (
+          <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 animate-in slide-in-from-top-2 duration-200">
+            <div className="flex items-center gap-2">
+              <Scale size={16} className="text-indigo-500" />
+              <span className="text-sm font-medium text-indigo-700">
+                Select 2-3 words to compare
+              </span>
+              {selectedForCompare.length > 0 && (
+                <span className="text-xs font-bold text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">
+                  {selectedForCompare.length} selected
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => { setCompareMode(false); setSelectedForCompare([]); }}
+              className="text-indigo-400 hover:text-indigo-600 p-1 rounded-full hover:bg-indigo-100 transition-colors"
+              title="Exit compare mode"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {groupedItems.map((group, index) => {
+          // In compare mode, wrap each group with a selectable container
+          if (compareMode) {
+            // Use the properly-cased title from the first item (group.title is lowercase)
+            const firstItem = group.items[0];
+            const displayWord = firstItem
+              ? (firstItem.type === 'phrase' 
+                  ? (firstItem.data as SearchResult).query 
+                  : (firstItem.data as VocabCard).word) || group.title
+              : group.title;
+            const isSelected = selectedForCompare.includes(displayWord);
+            const canSelect = selectedForCompare.length < 3 || isSelected;
+            
+            return (
+              <div
+                key={group.title}
+                className={`relative cursor-pointer transition-all ${isSelected ? 'ring-2 ring-indigo-400 rounded-2xl' : ''}`}
+                onClick={() => {
+                  if (isSelected) {
+                    setSelectedForCompare(prev => prev.filter(w => w !== displayWord));
+                  } else if (canSelect) {
+                    setSelectedForCompare(prev => [...prev, displayWord]);
+                  }
+                }}
+              >
+                {/* Selection checkbox overlay */}
+                <div className={`absolute top-3 right-3 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+                  isSelected 
+                    ? 'bg-indigo-500 border-indigo-500 text-white' 
+                    : canSelect 
+                      ? 'bg-white border-slate-300' 
+                      : 'bg-slate-100 border-slate-200 opacity-50'
+                }`}>
+                  {isSelected && <Check size={14} />}
+                </div>
+                {/* Render the group normally but without click-through */}
+                <div className="pointer-events-none">
+                  <NotebookGroup
+                    group={group}
+                    groups={groupedItems}
+                    groupIndex={index}
+                    openItemId={null}
+                    setOpenItemId={() => {}}
+                    onDelete={() => {}}
+                    onSearch={() => {}}
+                    onViewDetail={() => {}}
+                  />
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <NotebookGroup
+              key={group.title}
+              group={group}
+              groups={groupedItems}
+              groupIndex={index}
+              openItemId={openItemId}
+              setOpenItemId={setOpenItemId}
+              onDelete={onDelete}
+              onSearch={onSearch}
+              onViewDetail={onViewDetail}
+              onArchive={onArchive}
+              onUnarchive={onUnarchive}
+            />
+          );
+        })}
 
         {/* Due for Review backfill — shown when fuzzy results < 20 during search */}
         {dueForReviewGroups.length > 0 && (
@@ -1236,6 +1348,23 @@ export const NotebookView: React.FC<NotebookProps> = ({
           savedItems={items}
           isOnline={isOnline}
         />
+      )}
+
+      {/* Compare floating action button */}
+      {compareMode && selectedForCompare.length >= 2 && onCompare && (
+        <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] left-0 right-0 flex justify-center z-20 pointer-events-none">
+          <button
+            onClick={() => {
+              onCompare(selectedForCompare);
+              setCompareMode(false);
+              setSelectedForCompare([]);
+            }}
+            className="pointer-events-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-full shadow-lg hover:shadow-xl transition-all flex items-center gap-2 animate-in zoom-in-95 duration-200"
+          >
+            <Scale size={18} />
+            Compare {selectedForCompare.length} Words
+          </button>
+        </div>
       )}
     </div>
   );

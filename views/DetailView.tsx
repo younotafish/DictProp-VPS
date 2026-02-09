@@ -63,6 +63,7 @@ interface DetailViewProps {
   podcastQueue?: string[]; // IDs of items in podcast generation queue
   onAddToPodcastQueue?: (itemId: string) => void;
   onRemoveFromPodcastQueue?: (itemId: string) => void;
+  onCompare?: (words: string[]) => void;
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
@@ -83,6 +84,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   podcastQueue,
   onAddToPodcastQueue,
   onRemoveFromPodcastQueue,
+  onCompare,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
@@ -793,6 +795,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
               scrollable={false}
               className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
               showRefresh={false}
+              onCompare={onCompare}
             />
           )}
 
@@ -850,6 +853,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         scrollable={false}
                         showSave={true}
                         className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
+                        onCompare={onCompare}
                       />
                     ))}
                   </div>

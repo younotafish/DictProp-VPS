@@ -3,6 +3,7 @@ import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { PodcastView } from './views/Podcast';
 import { DetailView } from './views/DetailView';
+import { ComparisonView } from './views/ComparisonView';
 import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
 import { Book, BrainCircuit, Headphones, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
@@ -170,6 +171,9 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('podcast_queue', JSON.stringify(podcastQueue));
   }, [podcastQueue]);
+
+  // Word comparison mode — 2-3 words to compare side-by-side
+  const [comparisonWords, setComparisonWords] = useState<string[] | null>(null);
   
   // Global keyboard navigation for tab switching (1, 2, 3 keys)
   useGlobalNavigation({
@@ -182,7 +186,7 @@ const App: React.FC = () => {
     onNavigateToPodcast: () => {
       setCurrentView('podcast');
     },
-    enabled: !detailContext && !confirmModal && !showKeyboardHelp, // Disable when modals are open
+    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !comparisonWords, // Disable when modals are open
   });
 
   // Global Escape key to close modals or go back
@@ -193,6 +197,8 @@ const App: React.FC = () => {
           setShowKeyboardHelp(false);
         } else if (confirmModal) {
           setConfirmModal(null);
+        } else if (comparisonWords) {
+          setComparisonWords(null);
         } else if (detailContext) {
           setDetailContext(null);
         }
@@ -221,7 +227,7 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [detailContext, confirmModal, showKeyboardHelp]);
+  }, [detailContext, confirmModal, showKeyboardHelp, comparisonWords]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -1314,6 +1320,13 @@ const App: React.FC = () => {
     setPodcastQueue([]);
   }, []);
 
+  // Word comparison handler
+  const handleCompare = useCallback((words: string[]) => {
+    if (words.length >= 2 && words.length <= 3) {
+      setComparisonWords(words);
+    }
+  }, []);
+
   // Search handler - now triggers search in notebook
   const handleRecursiveSearch = (text: string) => {
       setCurrentView('notebook');
@@ -1530,6 +1543,14 @@ const App: React.FC = () => {
               podcastQueue={podcastQueue}
               onAddToPodcastQueue={handleAddToPodcastQueue}
               onRemoveFromPodcastQueue={handleRemoveFromPodcastQueue}
+              onCompare={handleCompare}
+          />
+      )}
+
+      {comparisonWords && (
+          <ComparisonView
+              words={comparisonWords}
+              onClose={() => setComparisonWords(null)}
           />
       )}
 
@@ -1553,6 +1574,7 @@ const App: React.FC = () => {
             onUnarchive={handleUnarchive}
             onSave={handleSave}
             onUpdateStoredItem={handleUpdateStoredItem}
+            onCompare={handleCompare}
           />
         )}
         
