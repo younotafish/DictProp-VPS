@@ -80,7 +80,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // A. DATA MERGE (Content - Word/Definition)
       // Content usually changes rarely. Trust the most recent update.
       if (localTime > remoteTime) {
-          mergedItem.data = JSON.parse(JSON.stringify(localItem.data));
+          mergedItem.data = structuredClone(localItem.data);
           mergedItem.updatedAt = localTime;
           mergedItem.savedAt = localItem.savedAt;
       }
@@ -92,20 +92,20 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // 3. If still equal, keep the one with MORE RECENT lastReviewDate (latest update)
       // This ensures learning progress is never accidentally overwritten
       if (localHistory > remoteHistory) {
-          mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
+          mergedItem.srs = structuredClone(localItem.srs);
       } else if (localHistory === remoteHistory) {
           // Tie-breaker 1: Memory strength (higher = more progress)
           const localStrength = localItem.srs?.memoryStrength || 0;
           const remoteStrength = remoteItem.srs?.memoryStrength || 0;
-          
+
           if (localStrength > remoteStrength) {
-              mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
+              mergedItem.srs = structuredClone(localItem.srs);
           } else if (localStrength === remoteStrength) {
               // Tie-breaker 2: Recency of last review
               const localReview = localItem.srs?.lastReviewDate || 0;
               const remoteReview = remoteItem.srs?.lastReviewDate || 0;
               if (localReview > remoteReview) {
-                   mergedItem.srs = JSON.parse(JSON.stringify(localItem.srs));
+                   mergedItem.srs = structuredClone(localItem.srs);
               }
           }
       }

@@ -383,13 +383,4 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
       </div>
     </div>
   );
-}, (prevProps, nextProps) => {
-  // Custom comparison - only re-render if data or callbacks actually change
-  return (
-    prevProps.data.id === nextProps.data.id &&
-    prevProps.data.imageUrl === nextProps.data.imageUrl &&
-    prevProps.isSaved === nextProps.isSaved &&
-    prevProps.className === nextProps.className &&
-    prevProps.onCompare === nextProps.onCompare
-  );
 });

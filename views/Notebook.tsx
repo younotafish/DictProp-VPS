@@ -11,6 +11,7 @@ import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/aiService';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { speak } from '../services/speech';
+import { warn, error as logError } from '../services/logger';
 
 interface NotebookItemProps {
   item: StoredItem;
@@ -497,6 +498,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchGenerationIdRef = useRef(0); // Incremented on each search to cancel stale image updates
   
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
@@ -547,27 +549,32 @@ export const NotebookView: React.FC<NotebookProps> = ({
   // AI Search function
   const performAISearch = useCallback(async (query: string) => {
     if (!query.trim() || !isOnline) return;
-    
+
     setIsSearching(true);
     setSearchError(null);
     setSearchResults(null);
-    
+
+    // Increment generation ID to cancel stale image updates from previous searches
+    const currentGenId = ++searchGenerationIdRef.current;
+
     try {
       const result = await analyzeInput(query.trim());
+      if (searchGenerationIdRef.current !== currentGenId) return; // Superseded by new search
       setSearchResults(result);
-      
+
       // Auto-pronounce the word once when results arrive
       if (result.vocabs && result.vocabs.length > 0) {
         const wordToSpeak = result.vocabs[0].word || query.trim();
         setTimeout(() => speak(wordToSpeak), 100);
-        
+
         // Generate images asynchronously for each vocab (don't block UI)
         result.vocabs.forEach(async (vocab, index) => {
           if (vocab.imagePrompt && !vocab.imageUrl) {
             try {
               const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
+              // Skip update if a newer search has started
+              if (searchGenerationIdRef.current !== currentGenId) return;
               if (imageData) {
-                // Update the search results with the generated image
                 setSearchResults(prev => {
                   if (!prev || !prev.vocabs) return prev;
                   const updatedVocabs = [...prev.vocabs];
@@ -578,13 +585,13 @@ export const NotebookView: React.FC<NotebookProps> = ({
                 });
               }
             } catch (imgErr) {
-              console.warn('Image generation failed for vocab:', vocab.word, imgErr);
+              warn('Image generation failed for vocab:', vocab.word, imgErr);
             }
           }
         });
       }
     } catch (err: any) {
-      console.error('AI Search failed:', err);
+      logError('AI Search failed:', err);
       setSearchError(err.message || 'Search failed. Please try again.');
     } finally {
       setIsSearching(false);
@@ -644,7 +651,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
             performAISearch(transcribedText.trim());
           }
         } catch (err: any) {
-          console.error('Transcription failed:', err);
+          logError('Transcription failed:', err);
           setSearchError(err.message === 'QUOTA_EXCEEDED' 
             ? 'Voice transcription quota exceeded. Please type your search.' 
             : 'Voice transcription failed. Please try again.');
@@ -656,7 +663,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
       mediaRecorder.start();
       setIsRecording(true);
     } catch (err: any) {
-      console.error('Failed to start recording:', err);
+      logError('Failed to start recording:', err);
       setSearchError('Microphone access denied. Please enable microphone permissions.');
     }
   }, [isOnline, performAISearch]);
@@ -761,23 +768,26 @@ export const NotebookView: React.FC<NotebookProps> = ({
     onScroll?.(e);
   };
   
+  // Memoize Fuse index separately - only rebuild when items change, not on every keystroke
+  const fuseIndex = React.useMemo(() => {
+    return new Fuse(items, {
+      keys: [
+        'data.word',
+        'data.query',
+        'data.chinese',
+        'data.translation'
+      ],
+      threshold: 0.3,
+      ignoreLocation: true
+    });
+  }, [items]);
+
   const { displayItems, groupedItems, archivedItems, archivedGroups, dueForReviewGroups } = React.useMemo(() => {
     // 1. Fuzzy Search
     let processedItems = items;
     
     if (localSearchQuery.trim()) {
-      const fuse = new Fuse(items, {
-        keys: [
-          'data.word',
-          'data.query',
-          'data.chinese',
-          'data.translation'
-        ],
-        threshold: 0.3,
-        ignoreLocation: true
-      });
-      
-      const fuseResults = fuse.search(localSearchQuery).map(result => result.item);
+      const fuseResults = fuseIndex.search(localSearchQuery).map(result => result.item);
       
       // Chinese input: Fuse.js Bitap algorithm doesn't work well with CJK characters.
       // Fall back to substring matching against chinese/translation fields.
@@ -929,7 +939,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
       archivedGroups: groupByTitle(archivedFiltered),
       dueForReviewGroups: dueForReview
     };
-  }, [items, sortMode, filterMode, localSearchQuery]);
+  }, [items, sortMode, filterMode, localSearchQuery, fuseIndex]);
 
   if (displayItems.length === 0 && !localSearchQuery) {
     return (

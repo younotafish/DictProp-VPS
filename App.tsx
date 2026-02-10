@@ -17,6 +17,19 @@ import { analyzeInput } from './services/aiService';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 
+// Strip base64 images from items to create a lightweight cache for localStorage (5MB limit)
+const stripImagesForCache = (items: StoredItem[]): StoredItem[] =>
+  items.map(item => ({
+    ...item,
+    data: {
+      ...item.data,
+      imageUrl: undefined,
+      vocabs: isPhraseItem(item) && (item.data as SearchResult).vocabs
+        ? (item.data as SearchResult).vocabs.map((v: VocabCard) => ({ ...v, imageUrl: undefined }))
+        : undefined
+    }
+  }));
+
 // Keyboard shortcut display component
 const DETAIL_CONTEXT_KEY = 'app_detail_context';
 
@@ -34,6 +47,23 @@ const ShortcutRow: React.FC<{ keys: string[], description: string }> = ({ keys, 
       ))}
     </div>
   </div>
+);
+
+const NavButton = ({ view, currentView, onClick, icon: Icon, label, badge }: { view: ViewState, currentView: ViewState, onClick: (view: ViewState) => void, icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, label: string, badge?: number }) => (
+  <button
+    onClick={() => onClick(view)}
+    className={`flex flex-col items-center justify-center flex-1 py-3 gap-1 transition-colors relative ${currentView === view ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
+  >
+    <div className="relative">
+      <Icon size={24} strokeWidth={currentView === view ? 2.5 : 2} />
+      {badge !== undefined && badge > 0 && (
+        <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 bg-violet-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </div>
+    <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
+  </button>
 );
 
 const App: React.FC = () => {
@@ -75,6 +105,10 @@ const App: React.FC = () => {
   
   // Track when we last saved to avoid redundant saves from event handlers
   const lastSaveTimeRef = useRef<number>(0);
+
+  // Track synced content hashes by item ID to avoid re-syncing unchanged items
+  // Stored in a ref (not state) to prevent the save effect from re-triggering itself
+  const syncedHashesRef = useRef<Map<string, string>>(new Map());
   
   // Track last successful sync timestamp to enable Delta Sync
   const [lastSyncTime, setLastSyncTime] = useState<number>(() => {
@@ -93,18 +127,11 @@ const App: React.FC = () => {
   // Items available for study (excludes archived)
   const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived), [savedItems]);
   
-  // Start as "loaded" if we have cached items (instant UI) 
+  // Start as "loaded" if we have cached items (instant UI)
   // Full data will be loaded from IndexedDB in background
-  const [isLoaded, setIsLoaded] = useState(() => {
-    try {
-      const cached = localStorage.getItem('app_items_cache');
-      return cached ? JSON.parse(cached).length > 0 : false;
-    } catch {
-      return false;
-    }
-  });
+  const [isLoaded, setIsLoaded] = useState(() => syncState.items.length > 0);
   const [showNav, setShowNav] = useState(true);
-  const [lastScrollY, setLastScrollY] = useState(0);
+  const lastScrollYRef = useRef(0);
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
@@ -269,17 +296,7 @@ const App: React.FC = () => {
         
         // Use synchronous localStorage as a backup (IndexedDB is async and may not complete)
         try {
-          const cacheItems = currentItems.map(item => ({
-            ...item,
-            data: {
-              ...item.data,
-              imageUrl: undefined, // Strip images to fit in localStorage
-              vocabs: isPhraseItem(item) && (item.data as SearchResult).vocabs 
-                ? (item.data as SearchResult).vocabs.map((v: VocabCard) => ({ ...v, imageUrl: undefined }))
-                : undefined
-            }
-          }));
-          localStorage.setItem('app_items_cache', JSON.stringify(cacheItems));
+          localStorage.setItem('app_items_cache', JSON.stringify(stripImagesForCache(currentItems)));
           log("💾 Saved items cache on beforeunload");
         } catch (e) {
           warn("Failed to save cache on beforeunload:", e);
@@ -451,6 +468,26 @@ const App: React.FC = () => {
     return cleaned;
   };
 
+  // Helper to remove an item from detailContext groups and adjust indices
+  const removeItemFromDetailContext = (id: string) => {
+    setDetailContext(prev => {
+      if (!prev) return null;
+
+      const newGroups = prev.groups.map(group => ({
+        ...group,
+        items: group.items.filter(item => item.data.id !== id)
+      })).filter(group => group.items.length > 0);
+
+      if (newGroups.length === 0) return null;
+
+      let newGroupIndex = Math.min(prev.groupIndex, newGroups.length - 1);
+      let newItemIndex = Math.min(prev.itemIndex, newGroups[newGroupIndex].items.length - 1);
+      newItemIndex = Math.max(0, newItemIndex);
+
+      return { groups: newGroups, groupIndex: newGroupIndex, itemIndex: newItemIndex };
+    });
+  };
+
   // 2. FIREBASE SYNC LOGIC (Operation-Based)
   useEffect(() => {
     if (!isFirebaseConfigured) return;
@@ -594,19 +631,7 @@ const App: React.FC = () => {
     if (!isLoaded || syncState.items.length === 0) return;
     
     try {
-      // Create a lightweight cache by stripping large base64 images
-      const cacheItems = syncState.items.map(item => ({
-        ...item,
-        data: {
-          ...item.data,
-          imageUrl: undefined, // Strip image
-          vocabs: isPhraseItem(item) && item.data.vocabs 
-            ? item.data.vocabs.map((v: VocabCard) => ({ ...v, imageUrl: undefined }))
-            : undefined
-        }
-      }));
-      
-      localStorage.setItem('app_items_cache', JSON.stringify(cacheItems));
+      localStorage.setItem('app_items_cache', JSON.stringify(stripImagesForCache(syncState.items)));
     } catch (e) {
       // If quota exceeded, try to save just item count for UI feedback
       warn("Failed to cache items to localStorage", e);
@@ -615,17 +640,17 @@ const App: React.FC = () => {
 
   // 3. SAVE EFFECTS (Persistence + Simple Item Sync)
   useEffect(() => {
-    if (!isLoaded) return; 
+    if (!isLoaded) return;
 
     const timer = setTimeout(async () => {
       // Use ref to get latest items (avoids stale closure in setTimeout)
       const currentItems = latestItemsRef.current;
-      
+
       // 1. Save to Local IDB FIRST (always, works offline)
       // Save to user-specific storage or guest storage
       const targetUserId = user?.uid || 'guest';
       await saveData(currentItems, targetUserId);
-      
+
       // 2. Push items to Cloud (Firebase) - Delta Sync with Hash Comparison
       // Skip cloud sync when offline - will sync when back online
       if (user && isFirebaseConfigured && isOnline) {
@@ -633,14 +658,15 @@ const App: React.FC = () => {
           // 1. Must have been updated since last sync (timestamp check)
           // 2. Content hash must differ from last synced hash (prevents redundant writes)
           const itemsWithHashes: { item: StoredItem; hash: string }[] = [];
-          
+
           currentItems.forEach(item => {
               const updated = item.updatedAt || 0;
               if (updated <= lastSyncTime) return; // Skip if not updated since last sync
-              
+
               const currentHash = getItemContentHash(item);
-              if (currentHash === item.lastSyncedHash) return; // Skip if content unchanged
-              
+              const lastSyncedHash = syncedHashesRef.current.get(item.data.id);
+              if (currentHash === lastSyncedHash) return; // Skip if content unchanged
+
               itemsWithHashes.push({ item, hash: currentHash });
           });
 
@@ -651,26 +677,19 @@ const App: React.FC = () => {
 
           setSyncStatus('syncing');
           log(`🔥 Firebase: ${itemsWithHashes.length} items actually changed (hash check)`);
-          
+
           try {
             await saveUserData(user.uid, itemsWithHashes.map(i => i.item));
-            
+
             // Update last sync time
             const now = Date.now();
             setLastSyncTime(now);
             localStorage.setItem('last_successful_sync', now.toString());
-            
-            // Update items with their new hashes to prevent re-syncing
-            setSyncState(prevState => {
-              const updatedItems = prevState.items.map(item => {
-                const synced = itemsWithHashes.find(i => i.item.data.id === item.data.id);
-                if (synced) {
-                  return { ...item, lastSyncedHash: synced.hash };
-                }
-                return item;
-              });
-              return { ...prevState, items: updatedItems };
-            });
+
+            // Update synced hashes in ref (not state) to prevent re-triggering this effect
+            for (const { item, hash } of itemsWithHashes) {
+              syncedHashesRef.current.set(item.data.id, hash);
+            }
 
             setSyncStatus('saved');
           } catch (e) {
@@ -713,18 +732,17 @@ const App: React.FC = () => {
       // 4. Clean up old deleted items (hard delete after retention period)
       const cleanedItems = cleanupOldDeletedItems(mergedItems);
       
-      // 5. Update hashes for all items to prevent re-syncing on next regular sync
-      const itemsWithHashes = cleanedItems.map(item => ({
-        ...item,
-        lastSyncedHash: getItemContentHash(item)
-      }));
-      
+      // 5. Update synced hashes in ref to prevent re-syncing on next regular sync
+      for (const item of cleanedItems) {
+        syncedHashesRef.current.set(item.data.id, getItemContentHash(item));
+      }
+
       // Update ref immediately so event handlers have fresh data
-      latestItemsRef.current = itemsWithHashes;
-      
+      latestItemsRef.current = cleanedItems;
+
       setSyncState(prevState => ({
         ...prevState,
-        items: itemsWithHashes
+        items: cleanedItems
       }));
       
       setSyncStatus('saved');
@@ -1170,40 +1188,7 @@ const App: React.FC = () => {
     }
     
     // Update detailContext to remove the deleted item (instead of closing entirely)
-    setDetailContext(prev => {
-      if (!prev) return null;
-      
-      // Create new groups with the deleted item removed
-      const newGroups = prev.groups.map(group => ({
-        ...group,
-        items: group.items.filter(item => item.data.id !== id)
-      })).filter(group => group.items.length > 0); // Remove empty groups
-      
-      // If no groups left, close the view
-      if (newGroups.length === 0) {
-        return null;
-      }
-      
-      // Adjust indices if needed
-      let newGroupIndex = prev.groupIndex;
-      let newItemIndex = prev.itemIndex;
-      
-      // If current group was removed or index is out of bounds
-      if (newGroupIndex >= newGroups.length) {
-        newGroupIndex = newGroups.length - 1;
-      }
-      
-      // If current item index is out of bounds for the new group
-      if (newItemIndex >= newGroups[newGroupIndex].items.length) {
-        newItemIndex = Math.max(0, newGroups[newGroupIndex].items.length - 1);
-      }
-      
-      return {
-        groups: newGroups,
-        groupIndex: newGroupIndex,
-        itemIndex: newItemIndex
-      };
-    });
+    removeItemFromDetailContext(id);
   };
 
   const handleArchive = async (id: string) => {
@@ -1246,36 +1231,7 @@ const App: React.FC = () => {
     }
     
     // Update detailContext to remove the archived item (instead of closing entirely)
-    setDetailContext(prev => {
-      if (!prev) return null;
-      
-      // Create new groups with the archived item removed
-      const newGroups = prev.groups.map(group => ({
-        ...group,
-        items: group.items.filter(item => item.data.id !== id)
-      })).filter(group => group.items.length > 0);
-      
-      if (newGroups.length === 0) {
-        return null;
-      }
-      
-      let newGroupIndex = prev.groupIndex;
-      let newItemIndex = prev.itemIndex;
-      
-      if (newGroupIndex >= newGroups.length) {
-        newGroupIndex = newGroups.length - 1;
-      }
-      
-      if (newItemIndex >= newGroups[newGroupIndex].items.length) {
-        newItemIndex = Math.max(0, newGroups[newGroupIndex].items.length - 1);
-      }
-      
-      return {
-        groups: newGroups,
-        groupIndex: newGroupIndex,
-        itemIndex: newItemIndex
-      };
-    });
+    removeItemFromDetailContext(id);
   };
 
   const handleUnarchive = async (id: string) => {
@@ -1443,17 +1399,7 @@ const App: React.FC = () => {
     if (allUpdatedItems.length > 0) {
       // Also update localStorage cache synchronously (backup for iOS PWA)
       try {
-        const cacheItems = allUpdatedItems.map(item => ({
-          ...item,
-          data: {
-            ...item.data,
-            imageUrl: undefined, // Strip images to fit in localStorage
-            vocabs: isPhraseItem(item) && item.data.vocabs 
-              ? item.data.vocabs.map((v: VocabCard) => ({ ...v, imageUrl: undefined }))
-              : undefined
-          }
-        }));
-        localStorage.setItem('app_items_cache', JSON.stringify(cacheItems));
+        localStorage.setItem('app_items_cache', JSON.stringify(stripImagesForCache(allUpdatedItems)));
       } catch (e) {
         warn("Failed to update cache after SRS:", e);
       }
@@ -1484,36 +1430,19 @@ const App: React.FC = () => {
   // Handle scroll to hide/show nav bar
   const handleScroll = (e: React.UIEvent<HTMLElement>) => {
     const currentScrollY = e.currentTarget.scrollTop;
-    
+
     if (currentScrollY < 10) {
       setShowNav(true);
-    } else if (currentScrollY > lastScrollY && currentScrollY > 100) {
+    } else if (currentScrollY > lastScrollYRef.current && currentScrollY > 100) {
       // Scrolling down
       setShowNav(false);
-    } else if (currentScrollY < lastScrollY) {
+    } else if (currentScrollY < lastScrollYRef.current) {
       // Scrolling up
       setShowNav(true);
     }
-    
-    setLastScrollY(currentScrollY);
-  };
 
-  const NavButton = ({ view, icon: Icon, label, badge }: { view: ViewState, icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, label: string, badge?: number }) => (
-    <button 
-      onClick={() => setCurrentView(view)}
-      className={`flex flex-col items-center justify-center flex-1 py-3 gap-1 transition-colors relative ${currentView === view ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
-    >
-      <div className="relative">
-        <Icon size={24} strokeWidth={currentView === view ? 2.5 : 2} />
-        {badge !== undefined && badge > 0 && (
-          <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 bg-violet-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
-            {badge > 99 ? '99+' : badge}
-          </span>
-        )}
-      </div>
-      <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
-    </button>
-  );
+    lastScrollYRef.current = currentScrollY;
+  };
 
   return (
     <div className="fixed inset-0 bg-white flex flex-col">
@@ -1621,9 +1550,9 @@ const App: React.FC = () => {
       </main>
 
       <nav className={`fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
-        <NavButton view="notebook" icon={Book} label="Notebook" />
-        <NavButton view="study" icon={BrainCircuit} label="Study" />
-        <NavButton view="podcast" icon={Headphones} label="Podcast" badge={podcastQueue.length} />
+        <NavButton view="notebook" currentView={currentView} onClick={setCurrentView} icon={Book} label="Notebook" />
+        <NavButton view="study" currentView={currentView} onClick={setCurrentView} icon={BrainCircuit} label="Study" />
+        <NavButton view="podcast" currentView={currentView} onClick={setCurrentView} icon={Headphones} label="Podcast" badge={podcastQueue.length} />
         {/* Keyboard shortcuts hint - only visible on desktop */}
         <button 
           onClick={() => setShowKeyboardHelp(true)}

@@ -24,25 +24,23 @@ DictProp combines AI-powered deep analysis with science-backed memory techniques
 
 ### The Search Interface
 
-**Input Area:**
-- Large, comfortable text input at the top of the screen
-- Supports multiline input for sentences and paragraphs
-- **Paste & Search button** — One tap to paste clipboard content and immediately search
-- **Clear button (X)** — Quickly clear the input to start fresh
-- **Start Search button** — Triggers the AI analysis
+Search is integrated directly into the Notebook tab header — there is no separate search view.
 
-**Zero State (Empty Search):**
-- Welcoming prompt: "What would you like to learn?"
-- Suggested examples with icons to inspire exploration:
-  - 📚 "serendipity" (vocabulary)
-  - 💬 "break the ice" (idiom)
-  - ⏰ "ephemeral" (advanced word)
-  - 🎯 "hit the nail on the head" (phrase)
-- Tapping any suggestion immediately searches it
+**Search Bar (in Notebook header):**
+- Compact text input with placeholder "Search or look up new word"
+- **AI Search button** (Wand2 icon) — Triggers AI analysis for the query (also triggered by Enter key)
+- **Clear button (X)** — Clears the search query and results
+- **Voice Search button** (Mic icon) — Records audio, transcribes via Whisper, and auto-searches the transcribed text
+- Search doubles as a notebook filter: typing filters saved items via Fuse.js fuzzy search in real-time
+
+**Empty Notebook State:**
+- Shows "Your notebook is empty" message
+- Encourages user to save words and phrases
+- Sign-in button visible
 
 **Loading State:**
-- Previous results stay visible (dimmed) while loading new search
-- Prevents jarring blank screens during analysis
+- Spinner replaces the AI search button while processing
+- Notebook items remain visible below
 
 ---
 
@@ -183,107 +181,48 @@ The AI creates **separate vocabulary cards for each distinct meaning**. This is 
 
 ### The Search Flow — Step by Step
 
-#### Path A: Word Already Saved (Instant, No API Call)
+#### Notebook Search (Local Fuzzy Filtering)
 
-1. **User types or pastes text** into the search box
-2. **User taps submit arrow** (or presses Enter)
-3. **App checks local notebook** for matching word/phrase (case-insensitive)
-4. **Match found!** → Saved content displayed instantly
-   - No loading spinner
-   - No API request
-   - No network required (works offline)
-   - SRS progress preserved
-5. **Refresh button available** if user wants fresh AI analysis
-6. **User can:**
-   - View the saved content immediately
-   - Tap Refresh to get new AI analysis (triggers Path B)
-   - Browse, study, or explore synonyms as normal
+1. **User types in search bar** — Fuse.js fuzzy search filters saved items in real-time
+2. Results appear instantly as matching notebook items
+3. Chinese text input falls back to substring matching (Fuse.js Bitap doesn't handle CJK well)
+4. If fewer than 20 fuzzy matches, "Due for Review" items backfill the screen
 
-**Why This Matters:**
-- Instant results for saved vocabulary
-- No API quota consumed
-- Works completely offline
-- Consistent experience — user sees what they saved
+#### AI Search (New Word Lookup)
 
----
-
-#### Path B: New Word (AI Analysis Required)
-
-1. **User types or pastes text** into the search box
-2. **User taps submit arrow** (or presses Enter)
-3. **App checks local notebook** — no match found
-4. **Loading state appears** — spinner, "Analyzing..."
-5. **AI processes the input** (typically 2-5 seconds):
+1. **User types a word/phrase and presses Enter** (or taps the Wand2 AI button)
+2. **Loading state appears** — spinner, "Analyzing..."
+3. **AI processes the input** (typically 2-5 seconds via Cloud Function):
    - Detects word vs. sentence mode
    - Generates structured JSON response
    - Includes all meanings for words, or full analysis for sentences
-6. **Results render immediately**
-7. **Images generate asynchronously:**
-   - Main hero image loads first
-   - Individual vocab card images load one by one
+4. **Results render in a carousel** above the notebook list
+5. **Images generate asynchronously:**
+   - Individual vocab card images load one by one (fire-and-forget)
    - Results are usable before images finish loading
-8. **User can:**
+6. **Auto-pronounce:** The first word is spoken aloud when results arrive
+7. **User can:**
    - Browse vocabulary cards (swipe carousel)
-   - Tap any card to see full details
-   - Save individual meanings to notebook
-   - Tap any synonym/antonym/confusable to recursively search it
-   - Go back to previous search (back arrow appears)
+   - Save individual meanings to notebook (star icon)
+   - Tap any synonym/antonym/confusable to search it (dispatches a custom event)
 
----
-
-#### Detection Flow Diagram
-
-```
-User Searches "bank"
-        │
-        ▼
-┌───────────────────────┐
-│ Check saved items for │
-│ matching word/phrase  │
-└───────────────────────┘
-        │
-        ├── Match Found ──────────► Show saved content instantly
-        │                           (No API call, works offline)
-        │
-        └── No Match ─────────────► Call AI API (DeepSeek-V3 via DeepInfra)
-                                    (Requires network, 2-5 sec)
-```
-
----
-
-#### Refresh Behavior
-
-When viewing a saved item, a **Refresh button** (🔄) appears:
-
-| Action | Result |
-|--------|--------|
-| View saved item | Shows cached content instantly |
-| Tap Refresh | Triggers new AI analysis (Path B) |
-| New analysis completes | Updates saved item with new content |
-| SRS progress | Preserved (not affected by refresh) |
-| Images | Regenerated with new prompts |
-
-**Use Cases for Refresh:**
-- AI prompts have been improved
-- Want fresher example sentences
-- Original analysis was incomplete
-- Images failed to generate initially
+**Refresh Behavior:**
+- From Detail View, tap the Refresh button to re-analyze a saved word with AI
+- From Notebook, long-press a card to reveal the Refresh action
 
 ---
 
 ### Recursive Search — Exploring Connected Words
 
 **Clickable Pills:**
-Every word in synonyms, antonyms, confusables, and word forms is tappable:
-- Tap "rely on" from synonyms → immediate search for "rely on"
-- Previous result stays in history (back arrow appears)
-- Up to 5 searches stored in history stack
+Every word in synonyms, antonyms, confusables, word forms, and word family is tappable:
+- Tap "rely on" from synonyms → navigates to Notebook and triggers a search
+- If the word isn't in the notebook, an AI search is automatically triggered
 - Enables natural exploration of word relationships
 
 **Back Navigation:**
-- Back arrow appears after drilling into related words
-- Returns to previous search result instantly (no re-fetch)
-- Breadcrumb-like experience through vocabulary space
+- Closing the Detail View returns to the Notebook list
+- No multi-level search history stack is maintained
 
 ---
 
@@ -562,20 +501,21 @@ Browse through vocabulary cards with a familiar, immersive experience:
          ↕ swipe up/down (hidden gesture)
 ```
 
-**Navigation Gestures (No Visible UI):**
+**Navigation Gestures:**
 | Gesture | Action |
 |---------|--------|
-| Swipe Up | Next word in list |
-| Swipe Down | Previous word in list |
-| Swipe Left/Right | Navigate between meanings (if multiple) |
-| Tap | Interact with card content |
+| Long swipe up (>120px, at bottom) | Next word in list |
+| Long swipe down (>120px, at top) | Previous word in list |
+| Short swipe down (50-120px, at top) | Show/hide header bar |
+| Swipe left (>60px) | Next meaning (loops) |
+| Swipe right (>60px) | Previous meaning (or close view if at first) |
+| Double-click background | Mark as "Remembered" |
 
-**Full-Screen Immersive Experience:**
-- One card fills the entire screen
-- Smooth snap-to-card scrolling
-- Endless vertical browsing through your vocabulary
-- **No arrows or indicators** — clean, distraction-free UI
-- Gesture-based navigation (discoverable through use)
+**Visual Indicators:**
+- **Dot indicators** (● ○ ○) appear at top for multi-meaning items when header is hidden
+- **Desktop navigation bar** appears at bottom with Prev/Next word and meaning buttons
+- Header bar (hidden by default) shows progress bar, mastery badge, review stats, and action buttons
+- Header revealed by short swipe down or pressing `H` key
 
 ---
 
@@ -622,22 +562,21 @@ If the word has multiple saved meanings:
 
 ### The Science Behind It
 
-DictProp's SRS (Spaced Repetition System) is inspired by:
-- **SuperMemo SM-2** — The original spaced repetition algorithm
-- **Shanbay** — Chinese vocabulary app with memory strength model
-- **Forgetting Curve Research** — Ebbinghaus's work on memory decay
+DictProp uses a **Fixed-Schedule SRS Algorithm** — a positive-signal-only spaced repetition system.
 
 **Core Concepts:**
 
 #### Memory Strength (0-100)
-A hidden score representing how well you know a word:
+A display-only score derived from stability via logarithmic mapping:
+- Formula: `min(100, round(18 × ln(1 + stability)))`
 - **0** — Brand new, never reviewed
-- **10-30** — Weak, easily forgotten
-- **40-60** — Moderate, needs regular review
-- **70-85** — Strong, longer intervals okay
-- **90-100** — Near-permanent, months between reviews
+- **10-30** — Struggling
+- **30-50** — Learning
+- **50-70** — Proficient
+- **70-85** — Mastered
+- **85-100** — Grandmaster
 
-You don't see the exact number, but you see **Mastery Levels**:
+You see **Mastery Levels** based on this score:
 | Score Range | Label | Color |
 |-------------|-------|-------|
 | 0-10 | New | Gray |
@@ -647,63 +586,59 @@ You don't see the exact number, but you see **Mastery Levels**:
 | 70-85 | Mastered | Emerald |
 | 85-100 | Grandmaster | Purple |
 
-#### Stability
-How long a memory lasts before significant decay:
-- New words: ~0.5 days stability
-- After successful reviews: Stability increases (up to 90 days)
-- After failures: Stability decreases by 50%
+#### Fixed Schedule
+Review intervals follow a predetermined schedule. Each "remember" tap advances one step:
 
-#### Difficulty
-An item's inherent difficulty (0-10):
-- Starts at 5 (neutral)
-- Increases if you consistently fail
-- Decreases if you consistently succeed
-- Affects how soon items come back for review
+| Step | Interval (days) |
+|------|-----------------|
+| 1 | 1 |
+| 2 | 2 |
+| 3 | 3 |
+| 4 | 5 |
+| 5 | 7 |
+| 6 | 12 |
+| 7 | 20 |
+| 8 | 25 |
+| 9 | 47 |
+| 10 | 84 |
+| 11 | 143 |
+| 12 | 180 |
 
----
+#### Overdue Penalty
+Items left unreviewed past their due date regress steps:
+- 7+ days overdue: -1 step
+- 30+ days overdue: -2 steps
+- 90+ days overdue: -3 steps
 
-### How Reviews Affect Memory
-
-**Quality Scores (0-5):**
-| Score | Meaning | Effect |
-|-------|---------|--------|
-| 0 | Complete blackout | -25 memory strength |
-| 1 | Wrong, but recognized when shown | -10 memory strength |
-| 2 | Wrong, but close | -5 memory strength |
-| 3 | Correct with effort | +5 memory strength |
-| 4 | Correct, fairly easy | +12 memory strength |
-| 5 | Instant, effortless recall | +20 memory strength |
-
-**Review Mode:**
-- Reviews happen in Detail View (open item, press `R` or tap Remember)
-- Dashboard shows analytics derived from item-level SRS data
-
-**Speed Bonus:**
-Faster correct answers slightly boost memory strength:
-- Very fast (< 50% expected time): +3 bonus
-- Fast (< 80% expected time): +1 bonus
-- Slow (> 200% expected time): -2 penalty
+This means the schedule is self-correcting — forgotten words get shorter intervals.
 
 ---
 
-### Time Decay
+### How Reviews Work
 
-**Between Reviews:**
-Memory strength naturally decays over time using exponential decay:
+**Positive-Signal-Only Design:**
+- Only one event: **"Remember"** (user taps green bar, double-clicks card, or presses `R`)
+- Skipping produces no data — the card stays due
+- No quality scores, no speed bonuses, no difficulty parameter
+
+**What happens on "Remember":**
+1. Calculate overdue penalty (if any)
+2. Penalize current step, then advance by 1
+3. Look up new interval from the schedule
+4. Update stability, memory strength, and next review date
+5. Reset correct streak if penalty was applied
+
+**Where Reviews Happen:**
+- In Detail View: double-click the card background, or press `R`
+- Success animation ("Remembered!") confirms the action
+- All items sharing the same word title are updated together (Shared SRS)
+### Retention Probability
+
+The app can calculate current retention probability:
 ```
-Current Strength = Original Strength × e^(-days / (stability × 2))
+R = 0.9^(days_since_review / stability)
 ```
-
-**What this means:**
-- High stability = slow decay
-- Low stability = fast decay
-- After 1 week with stability 3.5: ~60% of original strength remains
-- After 1 month with stability 30: ~90% remains
-
-**Practical Effect:**
-- Review items before they decay too much
-- App schedules reviews at ~85% retention probability
-- You review words right before you'd forget them
+When elapsed time equals stability, retention is 90%. This is used for display purposes (e.g., deciding if an item is "due").
 
 ---
 
@@ -762,14 +697,10 @@ The Study tab shows a dashboard with learning analytics derived from item-level 
 ### Review Scheduling
 
 **When words appear for review:**
-- Based on SRS algorithm (spaced repetition)
-- Due items shown on the dashboard with count and average retention
-- Reviews happen in Detail View: open a due item and press `R` to mark as recalled
-
-**Stats Recorded:**
-- Session saved to Firebase (if signed in)
-- Contributes to streaks
-- Visible in analytics
+- Based on fixed-schedule SRS algorithm
+- Due items shown in the Notebook (sorted to top when using "familiarity" sort)
+- Due count displayed on the Study dashboard
+- Reviews happen in Detail View: open a due item and press `R` or double-click to mark as recalled
 
 ---
 
@@ -880,8 +811,8 @@ When the same item is edited on two devices:
 
 **Soft Delete:**
 - Deleted items marked as `isDeleted: true`
-- Kept for 1 day to propagate deletions
-- Then permanently removed
+- Kept for 30 days to propagate deletions across devices
+- Then permanently removed during cleanup
 
 ---
 
@@ -982,11 +913,14 @@ When the same item is edited on two devices:
 ### Navigation
 
 **Bottom Tab Bar:**
-- Three tabs: Notebook | Study | Podcast (search is integrated into Notebook)
+- Three tabs: Notebook | Study | Podcast
+- Search is integrated into the Notebook tab header (not a separate tab)
 - Icons with labels
 - Active state: indigo color, thicker icon
+- Badge on Podcast tab shows podcast queue count
 - Hides when scrolling down (more content space)
 - Reappears when scrolling up
+- Desktop: Keyboard shortcuts button (⌨️) appears as a fourth nav item
 
 **Safe Areas:**
 - Respects notch/Dynamic Island on iOS
@@ -1323,12 +1257,12 @@ Images are intentionally designed as **simple, low-complexity icons** rather tha
 Users can paste any block of English text (articles, book excerpts, emails) and the AI automatically identifies interesting or challenging vocabulary within it.
 
 ### How It Works
-1. User opens the Text Analyzer modal from the Notebook view
-2. Pastes or types a passage of text
-3. AI (`detectVocabulary`) scans the passage and returns a list of notable words
-4. User selects which words to analyze in detail
-5. Each selected word is sent through the full `analyzeInput` pipeline
-6. Results are saved directly to the user's notebook
+1. User opens the Text Analyzer modal from the Notebook header (ScanText icon)
+2. **Step 1 — Input:** Pastes or types a passage of text (Cmd+Enter to scan, or paste button)
+3. **Step 2 — Select:** AI (`extractVocabulary`) scans the passage and returns a checklist of notable words with level badges (C1, C2, idiom, phrasal verb, etc.), context snippets, and reasons. All words are selected by default; user deselects any they don't want.
+4. **Step 3 — Analyze:** Each selected word is sent through the full `analyzeInput` pipeline sequentially (with 800ms delay between calls to avoid rate-limiting). Progress bar shows current word being analyzed.
+5. **Step 4 — Done:** Results are saved directly to the user's notebook. Fire-and-forget image generation runs for each saved vocab card. Summary shows success/error counts.
+6. User can abort the analysis mid-way ("Stop after current word" button)
 
 ### Use Cases
 - Reading an article and wanting to learn all the advanced vocabulary
@@ -1343,10 +1277,20 @@ Users can paste any block of English text (articles, book excerpts, emails) and 
 Users can select 2-3 similar words and get a detailed AI-generated comparison showing exactly how they differ in meaning, usage, register, and context.
 
 ### How It Works
-1. User enters "compare mode" from the Notebook view
-2. Taps 2-3 words from their saved vocabulary to select them
-3. AI (`compareWords`) generates a structured comparison
-4. Results display in a dedicated `ComparisonView`
+
+**Entry Point 1 — Notebook Compare Mode:**
+1. User taps the Compare toggle (Scale icon) in the Notebook header
+2. Cards become selectable with checkboxes
+3. Taps 2-3 words from their saved vocabulary
+4. Taps "Compare N Words" floating action button
+5. AI generates a structured comparison
+
+**Entry Point 2 — Inline Compare from VocabCard:**
+1. User views any vocabulary card (in Detail View or Search Results)
+2. Taps the "Compare" button next to the Synonyms or Confusables section
+3. Selects 1-2 related words from the pill list to compare with the current word
+4. Taps "Go" to trigger comparison
+5. Results display in ComparisonView
 
 ### Comparison Dimensions
 | Dimension | What It Shows |
@@ -1387,15 +1331,24 @@ DictProp generates personalized podcast episodes that teach vocabulary through e
 - Delete and retry capabilities
 
 ### Technical Flow
-1. Frontend calls `generatePodcast` Cloud Function with list of word objects
-2. Cloud Function uses GPT-4o to generate a teaching script
-3. Script is converted to audio via OpenAI TTS (alloy voice)
-4. Audio is uploaded to Firebase Storage at `podcasts/{userId}/{podcastId}.mp3`
-5. Metadata (script, word list, duration, status) is stored in Firestore
-6. Frontend polls/subscribes for completion and fetches signed audio URL
+1. Frontend calls `generatePodcast` Cloud Function — creates a Firestore document with `status: 'generating'` and returns immediately
+2. A Firestore `onDocumentCreated` trigger (`processPodcast`) picks up the new document
+3. Cloud Function uses GPT-4o to generate a teaching script
+4. Script is converted to audio via OpenAI TTS-1-HD (nova voice)
+5. Audio is uploaded to Firebase Storage at `podcasts/{userId}/{podcastId}.mp3`
+6. Metadata (script, word list, duration, status) is updated in Firestore to `status: 'ready'`
+7. Frontend receives update via real-time Firestore subscription
+8. Browser notification sent if app tab is hidden when generation completes
 
 ### Daily Auto-Generation
-A scheduled Cloud Function (`dailyPodcastJob`) can automatically generate podcasts for active users using their weakest vocabulary.
+A scheduled Cloud Function (`dailyPodcastJob`) runs daily at 2 PM UTC:
+1. Reads each user's podcast queue from Firestore (words added during review)
+2. Backfills remaining slots (up to 30) with the user's weakest vocabulary
+3. Creates a `generating` document to trigger the podcast pipeline
+4. Clears the user's podcast queue after consuming it
+
+### Auto-Cleanup
+A scheduled Cloud Function (`cleanupOldPodcasts`) runs daily at 3 AM UTC and deletes podcasts older than 14 days (both audio files and Firestore documents).
 
 ---
 
@@ -1576,9 +1529,10 @@ A scheduled Cloud Function (`dailyPodcastJob`) can automatically generate podcas
 - Background dims
 - Smooth easing
 
-**Page Background Refresh:**
-- Content refresh after 5+ minutes in background (iOS PWA)
-- Prevents stale data
+**Background Sync:**
+- Force sync triggered after 30+ seconds in background (iOS PWA)
+- Preserves current UI state (no jarring reload)
+- Merges remote changes transparently
 
 ---
 
@@ -1587,15 +1541,15 @@ A scheduled Cloud Function (`dailyPodcastJob`) can automatically generate podcas
 ### Local Storage (IndexedDB)
 
 **Database Structure:**
-- Database name: `dictprop_db`
-- Object store: `vocab_items`
-- Key: item ID (UUID)
+- Database name: `PopDictDB`
+- Object store: `library`
+- Key: per-user storage key (`items_{userId}` or `items_guest`)
 
 **What's Stored Locally:**
 | Data | Size (typical) | Notes |
 |------|----------------|-------|
 | Vocabulary card data | ~2KB per card | All fields |
-| SRS state | ~500B per item | Memory strength, intervals, history |
+| SRS state | ~500B per item | Memory strength, intervals, review counts |
 | Images | ~50-200KB each | Base64 encoded |
 | User preferences | ~100B | View state, last query |
 
@@ -1608,13 +1562,14 @@ A scheduled Cloud Function (`dailyPodcastJob`) can automatically generate podcas
 
 **Document Structure:**
 ```
-users/{userId}/vocab_items/{itemId}
+users/{userId}/items/{itemId}
 ├── data (vocabulary card content)
 ├── type ("vocab" or "phrase")
 ├── srs (learning state)
 ├── savedAt (timestamp)
 ├── updatedAt (timestamp)
-└── isDeleted (soft delete flag)
+├── isDeleted (soft delete flag)
+└── isArchived (archive flag)
 ```
 
 **What's NOT Synced:**
@@ -1695,7 +1650,7 @@ users/{userId}/vocab_items/{itemId}
 
 **Cleanup:**
 - Soft-deleted items purged after 30 days
-- Old task history pruned (keeps last 50 per item)
+- Podcasts auto-deleted after 14 days
 - Images garbage collected with deleted items
 
 ---
@@ -1711,13 +1666,13 @@ users/{userId}/vocab_items/{itemId}
 4. Confirm name, tap "Add"
 
 **Known Issues:**
-- OAuth requires redirect (not popup)
+- OAuth requires redirect on iPhone/iPod (not popup); iPad uses popup
 - "Prevent Cross-Site Tracking" can block sign-in
-- Background refresh needed after 5+ minutes
+- App triggers background force sync (not reload) when returning from background >30s
 
 **Workarounds:**
-- App auto-reloads when returning from background >5min
-- Sign-in uses redirect flow on iOS
+- App triggers a background force sync when returning from background >30s (preserves UI state, no jarring reload)
+- Sign-in uses redirect flow on iPhone/iPod (iPad uses popup like desktop)
 - Modal explains privacy settings if sign-in fails
 
 ### Android Chrome
@@ -2331,8 +2286,8 @@ Mnemonic: Picture a speedometer needle moving from 0 to 100
 | **Stability** | How long a memory lasts before significant decay |
 | **Mastery Level** | User-friendly label (New → Grandmaster) based on memory strength |
 | **Due Item** | Word scheduled for review (memory has decayed to target level) |
-| **Quality Score** | 0-5 rating of recall quality during review |
-| **Task Type** | Review mode (recall via Detail View Remember button or `R` key) |
+| **Quality Score** | Not used — the app uses a positive-signal-only fixed-schedule SRS |
+| **Task Type** | Not applicable — reviews use a single "Remember" action via Detail View |
 | **Interval** | Time until next scheduled review |
 
 ## Technical Terms (Simplified)
@@ -2432,9 +2387,9 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ### Navigation
 | Tab | Purpose |
 |-----|---------|
-| Notebook | Look up, save, and manage vocabulary (includes integrated search) |
-| Study | View learning analytics and review due vocabulary |
-| Podcast | Listen to AI-generated vocabulary audio lessons |
+| Notebook | Look up, save, and manage vocabulary (includes integrated search bar with AI search, voice search, and fuzzy filtering) |
+| Study | View learning analytics dashboard (reviews happen in Detail View) |
+| Podcast | Listen to AI-generated vocabulary audio lessons; manage podcast queue |
 
 ### Actions
 | Action | How |
@@ -2476,7 +2431,8 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ### Study Mode
 | Mode | Description |
 |------|-------------|
-| Dashboard | View learning analytics; reviews happen in Detail View via `R` key or Remember button |
+| Dashboard | View learning analytics (due count, mastery breakdown, 7-day activity, achievements) |
+| Detail View Review | Open any item and press `R` or double-click to mark as "Remembered" |
 
 ---
 
@@ -2581,13 +2537,14 @@ service cloud.firestore {
   match /databases/{database}/documents {
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
-      
+
       match /items/{itemId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
-      
-      match /sessions/{sessionId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      match /podcasts/{podcastId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if false; // Only Cloud Functions write
       }
     }
   }
@@ -2762,6 +2719,7 @@ interface VocabCard {
   ipa: string;
   definition: string;
   forms?: string[];    // e.g., ["runs", "running", "ran"]
+  wordFamily?: WordFamilyEntry[]; // Related words of different parts of speech
   synonyms: string[];
   antonyms: string[];
   confusables: string[];
@@ -2771,6 +2729,12 @@ interface VocabCard {
   mnemonic: string;
   imagePrompt?: string;
   imageUrl?: string;   // Base64 data URI
+}
+
+interface WordFamilyEntry {
+  word: string;
+  pos: string;    // Part of speech: noun, verb, adj, adv
+  chinese: string;
 }
 ```
 
@@ -2783,6 +2747,7 @@ interface StoredItem {
   savedAt: number;
   updatedAt?: number;
   isDeleted?: boolean;  // Soft delete for sync
+  isArchived?: boolean; // Archive flag — excludes from study
 }
 ```
 
@@ -2793,12 +2758,11 @@ interface SRSData {
   type: 'vocab' | 'phrase';
   nextReview: number;      // Timestamp
   interval: number;        // Minutes
-  memoryStrength: number;  // 0-100
-  stability: number;       // Days
-  difficulty: number;      // 0-10
-  totalReviews: number;
-  correctStreak: number;
-  taskHistory: TaskPerformance[];
+  memoryStrength: number;  // 0-100, derived from stability via log mapping
+  lastReviewDate: number;  // Timestamp of last review
+  totalReviews: number;    // Count of successful "remember" taps (= schedule step)
+  correctStreak: number;   // Consecutive remembers without overdue penalty
+  stability: number;       // Current interval in days (= SCHEDULE[step])
 }
 ```
 
@@ -2865,9 +2829,9 @@ interface SRSData {
 ## Key Implementation Details
 
 ### IndexedDB Storage
-- Database: `dictprop_db`
-- Store: `vocab_items`
-- Primary key: `data.id`
+- Database: `PopDictDB`
+- Store: `library`
+- Primary key: per-user storage key (`items_{userId}`)
 - Used for offline-first storage
 
 ### Sync Strategy
@@ -2906,7 +2870,7 @@ interface SRSData {
 
 ---
 
-*Document Version: 3.0*
-*Last Updated: February 2025*
+*Document Version: 4.0*
+*Last Updated: February 2026*
 *Total Sections: 22 + Appendix + Technical Guide*
 *Estimated Reading Time: 55-70 minutes*

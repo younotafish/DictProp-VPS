@@ -13,7 +13,7 @@
  * All stats are derived from item-level SRS fields (lastReviewDate, totalReviews).
  */
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { StoredItem, VocabCard, SearchResult } from '../types';
 import { 
   Trophy, 
@@ -37,6 +37,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 }) => {
   // Scroll container ref for position restoration
   const dashboardScrollRef = React.useRef<HTMLDivElement>(null);
+  const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Cleanup scroll save timer
+  useEffect(() => () => { if (scrollSaveTimerRef.current) clearTimeout(scrollSaveTimerRef.current); }, []);
   
   // Restore dashboard scroll position on mount
   useEffect(() => {
@@ -199,7 +203,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       ref={dashboardScrollRef}
       className="h-full overflow-y-auto bg-slate-50 p-6 pb-[calc(5rem+env(safe-area-inset-bottom))]" 
       onScroll={(e) => {
-        localStorage.setItem('study_dashboard_scroll', e.currentTarget.scrollTop.toString());
+        const scrollTop = e.currentTarget.scrollTop;
+        if (scrollSaveTimerRef.current) clearTimeout(scrollSaveTimerRef.current);
+        scrollSaveTimerRef.current = setTimeout(() => {
+          localStorage.setItem('study_dashboard_scroll', scrollTop.toString());
+        }, 500);
         onScroll?.(e);
       }}
     >

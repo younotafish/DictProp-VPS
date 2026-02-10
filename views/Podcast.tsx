@@ -734,10 +734,8 @@ export const PodcastView: React.FC<PodcastViewProps> = ({ user, isOnline, items,
       prevPodcastsRef.current = data;
 
       setPodcasts(data);
-      // Auto-expand latest podcast if nothing is expanded
-      if (data.length > 0 && !expandedId) {
-        setExpandedId(data[0].id);
-      }
+      // Auto-expand latest podcast only if nothing is currently expanded
+      setExpandedId(prev => prev ?? (data.length > 0 ? data[0].id : null));
     });
 
     return unsubscribe;
@@ -745,7 +743,10 @@ export const PodcastView: React.FC<PodcastViewProps> = ({ user, isOnline, items,
 
   // Separate daily and manual podcasts
   const latestDaily = useMemo(() => podcasts.find(p => p.mode === 'daily'), [podcasts]);
-  const historyPodcasts = useMemo(() => podcasts.slice(latestDaily ? 1 : 0), [podcasts, latestDaily]);
+  const historyPodcasts = useMemo(() => {
+    if (!latestDaily) return podcasts;
+    return podcasts.filter(p => p.id !== latestDaily.id);
+  }, [podcasts, latestDaily]);
 
   // Resolve queued items to StoredItem objects
   const queuedItems = useMemo(() => {
