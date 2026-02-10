@@ -105,7 +105,7 @@ const AudioPlayer: React.FC<{
         setAudioUrl(url);
         // Audio will auto-play via onCanPlay handler
       } catch (err: any) {
-        setError('Failed to load audio');
+        setError(err?.message || 'Failed to load audio. Please check your connection and try again.');
         setLoading(false);
         return;
       }
@@ -121,7 +121,7 @@ const AudioPlayer: React.FC<{
     if (isPlaying) {
       audio.pause();
     } else {
-      audio.play().catch(() => setError('Playback failed'));
+      audio.play().catch((e) => setError('Tap play to start — your browser blocked autoplay.'));
     }
   };
 
@@ -168,7 +168,10 @@ const AudioPlayer: React.FC<{
                 }
               } catch {}
               // Auto-play after loading
-              audioRef.current.play().catch(() => {});
+              audioRef.current.play().catch((e) => {
+                // On mobile, autoplay may be blocked — show play button instead of error
+                setIsPlaying(false);
+              });
             }
           }}
           onPlay={() => setIsPlaying(true)}

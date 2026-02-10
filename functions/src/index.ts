@@ -9,6 +9,7 @@ import * as admin from "firebase-admin";
 admin.initializeApp();
 const adminDb = admin.firestore();
 const adminStorage = admin.storage();
+const STORAGE_BUCKET = 'dictpropstore.firebasestorage.app';
 
 // Define the secret parameters
 const replicateApiKey = defineSecret("REPLICATE_API_TOKEN");
@@ -1359,7 +1360,7 @@ async function generatePodcastCore(
 
     // 3. Upload audio to Firebase Storage
     const audioPath = `podcasts/${userId}/${podcastId}.mp3`;
-    const bucket = adminStorage.bucket();
+    const bucket = adminStorage.bucket(STORAGE_BUCKET);
     const file = bucket.file(audioPath);
     await file.save(audioBuffer, {
       metadata: {
@@ -1503,66 +1504,85 @@ export const generatePodcast = onCall({
     throw new HttpsError('unauthenticated', 'Must be signed in');
   }
 
-  const wordIds: string[] | undefined = request.data.wordIds;
-  let words: PodcastWord[];
-  let mode: 'daily' | 'manual';
+  try {
+    const wordIds: string[] | undefined = request.data.wordIds;
+    let words: PodcastWord[];
+    let mode: 'daily' | 'manual';
 
-  if (wordIds && Array.isArray(wordIds) && wordIds.length > 0) {
-    if (wordIds.length > 30) {
-      throw new HttpsError('invalid-argument', 'Maximum 30 words for manual podcast');
-    }
-
-    mode = wordIds.length <= 3 ? 'manual' : 'daily';
-    words = [];
-
-    for (const wordId of wordIds) {
-      const docSnap = await adminDb.doc(`users/${userId}/items/${wordId}`).get();
-      if (!docSnap.exists) {
-        throw new HttpsError('not-found', `Item ${wordId} not found`);
+    if (wordIds && Array.isArray(wordIds) && wordIds.length > 0) {
+      if (wordIds.length > 30) {
+        throw new HttpsError('invalid-argument', 'Maximum 30 words for manual podcast');
       }
-      const data = docSnap.data() as any;
-      words.push({
-        word: data.data?.word || '',
-        chinese: data.data?.chinese || '',
-        sense: data.data?.sense || '',
-        definition: data.data?.definition || '',
-        example: data.data?.examples?.[0] || '',
-        mnemonic: data.data?.mnemonic || '',
-        memoryStrength: data.srs?.memoryStrength ?? 100,
-      });
+
+      mode = wordIds.length <= 3 ? 'manual' : 'daily';
+      words = [];
+
+      for (const wordId of wordIds) {
+        try {
+          const docSnap = await adminDb.doc(`users/${userId}/items/${wordId}`).get();
+          if (!docSnap.exists) {
+            logger.warn(`Podcast: Item ${wordId} not found in Firestore, skipping`);
+            continue; // Skip missing items instead of throwing
+          }
+          const data = docSnap.data() as any;
+          words.push({
+            word: data.data?.word || '',
+            chinese: data.data?.chinese || '',
+            sense: data.data?.sense || '',
+            definition: data.data?.definition || '',
+            example: data.data?.examples?.[0] || '',
+            mnemonic: data.data?.mnemonic || '',
+            memoryStrength: data.srs?.memoryStrength ?? 100,
+          });
+        } catch (itemErr: any) {
+          logger.warn(`Podcast: Failed to read item ${wordId}: ${itemErr.message}`);
+          continue; // Skip items that fail to read
+        }
+      }
+
+      if (words.length === 0) {
+        throw new HttpsError('failed-precondition', 'None of the selected items could be found. They may not have synced yet — please try again.');
+      }
+    } else {
+      // Auto mode: select 30 weakest words
+      mode = 'daily';
+      words = await selectWeakestWords(userId, 30);
     }
-  } else {
-    // Auto mode: select 30 weakest words
-    mode = 'daily';
-    words = await selectWeakestWords(userId, 30);
+
+    // Create podcast document with status: 'generating' and return immediately
+    const podcastId = `podcast_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    const metadata: PodcastMetadata = {
+      id: podcastId,
+      generatedAt: Date.now(),
+      mode,
+      status: 'generating',
+      audioPath: '',
+      duration: 0,
+      wordCount: words.length,
+      words: words.map(w => ({ word: w.word, chinese: w.chinese, sense: w.sense })),
+      script: '',
+    };
+
+    // Store full word data in a separate field for the trigger to use
+    const docData = {
+      ...metadata,
+      _wordsForGeneration: words, // Internal field consumed by the trigger
+    };
+
+    await adminDb.doc(`users/${userId}/podcasts/${podcastId}`).set(docData);
+    logger.info(`Podcast: Created ${podcastId} with status 'generating' for user ${userId} (${words.length} words)`);
+
+    // Return immediately — the Firestore trigger will handle the rest
+    return { id: podcastId, status: 'generating' };
+  } catch (error: any) {
+    // Re-throw HttpsErrors as-is (they already have user-friendly messages)
+    if (error instanceof HttpsError) throw error;
+
+    // Wrap unexpected errors with a helpful message instead of raw "INTERNAL"
+    logger.error('Podcast: Unexpected error in generatePodcast:', error.message, error.stack);
+    throw new HttpsError('internal', 'Podcast generation failed. Please try again.');
   }
-
-  // Create podcast document with status: 'generating' and return immediately
-  const podcastId = `podcast_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-
-  const metadata: PodcastMetadata = {
-    id: podcastId,
-    generatedAt: Date.now(),
-    mode,
-    status: 'generating',
-    audioPath: '',
-    duration: 0,
-    wordCount: words.length,
-    words: words.map(w => ({ word: w.word, chinese: w.chinese, sense: w.sense })),
-    script: '',
-  };
-
-  // Store full word data in a separate field for the trigger to use
-  const docData = {
-    ...metadata,
-    _wordsForGeneration: words, // Internal field consumed by the trigger
-  };
-
-  await adminDb.doc(`users/${userId}/podcasts/${podcastId}`).set(docData);
-  logger.info(`Podcast: Created ${podcastId} with status 'generating' for user ${userId} (${words.length} words)`);
-
-  // Return immediately — the Firestore trigger will handle the rest
-  return { id: podcastId, status: 'generating' };
 });
 
 // --- Firestore trigger: processPodcast (does the actual generation) ---
@@ -1642,7 +1662,7 @@ export const deletePodcast = onCall({
   // Delete audio file from Storage if it exists
   if (data?.audioPath) {
     try {
-      const bucket = adminStorage.bucket();
+      const bucket = adminStorage.bucket(STORAGE_BUCKET);
       const file = bucket.file(data.audioPath);
       await file.delete();
       logger.info(`deletePodcast: Deleted audio file ${data.audioPath}`);
@@ -1816,7 +1836,7 @@ export const cleanupOldPodcasts = onSchedule({
         // Delete audio file from Storage
         if (data.audioPath) {
           try {
-            const bucket = adminStorage.bucket();
+            const bucket = adminStorage.bucket(STORAGE_BUCKET);
             const file = bucket.file(data.audioPath);
             await file.delete();
           } catch (e: any) {

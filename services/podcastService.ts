@@ -43,6 +43,14 @@ export const generatePodcast = async (wordIds?: string[]): Promise<{ id: string 
       throw new Error(msg || "Invalid request. Maximum 30 words for manual podcast.");
     }
 
+    if (code === 'functions/deadline-exceeded' || msg.includes('deadline-exceeded') || msg.includes('timed out')) {
+      throw new Error("Request timed out. Please try again.");
+    }
+
+    if (code === 'functions/internal' || msg === 'INTERNAL') {
+      throw new Error("Podcast generation failed. Please try again.");
+    }
+
     throw new Error(msg || 'Failed to start podcast generation. Please try again.');
   }
 };
