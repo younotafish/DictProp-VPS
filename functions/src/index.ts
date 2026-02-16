@@ -9,7 +9,6 @@ import * as admin from "firebase-admin";
 admin.initializeApp();
 const adminDb = admin.firestore();
 const adminStorage = admin.storage();
-const STORAGE_BUCKET = 'dictpropstore.firebasestorage.app';
 
 // Define the secret parameters
 const replicateApiKey = defineSecret("REPLICATE_API_TOKEN");
@@ -201,7 +200,7 @@ Each vocab object MUST have these fields:
   "word": "string - The vocabulary word or phrase",
   "sense": "string - Brief label for this specific meaning (e.g., 'noun: financial', 'verb: to rely on')",
   "chinese": "string - Chinese translation for THIS specific meaning only",
-  "ipa": "string - American English IPA pronunciation with stress marks (use General American accent, NOT British)",
+  "ipa": "string - General American (GA) IPA with stress marks. MUST be rhotic American, NEVER British RP. Key rules: always include /r/ after vowels (car=/kɑːr/ NOT /kɑː/), use /ɑː/ not /ɒ/ (lot=/lɑːt/ NOT /lɒt/), use /æ/ not /ɑː/ in BATH words (bath=/bæθ/ NOT /bɑːθ/), use /ɛr/ not /eə/ (care=/kɛr/ NOT /keə/), use /t/ not /ʔ/ (better=/ˈbɛtɚ/ NOT /ˈbeʔə/)",
   "definition": "string - Original English definition for THIS specific meaning/sense",
   "forms": ["array of strings - Different grammatical forms (e.g., runs, running, ran)"],
   "wordFamily": ["array of objects - Related words of different parts of speech, each with { word, pos, chinese }"],
@@ -231,7 +230,7 @@ You MUST respond with valid JSON in this exact format:
   "translation": "string - Precise Chinese translation of the full sentence",
   "grammar": "string - Markdown explanation of grammar, nuance, tone, and register",
   "visualKeyword": "string - One single visual keyword to represent the whole concept for image generation",
-  "pronunciation": "string - American English IPA pronunciation of the full input (use General American accent, NOT British)",
+  "pronunciation": "string - General American (GA) IPA of the full input. MUST be rhotic American, NEVER British RP. Always include /r/ after vowels, use /ɑː/ not /ɒ/, use /æ/ not /ɑː/ in BATH words, use /ɛr/ not /eə/",
   "vocabs": [
     ${VOCAB_SCHEMA_DESCRIPTION}
   ]
@@ -1360,7 +1359,7 @@ async function generatePodcastCore(
 
     // 3. Upload audio to Firebase Storage
     const audioPath = `podcasts/${userId}/${podcastId}.mp3`;
-    const bucket = adminStorage.bucket(STORAGE_BUCKET);
+    const bucket = adminStorage.bucket();
     const file = bucket.file(audioPath);
     await file.save(audioBuffer, {
       metadata: {
@@ -1517,27 +1516,25 @@ export const generatePodcast = onCall({
       mode = wordIds.length <= 3 ? 'manual' : 'daily';
       words = [];
 
-      for (const wordId of wordIds) {
-        try {
-          const docSnap = await adminDb.doc(`users/${userId}/items/${wordId}`).get();
-          if (!docSnap.exists) {
-            logger.warn(`Podcast: Item ${wordId} not found in Firestore, skipping`);
-            continue; // Skip missing items instead of throwing
-          }
-          const data = docSnap.data() as any;
-          words.push({
-            word: data.data?.word || '',
-            chinese: data.data?.chinese || '',
-            sense: data.data?.sense || '',
-            definition: data.data?.definition || '',
-            example: data.data?.examples?.[0] || '',
-            mnemonic: data.data?.mnemonic || '',
-            memoryStrength: data.srs?.memoryStrength ?? 100,
-          });
-        } catch (itemErr: any) {
-          logger.warn(`Podcast: Failed to read item ${wordId}: ${itemErr.message}`);
-          continue; // Skip items that fail to read
+      // Batch-read all items at once (much faster than sequential reads, especially on cold start)
+      const docRefs = wordIds.map(id => adminDb.doc(`users/${userId}/items/${id}`));
+      const docs = await adminDb.getAll(...docRefs);
+
+      for (const docSnap of docs) {
+        if (!docSnap.exists) {
+          logger.warn(`Podcast: Item ${docSnap.id} not found in Firestore, skipping`);
+          continue;
         }
+        const data = docSnap.data() as any;
+        words.push({
+          word: data.data?.word || '',
+          chinese: data.data?.chinese || '',
+          sense: data.data?.sense || '',
+          definition: data.data?.definition || '',
+          example: data.data?.examples?.[0] || '',
+          mnemonic: data.data?.mnemonic || '',
+          memoryStrength: data.srs?.memoryStrength ?? 100,
+        });
       }
 
       if (words.length === 0) {
@@ -1662,7 +1659,7 @@ export const deletePodcast = onCall({
   // Delete audio file from Storage if it exists
   if (data?.audioPath) {
     try {
-      const bucket = adminStorage.bucket(STORAGE_BUCKET);
+      const bucket = adminStorage.bucket();
       const file = bucket.file(data.audioPath);
       await file.delete();
       logger.info(`deletePodcast: Deleted audio file ${data.audioPath}`);
@@ -1836,7 +1833,7 @@ export const cleanupOldPodcasts = onSchedule({
         // Delete audio file from Storage
         if (data.audioPath) {
           try {
-            const bucket = adminStorage.bucket(STORAGE_BUCKET);
+            const bucket = adminStorage.bucket();
             const file = bucket.file(data.audioPath);
             await file.delete();
           } catch (e: any) {
