@@ -17,18 +17,40 @@ import { analyzeInput } from './services/aiService';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 
-// Strip base64 images from items to create a lightweight cache for localStorage (5MB limit)
-const stripImagesForCache = (items: StoredItem[]): StoredItem[] =>
-  items.map(item => ({
-    ...item,
-    data: {
-      ...item.data,
-      imageUrl: undefined,
-      vocabs: isPhraseItem(item) && (item.data as SearchResult).vocabs
-        ? (item.data as SearchResult).vocabs.map((v: VocabCard) => ({ ...v, imageUrl: undefined }))
-        : undefined
+// Create lightweight cache for localStorage (target: <1MB for 3000+ items)
+// Only includes fields needed for list display + SRS scheduling
+// Full data loads from IndexedDB after initial render
+const createLightweightCache = (items: StoredItem[]): any[] =>
+  items.map(item => {
+    const entry: any = {
+      type: item.type,
+      srs: item.srs,
+      savedAt: item.savedAt,
+      updatedAt: item.updatedAt,
+    };
+    if (item.isDeleted) entry.isDeleted = true;
+    if (item.isArchived) entry.isArchived = true;
+
+    if (isPhraseItem(item)) {
+      entry.data = {
+        id: item.data.id,
+        query: item.data.query,
+        translation: item.data.translation,
+        pronunciation: item.data.pronunciation,
+        vocabs: (item.data.vocabs || []).map((v: VocabCard) => ({
+          id: v.id, word: v.word, sense: v.sense, chinese: v.chinese, ipa: v.ipa,
+        })),
+        timestamp: item.data.timestamp,
+      };
+    } else {
+      const vocab = item.data as VocabCard;
+      entry.data = {
+        id: vocab.id, word: vocab.word, sense: vocab.sense,
+        chinese: vocab.chinese, ipa: vocab.ipa,
+      };
     }
-  }));
+    return entry;
+  });
 
 // Keyboard shortcut display component
 const DETAIL_CONTEXT_KEY = 'app_detail_context';
@@ -296,7 +318,7 @@ const App: React.FC = () => {
         
         // Use synchronous localStorage as a backup (IndexedDB is async and may not complete)
         try {
-          localStorage.setItem('app_items_cache', JSON.stringify(stripImagesForCache(currentItems)));
+          localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(currentItems)));
           log("💾 Saved items cache on beforeunload");
         } catch (e) {
           warn("Failed to save cache on beforeunload:", e);
@@ -379,24 +401,31 @@ const App: React.FC = () => {
                 }
             }
             
-            // CRITICAL: Merge IndexedDB data with localStorage cache
-            // localStorage cache may have fresher data (from immediate saves before app was killed)
-            // Use mergeDatasets to pick the best version of each item
-            const cachedItems = syncState.items; // Current state was initialized from localStorage cache
+            // IndexedDB is the source of truth (has full item data)
+            // localStorage cache is now lightweight (titles + SRS only) for instant UI
+            const cachedItems = syncState.items;
             let processedItems: StoredItem[];
-            
-            if (cachedItems.length > 0 && itemsFromIDB.length > 0) {
-                // Both sources have data - merge them
-                // mergeDatasets will pick the item with more progress/newer updates
-                processedItems = mergeDatasets(cachedItems, itemsFromIDB);
-                log(`📦 Merged localStorage cache (${cachedItems.length}) with IndexedDB (${itemsFromIDB.length}) → ${processedItems.length} items`);
+            let hasCacheOnlyItems = false;
+
+            if (itemsFromIDB.length > 0) {
+                // Use IndexedDB data (full content)
+                // Check for items in cache that aren't in IDB (added but not yet saved to IDB)
+                const idbIds = new Set(itemsFromIDB.map(i => i.data.id));
+                const cacheOnlyItems = cachedItems.filter(i => !idbIds.has(i.data.id));
+                if (cacheOnlyItems.length > 0) {
+                    log(`📦 Found ${cacheOnlyItems.length} items in cache not in IndexedDB, adding them`);
+                    processedItems = [...itemsFromIDB, ...cacheOnlyItems];
+                    hasCacheOnlyItems = true;
+                } else {
+                    processedItems = itemsFromIDB;
+                }
+                log(`📦 Loaded ${processedItems.length} items from IndexedDB`);
             } else if (cachedItems.length > 0) {
-                // Only cache has data (IndexedDB empty or failed)
+                // IndexedDB empty, fall back to cache (lightweight, but better than nothing)
                 processedItems = cachedItems;
-                log(`📦 Using localStorage cache only: ${processedItems.length} items`);
+                log(`📦 IndexedDB empty, using cache: ${processedItems.length} items`);
             } else {
-                // Only IndexedDB has data (normal case for fresh load)
-                processedItems = itemsFromIDB;
+                processedItems = [];
             }
             
             let hasChanges = false;
@@ -434,7 +463,7 @@ const App: React.FC = () => {
             
             // 4. Save merged result back to IndexedDB if we merged or made changes
             // This ensures IndexedDB is up-to-date with any fresher data from cache
-            if (hasChanges || (cachedItems.length > 0 && itemsFromIDB.length > 0)) {
+            if (hasChanges || hasCacheOnlyItems) {
                 await saveData(processedItems);
             }
         } catch (e) {
@@ -631,7 +660,7 @@ const App: React.FC = () => {
     if (!isLoaded || syncState.items.length === 0) return;
     
     try {
-      localStorage.setItem('app_items_cache', JSON.stringify(stripImagesForCache(syncState.items)));
+      localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(syncState.items)));
     } catch (e) {
       // If quota exceeded, try to save just item count for UI feedback
       warn("Failed to cache items to localStorage", e);
@@ -1399,7 +1428,7 @@ const App: React.FC = () => {
     if (allUpdatedItems.length > 0) {
       // Also update localStorage cache synchronously (backup for iOS PWA)
       try {
-        localStorage.setItem('app_items_cache', JSON.stringify(stripImagesForCache(allUpdatedItems)));
+        localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(allUpdatedItems)));
       } catch (e) {
         warn("Failed to update cache after SRS:", e);
       }
