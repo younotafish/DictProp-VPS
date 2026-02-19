@@ -405,7 +405,7 @@ const App: React.FC = () => {
             // localStorage cache is now lightweight (titles + SRS only) for instant UI
             const cachedItems = syncState.items;
             let processedItems: StoredItem[];
-            let hasCacheOnlyItems = false;
+            let needsSaveToIDB = false;
 
             if (itemsFromIDB.length > 0) {
                 // Use IndexedDB data (full content)
@@ -415,14 +415,16 @@ const App: React.FC = () => {
                 if (cacheOnlyItems.length > 0) {
                     log(`📦 Found ${cacheOnlyItems.length} items in cache not in IndexedDB, adding them`);
                     processedItems = [...itemsFromIDB, ...cacheOnlyItems];
-                    hasCacheOnlyItems = true;
+                    needsSaveToIDB = true;
                 } else {
                     processedItems = itemsFromIDB;
                 }
                 log(`📦 Loaded ${processedItems.length} items from IndexedDB`);
             } else if (cachedItems.length > 0) {
                 // IndexedDB empty, fall back to cache (lightweight, but better than nothing)
+                // Save cache items to IDB so auth effect and future loads find them
                 processedItems = cachedItems;
+                needsSaveToIDB = true;
                 log(`📦 IndexedDB empty, using cache: ${processedItems.length} items`);
             } else {
                 processedItems = [];
@@ -463,7 +465,7 @@ const App: React.FC = () => {
             
             // 4. Save merged result back to IndexedDB if we merged or made changes
             // This ensures IndexedDB is up-to-date with any fresher data from cache
-            if (hasChanges || hasCacheOnlyItems) {
+            if (hasChanges || needsSaveToIDB) {
                 await saveData(processedItems);
             }
         } catch (e) {
@@ -554,17 +556,21 @@ const App: React.FC = () => {
         // 1. Load User's specific local data (offline cache for this user)
         // This is the primary data source - always available offline
         const userLocalItems = await loadData(currentUser.uid);
-        
+
         // Set user and local items FIRST (instant, works offline)
         setUser(currentUser);
-        
-        // Update ref immediately so event handlers have fresh data
-        latestItemsRef.current = userLocalItems;
-        
-        setSyncState(prevState => ({
-            ...prevState,
-            items: userLocalItems
-        }));
+
+        // Only replace items if user IDB has data
+        // If IDB is empty (corruption from crashes), keep cache items visible
+        // while Firestore fetch restores the correct data
+        if (userLocalItems.length > 0) {
+          latestItemsRef.current = userLocalItems;
+
+          setSyncState(prevState => ({
+              ...prevState,
+              items: userLocalItems
+          }));
+        }
         
         // 2. Load Remote Data ONLY if online (background sync)
         // Skip cloud fetch when offline to avoid delays
@@ -637,13 +643,16 @@ const App: React.FC = () => {
       } else {
           // LOGGED OUT
           setUser(null);
-          
-          // Load guest data
+
+          // Load guest data — only replace state if guest IDB has items
+          // (preserve cache items if IDB is empty due to corruption)
           const guestItems = await loadData('guest');
-          setSyncState(prevState => ({
-              ...prevState,
-              items: guestItems
-          }));
+          if (guestItems.length > 0) {
+            setSyncState(prevState => ({
+                ...prevState,
+                items: guestItems
+            }));
+          }
       }
     });
 

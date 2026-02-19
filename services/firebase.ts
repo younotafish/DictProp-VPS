@@ -1,10 +1,12 @@
 import { initializeApp, FirebaseApp } from "firebase/app";
-import { 
-  getAuth, 
-  signInWithPopup, 
+import {
+  initializeAuth,
+  browserLocalPersistence,
+  browserPopupRedirectResolver,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
-  GoogleAuthProvider, 
+  GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   User,
@@ -33,7 +35,7 @@ const CONFIG_KEY = 'popdict_firebase_config';
 // Default Configuration (Provided by User)
 const DEFAULT_CONFIG = {
   apiKey: "AIzaSyA0JgY0hTlnXZSVg3WQGfKhVm7ij0sTy-s",
-  authDomain: "dictpropstore.firebaseapp.com",
+  authDomain: "dictpropstore.web.app",
   projectId: "dictpropstore",
   storageBucket: "dictpropstore.firebasestorage.app",
   messagingSenderId: "340564794762",
@@ -65,7 +67,10 @@ try {
 
     // 2. Initialize
     app = initializeApp(config);
-    auth = getAuth(app);
+    auth = initializeAuth(app, {
+      persistence: browserLocalPersistence,
+      popupRedirectResolver: browserPopupRedirectResolver,
+    });
     db = getFirestore(app);
     functions = getFunctions(app);
     storage = getStorage(app);
@@ -95,28 +100,24 @@ const isIOsSafari = (): boolean => {
 export const signIn = async () => {
   if (!auth) throw new Error("NOT_CONFIGURED");
   try {
-    // iOS Safari on iPhone has issues with popups, use redirect instead
     if (isIOsSafari()) {
+      // iOS Safari/PWA: Must use redirect (popups are blocked in standalone mode)
       log("iOS Safari (iPhone) detected, using redirect method");
-      // Set flag to detect silent failures (e.g. Cross-Site Tracking)
       localStorage.setItem('auth_redirect_pending', 'true');
       await signInWithRedirect(auth, provider);
-      // The actual sign-in will complete when the page reloads
-      // handleRedirectResult should be called on app initialization
     } else {
       await signInWithPopup(auth, provider);
     }
   } catch (error: any) {
-    // Suppress console noise for expected operational errors
     const code = error.code || '';
     if (
-        code === 'auth/unauthorized-domain' || 
+        code === 'auth/unauthorized-domain' ||
         code === 'auth/popup-closed-by-user' ||
         code === 'auth/cancelled-popup-request'
     ) {
-        throw error; // Re-throw for UI to handle, but don't logError
+        throw error;
     }
-    
+
     logError("Error signing in", error);
     throw error;
   }
