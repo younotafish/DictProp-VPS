@@ -56,21 +56,21 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // Calculate comprehensive statistics — derived entirely from item-level SRS data
   const stats = useMemo(() => {
     const now = Date.now();
-    const due = items.filter(i => i.srs.nextReview <= now).length;
-    
+    const due = items.filter(i => (i.srs?.nextReview ?? 0) <= now).length;
+
     // Memory strength based categories (per PRODUCT_SUMMARY.md spec)
-    const grandmaster = items.filter(i => i.srs.memoryStrength >= 85).length;
-    const mastered = items.filter(i => i.srs.memoryStrength >= 70 && i.srs.memoryStrength < 85).length;
-    const proficient = items.filter(i => i.srs.memoryStrength >= 50 && i.srs.memoryStrength < 70).length;
-    const learning = items.filter(i => i.srs.memoryStrength >= 30 && i.srs.memoryStrength < 50).length;
-    const struggling = items.filter(i => i.srs.memoryStrength >= 10 && i.srs.memoryStrength < 30).length;
-    const newItems = items.filter(i => i.srs.memoryStrength < 10).length;
-    
+    const grandmaster = items.filter(i => (i.srs?.memoryStrength ?? 0) >= 85).length;
+    const mastered = items.filter(i => (i.srs?.memoryStrength ?? 0) >= 70 && (i.srs?.memoryStrength ?? 0) < 85).length;
+    const proficient = items.filter(i => (i.srs?.memoryStrength ?? 0) >= 50 && (i.srs?.memoryStrength ?? 0) < 70).length;
+    const learning = items.filter(i => (i.srs?.memoryStrength ?? 0) >= 30 && (i.srs?.memoryStrength ?? 0) < 50).length;
+    const struggling = items.filter(i => (i.srs?.memoryStrength ?? 0) >= 10 && (i.srs?.memoryStrength ?? 0) < 30).length;
+    const newItems = items.filter(i => (i.srs?.memoryStrength ?? 0) < 10).length;
+
     // Collect review dates from items for streak + chart calculation
     // Each item's lastReviewDate tells us the most recent day it was reviewed
     const reviewDateSet = new Set<string>();
     for (const item of items) {
-      if (item.srs.lastReviewDate && item.srs.totalReviews > 0) {
+      if (item.srs?.lastReviewDate && (item.srs?.totalReviews ?? 0) > 0) {
         const dateStr = new Date(item.srs.lastReviewDate).toISOString().split('T')[0];
         reviewDateSet.add(dateStr);
       }
@@ -95,36 +95,36 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     }
     
     // Average memory strength
-    const avgStrength = items.length > 0 
-      ? items.reduce((sum, i) => sum + i.srs.memoryStrength, 0) / items.length 
+    const avgStrength = items.length > 0
+      ? items.reduce((sum, i) => sum + (i.srs?.memoryStrength ?? 0), 0) / items.length
       : 0;
 
     // Weekly stats derived from item-level SRS data (last 7 days)
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     const weekAgoTimestamp = weekAgo.getTime();
-    
+
     // Count items reviewed in the last 7 days
     const itemsReviewedThisWeek = items.filter(
-      i => i.srs.lastReviewDate >= weekAgoTimestamp && i.srs.totalReviews > 0
+      i => (i.srs?.lastReviewDate ?? 0) >= weekAgoTimestamp && (i.srs?.totalReviews ?? 0) > 0
     );
     const weeklyReviews = itemsReviewedThisWeek.length;
-    
+
     // Average memory strength of items reviewed this week (proxy for accuracy)
     const weeklyAvgStrength = itemsReviewedThisWeek.length > 0
-      ? itemsReviewedThisWeek.reduce((sum, i) => sum + i.srs.memoryStrength, 0) / itemsReviewedThisWeek.length
+      ? itemsReviewedThisWeek.reduce((sum, i) => sum + (i.srs?.memoryStrength ?? 0), 0) / itemsReviewedThisWeek.length
       : 0;
 
     // Total lifetime reviews across all items
-    const totalLifetimeReviews = items.reduce((sum, i) => sum + (i.srs.totalReviews || 0), 0);
+    const totalLifetimeReviews = items.reduce((sum, i) => sum + (i.srs?.totalReviews ?? 0), 0);
 
     // Card-level metrics
     const longestStreak = items.length > 0
-      ? Math.max(...items.map(i => i.srs.correctStreak || 0))
+      ? Math.max(...items.map(i => i.srs?.correctStreak ?? 0))
       : 0;
     
     const mostReviewed = [...items]
-      .sort((a, b) => (b.srs.totalReviews || 0) - (a.srs.totalReviews || 0))
+      .sort((a, b) => (b.srs?.totalReviews ?? 0) - (a.srs?.totalReviews ?? 0))
       .slice(0, 3);
 
     // Get last 7 days for chart — count items reviewed on each day
@@ -135,7 +135,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       const dateStr = d.toISOString().split('T')[0];
       // Count items whose lastReviewDate falls on this day
       const dayReviews = items.filter(item => {
-        if (!item.srs.lastReviewDate || item.srs.totalReviews === 0) return false;
+        if (!item.srs?.lastReviewDate || (item.srs?.totalReviews ?? 0) === 0) return false;
         const reviewDateStr = new Date(item.srs.lastReviewDate).toISOString().split('T')[0];
         return reviewDateStr === dateStr;
       }).length;
@@ -371,7 +371,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         </div>
 
         {/* Most Reviewed */}
-        {stats.mostReviewed.length > 0 && stats.mostReviewed[0].srs.totalReviews > 0 && (
+        {stats.mostReviewed.length > 0 && (stats.mostReviewed[0].srs?.totalReviews ?? 0) > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-100">
             <p className="text-xs font-medium text-slate-600 mb-2">Most Practiced</p>
             <div className="flex flex-wrap gap-2">
@@ -380,7 +380,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                   key={idx}
                   className="px-2 py-1 bg-emerald-50 text-emerald-700 text-xs rounded-full font-medium"
                 >
-                  {getItemTitle(item)} ({item.srs.totalReviews}x)
+                  {getItemTitle(item)} ({item.srs?.totalReviews ?? 0}x)
                 </span>
               ))}
             </div>

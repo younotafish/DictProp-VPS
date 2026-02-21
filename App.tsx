@@ -4,7 +4,7 @@ import { StudyEnhanced } from './views/StudyEnhanced';
 import { PodcastView } from './views/Podcast';
 import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
-import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
+import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
 import { Book, BrainCircuit, Headphones, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
@@ -51,6 +51,45 @@ const createLightweightCache = (items: StoredItem[]): any[] =>
     }
     return entry;
   });
+
+// Normalize shared SRS: ensure all items with the same spelling share one SRS score.
+// When siblings have drifted (sync, legacy data), picks the most recently reviewed sibling
+// as canonical and applies its SRS to all others. Returns original array if nothing changed.
+function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
+  const groups = new Map<string, StoredItem[]>();
+  items.forEach(item => {
+    if (item.isDeleted) return;
+    const spelling = getItemSpelling(item);
+    if (!spelling) return;
+    if (!groups.has(spelling)) groups.set(spelling, []);
+    groups.get(spelling)!.push(item);
+  });
+
+  const updates = new Map<string, SRSData>();
+  groups.forEach(siblings => {
+    if (siblings.length <= 1) return;
+    // Pick the most recently reviewed sibling as canonical
+    const canonical = siblings.reduce((best, s) => {
+      const bSrs = SRSAlgorithm.ensure(best.srs, best.data.id, best.type);
+      const sSrs = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
+      return sSrs.lastReviewDate > bSrs.lastReviewDate ? s : best;
+    });
+    const canonicalSRS = SRSAlgorithm.ensure(canonical.srs, canonical.data.id, canonical.type);
+    for (const s of siblings) {
+      if (s.data.id === canonical.data.id) continue;
+      const sSRS = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
+      if (sSRS.memoryStrength !== canonicalSRS.memoryStrength) {
+        updates.set(s.data.id, { ...canonicalSRS, id: s.data.id });
+      }
+    }
+  });
+
+  if (updates.size === 0) return items;
+  return items.map(item => {
+    const newSRS = updates.get(item.data.id);
+    return newSRS ? { ...item, srs: newSRS } : item;
+  });
+}
 
 // Keyboard shortcut display component
 const DETAIL_CONTEXT_KEY = 'app_detail_context';
@@ -164,26 +203,20 @@ const App: React.FC = () => {
   const [isFirebaseConfigured, setIsFirebaseConfigured] = useState(isConfigured());
 
   // Updated DetailContext to support Group-based navigation (2D: Groups vs Items)
-  const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number } | null>(() => {
-    try {
-      const saved = localStorage.getItem(DETAIL_CONTEXT_KEY);
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) {
-      warn("Failed to restore detail context", e);
-      return null;
-    }
-  });
+  // NOTE: We no longer restore detailContext from localStorage. Persisted groups
+  // can contain stale/corrupted StoredItem data that crashes DetailView on reload.
+  // The trade-off is minor: users return to the notebook after a reload instead of
+  // resuming exactly where they were in the detail view.
+  const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number } | null>(null);
 
-  // Persist detailContext
+  // Persist detailContext (only group/item indices for potential future use)
   useEffect(() => {
     try {
-      if (detailContext) {
-        localStorage.setItem(DETAIL_CONTEXT_KEY, JSON.stringify(detailContext));
-      } else {
+      if (!detailContext) {
         localStorage.removeItem(DETAIL_CONTEXT_KEY);
       }
     } catch (e) {
-      warn("Failed to save detail context (quota exceeded?)", e);
+      warn("Failed to clear detail context", e);
     }
   }, [detailContext]);
 
@@ -455,11 +488,14 @@ const App: React.FC = () => {
                 hasChanges = true;
             }
 
-            // 3. Initialize sync state with merged data
+            // 3. Normalize shared SRS (ensure same-spelling siblings share one score)
+            processedItems = normalizeSharedSRS(processedItems);
+
+            // 4. Initialize sync state with merged data
             setSyncState({
                 items: processedItems
             });
-            
+
             // Also update the ref
             latestItemsRef.current = processedItems;
             
@@ -564,11 +600,12 @@ const App: React.FC = () => {
         // If IDB is empty (corruption from crashes), keep cache items visible
         // while Firestore fetch restores the correct data
         if (userLocalItems.length > 0) {
-          latestItemsRef.current = userLocalItems;
+          const normalizedUserItems = normalizeSharedSRS(userLocalItems);
+          latestItemsRef.current = normalizedUserItems;
 
           setSyncState(prevState => ({
               ...prevState,
-              items: userLocalItems
+              items: normalizedUserItems
           }));
         }
         
@@ -595,7 +632,11 @@ const App: React.FC = () => {
 
             // Update ref immediately so event handlers have fresh data
             latestItemsRef.current = mergedItems;
-            
+
+            // Normalize shared SRS after merge
+            mergedItems = normalizeSharedSRS(mergedItems);
+            latestItemsRef.current = mergedItems;
+
             // Update state with merged data
             setSyncState(prevState => ({
               ...prevState,
@@ -622,11 +663,11 @@ const App: React.FC = () => {
 
           setSyncState(prevState => {
             // Merge with ALL items including deleted to propagate deletions
-            const mergedItems = mergeDatasets(prevState.items, remoteItems);
-            
+            const mergedItems = normalizeSharedSRS(mergeDatasets(prevState.items, remoteItems));
+
             // Update ref immediately so event handlers have fresh data
             latestItemsRef.current = mergedItems;
-            
+
             return {
               ...prevState,
               items: mergedItems
@@ -648,9 +689,10 @@ const App: React.FC = () => {
           // (preserve cache items if IDB is empty due to corruption)
           const guestItems = await loadData('guest');
           if (guestItems.length > 0) {
+            const normalizedGuest = normalizeSharedSRS(guestItems);
             setSyncState(prevState => ({
                 ...prevState,
-                items: guestItems
+                items: normalizedGuest
             }));
           }
       }
@@ -768,7 +810,7 @@ const App: React.FC = () => {
       let mergedItems = mergeDatasets(currentItems, remoteItems);
       
       // 4. Clean up old deleted items (hard delete after retention period)
-      const cleanedItems = cleanupOldDeletedItems(mergedItems);
+      const cleanedItems = normalizeSharedSRS(cleanupOldDeletedItems(mergedItems));
       
       // 5. Update synced hashes in ref to prevent re-syncing on next regular sync
       for (const item of cleanedItems) {
@@ -1392,7 +1434,7 @@ const App: React.FC = () => {
       });
       
       // Calculate NEW SRS state based on the target item's current state
-      const migratedSRS = SRSAlgorithm.migrate(targetItem.srs);
+      const migratedSRS = SRSAlgorithm.ensure(targetItem.srs, targetItem.data.id, targetItem.type);
       const updatedSRS = SRSAlgorithm.updateAfterRemember(migratedSRS);
       
       log(`🧠 SRS Update: ${targetTitle} - step ${migratedSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);

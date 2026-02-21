@@ -339,11 +339,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Calculate global stats for saved items
   const activeItems = savedItems.filter(i => !i.isDeleted && !i.isArchived);
-  const memorizedCount = activeItems.filter(i => i.srs.memoryStrength >= 70).length;
-  const dueToday = activeItems.filter(i => i.srs.nextReview <= Date.now()).length;
+  const memorizedCount = activeItems.filter(i => (i.srs?.memoryStrength ?? 0) >= 70).length;
+  const dueToday = activeItems.filter(i => (i.srs?.nextReview ?? 0) <= Date.now()).length;
   
   // Get mastery info for current item
-  const mastery = savedItemMatch ? SRSAlgorithm.getMasteryLevel(savedItemMatch.srs) : null;
+  const mastery = savedItemMatch?.srs ? SRSAlgorithm.getMasteryLevel(savedItemMatch.srs) : null;
   const masteryColors = mastery ? getMasteryColors(mastery.color) : null;
 
   const handleToggleSave = useCallback(() => {
@@ -550,14 +550,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
         log('🧠 DetailView: Using onUpdateSRS for atomic shared SRS update');
         onUpdateSRS(siblings[0].data.id);
       } else {
-        // Fallback: Update existing items (all siblings) via onSave
+        // Fallback: Compute SRS update once, apply to all siblings
         log('🧠 DetailView: Using onSave fallback for SRS update');
+        const baseSRS = SRSAlgorithm.ensure(siblings[0].srs, siblings[0].data.id, siblings[0].type);
+        const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
         siblings.forEach(sibling => {
-          const updatedSRS = SRSAlgorithm.updateAfterRemember(sibling.srs);
-          
           onSave({
             ...sibling,
-            srs: updatedSRS
+            srs: { ...updatedSRS, id: sibling.data.id }
           });
         });
       }
@@ -743,12 +743,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 
                 {/* Stats */}
                 <span className="text-slate-400 whitespace-nowrap">
-                  {savedItemMatch.srs.totalReviews}×
+                  {savedItemMatch.srs?.totalReviews ?? 0}×
                 </span>
-                {savedItemMatch.srs.correctStreak > 0 && (
+                {(savedItemMatch.srs?.correctStreak ?? 0) > 0 && (
                   <span className="text-orange-500 flex items-center gap-0.5">
                     <Flame size={12} />
-                    {savedItemMatch.srs.correctStreak}
+                    {savedItemMatch.srs?.correctStreak}
                   </span>
                 )}
                 <span className="text-slate-300">•</span>
@@ -763,7 +763,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 </span>
                 <span className="text-slate-300">•</span>
                 <span className="text-slate-500">
-                  {savedItemMatch.srs.nextReview <= Date.now() ? 'due' : formatRelativeTime(savedItemMatch.srs.nextReview)}
+                  {(savedItemMatch.srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatRelativeTime(savedItemMatch.srs?.nextReview ?? 0)}
                 </span>
               </div>
             </div>

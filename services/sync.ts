@@ -1,13 +1,15 @@
 import { StoredItem } from '../types';
+import { SRSAlgorithm } from './srsAlgorithm';
 import { warn } from './logger';
 
 // Smart Merge: Combines Local and Remote data
 export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): StoredItem[] => {
   const map = new Map<string, StoredItem>();
 
-  // Add all local items first
+  // Add all local items first (ensure SRS exists)
   local.forEach(item => {
     if (item.data && item.data.id) {
+      if (!item.srs) item = { ...item, srs: SRSAlgorithm.createNew(item.data.id, item.type) };
       map.set(item.data.id, item);
     }
   });
@@ -15,6 +17,8 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
   // Merge remote items
   remote.forEach(remoteItem => {
     if (!remoteItem.data || !remoteItem.data.id) return;
+    // Ensure remote item has SRS data
+    if (!remoteItem.srs) remoteItem = { ...remoteItem, srs: SRSAlgorithm.createNew(remoteItem.data.id, remoteItem.type) };
 
     const localItem = map.get(remoteItem.data.id);
 

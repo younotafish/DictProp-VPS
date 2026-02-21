@@ -28,7 +28,22 @@ import {
 import { getStorage, ref, getDownloadURL, FirebaseStorage } from "firebase/storage";
 import { getFunctions, Functions } from "firebase/functions";
 import { StoredItem, PodcastMetadata } from "../types";
+import { SRSAlgorithm } from "./srsAlgorithm";
 import { log, warn, error as logError } from "./logger";
+
+/**
+ * Validate and sanitize a StoredItem from an external source (Firestore, localStorage).
+ * Ensures required fields exist and SRS data is properly initialized.
+ * Returns null if the item is irrecoverably invalid.
+ */
+const sanitizeItem = (raw: any): StoredItem | null => {
+  if (!raw || !raw.data || !raw.data.id || !raw.type) return null;
+
+  // Ensure SRS data exists (Firestore documents may have missing/corrupted srs)
+  const srs = SRSAlgorithm.ensure(raw.srs, raw.data.id, raw.type);
+
+  return { ...raw, srs } as StoredItem;
+};
 
 const CONFIG_KEY = 'popdict_firebase_config';
 
@@ -185,8 +200,9 @@ export const loadUserData = async (userId: string): Promise<StoredItem[]> => {
     
     const items: StoredItem[] = [];
     snapshot.forEach((doc: any) => {
-        const data = doc.data() as StoredItem;
-        items.push(data);
+        const raw = doc.data();
+        const item = sanitizeItem(raw);
+        if (item) items.push(item);
     });
     
     log(`🔥 Firebase: Manual fetch retrieved ${items.length} items (including deleted)`);
@@ -209,7 +225,7 @@ export const loadSingleItem = async (userId: string, itemId: string): Promise<St
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
-      return docSnap.data() as StoredItem;
+      return sanitizeItem(docSnap.data());
     }
     return null;
   } catch (error) {
@@ -236,8 +252,9 @@ export const subscribeToUserData = (
   const processSnapshot = (snapshot: any) => {
     const items: StoredItem[] = [];
     snapshot.forEach((doc: any) => {
-        const data = doc.data() as StoredItem;
-        items.push(data);
+        const raw = doc.data();
+        const item = sanitizeItem(raw);
+        if (item) items.push(item);
     });
     
     log(`🔥 Firebase: Parsed ${items.length} items from cloud (${snapshot.metadata.fromCache ? 'cache' : 'server'})`);

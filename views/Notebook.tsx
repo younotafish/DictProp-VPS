@@ -70,9 +70,9 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
   const history = !isPhrase ? (item.data as any).history : null;
   const sense = !isPhrase ? (item.data as any).sense : null;
 
-  const nextReview = item.srs.nextReview;
+  const nextReview = item.srs?.nextReview ?? Date.now();
   const isDue = nextReview <= Date.now();
-  const intervalDays = Math.round(item.srs.interval / (24 * 60));
+  const intervalDays = Math.round((item.srs?.interval ?? 0) / (24 * 60));
 
   return (
     <div className="relative overflow-hidden rounded-2xl shadow-sm border border-slate-100 bg-slate-50">
