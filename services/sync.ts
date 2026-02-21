@@ -2,6 +2,11 @@ import { StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 import { warn } from './logger';
 
+// Polyfill structuredClone for iOS < 15.4
+const clone = typeof structuredClone === 'function'
+  ? structuredClone
+  : <T>(obj: T): T => JSON.parse(JSON.stringify(obj));
+
 // Smart Merge: Combines Local and Remote data
 export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): StoredItem[] => {
   const map = new Map<string, StoredItem>();
@@ -79,12 +84,12 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || 0;
       
       // Deep clone to avoid mutation
-      const mergedItem: StoredItem = structuredClone(remoteItem);
+      const mergedItem: StoredItem = clone(remoteItem);
 
       // A. DATA MERGE (Content - Word/Definition)
       // Content usually changes rarely. Trust the most recent update.
       if (localTime > remoteTime) {
-          mergedItem.data = structuredClone(localItem.data);
+          mergedItem.data = clone(localItem.data);
           mergedItem.updatedAt = localTime;
           mergedItem.savedAt = localItem.savedAt;
       }
@@ -96,20 +101,20 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // 3. If still equal, keep the one with MORE RECENT lastReviewDate (latest update)
       // This ensures learning progress is never accidentally overwritten
       if (localHistory > remoteHistory) {
-          mergedItem.srs = structuredClone(localItem.srs);
+          mergedItem.srs = clone(localItem.srs);
       } else if (localHistory === remoteHistory) {
           // Tie-breaker 1: Memory strength (higher = more progress)
           const localStrength = localItem.srs?.memoryStrength || 0;
           const remoteStrength = remoteItem.srs?.memoryStrength || 0;
 
           if (localStrength > remoteStrength) {
-              mergedItem.srs = structuredClone(localItem.srs);
+              mergedItem.srs = clone(localItem.srs);
           } else if (localStrength === remoteStrength) {
               // Tie-breaker 2: Recency of last review
               const localReview = localItem.srs?.lastReviewDate || 0;
               const remoteReview = remoteItem.srs?.lastReviewDate || 0;
               if (localReview > remoteReview) {
-                   mergedItem.srs = structuredClone(localItem.srs);
+                   mergedItem.srs = clone(localItem.srs);
               }
           }
       }

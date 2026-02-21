@@ -12,22 +12,18 @@ import {
   User,
   Auth
 } from "firebase/auth";
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
+import {
+  getFirestore,
+  doc,
   getDoc,
   getDocs,
   collection,
   onSnapshot,
   writeBatch,
-  query,
-  orderBy,
   Firestore
 } from "firebase/firestore";
-import { getStorage, ref, getDownloadURL, FirebaseStorage } from "firebase/storage";
 import { getFunctions, Functions } from "firebase/functions";
-import { StoredItem, PodcastMetadata } from "../types";
+import { StoredItem } from "../types";
 import { SRSAlgorithm } from "./srsAlgorithm";
 import { log, warn, error as logError } from "./logger";
 
@@ -61,7 +57,6 @@ let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
 let functions: Functions | undefined;
-let storage: FirebaseStorage | undefined;
 
 // Initialize Firebase
 try {
@@ -88,7 +83,6 @@ try {
     });
     db = getFirestore(app);
     functions = getFunctions(app);
-    storage = getStorage(app);
 } catch (e) {
     logError("Failed to initialize Firebase", e);
 }
@@ -301,16 +295,21 @@ export const subscribeToUserData = (
 };
 
 /**
- * Fast djb2 hash algorithm - produces a short hash string from any input.
- * Used for content comparison to avoid redundant Firestore writes.
+ * Dual-seed djb2 hash — produces a ~64-bit hash string from any input.
+ * Two independent djb2 passes with different seeds reduce collision probability
+ * from ~0.1% (32-bit) to near-zero for 3000+ items.
  */
 const hashString = (str: string): string => {
-  let hash = 5381;
+  let h1 = 5381;
+  let h2 = 52711;
   for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash) + str.charCodeAt(i);
-    hash = hash & hash; // Convert to 32-bit integer
+    const c = str.charCodeAt(i);
+    h1 = ((h1 << 5) + h1) + c;
+    h1 = h1 & h1;
+    h2 = ((h2 << 5) + h2) + c;
+    h2 = h2 & h2;
   }
-  return Math.abs(hash).toString(36);
+  return Math.abs(h1).toString(36) + Math.abs(h2).toString(36);
 };
 
 /**
@@ -467,98 +466,4 @@ export const saveUserData = async (userId: string, items: StoredItem[]) => {
 // Study session recording and history have been removed.
 // All dashboard stats are now derived from item-level SRS data (lastReviewDate, totalReviews).
 // SRS updates happen through DetailView (double-click or R key).
-
-// ============================================================================
-// Podcast Functions
-// ============================================================================
-
-/**
- * Subscribe to podcast list from Firestore (real-time).
- * Returns podcasts ordered by generatedAt descending (newest first).
- */
-export const subscribeToPodcasts = (
-  userId: string,
-  onData: (podcasts: PodcastMetadata[]) => void
-) => {
-  if (!db) return () => {};
-
-  const podcastsCollection = collection(db, "users", userId, "podcasts");
-  const podcastsQuery = query(podcastsCollection, orderBy("generatedAt", "desc"));
-
-  log("Podcast: Subscribing to podcasts for user:", userId);
-
-  const unsubscribe = onSnapshot(podcastsQuery, (snapshot) => {
-    const podcasts: PodcastMetadata[] = [];
-    snapshot.forEach((doc: any) => {
-      const data = doc.data() as PodcastMetadata;
-      podcasts.push(data);
-    });
-    log(`Podcast: Received ${podcasts.length} podcasts`);
-    onData(podcasts);
-  }, (error) => {
-    logError("Podcast subscription error:", error);
-  });
-
-  return unsubscribe;
-};
-
-/**
- * Get a download URL for a podcast audio file from Firebase Storage.
- */
-export const getPodcastAudioUrl = async (audioPath: string): Promise<string> => {
-  if (!storage) throw new Error("Firebase Storage not initialized");
-
-  const audioRef = ref(storage, audioPath);
-  const url = await getDownloadURL(audioRef);
-  return url;
-};
-
-// ============================================================================
-// Podcast Queue (Firestore-backed)
-// ============================================================================
-
-/**
- * Save the podcast queue to Firestore (merge into user doc).
- * This persists the queue so the server-side daily job can read it.
- */
-export const savePodcastQueue = async (userId: string, ids: string[]): Promise<void> => {
-  if (!db || !userId) return;
-
-  try {
-    const userDocRef = doc(db, "users", userId);
-    await setDoc(userDocRef, { podcastQueue: ids }, { merge: true });
-    log("Podcast queue: Saved", ids.length, "items to Firestore");
-  } catch (e: any) {
-    logError("Podcast queue: Failed to save to Firestore:", e.message);
-  }
-};
-
-/**
- * Subscribe to podcast queue changes from Firestore (real-time).
- * This allows the client to pick up queue clears performed by the daily job.
- */
-export const subscribeToPodcastQueue = (
-  userId: string,
-  onData: (ids: string[]) => void
-) => {
-  if (!db) return () => {};
-
-  const userDocRef = doc(db, "users", userId);
-
-  log("Podcast queue: Subscribing for user:", userId);
-
-  const unsubscribe = onSnapshot(userDocRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.data();
-      const queue: string[] = Array.isArray(data.podcastQueue) ? data.podcastQueue : [];
-      onData(queue);
-    } else {
-      onData([]);
-    }
-  }, (error) => {
-    logError("Podcast queue subscription error:", error);
-  });
-
-  return unsubscribe;
-};
 

@@ -913,11 +913,10 @@ When the same item is edited on two devices:
 ### Navigation
 
 **Bottom Tab Bar:**
-- Three tabs: Notebook | Study | Podcast
+- Two tabs: Notebook | Study
 - Search is integrated into the Notebook tab header (not a separate tab)
 - Icons with labels
 - Active state: indigo color, thicker icon
-- Badge on Podcast tab shows podcast queue count
 - Hides when scrolling down (more content space)
 - Reappears when scrolling up
 - Desktop: Keyboard shortcuts button (⌨️) appears as a fourth nav item
@@ -1310,49 +1309,7 @@ Users can select 2-3 similar words and get a detailed AI-generated comparison sh
 
 ---
 
-## 12. Podcast — AI-Generated Vocabulary Audio Lessons
-
-### Overview
-DictProp generates personalized podcast episodes that teach vocabulary through engaging audio lessons. Podcasts target the user's weakest words using SRS data.
-
-### How It Works
-1. **Word Selection**: System picks up to 30 words with the lowest memory strength, or user manually selects words
-2. **Script Generation**: GPT-4o creates a natural, conversational podcast script covering definitions, usage, examples, and mnemonics
-3. **Audio Generation**: OpenAI TTS converts the script to spoken audio
-4. **Storage**: Audio uploaded to Firebase Storage, metadata saved to Firestore
-
-### Podcast View Features
-- List of generated podcasts with word count and generation date
-- Expandable cards showing full read-along script
-- Audio player with playback speed control (0.75x–2x)
-- Manual queue builder: add specific words to generate a custom podcast
-- "Add 30 weakest words" button for automatic selection
-- Generation status tracking (generating/ready/failed)
-- Delete and retry capabilities
-
-### Technical Flow
-1. Frontend calls `generatePodcast` Cloud Function — creates a Firestore document with `status: 'generating'` and returns immediately
-2. A Firestore `onDocumentCreated` trigger (`processPodcast`) picks up the new document
-3. Cloud Function uses GPT-4o to generate a teaching script
-4. Script is converted to audio via OpenAI TTS-1-HD (nova voice)
-5. Audio is uploaded to Firebase Storage at `podcasts/{userId}/{podcastId}.mp3`
-6. Metadata (script, word list, duration, status) is updated in Firestore to `status: 'ready'`
-7. Frontend receives update via real-time Firestore subscription
-8. Browser notification sent if app tab is hidden when generation completes
-
-### Daily Auto-Generation
-A scheduled Cloud Function (`dailyPodcastJob`) runs daily at 2 PM UTC:
-1. Reads each user's podcast queue from Firestore (words added during review)
-2. Backfills remaining slots (up to 30) with the user's weakest vocabulary
-3. Creates a `generating` document to trigger the podcast pipeline
-4. Clears the user's podcast queue after consuming it
-
-### Auto-Cleanup
-A scheduled Cloud Function (`cleanupOldPodcasts`) runs daily at 3 AM UTC and deletes podcasts older than 14 days (both audio files and Firestore documents).
-
----
-
-## 13. Error Handling & Edge Cases
+## 12. Error Handling & Edge Cases
 
 ### Search Errors
 
@@ -1650,7 +1607,6 @@ users/{userId}/items/{itemId}
 
 **Cleanup:**
 - Soft-deleted items purged after 30 days
-- Podcasts auto-deleted after 14 days
 - Images garbage collected with deleted items
 
 ---
@@ -1706,7 +1662,6 @@ users/{userId}/items/{itemId}
 |----------|--------|
 | `1` | Go to Notebook tab |
 | `2` | Go to Study tab |
-| `3` | Go to Podcast tab |
 | `⌘F` / `Ctrl+F` | Focus search input |
 | `Esc` | Close modal / Go back |
 | `?` | Show keyboard shortcuts help |
@@ -1762,7 +1717,7 @@ users/{userId}/items/{itemId}
 - Focus indicators visible
 - Enter activates focused elements
 - Full keyboard control for all features:
-  - Number keys (`1`, `2`, `3`) switch tabs (Notebook, Study, Podcast)
+  - Number keys (`1`, `2`) switch tabs (Notebook, Study)
   - Arrow keys navigate carousels and cards
   - `R` marks current item as remembered (Detail View)
   - `P` pronounces current word
@@ -2389,7 +2344,6 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 |-----|---------|
 | Notebook | Look up, save, and manage vocabulary (includes integrated search bar with AI search, voice search, and fuzzy filtering) |
 | Study | View learning analytics dashboard (reviews happen in Detail View) |
-| Podcast | Listen to AI-generated vocabulary audio lessons; manage podcast queue |
 
 ### Actions
 | Action | How |
@@ -2409,7 +2363,7 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ### Keyboard Shortcuts (Desktop)
 | Shortcut | Action |
 |----------|--------|
-| `1` / `2` / `3` | Switch tabs (Notebook/Study/Podcast) |
+| `1` / `2` | Switch tabs (Notebook/Study) |
 | `⌘F` | Focus search |
 | `←` `→` | Navigate cards |
 | `↑` `↓` | Navigate words |
@@ -2446,8 +2400,8 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 | Build Tool | Vite |
 | Styling | Tailwind CSS |
 | Icons | Lucide React |
-| Backend | Firebase (Auth, Firestore, Storage, Functions) |
-| AI | DeepSeek-V3 via DeepInfra (text), FLUX Schnell (images), Whisper Large V3 Turbo (transcription), GPT-4o (podcast scripts), OpenAI TTS (podcast audio) |
+| Backend | Firebase (Auth, Firestore, Functions) |
+| AI | DeepSeek-V3 via DeepInfra (text), FLUX Schnell (images), Whisper Large V3 Turbo (transcription) |
 | Search | Fuse.js (fuzzy local search) |
 | Hosting | Firebase Hosting |
 | PWA | vite-plugin-pwa |
@@ -2477,7 +2431,6 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 │   ├── Notebook.tsx        # Notebook view (includes integrated search)
 │   ├── StudyEnhanced.tsx   # Study analytics dashboard
 │   ├── DetailView.tsx      # Full card view with 2D navigation
-│   ├── Podcast.tsx         # AI-generated podcast view
 │   └── ComparisonView.tsx  # Side-by-side word comparison view
 ├── hooks/
 │   ├── index.ts            # Hook re-exports
@@ -2485,7 +2438,6 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 ├── services/
 │   ├── firebase.ts         # Firebase initialization & auth
 │   ├── aiService.ts        # AI API calls (via Firebase Functions)
-│   ├── podcastService.ts   # Podcast generation/deletion via Cloud Functions
 │   ├── storage.ts          # IndexedDB operations
 │   ├── sync.ts             # Cloud sync logic
 │   ├── srsAlgorithm.ts     # Spaced repetition algorithm
@@ -2493,7 +2445,7 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 │   └── logger.ts           # Development/production logging utility
 └── functions/
     └── src/
-        └── index.ts        # Firebase Cloud Functions (AI + podcast endpoints)
+        └── index.ts        # Firebase Cloud Functions (AI endpoints)
 ```
 
 ---
@@ -2507,7 +2459,6 @@ DictProp transforms vocabulary learning from passive lookup to active mastery. I
 3. Enable these services:
    - **Authentication** → Google Sign-In
    - **Firestore Database** → Start in production mode
-   - **Storage** → For podcast audio files
    - **Functions** → Blaze plan required
    - **Hosting** → For deployment
 
@@ -2542,10 +2493,6 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
 
-      match /podcasts/{podcastId} {
-        allow read: if request.auth != null && request.auth.uid == userId;
-        allow write: if false; // Only Cloud Functions write
-      }
     }
   }
 }
@@ -2601,19 +2548,6 @@ The app uses three Cloud Functions:
 - Accepts 2-3 words
 - Uses DeepSeek-V3 to generate structured comparison
 - Returns dimensions, examples, common mistakes, and verdict
-
-**generatePodcast** — AI podcast generation
-- Accepts a list of word objects (word, chinese, sense)
-- Generates teaching script via GPT-4o
-- Converts script to audio via OpenAI TTS
-- Uploads audio to Firebase Storage
-- Returns podcast metadata
-
-**deletePodcast** — Remove a podcast
-- Deletes audio from Storage and metadata from Firestore
-
-**retryPodcast** — Retry failed podcast generation
-- Re-runs generation for a podcast that previously failed
 
 Deploy functions:
 ```bash
@@ -2861,7 +2795,6 @@ interface SRSData {
 - [ ] Hosting domain added to authorized domains
 - [ ] Firestore rules deployed
 - [ ] DeepInfra API key set as Firebase secret (DEEPINFRA_API_KEY)
-- [ ] OpenAI API key set as Firebase secret (OPENAI_API_KEY) — required for podcast generation
 - [ ] Replicate API key set as Firebase secret (optional, REPLICATE_API_TOKEN)
 - [ ] Cloud Functions deployed
 - [ ] PWA icons in `/public` (192x192, 512x512)

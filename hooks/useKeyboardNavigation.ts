@@ -166,7 +166,6 @@ function handleFocusTrap(e: KeyboardEvent, container: HTMLElement) {
 interface GlobalNavigationOptions {
   onNavigateToNotebook?: () => void;
   onNavigateToStudy?: () => void;
-  onNavigateToPodcast?: () => void;
   enabled?: boolean;
 }
 
@@ -174,7 +173,6 @@ export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
   const {
     onNavigateToNotebook,
     onNavigateToStudy,
-    onNavigateToPodcast,
     enabled = true,
   } = options;
 
@@ -200,16 +198,12 @@ export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
           e.preventDefault();
           onNavigateToStudy?.();
           break;
-        case '3':
-          e.preventDefault();
-          onNavigateToPodcast?.();
-          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [enabled, onNavigateToNotebook, onNavigateToStudy, onNavigateToPodcast]);
+  }, [enabled, onNavigateToNotebook, onNavigateToStudy]);
 };
 
 /**

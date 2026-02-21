@@ -40,10 +40,9 @@ Use type guards `isVocabItem()` and `isPhraseItem()` to narrow `StoredItem`. Hel
 
 ### App Structure
 
-`App.tsx` (~1700 lines) is the root component and owns all state. It manages three tab views:
+`App.tsx` (~1700 lines) is the root component and owns all state. It manages two tab views:
 - **Notebook** (`views/Notebook.tsx`) — search, browse, delete saved items
 - **Study** (`views/StudyEnhanced.tsx`) — SRS review with 5 task types
-- **Podcast** (`views/Podcast.tsx`) — AI-generated audio lessons
 
 Supporting full-screen views: `DetailView.tsx` (card carousel) and `ComparisonView.tsx` (compare similar words).
 
@@ -53,10 +52,10 @@ Data flows: **React state** → **localStorage cache** (stripped images, instant
 
 Key services in `services/`:
 - `storage.ts` — IndexedDB with fallback to in-memory (Safari private mode)
-- `firebase.ts` — Auth (Google), Firestore, Storage
+- `firebase.ts` — Auth (Google), Firestore
 - `sync.ts` — Delta sync with content hashing, merge conflict resolution
 - `srsAlgorithm.ts` — Fixed-schedule SRS with 12 steps: [1,2,3,5,7,12,20,25,47,84,143,180] days
-- `aiService.ts` — Gemini AI word analysis
+- `aiService.ts` — AI word analysis (DeepSeek-V3 via DeepInfra cloud functions)
 
 ### Critical Pattern: Stale Closure Prevention
 
@@ -75,7 +74,7 @@ Key services in `services/`:
 
 ## Environment
 
-- `GEMINI_API_KEY` in `.env.local` — required for AI word analysis
+- Cloud Functions secrets: `DEEPINFRA_API_KEY`, `REPLICATE_API_TOKEN` — used for AI analysis and image generation
 - Firebase config is in `services/firebase.ts` (can be overridden via localStorage key `popdict_firebase_config`)
 - Firebase project ID: `dictpropstore`
 - Functions require Node 22

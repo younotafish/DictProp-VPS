@@ -23,6 +23,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
 
   // Initialize voices
   useEffect(() => {
+    if (!window.speechSynthesis) return;
     const loadVoices = () => {
       window.speechSynthesis.getVoices();
     };
@@ -34,7 +35,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      window.speechSynthesis.cancel();
+      window.speechSynthesis?.cancel();
       setIsPlaying(false);
     };
   }, []);
@@ -42,7 +43,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   const handlePlay = useCallback((e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
 
-    if (!text) return;
+    if (!text || !window.speechSynthesis) return;
 
     // If currently playing, stop it
     if (isPlaying) {

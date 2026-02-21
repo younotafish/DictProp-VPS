@@ -75,7 +75,7 @@ export interface ItemGroup {
 
 export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
-export type ViewState = 'notebook' | 'study' | 'podcast';
+export type ViewState = 'notebook' | 'study';
 
 // Simplified sync state (operation-based sync was removed due to Firestore limits)
 export interface SyncState {
@@ -159,19 +159,6 @@ export interface ComparisonResult {
   examples: ComparisonExample[];
   commonMistakes: string[];
   verdict: string;
-}
-
-// Podcast metadata — stored in Firestore at users/{userId}/podcasts/{podcastId}
-export interface PodcastMetadata {
-  id: string;
-  generatedAt: number;
-  mode: 'daily' | 'manual';
-  status: 'generating' | 'ready' | 'failed';
-  audioPath: string; // Firebase Storage path
-  duration: number; // Estimated seconds
-  wordCount: number;
-  words: { word: string; chinese: string; sense: string }[];
-  script: string; // Full text for read-along
 }
 
 // Simplified Firebase User type for props

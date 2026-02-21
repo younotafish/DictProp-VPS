@@ -56,7 +56,15 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // Calculate comprehensive statistics — derived entirely from item-level SRS data
   const stats = useMemo(() => {
     const now = Date.now();
-    const due = items.filter(i => (i.srs?.nextReview ?? 0) <= now).length;
+    // Deduplicate due count by spelling — one word = one due item regardless of sense count
+    const dueSpellings = new Set<string>();
+    items.forEach(i => {
+      if ((i.srs?.nextReview ?? 0) <= now) {
+        const spelling = (i.type === 'phrase' ? (i.data as any).query : (i.data as any).word || '').toLowerCase().trim();
+        if (spelling) dueSpellings.add(spelling);
+      }
+    });
+    const due = dueSpellings.size;
 
     // Memory strength based categories (per PRODUCT_SUMMARY.md spec)
     const grandmaster = items.filter(i => (i.srs?.memoryStrength ?? 0) >= 85).length;

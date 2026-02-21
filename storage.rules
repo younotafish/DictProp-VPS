@@ -6,12 +6,6 @@ service firebase.storage {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
-    
-    // Podcast audio files — read-only for clients; Cloud Functions write
-    match /podcasts/{userId}/{fileName} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false; // Only Cloud Functions write
-    }
   }
 }
 

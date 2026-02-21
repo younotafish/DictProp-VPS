@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
-import { PodcastView } from './views/Podcast';
 import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
-import { Book, BrainCircuit, Headphones, Keyboard } from 'lucide-react';
+import { Book, BrainCircuit, Keyboard } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash, savePodcastQueue, subscribeToPodcastQueue } from './services/firebase';
+import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash } from './services/firebase';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -68,8 +67,11 @@ function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
   const updates = new Map<string, SRSData>();
   groups.forEach(siblings => {
     if (siblings.length <= 1) return;
-    // Pick the most recently reviewed sibling as canonical
-    const canonical = siblings.reduce((best, s) => {
+    // Pick the most recently reviewed ACTIVE (non-archived) sibling as canonical
+    // Fall back to any sibling if all are archived
+    const activeSiblings = siblings.filter(s => !s.isArchived);
+    const candidatePool = activeSiblings.length > 0 ? activeSiblings : siblings;
+    const canonical = candidatePool.reduce((best, s) => {
       const bSrs = SRSAlgorithm.ensure(best.srs, best.data.id, best.type);
       const sSrs = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
       return sSrs.lastReviewDate > bSrs.lastReviewDate ? s : best;
@@ -78,7 +80,8 @@ function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
     for (const s of siblings) {
       if (s.data.id === canonical.data.id) continue;
       const sSRS = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
-      if (sSRS.memoryStrength !== canonicalSRS.memoryStrength) {
+      // Use totalReviews + lastReviewDate for drift detection (not memoryStrength which is rounded)
+      if (sSRS.totalReviews !== canonicalSRS.totalReviews || sSRS.lastReviewDate !== canonicalSRS.lastReviewDate) {
         updates.set(s.data.id, { ...canonicalSRS, id: s.data.id });
       }
     }
@@ -131,7 +134,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
     const saved = localStorage.getItem('app_current_view');
     // Default to notebook, and handle legacy 'search' value from old localStorage
-    if (!saved || saved === 'search' || (saved !== 'notebook' && saved !== 'study' && saved !== 'podcast')) {
+    if (!saved || saved === 'search' || (saved !== 'notebook' && saved !== 'study')) {
       return 'notebook';
     }
     return saved as ViewState;
@@ -176,11 +179,17 @@ const App: React.FC = () => {
       const saved = localStorage.getItem('last_successful_sync');
       return saved ? parseInt(saved, 10) : 0;
   });
+  const lastSyncTimeRef = useRef(lastSyncTime);
   
   // Keep latestItemsRef in sync with state (synchronously, so event handlers always have current data)
   useEffect(() => {
     latestItemsRef.current = syncState.items;
   }, [syncState.items]);
+
+  // Keep lastSyncTimeRef in sync
+  useEffect(() => {
+    lastSyncTimeRef.current = lastSyncTime;
+  }, [lastSyncTime]);
   
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
@@ -241,40 +250,19 @@ const App: React.FC = () => {
   // Keyboard shortcuts help modal
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
 
-  // Podcast generation queue — words added during review
-  // Initialized from localStorage (offline fallback), synced to/from Firestore
-  const [podcastQueue, setPodcastQueue] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('podcast_queue');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
-  // Track whether the latest update came from Firestore to avoid echo writes
-  const podcastQueueFromFirestore = useRef(false);
-
-  // Persist podcast queue to localStorage + Firestore
-  useEffect(() => {
-    localStorage.setItem('podcast_queue', JSON.stringify(podcastQueue));
-    // Write to Firestore unless the change originated from the Firestore subscription
-    if (!podcastQueueFromFirestore.current && user) {
-      savePodcastQueue(user.uid, podcastQueue);
-    }
-    podcastQueueFromFirestore.current = false;
-  }, [podcastQueue, user]);
+  // localStorage quota warning
+  const [cacheWarning, setCacheWarning] = useState(false);
 
   // Word comparison mode — 2-3 words to compare side-by-side
   const [comparisonWords, setComparisonWords] = useState<string[] | null>(null);
   
-  // Global keyboard navigation for tab switching (1, 2, 3 keys)
+  // Global keyboard navigation for tab switching (1, 2 keys)
   useGlobalNavigation({
     onNavigateToNotebook: () => {
       setCurrentView('notebook');
     },
     onNavigateToStudy: () => {
       setCurrentView('study');
-    },
-    onNavigateToPodcast: () => {
-      setCurrentView('podcast');
     },
     enabled: !detailContext && !confirmModal && !showKeyboardHelp && !comparisonWords, // Disable when modals are open
   });
@@ -357,7 +345,7 @@ const App: React.FC = () => {
           warn("Failed to save cache on beforeunload:", e);
         }
         // Also try IndexedDB (may not complete but worth trying)
-        saveData(currentItems, targetUserId);
+        saveData(currentItems, targetUserId).catch(e => warn("Failed to save on beforeunload:", e));
       }
     };
     
@@ -370,6 +358,8 @@ const App: React.FC = () => {
   useEffect(() => {
       const handleVisibilityChange = async () => {
           if (document.visibilityState === 'visible') {
+              // Reset stuck speechSynthesis after backgrounding
+              window.speechSynthesis?.cancel();
               const lastHiddenStr = localStorage.getItem('app_last_hidden');
               if (lastHiddenStr) {
                   const lastHidden = parseInt(lastHiddenStr, 10);
@@ -403,7 +393,13 @@ const App: React.FC = () => {
               if (isLoaded && currentItems.length > 0) {
                   const targetUserId = user?.uid || 'guest';
                   log("💾 App going to background, saving data immediately...");
-                  // Don't await - we want this to start but the page might be killed
+                  // Sync localStorage cache first (guaranteed to complete before iOS kills us)
+                  try {
+                    localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(currentItems)));
+                  } catch (e) {
+                    warn("Failed to save cache on visibility change:", e);
+                  }
+                  // Also try IndexedDB (may not complete but worth trying)
                   saveData(currentItems, targetUserId).catch(e => {
                       warn("Failed to save on visibility change:", e);
                   });
@@ -428,8 +424,8 @@ const App: React.FC = () => {
                 // Initially load guest data (user is not logged in yet)
                 const items = await loadData('guest');
                 if (items && Array.isArray(items)) {
-                    itemsFromIDB = items.filter((i: any) => 
-                        i && i.data && i.data.id && i.srs && i.type && !i.isDeleted
+                    itemsFromIDB = items.filter((i: any) =>
+                        i && i.data && i.data.id && i.srs && i.type
                     );
                 }
             }
@@ -574,18 +570,13 @@ const App: React.FC = () => {
     });
 
     let unsubscribeOps: (() => void) | undefined;
-    let unsubscribeQueue: (() => void) | undefined;
 
     const unsubscribeAuth = subscribeToAuth(async (currentUser) => {
-      
+
       // Clean up previous subscriptions if they exist
       if (unsubscribeOps) {
         unsubscribeOps();
         unsubscribeOps = undefined;
-      }
-      if (unsubscribeQueue) {
-        unsubscribeQueue();
-        unsubscribeQueue = undefined;
       }
       
       if (currentUser) {
@@ -675,12 +666,6 @@ const App: React.FC = () => {
           });
         });
 
-        // Subscribe to podcast queue changes from Firestore
-        // (e.g. daily job clears the queue after consuming it)
-        unsubscribeQueue = subscribeToPodcastQueue(currentUser.uid, (remoteQueue) => {
-          podcastQueueFromFirestore.current = true;
-          setPodcastQueue(remoteQueue);
-        });
       } else {
           // LOGGED OUT
           setUser(null);
@@ -700,7 +685,6 @@ const App: React.FC = () => {
 
     return () => {
       if (unsubscribeOps) unsubscribeOps();
-      if (unsubscribeQueue) unsubscribeQueue();
       unsubscribeAuth();
     };
   }, [isFirebaseConfigured]);
@@ -712,9 +696,10 @@ const App: React.FC = () => {
     
     try {
       localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(syncState.items)));
+      setCacheWarning(false);
     } catch (e) {
-      // If quota exceeded, try to save just item count for UI feedback
       warn("Failed to cache items to localStorage", e);
+      setCacheWarning(true);
     }
   }, [syncState.items, isLoaded]);
 
@@ -727,9 +712,15 @@ const App: React.FC = () => {
       const currentItems = latestItemsRef.current;
 
       // 1. Save to Local IDB FIRST (always, works offline)
-      // Save to user-specific storage or guest storage
-      const targetUserId = user?.uid || 'guest';
-      await saveData(currentItems, targetUserId);
+      // Skip if a recent immediate save (SRS update) happened within 2 seconds
+      const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
+      if (timeSinceLastSave < 2000) {
+        log("💾 Skipping debounced IDB save (recent immediate save)");
+      } else {
+        // Save to user-specific storage or guest storage
+        const targetUserId = user?.uid || 'guest';
+        await saveData(currentItems, targetUserId);
+      }
 
       // 2. Push items to Cloud (Firebase) - Delta Sync with Hash Comparison
       // Skip cloud sync when offline - will sync when back online
@@ -741,7 +732,7 @@ const App: React.FC = () => {
 
           currentItems.forEach(item => {
               const updated = item.updatedAt || 0;
-              if (updated <= lastSyncTime) return; // Skip if not updated since last sync
+              if (updated <= lastSyncTimeRef.current) return; // Skip if not updated since last sync
 
               const currentHash = getItemContentHash(item);
               const lastSyncedHash = syncedHashesRef.current.get(item.data.id);
@@ -784,7 +775,7 @@ const App: React.FC = () => {
     }, 5000); // 5s debounce (user preference)
 
     return () => clearTimeout(timer);
-  }, [syncState, isLoaded, user, isFirebaseConfigured, lastSyncTime, isOnline]);
+  }, [syncState, isLoaded, user, isFirebaseConfigured, isOnline]);
 
   const handleForceSync = async () => {
     if (!user || !isFirebaseConfigured || !isOnline) return;
@@ -795,8 +786,21 @@ const App: React.FC = () => {
       // Use ref to get latest items (avoids stale closure)
       const currentItems = latestItemsRef.current;
       
-      // 1. Upload local items to Firebase
-      await saveUserData(user.uid, currentItems);
+      // 1. Upload changed local items to Firebase (delta sync)
+      const changedItems: StoredItem[] = [];
+      currentItems.forEach(item => {
+        const currentHash = getItemContentHash(item);
+        const lastSyncedHash = syncedHashesRef.current.get(item.data.id);
+        if (currentHash !== lastSyncedHash) {
+          changedItems.push(item);
+        }
+      });
+      if (changedItems.length > 0) {
+        log(`🔥 Firebase: Force sync uploading ${changedItems.length} changed items (of ${currentItems.length} total)`);
+        await saveUserData(user.uid, changedItems);
+      } else {
+        log("🔥 Firebase: Force sync - no local changes to upload");
+      }
       
       // Update last sync time after force sync
       const now = Date.now();
@@ -1353,30 +1357,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Podcast queue handlers
-  const handleAddToPodcastQueue = useCallback((itemId: string) => {
-    setPodcastQueue(prev => {
-      if (prev.includes(itemId)) return prev;
-      if (prev.length >= 30) return prev; // Max 30
-      return [...prev, itemId];
-    });
-  }, []);
-
-  const handleAddMultipleToPodcastQueue = useCallback((itemIds: string[]) => {
-    setPodcastQueue(prev => {
-      const newIds = itemIds.filter(id => !prev.includes(id));
-      return [...prev, ...newIds].slice(0, 30);
-    });
-  }, []);
-
-  const handleRemoveFromPodcastQueue = useCallback((itemId: string) => {
-    setPodcastQueue(prev => prev.filter(id => id !== itemId));
-  }, []);
-
-  const handleClearPodcastQueue = useCallback(() => {
-    setPodcastQueue([]);
-  }, []);
-
   // Word comparison handler
   const handleCompare = useCallback((words: string[]) => {
     if (words.length >= 2 && words.length <= 3) {
@@ -1433,11 +1413,18 @@ const App: React.FC = () => {
           }
       });
       
-      // Calculate NEW SRS state based on the target item's current state
-      const migratedSRS = SRSAlgorithm.ensure(targetItem.srs, targetItem.data.id, targetItem.type);
-      const updatedSRS = SRSAlgorithm.updateAfterRemember(migratedSRS);
+      // Calculate NEW SRS state based on the MOST ADVANCED sibling's current state
+      // This prevents regressing a card when a less-advanced sibling is reviewed
+      const siblings = prevState.items.filter(item => idsToUpdate.has(item.data.id));
+      const bestSibling = siblings.reduce((best, s) => {
+        const bSrs = SRSAlgorithm.ensure(best.srs, best.data.id, best.type);
+        const sSrs = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
+        return sSrs.totalReviews > bSrs.totalReviews ? s : best;
+      });
+      const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
+      const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
       
-      log(`🧠 SRS Update: ${targetTitle} - step ${migratedSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);
+      log(`🧠 SRS Update: ${targetTitle} - step ${baseSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);
       
       // Update ALL matching items with the NEW SRS state
       const newItems = prevState.items.map(item => {
@@ -1500,6 +1487,10 @@ const App: React.FC = () => {
       try {
         log(`🔥 Firebase: Immediately syncing ${itemsToSync.length} SRS updates`);
         await saveUserData(user.uid, itemsToSync);
+        // Update synced hashes so the debounced save doesn't re-upload these items
+        for (const syncedItem of itemsToSync) {
+          syncedHashesRef.current.set(syncedItem.data.id, getItemContentHash(syncedItem));
+        }
       } catch (e) {
         logError('🔥 Firebase: Failed to sync SRS updates:', e);
         // Local state is already saved, will retry on next regular sync
@@ -1570,9 +1561,6 @@ const App: React.FC = () => {
               onRefresh={handleForceRefreshSearch}
               onLazyLoadImage={handleLazyLoadImage}
               onUpdateSRS={updateSRS}
-              podcastQueue={podcastQueue}
-              onAddToPodcastQueue={handleAddToPodcastQueue}
-              onRemoveFromPodcastQueue={handleRemoveFromPodcastQueue}
               onCompare={handleCompare}
           />
       )}
@@ -1615,24 +1603,11 @@ const App: React.FC = () => {
           />
         )}
 
-        {currentView === 'podcast' && (
-          <PodcastView
-            user={user}
-            isOnline={isOnline}
-            items={activeItems}
-            onScroll={handleScroll}
-            podcastQueue={podcastQueue}
-            onAddToQueue={handleAddMultipleToPodcastQueue}
-            onRemoveFromQueue={handleRemoveFromPodcastQueue}
-            onClearQueue={handleClearPodcastQueue}
-          />
-        )}
       </main>
 
       <nav className={`fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
         <NavButton view="notebook" currentView={currentView} onClick={setCurrentView} icon={Book} label="Notebook" />
         <NavButton view="study" currentView={currentView} onClick={setCurrentView} icon={BrainCircuit} label="Study" />
-        <NavButton view="podcast" currentView={currentView} onClick={setCurrentView} icon={Headphones} label="Podcast" badge={podcastQueue.length} />
         {/* Keyboard shortcuts hint - only visible on desktop */}
         <button 
           onClick={() => setShowKeyboardHelp(true)}
@@ -1671,7 +1646,6 @@ const App: React.FC = () => {
                 <div className="space-y-2">
                   <ShortcutRow keys={['1']} description="Go to Notebook" />
                   <ShortcutRow keys={['2']} description="Go to Study" />
-                  <ShortcutRow keys={['3']} description="Go to Podcast" />
                   <ShortcutRow keys={['⌘', 'F']} description="Focus search input" />
                   <ShortcutRow keys={['Esc']} description="Close modal / Go back" />
                 </div>

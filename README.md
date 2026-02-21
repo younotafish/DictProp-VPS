@@ -10,7 +10,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1xgIRAWPloe5gPdslYRnvse
 
 ## ✨ Key Features
 
-- 🤖 **AI-Powered Analysis** - Get comprehensive word and phrase explanations with examples, etymology, and mnemonics using Gemini AI
+- 🤖 **AI-Powered Analysis** - Get comprehensive word and phrase explanations with examples, etymology, and mnemonics using DeepSeek-V3 AI
 - 🧠 **Advanced SRS System** - SuperMemo/Shanbay-inspired memory strength algorithm that adapts to your learning
 - 🎯 **Multi-Task Learning** - Five task types: Recognition, Recall, Typing, Listening, and Sentence usage
 - 📊 **Learning Analytics** - Track your progress with detailed mastery insights and memory strength metrics
@@ -26,7 +26,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1xgIRAWPloe5gPdslYRnvse
    npm install
    ```
 
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Set up Firebase Cloud Functions with `DEEPINFRA_API_KEY` secret (see functions/ directory)
 
 3. Run the app:
    ```bash
@@ -146,8 +146,8 @@ To verify sync is working:
 
 - **React + TypeScript**
 - **Vite** for fast development
-- **Firebase** (Auth, Firestore, Storage)
-- **Google Gemini AI** for definitions
+- **Firebase** (Auth, Firestore, Functions)
+- **DeepSeek-V3 AI** via DeepInfra for definitions
 - **Tailwind CSS** for styling
 - **IndexedDB** for local storage
 

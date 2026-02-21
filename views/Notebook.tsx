@@ -1282,7 +1282,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
           <div className="mt-4 pt-3 border-t border-dashed border-orange-200">
             <div className="flex items-center gap-2 px-1 mb-3">
               <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide">Due for Review</span>
-              <span className="text-xs text-slate-400">{dueForReviewGroups.reduce((sum, g) => sum + g.items.length, 0)} items to revisit</span>
+              <span className="text-xs text-slate-400">{dueForReviewGroups.length} words to revisit</span>
             </div>
             <div className="grid gap-3">
               {dueForReviewGroups.map((group, index) => (
