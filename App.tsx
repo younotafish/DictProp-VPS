@@ -1327,7 +1327,10 @@ const App: React.FC = () => {
       warn('🗑️ App: Item not found for deletion:', id);
       return prevState;
     });
-    
+
+    // Update carousel immediately (before Firebase sync) so card disappears instantly
+    removeItemFromDetailContext(id);
+
     // Immediately sync deletion to Firebase (don't wait for 5s debounce)
     // This ensures deletions propagate even if user closes app quickly
     if (user && isFirebaseConfigured) {
@@ -1344,9 +1347,6 @@ const App: React.FC = () => {
         // Deletion is still saved locally, will retry on next sync
       }
     }
-    
-    // Update detailContext to remove the deleted item (instead of closing entirely)
-    removeItemFromDetailContext(id);
   };
 
   const handleArchive = async (id: string) => {
@@ -1372,7 +1372,10 @@ const App: React.FC = () => {
       warn('📦 App: Item not found for archiving:', id);
       return prevState;
     });
-    
+
+    // Update carousel immediately (before Firebase sync) so card disappears instantly
+    removeItemFromDetailContext(id);
+
     // Immediately sync archive to Firebase (don't wait for 5s debounce)
     if (user && isFirebaseConfigured) {
       try {
@@ -1387,9 +1390,6 @@ const App: React.FC = () => {
         logError('📦 App: Failed to sync archive to Firebase:', e);
       }
     }
-    
-    // Update detailContext to remove the archived item (instead of closing entirely)
-    removeItemFromDetailContext(id);
   };
 
   const handleUnarchive = async (id: string) => {
