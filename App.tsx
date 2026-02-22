@@ -324,6 +324,60 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Force sync — uploads changed items, pulls remote, merges
+  // Defined before the visibilitychange effect that references it
+  const handleForceSync = useCallback(async () => {
+    if (!user || !isFirebaseConfigured || !isOnline) return;
+
+    setSyncStatus('syncing');
+
+    try {
+      const currentItems = latestItemsRef.current;
+
+      // 1. Upload changed local items to Firebase (delta sync)
+      const changedItems: StoredItem[] = [];
+      currentItems.forEach(item => {
+        const currentHash = getItemContentHash(item);
+        const lastSyncedHash = syncedHashesRef.current.get(item.data.id);
+        if (currentHash !== lastSyncedHash) {
+          changedItems.push(item);
+        }
+      });
+      if (changedItems.length > 0) {
+        log(`🔥 Firebase: Force sync uploading ${changedItems.length} changed items (of ${currentItems.length} total)`);
+        await saveUserData(user.uid, changedItems);
+      } else {
+        log("🔥 Firebase: Force sync - no local changes to upload");
+      }
+
+      const now = Date.now();
+      setLastSyncTime(now);
+      localStorage.setItem('last_successful_sync', now.toString());
+
+      // 2. Pull latest items from Firebase
+      const remoteItems = await loadUserData(user.uid);
+
+      // 3. Merge (including deleted items to propagate deletions)
+      let mergedItems = mergeDatasets(currentItems, remoteItems);
+
+      // 4. Clean up old deleted items (hard delete after retention period)
+      const cleanedItems = normalizeSharedSRS(cleanupOldDeletedItems(mergedItems));
+
+      // 5. Update synced hashes
+      for (const item of cleanedItems) {
+        syncedHashesRef.current.set(item.data.id, getItemContentHash(item));
+      }
+
+      latestItemsRef.current = cleanedItems;
+      setSyncState(prevState => ({ ...prevState, items: cleanedItems }));
+      setSyncStatus('saved');
+
+    } catch (e) {
+      logError("Force Sync Failed:", e);
+      setSyncStatus('error');
+    }
+  }, [user, isFirebaseConfigured, isOnline]);
+
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
   useEffect(() => {
@@ -856,66 +910,6 @@ const App: React.FC = () => {
 
     return () => clearTimeout(timer);
   }, [syncState, isLoaded, user, isFirebaseConfigured]);
-
-  const handleForceSync = useCallback(async () => {
-    if (!user || !isFirebaseConfigured || !isOnline) return;
-
-    setSyncStatus('syncing');
-
-    try {
-      // Use ref to get latest items (avoids stale closure)
-      const currentItems = latestItemsRef.current;
-
-      // 1. Upload changed local items to Firebase (delta sync)
-      const changedItems: StoredItem[] = [];
-      currentItems.forEach(item => {
-        const currentHash = getItemContentHash(item);
-        const lastSyncedHash = syncedHashesRef.current.get(item.data.id);
-        if (currentHash !== lastSyncedHash) {
-          changedItems.push(item);
-        }
-      });
-      if (changedItems.length > 0) {
-        log(`🔥 Firebase: Force sync uploading ${changedItems.length} changed items (of ${currentItems.length} total)`);
-        await saveUserData(user.uid, changedItems);
-      } else {
-        log("🔥 Firebase: Force sync - no local changes to upload");
-      }
-
-      // Update last sync time after force sync
-      const now = Date.now();
-      setLastSyncTime(now);
-      localStorage.setItem('last_successful_sync', now.toString());
-
-      // 2. Pull latest items from Firebase
-      const remoteItems = await loadUserData(user.uid);
-
-      // 3. Merge (including deleted items to propagate deletions)
-      let mergedItems = mergeDatasets(currentItems, remoteItems);
-
-      // 4. Clean up old deleted items (hard delete after retention period)
-      const cleanedItems = normalizeSharedSRS(cleanupOldDeletedItems(mergedItems));
-
-      // 5. Update synced hashes in ref to prevent re-syncing on next regular sync
-      for (const item of cleanedItems) {
-        syncedHashesRef.current.set(item.data.id, getItemContentHash(item));
-      }
-
-      // Update ref immediately so event handlers have fresh data
-      latestItemsRef.current = cleanedItems;
-
-      setSyncState(prevState => ({
-        ...prevState,
-        items: cleanedItems
-      }));
-
-      setSyncStatus('saved');
-
-    } catch (e) {
-      logError("Force Sync Failed:", e);
-      setSyncStatus('error');
-    }
-  }, [user, isFirebaseConfigured, isOnline]);
 
   // Bulk refresh - actual execution
   const executeBulkRefresh = useCallback(async () => {
