@@ -971,7 +971,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
         <div className="px-6 py-4 flex justify-between items-center">
           <div>
             <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-            <p className="text-xs text-slate-500 font-medium">{displayItems.length} {displayItems.length === 1 ? 'item' : 'items'} saved</p>
+            <p className="text-xs text-slate-500 font-medium">{groupedItems.length} {groupedItems.length === 1 ? 'word' : 'words'} saved</p>
           </div>
           <div className="flex items-center gap-1 bg-white rounded-full p-1 border border-slate-100 shadow-sm flex-nowrap shrink-0">
             {/* Text Analyzer button */}

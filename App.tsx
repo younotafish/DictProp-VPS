@@ -406,7 +406,7 @@ const App: React.FC = () => {
       
       document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [user, isOnline, isFirebaseConfigured, isLoaded]); // Removed syncState.items - we use ref instead
+  }, [user, isOnline, isFirebaseConfigured, isLoaded, handleForceSync]); // Removed syncState.items - we use ref instead
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
@@ -850,15 +850,15 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [syncState, isLoaded, user, isFirebaseConfigured]);
 
-  const handleForceSync = async () => {
+  const handleForceSync = useCallback(async () => {
     if (!user || !isFirebaseConfigured || !isOnline) return;
-    
+
     setSyncStatus('syncing');
-    
+
     try {
       // Use ref to get latest items (avoids stale closure)
       const currentItems = latestItemsRef.current;
-      
+
       // 1. Upload changed local items to Firebase (delta sync)
       const changedItems: StoredItem[] = [];
       currentItems.forEach(item => {
@@ -874,7 +874,7 @@ const App: React.FC = () => {
       } else {
         log("🔥 Firebase: Force sync - no local changes to upload");
       }
-      
+
       // Update last sync time after force sync
       const now = Date.now();
       setLastSyncTime(now);
@@ -882,13 +882,13 @@ const App: React.FC = () => {
 
       // 2. Pull latest items from Firebase
       const remoteItems = await loadUserData(user.uid);
-      
+
       // 3. Merge (including deleted items to propagate deletions)
       let mergedItems = mergeDatasets(currentItems, remoteItems);
-      
+
       // 4. Clean up old deleted items (hard delete after retention period)
       const cleanedItems = normalizeSharedSRS(cleanupOldDeletedItems(mergedItems));
-      
+
       // 5. Update synced hashes in ref to prevent re-syncing on next regular sync
       for (const item of cleanedItems) {
         syncedHashesRef.current.set(item.data.id, getItemContentHash(item));
@@ -901,14 +901,14 @@ const App: React.FC = () => {
         ...prevState,
         items: cleanedItems
       }));
-      
+
       setSyncStatus('saved');
-      
+
     } catch (e) {
       logError("Force Sync Failed:", e);
       setSyncStatus('error');
     }
-  };
+  }, [user, isFirebaseConfigured, isOnline]);
 
   // Bulk refresh - actual execution
   const executeBulkRefresh = useCallback(async () => {
@@ -1464,28 +1464,30 @@ const App: React.FC = () => {
   };
 
   // SRS update — handles shared SRS atomically (all items with same title updated together)
+  // Uses refs to communicate between the setSyncState updater and the post-update save logic,
+  // avoiding reliance on closure-mutated variables (which is fragile across React versions).
+  const srsUpdateResultRef = useRef<{ itemsToSync: StoredItem[]; allItems: StoredItem[] }>({ itemsToSync: [], allItems: [] });
+
   const updateSRS = async (itemId: string) => {
     const now = Date.now();
-    let itemsToSync: StoredItem[] = [];
-    let allUpdatedItems: StoredItem[] = [];
-    
+
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
       const targetItem = prevState.items.find(i => i.data.id === itemId);
       if (!targetItem) return prevState;
-      
+
       // Find ALL items with the same word/query to update them together (Shared SRS)
       const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
-      
+
       const idsToUpdate = new Set<string>();
       idsToUpdate.add(itemId);
-      
+
       prevState.items.forEach(item => {
           if (!item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle) {
               idsToUpdate.add(item.data.id);
           }
       });
-      
+
       // Calculate NEW SRS state based on the MOST ADVANCED sibling's current state
       // This prevents regressing a card when a less-advanced sibling is reviewed
       const siblings = prevState.items.filter(item => idsToUpdate.has(item.data.id));
@@ -1496,41 +1498,32 @@ const App: React.FC = () => {
       });
       const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
       const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
-      
+
       log(`🧠 SRS Update: ${targetTitle} - step ${baseSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);
-      
+
       // Update ALL matching items with the NEW SRS state
+      const syncItems: StoredItem[] = [];
       const newItems = prevState.items.map(item => {
           if (idsToUpdate.has(item.data.id)) {
-              // Create a copy of the updated SRS with the correct ID for this specific item
               const itemSpecificSRS = { ...updatedSRS, id: item.data.id };
-              
-              const updatedItem = {
-                  ...item,
-                  srs: itemSpecificSRS,
-                  updatedAt: now
-              };
-              
-              // Collect items to sync immediately
-              itemsToSync.push(updatedItem);
-              
+              const updatedItem = { ...item, srs: itemSpecificSRS, updatedAt: now };
+              syncItems.push(updatedItem);
               return updatedItem;
           }
           return item;
       });
-      
-      // Store full items list for immediate local save
-      allUpdatedItems = newItems;
-      
+
+      // Store results in ref (safe across React versions, unlike closure mutation)
+      srsUpdateResultRef.current = { itemsToSync: syncItems, allItems: newItems };
+
       // Update ref immediately so event handlers have fresh data
-      // (React's state update is async, but this ref update is sync)
       latestItemsRef.current = newItems;
-      
-      return {
-          ...prevState,
-          items: newItems
-      };
+
+      return { ...prevState, items: newItems };
     });
+
+    // Read results from ref (guaranteed to be set by the updater above)
+    const { itemsToSync, allItems: allUpdatedItems } = srsUpdateResultRef.current;
     
     // CRITICAL: Save to IndexedDB IMMEDIATELY after SRS update
     // This ensures learning progress is never lost even if user switches apps quickly
