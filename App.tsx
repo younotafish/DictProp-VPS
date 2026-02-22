@@ -67,21 +67,28 @@ function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
   const updates = new Map<string, SRSData>();
   groups.forEach(siblings => {
     if (siblings.length <= 1) return;
-    // Pick the most recently reviewed ACTIVE (non-archived) sibling as canonical
-    // Fall back to any sibling if all are archived
+    // Pick the most ADVANCED sibling as canonical (highest totalReviews).
+    // Tiebreaker: most recent lastReviewDate. Prefer active (non-archived) siblings.
+    // This prevents un-reviewed items (which have lastReviewDate set to creation time)
+    // from becoming canonical and regressing reviewed siblings to "due" status.
     const activeSiblings = siblings.filter(s => !s.isArchived);
     const candidatePool = activeSiblings.length > 0 ? activeSiblings : siblings;
     const canonical = candidatePool.reduce((best, s) => {
-      const bSrs = SRSAlgorithm.ensure(best.srs, best.data.id, best.type);
-      const sSrs = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
-      return sSrs.lastReviewDate > bSrs.lastReviewDate ? s : best;
+      const bReviews = best.srs?.totalReviews || 0;
+      const sReviews = s.srs?.totalReviews || 0;
+      if (sReviews !== bReviews) return sReviews > bReviews ? s : best;
+      // Tiebreaker: most recent lastReviewDate
+      const bDate = best.srs?.lastReviewDate || 0;
+      const sDate = s.srs?.lastReviewDate || 0;
+      return sDate > bDate ? s : best;
     });
     const canonicalSRS = SRSAlgorithm.ensure(canonical.srs, canonical.data.id, canonical.type);
     for (const s of siblings) {
       if (s.data.id === canonical.data.id) continue;
-      const sSRS = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
-      // Use totalReviews + lastReviewDate for drift detection (not memoryStrength which is rounded)
-      if (sSRS.totalReviews !== canonicalSRS.totalReviews || sSRS.lastReviewDate !== canonicalSRS.lastReviewDate) {
+      const sReviews = s.srs?.totalReviews || 0;
+      const sDate = s.srs?.lastReviewDate || 0;
+      // Detect drift using raw values (not ensure/migrate which can inject Date.now())
+      if (sReviews !== canonicalSRS.totalReviews || sDate !== canonicalSRS.lastReviewDate) {
         updates.set(s.data.id, { ...canonicalSRS, id: s.data.id });
       }
     }

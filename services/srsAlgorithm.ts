@@ -27,7 +27,7 @@ export class SRSAlgorithm {
       stability: srs.stability ?? 0.5,
       totalReviews: srs.totalReviews ?? 0,
       correctStreak: srs.correctStreak ?? 0,
-      lastReviewDate: srs.lastReviewDate ?? Date.now(),
+      lastReviewDate: srs.lastReviewDate ?? 0,
     };
   }
 
@@ -55,7 +55,7 @@ export class SRSAlgorithm {
       nextReview: Date.now(), // Due immediately for first review
       interval: 0,
       memoryStrength: 0,
-      lastReviewDate: Date.now(),
+      lastReviewDate: 0, // 0 = never reviewed
       totalReviews: 0,
       correctStreak: 0,
       stability: 0.5, // Initial stability (half a day)
