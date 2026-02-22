@@ -380,7 +380,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
 
             {inputText.trim() && !isScanning && (
               <p className="text-[11px] text-slate-400 mt-2 text-center">
-                {inputText.trim().split(/\s+/).length} words &middot; {navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter
+                {inputText.trim().split(/\s+/).length} words &middot; {(navigator as any).userAgentData?.platform === 'macOS' || navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter
               </p>
             )}
 

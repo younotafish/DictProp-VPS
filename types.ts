@@ -141,13 +141,13 @@ export const getItemImageUrl = (item: StoredItem): string | undefined => {
 };
 
 // Word Comparison — AI-generated side-by-side analysis of 2-3 similar words
-export interface ComparisonDimension {
+interface ComparisonDimension {
   label: string;
   analysis: string;
   perWord: Record<string, string>;
 }
 
-export interface ComparisonExample {
+interface ComparisonExample {
   context: string;
   sentences: Record<string, string>;
 }

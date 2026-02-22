@@ -12,6 +12,14 @@ const deepinfraApiKey = defineSecret("DEEPINFRA_API_KEY");
 
 const DEEPSEEK_TIMEOUT_MS = 100000; // 100 second timeout
 
+// API endpoints and model identifiers
+const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
+const DEEPINFRA_WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo';
+const DEEPINFRA_FLUX_URL = 'https://api.deepinfra.com/v1/inference/black-forest-labs/FLUX-1-schnell';
+const REPLICATE_FLUX_URL = 'https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions';
+const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V3';
+const DEFAULT_TEMPERATURE = 0.7;
+
 interface DeepSeekResponse {
   choices: Array<{
     message: {
@@ -43,7 +51,7 @@ async function callDeepSeekOnce(
   let response: Response;
   try {
     response = await fetchWithTimeout(
-      'https://api.deepinfra.com/v1/openai/chat/completions',
+      DEEPINFRA_CHAT_URL,
       {
         method: 'POST',
         headers: {
@@ -51,13 +59,13 @@ async function callDeepSeekOnce(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-        model: 'deepseek-ai/DeepSeek-V3',
+        model: DEEPSEEK_MODEL,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         response_format: { type: 'json_object' },
-        temperature: 0.7,
+        temperature: DEFAULT_TEMPERATURE,
         }),
       },
       DEEPSEEK_TIMEOUT_MS
@@ -811,7 +819,7 @@ export const transcribeAudio = onCall({ secrets: [deepinfraApiKey], cors: true }
     formData.append('audio', blob, `audio.${mimeType.split('/')[1] || 'webm'}`);
     
     const response = await fetchWithTimeout(
-      'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo',
+      DEEPINFRA_WHISPER_URL,
       {
         method: 'POST',
         headers: {
@@ -870,7 +878,7 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
   if (deepinfraKey) {
     try {
       logger.info("Generating with DeepInfra FLUX Schnell...");
-      const response = await fetch('https://api.deepinfra.com/v1/inference/black-forest-labs/FLUX-1-schnell', {
+      const response = await fetch(DEEPINFRA_FLUX_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${deepinfraKey}`,
@@ -902,7 +910,7 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
         logger.warn("DeepInfra FLUX failed:", status, errorData);
         
         // Check for quota issues
-        if (status == 429 || status == 402) {
+        if (status === 429 || status === 402) {
           logger.warn("DeepInfra quota exceeded");
           return { imageData: undefined, error: "QUOTA_EXCEEDED" };
         }
@@ -923,7 +931,7 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
 
   try {
     logger.info("Trying Replicate FLUX Schnell (fallback)...");
-    const response = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
+    const response = await fetch(REPLICATE_FLUX_URL, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${replicateKey}`,
@@ -945,7 +953,7 @@ export const generateIllustration = onCall({ secrets: [deepinfraApiKey, replicat
       const errorData = await response.json().catch(() => ({}));
       const status = response.status;
       
-      if (status == 429 || status == 402) {
+      if (status === 429 || status === 402) {
         logger.warn("Replicate rate limit hit:", status, errorData);
         return { imageData: undefined, error: "QUOTA_EXCEEDED" };
       }

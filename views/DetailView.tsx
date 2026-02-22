@@ -149,16 +149,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // Trigger lazy load from Firebase
       onLazyLoadImage(itemId);
     }
-    
-    // Also check vocab images for phrase type
-    if (isSaved && isPhraseItem(currentItem) && currentItem.data.vocabs) {
-      currentItem.data.vocabs.forEach((vocab: VocabCard) => {
-        if (!vocab.imageUrl && vocab.id) {
-          // The parent item ID is used - Firebase stores the whole phrase
-          // so we only need to fetch the parent once
-        }
-      });
-    }
   }, [currentItem?.data.id, onLazyLoadImage, savedItems]);
 
 
@@ -819,7 +809,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">
                     <ReactMarkdown 
                       components={{
-                        strong: ({node, ...props}) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
+                        strong: (props) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
                       }}
                     >
                       {(data as SearchResult).grammar}

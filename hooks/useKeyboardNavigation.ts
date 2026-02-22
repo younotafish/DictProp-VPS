@@ -266,5 +266,5 @@ export const useWheelNavigation = (options: WheelNavigationOptions) => {
   }, [enabled, onScrollLeft, onScrollRight, containerRef, threshold]);
 };
 
-export default useKeyboardNavigation;
+
 

@@ -14,7 +14,7 @@
  */
 
 import React, { useEffect, useMemo, useRef } from 'react';
-import { StoredItem, VocabCard, SearchResult } from '../types';
+import { StoredItem, getItemTitle } from '../types';
 import { 
   Trophy, 
   TrendingUp, 
@@ -184,14 +184,6 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       </div>
     );
   }
-
-  // Helper to get item title for display
-  const getItemTitle = (item: StoredItem): string => {
-    if (item.type === 'vocab') {
-      return (item.data as VocabCard).word;
-    }
-    return (item.data as SearchResult).query;
-  };
 
   // Mastery breakdown data for stacked bar
   const masteryData = [

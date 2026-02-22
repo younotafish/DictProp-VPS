@@ -6,7 +6,7 @@
  * Get the preferred English voice for speech synthesis
  * Priority: Samantha (iOS/Mac) > Google US English > Microsoft Zira > any en-US > any en
  */
-export const getPreferredVoice = (): SpeechSynthesisVoice | undefined => {
+const getPreferredVoice = (): SpeechSynthesisVoice | undefined => {
   if (!window.speechSynthesis) return undefined;
 
   const voices = window.speechSynthesis.getVoices();

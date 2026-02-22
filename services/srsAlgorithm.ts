@@ -109,18 +109,6 @@ export class SRSAlgorithm {
   }
 
   /**
-   * Get current retention probability based on time since last review.
-   * R = 0.9^(elapsed / stability) — when elapsed = stability, R = 90%.
-   */
-  static getRetentionProbability(srs: SRSData): number {
-    const now = Date.now();
-    const daysSinceReview = (now - srs.lastReviewDate) / (1000 * 60 * 60 * 24);
-    const stability = Math.max(0.1, srs.stability);
-
-    return Math.pow(0.9, daysSinceReview / stability);
-  }
-
-  /**
    * Map stability (days) to a display strength score (0–100) for mastery badges.
    *
    * Mapping (approximate):
