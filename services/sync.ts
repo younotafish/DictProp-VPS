@@ -87,9 +87,24 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const mergedItem: StoredItem = clone(remoteItem);
 
       // A. DATA MERGE (Content - Word/Definition)
-      // Content usually changes rarely. Trust the most recent update.
+      // SAFETY: Never replace full content with lightweight cache data.
+      // The localStorage cache strips most fields (definition, history, examples, etc.)
+      // to fit within Safari's 5MB limit. If those stripped items enter the merge
+      // (e.g., after iOS clears IDB under storage pressure), we must detect and
+      // preserve the version that has full content.
+      const localDataFields = localItem.data as any;
+      const remoteDataFields = remoteItem.data as any;
+      const localHasContent = !!(localDataFields.definition || localDataFields.history || localDataFields.grammar ||
+                                (Array.isArray(localDataFields.examples) && localDataFields.examples.length > 0));
+      const remoteHasContent = !!(remoteDataFields.definition || remoteDataFields.history || remoteDataFields.grammar ||
+                                (Array.isArray(remoteDataFields.examples) && remoteDataFields.examples.length > 0));
+
       if (localTime > remoteTime) {
-          mergedItem.data = clone(localItem.data);
+          // Only use local data if it has full content, OR remote also lacks content
+          if (localHasContent || !remoteHasContent) {
+              mergedItem.data = clone(localItem.data);
+          }
+          // else: local is stripped cache data but remote has full content — keep remote data
           mergedItem.updatedAt = localTime;
           mergedItem.savedAt = localItem.savedAt;
       }

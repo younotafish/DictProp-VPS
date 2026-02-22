@@ -27,6 +27,13 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,ttf,eot}'],
         // Increase cache size limits for the app bundle
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
+        // Activate new SW immediately — don't wait for all tabs to close
+        skipWaiting: true,
+        clientsClaim: true,
+        // CRITICAL: Don't intercept Firebase auth handler paths.
+        // Without this, the SW serves index.html for /__/auth/handler
+        // which breaks Google sign-in popups.
+        navigateFallbackDenylist: [/^\/__\/.*/],
         runtimeCaching: [
           {
             // Cache Firebase Storage images for offline use

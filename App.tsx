@@ -250,9 +250,6 @@ const App: React.FC = () => {
   // Keyboard shortcuts help modal
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
 
-  // localStorage quota warning
-  const [cacheWarning, setCacheWarning] = useState(false);
-
   // Word comparison mode — 2-3 words to compare side-by-side
   const [comparisonWords, setComparisonWords] = useState<string[] | null>(null);
   
@@ -633,6 +630,34 @@ const App: React.FC = () => {
               ...prevState,
               items: mergedItems
             }));
+
+            // CATCH-UP PUSH: Compare merged items against Firestore and upload any
+            // that differ. This repairs Firestore when local IDB has full content but
+            // Firestore has stripped data (from a past cache-to-Firestore overwrite).
+            const remoteHashMap = new Map<string, string>();
+            remoteItems.forEach(item => {
+              if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
+            });
+            const catchUpItems: StoredItem[] = [];
+            mergedItems.forEach(item => {
+              const mergedHash = getItemContentHash(item);
+              const remoteHash = remoteHashMap.get(item.data.id);
+              syncedHashesRef.current.set(item.data.id, mergedHash);
+              if (mergedHash !== remoteHash) {
+                catchUpItems.push(item);
+              }
+            });
+            if (catchUpItems.length > 0) {
+              log(`🔥 Firebase: Catch-up sync: ${catchUpItems.length} items differ from cloud, uploading...`);
+              try {
+                await saveUserData(currentUser.uid, catchUpItems);
+                log(`🔥 Firebase: Catch-up sync complete`);
+              } catch (e) {
+                logError("Catch-up sync failed:", e);
+              }
+            } else {
+              log("🔥 Firebase: No catch-up needed, local and cloud match");
+            }
             
           } catch (error) {
             logError("Initial sync failed:", error);
@@ -691,16 +716,66 @@ const App: React.FC = () => {
 
   // Cache items to localStorage for instant restoration on iOS PWA reload
   // Strip images to stay within 5MB localStorage limit
+  // If full cache doesn't fit, progressively shrink: drop vocabs from phrases,
+  // then truncate to most recently updated items
   useEffect(() => {
     if (!isLoaded || syncState.items.length === 0) return;
-    
+
+    const fullCache = createLightweightCache(syncState.items);
+
+    // Try full cache first
     try {
-      localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(syncState.items)));
-      setCacheWarning(false);
-    } catch (e) {
-      warn("Failed to cache items to localStorage", e);
-      setCacheWarning(true);
+      localStorage.setItem('app_items_cache', JSON.stringify(fullCache));
+      return;
+    } catch {
+      // Full cache too large — try shrinking
     }
+
+    // Strategy 1: Strip vocabs[] from phrase items (biggest payload)
+    const slimCache = fullCache.map((entry: any) => {
+      if (entry.type === 'phrase' && entry.data?.vocabs) {
+        return { ...entry, data: { ...entry.data, vocabs: entry.data.vocabs.map((v: any) => ({ id: v.id, word: v.word, sense: v.sense })) } };
+      }
+      return entry;
+    });
+    try {
+      localStorage.setItem('app_items_cache', JSON.stringify(slimCache));
+      return;
+    } catch {
+      // Still too large
+    }
+
+    // Strategy 2: Keep only SRS-essential fields, sorted by most recently updated
+    const essentialCache = syncState.items
+      .slice()
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .map(item => ({
+        type: item.type,
+        srs: item.srs,
+        isDeleted: item.isDeleted || undefined,
+        isArchived: item.isArchived || undefined,
+        data: { id: item.data.id, ...(item.type === 'phrase' ? { query: (item.data as any).query } : { word: (item.data as any).word, sense: (item.data as any).sense }) },
+      }));
+
+    // Binary search for max items that fit
+    let lo = 0, hi = essentialCache.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      try {
+        localStorage.setItem('app_items_cache', JSON.stringify(essentialCache.slice(0, mid)));
+        lo = mid;
+      } catch {
+        hi = mid - 1;
+      }
+    }
+    if (lo > 0) {
+      try {
+        localStorage.setItem('app_items_cache', JSON.stringify(essentialCache.slice(0, lo)));
+      } catch {
+        // Give up — keep whatever was in cache before
+      }
+    }
+    warn(`localStorage cache truncated to ${lo}/${syncState.items.length} items`);
   }, [syncState.items, isLoaded]);
 
   // 3. SAVE EFFECTS (Persistence + Simple Item Sync)
@@ -723,8 +798,9 @@ const App: React.FC = () => {
       }
 
       // 2. Push items to Cloud (Firebase) - Delta Sync with Hash Comparison
-      // Skip cloud sync when offline - will sync when back online
-      if (user && isFirebaseConfigured && isOnline) {
+      // NOTE: Don't gate on isOnline — navigator.onLine is unreliable on iOS PWA standalone mode.
+      // Always attempt sync; the try/catch handles actual network failures gracefully.
+      if (user && isFirebaseConfigured) {
           // Filter items that actually need writing:
           // 1. Must have been updated since last sync (timestamp check)
           // 2. Content hash must differ from last synced hash (prevents redundant writes)
@@ -767,15 +843,12 @@ const App: React.FC = () => {
             logError("Sync error:", e);
             setSyncStatus('error');
           }
-      } else if (!isOnline) {
-          // Offline - data saved locally, will sync when online
-          setSyncStatus('saved');
       }
 
     }, 5000); // 5s debounce (user preference)
 
     return () => clearTimeout(timer);
-  }, [syncState, isLoaded, user, isFirebaseConfigured, isOnline]);
+  }, [syncState, isLoaded, user, isFirebaseConfigured]);
 
   const handleForceSync = async () => {
     if (!user || !isFirebaseConfigured || !isOnline) return;
@@ -1256,7 +1329,7 @@ const App: React.FC = () => {
     
     // Immediately sync deletion to Firebase (don't wait for 5s debounce)
     // This ensures deletions propagate even if user closes app quickly
-    if (user && isFirebaseConfigured && isOnline) {
+    if (user && isFirebaseConfigured) {
       try {
         // Use ref to get latest items (avoids stale closure)
         const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
@@ -1300,7 +1373,7 @@ const App: React.FC = () => {
     });
     
     // Immediately sync archive to Firebase (don't wait for 5s debounce)
-    if (user && isFirebaseConfigured && isOnline) {
+    if (user && isFirebaseConfigured) {
       try {
         // Use ref to get latest items (avoids stale closure)
         const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
@@ -1342,7 +1415,7 @@ const App: React.FC = () => {
     });
     
     // Immediately sync unarchive to Firebase
-    if (user && isFirebaseConfigured && isOnline) {
+    if (user && isFirebaseConfigured) {
       try {
         // Use ref to get latest items (avoids stale closure)
         const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
@@ -1483,7 +1556,9 @@ const App: React.FC = () => {
     
     // Also sync SRS updates to Firebase (don't wait for 5s debounce)
     // This ensures learning progress syncs across devices
-    if (user && isFirebaseConfigured && isOnline && itemsToSync.length > 0) {
+    // NOTE: Don't gate on isOnline — navigator.onLine is unreliable on iOS PWA standalone mode.
+    // Instead, always attempt the save and let the try/catch handle network failures gracefully.
+    if (user && isFirebaseConfigured && itemsToSync.length > 0) {
       try {
         log(`🔥 Firebase: Immediately syncing ${itemsToSync.length} SRS updates`);
         await saveUserData(user.uid, itemsToSync);

@@ -334,7 +334,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Calculate global stats for saved items
   const activeItems = savedItems.filter(i => !i.isDeleted && !i.isArchived);
   const memorizedCount = activeItems.filter(i => (i.srs?.memoryStrength ?? 0) >= 70).length;
-  const dueToday = activeItems.filter(i => (i.srs?.nextReview ?? 0) <= Date.now()).length;
+  // Deduplicate due count by spelling — one word = one due item
+  const dueSpellings = new Set<string>();
+  const now = Date.now();
+  activeItems.forEach(i => {
+    if ((i.srs?.nextReview ?? 0) <= now) {
+      const spelling = (i.type === 'phrase' ? (i.data as any).query : (i.data as any).word || '').toLowerCase().trim();
+      if (spelling) dueSpellings.add(spelling);
+    }
+  });
+  const dueToday = dueSpellings.size;
   
   // Get mastery info for current item
   const mastery = savedItemMatch?.srs ? SRSAlgorithm.getMasteryLevel(savedItemMatch.srs) : null;
