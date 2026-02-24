@@ -1,6 +1,6 @@
 import React, { memo, useState, useCallback } from 'react';
 import { VocabCard as VocabType, WordFamilyEntry } from '../types';
-import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, Network, Scale, Check, X } from 'lucide-react';
+import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, Network, Scale, Check, X, BookmarkPlus, BookmarkCheck } from 'lucide-react';
 import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
@@ -18,6 +18,8 @@ interface Props {
   showPronunciation?: boolean;
   showRefresh?: boolean;
   onCompare?: (words: string[]) => void;
+  onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  isSentenceSaved?: (text: string) => boolean;
 }
 
 // Memoize to prevent re-renders when other cards in the list update
@@ -34,6 +36,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   showPronunciation = true,
   showRefresh = true,
   onCompare,
+  onSaveSentence,
+  isSentenceSaved,
 }) => {
   
   // Compare-pick mode state
@@ -248,23 +252,37 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             {ensureArray(data.examples).map((ex, i) => {
               // Safely handle word highlighting
               const word = data.word || '';
+              const saveBtn = onSaveSentence && (() => {
+                const saved = isSentenceSaved?.(ex) ?? false;
+                return (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); if (!saved) onSaveSentence(ex, data.word, data.sense); }}
+                    className={`absolute right-0 top-0 p-0.5 transition-colors ${saved ? 'text-indigo-500' : 'text-indigo-300 hover:text-indigo-600'}`}
+                    title={saved ? 'Sentence saved' : 'Save sentence for review'}
+                    disabled={saved}
+                  >
+                    {saved ? <BookmarkCheck size={14} /> : <BookmarkPlus size={14} />}
+                  </button>
+                );
+              })();
               if (!word || !ex) {
-                return <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3">{ex}</li>;
+                return <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">{ex}{saveBtn}</li>;
               }
-              
+
               try {
                 return (
-                  <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3">
-                    {ex.split(new RegExp(`(${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, j) => 
-                      part.toLowerCase() === word.toLowerCase() 
-                      ? <span key={j} className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">{part}</span> 
+                  <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">
+                    {ex.split(new RegExp(`(${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, j) =>
+                      part.toLowerCase() === word.toLowerCase()
+                      ? <span key={j} className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">{part}</span>
                       : part
                     )}
+                    {saveBtn}
                   </li>
                 );
               } catch (e) {
                 // Fallback if regex fails
-                return <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3">{ex}</li>;
+                return <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">{ex}{saveBtn}</li>;
               }
             })}
           </ul>

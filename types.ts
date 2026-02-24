@@ -38,10 +38,18 @@ export interface SearchResult {
   originalQuery?: string; // Original Chinese input if translated
 }
 
+// Sentence — saved example sentence from a vocabulary card
+export interface SentenceData {
+  id: string;
+  text: string; // The sentence text, with [[word]] markup for linked words
+  sourceWord: string; // The vocab word this sentence came from
+  sourceSense?: string; // The sense label of the source word
+}
+
 // SRS Data — Fixed-schedule spaced repetition
 export interface SRSData {
   id: string; // References SearchResult.id or VocabCard.id
-  type: 'vocab' | 'phrase';
+  type: 'vocab' | 'phrase' | 'sentence';
   nextReview: number; // Timestamp
   interval: number; // In minutes
   
@@ -57,8 +65,8 @@ export interface SRSData {
 
 // Combined type for storage
 export interface StoredItem {
-  data: SearchResult | VocabCard;
-  type: 'vocab' | 'phrase';
+  data: SearchResult | VocabCard | SentenceData;
+  type: 'vocab' | 'phrase' | 'sentence';
   srs: SRSData;
   savedAt: number;
   updatedAt?: number;
@@ -75,7 +83,7 @@ export interface ItemGroup {
 
 export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
-export type ViewState = 'notebook' | 'study';
+export type ViewState = 'notebook' | 'study' | 'sentences';
 
 // Simplified sync state (operation-based sync was removed due to Firestore limits)
 export interface SyncState {
@@ -93,11 +101,17 @@ export const isVocabItem = (item: StoredItem): item is StoredItem & { type: 'voc
  * Type guard to check if a StoredItem contains phrase/sentence data.
  * When true, narrows the type to allow direct access to SearchResult properties.
  */
-export const isPhraseItem = (item: StoredItem): item is StoredItem & { type: 'phrase'; data: SearchResult } => 
+export const isPhraseItem = (item: StoredItem): item is StoredItem & { type: 'phrase'; data: SearchResult } =>
   item.type === 'phrase';
 
 /**
- * Gets the display title of a stored item (word for vocab, query for phrase).
+ * Type guard to check if a StoredItem contains sentence data.
+ */
+export const isSentenceItem = (item: StoredItem): item is StoredItem & { type: 'sentence'; data: SentenceData } =>
+  item.type === 'sentence';
+
+/**
+ * Gets the display title of a stored item (word for vocab, query for phrase, text for sentence).
  * @param item - The stored item to get the title from
  * @returns The word or query string, or empty string if not available
  */
@@ -105,6 +119,9 @@ export const getItemTitle = (item: StoredItem): string => {
   if (!item || !item.data) return '';
   if (isPhraseItem(item)) {
     return item.data.query || '';
+  }
+  if (isSentenceItem(item)) {
+    return (item.data as SentenceData).text || '';
   }
   return (item.data as VocabCard).word || '';
 };

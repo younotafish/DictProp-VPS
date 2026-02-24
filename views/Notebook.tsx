@@ -323,10 +323,12 @@ interface SearchResultsCarouselProps {
   onSave: (vocab: VocabCard) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onSearch: (text: string) => void;
+  onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  isSentenceSaved?: (text: string) => boolean;
 }
 
 const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
-  vocabs, onSave, isVocabSaved, onSearch
+  vocabs, onSave, isVocabSaved, onSearch, onSaveSentence, isSentenceSaved
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const carouselRef = useRef<HTMLDivElement>(null);
@@ -433,6 +435,8 @@ const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
             onSearch={onSearch}
             scrollable={false}
             className="!h-auto !overflow-visible border-violet-200 shadow-sm hover:shadow-md transition-shadow bg-white"
+            onSaveSentence={onSaveSentence}
+            isSentenceSaved={isSentenceSaved}
           />
         </div>
         
@@ -478,12 +482,15 @@ interface NotebookProps {
   onSave?: (item: StoredItem) => void;
   onUpdateStoredItem?: (item: StoredItem) => void;
   onCompare?: (words: string[]) => void;
+  onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  isSentenceSaved?: (text: string) => boolean;
 }
 
-export const NotebookView: React.FC<NotebookProps> = ({ 
-    items, onDelete, onSearch, onViewDetail, 
+export const NotebookView: React.FC<NotebookProps> = ({
+    items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare
+    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
+    onSaveSentence, isSentenceSaved
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -1200,6 +1207,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
           onSave={handleSaveVocab}
           isVocabSaved={isVocabSaved}
           onSearch={onSearch}
+          onSaveSentence={onSaveSentence}
+          isSentenceSaved={isSentenceSaved}
         />
       )}
 

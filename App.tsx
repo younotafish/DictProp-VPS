@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
+import { SentencesView } from './views/SentencesView';
 import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
-import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
-import { Book, BrainCircuit, Keyboard } from 'lucide-react';
+import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
+import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash } from './services/firebase';
@@ -141,7 +142,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
     const saved = localStorage.getItem('app_current_view');
     // Default to notebook, and handle legacy 'search' value from old localStorage
-    if (!saved || saved === 'search' || (saved !== 'notebook' && saved !== 'study')) {
+    if (!saved || saved === 'search' || !['notebook', 'study', 'sentences'].includes(saved)) {
       return 'notebook';
     }
     return saved as ViewState;
@@ -200,9 +201,15 @@ const App: React.FC = () => {
   
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
-  const activeItems = useMemo(() => savedItems.filter(i => !i.isDeleted), [savedItems]);
-  // Items available for study (excludes archived)
-  const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived), [savedItems]);
+  const activeItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
+  // Items available for study (excludes archived and sentences)
+  const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
+  // Sentence items
+  const sentenceItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type === 'sentence'), [savedItems]);
+  const sentenceDueCount = useMemo(() => {
+    const now = Date.now();
+    return sentenceItems.filter(s => !s.isArchived && ((s.srs?.nextReview ?? 0) <= now)).length;
+  }, [sentenceItems]);
   
   // Start as "loaded" if we have cached items (instant UI)
   // Full data will be loaded from IndexedDB in background
@@ -260,10 +267,13 @@ const App: React.FC = () => {
   // Word comparison mode — 2-3 words to compare side-by-side
   const [comparisonWords, setComparisonWords] = useState<string[] | null>(null);
   
-  // Global keyboard navigation for tab switching (1, 2 keys)
+  // Global keyboard navigation for tab switching (1, 2, 3 keys)
   useGlobalNavigation({
     onNavigateToNotebook: () => {
       setCurrentView('notebook');
+    },
+    onNavigateToSentences: () => {
+      setCurrentView('sentences');
     },
     onNavigateToStudy: () => {
       setCurrentView('study');
@@ -1438,6 +1448,26 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Save sentence for review
+  const handleSaveSentence = useCallback((text: string, sourceWord: string, sourceSense?: string) => {
+    const sentenceData: SentenceData = {
+      id: crypto.randomUUID(),
+      text,
+      sourceWord,
+      sourceSense,
+    };
+    handleSave({
+      data: sentenceData,
+      type: 'sentence',
+      savedAt: Date.now(),
+      srs: SRSAlgorithm.createNew(sentenceData.id, 'sentence'),
+    });
+  }, []);
+
+  const isSentenceSaved = useCallback((text: string) => {
+    return sentenceItems.some(s => (s.data as SentenceData).text === text);
+  }, [sentenceItems]);
+
   // Search handler - now triggers search in notebook
   const handleRecursiveSearch = (text: string) => {
       setCurrentView('notebook');
@@ -1631,6 +1661,8 @@ const App: React.FC = () => {
               onLazyLoadImage={handleLazyLoadImage}
               onUpdateSRS={updateSRS}
               onCompare={handleCompare}
+              onSaveSentence={handleSaveSentence}
+              isSentenceSaved={isSentenceSaved}
           />
       )}
 
@@ -1662,12 +1694,24 @@ const App: React.FC = () => {
             onSave={handleSave}
             onUpdateStoredItem={handleUpdateStoredItem}
             onCompare={handleCompare}
+            onSaveSentence={handleSaveSentence}
+            isSentenceSaved={isSentenceSaved}
           />
         )}
-        
+
         {currentView === 'study' && (
           <StudyEnhanced
-            items={studyItems} 
+            items={studyItems}
+            onScroll={handleScroll}
+          />
+        )}
+
+        {currentView === 'sentences' && (
+          <SentencesView
+            items={sentenceItems}
+            onUpdateSRS={updateSRS}
+            onDelete={handleDelete}
+            onSearch={handleRecursiveSearch}
             onScroll={handleScroll}
           />
         )}
@@ -1676,6 +1720,7 @@ const App: React.FC = () => {
 
       <nav className={`fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
         <NavButton view="notebook" currentView={currentView} onClick={setCurrentView} icon={Book} label="Notebook" />
+        <NavButton view="sentences" currentView={currentView} onClick={setCurrentView} icon={MessageSquareQuote} label="Sentences" badge={sentenceDueCount || undefined} />
         <NavButton view="study" currentView={currentView} onClick={setCurrentView} icon={BrainCircuit} label="Study" />
         {/* Keyboard shortcuts hint - only visible on desktop */}
         <button 

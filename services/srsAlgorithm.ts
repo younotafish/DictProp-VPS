@@ -37,7 +37,7 @@ export class SRSAlgorithm {
   static ensure(
     srs: SRSData | undefined,
     fallbackId: string,
-    fallbackType: 'vocab' | 'phrase'
+    fallbackType: 'vocab' | 'phrase' | 'sentence'
   ): SRSData {
     if (srs) {
       return this.migrate(srs);
@@ -48,7 +48,7 @@ export class SRSAlgorithm {
   /**
    * Initialize new SRS data for an item.
    */
-  static createNew(id: string, type: 'vocab' | 'phrase'): SRSData {
+  static createNew(id: string, type: 'vocab' | 'phrase' | 'sentence'): SRSData {
     return {
       id,
       type,

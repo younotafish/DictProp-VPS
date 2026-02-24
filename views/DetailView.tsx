@@ -56,6 +56,8 @@ interface DetailViewProps {
   onLazyLoadImage?: (itemId: string) => void; // Fetch image from Firebase if missing locally
   onUpdateSRS?: (itemId: string) => void; // Direct SRS update (triggers "remember")
   onCompare?: (words: string[]) => void;
+  onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  isSentenceSaved?: (text: string) => boolean;
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
@@ -72,6 +74,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onLazyLoadImage,
   onUpdateSRS,
   onCompare,
+  onSaveSentence,
+  isSentenceSaved,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
@@ -778,6 +782,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
               className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
               showRefresh={false}
               onCompare={onCompare}
+              onSaveSentence={onSaveSentence}
+              isSentenceSaved={isSentenceSaved}
             />
           )}
 
@@ -836,6 +842,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         showSave={true}
                         className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
                         onCompare={onCompare}
+                        onSaveSentence={onSaveSentence}
+                        isSentenceSaved={isSentenceSaved}
                       />
                     ))}
                   </div>
