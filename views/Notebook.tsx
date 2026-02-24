@@ -805,6 +805,26 @@ export const NotebookView: React.FC<NotebookProps> = ({
       } else {
         processedItems = fuseResults;
       }
+
+      // Expand fuzzy results to include all sibling items (same word, different senses)
+      const matchedTitles = new Set<string>();
+      processedItems.forEach(item => {
+        const title = item.type === 'phrase'
+          ? (item.data as any).query?.toLowerCase().trim()
+          : (item.data as any).word?.toLowerCase().trim();
+        if (title) matchedTitles.add(title);
+      });
+
+      const matchedIds = new Set(processedItems.map(i => i.data.id));
+      const siblings = items.filter(item => {
+        if (matchedIds.has(item.data.id)) return false;
+        const title = item.type === 'phrase'
+          ? (item.data as any).query?.toLowerCase().trim()
+          : (item.data as any).word?.toLowerCase().trim();
+        return title ? matchedTitles.has(title) : false;
+      });
+
+      processedItems = [...processedItems, ...siblings];
     }
 
     // Separate active and archived items
