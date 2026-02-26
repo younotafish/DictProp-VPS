@@ -264,20 +264,21 @@ export const DetailView: React.FC<DetailViewProps> = ({
     else if (isHorizontalSwipe) {
       const totalItems = currentGroup ? currentGroup.items.length : 0;
       
-      // Swipe LEFT -> Next Item (Meaning) - loops forever (even with 1 item for consistent UX)
+      // Swipe LEFT -> Next Item (Meaning)
       if (diffX < -horizontalSwipeMin && totalItems >= 1) {
-        setShowHeader(false); // Hide header on navigation
-        setIsAnimating(true);
-        setCurrentItemIndex(prev => (prev + 1) % totalItems); // Loop back to 0 when at end
-        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-        setTimeout(() => setIsAnimating(false), 300);
-        
-        // Only pronounce directly when single item (index doesn't change, so useEffect won't trigger)
-        if (totalItems === 1 && currentItem) {
-          const wordToSpeak = currentItem.type === 'phrase' 
-            ? (currentItem.data as SearchResult).query 
-            : (currentItem.data as VocabCard).word;
-          if (wordToSpeak) speak(wordToSpeak);
+        if (totalItems === 1) {
+          // Single meaning: just pronounce, no scroll/animation reset
+          if (currentItem) {
+            const wordToSpeak = currentItem.type === 'phrase'
+              ? (currentItem.data as SearchResult).query
+              : (currentItem.data as VocabCard).word;
+            if (wordToSpeak) speak(wordToSpeak);
+          }
+        } else {
+          setShowHeader(false);
+          setIsAnimating(true);
+          setCurrentItemIndex(prev => (prev + 1) % totalItems);
+          setTimeout(() => setIsAnimating(false), 300);
         }
       }
       
@@ -287,7 +288,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
           setShowHeader(false); // Hide header on navigation
           setIsAnimating(true);
           setCurrentItemIndex(prev => prev - 1);
-          if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
           setTimeout(() => setIsAnimating(false), 300);
         } else {
           // Close view if swiping right with no previous item
@@ -363,7 +363,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (hasPrevItem && !isAnimating) {
       setIsAnimating(true);
       setCurrentItemIndex(prev => prev - 1);
-      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       setTimeout(() => setIsAnimating(false), 300);
     }
   }, [hasPrevItem, isAnimating]);
@@ -371,17 +370,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handleNextItem = useCallback(() => {
     const totalItems = currentGroup ? currentGroup.items.length : 0;
     if (totalItems >= 1 && !isAnimating) {
-      setIsAnimating(true);
-      setCurrentItemIndex(prev => (prev + 1) % totalItems); // Loop back to 0 when at end
-      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-      setTimeout(() => setIsAnimating(false), 300);
-      
-      // Only pronounce directly when single item (index doesn't change, so useEffect won't trigger)
-      if (totalItems === 1 && currentItem) {
-        const wordToSpeak = currentItem.type === 'phrase' 
-          ? (currentItem.data as SearchResult).query 
-          : (currentItem.data as VocabCard).word;
-        if (wordToSpeak) speak(wordToSpeak);
+      if (totalItems === 1) {
+        // Single meaning: just pronounce
+        if (currentItem) {
+          const wordToSpeak = currentItem.type === 'phrase'
+            ? (currentItem.data as SearchResult).query
+            : (currentItem.data as VocabCard).word;
+          if (wordToSpeak) speak(wordToSpeak);
+        }
+      } else {
+        setIsAnimating(true);
+        setCurrentItemIndex(prev => (prev + 1) % totalItems);
+        setTimeout(() => setIsAnimating(false), 300);
       }
     }
   }, [currentGroup, isAnimating, currentItem]);
