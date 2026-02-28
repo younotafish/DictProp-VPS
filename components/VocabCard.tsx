@@ -250,7 +250,6 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           </div>
           <ul className="space-y-2">
             {ensureArray(data.examples).map((ex, i) => {
-              // Safely handle word highlighting
               const word = data.word || '';
               const saveBtn = onSaveSentence && (() => {
                 const saved = isSentenceSaved?.(ex) ?? false;
@@ -265,25 +264,45 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                   </button>
                 );
               })();
-              if (!word || !ex) {
-                return <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">{ex}{saveBtn}</li>;
-              }
 
-              try {
-                return (
-                  <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">
-                    {ex.split(new RegExp(`(${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, j) =>
-                      part.toLowerCase() === word.toLowerCase()
-                      ? <span key={j} className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">{part}</span>
+              // Two-pass rendering: first split on [[brackets]], then highlight current word in plain segments
+              const highlightWord = (text: string, keyPrefix: string) => {
+                if (!word || !text) return text;
+                try {
+                  return text.split(new RegExp(`(${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, j) =>
+                    part.toLowerCase() === word.toLowerCase()
+                      ? <span key={`${keyPrefix}-w${j}`} className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">{part}</span>
                       : part
-                    )}
-                    {saveBtn}
-                  </li>
+                  );
+                } catch { return text; }
+              };
+
+              const renderExample = () => {
+                // Split on [[...]] brackets for clickable C1/C2 words
+                const parts = ex.split(/\[\[(.+?)\]\]/g);
+                if (parts.length === 1) {
+                  // No brackets found — just highlight the current word
+                  return highlightWord(ex, `ex${i}`);
+                }
+                return parts.map((part, j) =>
+                  j % 2 === 1 ? (
+                    <button
+                      key={`ex${i}-b${j}`}
+                      onClick={(e) => { e.stopPropagation(); onSearch?.(part); }}
+                      className="text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors"
+                    >
+                      {part}
+                    </button>
+                  ) : highlightWord(part, `ex${i}-p${j}`)
                 );
-              } catch (e) {
-                // Fallback if regex fails
-                return <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">{ex}{saveBtn}</li>;
-              }
+              };
+
+              return (
+                <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">
+                  {renderExample()}
+                  {saveBtn}
+                </li>
+              );
             })}
           </ul>
         </div>

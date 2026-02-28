@@ -206,7 +206,7 @@ Each vocab object MUST have these fields:
   "synonyms": ["array of strings - Synonyms for THIS specific meaning"],
   "antonyms": ["array of strings - Antonyms for THIS specific meaning"],
   "confusables": ["array of strings - Words easily confused with this (similar spelling, sound, or meaning)"],
-  "examples": ["array of 2 strings - Natural contemporary sentences showing THIS specific meaning"],
+  "examples": ["array of 2 strings - Natural contemporary sentences showing THIS specific meaning. Wrap any C1/C2 level words, idioms, or advanced phrases (other than the word being defined) in [[double brackets]] so they become clickable links. e.g. 'She managed to [[reconcile]] her personal beliefs with the [[prevailing]] social norms.'"],
   "history": "string - Etymology and semantic evolution: Where the word comes from AND how/why it evolved to its current meaning. Explain the journey from original meaning to modern usage (2-3 sentences)",
   "register": "string - Frequency/register note (formal, slang, etc.)",
   "mnemonic": "string - A simple memory aid for THIS specific meaning",
