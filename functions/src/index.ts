@@ -199,7 +199,7 @@ Each vocab object MUST have these fields:
   "word": "string - The vocabulary word or phrase",
   "sense": "string - Brief label for this specific meaning (e.g., 'noun: financial', 'verb: to rely on')",
   "chinese": "string - Chinese translation for THIS specific meaning only",
-  "ipa": "string - General American (GA) IPA with stress marks. MUST be rhotic American, NEVER British RP. Key rules: always include /r/ after vowels (car=/kɑːr/ NOT /kɑː/), use /ɑː/ not /ɒ/ (lot=/lɑːt/ NOT /lɒt/), use /æ/ not /ɑː/ in BATH words (bath=/bæθ/ NOT /bɑːθ/), use /ɛr/ not /eə/ (care=/kɛr/ NOT /keə/), use /t/ not /ʔ/ (better=/ˈbɛtɚ/ NOT /ˈbeʔə/)",
+  "ipa": "string - General American (GA) IPA with stress marks. Use Merriam-Webster pronunciation as reference, NEVER Oxford/Cambridge. MUST be rhotic American, NEVER British RP. Use American stress patterns (e.g., vaginal=/ˈvædʒənəl/ NOT British /vəˈdʒaɪnəl/, address(n)=/ˈædrɛs/ NOT /əˈdrɛs/, garage=/ɡəˈrɑːʒ/ NOT /ˈɡærɑːʒ/). Key rules: always include /r/ after vowels (car=/kɑːr/ NOT /kɑː/), use /ɑː/ not /ɒ/ (lot=/lɑːt/ NOT /lɒt/), use /æ/ not /ɑː/ in BATH words (bath=/bæθ/ NOT /bɑːθ/), use /ɛr/ not /eə/ (care=/kɛr/ NOT /keə/), use /t/ not /ʔ/ (better=/ˈbɛtɚ/ NOT /ˈbeʔə/), use /ɚ/ or /ər/ for unstressed -er (never silent r)",
   "definition": "string - Original English definition for THIS specific meaning/sense",
   "forms": ["array of strings - Different grammatical forms (e.g., runs, running, ran)"],
   "wordFamily": ["array of objects - Related words of different parts of speech, each with { word, pos, chinese }"],
