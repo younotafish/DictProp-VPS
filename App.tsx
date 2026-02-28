@@ -308,10 +308,8 @@ const App: React.FC = () => {
         }, 100);
       }
       
-      // ? key to show keyboard shortcuts (when not in input)
-      const target = e.target as HTMLElement;
-      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-      if (e.key === '?' && !isInput && !e.metaKey && !e.ctrlKey) {
+      // ? key to show keyboard shortcuts (works even from input fields)
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setShowKeyboardHelp(true);
       }

@@ -355,7 +355,25 @@ const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
     threshold: 80,
     enabled: totalItems > 1,
   });
-  
+
+  // Keyboard arrow navigation
+  React.useEffect(() => {
+    if (totalItems <= 1) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (currentIndex > 0) navigateTo(currentIndex - 1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        navigateTo((currentIndex + 1) % totalItems);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [totalItems, currentIndex, navigateTo]);
+
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
@@ -738,6 +756,25 @@ export const NotebookView: React.FC<NotebookProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [compareMode]);
+
+  // Global Escape to clear search (works even when input is not focused)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const target = e.target as HTMLElement;
+      // Skip if already handled by the input's own onKeyDown
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (localSearchQuery || searchResults) {
+        e.preventDefault();
+        e.stopPropagation();
+        setLocalSearchQuery('');
+        setSearchResults(null);
+        setSearchError(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [localSearchQuery, searchResults]);
 
   // Clear search results when query is cleared
   useEffect(() => {
