@@ -502,13 +502,14 @@ interface NotebookProps {
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
+  hasOverlay?: boolean;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
     onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
-    onSaveSentence, isSentenceSaved
+    onSaveSentence, isSentenceSaved, hasOverlay
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -759,13 +760,11 @@ export const NotebookView: React.FC<NotebookProps> = ({
 
   // Global Escape to clear search (works even when input is not focused)
   useEffect(() => {
+    if (hasOverlay) return; // Don't clear search when an overlay (DetailView, modal) is open
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const target = e.target as HTMLElement;
-      // Skip if already handled by the input's own onKeyDown
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-      // Skip if an overlay (DetailView, modal) is open — let it handle Escape first
-      if (document.querySelector('.fixed.z-50, .fixed.z-\\[100\\]')) return;
       if (localSearchQuery || searchResults) {
         e.preventDefault();
         e.stopPropagation();
@@ -776,7 +775,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [localSearchQuery, searchResults]);
+  }, [localSearchQuery, searchResults, hasOverlay]);
 
   // Clear search results when query is cleared
   useEffect(() => {

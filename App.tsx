@@ -1694,6 +1694,7 @@ const App: React.FC = () => {
             onCompare={handleCompare}
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
+            hasOverlay={!!detailContext || !!confirmModal || !!comparisonWords || showKeyboardHelp}
           />
         )}
 
