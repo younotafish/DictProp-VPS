@@ -764,6 +764,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
       const target = e.target as HTMLElement;
       // Skip if already handled by the input's own onKeyDown
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      // Skip if an overlay (DetailView, modal) is open — let it handle Escape first
+      if (document.querySelector('.fixed.z-50, .fixed.z-\\[100\\]')) return;
       if (localSearchQuery || searchResults) {
         e.preventDefault();
         e.stopPropagation();
