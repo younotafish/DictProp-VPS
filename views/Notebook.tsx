@@ -611,6 +611,15 @@ export const NotebookView: React.FC<NotebookProps> = ({
       e.preventDefault();
       performAISearch(localSearchQuery);
     }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (localSearchQuery) {
+        setLocalSearchQuery('');
+      } else {
+        (e.target as HTMLInputElement).blur();
+      }
+    }
   };
 
   // Voice recording functions

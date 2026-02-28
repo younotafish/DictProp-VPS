@@ -626,11 +626,27 @@ export const DetailView: React.FC<DetailViewProps> = ({
           handleToggleSave();
         }
       }
+
+      // D: Delete (show confirm dialog)
+      if (e.key === 'd' || e.key === 'D') {
+        if (!e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          if (isSaved) setShowDeleteConfirm(true);
+        }
+      }
+
+      // A: Archive / Unarchive
+      if (e.key === 'a' || e.key === 'A') {
+        if (!e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          if (isSaved) handleArchiveItem();
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showDeleteConfirm, showActionMenu, handleRemember, handleResetSRS, handleToggleSave]);
+  }, [title, showDeleteConfirm, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved]);
 
   return (
     <div 

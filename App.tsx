@@ -302,7 +302,7 @@ const App: React.FC = () => {
         setCurrentView('notebook');
         // Focus notebook search input
         setTimeout(() => {
-          const input = document.querySelector('input[placeholder*="Search notebook"]') as HTMLInputElement;
+          const input = document.querySelector('input[placeholder*="Search or look up"]') as HTMLInputElement;
           input?.focus();
           input?.select();
         }, 100);
@@ -1759,23 +1759,27 @@ const App: React.FC = () => {
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Navigation</h4>
                 <div className="space-y-2">
                   <ShortcutRow keys={['1']} description="Go to Notebook" />
-                  <ShortcutRow keys={['2']} description="Go to Study" />
+                  <ShortcutRow keys={['2']} description="Go to Sentences" />
+                  <ShortcutRow keys={['3']} description="Go to Study" />
                   <ShortcutRow keys={['⌘', 'F']} description="Focus search input" />
-                  <ShortcutRow keys={['Esc']} description="Close modal / Go back" />
+                  <ShortcutRow keys={['?']} description="Show keyboard shortcuts" />
+                  <ShortcutRow keys={['Esc']} description="Close modal / Go back / Clear search" />
                 </div>
               </div>
 
               {/* Cards & Carousels */}
               <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Cards & Carousels</h4>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Card View</h4>
                 <div className="space-y-2">
-                  <ShortcutRow keys={['←', '→']} description="Navigate between cards" />
+                  <ShortcutRow keys={['←', '→']} description="Navigate between meanings" />
                   <ShortcutRow keys={['↑', '↓']} description="Navigate between words" />
-                  <ShortcutRow keys={['Space']} description="Flip flashcard" />
-                  <ShortcutRow keys={['Enter']} description="Open selected card" />
+                  <ShortcutRow keys={['S']} description="Toggle save" />
                   <ShortcutRow keys={['P']} description="Pronounce current word" />
                   <ShortcutRow keys={['R']} description="Mark as Remembered" />
                   <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />
+                  <ShortcutRow keys={['H']} description="Toggle header bar" />
+                  <ShortcutRow keys={['D']} description="Delete current item" />
+                  <ShortcutRow keys={['A']} description="Archive / Unarchive" />
                 </div>
               </div>
 
