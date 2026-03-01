@@ -196,15 +196,26 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
       {/* Two-column layout on large screens: image left, content right */}
       <div className={`${data.imageUrl ? 'md:flex md:gap-6' : ''}`}>
-        {/* Generated Image + inline YouGlish on desktop */}
+        {/* Generated Image + YouGlish on desktop (click to load) */}
         {data.imageUrl && (
           <div className="mb-4 md:mb-0 w-full md:w-2/5 md:shrink-0">
             <div className="rounded-xl overflow-hidden max-h-48 md:max-h-64 bg-slate-50 border border-slate-100 shadow-inner">
               <OfflineImage src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
             </div>
-            {/* Auto-load YouGlish inline below image on desktop */}
+            {/* Inline YouGlish below image on desktop — click to load (preserves daily quota) */}
             <div className="hidden md:block">
-              <YouGlishPlayer word={data.word} mode="inline" />
+              {showYouGlish ? (
+                <YouGlishPlayer word={data.word} mode="inline" />
+              ) : (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowYouGlish(true); }}
+                  className="mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors cursor-pointer"
+                  title="Load YouGlish pronunciation videos"
+                >
+                  <ExternalLink size={14} />
+                  <span className="text-xs font-medium">Load YouGlish</span>
+                </button>
+              )}
             </div>
           </div>
         )}
