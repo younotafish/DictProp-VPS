@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Loader2, AlertCircle } from 'lucide-react';
 
 declare global {
@@ -10,11 +10,13 @@ declare global {
 
 interface Props {
   word: string;
-  onClose: () => void;
+  onClose?: () => void;
+  /** 'modal' (default): fixed overlay. 'inline': renders in parent flow, no overlay */
+  mode?: 'modal' | 'inline';
 }
 
-const SCRIPT_LOAD_TIMEOUT = 10000; // 10s to load the YouGlish script
-const FETCH_TIMEOUT = 15000; // 15s to get results after widget creation
+const SCRIPT_LOAD_TIMEOUT = 10000;
+const FETCH_TIMEOUT = 15000;
 
 /**
  * Error boundary scoped to YouGlishPlayer — catches render/lifecycle
@@ -22,7 +24,7 @@ const FETCH_TIMEOUT = 15000; // 15s to get results after widget creation
  * the parent VocabCard / DetailView.
  */
 class YouGlishErrorBoundary extends React.Component<
-  { children: React.ReactNode; onClose: () => void; word: string },
+  { children: React.ReactNode; onClose?: () => void; word: string; inline?: boolean },
   { hasError: boolean; error: Error | null }
 > {
   constructor(props: any) {
@@ -40,6 +42,14 @@ class YouGlishErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
+      if (this.props.inline) {
+        return (
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-center">
+            <AlertCircle size={20} className="text-amber-400 mx-auto mb-1" />
+            <p className="text-xs text-slate-500">YouGlish unavailable</p>
+          </div>
+        );
+      }
       return (
         <div
           className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4"
@@ -76,20 +86,27 @@ class YouGlishErrorBoundary extends React.Component<
   }
 }
 
-const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose }) => {
+/** Unique ID counter for inline widget instances (avoids DOM id collisions) */
+let widgetIdCounter = 0;
+
+const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' }) => {
   const widgetRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [noResults, setNoResults] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [widgetId] = useState(() => `youglish-widget-${++widgetIdCounter}`);
+  const isInline = mode === 'inline';
 
-  // Escape key closes modal
+  // Escape key closes modal (only in modal mode)
   useEffect(() => {
+    if (isInline || !onClose) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, isInline]);
 
   // Load widget
   useEffect(() => {
@@ -100,7 +117,6 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose }) => {
     const createWidget = () => {
       if (!mounted || !window.YG) return;
 
-      // Clear script load timeout since we got the API
       if (scriptLoadTimer) {
         clearTimeout(scriptLoadTimer);
         scriptLoadTimer = null;
@@ -108,43 +124,47 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose }) => {
 
       try {
         setLoading(false);
-        widgetRef.current = new window.YG.Widget('youglish-widget', {
-          width: Math.min(600, window.innerWidth - 48),
+
+        // For inline mode, measure parent container width; for modal use fixed width
+        const width = isInline
+          ? (containerRef.current?.clientWidth || 400)
+          : Math.min(600, window.innerWidth - 48);
+
+        widgetRef.current = new window.YG.Widget(widgetId, {
+          width,
           components: 8 + 16 + 64, // caption + speed + controls
-          autoStart: 1,
+          autoStart: isInline ? 0 : 1, // Don't auto-start in inline mode
           events: {
             'onFetchDone': (e: any) => {
               if (!mounted) return;
-              // Clear fetch timeout — we got a response
               if (fetchTimer) {
                 clearTimeout(fetchTimer);
                 fetchTimer = null;
               }
               if (e.totalResult === 0) setNoResults(true);
             },
-            'onError': (e: any) => {
+            'onError': () => {
               if (!mounted) return;
               if (fetchTimer) {
                 clearTimeout(fetchTimer);
                 fetchTimer = null;
               }
-              setError('YouGlish playback error. Please try again.');
+              setError('YouGlish playback error.');
             }
           }
         });
         widgetRef.current.fetch(word, 'english', 'us');
 
-        // Timeout if no results come back
         fetchTimer = setTimeout(() => {
           if (mounted && loading) {
             setLoading(false);
-            setError('YouGlish took too long to respond. The service may be unavailable.');
+            setError('YouGlish took too long to respond.');
           }
         }, FETCH_TIMEOUT);
       } catch (e) {
         if (!mounted) return;
         setLoading(false);
-        setError('Failed to initialize YouGlish widget.');
+        setError('Failed to initialize YouGlish.');
       }
     };
 
@@ -152,21 +172,23 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose }) => {
       createWidget();
     } else {
       window.onYouglishAPIReady = createWidget;
-      const script = document.createElement('script');
-      script.src = 'https://youglish.com/public/emb/widget.js';
-      script.charset = 'utf-8';
-      script.onerror = () => {
-        if (!mounted) return;
-        setLoading(false);
-        setError('Failed to load YouGlish. Check your internet connection.');
-      };
-      document.head.appendChild(script);
+      // Only add script if not already present
+      if (!document.querySelector('script[src*="youglish.com"]')) {
+        const script = document.createElement('script');
+        script.src = 'https://youglish.com/public/emb/widget.js';
+        script.charset = 'utf-8';
+        script.onerror = () => {
+          if (!mounted) return;
+          setLoading(false);
+          setError('Failed to load YouGlish.');
+        };
+        document.head.appendChild(script);
+      }
 
-      // Timeout for script loading
       scriptLoadTimer = setTimeout(() => {
         if (mounted && loading) {
           setLoading(false);
-          setError('YouGlish is taking too long to load. The service may be blocked or unavailable.');
+          setError('YouGlish is taking too long to load.');
         }
       }, SCRIPT_LOAD_TIMEOUT);
     }
@@ -179,12 +201,38 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose }) => {
         try { widgetRef.current.close(); } catch (_) {}
         widgetRef.current = null;
       }
-      // Clean up any DOM remnants the widget left behind
-      const el = document.getElementById('youglish-widget');
+      const el = document.getElementById(widgetId);
       if (el) el.innerHTML = '';
     };
-  }, [word]);
+  }, [word, widgetId]);
 
+  // Inline mode: render in parent flow
+  if (isInline) {
+    return (
+      <div ref={containerRef} className="mt-3 rounded-xl overflow-hidden border border-slate-200 bg-white">
+        {loading && (
+          <div className="flex items-center justify-center py-6 gap-2">
+            <Loader2 size={16} className="animate-spin text-slate-400" />
+            <span className="text-xs text-slate-400">Loading YouGlish...</span>
+          </div>
+        )}
+        {error && (
+          <div className="flex items-center justify-center py-4 gap-2 text-center">
+            <AlertCircle size={16} className="text-amber-400 shrink-0" />
+            <p className="text-xs text-slate-500">{error}</p>
+          </div>
+        )}
+        {noResults && !error && (
+          <div className="flex items-center justify-center py-4 gap-2">
+            <p className="text-xs text-slate-400">No YouGlish results for &ldquo;{word}&rdquo;</p>
+          </div>
+        )}
+        <div id={widgetId} className={error ? 'hidden' : ''}></div>
+      </div>
+    );
+  }
+
+  // Modal mode: fixed overlay
   return (
     <div
       className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200"
@@ -236,7 +284,7 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose }) => {
               </button>
             </div>
           )}
-          <div id="youglish-widget" className={error ? 'hidden' : ''}></div>
+          <div id={widgetId} className={error ? 'hidden' : ''}></div>
         </div>
       </div>
     </div>
@@ -244,8 +292,8 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose }) => {
 };
 
 /** Public export — wraps the player in an error boundary so crashes never propagate to VocabCard */
-export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => (
-  <YouGlishErrorBoundary onClose={onClose} word={word}>
-    <YouGlishPlayerInner word={word} onClose={onClose} />
+export const YouGlishPlayer: React.FC<Props> = ({ word, onClose, mode = 'modal' }) => (
+  <YouGlishErrorBoundary onClose={onClose} word={word} inline={mode === 'inline'}>
+    <YouGlishPlayerInner word={word} onClose={onClose} mode={mode} />
   </YouGlishErrorBoundary>
 );

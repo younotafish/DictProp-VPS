@@ -151,14 +151,14 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             )}
             <button
               onClick={(e) => { e.stopPropagation(); setShowYouGlish(true); }}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm cursor-pointer"
+              className="md:hidden inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm cursor-pointer"
               title="Listen on YouGlish"
             >
               <ExternalLink size={12} />
               YouGlish
             </button>
             {showYouGlish && (
-              <YouGlishPlayer word={data.word} onClose={() => setShowYouGlish(false)} />
+              <YouGlishPlayer word={data.word} onClose={() => setShowYouGlish(false)} mode="modal" />
             )}
           </div>
           )}
@@ -196,10 +196,16 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
       {/* Two-column layout on large screens: image left, content right */}
       <div className={`${data.imageUrl ? 'md:flex md:gap-6' : ''}`}>
-        {/* Generated Image */}
+        {/* Generated Image + inline YouGlish on desktop */}
         {data.imageUrl && (
-          <div className="mb-4 md:mb-0 rounded-xl overflow-hidden w-full md:w-2/5 md:shrink-0 max-h-48 md:max-h-64 bg-slate-50 border border-slate-100 shadow-inner">
-            <OfflineImage src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
+          <div className="mb-4 md:mb-0 w-full md:w-2/5 md:shrink-0">
+            <div className="rounded-xl overflow-hidden max-h-48 md:max-h-64 bg-slate-50 border border-slate-100 shadow-inner">
+              <OfflineImage src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
+            </div>
+            {/* Auto-load YouGlish inline below image on desktop */}
+            <div className="hidden md:block">
+              <YouGlishPlayer word={data.word} mode="inline" />
+            </div>
           </div>
         )}
 
