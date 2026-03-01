@@ -124,7 +124,7 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
             <div className="space-y-2 mt-2 pt-2 border-t border-slate-50">
               {examples?.length > 0 && (
                 <div className="text-xs text-slate-600 italic border-l-2 border-indigo-200 pl-2 line-clamp-2">
-                  "{examples[0].replace(/\[\[(.+?)\]\]/g, '$1')}"
+                  "{(examples[0] || '').replace(/\[\[(.+?)\]\]/g, '$1')}"
                 </div>
               )}
               {history && (

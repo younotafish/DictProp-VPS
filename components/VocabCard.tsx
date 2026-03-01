@@ -52,9 +52,9 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
     setCompareSelected(new Set());
   }, [data.id]);
 
-  // Robust helper to ensure we always map over an array
+  // Robust helper to ensure we always map over an array of strings
   const ensureArray = (items: any): string[] => {
-    if (Array.isArray(items)) return items;
+    if (Array.isArray(items)) return items.filter((x): x is string => typeof x === 'string');
     if (typeof items === 'string') return [items];
     return [];
   };
@@ -302,6 +302,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               };
 
               const renderExample = () => {
+                if (!ex) return null;
                 // Split on [[...]] brackets for clickable C1/C2 words
                 const parts = ex.split(/\[\[(.+?)\]\]/g);
                 if (parts.length === 1) {

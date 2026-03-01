@@ -16,7 +16,67 @@ interface Props {
 const SCRIPT_LOAD_TIMEOUT = 10000; // 10s to load the YouGlish script
 const FETCH_TIMEOUT = 15000; // 15s to get results after widget creation
 
-export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => {
+/**
+ * Error boundary scoped to YouGlishPlayer — catches render/lifecycle
+ * errors from the widget and shows a recovery UI instead of crashing
+ * the parent VocabCard / DetailView.
+ */
+class YouGlishErrorBoundary extends React.Component<
+  { children: React.ReactNode; onClose: () => void; word: string },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[YouGlish] Widget crashed:', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4"
+          onClick={this.props.onClose}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-3 px-4 flex justify-between items-center border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-sm">YouGlish — {this.props.word}</h3>
+              <button
+                onClick={this.props.onClose}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 min-h-[200px] flex flex-col items-center justify-center gap-3 text-center">
+              <AlertCircle size={32} className="text-amber-400" />
+              <p className="text-sm text-slate-600">YouGlish encountered an error and couldn't load.</p>
+              <button
+                onClick={this.props.onClose}
+                className="mt-2 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose }) => {
   const widgetRef = useRef<any>(null);
   const [loading, setLoading] = useState(true);
   const [noResults, setNoResults] = useState(false);
@@ -182,3 +242,10 @@ export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => {
     </div>
   );
 };
+
+/** Public export — wraps the player in an error boundary so crashes never propagate to VocabCard */
+export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => (
+  <YouGlishErrorBoundary onClose={onClose} word={word}>
+    <YouGlishPlayerInner word={word} onClose={onClose} />
+  </YouGlishErrorBoundary>
+);

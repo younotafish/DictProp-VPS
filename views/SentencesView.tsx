@@ -12,7 +12,7 @@ interface SentencesViewProps {
 }
 
 const renderSentenceText = (text: string, onSearch: (term: string) => void) =>
-  text.split(/\[\[(.+?)\]\]/g).map((part, i) =>
+  (text || '').split(/\[\[(.+?)\]\]/g).map((part, i) =>
     i % 2 === 1 ? (
       <button
         key={i}
