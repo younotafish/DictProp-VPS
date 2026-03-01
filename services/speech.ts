@@ -4,9 +4,15 @@
  * Chrome on macOS loads voices asynchronously — getVoices() returns []
  * until the voiceschanged event fires (~1-2s after page load). We cache
  * the resolved voice eagerly at module load so it's ready by the time
- * the user interacts. If speak() is called before voices load, we wait
- * for voiceschanged and retry, with a 1.5s timeout fallback.
+ * the user interacts.
+ *
+ * Known Chrome bugs handled:
+ * 1. Voices load asynchronously (voiceschanged event)
+ * 2. cancel() followed immediately by speak() silently drops the utterance
+ * 3. Long utterances (>15s) get cut off — we don't hit this for single words
  */
+
+import { log, warn } from './logger';
 
 /**
  * Get the preferred American English voice for speech synthesis
@@ -34,10 +40,16 @@ let cachedVoice: SpeechSynthesisVoice | null = null;
 let voicesLoaded = false;
 
 const resolveVoices = () => {
+  const voices = window.speechSynthesis?.getVoices() || [];
   const voice = getPreferredVoice();
   if (voice) {
     cachedVoice = voice;
     voicesLoaded = true;
+    log(`🔊 TTS: Cached voice "${voice.name}" (${voice.lang}) from ${voices.length} available`);
+  } else if (voices.length > 0) {
+    // Voices loaded but none match our US English priority — mark as loaded
+    voicesLoaded = true;
+    log(`🔊 TTS: ${voices.length} voices available but none match US English priority. Names: ${voices.slice(0, 5).map(v => v.name).join(', ')}...`);
   }
 };
 
@@ -48,13 +60,17 @@ if (typeof window !== 'undefined' && window.speechSynthesis) {
   // Chrome fires voiceschanged asynchronously — listen for it
   if (!voicesLoaded) {
     window.speechSynthesis.addEventListener('voiceschanged', () => {
+      log('🔊 TTS: voiceschanged event fired');
       resolveVoices();
     }, { once: true });
   }
 }
 
 /**
- * Speak the given text using browser's speech synthesis
+ * Speak the given text using browser's speech synthesis.
+ *
+ * Chrome bug workaround: cancel() immediately followed by speak() can
+ * silently drop the utterance. We add a small delay after cancel().
  */
 export const speak = (
   text: string,
@@ -68,9 +84,6 @@ export const speak = (
 ): SpeechSynthesisUtterance | null => {
   if (!window.speechSynthesis) return null;
 
-  // Stop any current speech
-  window.speechSynthesis.cancel();
-
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'en-US';
   utterance.rate = options?.rate ?? 0.9;
@@ -80,30 +93,45 @@ export const speak = (
   if (options?.onEnd) utterance.onend = options.onEnd;
   if (options?.onError) utterance.onerror = options.onError;
 
-  if (cachedVoice) {
-    // Voice already cached — speak immediately
-    utterance.voice = cachedVoice;
-    window.speechSynthesis.speak(utterance);
-  } else if (!voicesLoaded) {
-    // Voices haven't loaded yet (Chrome async) — wait for them, then speak
-    const onVoicesChanged = () => {
-      resolveVoices();
-      if (cachedVoice) utterance.voice = cachedVoice;
+  const doSpeak = () => {
+    // Chrome bug: cancel() + immediate speak() = silent drop.
+    // Stop any current speech, then delay before speaking.
+    window.speechSynthesis.cancel();
+
+    // Use setTimeout(0) to let Chrome's internal state settle after cancel()
+    setTimeout(() => {
+      if (cachedVoice) {
+        utterance.voice = cachedVoice;
+      }
       window.speechSynthesis.speak(utterance);
+    }, 10);
+  };
+
+  if (cachedVoice || voicesLoaded) {
+    // Voice cached or voices loaded (even if none matched) — speak now
+    doSpeak();
+  } else {
+    // Voices haven't loaded yet (Chrome async) — wait for them, then speak
+    let spoken = false;
+
+    const onVoicesChanged = () => {
+      if (spoken) return;
+      spoken = true;
+      resolveVoices();
+      doSpeak();
     };
     window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged, { once: true });
 
     // Timeout fallback: if voiceschanged never fires, speak with browser default
     setTimeout(() => {
-      if (!voicesLoaded) {
+      if (!spoken) {
+        spoken = true;
         window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
-        voicesLoaded = true; // prevent future waits
-        window.speechSynthesis.speak(utterance);
+        voicesLoaded = true;
+        warn('🔊 TTS: voiceschanged never fired, speaking with default voice');
+        doSpeak();
       }
     }, 1500);
-  } else {
-    // Voices loaded but none matched our priority list — speak with browser default
-    window.speechSynthesis.speak(utterance);
   }
 
   return utterance;
