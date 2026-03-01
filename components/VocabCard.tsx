@@ -50,6 +50,22 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
     setCompareSelected(new Set());
   }, [data.id]);
 
+  // Open YouGlish in a sandboxed iframe so no cookies are sent (clean session)
+  const openYouGlishClean = useCallback((word: string) => {
+    const url = `https://youglish.com/pronounce/${encodeURIComponent(word)}/english/us`;
+    const safeWord = word.replace(/[<>"'&]/g, '');
+    const html = `<!DOCTYPE html>
+<html><head><title>YouGlish - ${safeWord}</title>
+<style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}
+iframe{width:100%;height:100%;border:none}</style></head>
+<body><iframe sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+src="${url}"></iframe></body></html>`;
+    const blob = new Blob([html], { type: 'text/html' });
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, '_blank');
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  }, []);
+
   // Robust helper to ensure we always map over an array
   const ensureArray = (items: any): string[] => {
     if (Array.isArray(items)) return items;
@@ -147,17 +163,14 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                 className="text-sm bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
               />
             )}
-            <a
-              href={`https://youglish.com/pronounce/${encodeURIComponent(data.word)}/english/us`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm"
-              title="Listen on YouGlish"
+            <button
+              onClick={(e) => { e.stopPropagation(); openYouGlishClean(data.word); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm cursor-pointer"
+              title="Listen on YouGlish (private)"
             >
               <ExternalLink size={12} />
               YouGlish
-            </a>
+            </button>
           </div>
           )}
         </div>
