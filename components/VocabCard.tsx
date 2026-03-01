@@ -148,7 +148,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               />
             )}
             <a
-              href={`https://youglish.com/pronounce/${encodeURIComponent(data.word)}/english`}
+              href={`https://youglish.com/pronounce/${encodeURIComponent(data.word)}/english/us`}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
