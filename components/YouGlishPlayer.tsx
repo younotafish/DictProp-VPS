@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Loader2, AlertCircle } from 'lucide-react';
+import { useYouGlishSandbox } from '../hooks/useYouGlishSandbox';
 
 declare global {
   interface Window {
@@ -90,6 +91,7 @@ class YouGlishErrorBoundary extends React.Component<
 let widgetIdCounter = 0;
 
 const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' }) => {
+  useYouGlishSandbox();
   const widgetRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
