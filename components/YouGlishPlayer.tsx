@@ -37,13 +37,11 @@ export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => {
       widgetRef.current = new window.YG.Widget('youglish-widget', {
         width: Math.min(600, window.innerWidth - 48),
         components: 8 + 16 + 64, // caption + speed + controls
+        autoStart: 1,
         events: {
           'onFetchDone': (e: any) => {
             if (!mounted) return;
             if (e.totalResult === 0) setNoResults(true);
-          },
-          'onCaptionConsumed': () => {
-            widgetRef.current?.next();
           }
         }
       });
