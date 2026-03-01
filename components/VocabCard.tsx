@@ -4,6 +4,7 @@ import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, N
 import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
+import { YouGlishPlayer } from './YouGlishPlayer';
 
 interface Props {
   data: VocabType;
@@ -43,6 +44,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   // Compare-pick mode state
   const [comparePicking, setComparePicking] = useState<'synonyms' | 'confusables' | null>(null);
   const [compareSelected, setCompareSelected] = useState<Set<string>>(new Set());
+  const [showYouGlish, setShowYouGlish] = useState(false);
 
   // Reset compare-pick state when the card changes (e.g., navigating in DetailView)
   React.useEffect(() => {
@@ -147,17 +149,17 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                 className="text-sm bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
               />
             )}
-            <a
-              href={`https://youglish.com/pronounce/${encodeURIComponent(data.word)}/english/us`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm"
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowYouGlish(true); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm cursor-pointer"
               title="Listen on YouGlish"
             >
               <ExternalLink size={12} />
               YouGlish
-            </a>
+            </button>
+            {showYouGlish && (
+              <YouGlishPlayer word={data.word} onClose={() => setShowYouGlish(false)} />
+            )}
           </div>
           )}
         </div>
