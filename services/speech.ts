@@ -1,30 +1,57 @@
 /**
  * Shared speech synthesis utilities
+ *
+ * Chrome on macOS loads voices asynchronously — getVoices() returns []
+ * until the voiceschanged event fires (~1-2s after page load). We cache
+ * the resolved voice eagerly at module load so it's ready by the time
+ * the user interacts. If speak() is called before voices load, we wait
+ * for voiceschanged and retry, with a 1.5s timeout fallback.
  */
 
 /**
- * Get the preferred English voice for speech synthesis
- * Priority: Samantha (iOS/Mac) > Google US English > Microsoft Zira > any en-US > any en
+ * Get the preferred American English voice for speech synthesis
+ * Priority: Samantha (iOS/Mac) > Google US English > Alex (Mac) > Zira (Windows) > any en-US
  */
 const getPreferredVoice = (): SpeechSynthesisVoice | undefined => {
   if (!window.speechSynthesis) return undefined;
 
   const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) return undefined;
 
-  // Priority List:
-  // 1. "Samantha" (High quality iOS/Mac)
-  // 2. "Google US English" (High quality Android/Chrome)
-  // 3. "Microsoft Zira" (High quality Windows)
-  // 4. Any "en-US" voice (prefer non-Google to avoid network latency)
-  // 5. Any English voice
-  let preferredVoice = voices.find(v => v.name === 'Samantha');
-  if (!preferredVoice) preferredVoice = voices.find(v => v.name === 'Google US English');
-  if (!preferredVoice) preferredVoice = voices.find(v => v.name.includes('Zira'));
-  if (!preferredVoice) preferredVoice = voices.find(v => v.lang === 'en-US' && !v.name.includes('Google'));
-  if (!preferredVoice) preferredVoice = voices.find(v => v.lang.startsWith('en'));
-
-  return preferredVoice;
+  // Priority: best American English voices first
+  return (
+    voices.find(v => v.name === 'Samantha') ||              // macOS/iOS native US English
+    voices.find(v => v.name === 'Google US English') ||      // Chrome cloud voice
+    voices.find(v => v.name === 'Alex') ||                   // macOS native US English
+    voices.find(v => v.name.includes('Zira')) ||             // Windows US English
+    voices.find(v => v.lang === 'en-US') ||                  // Any en-US voice (incl. Google)
+    undefined
+  );
 };
+
+// Module-level voice cache — resolved eagerly so it's ready by user interaction
+let cachedVoice: SpeechSynthesisVoice | null = null;
+let voicesLoaded = false;
+
+const resolveVoices = () => {
+  const voice = getPreferredVoice();
+  if (voice) {
+    cachedVoice = voice;
+    voicesLoaded = true;
+  }
+};
+
+// Eagerly attempt to load voices (works immediately in Safari, Firefox)
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  resolveVoices();
+
+  // Chrome fires voiceschanged asynchronously — listen for it
+  if (!voicesLoaded) {
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      resolveVoices();
+    }, { once: true });
+  }
+}
 
 /**
  * Speak the given text using browser's speech synthesis
@@ -49,26 +76,35 @@ export const speak = (
   utterance.rate = options?.rate ?? 0.9;
   utterance.volume = options?.volume ?? 1.0;
 
-  const preferredVoice = getPreferredVoice();
-  if (preferredVoice) {
-    utterance.voice = preferredVoice;
-  } else {
-    // In PWA standalone mode, voices may not be loaded yet
-    // Register a one-time listener to set the voice when available
-    const onVoicesChanged = () => {
-      const voice = getPreferredVoice();
-      if (voice) utterance.voice = voice;
-      window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
-    };
-    window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
-  }
-
   if (options?.onStart) utterance.onstart = options.onStart;
   if (options?.onEnd) utterance.onend = options.onEnd;
   if (options?.onError) utterance.onerror = options.onError;
 
-  window.speechSynthesis.speak(utterance);
+  if (cachedVoice) {
+    // Voice already cached — speak immediately
+    utterance.voice = cachedVoice;
+    window.speechSynthesis.speak(utterance);
+  } else if (!voicesLoaded) {
+    // Voices haven't loaded yet (Chrome async) — wait for them, then speak
+    const onVoicesChanged = () => {
+      resolveVoices();
+      if (cachedVoice) utterance.voice = cachedVoice;
+      window.speechSynthesis.speak(utterance);
+    };
+    window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged, { once: true });
+
+    // Timeout fallback: if voiceschanged never fires, speak with browser default
+    setTimeout(() => {
+      if (!voicesLoaded) {
+        window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+        voicesLoaded = true; // prevent future waits
+        window.speechSynthesis.speak(utterance);
+      }
+    }, 1500);
+  } else {
+    // Voices loaded but none matched our priority list — speak with browser default
+    window.speechSynthesis.speak(utterance);
+  }
 
   return utterance;
 };
-
