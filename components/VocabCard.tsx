@@ -127,7 +127,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
   return (
     <div 
-      className={`bg-white rounded-2xl p-5 pb-20 shadow-md border border-slate-100 flex flex-col select-text ${scrollable ? 'overflow-y-auto' : 'overflow-hidden'} ${className}`}
+      className={`bg-white rounded-2xl p-5 pb-8 md:pb-4 shadow-md border border-slate-100 flex flex-col select-text ${scrollable ? 'overflow-y-auto' : 'overflow-hidden'} ${className}`}
       style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
     >
       {/* Header */}
@@ -194,15 +194,18 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
         </div>
       </div>
 
-      {/* Generated Image */}
-      {data.imageUrl && (
-        <div className="mb-4 rounded-xl overflow-hidden w-full bg-slate-50 border border-slate-100 shadow-inner shrink-0">
-          <OfflineImage src={data.imageUrl} alt={data.word} className="w-full fade-in" />
-        </div>
-      )}
+      {/* Two-column layout on large screens: image left, content right */}
+      <div className={`${data.imageUrl ? 'md:flex md:gap-6' : ''}`}>
+        {/* Generated Image */}
+        {data.imageUrl && (
+          <div className="mb-4 md:mb-0 rounded-xl overflow-hidden w-full md:w-2/5 md:shrink-0 max-h-48 md:max-h-64 bg-slate-50 border border-slate-100 shadow-inner">
+            <OfflineImage src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
+          </div>
+        )}
 
-      {/* Core Meaning */}
-      <div className="mb-4 shrink-0" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+        <div className="md:flex-1 md:min-w-0">
+          {/* Core Meaning */}
+          <div className="mb-4 md:mb-2 shrink-0" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
         <p className="text-xl text-slate-700 font-medium leading-relaxed select-text">{data.chinese}</p>
         <p className="text-slate-500 mt-1 italic leading-relaxed select-text">{data.definition}</p>
         <a
@@ -220,7 +223,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
       {/* Word Forms */}
       {ensureArray(data.forms).length > 0 && (
-        <div className="mb-4 shrink-0">
+        <div className="mb-4 md:mb-2 shrink-0">
           <div className="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase mb-2">
             <Shapes size={12} /> Word Forms
           </div>
@@ -243,7 +246,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
       {/* Word Family - Related words of different parts of speech */}
       {data.wordFamily && data.wordFamily.length > 0 && (
-        <div className="mb-4 shrink-0">
+        <div className="mb-4 md:mb-2 shrink-0">
           <div className="flex items-center gap-2 text-xs font-bold text-purple-400 uppercase mb-2">
             <Network size={12} /> Word Family
           </div>
@@ -266,7 +269,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
         </div>
       )}
 
-      <div className="space-y-4" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+      <div className="space-y-4 md:space-y-2" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
         {/* Example Sentences */}
         <div className="bg-slate-50 p-3 rounded-xl select-text">
           <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase mb-2">
@@ -443,6 +446,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             <span className="font-semibold">Register:</span> {data.register}
          </div>
       </div>
+        </div>{/* close md:flex-1 */}
+      </div>{/* close md:flex container */}
     </div>
   );
 });

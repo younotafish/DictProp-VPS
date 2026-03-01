@@ -810,7 +810,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           )}
         </div>
 
-        <div className="p-4 pb-24">
+        <div className="p-4 pb-24 md:pb-8 md:px-6">
 
           {type === 'vocab' && (
             <ErrorBoundary variant="inline" fallbackMessage="This card couldn't be displayed.">
@@ -822,7 +822,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 onExpand={undefined}
                 onSearch={handleVocabSearch}
                 scrollable={false}
-                className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
+                className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl md:max-w-5xl lg:max-w-6xl mx-auto"
                 showRefresh={false}
                 onCompare={onCompare}
                 onSaveSentence={onSaveSentence}
@@ -832,32 +832,33 @@ export const DetailView: React.FC<DetailViewProps> = ({
           )}
 
           {type === 'phrase' && (
-            <div className="space-y-6 max-w-3xl mx-auto">
+            <div className="space-y-6 max-w-3xl md:max-w-5xl lg:max-w-6xl mx-auto">
               <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group">
-                  {(data as SearchResult).imageUrl ? (
-                    <OfflineImage src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full fade-in transition-transform duration-700 group-hover:scale-105" />
-                  ) : (
-                    <div className="flex flex-col items-center text-slate-400">
-                      <SearchIcon className="mb-2 opacity-30" size={32}/>
-                      <span className="text-xs uppercase font-bold tracking-wider opacity-60">{(data as SearchResult).visualKeyword}</span>
-                    </div>
-                  )}
-                </div>
+                <div className="md:flex">
+                  <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group max-h-48 md:max-h-none md:w-2/5 md:shrink-0">
+                    {(data as SearchResult).imageUrl ? (
+                      <OfflineImage src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
+                    ) : (
+                      <div className="flex flex-col items-center text-slate-400 py-8">
+                        <SearchIcon className="mb-2 opacity-30" size={32}/>
+                        <span className="text-xs uppercase font-bold tracking-wider opacity-60">{(data as SearchResult).visualKeyword}</span>
+                      </div>
+                    )}
+                  </div>
 
-                <div className="p-6 sm:p-8">
+                <div className="p-6 sm:p-8 md:flex-1 md:min-w-0">
                   <div className="mb-6">
                     <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{(data as SearchResult).translation}</h2>
                     <p className="text-lg text-slate-600 mb-3 leading-relaxed">{(data as SearchResult).query}</p>
-                    <PronunciationBlock 
+                    <PronunciationBlock
                       text={(data as SearchResult).query}
                       ipa={(data as SearchResult).pronunciation}
                       className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
                     />
                   </div>
-                  
+
                   <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">
-                    <ReactMarkdown 
+                    <ReactMarkdown
                       components={{
                         strong: (props) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
                       }}
@@ -866,6 +867,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     </ReactMarkdown>
                   </div>
                 </div>
+              </div>{/* close md:flex */}
               </div>
 
               {((data as SearchResult).vocabs || []).length > 0 && (
