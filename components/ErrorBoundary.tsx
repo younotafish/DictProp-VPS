@@ -4,6 +4,8 @@ interface ErrorBoundaryProps {
   children: React.ReactNode;
   onReset?: () => void;
   fallbackMessage?: string;
+  /** "fullscreen" (default) shows a fixed overlay; "inline" shows a card-sized fallback */
+  variant?: 'fullscreen' | 'inline';
 }
 
 interface ErrorBoundaryState {
@@ -49,6 +51,22 @@ export class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
+      if (this.props.variant === 'inline') {
+        return (
+          <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 text-center">
+            <p className="text-sm text-slate-500 mb-3">
+              {this.props.fallbackMessage || 'This content couldn\u2019t be displayed.'}
+            </p>
+            <button
+              onClick={this.handleRecover}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-xl transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        );
+      }
+
       return (
         <div className="fixed inset-0 bg-slate-50 flex items-center justify-center p-6">
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 max-w-sm w-full text-center">

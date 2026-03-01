@@ -3,6 +3,7 @@ import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, get
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
 import ReactMarkdown from 'react-markdown';
@@ -15,17 +16,26 @@ import { log, warn } from '../services/logger';
 const formatRelativeTime = (timestamp: number): string => {
   const now = Date.now();
   const diff = timestamp - now;
-  
+
   if (diff <= 0) return 'now';
-  
+
   const minutes = Math.floor(diff / (1000 * 60));
   const hours = Math.floor(diff / (1000 * 60 * 60));
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  
+
   if (days > 0) return `${days}d`;
   if (hours > 0) return `${hours}h`;
   if (minutes > 0) return `${minutes}m`;
   return 'now';
+};
+
+// Format interval days for the "Remembered!" overlay
+const formatNextReview = (days: number): string => {
+  if (days <= 1) return 'tomorrow';
+  if (days <= 30) return `in ${days} days`;
+  const months = Math.round(days / 30 * 2) / 2; // Round to nearest 0.5
+  if (months <= 1) return 'in ~1 month';
+  return `in ~${months % 1 === 0 ? months.toFixed(0) : months.toFixed(1)} months`;
 };
 
 // Color classes for mastery levels
@@ -88,6 +98,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
+  const [rememberInfo, setRememberInfo] = useState<{ intervalDays: number } | null>(null);
   const lastScrollY = useRef(0);
   
   // Sync local indices when props change (e.g., after delete/archive updates detailContext)
@@ -533,18 +544,24 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   const handleRemember = useCallback(() => {
     log('🧠 DetailView: Marking as remembered via shortcut/gesture');
-    
-    // Trigger Success Animation
-    setShowSuccessAnim(true);
-    setTimeout(() => setShowSuccessAnim(false), 1500);
 
     const targetTitle = (title || '').toLowerCase().trim();
     // Find all siblings to update them together (Shared SRS)
-    const siblings = savedItems.filter(item => 
+    const siblings = savedItems.filter(item =>
       !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle
     );
-    
+
     if (siblings.length > 0) {
+      // Compute preview SRS to show next review date in the animation
+      const bestSibling = siblings.reduce((best, s) => {
+        const bReviews = best.srs?.totalReviews || 0;
+        const sReviews = s.srs?.totalReviews || 0;
+        return sReviews > bReviews ? s : best;
+      });
+      const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
+      const previewSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
+      setRememberInfo({ intervalDays: Math.round(previewSRS.stability) });
+
       // Use the dedicated onUpdateSRS if available (preferred - handles shared SRS atomically)
       if (onUpdateSRS) {
         // Update using the first sibling's ID - onUpdateSRS handles all siblings with same title
@@ -553,8 +570,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       } else {
         // Fallback: Compute SRS update once, apply to all siblings
         log('🧠 DetailView: Using onSave fallback for SRS update');
-        const baseSRS = SRSAlgorithm.ensure(siblings[0].srs, siblings[0].data.id, siblings[0].type);
-        const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
+        const updatedSRS = previewSRS;
         siblings.forEach(sibling => {
           onSave({
             ...sibling,
@@ -565,12 +581,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
     } else {
       // Create new item and immediately mark as remembered
       if (!data.id) return;
-      
+
       let newSRS = SRSAlgorithm.createNew(data.id, type);
-      
-      // Apply the "remembered" update immediately
       newSRS = SRSAlgorithm.updateAfterRemember(newSRS);
-      
+      setRememberInfo({ intervalDays: Math.round(newSRS.stability) });
+
       onSave({
         data: data,
         type: type,
@@ -578,6 +593,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
         srs: newSRS
       });
     }
+
+    // Trigger Success Animation (after computing info so it's available for display)
+    setShowSuccessAnim(true);
+    setTimeout(() => {
+      setShowSuccessAnim(false);
+      setRememberInfo(null);
+    }, 1500);
   }, [data, type, savedItems, onSave, onUpdateSRS, title]);
 
   const handleDoubleClick = () => {
@@ -791,20 +813,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
         <div className="p-4 pb-24">
 
           {type === 'vocab' && (
-            <VocabCardDisplay 
-              data={data as VocabCard}
-              isSaved={isSaved}
-              onSave={handleToggleSave}
-              showSave={false}
-              onExpand={undefined}
-              onSearch={handleVocabSearch}
-              scrollable={false}
-              className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
-              showRefresh={false}
-              onCompare={onCompare}
-              onSaveSentence={onSaveSentence}
-              isSentenceSaved={isSentenceSaved}
-            />
+            <ErrorBoundary variant="inline" fallbackMessage="This card couldn't be displayed.">
+              <VocabCardDisplay
+                data={data as VocabCard}
+                isSaved={isSaved}
+                onSave={handleToggleSave}
+                showSave={false}
+                onExpand={undefined}
+                onSearch={handleVocabSearch}
+                scrollable={false}
+                className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl mx-auto"
+                showRefresh={false}
+                onCompare={onCompare}
+                onSaveSentence={onSaveSentence}
+                isSentenceSaved={isSentenceSaved}
+              />
+            </ErrorBoundary>
           )}
 
           {type === 'phrase' && (
@@ -852,19 +876,20 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   </div>
                   <div className="grid gap-4">
                     {((data as SearchResult).vocabs || []).map((vocab) => (
-                      <VocabCardDisplay 
-                        key={vocab.id}
-                        data={vocab} 
-                        onSave={() => handleSaveVocab(vocab)}
-                        isSaved={savedItems.some(i => getItemSpelling(i) === (vocab.word || '').toLowerCase().trim() && getItemSense(i) === vocab.sense)}
-                        onSearch={handleVocabSearch}
-                        scrollable={false}
-                        showSave={true}
-                        className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
-                        onCompare={onCompare}
-                        onSaveSentence={onSaveSentence}
-                        isSentenceSaved={isSentenceSaved}
-                      />
+                      <ErrorBoundary key={vocab.id} variant="inline" fallbackMessage="This card couldn't be displayed.">
+                        <VocabCardDisplay
+                          data={vocab}
+                          onSave={() => handleSaveVocab(vocab)}
+                          isSaved={savedItems.some(i => getItemSpelling(i) === (vocab.word || '').toLowerCase().trim() && getItemSense(i) === vocab.sense)}
+                          onSearch={handleVocabSearch}
+                          scrollable={false}
+                          showSave={true}
+                          className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
+                          onCompare={onCompare}
+                          onSaveSentence={onSaveSentence}
+                          isSentenceSaved={isSentenceSaved}
+                        />
+                      </ErrorBoundary>
                     ))}
                   </div>
                 </div>
@@ -935,9 +960,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {/* Success Animation Overlay */}
       {showSuccessAnim && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
-          <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-full shadow-2xl flex items-center gap-3 animate-in zoom-in fade-in slide-in-from-bottom-4 duration-300">
-            <Sparkles className="text-amber-500 w-6 h-6 animate-pulse" />
-            <span className="text-slate-800 font-bold text-lg">Remembered!</span>
+          <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center gap-1 animate-in zoom-in fade-in slide-in-from-bottom-4 duration-300">
+            <div className="flex items-center gap-3">
+              <Sparkles className="text-amber-500 w-6 h-6 animate-pulse" />
+              <span className="text-slate-800 font-bold text-lg">Remembered!</span>
+            </div>
+            {rememberInfo && (
+              <span className="text-sm text-slate-500">
+                Next review {formatNextReview(rememberInfo.intervalDays)}
+              </span>
+            )}
           </div>
         </div>
       )}
