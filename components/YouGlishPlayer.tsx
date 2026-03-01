@@ -63,9 +63,12 @@ export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => {
     return () => {
       mounted = false;
       if (widgetRef.current) {
-        widgetRef.current.close();
+        try { widgetRef.current.close(); } catch (_) {}
         widgetRef.current = null;
       }
+      // Clean up any DOM remnants the widget left behind
+      const el = document.getElementById('youglish-widget');
+      if (el) el.innerHTML = '';
     };
   }, [word]);
 
