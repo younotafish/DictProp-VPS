@@ -32,7 +32,8 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   onScroll,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const now = Date.now();
+  // Only recompute "now" when items change (when SRS state could have changed)
+  const now = useMemo(() => Date.now(), [items]);
 
   const activeItems = useMemo(() => items.filter(s => !s.isArchived), [items]);
 

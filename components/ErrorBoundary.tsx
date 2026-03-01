@@ -1,5 +1,11 @@
 import React from 'react';
 
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+  onReset?: () => void;
+  fallbackMessage?: string;
+}
+
 interface ErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
@@ -10,10 +16,10 @@ interface ErrorBoundaryState {
  * a recovery UI instead of crashing the entire app with a white screen.
  */
 export class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
+  ErrorBoundaryProps,
   ErrorBoundaryState
 > {
-  constructor(props: { children: React.ReactNode }) {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
   }
@@ -31,6 +37,9 @@ export class ErrorBoundary extends React.Component<
   };
 
   handleRecover = () => {
+    if (this.props.onReset) {
+      this.props.onReset();
+    }
     // Clear potentially corrupted persisted state
     try {
       localStorage.removeItem('app_detail_context');
@@ -52,7 +61,7 @@ export class ErrorBoundary extends React.Component<
             </div>
             <h2 className="text-xl font-bold text-slate-800 mb-2">Something went wrong</h2>
             <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-              The app encountered an unexpected error. Your data is safe.
+              {this.props.fallbackMessage || 'The app encountered an unexpected error. Your data is safe.'}
             </p>
             {this.state.error && (
               <p className="text-xs text-slate-400 bg-slate-50 rounded-lg p-3 mb-6 font-mono break-all text-left">

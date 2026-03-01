@@ -378,8 +378,17 @@ const prepareItemForFirestore = (item: StoredItem): StoredItem => {
  * Creates a hash of item content as it would be stored in Firestore.
  * Used to detect if an item actually changed and needs to be synced.
  * Excludes timestamps and the hash field itself.
+ *
+ * Uses a WeakMap cache keyed by item object identity. Since items are
+ * immutable (new object created on mutation), the cache auto-invalidates
+ * via GC when the old object is no longer referenced.
  */
+const hashCache = new WeakMap<StoredItem, string>();
+
 export const getItemContentHash = (item: StoredItem): string => {
+  const cached = hashCache.get(item);
+  if (cached) return cached;
+
   // Prepare item exactly as it would be written to Firestore
   const prepared = prepareItemForFirestore(item);
   
@@ -393,7 +402,9 @@ export const getItemContentHash = (item: StoredItem): string => {
     isArchived: prepared.isArchived,
   };
   
-  return hashString(JSON.stringify(contentToHash));
+  const hash = hashString(JSON.stringify(contentToHash));
+  hashCache.set(item, hash);
+  return hash;
 };
 
 export const saveUserData = async (userId: string, items: StoredItem[]) => {

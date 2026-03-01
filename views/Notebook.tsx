@@ -49,6 +49,15 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
     }
   };
 
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (longPressTimer.current) {
+        window.clearTimeout(longPressTimer.current);
+      }
+    };
+  }, []);
+
   const handleClick = () => {
     if (showActions) {
       setShowActions(false);
@@ -538,6 +547,19 @@ export const NotebookView: React.FC<NotebookProps> = ({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
+  // Clean up MediaRecorder and release microphone on unmount
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   // Touch swipe handling to clear search
   const touchStart = useRef<{x: number, y: number} | null>(null);
@@ -647,6 +669,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
       
       // Try to use audio/webm with opus codec, fallback to default
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
@@ -668,6 +691,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
       mediaRecorder.onstop = async () => {
         // Stop all tracks to release microphone
         stream.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
         
         if (audioChunksRef.current.length === 0) return;
         

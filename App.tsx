@@ -11,6 +11,7 @@ import { mergeDatasets } from './services/sync';
 import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash } from './services/firebase';
 import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
 import { ErrorModal } from './components/ErrorModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { analyzeInput } from './services/aiService';
@@ -178,6 +179,10 @@ const App: React.FC = () => {
   // Track when we last saved to avoid redundant saves from event handlers
   const lastSaveTimeRef = useRef<number>(0);
 
+  // Throttle localStorage writes during rapid SRS updates (e.g. reviewing 20+ cards)
+  const srsSavePendingRef = useRef(false);
+  const srsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Track synced content hashes by item ID to avoid re-syncing unchanged items
   // Stored in a ref (not state) to prevent the save effect from re-triggering itself
   const syncedHashesRef = useRef<Map<string, string>>(new Map());
@@ -334,8 +339,11 @@ const App: React.FC = () => {
 
   // Force sync — uploads changed items, pulls remote, merges
   // Defined before the visibilitychange effect that references it
+  const forceSyncInProgressRef = useRef(false);
   const handleForceSync = useCallback(async () => {
     if (!user || !isFirebaseConfigured || !isOnline) return;
+    if (forceSyncInProgressRef.current) return; // Prevent concurrent syncs
+    forceSyncInProgressRef.current = true;
 
     setSyncStatus('syncing');
 
@@ -383,6 +391,8 @@ const App: React.FC = () => {
     } catch (e) {
       logError("Force Sync Failed:", e);
       setSyncStatus('error');
+    } finally {
+      forceSyncInProgressRef.current = false;
     }
   }, [user, isFirebaseConfigured, isOnline]);
 
@@ -447,6 +457,13 @@ const App: React.FC = () => {
               
               // Use ref to get latest items (avoids stale closure)
               const currentItems = latestItemsRef.current;
+
+              // Flush any pending throttled SRS localStorage write
+              if (srsSaveTimerRef.current) {
+                clearTimeout(srsSaveTimerRef.current);
+                srsSaveTimerRef.current = null;
+                srsSavePendingRef.current = false;
+              }
               
               // Skip if we just saved (within last 500ms) to avoid redundant writes
               // and to prevent overwriting fresher data from updateSRS
@@ -753,6 +770,13 @@ const App: React.FC = () => {
             // Update ref immediately so event handlers have fresh data
             latestItemsRef.current = mergedItems;
 
+            // Update synced hashes for merged items to prevent echo loop:
+            // normalizeSharedSRS can modify SRS data, producing different hashes.
+            // Without this, the debounced save re-uploads them, triggering another snapshot.
+            for (const item of mergedItems) {
+              syncedHashesRef.current.set(item.data.id, getItemContentHash(item));
+            }
+
             return {
               ...prevState,
               items: mergedItems
@@ -790,7 +814,16 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isLoaded || syncState.items.length === 0) return;
 
-    const fullCache = createLightweightCache(syncState.items);
+    // Skip if a throttled SRS save is pending (Fix 1A handles localStorage for SRS updates)
+    if (srsSavePendingRef.current) return;
+
+    // Debounce localStorage cache writes — localStorage is only an optimization for fast reload,
+    // IDB is the real persistence layer, so a 5-second delay is safe
+    const debounceTimer = setTimeout(() => {
+      // Re-check in case SRS save started during the delay
+      if (srsSavePendingRef.current) return;
+
+      const fullCache = createLightweightCache(syncState.items);
 
     // Try full cache first
     try {
@@ -845,6 +878,9 @@ const App: React.FC = () => {
       }
     }
     warn(`localStorage cache truncated to ${lo}/${syncState.items.length} items`);
+    }, 5000); // 5s debounce
+
+    return () => clearTimeout(debounceTimer);
   }, [syncState.items, isLoaded]);
 
   // 3. SAVE EFFECTS (Persistence + Simple Item Sync)
@@ -1559,11 +1595,19 @@ const App: React.FC = () => {
     // This is the primary persistence layer - Firebase sync is secondary
     const targetUserId = user?.uid || 'guest';
     if (allUpdatedItems.length > 0) {
-      // Also update localStorage cache synchronously (backup for iOS PWA)
-      try {
-        localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(allUpdatedItems)));
-      } catch (e) {
-        warn("Failed to update cache after SRS:", e);
+      // Throttle localStorage cache writes during rapid review sessions (3-second window)
+      // Uses latestItemsRef.current when flushing to get the most up-to-date items
+      srsSavePendingRef.current = true;
+      if (!srsSaveTimerRef.current) {
+        srsSaveTimerRef.current = setTimeout(() => {
+          srsSaveTimerRef.current = null;
+          srsSavePendingRef.current = false;
+          try {
+            localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(latestItemsRef.current)));
+          } catch (e) {
+            warn("Failed to update cache after SRS:", e);
+          }
+        }, 3000);
       }
       
       try {
@@ -1645,7 +1689,11 @@ const App: React.FC = () => {
       )}
 
       {detailContext && (
-          <DetailView 
+        <ErrorBoundary
+          onReset={() => setDetailContext(null)}
+          fallbackMessage="Something went wrong displaying this card. Your data is safe — returning to notebook."
+        >
+          <DetailView
               groups={detailContext.groups}
               initialGroupIndex={detailContext.groupIndex}
               initialItemIndex={detailContext.itemIndex}
@@ -1662,6 +1710,7 @@ const App: React.FC = () => {
               onSaveSentence={handleSaveSentence}
               isSentenceSaved={isSentenceSaved}
           />
+        </ErrorBoundary>
       )}
 
       {comparisonWords && (
