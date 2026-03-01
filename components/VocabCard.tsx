@@ -1,6 +1,6 @@
 import React, { memo, useState, useCallback } from 'react';
 import { VocabCard as VocabType, WordFamilyEntry } from '../types';
-import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, Network, Scale, Check, X, BookmarkPlus, BookmarkCheck } from 'lucide-react';
+import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, Network, Scale, Check, X, BookmarkPlus, BookmarkCheck, ExternalLink } from 'lucide-react';
 import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
@@ -141,12 +141,23 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           {showPronunciation && (
           <div className="flex items-center gap-2 mt-1 text-slate-500">
             {showAudio && data.ipa && (
-              <PronunciationBlock 
-                text={data.word} 
-                ipa={data.ipa} 
+              <PronunciationBlock
+                text={data.word}
+                ipa={data.ipa}
                 className="text-sm bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
               />
             )}
+            <a
+              href={`https://youglish.com/pronounce/${encodeURIComponent(data.word)}/english`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm"
+              title="Listen on YouGlish"
+            >
+              <ExternalLink size={12} />
+              YouGlish
+            </a>
           </div>
           )}
         </div>
