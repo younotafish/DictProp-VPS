@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, AlertCircle } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -13,10 +13,14 @@ interface Props {
   onClose: () => void;
 }
 
+const SCRIPT_LOAD_TIMEOUT = 10000; // 10s to load the YouGlish script
+const FETCH_TIMEOUT = 15000; // 15s to get results after widget creation
+
 export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => {
   const widgetRef = useRef<any>(null);
   const [loading, setLoading] = useState(true);
   const [noResults, setNoResults] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Escape key closes modal
   useEffect(() => {
@@ -30,22 +34,58 @@ export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => {
   // Load widget
   useEffect(() => {
     let mounted = true;
+    let scriptLoadTimer: ReturnType<typeof setTimeout> | null = null;
+    let fetchTimer: ReturnType<typeof setTimeout> | null = null;
 
     const createWidget = () => {
       if (!mounted || !window.YG) return;
-      setLoading(false);
-      widgetRef.current = new window.YG.Widget('youglish-widget', {
-        width: Math.min(600, window.innerWidth - 48),
-        components: 8 + 16 + 64, // caption + speed + controls
-        autoStart: 1,
-        events: {
-          'onFetchDone': (e: any) => {
-            if (!mounted) return;
-            if (e.totalResult === 0) setNoResults(true);
+
+      // Clear script load timeout since we got the API
+      if (scriptLoadTimer) {
+        clearTimeout(scriptLoadTimer);
+        scriptLoadTimer = null;
+      }
+
+      try {
+        setLoading(false);
+        widgetRef.current = new window.YG.Widget('youglish-widget', {
+          width: Math.min(600, window.innerWidth - 48),
+          components: 8 + 16 + 64, // caption + speed + controls
+          autoStart: 1,
+          events: {
+            'onFetchDone': (e: any) => {
+              if (!mounted) return;
+              // Clear fetch timeout — we got a response
+              if (fetchTimer) {
+                clearTimeout(fetchTimer);
+                fetchTimer = null;
+              }
+              if (e.totalResult === 0) setNoResults(true);
+            },
+            'onError': (e: any) => {
+              if (!mounted) return;
+              if (fetchTimer) {
+                clearTimeout(fetchTimer);
+                fetchTimer = null;
+              }
+              setError('YouGlish playback error. Please try again.');
+            }
           }
-        }
-      });
-      widgetRef.current.fetch(word, 'english', 'us');
+        });
+        widgetRef.current.fetch(word, 'english', 'us');
+
+        // Timeout if no results come back
+        fetchTimer = setTimeout(() => {
+          if (mounted && loading) {
+            setLoading(false);
+            setError('YouGlish took too long to respond. The service may be unavailable.');
+          }
+        }, FETCH_TIMEOUT);
+      } catch (e) {
+        if (!mounted) return;
+        setLoading(false);
+        setError('Failed to initialize YouGlish widget.');
+      }
     };
 
     if (window.YG) {
@@ -55,11 +95,26 @@ export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => {
       const script = document.createElement('script');
       script.src = 'https://youglish.com/public/emb/widget.js';
       script.charset = 'utf-8';
+      script.onerror = () => {
+        if (!mounted) return;
+        setLoading(false);
+        setError('Failed to load YouGlish. Check your internet connection.');
+      };
       document.head.appendChild(script);
+
+      // Timeout for script loading
+      scriptLoadTimer = setTimeout(() => {
+        if (mounted && loading) {
+          setLoading(false);
+          setError('YouGlish is taking too long to load. The service may be blocked or unavailable.');
+        }
+      }, SCRIPT_LOAD_TIMEOUT);
     }
 
     return () => {
       mounted = false;
+      if (scriptLoadTimer) clearTimeout(scriptLoadTimer);
+      if (fetchTimer) clearTimeout(fetchTimer);
       if (widgetRef.current) {
         try { widgetRef.current.close(); } catch (_) {}
         widgetRef.current = null;
@@ -90,16 +145,38 @@ export const YouGlishPlayer: React.FC<Props> = ({ word, onClose }) => {
         </div>
         <div className="p-4 min-h-[200px]">
           {loading && (
-            <div className="flex items-center justify-center py-16">
+            <div className="flex flex-col items-center justify-center py-16 gap-2">
               <Loader2 size={24} className="animate-spin text-slate-400" />
+              <span className="text-xs text-slate-400">Loading YouGlish...</span>
             </div>
           )}
-          {noResults && (
-            <div className="flex items-center justify-center py-16 text-slate-400 text-sm">
-              No results found for &ldquo;{word}&rdquo;
+          {error && (
+            <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+              <AlertCircle size={32} className="text-amber-400" />
+              <p className="text-sm text-slate-600">{error}</p>
+              <button
+                onClick={onClose}
+                className="mt-2 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+              >
+                Close
+              </button>
             </div>
           )}
-          <div id="youglish-widget"></div>
+          {noResults && !error && (
+            <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+              <AlertCircle size={32} className="text-slate-300" />
+              <p className="text-sm text-slate-500">
+                No pronunciation videos found for &ldquo;{word}&rdquo;
+              </p>
+              <button
+                onClick={onClose}
+                className="mt-2 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          )}
+          <div id="youglish-widget" className={error ? 'hidden' : ''}></div>
         </div>
       </div>
     </div>
