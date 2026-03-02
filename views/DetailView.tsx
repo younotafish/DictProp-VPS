@@ -899,8 +899,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
             </div>
           )}
 
-          {/* Desktop navigation buttons */}
-          <div className="hidden md:flex fixed bottom-6 left-1/2 -translate-x-1/2 z-40 items-center gap-2 bg-white/90 backdrop-blur-sm rounded-full px-4 py-2 shadow-lg border border-slate-200">
+          {/* Desktop navigation buttons — hidden; use keyboard arrows instead */}
+          <div className="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-40 items-center gap-2 bg-white/90 backdrop-blur-sm rounded-full px-4 py-2 shadow-lg border border-slate-200">
             {/* Previous word */}
             {hasPrevGroup && (
               <button
