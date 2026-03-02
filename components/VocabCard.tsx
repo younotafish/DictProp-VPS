@@ -44,7 +44,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   // Compare-pick mode state
   const [comparePicking, setComparePicking] = useState<'synonyms' | 'confusables' | null>(null);
   const [compareSelected, setCompareSelected] = useState<Set<string>>(new Set());
-  const [showYouGlish, setShowYouGlish] = useState(false);
+  const [showYouGlishModal, setShowYouGlishModal] = useState(false);
+  const [showYouGlishInline, setShowYouGlishInline] = useState(false);
 
   // Reset compare-pick state when the card changes (e.g., navigating in DetailView)
   React.useEffect(() => {
@@ -150,17 +151,15 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               />
             )}
             <button
-              onClick={(e) => { e.stopPropagation(); setShowYouGlish(true); }}
+              onClick={(e) => { e.stopPropagation(); setShowYouGlishModal(true); }}
               className="md:hidden inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm cursor-pointer"
               title="Listen on YouGlish"
             >
               <ExternalLink size={12} />
               YouGlish
             </button>
-            {showYouGlish && (
-              <span className="md:hidden">
-                <YouGlishPlayer word={data.word} onClose={() => setShowYouGlish(false)} mode="modal" />
-              </span>
+            {showYouGlishModal && (
+              <YouGlishPlayer word={data.word} onClose={() => setShowYouGlishModal(false)} mode="modal" />
             )}
           </div>
           )}
@@ -206,11 +205,11 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             </div>
             {/* Inline YouGlish below image on desktop — click to load (preserves daily quota) */}
             <div className="hidden md:block">
-              {showYouGlish ? (
+              {showYouGlishInline ? (
                 <YouGlishPlayer word={data.word} mode="inline" />
               ) : (
                 <button
-                  onClick={(e) => { e.stopPropagation(); setShowYouGlish(true); }}
+                  onClick={(e) => { e.stopPropagation(); setShowYouGlishInline(true); }}
                   className="mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors cursor-pointer"
                   title="Load YouGlish pronunciation videos"
                 >
