@@ -158,7 +158,9 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               YouGlish
             </button>
             {showYouGlish && (
-              <YouGlishPlayer word={data.word} onClose={() => setShowYouGlish(false)} mode="modal" />
+              <span className="md:hidden">
+                <YouGlishPlayer word={data.word} onClose={() => setShowYouGlish(false)} mode="modal" />
+              </span>
             )}
           </div>
           )}
