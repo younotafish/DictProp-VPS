@@ -350,42 +350,44 @@ const App: React.FC = () => {
     try {
       const currentItems = latestItemsRef.current;
 
-      // 1. Upload changed local items to Firebase (delta sync)
+      // 1. Pull latest items from Firebase FIRST (before pushing)
+      // This ensures SRS merge logic runs before we write, preventing
+      // stale local SRS from overwriting newer remote SRS.
+      const remoteItems = await loadUserData(user.uid);
+
+      // 2. Merge local + remote (SRS: more reviews wins)
+      const mergedItems = normalizeSharedSRS(cleanupOldDeletedItems(
+        mergeDatasets(currentItems, remoteItems)
+      ));
+
+      // 3. Push merged items that differ from remote
+      const remoteHashMap = new Map<string, string>();
+      remoteItems.forEach(item => {
+        if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
+      });
       const changedItems: StoredItem[] = [];
-      currentItems.forEach(item => {
-        const currentHash = getItemContentHash(item);
-        const lastSyncedHash = syncedHashesRef.current.get(item.data.id);
-        if (currentHash !== lastSyncedHash) {
+      for (const item of mergedItems) {
+        const mergedHash = getItemContentHash(item);
+        syncedHashesRef.current.set(item.data.id, mergedHash);
+        const remoteHash = remoteHashMap.get(item.data.id);
+        if (mergedHash !== remoteHash) {
           changedItems.push(item);
         }
-      });
+      }
       if (changedItems.length > 0) {
         log(`🔥 Firebase: Force sync uploading ${changedItems.length} changed items (of ${currentItems.length} total)`);
         await saveUserData(user.uid, changedItems);
       } else {
-        log("🔥 Firebase: Force sync - no local changes to upload");
+        log("🔥 Firebase: Force sync - no changes to upload");
       }
 
       const now = Date.now();
       setLastSyncTime(now);
       localStorage.setItem('last_successful_sync', now.toString());
 
-      // 2. Pull latest items from Firebase
-      const remoteItems = await loadUserData(user.uid);
-
-      // 3. Merge (including deleted items to propagate deletions)
-      let mergedItems = mergeDatasets(currentItems, remoteItems);
-
-      // 4. Clean up old deleted items (hard delete after retention period)
-      const cleanedItems = normalizeSharedSRS(cleanupOldDeletedItems(mergedItems));
-
-      // 5. Update synced hashes
-      for (const item of cleanedItems) {
-        syncedHashesRef.current.set(item.data.id, getItemContentHash(item));
-      }
-
-      latestItemsRef.current = cleanedItems;
-      setSyncState(prevState => ({ ...prevState, items: cleanedItems }));
+      // 4. Update local state with merged data
+      latestItemsRef.current = mergedItems;
+      setSyncState(prevState => ({ ...prevState, items: mergedItems }));
       setSyncStatus('saved');
 
     } catch (e) {
