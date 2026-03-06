@@ -51,6 +51,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   React.useEffect(() => {
     setComparePicking(null);
     setCompareSelected(new Set());
+    setShowYouGlishInline(false);
+    setShowYouGlishModal(false);
   }, [data.id]);
 
   // Robust helper to ensure we always map over an array of strings
