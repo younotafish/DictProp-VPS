@@ -1039,6 +1039,21 @@ export const NotebookView: React.FC<NotebookProps> = ({
     };
   }, [items, sortMode, filterMode, localSearchQuery, fuseIndex]);
 
+  const { reviewedToday, dueCount } = useMemo(() => {
+    const now = Date.now();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayTs = todayStart.getTime();
+    let reviewed = 0;
+    let due = 0;
+    for (const item of items) {
+      if (item.isDeleted || item.isArchived || !item.srs) continue;
+      if (item.srs.lastReviewDate >= todayTs) reviewed++;
+      if (item.srs.nextReview <= now) due++;
+    }
+    return { reviewedToday: reviewed, dueCount: due };
+  }, [items]);
+
   if (displayItems.length === 0 && !localSearchQuery) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50">
@@ -1069,7 +1084,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
         <div className="px-6 py-4 flex justify-between items-center">
           <div>
             <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-            <p className="text-xs text-slate-500 font-medium">{groupedItems.length} {groupedItems.length === 1 ? 'word' : 'words'} saved</p>
+            <p className="text-xs text-slate-500 font-medium">{groupedItems.length} saved · {reviewedToday} reviewed today · {dueCount} due</p>
           </div>
           <div className="flex items-center gap-1 bg-white rounded-full p-1 border border-slate-100 shadow-sm flex-nowrap shrink-0">
             {/* Text Analyzer button */}
