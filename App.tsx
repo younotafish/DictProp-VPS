@@ -341,7 +341,7 @@ const App: React.FC = () => {
   // Defined before the visibilitychange effect that references it
   const forceSyncInProgressRef = useRef(false);
   const handleForceSync = useCallback(async () => {
-    if (!user || !isFirebaseConfigured || !isOnline) return;
+    if (!user || !isFirebaseConfigured) return;
     if (forceSyncInProgressRef.current) return; // Prevent concurrent syncs
     forceSyncInProgressRef.current = true;
 
@@ -396,7 +396,7 @@ const App: React.FC = () => {
     } finally {
       forceSyncInProgressRef.current = false;
     }
-  }, [user, isFirebaseConfigured, isOnline]);
+  }, [user, isFirebaseConfigured]);
 
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
@@ -444,7 +444,7 @@ const App: React.FC = () => {
                   const now = Date.now();
                   // If app was in background for more than 30 seconds, trigger background sync
                   // (instead of a jarring full page reload)
-                  if (now - lastHidden > 30 * 1000 && user && isOnline && isFirebaseConfigured) {
+                  if (now - lastHidden > 30 * 1000 && user && isFirebaseConfigured) {
                       log("🔄 App was backgrounded for >30s, syncing in background...");
                       // Trigger a force sync instead of reloading the page
                       // This keeps the UI responsive while updating data
@@ -488,13 +488,36 @@ const App: React.FC = () => {
                   saveData(currentItems, targetUserId).catch(e => {
                       warn("Failed to save on visibility change:", e);
                   });
+                  // Best-effort Firebase push: push changed items so other devices
+                  // can see updates even if the app is killed before debounced save fires.
+                  // Fire-and-forget — iOS may kill us before this completes, but it's worth trying.
+                  if (user && isFirebaseConfigured) {
+                    const changedItems: StoredItem[] = [];
+                    for (const item of currentItems) {
+                      const currentHash = getItemContentHash(item);
+                      const lastSyncedHash = syncedHashesRef.current.get(item.data.id);
+                      if (currentHash !== lastSyncedHash) {
+                        changedItems.push(item);
+                      }
+                    }
+                    if (changedItems.length > 0) {
+                      log(`🔥 Firebase: Pushing ${changedItems.length} changed items on background...`);
+                      saveUserData(user.uid, changedItems).then(() => {
+                        for (const item of changedItems) {
+                          syncedHashesRef.current.set(item.data.id, getItemContentHash(item));
+                        }
+                      }).catch(e => {
+                        warn("Firebase push on background failed:", e);
+                      });
+                    }
+                  }
               }
           }
       };
-      
+
       document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [user, isOnline, isFirebaseConfigured, isLoaded, handleForceSync]); // Removed syncState.items - we use ref instead
+  }, [user, isFirebaseConfigured, isLoaded, handleForceSync]); // Removed syncState.items - we use ref instead
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
@@ -685,74 +708,71 @@ const App: React.FC = () => {
           }));
         }
         
-        // 2. Load Remote Data ONLY if online (background sync)
-        // Skip cloud fetch when offline to avoid delays
-        if (navigator.onLine) {
-          try {
-            const remoteItems = await loadUserData(currentUser.uid);
-            
-            // 3. Merge User Local + User Remote (INCLUDING deleted items for proper sync)
-            // We must include deleted items in merge to propagate deletions across devices
-            let mergedItems = mergeDatasets(userLocalItems, remoteItems);
-            
-            // 4. Clean up old deleted items during initial sync
-            mergedItems = cleanupOldDeletedItems(mergedItems);
-            
-            // Update last sync time based on ALL remote data to avoid re-syncing what we just got
-            const maxRemoteTime = remoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
-            setLastSyncTime(prev => {
-                const newTime = Math.max(prev, maxRemoteTime);
-                localStorage.setItem('last_successful_sync', newTime.toString());
-                return newTime;
-            });
+        // 2. Load Remote Data (background sync)
+        // Always attempt — navigator.onLine is unreliable on iOS PWA standalone mode.
+        // The try/catch handles actual network failures gracefully.
+        try {
+          const remoteItems = await loadUserData(currentUser.uid);
 
-            // Update ref immediately so event handlers have fresh data
-            latestItemsRef.current = mergedItems;
+          // 3. Merge User Local + User Remote (INCLUDING deleted items for proper sync)
+          // We must include deleted items in merge to propagate deletions across devices
+          let mergedItems = mergeDatasets(userLocalItems, remoteItems);
 
-            // Normalize shared SRS after merge
-            mergedItems = normalizeSharedSRS(mergedItems);
-            latestItemsRef.current = mergedItems;
+          // 4. Clean up old deleted items during initial sync
+          mergedItems = cleanupOldDeletedItems(mergedItems);
 
-            // Update state with merged data
-            setSyncState(prevState => ({
-              ...prevState,
-              items: mergedItems
-            }));
+          // Update last sync time based on ALL remote data to avoid re-syncing what we just got
+          const maxRemoteTime = remoteItems.reduce((max, item) => Math.max(max, item.updatedAt || 0), 0);
+          setLastSyncTime(prev => {
+              const newTime = Math.max(prev, maxRemoteTime);
+              localStorage.setItem('last_successful_sync', newTime.toString());
+              return newTime;
+          });
 
-            // CATCH-UP PUSH: Compare merged items against Firestore and upload any
-            // that differ. This repairs Firestore when local IDB has full content but
-            // Firestore has stripped data (from a past cache-to-Firestore overwrite).
-            const remoteHashMap = new Map<string, string>();
-            remoteItems.forEach(item => {
-              if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
-            });
-            const catchUpItems: StoredItem[] = [];
-            mergedItems.forEach(item => {
-              const mergedHash = getItemContentHash(item);
-              const remoteHash = remoteHashMap.get(item.data.id);
-              syncedHashesRef.current.set(item.data.id, mergedHash);
-              if (mergedHash !== remoteHash) {
-                catchUpItems.push(item);
-              }
-            });
-            if (catchUpItems.length > 0) {
-              log(`🔥 Firebase: Catch-up sync: ${catchUpItems.length} items differ from cloud, uploading...`);
-              try {
-                await saveUserData(currentUser.uid, catchUpItems);
-                log(`🔥 Firebase: Catch-up sync complete`);
-              } catch (e) {
-                logError("Catch-up sync failed:", e);
-              }
-            } else {
-              log("🔥 Firebase: No catch-up needed, local and cloud match");
+          // Update ref immediately so event handlers have fresh data
+          latestItemsRef.current = mergedItems;
+
+          // Normalize shared SRS after merge
+          mergedItems = normalizeSharedSRS(mergedItems);
+          latestItemsRef.current = mergedItems;
+
+          // Update state with merged data
+          setSyncState(prevState => ({
+            ...prevState,
+            items: mergedItems
+          }));
+
+          // CATCH-UP PUSH: Compare merged items against Firestore and upload any
+          // that differ. This repairs Firestore when local IDB has full content but
+          // Firestore has stripped data (from a past cache-to-Firestore overwrite).
+          const remoteHashMap = new Map<string, string>();
+          remoteItems.forEach(item => {
+            if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
+          });
+          const catchUpItems: StoredItem[] = [];
+          mergedItems.forEach(item => {
+            const mergedHash = getItemContentHash(item);
+            const remoteHash = remoteHashMap.get(item.data.id);
+            syncedHashesRef.current.set(item.data.id, mergedHash);
+            if (mergedHash !== remoteHash) {
+              catchUpItems.push(item);
             }
-            
-          } catch (error) {
-            logError("Initial sync failed:", error);
-            // Local items already set above, no action needed
+          });
+          if (catchUpItems.length > 0) {
+            log(`🔥 Firebase: Catch-up sync: ${catchUpItems.length} items differ from cloud, uploading...`);
+            try {
+              await saveUserData(currentUser.uid, catchUpItems);
+              log(`🔥 Firebase: Catch-up sync complete`);
+            } catch (e) {
+              logError("Catch-up sync failed:", e);
+            }
+          } else {
+            log("🔥 Firebase: No catch-up needed, local and cloud match");
           }
-        } else {
-          log("📴 Offline: Using local data only");
+
+        } catch (error) {
+          logError("Initial sync failed:", error);
+          // Local items already set above, no action needed
         }
         
         // Subscribe to real-time updates
@@ -1292,7 +1312,7 @@ const App: React.FC = () => {
    * Called when viewing a saved card that has no local image
    */
   const handleLazyLoadImage = useCallback(async (itemId: string) => {
-    if (!user || !isOnline) return;
+    if (!user) return;
     
     try {
       const remoteItem = await loadSingleItem(user.uid, itemId);
@@ -1347,7 +1367,7 @@ const App: React.FC = () => {
     } catch (e) {
       warn("Failed to lazy-load image from Firebase:", e);
     }
-  }, [user, isOnline]);
+  }, [user]);
 
   const handleDelete = async (id: string) => {
     log('🗑️ App: Deleting item', id);
