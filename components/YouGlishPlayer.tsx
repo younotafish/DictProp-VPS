@@ -135,7 +135,7 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' })
         widgetRef.current = new window.YG.Widget(widgetId, {
           width,
           components: 8 + 16 + 64, // caption + speed + controls
-          autoStart: 0,
+          autoStart: 1,
           events: {
             'onFetchDone': (e: any) => {
               if (!mounted) return;
