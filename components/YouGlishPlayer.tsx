@@ -116,6 +116,8 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' })
     let scriptLoadTimer: ReturnType<typeof setTimeout> | null = null;
     let fetchTimer: ReturnType<typeof setTimeout> | null = null;
 
+    let iframeObserver: MutationObserver | null = null;
+
     const createWidget = () => {
       if (!mounted || !window.YG) return;
 
@@ -131,6 +133,27 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' })
         const width = isInline
           ? (containerRef.current?.clientWidth || 400)
           : Math.min(600, window.innerWidth - 48);
+
+        // Watch for iframes created by the widget and add autoplay permission
+        // so the browser allows the embedded YouTube player to autoplay
+        const widgetContainer = document.getElementById(widgetId);
+        if (widgetContainer) {
+          iframeObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+              for (const node of Array.from(mutation.addedNodes)) {
+                if (node instanceof HTMLIFrameElement) {
+                  node.allow = 'autoplay; encrypted-media';
+                }
+                if (node instanceof HTMLElement) {
+                  node.querySelectorAll('iframe').forEach(iframe => {
+                    iframe.allow = 'autoplay; encrypted-media';
+                  });
+                }
+              }
+            }
+          });
+          iframeObserver.observe(widgetContainer, { childList: true, subtree: true });
+        }
 
         widgetRef.current = new window.YG.Widget(widgetId, {
           width,
@@ -197,6 +220,7 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' })
 
     return () => {
       mounted = false;
+      if (iframeObserver) iframeObserver.disconnect();
       if (scriptLoadTimer) clearTimeout(scriptLoadTimer);
       if (fetchTimer) clearTimeout(fetchTimer);
       if (widgetRef.current) {
