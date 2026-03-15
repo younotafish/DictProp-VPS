@@ -98,7 +98,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
-  const [rememberInfo, setRememberInfo] = useState<{ intervalDays: number } | null>(null);
+  const [rememberInfo, setRememberInfo] = useState<{
+    intervalDays: number;
+    penalty?: number;
+    daysOverdue?: number;
+    stepsBefore?: number;
+    stepsAfter?: number;
+  } | null>(null);
   const lastScrollY = useRef(0);
   
   // Sync local indices when props change (e.g., after delete/archive updates detailContext)
@@ -560,7 +566,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
       });
       const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
       const previewSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
-      setRememberInfo({ intervalDays: Math.round(previewSRS.stability) });
+      const penalty = SRSAlgorithm.getOverduePenalty(baseSRS);
+      const daysOverdue = Math.max(0, Math.round((Date.now() - baseSRS.nextReview) / 86400000));
+      setRememberInfo({
+        intervalDays: Math.round(previewSRS.stability),
+        penalty,
+        daysOverdue,
+        stepsBefore: baseSRS.totalReviews,
+        stepsAfter: previewSRS.totalReviews,
+      });
 
       // Use the dedicated onUpdateSRS if available (preferred - handles shared SRS atomically)
       if (onUpdateSRS) {
@@ -596,10 +610,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     // Trigger Success Animation (after computing info so it's available for display)
     setShowSuccessAnim(true);
+    const overlayDuration = (penalty && penalty > 0) ? 3000 : 1500;
     setTimeout(() => {
       setShowSuccessAnim(false);
       setRememberInfo(null);
-    }, 1500);
+    }, overlayDuration);
   }, [data, type, savedItems, onSave, onUpdateSRS, title]);
 
   const handleDoubleClick = () => {
@@ -968,9 +983,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
               <span className="text-slate-800 font-bold text-lg">Remembered!</span>
             </div>
             {rememberInfo && (
-              <span className="text-sm text-slate-500">
-                Next review {formatNextReview(rememberInfo.intervalDays)}
-              </span>
+              <>
+                <span className="text-sm text-slate-500">
+                  Next review {formatNextReview(rememberInfo.intervalDays)}
+                </span>
+                {rememberInfo.penalty != null && rememberInfo.penalty > 0 && (
+                  <span className="text-xs text-amber-600">
+                    ⏰ Overdue {rememberInfo.daysOverdue}d — set back {rememberInfo.penalty} {rememberInfo.penalty === 1 ? 'step' : 'steps'} ({rememberInfo.stepsBefore}→{rememberInfo.stepsAfter})
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>
