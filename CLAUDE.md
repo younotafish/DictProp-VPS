@@ -73,7 +73,9 @@ Key services in `services/`:
 - Regular saves debounced to 5 seconds
 - SRS updates, deletions, and archives trigger immediate saves (bypass debounce)
 - Saves on `visibilitychange` and `beforeunload` events (iOS PWA safety)
-- Delta sync compares content hashes to skip unchanged items
+- **Per-item dirty tracking**: Each `StoredItem` has a `lastSyncedHash` field (persisted in IDB, stripped before Firestore upload). An item is dirty when `getItemContentHash(item) !== item.lastSyncedHash`. After successful Firebase push, `lastSyncedHash` is set to the current hash. This replaces the old in-memory `syncedHashesRef` + timestamp-based `lastSyncTime` filter.
+- On subscription (real-time Firestore snapshot), `lastSyncedHash` is only set on items whose merged hash matches the remote hash — items where local won the merge stay dirty so the debounced save pushes the merged result.
+- `handleForceSync` uses a functional `setSyncState` updater to read the latest state (avoids stale closure race condition).
 
 ## Environment
 

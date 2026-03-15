@@ -232,6 +232,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           onClick={(e) => {
             e.stopPropagation();
             try {
+              // Flush app state before external navigation — iOS PWA may reload when returning
+              window.dispatchEvent(new Event('dictprop:before-external-nav'));
               window.open(`https://www.vocabulary.com/dictionary/${encodeURIComponent(data.word)}`, '_blank', 'noopener,noreferrer');
             } catch (_) {
               // Silently ignore — never crash the app for an external link

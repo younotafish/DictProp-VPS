@@ -168,6 +168,9 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
           });
       }
 
+      // Preserve local sync tracking state through merge
+      mergedItem.lastSyncedHash = localItem.lastSyncedHash;
+
       map.set(remoteItem.data.id, mergedItem);
     }
   });
