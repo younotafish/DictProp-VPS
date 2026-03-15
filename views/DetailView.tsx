@@ -106,7 +106,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
     stepsAfter?: number;
   } | null>(null);
   const lastScrollY = useRef(0);
-  
+
+  // Keep a ref to savedItems so callbacks always see fresh data without re-creating
+  const savedItemsRef = useRef(savedItems);
+  useEffect(() => { savedItemsRef.current = savedItems; }, [savedItems]);
+
   // Sync local indices when props change (e.g., after delete/archive updates detailContext)
   useEffect(() => {
     if (groups) {
@@ -163,14 +167,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const imageUrl = getItemImageUrl(currentItem);
     
     // Check if this item is saved and missing an image
-    const isSaved = savedItems.some(i => i.data.id === itemId);
+    const isSaved = savedItemsRef.current.some(i => i.data.id === itemId);
     const hasImage = imageUrl && imageUrl.startsWith('data:image/');
-    
+
     if (isSaved && !hasImage) {
       // Trigger lazy load from Firebase
       onLazyLoadImage(itemId);
     }
-  }, [currentItem?.data.id, onLazyLoadImage, savedItems]);
+  }, [currentItem?.data.id, onLazyLoadImage]);
 
 
   if (!currentItem) {
@@ -454,12 +458,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   const handleSaveVocab = (vocab: VocabCard) => {
     const vocabSpelling = (vocab.word || '').toLowerCase().trim();
-    const isAlreadySaved = savedItems.some(i => 
+    const items = savedItemsRef.current;
+    const isAlreadySaved = items.some(i =>
       getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
     );
 
     if (isAlreadySaved) {
-      const existingItem = savedItems.find(i => 
+      const existingItem = items.find(i =>
         getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
       );
       if (existingItem) {
@@ -516,22 +521,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
     
     const targetTitle = (title || '').toLowerCase().trim();
     // Find all siblings to reset them together (Shared SRS)
-    const siblings = savedItems.filter(item => 
+    const siblings = savedItemsRef.current.filter(item =>
       !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle
     );
 
     if (siblings.length > 0) {
       siblings.forEach(sibling => {
          const newSRS = SRSAlgorithm.createNew(sibling.data.id, sibling.type);
-         // Preserve original savedAt if possible, or update? 
-         // Resetting usually implies starting over, so updating savedAt is acceptable, 
-         // but keeping original savedAt might be better for history. 
-         // Let's keep original savedAt for siblings.
-         onSave({ 
-           ...sibling, 
+         onSave({
+           ...sibling,
            srs: newSRS,
-           // We don't change savedAt to preserve "Added on" date, unless we want to "bump" it.
-           // Let's treat it as a fresh start for the Algorithm, but the item itself is old.
          });
       });
     } else {
@@ -546,14 +545,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
     
     setShowActionMenu(false);
-  }, [data, title, type, onSave, savedItems]);
+  }, [data, title, type, onSave]);
 
   const handleRemember = useCallback(() => {
     log('🧠 DetailView: Marking as remembered via shortcut/gesture');
 
     const targetTitle = (title || '').toLowerCase().trim();
     // Find all siblings to update them together (Shared SRS)
-    const siblings = savedItems.filter(item =>
+    const siblings = savedItemsRef.current.filter(item =>
       !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle
     );
 
@@ -615,7 +614,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setShowSuccessAnim(false);
       setRememberInfo(null);
     }, overlayDuration);
-  }, [data, type, savedItems, onSave, onUpdateSRS, title]);
+  }, [data, type, onSave, onUpdateSRS, title]);
 
   const handleDoubleClick = () => {
     // Avoid triggering when selecting text
