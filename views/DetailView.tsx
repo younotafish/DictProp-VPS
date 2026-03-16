@@ -102,8 +102,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     intervalDays: number;
     penalty?: number;
     daysOverdue?: number;
-    stepsBefore?: number;
-    stepsAfter?: number;
+    intervalWithout?: number; // what the interval would have been without penalty
   } | null>(null);
   const lastScrollY = useRef(0);
 
@@ -567,12 +566,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
       const previewSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
       const penalty = SRSAlgorithm.getOverduePenalty(baseSRS);
       const daysOverdue = Math.max(0, Math.round((Date.now() - baseSRS.nextReview) / 86400000));
+      // Compute what the interval would have been without penalty
+      const schedule = SRSAlgorithm.getSchedule();
+      const noPenaltyStep = Math.min(baseSRS.totalReviews + 1, schedule.length);
+      const intervalWithout = schedule[Math.max(0, Math.min(noPenaltyStep - 1, schedule.length - 1))];
       setRememberInfo({
         intervalDays: Math.round(previewSRS.stability),
         penalty,
         daysOverdue,
-        stepsBefore: baseSRS.totalReviews,
-        stepsAfter: previewSRS.totalReviews,
+        intervalWithout,
       });
 
       // Use the dedicated onUpdateSRS if available (preferred - handles shared SRS atomically)
@@ -986,9 +988,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <span className="text-sm text-slate-500">
                   Next review {formatNextReview(rememberInfo.intervalDays)}
                 </span>
-                {rememberInfo.penalty != null && rememberInfo.penalty > 0 && (
+                {rememberInfo.penalty != null && rememberInfo.penalty > 0 && rememberInfo.intervalWithout && (
                   <span className="text-xs text-amber-600">
-                    ⏰ {rememberInfo.daysOverdue} days late — dropped {rememberInfo.penalty === 1 ? 'a step' : '2 steps'}
+                    ⏰ {rememberInfo.daysOverdue} days late — would've been {formatNextReview(rememberInfo.intervalWithout)}
                   </span>
                 )}
               </>
