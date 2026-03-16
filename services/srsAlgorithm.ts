@@ -64,15 +64,23 @@ export class SRSAlgorithm {
 
   /**
    * Calculate step penalty for overdue items.
-   * The longer an item has been overdue (sitting unanswered), the more steps back.
+   * Penalty is proportional to how late the review is relative to the expected interval.
+   * Being 8 days late on a 25-day interval (32%) is very different from 8 days late on a 1-day interval.
    */
   static getOverduePenalty(srs: SRSData): number {
     const now = Date.now();
     const daysOverdue = Math.max(0, (now - srs.nextReview) / (1000 * 60 * 60 * 24));
 
-    if (daysOverdue > 90) return 3;
-    if (daysOverdue > 30) return 2;
-    if (daysOverdue > 7) return 1;
+    // Grace period: no penalty if less than 14 days overdue in absolute terms
+    if (daysOverdue <= 14) return 0;
+
+    // Compare overdue duration to the item's current interval
+    const step = Math.max(0, srs.totalReviews - 1);
+    const expectedInterval = SCHEDULE[Math.min(step, SCHEDULE.length - 1)] || 1;
+    const overdueRatio = daysOverdue / expectedInterval;
+
+    if (overdueRatio > 4) return 2;
+    if (overdueRatio > 2) return 1;
     return 0;
   }
 
