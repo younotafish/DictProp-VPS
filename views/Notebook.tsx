@@ -1001,14 +1001,13 @@ export const NotebookView: React.FC<NotebookProps> = ({
       return groups;
     };
     
-    // "Due for Review" backfill: when searching and fuzzy results < 100,
-    // show top due items to fill the screen while user waits for AI search
+    // "Due for Review" backfill: when searching, show all due items
+    // so user can review while waiting for AI search results
     let dueForReview: ItemGroup[] = [];
-    if (localSearchQuery.trim() && activeFiltered.length < 100) {
+    if (localSearchQuery.trim()) {
       const now = Date.now();
       const fuzzyIds = new Set(activeFiltered.map(i => i.data.id));
-      const slotsToFill = 100 - activeFiltered.length;
-      
+
       const dueItems = items
         .filter(i => {
           if (!i || !i.data || !i.data.id || i.isDeleted || i.isArchived) return false;
@@ -1024,9 +1023,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
           const strengthB = b.srs?.memoryStrength || 0;
           if (strengthA !== strengthB) return strengthA - strengthB;
           return (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0);
-        })
-        .slice(0, slotsToFill);
-      
+        });
+
       dueForReview = groupByTitle(dueItems);
     }
 
