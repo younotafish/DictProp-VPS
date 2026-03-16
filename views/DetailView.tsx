@@ -151,12 +151,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   }
   
-  // Reset item index when group changes
+  // Reset item index when user navigates to a different group (not on groups rebuild)
+  const prevGroupIndexRef = useRef(currentGroupIndex);
   useEffect(() => {
-    if (groups) {
-        setCurrentItemIndex(0);
+    if (prevGroupIndexRef.current !== currentGroupIndex) {
+      prevGroupIndexRef.current = currentGroupIndex;
+      setCurrentItemIndex(0);
     }
-  }, [currentGroupIndex, groups]);
+  }, [currentGroupIndex]);
 
   // Lazy load image from Firebase if missing locally
   useEffect(() => {
