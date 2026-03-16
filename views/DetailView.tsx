@@ -984,16 +984,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
               <span className="text-slate-800 font-bold text-lg">Remembered!</span>
             </div>
             {rememberInfo && (
-              <>
+              rememberInfo.penalty && rememberInfo.penalty > 0 && rememberInfo.intervalWithout ? (
+                <span className="text-sm text-slate-500">
+                  Next review {formatNextReview(rememberInfo.intervalDays)}{' '}
+                  <span className="text-amber-600">(not {formatNextReview(rememberInfo.intervalWithout).replace('in ', '')} — {rememberInfo.daysOverdue}d late)</span>
+                </span>
+              ) : (
                 <span className="text-sm text-slate-500">
                   Next review {formatNextReview(rememberInfo.intervalDays)}
                 </span>
-                {rememberInfo.penalty != null && rememberInfo.penalty > 0 && rememberInfo.intervalWithout && (
-                  <span className="text-xs text-amber-600">
-                    ⏰ {rememberInfo.daysOverdue} days late — would've been {formatNextReview(rememberInfo.intervalWithout)}
-                  </span>
-                )}
-              </>
+              )
             )}
           </div>
         </div>
