@@ -988,7 +988,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 </span>
                 {rememberInfo.penalty != null && rememberInfo.penalty > 0 && (
                   <span className="text-xs text-amber-600">
-                    ⏰ Overdue {rememberInfo.daysOverdue}d — set back {rememberInfo.penalty} {rememberInfo.penalty === 1 ? 'step' : 'steps'} ({rememberInfo.stepsBefore}→{rememberInfo.stepsAfter})
+                    ⏰ {rememberInfo.daysOverdue} days late — dropped {rememberInfo.penalty === 1 ? 'a step' : '2 steps'}
                   </span>
                 )}
               </>
