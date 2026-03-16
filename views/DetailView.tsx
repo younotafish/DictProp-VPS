@@ -110,20 +110,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const savedItemsRef = useRef(savedItems);
   useEffect(() => { savedItemsRef.current = savedItems; }, [savedItems]);
 
-  // Sync local indices when props change (e.g., after delete/archive updates detailContext)
+  // Set indices only on initial mount — after that, DetailView owns navigation
+  // and the runtime clamping (lines below) handles out-of-bounds after deletion
+  const hasInitialized = useRef(false);
   useEffect(() => {
-    if (groups) {
-      // Clamp indices to valid range
-      const maxGroupIndex = Math.max(0, groups.length - 1);
-      const clampedGroupIndex = Math.min(initialGroupIndex, maxGroupIndex);
-      
-      const maxItemIndex = groups[clampedGroupIndex] 
-        ? Math.max(0, groups[clampedGroupIndex].items.length - 1) 
-        : 0;
-      const clampedItemIndex = Math.min(initialItemIndex, maxItemIndex);
-      
-      setCurrentGroupIndex(clampedGroupIndex);
-      setCurrentItemIndex(clampedItemIndex);
+    if (groups && !hasInitialized.current) {
+      hasInitialized.current = true;
+      setCurrentGroupIndex(Math.min(initialGroupIndex, groups.length - 1));
+      const group = groups[Math.min(initialGroupIndex, groups.length - 1)];
+      setCurrentItemIndex(group ? Math.min(initialItemIndex, group.items.length - 1) : 0);
     }
   }, [groups, initialGroupIndex, initialItemIndex]);
   
