@@ -611,11 +611,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     // Trigger Success Animation (after computing info so it's available for display)
     setShowSuccessAnim(true);
-    const overlayDuration = (penalty && penalty > 0) ? 2000 : 1500;
     setTimeout(() => {
       setShowSuccessAnim(false);
       setRememberInfo(null);
-    }, overlayDuration);
+    }, 1500);
   }, [data, type, onSave, onUpdateSRS, title]);
 
   const handleDoubleClick = () => {
