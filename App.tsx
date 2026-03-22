@@ -151,21 +151,6 @@ const App: React.FC = () => {
     localStorage.setItem('app_current_view', currentView);
   }, [currentView]);
   
-  // One-time cleanup: remove ALL old storage to start VPS mode fresh.
-  // Without this, stale Firebase-era data from IndexedDB/localStorage bleeds through.
-  if (!localStorage.getItem('vps_clean_v2')) {
-    // Nuke all localStorage keys from old app
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key !== 'vps_clean_v2') keysToRemove.push(key);
-    }
-    keysToRemove.forEach(k => localStorage.removeItem(k));
-    localStorage.setItem('vps_clean_v2', '1');
-    // Nuke old IndexedDB entirely so no stale data can leak
-    try { indexedDB.deleteDatabase('PopDictDB'); } catch { /* ignore */ }
-  }
-
   // Simplified sync state (items only)
   // Try to instantly restore from localStorage cache for faster perceived load
   const [syncState, setSyncState] = useState<SyncState>(() => {
