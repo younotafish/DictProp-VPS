@@ -1,18 +1,42 @@
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Install frontend dependencies and build
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY index.html index.tsx tsconfig.json postcss.config.js ./
+COPY App.tsx types.ts ./
+COPY src/ ./src/
+COPY public/ ./public/
+COPY views/ ./views/
+COPY services/ ./services/
+COPY components/ ./components/
+COPY hooks/ ./hooks/
+COPY utils/ ./utils/
+COPY vite.config.ts ./
+RUN npm run build
+
+# Install server dependencies and build
+COPY server/package.json server/package-lock.json ./server/
+RUN cd server && npm ci
+COPY server/tsconfig.json ./server/
+COPY server/src/ ./server/src/
+RUN cd server && npm run build
+
+# --- Production image ---
 FROM node:22-alpine
 
 WORKDIR /app
 
-# Install server dependencies
-COPY server/package*.json ./server/
+# Server production deps only
+COPY server/package.json server/package-lock.json ./server/
 RUN cd server && npm ci --production
 
-# Copy server source (pre-built)
-COPY server/dist/ ./server/dist/
+# Copy built artifacts from builder
+COPY --from=builder /app/server/dist/ ./server/dist/
+COPY --from=builder /app/dist/ ./dist/
 
-# Copy built frontend
-COPY dist/ ./dist/
-
-# Data directory for SQLite
 RUN mkdir -p /app/data
 
 EXPOSE 3000
