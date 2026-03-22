@@ -21,13 +21,14 @@ interface Props {
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
+  onLazyLoadImage?: (itemId: string) => void;
 }
 
 // Memoize to prevent re-renders when other cards in the list update
-export const VocabCardDisplay: React.FC<Props> = memo(({ 
-  data, 
-  onSave, 
-  isSaved = false, 
+export const VocabCardDisplay: React.FC<Props> = memo(({
+  data,
+  onSave,
+  isSaved = false,
   className = '',
   showSave = true,
   onSearch,
@@ -39,6 +40,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   onCompare,
   onSaveSentence,
   isSentenceSaved,
+  onLazyLoadImage,
 }) => {
   
   // Compare-pick mode state
@@ -203,7 +205,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
         {data.imageUrl && (
           <div className="mb-4 md:mb-0 w-full md:w-2/5 md:shrink-0">
             <div className="rounded-xl overflow-hidden max-h-48 md:max-h-64 bg-slate-50 border border-slate-100 shadow-inner">
-              <OfflineImage src={data.imageUrl?.startsWith('data:') ? data.imageUrl : undefined} itemId={data.id} alt={data.word} className="w-full h-full object-cover fade-in" />
+              <OfflineImage src={data.imageUrl?.startsWith('data:') ? data.imageUrl : undefined} itemId={data.id} alt={data.word} className="w-full h-full object-cover fade-in" onMissing={onLazyLoadImage} />
             </div>
             {/* Inline YouGlish below image on desktop — click to load (preserves daily quota) */}
             <div className="hidden md:block">

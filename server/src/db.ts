@@ -63,11 +63,16 @@ interface ItemRow {
 function rowToItem(row: ItemRow, stripImages = false) {
   const data = JSON.parse(row.data);
   if (stripImages) {
-    delete data.imageUrl;
+    // Replace base64 with marker instead of deleting — client needs to know an image exists
+    if (data.imageUrl && data.imageUrl.startsWith('data:image/')) {
+      data.imageUrl = 'server:has_image';
+    }
     if (Array.isArray(data.vocabs)) {
       data.vocabs = data.vocabs.map((v: any) => {
-        const { imageUrl, ...rest } = v;
-        return rest;
+        if (v.imageUrl && v.imageUrl.startsWith('data:image/')) {
+          return { ...v, imageUrl: 'server:has_image' };
+        }
+        return v;
       });
     }
   }

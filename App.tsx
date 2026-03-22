@@ -103,8 +103,13 @@ function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
 // Sentinel value replacing base64 in React state — tells OfflineImage to load from IDB
 const IMAGE_IDB_MARKER = 'idb:stored';
 
+// Check if an imageUrl is a marker (not real base64 data)
+const isImageMarker = (url: string | undefined): boolean =>
+  !!url && !url.startsWith('data:image/') && (url === IMAGE_IDB_MARKER || url === 'server:has_image');
+
 /**
  * Strip base64 imageUrl fields from items and store them in IDB images store.
+ * Also normalizes server markers ('server:has_image') to the client marker ('idb:stored').
  * Replaces base64 with a tiny marker so layout checks (imageUrl truthy) still work.
  * This keeps ~143MB of image data out of React state.
  */
@@ -116,10 +121,16 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
     let data = item.data;
 
     // Vocab item image
-    if (isVocabItem(item) && (data as VocabCard).imageUrl?.startsWith('data:image/')) {
-      imagesToSave.push({ id: data.id, base64: (data as VocabCard).imageUrl! });
-      data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
-      changed = true;
+    if (isVocabItem(item)) {
+      const vc = data as VocabCard;
+      if (vc.imageUrl?.startsWith('data:image/')) {
+        imagesToSave.push({ id: data.id, base64: vc.imageUrl });
+        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
+        changed = true;
+      } else if (isImageMarker(vc.imageUrl)) {
+        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
+        changed = true;
+      }
     }
 
     // Phrase item image + nested vocab images
@@ -129,12 +140,18 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
         imagesToSave.push({ id: sr.id, base64: sr.imageUrl });
         data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
         changed = true;
+      } else if (isImageMarker(sr.imageUrl)) {
+        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
+        changed = true;
       }
       if (sr.vocabs?.length) {
         let vocabsChanged = false;
         const newVocabs = sr.vocabs.map(v => {
           if (v.imageUrl?.startsWith('data:image/')) {
             imagesToSave.push({ id: v.id, base64: v.imageUrl });
+            vocabsChanged = true;
+            return { ...v, imageUrl: IMAGE_IDB_MARKER };
+          } else if (isImageMarker(v.imageUrl)) {
             vocabsChanged = true;
             return { ...v, imageUrl: IMAGE_IDB_MARKER };
           }
