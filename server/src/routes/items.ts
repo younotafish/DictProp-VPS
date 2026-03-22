@@ -4,14 +4,16 @@ import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, get
 export const itemsRoutes = new Hono();
 
 // GET /api/items — return all items, or delta since ?since=timestamp
+// ?images=true to include base64 images (default: stripped for fast load)
 itemsRoutes.get('/items', (c) => {
+  const includeImages = c.req.query('images') === 'true';
   const since = c.req.query('since');
   if (since) {
     const ts = parseInt(since, 10);
     if (isNaN(ts)) return c.json({ error: 'Invalid since parameter' }, 400);
-    return c.json(getItemsSince(ts));
+    return c.json(getItemsSince(ts, !includeImages));
   }
-  return c.json(getAllItems());
+  return c.json(getAllItems(!includeImages));
 });
 
 // GET /api/items/:id — return a single item

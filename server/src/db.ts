@@ -60,10 +60,20 @@ interface ItemRow {
   is_archived: number;
 }
 
-function rowToItem(row: ItemRow) {
+function rowToItem(row: ItemRow, stripImages = false) {
+  const data = JSON.parse(row.data);
+  if (stripImages) {
+    delete data.imageUrl;
+    if (Array.isArray(data.vocabs)) {
+      data.vocabs = data.vocabs.map((v: any) => {
+        const { imageUrl, ...rest } = v;
+        return rest;
+      });
+    }
+  }
   return {
     type: row.type,
-    data: JSON.parse(row.data),
+    data,
     srs: JSON.parse(row.srs),
     savedAt: row.saved_at,
     updatedAt: row.updated_at ?? undefined,
@@ -72,14 +82,14 @@ function rowToItem(row: ItemRow) {
   };
 }
 
-export function getAllItems() {
+export function getAllItems(stripImages = false) {
   const rows = stmts.getAll.all() as ItemRow[];
-  return rows.map(rowToItem);
+  return rows.map(r => rowToItem(r, stripImages));
 }
 
-export function getItemsSince(since: number) {
+export function getItemsSince(since: number, stripImages = false) {
   const rows = stmts.getSince.all(since, since) as ItemRow[];
-  return rows.map(rowToItem);
+  return rows.map(r => rowToItem(r, stripImages));
 }
 
 export function upsertItem(item: any) {
