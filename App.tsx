@@ -872,6 +872,19 @@ const App: React.FC = () => {
       }
 
       // 2. Push dirty items to server
+      // SAFETY: Never push skeleton cache items (missing content fields) to server.
+      // The lightweight localStorage cache strips definition/history/examples to save space.
+      // If these skeleton items end up in state, pushing them would overwrite full data on server.
+      const hasFullContent = currentItems.some(item => {
+        if (item.type === 'sentence') return true;
+        const d = item.data as any;
+        return !!(d.definition || d.history || d.grammar || (Array.isArray(d.examples) && d.examples.length > 0));
+      });
+      if (!hasFullContent && currentItems.length > 10) {
+        log("⚠️ Skipping server sync — items appear to be skeleton cache data");
+        return;
+      }
+
       const itemsWithHashes: { item: StoredItem; hash: string }[] = [];
       currentItems.forEach(item => {
         const currentHash = getItemContentHash(item);
