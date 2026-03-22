@@ -8,7 +8,7 @@ import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { useWheelNavigation } from '../hooks';
-import { analyzeInput, generateIllustration, transcribeAudio } from '../services/aiService';
+import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { speak } from '../services/speech';
 import { warn, error as logError } from '../services/logger';
@@ -1059,14 +1059,23 @@ export const NotebookView: React.FC<NotebookProps> = ({
           <BookOpen size={32} className="text-indigo-300" />
         </div>
         <h3 className="text-xl font-bold text-slate-700 mb-2">Your notebook is empty</h3>
-        <p className="text-sm mb-8 max-w-xs mx-auto">Save words and phrases from your searches to build your personalized learning library.</p>
-        
-        <div className="flex justify-center">
-          <UserMenu 
-            user={user} 
-            onSignIn={onSignIn} 
-            onSignOut={onSignOut} 
-          />
+        <p className="text-sm mb-8 max-w-xs mx-auto">Search for a word or phrase to get started.</p>
+
+        <div className="w-full max-w-sm">
+          <form onSubmit={(e) => { e.preventDefault(); if (localSearchQuery.trim()) handleSearch(localSearchQuery.trim()); }} className="relative">
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={localSearchQuery}
+              onChange={(e) => setLocalSearchQuery(e.target.value)}
+              placeholder="Search a word or phrase..."
+              className="w-full px-4 py-3 pr-12 rounded-xl border border-slate-200 bg-white text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-base"
+              autoFocus
+            />
+            <button type="submit" className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-500 hover:text-indigo-700">
+              <Search size={20} />
+            </button>
+          </form>
         </div>
       </div>
     );
@@ -1155,7 +1164,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
             ) : (
               <button 
                 onClick={onForceSync} 
-                disabled={syncStatus === 'syncing' || !user}
+                disabled={syncStatus === 'syncing'}
                 className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full ${syncStatus === 'syncing' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-50'}`}
                 title="Force Sync"
               >
@@ -1166,14 +1175,18 @@ export const NotebookView: React.FC<NotebookProps> = ({
                 )}
               </button>
             )}
-            <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
-            <div className="shrink-0">
-              <UserMenu 
-                user={user} 
-                onSignIn={onSignIn} 
-                onSignOut={onSignOut} 
-              />
-            </div>
+            {user && (
+              <>
+                <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
+                <div className="shrink-0">
+                  <UserMenu
+                    user={user}
+                    onSignIn={onSignIn}
+                    onSignOut={onSignOut}
+                  />
+                </div>
+              </>
+            )}
           </div>
         </div>
         

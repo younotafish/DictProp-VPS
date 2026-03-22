@@ -23,6 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 .firebase/
+.env
+data/
+server/dist/
+server/node_modules/
 
 # Playwright
 .playwright/

@@ -110,27 +110,29 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       }
 
       // B. SRS MERGE (Learning Progress)
-      // Priority order for conflict resolution:
-      // 1. Keep the one with MORE reviews (most progress)
-      // 2. If equal reviews, keep the one with HIGHER memory strength (most learning)
-      // 3. If still equal, keep the one with MORE RECENT lastReviewDate (latest update)
-      // This ensures learning progress is never accidentally overwritten
-      if (localHistory > remoteHistory) {
-          mergedItem.srs = clone(localItem.srs);
-      } else if (localHistory === remoteHistory) {
-          // Tie-breaker 1: Memory strength (higher = more progress)
-          const localStrength = localItem.srs?.memoryStrength || 0;
-          const remoteStrength = remoteItem.srs?.memoryStrength || 0;
+      // Priority: most recent lastReviewDate wins.
+      // Rationale: lastReviewDate is set to Date.now() on each review, so a more
+      // recent value definitively means "this device studied more recently."
+      // The overdue penalty can DECREASE totalReviews (e.g., 4→2 after 90+ days),
+      // so using totalReviews as primary key would cause old remote data (higher
+      // reviews) to overwrite a just-studied local item (lower reviews after penalty).
+      // Fallback to totalReviews only when lastReviewDate is equal (same review).
+      const localReview = localItem.srs?.lastReviewDate || 0;
+      const remoteReview = remoteItem.srs?.lastReviewDate || 0;
 
-          if (localStrength > remoteStrength) {
+      if (localReview > remoteReview) {
+          // Local was reviewed more recently — local SRS wins
+          mergedItem.srs = clone(localItem.srs);
+      } else if (localReview === remoteReview) {
+          // Same review timestamp — use totalReviews as tiebreaker
+          if (localHistory > remoteHistory) {
               mergedItem.srs = clone(localItem.srs);
-          } else if (localStrength === remoteStrength) {
-              // Tie-breaker 2: Recency of last review
-              const localReview = localItem.srs?.lastReviewDate || 0;
-              const remoteReview = remoteItem.srs?.lastReviewDate || 0;
-              if (localReview > remoteReview) {
-                   mergedItem.srs = clone(localItem.srs);
-              }
+          }
+      } else if (remoteReview > localReview && localHistory !== remoteHistory) {
+          // Remote reviewed more recently — keep remote SRS (already in mergedItem)
+          // Log when this causes a totalReviews decrease (potential regression)
+          if (localHistory > remoteHistory) {
+              console.error(`[MERGE] "${(localItem.data as any).word || (localItem.data as any).query}" SRS: keeping remote (reviewed more recently) reviews ${localHistory}→${remoteHistory}, localReview=${new Date(localReview).toISOString()}, remoteReview=${new Date(remoteReview).toISOString()}`);
           }
       }
 

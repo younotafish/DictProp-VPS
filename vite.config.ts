@@ -1,93 +1,32 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   server: {
     port: 3000,
     host: '0.0.0.0',
-    // Disable HTTPS for local development (use HTTP)
-    https: false,
-    // Ignore playwright test output directories
     watch: {
       ignored: ['**/test-results/**', '**/playwright-report/**', '**/.playwright/**']
     },
-    // Disable error overlay for e2e testing
     hmr: {
       overlay: process.env.CI ? false : true
+    },
+    // Proxy API requests to the Hono server during development
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      }
     }
   },
   plugins: [
     react(),
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['pwa-192x192.png', 'pwa-512x512.png', 'apple-touch-icon.png', 'favicon-32x32.png'],
-      workbox: {
-        // Cache all static assets for offline use
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,ttf,eot}'],
-        // Increase cache size limits for the app bundle
-        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
-        // Activate new SW immediately — don't wait for all tabs to close
-        skipWaiting: true,
-        clientsClaim: true,
-        // CRITICAL: Don't intercept Firebase auth handler paths.
-        // Without this, the SW serves index.html for /__/auth/handler
-        // which breaks Google sign-in popups.
-        navigateFallbackDenylist: [/^\/__\/.*/],
-        runtimeCaching: [
-          {
-            // Cache Firebase Storage images for offline use
-            urlPattern: /^https:\/\/firebasestorage\.googleapis\.com\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'firebase-storage-images',
-              expiration: { 
-                maxEntries: 500,
-                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
-              },
-              cacheableResponse: { statuses: [0, 200] }
-            }
-          },
-          {
-            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'google-fonts-stylesheets',
-              expiration: { maxEntries: 10, maxAgeSeconds: 60 * 60 * 24 * 365 }
-            }
-          },
-          {
-            urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'google-fonts-webfonts',
-              expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 }
-            }
-          }
-        ]
-      },
-      manifest: {
-        name: 'DictProp - Vocabulary Builder',
-        short_name: 'DictProp',
-        description: 'Learn vocabulary with spaced repetition',
-        theme_color: '#4f46e5',
-        background_color: '#ffffff',
-        display: 'standalone',
-        start_url: '/',
-        icons: [
-          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
-        ]
-      }
-    })
   ],
   build: {
-    // Ensure all dependencies are bundled
     rollupOptions: {
       output: {
         manualChunks: {
           'react-vendor': ['react', 'react-dom'],
-          'firebase-vendor': ['firebase/app', 'firebase/auth', 'firebase/firestore'],
         }
       }
     }

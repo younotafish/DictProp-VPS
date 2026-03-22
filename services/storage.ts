@@ -9,7 +9,7 @@ const DB_VERSION = 2; // Keep at 2 for compatibility
 const BASE_DATA_KEY = 'items';
 
 // Helper to get key for a specific user
-const getStorageKey = (userId: string = 'guest') => `${BASE_DATA_KEY}_${userId}`;
+const getStorageKey = (userId: string = 'vps') => `${BASE_DATA_KEY}_${userId}`;
 
 // Fallback storage for iOS Safari private mode
 let inMemoryStorage: Record<string, StoredItem[]> = {};
@@ -72,7 +72,7 @@ const getDB = (): Promise<IDBDatabase> => {
   });
 };
 
-export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> => {
+export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> => {
   const idbAvailable = await checkIndexedDBAvailability();
   const storageKey = getStorageKey(userId);
   
@@ -161,7 +161,7 @@ export const loadData = async (userId: string = 'guest'): Promise<StoredItem[]> 
   }
 };
 
-export const saveData = async (items: StoredItem[], userId: string = 'guest'): Promise<void> => {
+export const saveData = async (items: StoredItem[], userId: string = 'vps'): Promise<void> => {
   const idbAvailable = await checkIndexedDBAvailability();
   const storageKey = getStorageKey(userId);
   

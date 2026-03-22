@@ -4,17 +4,14 @@ import { StudyEnhanced } from './views/StudyEnhanced';
 import { SentencesView } from './views/SentencesView';
 import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
-import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, AppUser, ItemGroup, isPhraseItem, isVocabItem } from './types';
+import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { subscribeToAuth, subscribeToUserData, saveUserData, signIn, signOut, isConfigured, handleRedirectResult, loadUserData, loadSingleItem, getItemContentHash } from './services/firebase';
-import { AuthDomainErrorModal } from './components/AuthDomainErrorModal';
-import { ErrorModal } from './components/ErrorModal';
+import { loadAllItems, saveItems, loadSingleItem, getItemContentHash, analyzeInput } from './services/api';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
-import { analyzeInput } from './services/aiService';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 
@@ -154,11 +151,26 @@ const App: React.FC = () => {
     localStorage.setItem('app_current_view', currentView);
   }, [currentView]);
   
+  // One-time cleanup: remove ALL old storage to start VPS mode fresh.
+  // Without this, stale Firebase-era data from IndexedDB/localStorage bleeds through.
+  if (!localStorage.getItem('vps_clean_v2')) {
+    // Nuke all localStorage keys from old app
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key !== 'vps_clean_v2') keysToRemove.push(key);
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    localStorage.setItem('vps_clean_v2', '1');
+    // Nuke old IndexedDB entirely so no stale data can leak
+    try { indexedDB.deleteDatabase('PopDictDB'); } catch { /* ignore */ }
+  }
+
   // Simplified sync state (items only)
   // Try to instantly restore from localStorage cache for faster perceived load
   const [syncState, setSyncState] = useState<SyncState>(() => {
     try {
-      const cached = localStorage.getItem('app_items_cache');
+      const cached = localStorage.getItem('vps_items_cache');
       if (cached) {
         const items = JSON.parse(cached);
         if (Array.isArray(items) && items.length > 0) {
@@ -209,11 +221,7 @@ const App: React.FC = () => {
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
-  // Auth States (Firebase)
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
-  const [signInError, setSignInError] = useState<{code?: string, message: string} | null>(null);
-  const [isFirebaseConfigured, setIsFirebaseConfigured] = useState(isConfigured());
+  // VPS mode: no auth needed (single user)
 
   // Updated DetailContext to support Group-based navigation (2D: Groups vs Items)
   // NOTE: We no longer restore detailContext from localStorage. Persisted groups
@@ -232,6 +240,28 @@ const App: React.FC = () => {
       warn("Failed to clear detail context", e);
     }
   }, [detailContext]);
+
+  // Debug: expose item inspector for diagnosing per-item sync/SRS issues
+  // Call from browser console: __debugItems('atlas') or __debugItems('first half')
+  useEffect(() => {
+    (window as any).__debugItems = (word: string) => {
+      const w = word.toLowerCase().trim();
+      const matches = latestItemsRef.current.filter(i => getItemSpelling(i) === w);
+      if (matches.length === 0) {
+        console.log(`[Debug] No items found for "${word}"`);
+        return;
+      }
+      console.log(`[Debug] Found ${matches.length} item(s) for "${word}":`);
+      matches.forEach((item, idx) => {
+        console.log(`  [${idx}] id=${item.data.id}, type=${item.type}, deleted=${!!item.isDeleted}, archived=${!!item.isArchived}`);
+        console.log(`       SRS: reviews=${item.srs?.totalReviews}, strength=${item.srs?.memoryStrength}, stability=${item.srs?.stability}d, streak=${item.srs?.correctStreak}`);
+        console.log(`       lastReview=${item.srs?.lastReviewDate ? new Date(item.srs.lastReviewDate).toISOString() : 'never'}, nextReview=${item.srs?.nextReview ? new Date(item.srs.nextReview).toISOString() : 'N/A'}`);
+        console.log(`       updatedAt=${item.updatedAt ? new Date(item.updatedAt).toISOString() : 'N/A'}, savedAt=${new Date(item.savedAt).toISOString()}`);
+        console.log(`       lastSyncedHash=${item.lastSyncedHash || 'NONE'}, currentHash=${getItemContentHash(item)}`);
+      });
+    };
+    return () => { delete (window as any).__debugItems; };
+  }, []);
 
   // Network status detection for offline support
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -323,20 +353,18 @@ const App: React.FC = () => {
   }, []);
 
   // Force sync — uploads changed items, pulls remote, merges
-  // Defined before the visibilitychange effect that references it
   const forceSyncInProgressRef = useRef(false);
   const handleForceSync = useCallback(async () => {
-    if (!user || !isFirebaseConfigured) return;
-    if (forceSyncInProgressRef.current) return; // Prevent concurrent syncs
+    if (forceSyncInProgressRef.current) return;
     forceSyncInProgressRef.current = true;
 
     setSyncStatus('syncing');
 
     try {
-      // 1. Pull latest items from Firebase FIRST (before pushing)
-      const remoteItems = await loadUserData(user.uid);
+      // 1. Pull latest items from server
+      const remoteItems = await loadAllItems();
 
-      // 2. Merge with LATEST state using functional updater (fixes race condition)
+      // 2. Merge with latest state
       let mergedItems: StoredItem[] = [];
       setSyncState(prevState => {
         mergedItems = normalizeSharedSRS(cleanupOldDeletedItems(
@@ -356,19 +384,17 @@ const App: React.FC = () => {
         const mergedHash = getItemContentHash(item);
         const remoteHash = remoteHashMap.get(item.data.id);
         if (mergedHash === remoteHash) {
-          item.lastSyncedHash = mergedHash; // Already synced
+          item.lastSyncedHash = mergedHash;
         } else {
           changedItems.push(item);
         }
       }
       if (changedItems.length > 0) {
-        log(`🔥 Firebase: Force sync uploading ${changedItems.length} changed items (of ${mergedItems.length} total)`);
-        await saveUserData(user.uid, changedItems);
+        log(`Server: Force sync uploading ${changedItems.length} changed items`);
+        await saveItems(changedItems);
         for (const item of changedItems) {
           item.lastSyncedHash = getItemContentHash(item);
         }
-      } else {
-        log("🔥 Firebase: Force sync - no changes to upload");
       }
 
       setSyncStatus('saved');
@@ -379,7 +405,7 @@ const App: React.FC = () => {
     } finally {
       forceSyncInProgressRef.current = false;
     }
-  }, [user, isFirebaseConfigured]);
+  }, []);
 
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
@@ -389,126 +415,103 @@ const App: React.FC = () => {
       const currentItems = latestItemsRef.current;
       
       if (isLoaded && currentItems.length > 0) {
-        const targetUserId = user?.uid || 'guest';
-        
         // Skip if we just saved (within last 500ms) to avoid redundant writes
         const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
         if (timeSinceLastSave < 500) {
           log("💾 Skipping beforeunload save (recently saved)");
           return;
         }
-        
+
         // Use synchronous localStorage as a backup (IndexedDB is async and may not complete)
         try {
-          localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(currentItems)));
+          localStorage.setItem('vps_items_cache', JSON.stringify(createLightweightCache(currentItems)));
           log("💾 Saved items cache on beforeunload");
         } catch (e) {
           warn("Failed to save cache on beforeunload:", e);
         }
         // Also try IndexedDB (may not complete but worth trying)
-        saveData(currentItems, targetUserId).catch(e => warn("Failed to save on beforeunload:", e));
+        saveData(currentItems).catch(e => warn("Failed to save on beforeunload:", e));
       }
     };
-    
+
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isLoaded, user]); // Removed syncState.items - we use ref instead
+  }, [isLoaded]);
 
-  // iOS PWA: Sync data when returning from background (instead of forcing reload)
-  // CRITICAL: Also save to IndexedDB when going to background to prevent data loss
+  // Save data when app goes to background / returns from background
   useEffect(() => {
       const handleVisibilityChange = async () => {
           if (document.visibilityState === 'visible') {
-              // Reset stuck speechSynthesis after backgrounding
               window.speechSynthesis?.cancel();
               const lastHiddenStr = localStorage.getItem('app_last_hidden');
               if (lastHiddenStr) {
                   const lastHidden = parseInt(lastHiddenStr, 10);
                   const now = Date.now();
-                  // If app was in background for more than 30 seconds, trigger background sync
-                  // (instead of a jarring full page reload)
-                  if (now - lastHidden > 30 * 1000 && user && isFirebaseConfigured) {
-                      log("🔄 App was backgrounded for >30s, syncing in background...");
-                      // Trigger a force sync instead of reloading the page
-                      // This keeps the UI responsive while updating data
+                  if (now - lastHidden > 30 * 1000) {
+                      log("🔄 App was backgrounded for >30s, syncing...");
                       handleForceSync();
                   }
               }
               localStorage.removeItem('app_last_hidden');
           } else {
-              // CRITICAL: Save to IndexedDB immediately when app goes to background
-              // This prevents data loss when user switches apps quickly
               localStorage.setItem('app_last_hidden', Date.now().toString());
-              
-              // Use ref to get latest items (avoids stale closure)
+
               const currentItems = latestItemsRef.current;
 
-              // Flush any pending throttled SRS localStorage write
               if (srsSaveTimerRef.current) {
                 clearTimeout(srsSaveTimerRef.current);
                 srsSaveTimerRef.current = null;
                 srsSavePendingRef.current = false;
               }
-              
-              // Skip if we just saved (within last 500ms) to avoid redundant writes
-              // and to prevent overwriting fresher data from updateSRS
+
               const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
               if (timeSinceLastSave < 500) {
                   log("💾 Skipping visibility change save (recently saved)");
                   return;
               }
-              
+
               if (isLoaded && currentItems.length > 0) {
-                  const targetUserId = user?.uid || 'guest';
                   log("💾 App going to background, saving data immediately...");
-                  // Sync localStorage cache first (guaranteed to complete before iOS kills us)
                   try {
-                    localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(currentItems)));
+                    localStorage.setItem('vps_items_cache', JSON.stringify(createLightweightCache(currentItems)));
                   } catch (e) {
                     warn("Failed to save cache on visibility change:", e);
                   }
-                  // Also try IndexedDB (may not complete but worth trying)
-                  saveData(currentItems, targetUserId).catch(e => {
+                  saveData(currentItems).catch(e => {
                       warn("Failed to save on visibility change:", e);
                   });
-                  // Best-effort Firebase push: push changed items so other devices
-                  // can see updates even if the app is killed before debounced save fires.
-                  // Fire-and-forget — iOS may kill us before this completes, but it's worth trying.
-                  if (user && isFirebaseConfigured) {
-                    const changedItems: StoredItem[] = [];
-                    for (const item of currentItems) {
-                      const currentHash = getItemContentHash(item);
-                      if (currentHash !== item.lastSyncedHash) {
-                        changedItems.push(item);
+                  // Best-effort server push
+                  const changedItems: StoredItem[] = [];
+                  for (const item of currentItems) {
+                    const currentHash = getItemContentHash(item);
+                    if (currentHash !== item.lastSyncedHash) {
+                      changedItems.push(item);
+                    }
+                  }
+                  if (changedItems.length > 0) {
+                    log(`Server: Pushing ${changedItems.length} changed items on background...`);
+                    saveItems(changedItems).then(() => {
+                      for (const item of changedItems) {
+                        item.lastSyncedHash = getItemContentHash(item);
                       }
-                    }
-                    if (changedItems.length > 0) {
-                      log(`🔥 Firebase: Pushing ${changedItems.length} changed items on background...`);
-                      saveUserData(user.uid, changedItems).then(() => {
-                        for (const item of changedItems) {
-                          item.lastSyncedHash = getItemContentHash(item);
-                        }
-                      }).catch(e => {
-                        warn("Firebase push on background failed:", e);
-                      });
-                    }
+                    }).catch(e => {
+                      warn("Server push on background failed:", e);
+                    });
                   }
               }
           }
       };
 
-      // Flush state before external navigation (iOS PWA may destroy web view and reload on return)
       const handleBeforeExternalNav = () => {
         const currentItems = latestItemsRef.current;
         if (!isLoaded || currentItems.length === 0) return;
-        const targetUserId = user?.uid || 'guest';
         log("💾 Saving state before external navigation...");
         try {
-          localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(currentItems)));
+          localStorage.setItem('vps_items_cache', JSON.stringify(createLightweightCache(currentItems)));
         } catch (e) {
           warn("Failed to save cache before external nav:", e);
         }
-        saveData(currentItems, targetUserId).catch(e => {
+        saveData(currentItems).catch(e => {
           warn("Failed to save to IDB before external nav:", e);
         });
       };
@@ -519,7 +522,7 @@ const App: React.FC = () => {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('dictprop:before-external-nav', handleBeforeExternalNav);
       };
-  }, [user, isFirebaseConfigured, isLoaded, handleForceSync]); // Removed syncState.items - we use ref instead
+  }, [isLoaded, handleForceSync]);
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
@@ -531,8 +534,8 @@ const App: React.FC = () => {
             if (migrated && migrated.length > 0) {
                 itemsFromIDB = migrated;
             } else {
-                // Initially load guest data (user is not logged in yet)
-                const items = await loadData('guest');
+                // VPS mode: use dedicated storage key (separate from Firebase guest data)
+                const items = await loadData();
                 if (items && Array.isArray(items)) {
                     itemsFromIDB = items.filter((i: any) =>
                         i && i.data && i.data.id && i.srs && i.type
@@ -661,76 +664,20 @@ const App: React.FC = () => {
     });
   };
 
-  // 2. FIREBASE SYNC LOGIC (Operation-Based)
+  // 2. SERVER SYNC — pull from server on mount, merge with local
   useEffect(() => {
-    if (!isFirebaseConfigured) return;
+    const syncFromServer = async () => {
+      try {
+        const remoteItems = await loadAllItems();
+        if (remoteItems.length === 0) return;
 
-    // Handle OAuth redirect result (for iOS Safari)
-    handleRedirectResult().catch((error) => {
-      if (error?.code === 'auth/unauthorized-domain') {
-        setUnauthorizedDomain(window.location.host || window.location.origin || "Unable to detect URL");
-      } else if (error?.message === "REDIRECT_FAILED_SILENTLY") {
-        setSignInError({ 
-            code: 'auth/safari-privacy', 
-            message: "Sign-in failed due to Safari privacy settings. Please disable 'Prevent Cross-Site Tracking' in Settings > Safari and try again." 
-        });
-      } else if (error) {
-        logError("Redirect result error:", error);
-      }
-    });
-
-    let unsubscribeOps: (() => void) | undefined;
-
-    const unsubscribeAuth = subscribeToAuth(async (currentUser) => {
-
-      // Clean up previous subscriptions if they exist
-      if (unsubscribeOps) {
-        unsubscribeOps();
-        unsubscribeOps = undefined;
-      }
-      
-      if (currentUser) {
-        // 1. Load User's specific local data (offline cache for this user)
-        // This is the primary data source - always available offline
-        const userLocalItems = await loadData(currentUser.uid);
-
-        // Set user and local items FIRST (instant, works offline)
-        setUser(currentUser);
-
-        // Only replace items if user IDB has data
-        // If IDB is empty (corruption from crashes), keep cache items visible
-        // while Firestore fetch restores the correct data
-        if (userLocalItems.length > 0) {
-          const normalizedUserItems = normalizeSharedSRS(userLocalItems);
-          latestItemsRef.current = normalizedUserItems;
-
-          setSyncState(prevState => ({
-              ...prevState,
-              items: normalizedUserItems
-          }));
-        }
-        
-        // 2. Load Remote Data (background sync)
-        // Always attempt — navigator.onLine is unreliable on iOS PWA standalone mode.
-        // The try/catch handles actual network failures gracefully.
-        try {
-          const remoteItems = await loadUserData(currentUser.uid);
-
-          // 3. Merge User Local + User Remote (INCLUDING deleted items for proper sync)
-          // We must include deleted items in merge to propagate deletions across devices
-          let mergedItems = mergeDatasets(userLocalItems, remoteItems);
-
-          // 4. Clean up old deleted items during initial sync
+        setSyncState(prevState => {
+          let mergedItems = mergeDatasets(prevState.items, remoteItems);
           mergedItems = cleanupOldDeletedItems(mergedItems);
-
-          // Update ref immediately so event handlers have fresh data
-          latestItemsRef.current = mergedItems;
-
-          // Normalize shared SRS after merge
           mergedItems = normalizeSharedSRS(mergedItems);
           latestItemsRef.current = mergedItems;
 
-          // Set lastSyncedHash for items matching remote, collect catch-up items
+          // Mark items matching remote as synced
           const remoteHashMap = new Map<string, string>();
           remoteItems.forEach(item => {
             if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
@@ -740,95 +687,34 @@ const App: React.FC = () => {
             const mergedHash = getItemContentHash(item);
             const remoteHash = remoteHashMap.get(item.data.id);
             if (mergedHash === remoteHash) {
-              item.lastSyncedHash = mergedHash; // Already in sync
+              item.lastSyncedHash = mergedHash;
             } else {
               catchUpItems.push(item);
             }
           });
 
-          // Update state with merged data
-          setSyncState(prevState => ({
-            ...prevState,
-            items: mergedItems
-          }));
-
-          // CATCH-UP PUSH: Upload items that differ from Firestore.
-          // Repairs Firestore when local IDB has full content but
-          // Firestore has stripped data (from a past cache-to-Firestore overwrite).
+          // Push items that differ from server
           if (catchUpItems.length > 0) {
-            log(`🔥 Firebase: Catch-up sync: ${catchUpItems.length} items differ from cloud, uploading...`);
-            try {
-              await saveUserData(currentUser.uid, catchUpItems);
-              // Mark pushed items as synced
+            log(`Server: ${catchUpItems.length} items differ, uploading...`);
+            saveItems(catchUpItems).then(() => {
               for (const item of catchUpItems) {
                 item.lastSyncedHash = getItemContentHash(item);
               }
-              log(`🔥 Firebase: Catch-up sync complete`);
-            } catch (e) {
-              logError("Catch-up sync failed:", e);
-            }
-          } else {
-            log("🔥 Firebase: No catch-up needed, local and cloud match");
+            }).catch(e => logError("Catch-up sync failed:", e));
           }
 
-        } catch (error) {
-          logError("Initial sync failed:", error);
-          // Local items already set above, no action needed
-        }
-        
-        // Subscribe to real-time updates
-        unsubscribeOps = subscribeToUserData(currentUser.uid, (remoteItems) => {
-          setSyncState(prevState => {
-            // Merge with ALL items including deleted to propagate deletions
-            const mergedItems = normalizeSharedSRS(mergeDatasets(prevState.items, remoteItems));
-
-            // Update ref immediately so event handlers have fresh data
-            latestItemsRef.current = mergedItems;
-
-            // Mark items as synced only if merged result matches remote.
-            // Items where local won merge keep stale lastSyncedHash →
-            // debounced save will push the correct merged result.
-            const remoteHashMap = new Map<string, string>();
-            remoteItems.forEach(item => {
-              if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
-            });
-            for (const item of mergedItems) {
-              const mergedHash = getItemContentHash(item);
-              const remoteHash = remoteHashMap.get(item.data.id);
-              if (mergedHash === remoteHash) {
-                item.lastSyncedHash = mergedHash;
-              }
-            }
-
-            return {
-              ...prevState,
-              items: mergedItems
-            };
-          });
+          return { ...prevState, items: mergedItems };
         });
-
-      } else {
-          // LOGGED OUT
-          setUser(null);
-
-          // Load guest data — only replace state if guest IDB has items
-          // (preserve cache items if IDB is empty due to corruption)
-          const guestItems = await loadData('guest');
-          if (guestItems.length > 0) {
-            const normalizedGuest = normalizeSharedSRS(guestItems);
-            setSyncState(prevState => ({
-                ...prevState,
-                items: normalizedGuest
-            }));
-          }
+      } catch (error) {
+        logError("Initial server sync failed:", error);
       }
-    });
-
-    return () => {
-      if (unsubscribeOps) unsubscribeOps();
-      unsubscribeAuth();
     };
-  }, [isFirebaseConfigured]);
+
+    // Only sync after local data is loaded
+    if (isLoaded) {
+      syncFromServer();
+    }
+  }, [isLoaded]);
 
   // Cache items to localStorage for instant restoration on iOS PWA reload
   // Strip images to stay within 5MB localStorage limit
@@ -850,7 +736,7 @@ const App: React.FC = () => {
 
     // Try full cache first
     try {
-      localStorage.setItem('app_items_cache', JSON.stringify(fullCache));
+      localStorage.setItem('vps_items_cache', JSON.stringify(fullCache));
       return;
     } catch {
       // Full cache too large — try shrinking
@@ -864,7 +750,7 @@ const App: React.FC = () => {
       return entry;
     });
     try {
-      localStorage.setItem('app_items_cache', JSON.stringify(slimCache));
+      localStorage.setItem('vps_items_cache', JSON.stringify(slimCache));
       return;
     } catch {
       // Still too large
@@ -887,7 +773,7 @@ const App: React.FC = () => {
     while (lo < hi) {
       const mid = Math.ceil((lo + hi) / 2);
       try {
-        localStorage.setItem('app_items_cache', JSON.stringify(essentialCache.slice(0, mid)));
+        localStorage.setItem('vps_items_cache', JSON.stringify(essentialCache.slice(0, mid)));
         lo = mid;
       } catch {
         hi = mid - 1;
@@ -895,7 +781,7 @@ const App: React.FC = () => {
     }
     if (lo > 0) {
       try {
-        localStorage.setItem('app_items_cache', JSON.stringify(essentialCache.slice(0, lo)));
+        localStorage.setItem('vps_items_cache', JSON.stringify(essentialCache.slice(0, lo)));
       } catch {
         // Give up — keep whatever was in cache before
       }
@@ -906,70 +792,57 @@ const App: React.FC = () => {
     return () => clearTimeout(debounceTimer);
   }, [syncState.items, isLoaded]);
 
-  // 3. SAVE EFFECTS (Persistence + Simple Item Sync)
+  // 3. SAVE EFFECTS (Persistence + Server Sync)
   useEffect(() => {
     if (!isLoaded) return;
 
     const timer = setTimeout(async () => {
-      // Use ref to get latest items (avoids stale closure in setTimeout)
       const currentItems = latestItemsRef.current;
 
-      // 1. Save to Local IDB FIRST (always, works offline)
-      // Skip if a recent immediate save (SRS update) happened within 2 seconds
+      // 1. Save to Local IDB
       const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
       if (timeSinceLastSave < 2000) {
         log("💾 Skipping debounced IDB save (recent immediate save)");
       } else {
-        // Save to user-specific storage or guest storage
-        const targetUserId = user?.uid || 'guest';
-        await saveData(currentItems, targetUserId);
+        await saveData(currentItems);
       }
 
-      // 2. Push items to Cloud (Firebase) - Delta Sync with per-item Hash Comparison
-      // NOTE: Don't gate on isOnline — navigator.onLine is unreliable on iOS PWA standalone mode.
-      // Always attempt sync; the try/catch handles actual network failures gracefully.
-      if (user && isFirebaseConfigured) {
-          // Find dirty items: content hash differs from last synced hash
-          const itemsWithHashes: { item: StoredItem; hash: string }[] = [];
+      // 2. Push dirty items to server
+      const itemsWithHashes: { item: StoredItem; hash: string }[] = [];
+      currentItems.forEach(item => {
+        const currentHash = getItemContentHash(item);
+        if (currentHash === item.lastSyncedHash) return;
+        itemsWithHashes.push({ item, hash: currentHash });
+      });
 
-          currentItems.forEach(item => {
-              const currentHash = getItemContentHash(item);
-              if (currentHash === item.lastSyncedHash) return; // Already synced
-              itemsWithHashes.push({ item, hash: currentHash });
-          });
-
-          if (itemsWithHashes.length === 0) {
-              setSyncStatus('saved');
-              return;
-          }
-
-          setSyncStatus('syncing');
-          log(`🔥 Firebase: ${itemsWithHashes.length} items actually changed (hash check)`);
-
-          try {
-            await saveUserData(user.uid, itemsWithHashes.map(i => i.item));
-
-            // Mark items as synced (mutate via ref, lastSyncedHash is never rendered)
-            for (const { item, hash } of itemsWithHashes) {
-              item.lastSyncedHash = hash;
-            }
-
-            // Persist updated hashes to IDB
-            const targetUserId = user.uid;
-            lastSaveTimeRef.current = Date.now();
-            await saveData(currentItems, targetUserId);
-
-            setSyncStatus('saved');
-          } catch (e) {
-            logError("Sync error:", e);
-            setSyncStatus('error');
-          }
+      if (itemsWithHashes.length === 0) {
+        setSyncStatus('saved');
+        return;
       }
 
-    }, 5000); // 5s debounce (user preference)
+      setSyncStatus('syncing');
+      log(`Server: ${itemsWithHashes.length} items changed, pushing...`);
+
+      try {
+        await saveItems(itemsWithHashes.map(i => i.item));
+
+        for (const { item, hash } of itemsWithHashes) {
+          item.lastSyncedHash = hash;
+        }
+
+        lastSaveTimeRef.current = Date.now();
+        await saveData(currentItems);
+
+        setSyncStatus('saved');
+      } catch (e) {
+        logError("Sync error:", e);
+        setSyncStatus('error');
+      }
+
+    }, 5000);
 
     return () => clearTimeout(timer);
-  }, [syncState, isLoaded, user, isFirebaseConfigured]);
+  }, [syncState, isLoaded]);
 
   // Bulk refresh - actual execution
   const executeBulkRefresh = useCallback(async () => {
@@ -1086,30 +959,6 @@ const App: React.FC = () => {
       }
     });
   }, [activeItems, executeBulkRefresh]);
-
-  const handleSignIn = async () => {
-      try {
-          await signIn();
-      } catch (e: any) {
-          const msg = e.message || '';
-          const code = e.code || '';
-          if (code === 'auth/unauthorized-domain' || msg.includes('unauthorized domain')) {
-              setUnauthorizedDomain(window.location.host || window.location.origin || "Unable to detect URL");
-              return;
-          }
-          if (code !== 'auth/popup-closed-by-user') {
-             setSignInError({ code, message: msg });
-          }
-      }
-  };
-
-  const handleSignOut = async () => {
-      await signOut();
-      setUser(null);
-      // Clear cached items to prevent stale data on next load
-      localStorage.removeItem('app_items_cache');
-  };
-
 
   const handleSave = (item: StoredItem) => {
     try {
@@ -1306,10 +1155,8 @@ const App: React.FC = () => {
    * Called when viewing a saved card that has no local image
    */
   const handleLazyLoadImage = useCallback(async (itemId: string) => {
-    if (!user) return;
-    
     try {
-      const remoteItem = await loadSingleItem(user.uid, itemId);
+      const remoteItem = await loadSingleItem(itemId);
       if (!remoteItem) return;
       
       const remoteImageUrl = getItemImageUrl(remoteItem);
@@ -1359,9 +1206,9 @@ const App: React.FC = () => {
         return prevState;
       });
     } catch (e) {
-      warn("Failed to lazy-load image from Firebase:", e);
+      warn("Failed to lazy-load image from server:", e);
     }
-  }, [user]);
+  }, []);
 
   const handleDelete = async (id: string) => {
     log('🗑️ App: Deleting item', id);
@@ -1391,22 +1238,17 @@ const App: React.FC = () => {
     // Update carousel immediately (before Firebase sync) so card disappears instantly
     removeItemFromDetailContext(id);
 
-    // Immediately sync deletion to Firebase (don't wait for 5s debounce)
-    // This ensures deletions propagate even if user closes app quickly
-    if (user && isFirebaseConfigured) {
-      try {
-        // Use ref to get latest items (avoids stale closure)
-        const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
-        if (itemToSync) {
-          const itemWithDelete = { ...itemToSync, isDeleted: true, updatedAt: now };
-          log('🗑️ App: Immediately syncing deletion to Firebase');
-          await saveUserData(user.uid, [itemWithDelete]);
-          itemWithDelete.lastSyncedHash = getItemContentHash(itemWithDelete);
-        }
-      } catch (e) {
-        logError('🗑️ App: Failed to sync deletion to Firebase:', e);
-        // Deletion is still saved locally, will retry on next sync
+    // Immediately sync deletion to server (don't wait for 5s debounce)
+    try {
+      const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
+      if (itemToSync) {
+        const itemWithDelete = { ...itemToSync, isDeleted: true, updatedAt: now };
+        log('🗑️ App: Immediately syncing deletion to server');
+        await saveItems([itemWithDelete]);
+        itemWithDelete.lastSyncedHash = getItemContentHash(itemWithDelete);
       }
+    } catch (e) {
+      logError('🗑️ App: Failed to sync deletion to server:', e);
     }
   };
 
@@ -1437,20 +1279,16 @@ const App: React.FC = () => {
     // Update carousel immediately (before Firebase sync) so card disappears instantly
     removeItemFromDetailContext(id);
 
-    // Immediately sync archive to Firebase (don't wait for 5s debounce)
-    if (user && isFirebaseConfigured) {
-      try {
-        // Use ref to get latest items (avoids stale closure)
-        const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
-        if (itemToSync) {
-          const itemWithArchive = { ...itemToSync, isArchived: true, updatedAt: now };
-          log('📦 App: Immediately syncing archive to Firebase');
-          await saveUserData(user.uid, [itemWithArchive]);
-          itemWithArchive.lastSyncedHash = getItemContentHash(itemWithArchive);
-        }
-      } catch (e) {
-        logError('📦 App: Failed to sync archive to Firebase:', e);
+    // Immediately sync archive to server
+    try {
+      const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
+      if (itemToSync) {
+        const itemWithArchive = { ...itemToSync, isArchived: true, updatedAt: now };
+        await saveItems([itemWithArchive]);
+        itemWithArchive.lastSyncedHash = getItemContentHash(itemWithArchive);
       }
+    } catch (e) {
+      logError('📦 App: Failed to sync archive to server:', e);
     }
   };
 
@@ -1477,20 +1315,16 @@ const App: React.FC = () => {
       return prevState;
     });
     
-    // Immediately sync unarchive to Firebase
-    if (user && isFirebaseConfigured) {
-      try {
-        // Use ref to get latest items (avoids stale closure)
-        const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
-        if (itemToSync) {
-          const itemWithUnarchive = { ...itemToSync, isArchived: false, updatedAt: now };
-          log('📦 App: Immediately syncing unarchive to Firebase');
-          await saveUserData(user.uid, [itemWithUnarchive]);
-          itemWithUnarchive.lastSyncedHash = getItemContentHash(itemWithUnarchive);
-        }
-      } catch (e) {
-        logError('📦 App: Failed to sync unarchive to Firebase:', e);
+    // Immediately sync unarchive to server
+    try {
+      const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
+      if (itemToSync) {
+        const itemWithUnarchive = { ...itemToSync, isArchived: false, updatedAt: now };
+        await saveItems([itemWithUnarchive]);
+        itemWithUnarchive.lastSyncedHash = getItemContentHash(itemWithUnarchive);
       }
+    } catch (e) {
+      logError('📦 App: Failed to sync unarchive to server:', e);
     }
   };
 
@@ -1612,7 +1446,6 @@ const App: React.FC = () => {
     // CRITICAL: Save to IndexedDB IMMEDIATELY after SRS update
     // This ensures learning progress is never lost even if user switches apps quickly
     // This is the primary persistence layer - Firebase sync is secondary
-    const targetUserId = user?.uid || 'guest';
     if (allUpdatedItems.length > 0) {
       // Throttle localStorage cache writes during rapid review sessions (3-second window)
       // Uses latestItemsRef.current when flushing to get the most up-to-date items
@@ -1622,7 +1455,7 @@ const App: React.FC = () => {
           srsSaveTimerRef.current = null;
           srsSavePendingRef.current = false;
           try {
-            localStorage.setItem('app_items_cache', JSON.stringify(createLightweightCache(latestItemsRef.current)));
+            localStorage.setItem('vps_items_cache', JSON.stringify(createLightweightCache(latestItemsRef.current)));
           } catch (e) {
             warn("Failed to update cache after SRS:", e);
           }
@@ -1630,7 +1463,7 @@ const App: React.FC = () => {
       }
       
       try {
-        await saveData(allUpdatedItems, targetUserId);
+        await saveData(allUpdatedItems);
         log(`💾 Immediately saved SRS update to IndexedDB`);
         // Record save time so event handlers can skip redundant saves
         lastSaveTimeRef.current = Date.now();
@@ -1639,21 +1472,16 @@ const App: React.FC = () => {
       }
     }
     
-    // Also sync SRS updates to Firebase (don't wait for 5s debounce)
-    // This ensures learning progress syncs across devices
-    // NOTE: Don't gate on isOnline — navigator.onLine is unreliable on iOS PWA standalone mode.
-    // Instead, always attempt the save and let the try/catch handle network failures gracefully.
-    if (user && isFirebaseConfigured && itemsToSync.length > 0) {
+    // Sync SRS updates to server immediately
+    if (itemsToSync.length > 0) {
       try {
-        log(`🔥 Firebase: Immediately syncing ${itemsToSync.length} SRS updates`);
-        await saveUserData(user.uid, itemsToSync);
-        // Mark items as synced so the debounced save doesn't re-upload them
+        log(`Server: Immediately syncing ${itemsToSync.length} SRS updates`);
+        await saveItems(itemsToSync);
         for (const syncedItem of itemsToSync) {
           syncedItem.lastSyncedHash = getItemContentHash(syncedItem);
         }
       } catch (e) {
-        logError('🔥 Firebase: Failed to sync SRS updates:', e);
-        // Local state is already saved, will retry on next regular sync
+        logError('Server: Failed to sync SRS updates:', e);
       }
     }
   };
@@ -1691,8 +1519,6 @@ const App: React.FC = () => {
         </div>
       )}
       
-      {unauthorizedDomain && <AuthDomainErrorModal domain={unauthorizedDomain} onClose={() => setUnauthorizedDomain(null)} />}
-      {signInError && <ErrorModal error={signInError} onClose={() => setSignInError(null)} />}
       {confirmModal && (
         <ConfirmModal
           isOpen={confirmModal.isOpen}
@@ -1741,14 +1567,14 @@ const App: React.FC = () => {
 
       <main className="flex-1 relative w-full min-h-0 overflow-hidden">
         {currentView === 'notebook' && (
-          <NotebookView 
-            items={activeItems} 
-            onDelete={handleDelete} 
-            onSearch={handleRecursiveSearch} 
+          <NotebookView
+            items={activeItems}
+            onDelete={handleDelete}
+            onSearch={handleRecursiveSearch}
             onViewDetail={handleViewStoredItem}
-            user={user}
-            onSignIn={handleSignIn}
-            onSignOut={handleSignOut}
+            user={null}
+            onSignIn={() => {}}
+            onSignOut={() => {}}
             syncStatus={syncStatus}
             onScroll={handleScroll}
             onForceSync={handleForceSync}

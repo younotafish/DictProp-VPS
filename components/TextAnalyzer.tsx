@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { StoredItem, VocabCard } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
-import { detectVocabulary, DetectedWord, analyzeInput, generateIllustration } from '../services/aiService';
+import { detectVocabulary, DetectedWord, analyzeInput, generateIllustration } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
 // ─── Types ──────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ComparisonResult } from '../types';
 import { ArrowLeft, Loader2, AlertTriangle, ChevronDown, ChevronUp, Lightbulb, Scale, RefreshCw } from 'lucide-react';
-import { compareWords } from '../services/aiService';
+import { compareWords } from '../services/api';
 
 // Color assignments for each word (up to 3)
 const WORD_COLORS = [
