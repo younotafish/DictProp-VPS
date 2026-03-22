@@ -1231,6 +1231,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
     return { reviewedToday: reviewed, dueCount: due };
   }, [items]);
 
+  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+
   if (displayItems.length === 0 && !localSearchQuery) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50">
@@ -1259,8 +1261,6 @@ export const NotebookView: React.FC<NotebookProps> = ({
       </div>
     );
   }
-
-  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
 
   return (
     <div
