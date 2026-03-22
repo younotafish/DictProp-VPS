@@ -227,34 +227,22 @@ const App: React.FC = () => {
   }, [currentView]);
   
   // Simplified sync state (items only)
-  // Cache parse is deferred to avoid blocking first paint
-  const [syncState, setSyncState] = useState<SyncState>({ items: [] });
-  const [cacheRestored, setCacheRestored] = useState(false);
-
-  // Defer localStorage cache parsing off the critical paint path
-  useEffect(() => {
-    const restore = () => {
-      try {
-        const cached = localStorage.getItem('vps_items_cache');
-        if (cached) {
-          const items = JSON.parse(cached);
-          if (Array.isArray(items) && items.length > 0) {
-            log(`⚡ Deferred restore: ${items.length} items from cache`);
-            setSyncState({ items });
-          }
+  // Restore instantly from lightweight localStorage cache for fast perceived load
+  const [syncState, setSyncState] = useState<SyncState>(() => {
+    try {
+      const cached = localStorage.getItem('vps_items_cache');
+      if (cached) {
+        const items = JSON.parse(cached);
+        if (Array.isArray(items) && items.length > 0) {
+          log(`⚡ Instant restore: ${items.length} items from cache`);
+          return { items };
         }
-      } catch (e) {
-        warn("Failed to restore items from cache", e);
       }
-      setCacheRestored(true);
-    };
-
-    if (typeof requestIdleCallback !== 'undefined') {
-      requestIdleCallback(restore);
-    } else {
-      setTimeout(restore, 0);
+    } catch (e) {
+      warn("Failed to restore items from cache", e);
     }
-  }, []);
+    return { items: [] };
+  });
   
   // Ref to track the latest items - avoids stale closure issues in event handlers
   // This is updated synchronously whenever syncState changes
@@ -285,8 +273,9 @@ const App: React.FC = () => {
     return sentenceItems.filter(s => !s.isArchived && ((s.srs?.nextReview ?? 0) <= now)).length;
   }, [sentenceItems]);
   
-  // Starts false; set to true after IDB load (or cache restore) completes
-  const [isLoaded, setIsLoaded] = useState(false);
+  // Start as "loaded" if we have cached items (instant UI)
+  // Full data will be loaded from IndexedDB in background
+  const [isLoaded, setIsLoaded] = useState(() => syncState.items.length > 0);
   const [showNav, setShowNav] = useState(true);
   const lastScrollYRef = useRef(0);
   
