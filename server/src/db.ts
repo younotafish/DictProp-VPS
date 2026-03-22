@@ -108,7 +108,7 @@ export function upsertItem(item: any) {
   if (existingRow) {
     const existingData = JSON.parse(existingRow.data);
     const needsImagePreserve = (url: string | undefined) =>
-      !url || url === 'idb:stored' || !url.startsWith('data:image/');
+      !url || url === 'idb:stored' || url === 'server:has_image' || !url.startsWith('data:image/');
 
     if (needsImagePreserve(data.imageUrl) && existingData.imageUrl?.startsWith('data:image/')) {
       finalData = { ...finalData, imageUrl: existingData.imageUrl };

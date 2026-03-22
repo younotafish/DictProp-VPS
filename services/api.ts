@@ -269,13 +269,34 @@ const hashString = (str: string): string => {
 
 const hashCache = new WeakMap<StoredItem, string>();
 
+// Strip image markers/base64 from data before hashing so that
+// items with 'idb:stored' or 'server:has_image' don't hash differently from
+// items with real base64 or no image at all.
+const stripImageForHash = (data: any): any => {
+  if (!data) return data;
+  const cleaned = { ...data };
+  if (cleaned.imageUrl && !cleaned.imageUrl.startsWith('http')) {
+    delete cleaned.imageUrl;
+  }
+  if (Array.isArray(cleaned.vocabs)) {
+    cleaned.vocabs = cleaned.vocabs.map((v: any) => {
+      if (v?.imageUrl && !v.imageUrl.startsWith('http')) {
+        const { imageUrl, ...rest } = v;
+        return rest;
+      }
+      return v;
+    });
+  }
+  return cleaned;
+};
+
 export const getItemContentHash = (item: StoredItem): string => {
   const cached = hashCache.get(item);
   if (cached) return cached;
 
   const contentToHash = {
     type: item.type,
-    data: item.data,
+    data: stripImageForHash(item.data),
     srs: item.srs,
     isDeleted: item.isDeleted,
     isArchived: item.isArchived,

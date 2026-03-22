@@ -6,7 +6,7 @@ import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
-import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage } from './services/storage';
+import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { loadAllItems, saveItems, loadSingleItem, getItemContentHash, analyzeInput } from './services/api';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -460,7 +460,8 @@ const App: React.FC = () => {
       }
       if (changedItems.length > 0) {
         log(`Server: Force sync uploading ${changedItems.length} changed items`);
-        await saveItems(changedItems);
+        const rehydrated = await rehydrateImagesForSync(changedItems);
+        await saveItems(rehydrated);
         for (const item of changedItems) {
           item.lastSyncedHash = getItemContentHash(item);
         }
@@ -771,7 +772,7 @@ const App: React.FC = () => {
         // Push items that differ from server
         if (catchUpItems.length > 0) {
           log(`Server: ${catchUpItems.length} items differ, uploading...`);
-          saveItems(catchUpItems).then(() => {
+          rehydrateImagesForSync(catchUpItems).then(rehydrated => saveItems(rehydrated)).then(() => {
             for (const item of catchUpItems) {
               item.lastSyncedHash = getItemContentHash(item);
             }
@@ -898,7 +899,9 @@ const App: React.FC = () => {
       log(`Server: ${itemsWithHashes.length} items changed, pushing...`);
 
       try {
-        await saveItems(itemsWithHashes.map(i => i.item));
+        // Rehydrate images from IDB before pushing to server
+        const itemsToSync = await rehydrateImagesForSync(itemsWithHashes.map(i => i.item));
+        await saveItems(itemsToSync);
 
         for (const { item, hash } of itemsWithHashes) {
           item.lastSyncedHash = hash;
@@ -1037,17 +1040,46 @@ const App: React.FC = () => {
   const handleSave = (item: StoredItem) => {
     try {
       if (!item || !item.data || !item.data.id) return;
-      
+
       const rawTitle = getItemTitle(item);
       const incomingTitle = String(rawTitle || '').toLowerCase().trim();
       if (!incomingTitle) return;
-      
+
+      // Offload any base64 images to IDB before putting into state
+      const imagesToSave: Array<{ id: string; base64: string }> = [];
+      let data = item.data;
+      if (isVocabItem(item) && (data as VocabCard).imageUrl?.startsWith('data:image/')) {
+        imagesToSave.push({ id: data.id, base64: (data as VocabCard).imageUrl! });
+        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
+      }
+      if (isPhraseItem(item)) {
+        const sr = data as SearchResult;
+        if (sr.imageUrl?.startsWith('data:image/')) {
+          imagesToSave.push({ id: sr.id, base64: sr.imageUrl });
+          data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
+        }
+        if (sr.vocabs?.length) {
+          let vc = false;
+          const nv = sr.vocabs.map(v => {
+            if (v.imageUrl?.startsWith('data:image/')) {
+              imagesToSave.push({ id: v.id, base64: v.imageUrl });
+              vc = true;
+              return { ...v, imageUrl: IMAGE_IDB_MARKER };
+            }
+            return v;
+          });
+          if (vc) data = { ...data, vocabs: nv } as SearchResult;
+        }
+      }
+      if (imagesToSave.length > 0) saveImagesBatch(imagesToSave);
+
       const now = Date.now();
-      const itemToSave = { 
-        ...item, 
+      const itemToSave = {
+        ...item,
+        data,
         updatedAt: now,
         savedAt: item.savedAt || now,
-        isDeleted: false 
+        isDeleted: false
       };
 
       // Use functional update to avoid stale closure issues when saving multiple items quickly

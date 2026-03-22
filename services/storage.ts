@@ -303,6 +303,84 @@ export const loadImage = async (itemId: string): Promise<string | null> => {
   }
 };
 
+/**
+ * Restore base64 images from IDB into items before pushing to server.
+ * Replaces 'idb:stored' markers with actual base64 data so the server stores real images.
+ */
+export const rehydrateImagesForSync = async (items: StoredItem[]): Promise<StoredItem[]> => {
+  const idbAvailable = await checkIndexedDBAvailability();
+  if (!idbAvailable) return items;
+
+  // Collect all item IDs that need image rehydration
+  const idsToLoad = new Set<string>();
+  for (const item of items) {
+    const data = item.data as any;
+    if (data.imageUrl === 'idb:stored') idsToLoad.add(data.id);
+    if (Array.isArray(data.vocabs)) {
+      for (const v of data.vocabs) {
+        if (v.imageUrl === 'idb:stored') idsToLoad.add(v.id);
+      }
+    }
+  }
+
+  if (idsToLoad.size === 0) return items;
+
+  // Batch load all needed images from IDB
+  const imageMap = new Map<string, string>();
+  try {
+    const db = await getDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IMAGES_STORE, 'readonly');
+      const store = tx.objectStore(IMAGES_STORE);
+      let pending = idsToLoad.size;
+      for (const id of idsToLoad) {
+        const req = store.get(id);
+        req.onsuccess = () => {
+          if (req.result) imageMap.set(id, req.result as string);
+          if (--pending === 0) resolve();
+        };
+        req.onerror = () => {
+          if (--pending === 0) resolve();
+        };
+      }
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    warn("Failed to batch load images for sync rehydration", e);
+    return items;
+  }
+
+  if (imageMap.size === 0) return items;
+
+  // Replace markers with real base64
+  return items.map(item => {
+    let changed = false;
+    let data = item.data as any;
+
+    if (data.imageUrl === 'idb:stored' && imageMap.has(data.id)) {
+      data = { ...data, imageUrl: imageMap.get(data.id) };
+      changed = true;
+    }
+
+    if (Array.isArray(data.vocabs)) {
+      let vocabsChanged = false;
+      const newVocabs = data.vocabs.map((v: any) => {
+        if (v.imageUrl === 'idb:stored' && imageMap.has(v.id)) {
+          vocabsChanged = true;
+          return { ...v, imageUrl: imageMap.get(v.id) };
+        }
+        return v;
+      });
+      if (vocabsChanged) {
+        data = { ...data, vocabs: newVocabs };
+        changed = true;
+      }
+    }
+
+    return changed ? { ...item, data } : item;
+  });
+};
+
 // Legacy Migration: Check if old localStorage data exists and move it to IDB
 export const migrateFromLocalStorage = async (): Promise<StoredItem[] | null> => {
     const localData = localStorage.getItem('popdict_items');
