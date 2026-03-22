@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check } from 'lucide-react';
@@ -1037,6 +1038,184 @@ export const NotebookView: React.FC<NotebookProps> = ({
     };
   }, [items, sortMode, filterMode, localSearchQuery, fuseIndex]);
 
+  // Flatten groups into a single list for virtualization
+  type VirtualRow =
+    | { type: 'group'; group: ItemGroup; groups: ItemGroup[]; groupIndex: number; section: 'main' | 'due' | 'archived' }
+    | { type: 'due-header'; count: number }
+    | { type: 'archived-toggle'; count: number }
+    | { type: 'compare-banner' };
+
+  const virtualRows = useMemo((): VirtualRow[] => {
+    const rows: VirtualRow[] = [];
+
+    // Compare mode banner
+    if (compareMode) {
+      rows.push({ type: 'compare-banner' });
+    }
+
+    // Main items
+    groupedItems.forEach((group, index) => {
+      rows.push({ type: 'group', group, groups: groupedItems, groupIndex: index, section: 'main' });
+    });
+
+    // Due for review section
+    if (dueForReviewGroups.length > 0) {
+      rows.push({ type: 'due-header', count: dueForReviewGroups.length });
+      dueForReviewGroups.forEach((group, index) => {
+        rows.push({ type: 'group', group, groups: dueForReviewGroups, groupIndex: index, section: 'due' });
+      });
+    }
+
+    // Archived toggle
+    if (archivedItems.length > 0) {
+      rows.push({ type: 'archived-toggle', count: archivedItems.length });
+      if (showArchived) {
+        archivedGroups.forEach((group, index) => {
+          rows.push({ type: 'group', group, groups: archivedGroups, groupIndex: index, section: 'archived' });
+        });
+      }
+    }
+
+    return rows;
+  }, [groupedItems, dueForReviewGroups, archivedItems.length, archivedGroups, showArchived, compareMode]);
+
+  const renderVirtualRow = useCallback((index: number) => {
+    const row = virtualRows[index];
+    if (!row) return null;
+
+    if (row.type === 'compare-banner') {
+      return (
+        <div className="px-3 pt-3">
+          <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 animate-in slide-in-from-top-2 duration-200">
+            <div className="flex items-center gap-2">
+              <Scale size={16} className="text-indigo-500" />
+              <span className="text-sm font-medium text-indigo-700">
+                Select 2-3 words to compare
+              </span>
+              {selectedForCompare.length > 0 && (
+                <span className="text-xs font-bold text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">
+                  {selectedForCompare.length} selected
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => { setCompareMode(false); setSelectedForCompare([]); }}
+              className="text-indigo-400 hover:text-indigo-600 p-1 rounded-full hover:bg-indigo-100 transition-colors"
+              title="Exit compare mode"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (row.type === 'due-header') {
+      return (
+        <div className="px-3 mt-4 pt-3 border-t border-dashed border-orange-200">
+          <div className="flex items-center gap-2 px-1 mb-3">
+            <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide">Due for Review</span>
+            <span className="text-xs text-slate-400">{row.count} words to revisit</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (row.type === 'archived-toggle') {
+      return (
+        <div className="px-3 mt-6 pt-4 border-t-2 border-slate-200">
+          <button
+            onClick={() => setShowArchived(!showArchived)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <Archive size={18} className="text-slate-500" />
+              <span className="font-bold text-slate-700">Archived</span>
+              <span className="text-sm text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
+                {row.count} {row.count === 1 ? 'item' : 'items'}
+              </span>
+            </div>
+            {showArchived ? (
+              <ChevronUp size={18} className="text-slate-500" />
+            ) : (
+              <ChevronDown size={18} className="text-slate-500" />
+            )}
+          </button>
+        </div>
+      );
+    }
+
+    // row.type === 'group'
+    const { group, groups, groupIndex, section } = row;
+    const keyPrefix = section === 'due' ? 'due-' : section === 'archived' ? 'archived-' : '';
+
+    if (compareMode && section === 'main') {
+      const firstItem = group.items[0];
+      const displayWord = firstItem
+        ? (firstItem.type === 'phrase'
+            ? (firstItem.data as SearchResult).query
+            : (firstItem.data as VocabCard).word) || group.title
+        : group.title;
+      const isSelected = selectedForCompare.includes(displayWord);
+      const canSelect = selectedForCompare.length < 3 || isSelected;
+
+      return (
+        <div className="px-3 py-1.5">
+          <div
+            className={`relative cursor-pointer transition-all ${isSelected ? 'ring-2 ring-indigo-400 rounded-2xl' : ''}`}
+            onClick={() => {
+              if (isSelected) {
+                setSelectedForCompare(prev => prev.filter(w => w !== displayWord));
+              } else if (canSelect) {
+                setSelectedForCompare(prev => [...prev, displayWord]);
+              }
+            }}
+          >
+            <div className={`absolute top-3 right-3 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+              isSelected
+                ? 'bg-indigo-500 border-indigo-500 text-white'
+                : canSelect
+                  ? 'bg-white border-slate-300'
+                  : 'bg-slate-100 border-slate-200 opacity-50'
+            }`}>
+              {isSelected && <Check size={14} />}
+            </div>
+            <div className="pointer-events-none">
+              <NotebookGroup
+                group={group}
+                groups={groups}
+                groupIndex={groupIndex}
+                openItemId={null}
+                setOpenItemId={() => {}}
+                onDelete={() => {}}
+                onSearch={() => {}}
+                onViewDetail={() => {}}
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="px-3 py-1.5">
+        <NotebookGroup
+          key={`${keyPrefix}${group.title}`}
+          group={group}
+          groups={groups}
+          groupIndex={groupIndex}
+          openItemId={openItemId}
+          setOpenItemId={setOpenItemId}
+          onDelete={onDelete}
+          onSearch={onSearch}
+          onViewDetail={onViewDetail}
+          onArchive={onArchive}
+          onUnarchive={onUnarchive}
+        />
+      </div>
+    );
+  }, [virtualRows, compareMode, selectedForCompare, openItemId, onDelete, onSearch, onViewDetail, onArchive, onUnarchive, showArchived]);
+
   const { reviewedToday, dueCount } = useMemo(() => {
     const now = Date.now();
     const todayStart = new Date(now);
@@ -1081,9 +1260,12 @@ export const NotebookView: React.FC<NotebookProps> = ({
     );
   }
 
+  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+
   return (
-    <div 
-      className="h-full overflow-y-auto overflow-x-hidden bg-slate-50" 
+    <div
+      ref={setScrollParent}
+      className="h-full overflow-y-auto overflow-x-hidden bg-slate-50"
       onScroll={handleScroll}
     >
       {/* Header */}
@@ -1309,168 +1491,14 @@ export const NotebookView: React.FC<NotebookProps> = ({
         />
       )}
 
-      <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-3 w-full max-w-screen-md mx-auto">
-        {/* Compare mode banner */}
-        {compareMode && (
-          <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 animate-in slide-in-from-top-2 duration-200">
-            <div className="flex items-center gap-2">
-              <Scale size={16} className="text-indigo-500" />
-              <span className="text-sm font-medium text-indigo-700">
-                Select 2-3 words to compare
-              </span>
-              {selectedForCompare.length > 0 && (
-                <span className="text-xs font-bold text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">
-                  {selectedForCompare.length} selected
-                </span>
-              )}
-            </div>
-            <button
-              onClick={() => { setCompareMode(false); setSelectedForCompare([]); }}
-              className="text-indigo-400 hover:text-indigo-600 p-1 rounded-full hover:bg-indigo-100 transition-colors"
-              title="Exit compare mode"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        )}
-
-        {groupedItems.map((group, index) => {
-          // In compare mode, wrap each group with a selectable container
-          if (compareMode) {
-            // Use the properly-cased title from the first item (group.title is lowercase)
-            const firstItem = group.items[0];
-            const displayWord = firstItem
-              ? (firstItem.type === 'phrase' 
-                  ? (firstItem.data as SearchResult).query 
-                  : (firstItem.data as VocabCard).word) || group.title
-              : group.title;
-            const isSelected = selectedForCompare.includes(displayWord);
-            const canSelect = selectedForCompare.length < 3 || isSelected;
-            
-            return (
-              <div
-                key={group.title}
-                className={`relative cursor-pointer transition-all ${isSelected ? 'ring-2 ring-indigo-400 rounded-2xl' : ''}`}
-                onClick={() => {
-                  if (isSelected) {
-                    setSelectedForCompare(prev => prev.filter(w => w !== displayWord));
-                  } else if (canSelect) {
-                    setSelectedForCompare(prev => [...prev, displayWord]);
-                  }
-                }}
-              >
-                {/* Selection checkbox overlay */}
-                <div className={`absolute top-3 right-3 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
-                  isSelected 
-                    ? 'bg-indigo-500 border-indigo-500 text-white' 
-                    : canSelect 
-                      ? 'bg-white border-slate-300' 
-                      : 'bg-slate-100 border-slate-200 opacity-50'
-                }`}>
-                  {isSelected && <Check size={14} />}
-                </div>
-                {/* Render the group normally but without click-through */}
-                <div className="pointer-events-none">
-                  <NotebookGroup
-                    group={group}
-                    groups={groupedItems}
-                    groupIndex={index}
-                    openItemId={null}
-                    setOpenItemId={() => {}}
-                    onDelete={() => {}}
-                    onSearch={() => {}}
-                    onViewDetail={() => {}}
-                  />
-                </div>
-              </div>
-            );
-          }
-
-          return (
-            <NotebookGroup
-              key={group.title}
-              group={group}
-              groups={groupedItems}
-              groupIndex={index}
-              openItemId={openItemId}
-              setOpenItemId={setOpenItemId}
-              onDelete={onDelete}
-              onSearch={onSearch}
-              onViewDetail={onViewDetail}
-              onArchive={onArchive}
-              onUnarchive={onUnarchive}
-            />
-          );
-        })}
-
-        {/* Due for Review backfill — shown when fuzzy results < 100 during search */}
-        {dueForReviewGroups.length > 0 && (
-          <div className="mt-4 pt-3 border-t border-dashed border-orange-200">
-            <div className="flex items-center gap-2 px-1 mb-3">
-              <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide">Due for Review</span>
-              <span className="text-xs text-slate-400">{dueForReviewGroups.length} words to revisit</span>
-            </div>
-            <div className="grid gap-3">
-              {dueForReviewGroups.map((group, index) => (
-                <NotebookGroup
-                  key={`due-${group.title}`}
-                  group={group}
-                  groups={dueForReviewGroups}
-                  groupIndex={index}
-                  openItemId={openItemId}
-                  setOpenItemId={setOpenItemId}
-                  onDelete={onDelete}
-                  onSearch={onSearch}
-                  onViewDetail={onViewDetail}
-                  onArchive={onArchive}
-                  onUnarchive={onUnarchive}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Archived Section */}
-        {archivedItems.length > 0 && (
-          <div className="mt-6 pt-4 border-t-2 border-slate-200">
-            <button
-              onClick={() => setShowArchived(!showArchived)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <Archive size={18} className="text-slate-500" />
-                <span className="font-bold text-slate-700">Archived</span>
-                <span className="text-sm text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
-                  {archivedItems.length} {archivedItems.length === 1 ? 'item' : 'items'}
-                </span>
-              </div>
-              {showArchived ? (
-                <ChevronUp size={18} className="text-slate-500" />
-              ) : (
-                <ChevronDown size={18} className="text-slate-500" />
-              )}
-            </button>
-
-            {showArchived && (
-              <div className="grid gap-4 mt-4 animate-in slide-in-from-top-2 duration-200">
-                {archivedGroups.map((group, index) => (
-                  <NotebookGroup
-                    key={`archived-${group.title}`}
-                    group={group}
-                    groups={archivedGroups}
-                    groupIndex={index}
-                    openItemId={openItemId}
-                    setOpenItemId={setOpenItemId}
-                    onDelete={onDelete}
-                    onSearch={onSearch}
-                    onViewDetail={onViewDetail}
-                    onArchive={onArchive}
-                    onUnarchive={onUnarchive}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+      <div className="w-full max-w-screen-md mx-auto pb-[calc(5rem+env(safe-area-inset-bottom))]">
+        {scrollParent && (
+          <Virtuoso
+            customScrollParent={scrollParent}
+            totalCount={virtualRows.length}
+            overscan={400}
+            itemContent={renderVirtualRow}
+          />
         )}
       </div>
 

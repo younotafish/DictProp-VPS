@@ -6,7 +6,7 @@ import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
-import { loadData, saveData, migrateFromLocalStorage } from './services/storage';
+import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { loadAllItems, saveItems, loadSingleItem, getItemContentHash, analyzeInput } from './services/api';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -100,6 +100,64 @@ function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
   });
 }
 
+// Sentinel value replacing base64 in React state — tells OfflineImage to load from IDB
+const IMAGE_IDB_MARKER = 'idb:stored';
+
+/**
+ * Strip base64 imageUrl fields from items and store them in IDB images store.
+ * Replaces base64 with a tiny marker so layout checks (imageUrl truthy) still work.
+ * This keeps ~143MB of image data out of React state.
+ */
+async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
+  const imagesToSave: Array<{ id: string; base64: string }> = [];
+
+  const stripped = items.map(item => {
+    let changed = false;
+    let data = item.data;
+
+    // Vocab item image
+    if (isVocabItem(item) && (data as VocabCard).imageUrl?.startsWith('data:image/')) {
+      imagesToSave.push({ id: data.id, base64: (data as VocabCard).imageUrl! });
+      data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
+      changed = true;
+    }
+
+    // Phrase item image + nested vocab images
+    if (isPhraseItem(item)) {
+      const sr = data as SearchResult;
+      if (sr.imageUrl?.startsWith('data:image/')) {
+        imagesToSave.push({ id: sr.id, base64: sr.imageUrl });
+        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
+        changed = true;
+      }
+      if (sr.vocabs?.length) {
+        let vocabsChanged = false;
+        const newVocabs = sr.vocabs.map(v => {
+          if (v.imageUrl?.startsWith('data:image/')) {
+            imagesToSave.push({ id: v.id, base64: v.imageUrl });
+            vocabsChanged = true;
+            return { ...v, imageUrl: IMAGE_IDB_MARKER };
+          }
+          return v;
+        });
+        if (vocabsChanged) {
+          data = { ...data, vocabs: newVocabs } as SearchResult;
+          changed = true;
+        }
+      }
+    }
+
+    return changed ? { ...item, data } : item;
+  });
+
+  if (imagesToSave.length > 0) {
+    log(`🖼️ Offloading ${imagesToSave.length} images to IDB`);
+    await saveImagesBatch(imagesToSave);
+  }
+
+  return stripped;
+}
+
 // Keyboard shortcut display component
 const DETAIL_CONTEXT_KEY = 'app_detail_context';
 
@@ -152,22 +210,34 @@ const App: React.FC = () => {
   }, [currentView]);
   
   // Simplified sync state (items only)
-  // Try to instantly restore from localStorage cache for faster perceived load
-  const [syncState, setSyncState] = useState<SyncState>(() => {
-    try {
-      const cached = localStorage.getItem('vps_items_cache');
-      if (cached) {
-        const items = JSON.parse(cached);
-        if (Array.isArray(items) && items.length > 0) {
-          log(`⚡ Instant restore: ${items.length} items from cache`);
-          return { items };
+  // Cache parse is deferred to avoid blocking first paint
+  const [syncState, setSyncState] = useState<SyncState>({ items: [] });
+  const [cacheRestored, setCacheRestored] = useState(false);
+
+  // Defer localStorage cache parsing off the critical paint path
+  useEffect(() => {
+    const restore = () => {
+      try {
+        const cached = localStorage.getItem('vps_items_cache');
+        if (cached) {
+          const items = JSON.parse(cached);
+          if (Array.isArray(items) && items.length > 0) {
+            log(`⚡ Deferred restore: ${items.length} items from cache`);
+            setSyncState({ items });
+          }
         }
+      } catch (e) {
+        warn("Failed to restore items from cache", e);
       }
-    } catch (e) {
-      warn("Failed to restore items from cache", e);
+      setCacheRestored(true);
+    };
+
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(restore);
+    } else {
+      setTimeout(restore, 0);
     }
-    return { items: [] };
-  });
+  }, []);
   
   // Ref to track the latest items - avoids stale closure issues in event handlers
   // This is updated synchronously whenever syncState changes
@@ -198,9 +268,8 @@ const App: React.FC = () => {
     return sentenceItems.filter(s => !s.isArchived && ((s.srs?.nextReview ?? 0) <= now)).length;
   }, [sentenceItems]);
   
-  // Start as "loaded" if we have cached items (instant UI)
-  // Full data will be loaded from IndexedDB in background
-  const [isLoaded, setIsLoaded] = useState(() => syncState.items.length > 0);
+  // Starts false; set to true after IDB load (or cache restore) completes
+  const [isLoaded, setIsLoaded] = useState(false);
   const [showNav, setShowNav] = useState(true);
   const lastScrollYRef = useRef(0);
   
@@ -349,15 +418,13 @@ const App: React.FC = () => {
       // 1. Pull latest items from server
       const remoteItems = await loadAllItems();
 
-      // 2. Merge with latest state
-      let mergedItems: StoredItem[] = [];
-      setSyncState(prevState => {
-        mergedItems = normalizeSharedSRS(cleanupOldDeletedItems(
-          mergeDatasets(prevState.items, remoteItems)
-        ));
-        latestItemsRef.current = mergedItems;
-        return { ...prevState, items: mergedItems };
-      });
+      // 2. Merge with latest state, strip images, then set state
+      let mergedItems = normalizeSharedSRS(cleanupOldDeletedItems(
+        mergeDatasets(latestItemsRef.current, remoteItems)
+      ));
+      mergedItems = await stripAndStoreImages(mergedItems);
+      latestItemsRef.current = mergedItems;
+      setSyncState({ items: mergedItems });
 
       // 3. Push items that differ from remote
       const remoteHashMap = new Map<string, string>();
@@ -585,6 +652,9 @@ const App: React.FC = () => {
             // 3. Normalize shared SRS (ensure same-spelling siblings share one score)
             processedItems = normalizeSharedSRS(processedItems);
 
+            // 3.5. Strip images from items → IDB (keep ~143MB out of React state)
+            processedItems = await stripAndStoreImages(processedItems);
+
             // 4. Initialize sync state with merged data
             setSyncState({
                 items: processedItems
@@ -656,40 +726,42 @@ const App: React.FC = () => {
         const remoteItems = await loadAllItems();
         if (remoteItems.length === 0) return;
 
-        setSyncState(prevState => {
-          let mergedItems = mergeDatasets(prevState.items, remoteItems);
-          mergedItems = cleanupOldDeletedItems(mergedItems);
-          mergedItems = normalizeSharedSRS(mergedItems);
-          latestItemsRef.current = mergedItems;
+        let mergedItems = mergeDatasets(latestItemsRef.current, remoteItems);
+        mergedItems = cleanupOldDeletedItems(mergedItems);
+        mergedItems = normalizeSharedSRS(mergedItems);
 
-          // Mark items matching remote as synced
-          const remoteHashMap = new Map<string, string>();
-          remoteItems.forEach(item => {
-            if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
-          });
-          const catchUpItems: StoredItem[] = [];
-          mergedItems.forEach(item => {
-            const mergedHash = getItemContentHash(item);
-            const remoteHash = remoteHashMap.get(item.data.id);
-            if (mergedHash === remoteHash) {
-              item.lastSyncedHash = mergedHash;
-            } else {
-              catchUpItems.push(item);
-            }
-          });
+        // Strip images before putting into React state
+        mergedItems = await stripAndStoreImages(mergedItems);
 
-          // Push items that differ from server
-          if (catchUpItems.length > 0) {
-            log(`Server: ${catchUpItems.length} items differ, uploading...`);
-            saveItems(catchUpItems).then(() => {
-              for (const item of catchUpItems) {
-                item.lastSyncedHash = getItemContentHash(item);
-              }
-            }).catch(e => logError("Catch-up sync failed:", e));
-          }
+        latestItemsRef.current = mergedItems;
 
-          return { ...prevState, items: mergedItems };
+        // Mark items matching remote as synced
+        const remoteHashMap = new Map<string, string>();
+        remoteItems.forEach(item => {
+          if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
         });
+        const catchUpItems: StoredItem[] = [];
+        mergedItems.forEach(item => {
+          const mergedHash = getItemContentHash(item);
+          const remoteHash = remoteHashMap.get(item.data.id);
+          if (mergedHash === remoteHash) {
+            item.lastSyncedHash = mergedHash;
+          } else {
+            catchUpItems.push(item);
+          }
+        });
+
+        // Push items that differ from server
+        if (catchUpItems.length > 0) {
+          log(`Server: ${catchUpItems.length} items differ, uploading...`);
+          saveItems(catchUpItems).then(() => {
+            for (const item of catchUpItems) {
+              item.lastSyncedHash = getItemContentHash(item);
+            }
+          }).catch(e => logError("Catch-up sync failed:", e));
+        }
+
+        setSyncState({ items: mergedItems });
       } catch (error) {
         logError("Initial server sync failed:", error);
       }
@@ -1062,56 +1134,68 @@ const App: React.FC = () => {
     const rawTitle = getItemTitle(item);
     const incomingTitle = String(rawTitle || '').toLowerCase().trim();
     if (!incomingTitle) return;
-    
+
+    // Offload any incoming images to IDB before updating state
+    const incomingImageUrl = getItemImageUrl(item);
+    if (incomingImageUrl?.startsWith('data:image/')) {
+      saveImage(item.data.id, incomingImageUrl);
+    }
+    if (isPhraseItem(item) && item.data.vocabs) {
+      for (const v of item.data.vocabs) {
+        if (v.imageUrl?.startsWith('data:image/')) {
+          saveImage(v.id, v.imageUrl);
+        }
+      }
+    }
+
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
       const itemId = item.data.id;
-      
+
       // Case 1: Direct match by ID (top-level items)
       const index = prevState.items.findIndex(i => i.data.id === itemId);
       if (index >= 0) {
         const existingItem = prevState.items[index];
         const newItems = [...prevState.items];
-        
-        // Merge: keep existing fields, update with new data, preserve important metadata
+
+        // Merge: keep existing fields, update with new data
+        // Replace base64 imageUrl with marker (actual data is in IDB)
+        const mergedData = { ...existingItem.data, ...item.data };
+        if ((mergedData as any).imageUrl?.startsWith('data:image/')) {
+          (mergedData as any).imageUrl = IMAGE_IDB_MARKER;
+        }
         newItems[index] = {
           ...existingItem,
-          data: {
-            ...existingItem.data,
-            ...item.data,
-            // Preserve existing imageUrl if incoming doesn't have one
-            imageUrl: getItemImageUrl(item) || getItemImageUrl(existingItem)
-          },
+          data: mergedData,
           updatedAt: Date.now()
         };
-        
+
         return {
           ...prevState,
           items: newItems
         };
       }
-      
+
       // Case 2: Check if this is a vocab inside a phrase item
       // Vocab images are generated separately and need to update the parent phrase
       if (item.type === 'vocab') {
         const vocabData = item.data as VocabCard;
-        
+
         for (let i = 0; i < prevState.items.length; i++) {
           const stored = prevState.items[i];
           if (stored.type === 'phrase') {
             const phraseData = stored.data as SearchResult;
             const vocabIndex = (phraseData.vocabs || []).findIndex(v => v.id === itemId);
-            
+
             if (vocabIndex >= 0) {
               // Found the vocab inside this phrase - update it
               const newVocabs = [...(phraseData.vocabs || [])];
-              newVocabs[vocabIndex] = {
-                ...newVocabs[vocabIndex],
-                ...vocabData,
-                // Preserve existing imageUrl if incoming doesn't have one
-                imageUrl: vocabData.imageUrl || newVocabs[vocabIndex].imageUrl
-              };
-              
+              const mergedVocab = { ...newVocabs[vocabIndex], ...vocabData };
+              if (mergedVocab.imageUrl?.startsWith('data:image/')) {
+                mergedVocab.imageUrl = IMAGE_IDB_MARKER;
+              }
+              newVocabs[vocabIndex] = mergedVocab;
+
               const newItems = [...prevState.items];
               newItems[i] = {
                 ...stored,
@@ -1121,7 +1205,7 @@ const App: React.FC = () => {
                 },
                 updatedAt: Date.now()
               };
-              
+
               return {
                 ...prevState,
                 items: newItems
@@ -1130,66 +1214,40 @@ const App: React.FC = () => {
           }
         }
       }
-      
+
       return prevState;
     });
   };
 
   /**
-   * Lazy load image from Firebase if local item is missing it
-   * Called when viewing a saved card that has no local image
+   * Lazy load image from server if not in IDB yet.
+   * Saves to IDB images store (not React state) to keep heap small.
    */
   const handleLazyLoadImage = useCallback(async (itemId: string) => {
     try {
       const remoteItem = await loadSingleItem(itemId);
       if (!remoteItem) return;
-      
+
+      const imagesToSave: Array<{ id: string; base64: string }> = [];
+
       const remoteImageUrl = getItemImageUrl(remoteItem);
-      const hasRemoteImage = remoteImageUrl && remoteImageUrl.startsWith('data:image/');
-      
-      if (!hasRemoteImage) return;
-      
-      // Update local storage with the remote image
-      setSyncState(prevState => {
-        const index = prevState.items.findIndex(i => i.data.id === itemId);
-        if (index >= 0) {
-          const localItem = prevState.items[index];
-          const localImageUrl = getItemImageUrl(localItem);
-          const hasLocalImage = localImageUrl && localImageUrl.startsWith('data:image/');
-          
-          if (!hasLocalImage) {
-            log(`🖼️ Lazy-loaded image from Firebase for: ${getItemTitle(remoteItem)}`);
-            const newItems = [...prevState.items];
-            
-            // Handle vocab images for phrase items
-            let updatedData = { ...localItem.data, imageUrl: remoteImageUrl };
-            if (isPhraseItem(remoteItem) && isPhraseItem(localItem)) {
-              const remoteVocabs = remoteItem.data.vocabs;
-              const localVocabs = localItem.data.vocabs || [];
-              if (remoteVocabs) {
-                updatedData = {
-                  ...updatedData,
-                  vocabs: localVocabs.map((localVocab: VocabCard, i: number) => {
-                    const remoteVocab = remoteVocabs[i];
-                    if (remoteVocab?.imageUrl && !localVocab.imageUrl) {
-                      return { ...localVocab, imageUrl: remoteVocab.imageUrl };
-                    }
-                    return localVocab;
-                  })
-                };
-              }
-            }
-            
-            newItems[index] = {
-              ...prevState.items[index],
-              data: updatedData,
-              updatedAt: Date.now()
-            };
-            return { ...prevState, items: newItems };
+      if (remoteImageUrl?.startsWith('data:image/')) {
+        imagesToSave.push({ id: remoteItem.data.id, base64: remoteImageUrl });
+      }
+
+      // Also grab vocab images for phrase items
+      if (isPhraseItem(remoteItem) && remoteItem.data.vocabs) {
+        for (const vocab of remoteItem.data.vocabs) {
+          if (vocab.imageUrl?.startsWith('data:image/')) {
+            imagesToSave.push({ id: vocab.id, base64: vocab.imageUrl });
           }
         }
-        return prevState;
-      });
+      }
+
+      if (imagesToSave.length > 0) {
+        log(`🖼️ Lazy-loaded ${imagesToSave.length} images from server for: ${getItemTitle(remoteItem)}`);
+        await saveImagesBatch(imagesToSave);
+      }
     } catch (e) {
       warn("Failed to lazy-load image from server:", e);
     }

@@ -164,7 +164,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     
     // Check if this item is saved and missing an image
     const isSaved = savedItemsRef.current.some(i => i.data.id === itemId);
-    const hasImage = imageUrl && imageUrl.startsWith('data:image/');
+    const hasImage = imageUrl && (imageUrl.startsWith('data:image/') || imageUrl === 'idb:stored');
 
     if (isSaved && !hasImage) {
       // Trigger lazy load from Firebase
@@ -849,7 +849,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <div className="md:flex">
                   <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group max-h-48 md:max-h-none md:w-2/5 md:shrink-0">
                     {(data as SearchResult).imageUrl ? (
-                      <OfflineImage src={(data as SearchResult).imageUrl} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
+                      <OfflineImage src={(data as SearchResult).imageUrl?.startsWith('data:') ? (data as SearchResult).imageUrl : undefined} itemId={(data as SearchResult).id} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" />
                     ) : (
                       <div className="flex flex-col items-center text-slate-400 py-8">
                         <SearchIcon className="mb-2 opacity-30" size={32}/>

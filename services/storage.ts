@@ -200,6 +200,109 @@ export const saveData = async (items: StoredItem[], userId: string = 'vps'): Pro
   }
 };
 
+// --- Image Store (offloaded from React state to IDB) ---
+
+const IMAGES_STORE = 'images';
+
+// In-memory LRU cache for frequently accessed images
+const imageCache = new Map<string, string>();
+const IMAGE_CACHE_MAX = 50;
+
+const evictImageCache = () => {
+  if (imageCache.size <= IMAGE_CACHE_MAX) return;
+  // Delete oldest entry (first key)
+  const firstKey = imageCache.keys().next().value;
+  if (firstKey) imageCache.delete(firstKey);
+};
+
+export const saveImage = async (itemId: string, base64: string): Promise<void> => {
+  imageCache.set(itemId, base64);
+  evictImageCache();
+
+  const idbAvailable = await checkIndexedDBAvailability();
+  if (!idbAvailable) return;
+
+  try {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGES_STORE, 'readwrite');
+      const store = tx.objectStore(IMAGES_STORE);
+      store.put(base64, itemId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    warn("Failed to save image to IDB", e);
+  }
+};
+
+export const saveImagesBatch = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
+  if (images.length === 0) return;
+
+  // Populate cache
+  for (const img of images) {
+    imageCache.set(img.id, img.base64);
+  }
+  // Trim cache to limit
+  while (imageCache.size > IMAGE_CACHE_MAX) {
+    const firstKey = imageCache.keys().next().value;
+    if (firstKey) imageCache.delete(firstKey);
+  }
+
+  const idbAvailable = await checkIndexedDBAvailability();
+  if (!idbAvailable) return;
+
+  try {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGES_STORE, 'readwrite');
+      const store = tx.objectStore(IMAGES_STORE);
+      for (const img of images) {
+        store.put(img.base64, img.id);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    warn("Failed to batch save images to IDB", e);
+  }
+};
+
+export const loadImage = async (itemId: string): Promise<string | null> => {
+  // Check in-memory cache first
+  const cached = imageCache.get(itemId);
+  if (cached) {
+    // Move to end (most recently used)
+    imageCache.delete(itemId);
+    imageCache.set(itemId, cached);
+    return cached;
+  }
+
+  const idbAvailable = await checkIndexedDBAvailability();
+  if (!idbAvailable) return null;
+
+  try {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGES_STORE, 'readonly');
+      const store = tx.objectStore(IMAGES_STORE);
+      const request = store.get(itemId);
+      request.onsuccess = () => {
+        const result = request.result as string | undefined;
+        if (result) {
+          imageCache.set(itemId, result);
+          evictImageCache();
+        }
+        resolve(result || null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (e) {
+    warn("Failed to load image from IDB", e);
+    return null;
+  }
+};
+
 // Legacy Migration: Check if old localStorage data exists and move it to IDB
 export const migrateFromLocalStorage = async (): Promise<StoredItem[] | null> => {
     const localData = localStorage.getItem('popdict_items');

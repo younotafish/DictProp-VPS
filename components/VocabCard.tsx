@@ -203,7 +203,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
         {data.imageUrl && (
           <div className="mb-4 md:mb-0 w-full md:w-2/5 md:shrink-0">
             <div className="rounded-xl overflow-hidden max-h-48 md:max-h-64 bg-slate-50 border border-slate-100 shadow-inner">
-              <OfflineImage src={data.imageUrl} alt={data.word} className="w-full h-full object-cover fade-in" />
+              <OfflineImage src={data.imageUrl?.startsWith('data:') ? data.imageUrl : undefined} itemId={data.id} alt={data.word} className="w-full h-full object-cover fade-in" />
             </div>
             {/* Inline YouGlish below image on desktop — click to load (preserves daily quota) */}
             <div className="hidden md:block">

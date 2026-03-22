@@ -96,10 +96,38 @@ export function upsertItem(item: any) {
   const data = item.data;
   if (!data || !data.id) throw new Error('Item missing data.id');
 
+  // Preserve existing images when client sends marker ('idb:stored') or no image.
+  // Client strips base64 images from React state to save memory; server is source of truth.
+  let finalData = data;
+  const existingRow = stmts.getById.get(data.id) as ItemRow | undefined;
+  if (existingRow) {
+    const existingData = JSON.parse(existingRow.data);
+    const needsImagePreserve = (url: string | undefined) =>
+      !url || url === 'idb:stored' || !url.startsWith('data:image/');
+
+    if (needsImagePreserve(data.imageUrl) && existingData.imageUrl?.startsWith('data:image/')) {
+      finalData = { ...finalData, imageUrl: existingData.imageUrl };
+    }
+
+    // Preserve vocab images within phrase items
+    if (Array.isArray(data.vocabs) && Array.isArray(existingData.vocabs)) {
+      finalData = {
+        ...finalData,
+        vocabs: data.vocabs.map((v: any, i: number) => {
+          const existingVocab = existingData.vocabs[i];
+          if (existingVocab && needsImagePreserve(v?.imageUrl) && existingVocab.imageUrl?.startsWith('data:image/')) {
+            return { ...v, imageUrl: existingVocab.imageUrl };
+          }
+          return v;
+        }),
+      };
+    }
+  }
+
   stmts.upsert.run({
     id: data.id,
     type: item.type,
-    data: JSON.stringify(data),
+    data: JSON.stringify(finalData),
     srs: JSON.stringify(item.srs),
     saved_at: item.savedAt || Date.now(),
     updated_at: item.updatedAt || Date.now(),
