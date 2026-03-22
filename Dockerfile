@@ -13,7 +13,6 @@ COPY views/ ./views/
 COPY services/ ./services/
 COPY components/ ./components/
 COPY hooks/ ./hooks/
-COPY utils/ ./utils/
 COPY vite.config.ts ./
 RUN npm run build
 

@@ -1,0 +1,14 @@
+node_modules
+server/node_modules
+server/dist
+dist
+data
+.git
+.firebase
+.playwright
+test-results
+playwright-report
+.env
+.gh
+e2e
+functions
