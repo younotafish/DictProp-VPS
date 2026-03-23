@@ -9,6 +9,7 @@ import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { loadAllItems, saveItems, loadSingleItem, getItemContentHash, analyzeInput } from './services/api';
+import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
@@ -212,6 +213,17 @@ const NavButton = ({ view, currentView, onClick, icon: Icon, label, badge }: { v
 );
 
 const App: React.FC = () => {
+  // Auth state
+  const [authState, setAuthState] = useState<AuthState>({ user: null, pending: false, loading: true });
+
+  useEffect(() => {
+    checkAuth().then(({ user, pending }) => {
+      setAuthState({ user, pending, loading: false });
+    }).catch(() => {
+      setAuthState({ user: null, pending: false, loading: false });
+    });
+  }, []);
+
   const [currentView, setCurrentView] = useState<ViewState>(() => {
     const saved = localStorage.getItem('app_current_view');
     // Default to notebook, and handle legacy 'search' value from old localStorage
@@ -226,24 +238,38 @@ const App: React.FC = () => {
     localStorage.setItem('app_current_view', currentView);
   }, [currentView]);
   
+  // Cache key is per-user to isolate data between accounts
+  const cacheKey = authState.user ? `vps_items_cache_${authState.user.id}` : 'vps_items_cache';
+
   // Simplified sync state (items only)
   // Restore instantly from lightweight localStorage cache for fast perceived load
   const [syncState, setSyncState] = useState<SyncState>(() => {
+    return { items: [] };
+  });
+  
+  // Restore from localStorage cache once auth is resolved
+  useEffect(() => {
+    if (authState.loading || !authState.user) return;
     try {
-      const cached = localStorage.getItem('vps_items_cache');
+      const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const items = JSON.parse(cached);
         if (Array.isArray(items) && items.length > 0) {
           log(`⚡ Instant restore: ${items.length} items from cache`);
-          return { items };
+          setSyncState({ items });
+          setIsLoaded(true);
         }
       }
     } catch (e) {
       warn("Failed to restore items from cache", e);
     }
-    return { items: [] };
-  });
-  
+  }, [authState.loading, authState.user?.id]);
+
+  // User-scoped saveData wrapper — all saves go through this
+  const userSaveData = useCallback((items: StoredItem[]) => {
+    return saveData(items, authState.user?.id || 'vps');
+  }, [authState.user?.id]);
+
   // Ref to track the latest items - avoids stale closure issues in event handlers
   // This is updated synchronously whenever syncState changes
   const latestItemsRef = useRef<StoredItem[]>(syncState.items);
@@ -281,7 +307,7 @@ const App: React.FC = () => {
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
-  // VPS mode: no auth needed (single user)
+  // Auth is required — app gates on authState below
 
   // Updated DetailContext to support Group-based navigation (2D: Groups vs Items)
   // NOTE: We no longer restore detailContext from localStorage. Persisted groups
@@ -483,13 +509,13 @@ const App: React.FC = () => {
 
         // Use synchronous localStorage as a backup (IndexedDB is async and may not complete)
         try {
-          localStorage.setItem('vps_items_cache', JSON.stringify(createLightweightCache(currentItems)));
+          localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(currentItems)));
           log("💾 Saved items cache on beforeunload");
         } catch (e) {
           warn("Failed to save cache on beforeunload:", e);
         }
         // Also try IndexedDB (may not complete but worth trying)
-        saveData(currentItems).catch(e => warn("Failed to save on beforeunload:", e));
+        userSaveData(currentItems).catch(e => warn("Failed to save on beforeunload:", e));
       }
     };
 
@@ -532,11 +558,11 @@ const App: React.FC = () => {
               if (isLoaded && currentItems.length > 0) {
                   log("💾 App going to background, saving data immediately...");
                   try {
-                    localStorage.setItem('vps_items_cache', JSON.stringify(createLightweightCache(currentItems)));
+                    localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(currentItems)));
                   } catch (e) {
                     warn("Failed to save cache on visibility change:", e);
                   }
-                  saveData(currentItems).catch(e => {
+                  userSaveData(currentItems).catch(e => {
                       warn("Failed to save on visibility change:", e);
                   });
                   // Best-effort server push
@@ -566,11 +592,11 @@ const App: React.FC = () => {
         if (!isLoaded || currentItems.length === 0) return;
         log("💾 Saving state before external navigation...");
         try {
-          localStorage.setItem('vps_items_cache', JSON.stringify(createLightweightCache(currentItems)));
+          localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(currentItems)));
         } catch (e) {
           warn("Failed to save cache before external nav:", e);
         }
-        saveData(currentItems).catch(e => {
+        userSaveData(currentItems).catch(e => {
           warn("Failed to save to IDB before external nav:", e);
         });
       };
@@ -585,16 +611,17 @@ const App: React.FC = () => {
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
+    if (!authState.user) return;
+    const userId = authState.user.id;
     const initStorage = async () => {
         try {
             const migrated = await migrateFromLocalStorage();
             let itemsFromIDB: StoredItem[] = [];
-            
+
             if (migrated && migrated.length > 0) {
                 itemsFromIDB = migrated;
             } else {
-                // VPS mode: use dedicated storage key (separate from Firebase guest data)
-                const items = await loadData();
+                const items = await loadData(userId);
                 if (items && Array.isArray(items)) {
                     itemsFromIDB = items.filter((i: any) =>
                         i && i.data && i.data.id && i.srs && i.type
@@ -673,7 +700,7 @@ const App: React.FC = () => {
             // 4. Save merged result back to IndexedDB if we merged or made changes
             // This ensures IndexedDB is up-to-date with any fresher data from cache
             if (hasChanges || needsSaveToIDB) {
-                await saveData(processedItems);
+                await saveData(processedItems, userId);
             }
         } catch (e) {
             logError("Failed to initialize storage", e);
@@ -682,7 +709,7 @@ const App: React.FC = () => {
         }
     };
     initStorage();
-  }, []);
+  }, [authState.user?.id]);
 
   // Cleanup old deleted items (hard delete after retention period)
   const cleanupOldDeletedItems = (items: StoredItem[]): StoredItem[] => {
@@ -800,7 +827,7 @@ const App: React.FC = () => {
 
     // Try full cache first
     try {
-      localStorage.setItem('vps_items_cache', JSON.stringify(fullCache));
+      localStorage.setItem(cacheKey, JSON.stringify(fullCache));
       return;
     } catch {
       // Full cache too large — try shrinking
@@ -814,7 +841,7 @@ const App: React.FC = () => {
       return entry;
     });
     try {
-      localStorage.setItem('vps_items_cache', JSON.stringify(slimCache));
+      localStorage.setItem(cacheKey, JSON.stringify(slimCache));
       return;
     } catch {
       // Still too large
@@ -837,7 +864,7 @@ const App: React.FC = () => {
     while (lo < hi) {
       const mid = Math.ceil((lo + hi) / 2);
       try {
-        localStorage.setItem('vps_items_cache', JSON.stringify(essentialCache.slice(0, mid)));
+        localStorage.setItem(cacheKey, JSON.stringify(essentialCache.slice(0, mid)));
         lo = mid;
       } catch {
         hi = mid - 1;
@@ -845,7 +872,7 @@ const App: React.FC = () => {
     }
     if (lo > 0) {
       try {
-        localStorage.setItem('vps_items_cache', JSON.stringify(essentialCache.slice(0, lo)));
+        localStorage.setItem(cacheKey, JSON.stringify(essentialCache.slice(0, lo)));
       } catch {
         // Give up — keep whatever was in cache before
       }
@@ -868,7 +895,7 @@ const App: React.FC = () => {
       if (timeSinceLastSave < 2000) {
         log("💾 Skipping debounced IDB save (recent immediate save)");
       } else {
-        await saveData(currentItems);
+        await userSaveData(currentItems);
       }
 
       // 2. Push dirty items to server
@@ -910,7 +937,7 @@ const App: React.FC = () => {
         }
 
         lastSaveTimeRef.current = Date.now();
-        await saveData(currentItems);
+        await userSaveData(currentItems);
 
         setSyncStatus('saved');
       } catch (e) {
@@ -1549,7 +1576,7 @@ const App: React.FC = () => {
           srsSaveTimerRef.current = null;
           srsSavePendingRef.current = false;
           try {
-            localStorage.setItem('vps_items_cache', JSON.stringify(createLightweightCache(latestItemsRef.current)));
+            localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(latestItemsRef.current)));
           } catch (e) {
             warn("Failed to update cache after SRS:", e);
           }
@@ -1557,7 +1584,7 @@ const App: React.FC = () => {
       }
       
       try {
-        await saveData(allUpdatedItems);
+        await userSaveData(allUpdatedItems);
         log(`💾 Immediately saved SRS update to IndexedDB`);
         // Record save time so event handlers can skip redundant saves
         lastSaveTimeRef.current = Date.now();
@@ -1596,6 +1623,55 @@ const App: React.FC = () => {
 
     lastScrollYRef.current = currentScrollY;
   };
+
+  // Auth gate: show login/pending/loading before the main app
+  if (authState.loading) {
+    return (
+      <div className="fixed inset-0 bg-white flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  if (!authState.user) {
+    return (
+      <div className="fixed inset-0 bg-gradient-to-br from-indigo-50 to-white flex items-center justify-center">
+        <div className="text-center space-y-6 p-8">
+          <div className="space-y-2">
+            <h1 className="text-3xl font-bold text-slate-800">DictProp</h1>
+            <p className="text-slate-500">AI-powered vocabulary learning</p>
+          </div>
+          <button
+            onClick={loginRedirect}
+            className="inline-flex items-center gap-3 px-6 py-3 bg-white border border-slate-200 rounded-lg shadow-sm hover:shadow-md hover:bg-slate-50 transition-all text-slate-700 font-medium"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Sign in with Google
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState.pending) {
+    return (
+      <div className="fixed inset-0 bg-gradient-to-br from-amber-50 to-white flex items-center justify-center">
+        <div className="text-center space-y-4 p-8">
+          <div className="w-12 h-12 mx-auto bg-amber-100 rounded-full flex items-center justify-center">
+            <span className="text-2xl">⏳</span>
+          </div>
+          <h2 className="text-xl font-semibold text-slate-800">Pending Approval</h2>
+          <p className="text-slate-500 max-w-sm">Your account is awaiting admin approval. Please check back later.</p>
+          <button onClick={logout} className="text-sm text-slate-400 hover:text-slate-600 underline">Sign out</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-white flex flex-col">
@@ -1666,9 +1742,9 @@ const App: React.FC = () => {
             onDelete={handleDelete}
             onSearch={handleRecursiveSearch}
             onViewDetail={handleViewStoredItem}
-            user={null}
-            onSignIn={() => {}}
-            onSignOut={() => {}}
+            user={authState.user ? { uid: authState.user.id, displayName: authState.user.displayName, photoURL: authState.user.photoUrl, email: authState.user.email } : null}
+            onSignIn={loginRedirect}
+            onSignOut={logout}
             syncStatus={syncStatus}
             onScroll={handleScroll}
             onForceSync={handleForceSync}
