@@ -49,6 +49,28 @@ export const deleteItem = async (id: string): Promise<void> => {
   if (!res.ok) throw new Error(`Failed to delete item: ${res.status}`);
 };
 
+/**
+ * Fetch a single item's image as a base64 data URI via the binary image endpoint.
+ * Returns null if the item has no image.
+ */
+export const loadItemImage = async (itemId: string): Promise<string | null> => {
+  try {
+    const res = await fetch(`${API_BASE}/api/items/${itemId}/image`);
+    if (!res.ok) return null;
+
+    const contentType = res.headers.get('Content-Type') || 'image/png';
+    const buffer = await res.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return `data:${contentType};base64,${btoa(binary)}`;
+  } catch {
+    return null;
+  }
+};
+
 // ============================================================================
 // AI API (replaces aiService.ts)
 // ============================================================================

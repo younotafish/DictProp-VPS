@@ -21,7 +21,7 @@ interface Props {
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
-  onLazyLoadImage?: (itemId: string) => void;
+  onLazyLoadImage?: (itemId: string) => Promise<string | null>;
 }
 
 // Memoize to prevent re-renders when other cards in the list update

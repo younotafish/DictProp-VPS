@@ -78,6 +78,8 @@ const stmts = {
   getById: db.prepare(`SELECT * FROM items WHERE id = ?`),
   getByIdScoped: db.prepare(`SELECT * FROM items WHERE id = ? AND user_id = ?`),
   assignOrphanItems: db.prepare(`UPDATE items SET user_id = ? WHERE user_id IS NULL`),
+  getImageData: db.prepare(`SELECT data FROM items WHERE id = ? AND user_id = ?`),
+  findVocabInPhrase: db.prepare(`SELECT data FROM items WHERE type = 'phrase' AND user_id = ? AND data LIKE ? LIMIT 1`),
 };
 
 // ─── User / Session prepared statements ───
@@ -225,6 +227,32 @@ export function softDeleteItem(id: string, userId: string) {
 export function getItemById(id: string, userId: string) {
   const row = stmts.getByIdScoped.get(id, userId) as ItemRow | undefined;
   return row ? rowToItem(row) : null;
+}
+
+/**
+ * Get just the base64 image data URI for an item.
+ * Searches top-level items first, then vocab images nested within phrases.
+ */
+export function getItemImage(id: string, userId: string): string | null {
+  // Direct lookup by item id
+  const row = stmts.getImageData.get(id, userId) as { data: string } | undefined;
+  if (row) {
+    const data = JSON.parse(row.data);
+    if (data.imageUrl?.startsWith('data:image/')) return data.imageUrl;
+    return null;
+  }
+
+  // Search within phrase vocabs (id might be a vocab id nested in a phrase)
+  const phraseRow = stmts.findVocabInPhrase.get(userId, `%"id":"${id}"%`) as { data: string } | undefined;
+  if (phraseRow) {
+    const data = JSON.parse(phraseRow.data);
+    if (Array.isArray(data.vocabs)) {
+      const vocab = data.vocabs.find((v: any) => v.id === id);
+      if (vocab?.imageUrl?.startsWith('data:image/')) return vocab.imageUrl;
+    }
+  }
+
+  return null;
 }
 
 // ─── User CRUD ───

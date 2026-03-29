@@ -8,14 +8,14 @@ interface Props {
   alt: string;
   className?: string;
   fallbackClassName?: string;
-  onMissing?: (itemId: string) => void; // Called when IDB has no image — triggers server fetch
+  onMissing?: (itemId: string) => Promise<string | null>; // Fetch image from server, returns base64
 }
 
 /**
  * Image component with offline support
  * - If `src` is a base64 data URI, renders it directly
  * - If `itemId` is provided, lazy-loads base64 from IDB images store
- * - If IDB has no image, calls `onMissing` to trigger server fetch, shows loading state
+ * - If IDB has no image, awaits `onMissing` to fetch from server and displays result directly
  */
 export const OfflineImage: React.FC<Props> = ({
   src,
@@ -53,53 +53,36 @@ export const OfflineImage: React.FC<Props> = ({
 
     let cancelled = false;
     setIdbLoading(true);
-    loadImage(itemId).then(base64 => {
+    loadImage(itemId).then(async (base64) => {
       if (cancelled) return;
-      setIdbSrc(base64);
-      setIdbLoading(false);
       if (base64) {
+        setIdbSrc(base64);
+        setIdbLoading(false);
         setHasError(false);
         setIsLoaded(false);
       } else if (onMissing && missingCalledRef.current !== itemId) {
-        // IDB has no image — ask parent to fetch from server
+        // IDB has no image — fetch from server directly
         missingCalledRef.current = itemId;
+        setIdbLoading(false);
         setFetchingFromServer(true);
-        onMissing(itemId);
+        try {
+          const result = await onMissing(itemId);
+          if (cancelled) return;
+          if (result) {
+            setIdbSrc(result);
+            setHasError(false);
+            setIsLoaded(false);
+          }
+        } catch {
+          // onMissing failed — no image available
+        }
+        if (!cancelled) setFetchingFromServer(false);
+      } else {
+        setIdbLoading(false);
       }
     });
     return () => { cancelled = true; };
   }, [itemId, src, onMissing]);
-
-  // Re-check IDB after onMissing fires (server fetch saves to IDB, then we retry)
-  useEffect(() => {
-    if (!fetchingFromServer || !itemId) return;
-
-    // Poll IDB briefly — server fetch + IDB write is async
-    let cancelled = false;
-    const checkInterval = setInterval(async () => {
-      const base64 = await loadImage(itemId);
-      if (cancelled) return;
-      if (base64) {
-        setIdbSrc(base64);
-        setFetchingFromServer(false);
-        setHasError(false);
-        setIsLoaded(false);
-        clearInterval(checkInterval);
-      }
-    }, 1000);
-
-    // Give up after 15 seconds
-    const timeout = setTimeout(() => {
-      clearInterval(checkInterval);
-      if (!cancelled) setFetchingFromServer(false);
-    }, 15000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(checkInterval);
-      clearTimeout(timeout);
-    };
-  }, [fetchingFromServer, itemId]);
 
   const effectiveSrc = (src?.startsWith('data:image/') ? src : undefined) || idbSrc;
 

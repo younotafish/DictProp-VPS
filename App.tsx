@@ -8,7 +8,7 @@ import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, ge
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadSingleItem, getItemContentHash, analyzeInput } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, getItemContentHash, analyzeInput } from './services/api';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -1298,36 +1298,22 @@ const App: React.FC = () => {
   };
 
   /**
-   * Lazy load image from server if not in IDB yet.
-   * Saves to IDB images store (not React state) to keep heap small.
+   * Lazy load image from server via dedicated binary endpoint.
+   * Returns base64 data URI directly (no polling needed).
+   * Also saves to IDB for offline access.
    */
-  const handleLazyLoadImage = useCallback(async (itemId: string) => {
+  const handleLazyLoadImage = useCallback(async (itemId: string): Promise<string | null> => {
     try {
-      const remoteItem = await loadSingleItem(itemId);
-      if (!remoteItem) return;
-
-      const imagesToSave: Array<{ id: string; base64: string }> = [];
-
-      const remoteImageUrl = getItemImageUrl(remoteItem);
-      if (remoteImageUrl?.startsWith('data:image/')) {
-        imagesToSave.push({ id: remoteItem.data.id, base64: remoteImageUrl });
+      const base64 = await loadItemImage(itemId);
+      if (base64) {
+        await saveImage(itemId, base64);
+        log(`🖼️ Lazy-loaded image from server for: ${itemId}`);
+        return base64;
       }
-
-      // Also grab vocab images for phrase items
-      if (isPhraseItem(remoteItem) && remoteItem.data.vocabs) {
-        for (const vocab of remoteItem.data.vocabs) {
-          if (vocab.imageUrl?.startsWith('data:image/')) {
-            imagesToSave.push({ id: vocab.id, base64: vocab.imageUrl });
-          }
-        }
-      }
-
-      if (imagesToSave.length > 0) {
-        log(`🖼️ Lazy-loaded ${imagesToSave.length} images from server for: ${getItemTitle(remoteItem)}`);
-        await saveImagesBatch(imagesToSave);
-      }
+      return null;
     } catch (e) {
       warn("Failed to lazy-load image from server:", e);
+      return null;
     }
   }, []);
 

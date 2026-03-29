@@ -63,7 +63,7 @@ interface DetailViewProps {
   savedItems: StoredItem[];
   onSearch: (text: string) => void;
   onRefresh?: (text: string) => void; // Force a real AI search, bypassing local cache
-  onLazyLoadImage?: (itemId: string) => void; // Fetch image from Firebase if missing locally
+  onLazyLoadImage?: (itemId: string) => Promise<string | null>; // Fetch image from server if missing locally
   onUpdateSRS?: (itemId: string) => void; // Direct SRS update (triggers "remember")
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;

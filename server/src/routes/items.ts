@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById } from '../db.js';
+import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage } from '../db.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 export const itemsRoutes = new Hono<{ Variables: AuthVariables }>();
@@ -16,6 +16,24 @@ itemsRoutes.get('/items', (c) => {
     return c.json(getItemsSince(ts, !includeImages, userId));
   }
   return c.json(getAllItems(!includeImages, userId));
+});
+
+// GET /api/items/:id/image — return raw binary image with caching headers
+itemsRoutes.get('/items/:id/image', (c) => {
+  const userId = c.get('user').id;
+  const dataUri = getItemImage(c.req.param('id'), userId);
+  if (!dataUri) return c.notFound();
+
+  const match = dataUri.match(/^data:(image\/[^;]+);base64,(.+)$/);
+  if (!match) return c.notFound();
+
+  const binary = Buffer.from(match[2], 'base64');
+  return new Response(binary, {
+    headers: {
+      'Content-Type': match[1],
+      'Cache-Control': 'public, max-age=86400, immutable',
+    },
+  });
 });
 
 // GET /api/items/:id — return a single item

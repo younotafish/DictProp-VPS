@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { compress } from 'hono/compress';
 import { logger } from 'hono/logger';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -18,6 +19,7 @@ const app = new Hono<{ Variables: AuthVariables }>();
 
 // Middleware
 app.use('*', logger());
+app.use('*', compress());
 app.use('*', cors({
   origin: ['https://dictprop.online', 'http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
