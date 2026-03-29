@@ -277,6 +277,10 @@ const App: React.FC = () => {
   // Track when we last saved to avoid redundant saves from event handlers
   const lastSaveTimeRef = useRef<number>(0);
 
+  // Incremented on every immediate push (SRS/delete/archive) so the debounced save
+  // can detect a concurrent push happened during its async rehydration window.
+  const syncGenerationRef = useRef(0);
+
   // Throttle localStorage writes during rapid SRS updates (e.g. reviewing 20+ cards)
   const srsSavePendingRef = useRef(false);
   const srsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -888,6 +892,7 @@ const App: React.FC = () => {
     if (!isLoaded) return;
 
     const timer = setTimeout(async () => {
+      const myGeneration = syncGenerationRef.current;
       const currentItems = latestItemsRef.current;
 
       // 1. Save to Local IDB
@@ -930,6 +935,15 @@ const App: React.FC = () => {
       try {
         // Rehydrate images from IDB before pushing to server
         const itemsToSync = await rehydrateImagesForSync(itemsWithHashes.map(i => i.item));
+
+        // If an immediate sync (SRS/delete/archive) happened during rehydration,
+        // skip this push — our data is stale. Next debounce cycle will pick up.
+        if (syncGenerationRef.current !== myGeneration) {
+          log("⏭️ Skipping debounced push (immediate sync happened, next cycle will handle)");
+          setSyncStatus('saved');
+          return;
+        }
+
         await saveItems(itemsToSync);
 
         for (const { item, hash } of itemsWithHashes) {
@@ -1351,6 +1365,7 @@ const App: React.FC = () => {
       if (itemToSync) {
         const itemWithDelete = { ...itemToSync, isDeleted: true, updatedAt: now };
         log('🗑️ App: Immediately syncing deletion to server');
+        syncGenerationRef.current++;
         await saveItems([itemWithDelete]);
         itemWithDelete.lastSyncedHash = getItemContentHash(itemWithDelete);
       }
@@ -1391,6 +1406,7 @@ const App: React.FC = () => {
       const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
       if (itemToSync) {
         const itemWithArchive = { ...itemToSync, isArchived: true, updatedAt: now };
+        syncGenerationRef.current++;
         await saveItems([itemWithArchive]);
         itemWithArchive.lastSyncedHash = getItemContentHash(itemWithArchive);
       }
@@ -1427,6 +1443,7 @@ const App: React.FC = () => {
       const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
       if (itemToSync) {
         const itemWithUnarchive = { ...itemToSync, isArchived: false, updatedAt: now };
+        syncGenerationRef.current++;
         await saveItems([itemWithUnarchive]);
         itemWithUnarchive.lastSyncedHash = getItemContentHash(itemWithUnarchive);
       }
@@ -1583,6 +1600,7 @@ const App: React.FC = () => {
     if (itemsToSync.length > 0) {
       try {
         log(`Server: Immediately syncing ${itemsToSync.length} SRS updates`);
+        syncGenerationRef.current++;
         await saveItems(itemsToSync);
         for (const syncedItem of itemsToSync) {
           syncedItem.lastSyncedHash = getItemContentHash(syncedItem);
