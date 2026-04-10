@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage } from '../db.js';
+import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch } from '../db.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 export const itemsRoutes = new Hono<{ Variables: AuthVariables }>();
@@ -34,6 +34,19 @@ itemsRoutes.get('/items/:id/image', (c) => {
       'Cache-Control': 'public, max-age=86400, immutable',
     },
   });
+});
+
+// POST /api/items/images — batch fetch images for multiple item IDs
+itemsRoutes.post('/items/images', async (c) => {
+  const userId = c.get('user').id;
+  const { ids } = await c.req.json();
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return c.json({ error: 'Expected { ids: string[] }' }, 400);
+  }
+  // Cap at 20 per request to limit response size
+  const capped = ids.slice(0, 20);
+  const images = getItemImagesBatch(capped, userId);
+  return c.json(images);
 });
 
 // GET /api/items/:id — return a single item

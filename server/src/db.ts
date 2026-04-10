@@ -255,6 +255,19 @@ export function getItemImage(id: string, userId: string): string | null {
   return null;
 }
 
+/**
+ * Get base64 image data URIs for multiple item IDs in one call.
+ * Returns a map of { id: dataUri } for items that have images.
+ */
+export function getItemImagesBatch(ids: string[], userId: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const id of ids) {
+    const uri = getItemImage(id, userId);
+    if (uri) result[id] = uri;
+  }
+  return result;
+}
+
 // ─── User CRUD ───
 
 export function findUserByGoogleId(googleId: string): UserRow | null {

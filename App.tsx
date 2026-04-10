@@ -6,9 +6,9 @@ import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
-import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync } from './services/storage';
+import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync, getStoredImageIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, getItemContentHash, analyzeInput } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput } from './services/api';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -310,6 +310,8 @@ const App: React.FC = () => {
   const lastScrollYRef = useRef(0);
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const [imagePrefetchProgress, setImagePrefetchProgress] = useState<{ done: number; total: number } | null>(null);
+  const prefetchAbortRef = useRef(false);
 
   // Auth is required — app gates on authState below
 
@@ -757,6 +759,70 @@ const App: React.FC = () => {
     });
   };
 
+  // Background pre-fetch images for items that have server markers but no IDB image yet
+  const prefetchImages = useCallback(async (items: StoredItem[]) => {
+    // Collect all item/vocab IDs that have image markers
+    const idsWithImages: string[] = [];
+    for (const item of items) {
+      if (item.isDeleted || item.isArchived) continue;
+      const data = item.data as any;
+      if (isImageMarker(data.imageUrl)) idsWithImages.push(data.id);
+      if (Array.isArray(data.vocabs)) {
+        for (const v of data.vocabs) {
+          if (isImageMarker(v.imageUrl)) idsWithImages.push(v.id);
+        }
+      }
+    }
+    if (idsWithImages.length === 0) return;
+
+    // Check which IDs already have images in IDB
+    const alreadyStored = await getStoredImageIds(idsWithImages);
+    const missing = idsWithImages.filter(id => !alreadyStored.has(id));
+    if (missing.length === 0) return;
+
+    // Sort by SRS nextReviewDate (soonest first) so study-relevant images load first
+    const srsMap = new Map<string, number>();
+    for (const item of items) {
+      const nrd = (item.srs as any)?.nextReviewDate;
+      if (nrd) {
+        srsMap.set(item.data.id, nrd);
+        if (Array.isArray((item.data as any).vocabs)) {
+          for (const v of (item.data as any).vocabs) {
+            srsMap.set(v.id, nrd);
+          }
+        }
+      }
+    }
+    missing.sort((a, b) => (srsMap.get(a) || Infinity) - (srsMap.get(b) || Infinity));
+
+    log(`🖼️ Pre-fetching ${missing.length} images in background...`);
+    prefetchAbortRef.current = false;
+    setImagePrefetchProgress({ done: 0, total: missing.length });
+
+    const BATCH_SIZE = 20;
+    let done = 0;
+    for (let i = 0; i < missing.length; i += BATCH_SIZE) {
+      if (prefetchAbortRef.current) break;
+      const batch = missing.slice(i, i + BATCH_SIZE);
+      try {
+        const images = await loadItemImagesBatch(batch);
+        const toSave = Object.entries(images).map(([id, base64]) => ({ id, base64 }));
+        if (toSave.length > 0) await saveImagesBatch(toSave);
+        done += batch.length;
+        setImagePrefetchProgress({ done, total: missing.length });
+      } catch (e) {
+        warn("Image pre-fetch batch failed:", e);
+        done += batch.length;
+        setImagePrefetchProgress({ done, total: missing.length });
+      }
+      // Yield to main thread between batches
+      await new Promise(r => setTimeout(r, 100));
+    }
+    log(`🖼️ Pre-fetch complete: ${done}/${missing.length} images`);
+    // Clear progress after a short delay
+    setTimeout(() => setImagePrefetchProgress(null), 3000);
+  }, []);
+
   // 2. SERVER SYNC — pull from server on mount, merge with local
   useEffect(() => {
     const syncFromServer = async () => {
@@ -800,6 +866,9 @@ const App: React.FC = () => {
         }
 
         setSyncState({ items: mergedItems });
+
+        // Start background image pre-fetch after sync
+        prefetchImages(mergedItems);
       } catch (error) {
         logError("Initial server sync failed:", error);
       }
@@ -1693,6 +1762,12 @@ const App: React.FC = () => {
         </div>
       )}
       
+      {imagePrefetchProgress && (
+        <div className="bg-indigo-50 text-indigo-600 text-center py-1 text-xs font-medium shrink-0">
+          Loading images: {imagePrefetchProgress.done}/{imagePrefetchProgress.total}
+        </div>
+      )}
+
       {confirmModal && (
         <ConfirmModal
           isOpen={confirmModal.isOpen}

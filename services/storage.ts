@@ -304,6 +304,42 @@ export const loadImage = async (itemId: string): Promise<string | null> => {
 };
 
 /**
+ * Check which of the given IDs already have images stored in IDB.
+ * Returns the set of IDs that DO have images (i.e., don't need fetching).
+ */
+export const getStoredImageIds = async (ids: string[]): Promise<Set<string>> => {
+  const found = new Set<string>();
+  if (ids.length === 0) return found;
+
+  const idbAvailable = await checkIndexedDBAvailability();
+  if (!idbAvailable) return found;
+
+  try {
+    const db = await getDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IMAGES_STORE, 'readonly');
+      const store = tx.objectStore(IMAGES_STORE);
+      let pending = ids.length;
+      for (const id of ids) {
+        // Use getKey instead of get to avoid loading the full base64 into memory
+        const req = store.getKey(id);
+        req.onsuccess = () => {
+          if (req.result !== undefined) found.add(id);
+          if (--pending === 0) resolve();
+        };
+        req.onerror = () => {
+          if (--pending === 0) resolve();
+        };
+      }
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    warn("Failed to check stored image IDs", e);
+  }
+  return found;
+};
+
+/**
  * Restore base64 images from IDB into items before pushing to server.
  * Replaces 'idb:stored' markers with actual base64 data so the server stores real images.
  */

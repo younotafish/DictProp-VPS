@@ -57,19 +57,39 @@ export const loadItemImage = async (itemId: string): Promise<string | null> => {
   try {
     const res = await fetch(`${API_BASE}/api/items/${itemId}/image`);
     if (!res.ok) return null;
-
-    const contentType = res.headers.get('Content-Type') || 'image/png';
-    const buffer = await res.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return `data:${contentType};base64,${btoa(binary)}`;
+    return await blobToBase64(await res.blob());
   } catch {
     return null;
   }
 };
+
+/**
+ * Fetch images for multiple item IDs in a single request.
+ * Returns a map of { id: base64DataUri }.
+ */
+export const loadItemImagesBatch = async (ids: string[]): Promise<Record<string, string>> => {
+  if (ids.length === 0) return {};
+  try {
+    const res = await fetch(`${API_BASE}/api/items/images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) return {};
+    return res.json();
+  } catch {
+    return {};
+  }
+};
+
+/** Convert a Blob to a base64 data URI string. */
+const blobToBase64 = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 
 // ============================================================================
 // AI API (replaces aiService.ts)
