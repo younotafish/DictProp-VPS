@@ -306,7 +306,8 @@ const App: React.FC = () => {
   // Start as "loaded" if we have cached items (instant UI)
   // Full data will be loaded from IndexedDB in background
   const [isLoaded, setIsLoaded] = useState(() => syncState.items.length > 0);
-  const [showNav, setShowNav] = useState(true);
+  const showNavRef = useRef(true);
+  const navRef = useRef<HTMLElement>(null);
   const lastScrollYRef = useRef(0);
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
@@ -1400,7 +1401,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = useCallback(async (id: string) => {
     log('🗑️ App: Deleting item', id);
     
     const now = Date.now();
@@ -1441,9 +1442,9 @@ const App: React.FC = () => {
     } catch (e) {
       logError('🗑️ App: Failed to sync deletion to server:', e);
     }
-  };
+  }, []);
 
-  const handleArchive = async (id: string) => {
+  const handleArchive = useCallback(async (id: string) => {
     log('📦 App: Archiving item', id);
     
     const now = Date.now();
@@ -1482,9 +1483,9 @@ const App: React.FC = () => {
     } catch (e) {
       logError('📦 App: Failed to sync archive to server:', e);
     }
-  };
+  }, []);
 
-  const handleUnarchive = async (id: string) => {
+  const handleUnarchive = useCallback(async (id: string) => {
     log('📦 App: Unarchiving item', id);
     
     const now = Date.now();
@@ -1519,7 +1520,7 @@ const App: React.FC = () => {
     } catch (e) {
       logError('📦 App: Failed to sync unarchive to server:', e);
     }
-  };
+  }, []);
 
   // Word comparison handler
   const handleCompare = useCallback((words: string[]) => {
@@ -1549,7 +1550,7 @@ const App: React.FC = () => {
   }, [sentenceItems]);
 
   // Search handler - now triggers search in notebook
-  const handleRecursiveSearch = (text: string) => {
+  const handleRecursiveSearch = useCallback((text: string) => {
       setCurrentView('notebook');
       setDetailContext(null);
       // The notebook will handle the search via its own search bar
@@ -1557,22 +1558,22 @@ const App: React.FC = () => {
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: false, autoAIIfNoMatch: true } }));
       }, 100);
-  };
+  }, []);
 
   // Force refresh search - bypasses local cache and calls AI
-  const handleForceRefreshSearch = (text: string) => {
+  const handleForceRefreshSearch = useCallback((text: string) => {
       setCurrentView('notebook');
       setDetailContext(null);
       // Dispatch event to trigger AI search in notebook
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: true } }));
       }, 100);
-  };
+  }, []);
 
   // Updated handler to support groups
-  const handleViewStoredItem = (groups: ItemGroup[], groupIndex: number, itemIndex: number) => {
+  const handleViewStoredItem = useCallback((groups: ItemGroup[], groupIndex: number, itemIndex: number) => {
       setDetailContext({ groups, groupIndex, itemIndex });
-  };
+  }, []);
 
   // SRS update — handles shared SRS atomically (all items with same title updated together)
   // Uses refs to communicate between the setSyncState updater and the post-update save logic,
@@ -1680,22 +1681,29 @@ const App: React.FC = () => {
     }
   };
 
-  // Handle scroll to hide/show nav bar
-  const handleScroll = (e: React.UIEvent<HTMLElement>) => {
+  // Handle scroll to hide/show nav bar — uses direct DOM mutation to avoid re-rendering App
+  const handleScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
     const currentScrollY = e.currentTarget.scrollTop;
+    let shouldShow = showNavRef.current;
 
     if (currentScrollY < 10) {
-      setShowNav(true);
+      shouldShow = true;
     } else if (currentScrollY > lastScrollYRef.current && currentScrollY > 100) {
-      // Scrolling down
-      setShowNav(false);
+      shouldShow = false;
     } else if (currentScrollY < lastScrollYRef.current) {
-      // Scrolling up
-      setShowNav(true);
+      shouldShow = true;
+    }
+
+    if (shouldShow !== showNavRef.current) {
+      showNavRef.current = shouldShow;
+      if (navRef.current) {
+        navRef.current.classList.toggle('translate-y-full', !shouldShow);
+        navRef.current.classList.toggle('translate-y-0', shouldShow);
+      }
     }
 
     lastScrollYRef.current = currentScrollY;
-  };
+  }, []);
 
   // Auth gate: show login/pending/loading before the main app
   if (authState.loading) {
@@ -1860,7 +1868,7 @@ const App: React.FC = () => {
 
       </main>
 
-      <nav className={`fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 ${showNav ? 'translate-y-0' : 'translate-y-full'}`}>
+      <nav ref={navRef} className="fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 translate-y-0">
         <NavButton view="notebook" currentView={currentView} onClick={setCurrentView} icon={Book} label="Notebook" />
         <NavButton view="sentences" currentView={currentView} onClick={setCurrentView} icon={MessageSquareQuote} label="Sentences" badge={sentenceDueCount || undefined} />
         <NavButton view="study" currentView={currentView} onClick={setCurrentView} icon={BrainCircuit} label="Study" />

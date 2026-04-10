@@ -29,7 +29,7 @@ interface NotebookItemProps {
   indexInGroup?: number;
 }
 
-const NotebookItem: React.FC<NotebookItemProps> = ({
+const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
   item, isOpen, onOpen, onClose, onDelete, onSearch, onViewDetail, onArchive, onUnarchive, totalInGroup = 1, indexInGroup = 0
 }) => {
   const [showActions, setShowActions] = useState(false);
@@ -181,7 +181,7 @@ const NotebookItem: React.FC<NotebookItemProps> = ({
       )}
     </div>
   );
-};
+});
 
 // Carousel wrapper for grouped items with same spelling
 interface NotebookGroupProps {
@@ -197,7 +197,7 @@ interface NotebookGroupProps {
   onUnarchive?: (id: string) => void;
 }
 
-const NotebookGroup: React.FC<NotebookGroupProps> = ({
+const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
   group, groups, groupIndex, openItemId, setOpenItemId, onDelete, onSearch, onViewDetail, onArchive, onUnarchive
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -325,7 +325,7 @@ const NotebookGroup: React.FC<NotebookGroupProps> = ({
       </div>
     </div>
   );
-};
+});
 
 // Search results carousel component
 interface SearchResultsCarouselProps {
@@ -515,7 +515,7 @@ interface NotebookProps {
   hasOverlay?: boolean;
 }
 
-export const NotebookView: React.FC<NotebookProps> = ({
+export const NotebookView: React.FC<NotebookProps> = React.memo(({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
     onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
@@ -1532,4 +1532,4 @@ export const NotebookView: React.FC<NotebookProps> = ({
       )}
     </div>
   );
-};
+});
