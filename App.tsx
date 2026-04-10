@@ -11,6 +11,7 @@ import { mergeDatasets } from './services/sync';
 import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput } from './services/api';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { GlobalSearch } from './components/GlobalSearch';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { useGlobalNavigation } from './hooks';
@@ -1549,6 +1550,16 @@ const App: React.FC = () => {
     return sentenceItems.some(s => (s.data as SentenceData).text === text);
   }, [sentenceItems]);
 
+  const isVocabSaved = useCallback((vocab: VocabCard) => {
+    const vocabWord = (vocab.word || '').toLowerCase().trim();
+    return activeItems.some(i => {
+      if (i.type !== 'vocab') return false;
+      const savedWord = ((i.data as VocabCard).word || '').toLowerCase().trim();
+      const savedSense = (i.data as VocabCard).sense || '';
+      return savedWord === vocabWord && savedSense === vocab.sense;
+    });
+  }, [activeItems]);
+
   // Search handler - now triggers search in notebook
   const handleRecursiveSearch = useCallback((text: string) => {
       setCurrentView('notebook');
@@ -1867,6 +1878,13 @@ const App: React.FC = () => {
         )}
 
       </main>
+
+      <GlobalSearch
+        onSave={handleSave}
+        isVocabSaved={isVocabSaved}
+        onSearch={handleRecursiveSearch}
+        isOnline={isOnline}
+      />
 
       <nav ref={navRef} className="fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 translate-y-0">
         <NavButton view="notebook" currentView={currentView} onClick={setCurrentView} icon={Book} label="Notebook" />
