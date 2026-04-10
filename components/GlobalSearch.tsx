@@ -38,15 +38,37 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
       }
       if (e.key === 'Escape') {
         if (mode === 'input') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
           setMode(results ? 'ready' : 'idle');
         } else if (mode === 'viewing') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
           setMode('idle');
         }
       }
+      // Arrow key navigation in results popup
+      if (mode === 'viewing' && results?.vocabs && results.vocabs.length > 1) {
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          if (currentIndex > 0) {
+            setCurrentIndex(currentIndex - 1);
+            if (results.vocabs[currentIndex - 1]?.word) speak(results.vocabs[currentIndex - 1].word);
+          }
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          const next = (currentIndex + 1) % results.vocabs.length;
+          setCurrentIndex(next);
+          if (results.vocabs[next]?.word) speak(results.vocabs[next].word);
+        }
+      }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, results]);
+    // Use capture phase so we intercept before DetailView/App handlers
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [mode, results, currentIndex]);
 
   // Auto-focus input when entering input mode
   useEffect(() => {
