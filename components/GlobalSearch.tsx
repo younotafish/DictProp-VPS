@@ -32,7 +32,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
         e.preventDefault();
-        if (mode === 'idle' || mode === 'ready') {
+        e.stopImmediatePropagation();
+        if (mode === 'input') {
+          // Already in input mode — just re-focus
+          inputRef.current?.focus();
+        } else {
           setMode('input');
         }
       }
