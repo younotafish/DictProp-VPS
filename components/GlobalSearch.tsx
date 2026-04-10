@@ -171,14 +171,14 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
     <>
       {/* Error toast */}
       {error && (
-        <div className="fixed bottom-28 right-4 z-[46] bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg animate-in fade-in duration-200">
+        <div className="fixed bottom-28 right-4 z-[56] bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg animate-in fade-in duration-200">
           {error}
         </div>
       )}
 
       {/* Input overlay */}
       {mode === 'input' && (
-        <div className="fixed bottom-20 right-4 left-4 z-[46] animate-in slide-in-from-bottom-2 duration-200">
+        <div className="fixed bottom-20 right-4 left-4 z-[56] animate-in slide-in-from-bottom-2 duration-200">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 flex items-center gap-2 px-4 py-3 max-w-md ml-auto">
             <Search size={18} className="text-slate-400 shrink-0" />
             <input
@@ -223,11 +223,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
         <>
           {/* Backdrop */}
           <div
-            className="fixed inset-0 z-[44] bg-black/30 backdrop-blur-[2px] animate-in fade-in duration-150"
+            className="fixed inset-0 z-[54] bg-black/30 backdrop-blur-[2px] animate-in fade-in duration-150"
             onClick={handleClose}
           />
           {/* Popup */}
-          <div className="fixed inset-x-0 bottom-0 z-[45] animate-in slide-in-from-bottom duration-300">
+          <div className="fixed inset-x-0 bottom-0 z-[55] animate-in slide-in-from-bottom duration-300">
             <div className="bg-white rounded-t-3xl shadow-2xl max-h-[85vh] flex flex-col">
               {/* Header */}
               <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100">
@@ -308,7 +308,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
       {mode !== 'input' && mode !== 'viewing' && (
         <button
           onClick={handleFloatingClick}
-          className={`fixed bottom-24 right-4 z-[35] w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
+          className={`fixed bottom-24 right-4 z-[55] w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
             ${mode === 'ready'
               ? 'bg-indigo-500 text-white shadow-indigo-300'
               : mode === 'searching'
