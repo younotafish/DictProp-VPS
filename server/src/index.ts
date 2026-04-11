@@ -17,6 +17,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = new Hono<{ Variables: AuthVariables }>();
 
+// Global error handler — catch everything so the server never crashes from a route error
+app.onError((err, c) => {
+  console.error(`[FATAL] ${c.req.method} ${c.req.path}:`, err);
+  return c.json({ error: err.message || 'Internal server error' }, 500);
+});
+
 // Middleware
 app.use('*', logger());
 app.use('*', compress());

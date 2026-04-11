@@ -116,18 +116,25 @@ itemsRoutes.get('/projects', (c) => {
 });
 
 itemsRoutes.post('/projects', async (c) => {
+  console.log('[projects] POST /projects - start');
   try {
     const userId = c.get('user').id;
+    console.log('[projects] userId:', userId);
     const body = await c.req.json();
+    console.log('[projects] body:', JSON.stringify(body));
     const name = body?.name;
     if (!name || typeof name !== 'string' || !name.trim()) {
       return c.json({ error: 'Project name is required' }, 400);
     }
     const id = randomUUID();
+    console.log('[projects] creating project:', id, name.trim());
     createProject(id, name.trim(), userId);
-    return c.json({ id, name: name.trim(), createdAt: Date.now() });
+    console.log('[projects] project created successfully');
+    const result = { id, name: name.trim(), createdAt: Date.now() };
+    console.log('[projects] returning:', JSON.stringify(result));
+    return c.json(result);
   } catch (e: any) {
-    console.error('POST /projects error:', e);
+    console.error('[projects] POST /projects error:', e);
     return c.json({ error: e.message || 'Internal error' }, 500);
   }
 });
