@@ -118,21 +118,19 @@ run the gamut"
         </div>
 
         {/* Project picker */}
-        {projects.length > 0 && (
-          <div className="mt-3 flex items-center gap-2">
-            <span className="text-xs text-slate-500 shrink-0">Import to:</span>
-            <select
-              value={selectedProject || ''}
-              onChange={e => setSelectedProject(e.target.value || undefined)}
-              className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-            >
-              <option value="">No project (uncategorized)</option>
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-xs text-slate-500 shrink-0">Import to:</span>
+          <select
+            value={selectedProject || ''}
+            onChange={e => setSelectedProject(e.target.value || undefined)}
+            className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+          >
+            <option value="">No project (uncategorized)</option>
+            {projects.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
 
         {/* Submit Button */}
         <button
