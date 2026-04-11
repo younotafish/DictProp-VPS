@@ -25,7 +25,13 @@ app.onError((err, c) => {
 
 // Middleware
 app.use('*', logger());
-app.use('*', compress());
+// Skip compression for /api/items (large payload, causes OOM on low-memory VPS)
+app.use('*', async (c, next) => {
+  if (c.req.path === '/api/items' && !c.req.query('since')) {
+    return next();
+  }
+  return compress()(c, next);
+});
 app.use('*', cors({
   origin: ['https://dictprop.online', 'http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
