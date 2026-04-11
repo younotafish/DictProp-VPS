@@ -1221,6 +1221,7 @@ const App: React.FC = () => {
     let failed = 0;
     let saved = 0;
     let index = 0;
+    const failedWords: string[] = [];
 
     const processWord = async () => {
       while (index < newWords.length && !batchImportAbortRef.current) {
@@ -1267,10 +1268,14 @@ const App: React.FC = () => {
           }
         } catch {
           failed++;
+          failedWords.push(word);
         }
 
         completed++;
         setBatchImportProgress({ current: completed, total: newWords.length, skipped, failed, saved, isRunning: true });
+
+        // Brief delay between requests to reduce rate limiting
+        await new Promise(r => setTimeout(r, 300));
       }
     };
 
@@ -1287,10 +1292,16 @@ const App: React.FC = () => {
       isOpen: true,
       title: 'Batch Import Complete',
       message: `${saved} vocab cards saved${skipped > 0 ? `\n${skipped} skipped (already saved)` : ''}${failed > 0 ? `\n${failed} failed` : ''}`,
-      confirmText: 'OK',
+      confirmText: failedWords.length > 0 ? 'Retry Failed' : 'OK',
       variant: failed > 0 ? 'warning' : 'success',
-      onConfirm: () => setConfirmModal(null),
-      showCancel: false,
+      onConfirm: () => {
+        setConfirmModal(null);
+        if (failedWords.length > 0) {
+          handleBatchImport(failedWords, project);
+        }
+      },
+      showCancel: failedWords.length > 0,
+      cancelText: 'Dismiss',
     });
   }, []);
 
