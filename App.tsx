@@ -1175,7 +1175,7 @@ const App: React.FC = () => {
 
   // ── Batch Import (background processing) ──────────────────────────────────
 
-  const BATCH_CONCURRENCY = 2;
+  const BATCH_CONCURRENCY = 3;
 
   // Refs for batch import to avoid stale closures
   const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
