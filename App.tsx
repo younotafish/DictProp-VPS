@@ -1175,7 +1175,7 @@ const App: React.FC = () => {
 
   // ── Batch Import (background processing) ──────────────────────────────────
 
-  const BATCH_CONCURRENCY = 3;
+  const BATCH_CONCURRENCY = 2;
 
   // Refs for batch import to avoid stale closures
   const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
@@ -1228,45 +1228,66 @@ const App: React.FC = () => {
         const currentIndex = index++;
         const word = newWords[currentIndex];
 
-        try {
-          const result = await analyzeInput(word, { mode: 'batch' });
+        // Retry once on failure (with backoff for rate limiting)
+        let lastError: any = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            if (attempt > 0) {
+              log(`Batch import: retrying "${word}" (attempt ${attempt + 1})`);
+              await new Promise(r => setTimeout(r, 2000));
+            }
 
-          for (const vocab of result.vocabs || []) {
-            const vocabWord = (vocab.word || '').toLowerCase().trim();
-            const alreadySaved = latestItemsRef.current.some(item => {
-              if (item.type !== 'vocab') return false;
-              const sw = ((item.data as VocabCard).word || '').toLowerCase().trim();
-              const ss = (item.data as VocabCard).sense || '';
-              return sw === vocabWord && ss === vocab.sense;
-            });
+            const result = await analyzeInput(word, { mode: 'batch' });
 
-            if (!alreadySaved) {
-              const storedItem: StoredItem = {
-                data: vocab,
-                type: 'vocab',
-                savedAt: Date.now(),
-                srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-                ...(project ? { project } : {}),
-              };
-              handleSaveRef.current(storedItem);
-              saved++;
+            for (const vocab of result.vocabs || []) {
+              const vocabWord = (vocab.word || '').toLowerCase().trim();
+              const alreadySaved = latestItemsRef.current.some(item => {
+                if (item.type !== 'vocab') return false;
+                const sw = ((item.data as VocabCard).word || '').toLowerCase().trim();
+                const ss = (item.data as VocabCard).sense || '';
+                return sw === vocabWord && ss === vocab.sense;
+              });
 
-              // Fire-and-forget image generation
-              if (vocab.imagePrompt && !vocab.imageUrl) {
-                generateIllustration(vocab.imagePrompt, '16:9')
-                  .then(imageData => {
-                    if (imageData) {
-                      handleUpdateRef.current({
-                        ...storedItem,
-                        data: { ...vocab, imageUrl: imageData },
-                      });
-                    }
-                  })
-                  .catch(() => {});
+              if (!alreadySaved) {
+                const storedItem: StoredItem = {
+                  data: vocab,
+                  type: 'vocab',
+                  savedAt: Date.now(),
+                  srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
+                  ...(project ? { project } : {}),
+                };
+                handleSaveRef.current(storedItem);
+                saved++;
+
+                // Fire-and-forget image generation
+                if (vocab.imagePrompt && !vocab.imageUrl) {
+                  generateIllustration(vocab.imagePrompt, '16:9')
+                    .then(imageData => {
+                      if (imageData) {
+                        handleUpdateRef.current({
+                          ...storedItem,
+                          data: { ...vocab, imageUrl: imageData },
+                        });
+                      }
+                    })
+                    .catch(() => {});
+                }
               }
             }
+            lastError = null;
+            break; // success — exit retry loop
+          } catch (err: any) {
+            lastError = err;
+            const msg = err?.message || '';
+            // Back off extra on rate limiting before retry
+            if (msg.includes('429') || msg.includes('QUOTA')) {
+              await new Promise(r => setTimeout(r, 3000));
+            }
           }
-        } catch {
+        }
+
+        if (lastError) {
+          warn(`Batch import failed for "${word}":`, lastError?.message || '');
           failed++;
           failedWords.push(word);
         }
