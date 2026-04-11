@@ -28,25 +28,26 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
   const editInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch projects directly from API when modal opens
-  const fetchProjects = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const p = await loadProjects();
-      setProjects(p);
-      onProjectsChanged(p);
-    } catch (e: any) {
-      setError(e.message || 'Failed to load projects');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [onProjectsChanged]);
+  const onProjectsChangedRef = useRef(onProjectsChanged);
+  onProjectsChangedRef.current = onProjectsChanged;
 
   useEffect(() => {
-    if (isOpen) {
-      fetchProjects();
-    }
-  }, [isOpen, fetchProjects]);
+    if (!isOpen) return;
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+    loadProjects().then(p => {
+      if (cancelled) return;
+      setProjects(p);
+      onProjectsChangedRef.current(p);
+    }).catch(e => {
+      if (cancelled) return;
+      setError(e.message || 'Failed to load projects');
+    }).finally(() => {
+      if (!cancelled) setIsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   useEffect(() => {
     if (editingId && editInputRef.current) {
