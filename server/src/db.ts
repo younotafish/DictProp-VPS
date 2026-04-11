@@ -79,6 +79,8 @@ try {
 
 const stmts = {
   getAll: db.prepare(`SELECT * FROM items WHERE user_id = ?`),
+  getAllChunk: db.prepare(`SELECT * FROM items WHERE user_id = ? LIMIT ? OFFSET ?`),
+  getCount: db.prepare(`SELECT COUNT(*) as count FROM items WHERE user_id = ?`),
   getSince: db.prepare(`SELECT * FROM items WHERE user_id = ? AND (updated_at > ? OR (updated_at IS NULL AND saved_at > ?))`),
   upsert: db.prepare(`
     INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, project)
@@ -181,13 +183,30 @@ function rowToItem(row: ItemRow, stripImages = false) {
 // ─── Item CRUD (all scoped by userId) ───
 
 export function getAllItems(stripImages = false, userId: string) {
-  const rows = stmts.getAll.all(userId) as ItemRow[];
-  return rows.map(r => rowToItem(r, stripImages));
+  if (!stripImages) {
+    // Full load (with images) — only used for explicit ?images=true requests
+    return (stmts.getAll.all(userId) as ItemRow[]).map(r => rowToItem(r, false));
+  }
+  // Chunked load to avoid OOM on low-memory VPS (3700 items with base64 images = ~150MB raw)
+  const CHUNK = 200;
+  const { count } = stmts.getCount.get(userId) as { count: number };
+  const items: any[] = [];
+  for (let offset = 0; offset < count; offset += CHUNK) {
+    const rows = stmts.getAllChunk.all(userId, CHUNK, offset) as ItemRow[];
+    for (const row of rows) {
+      items.push(rowToItem(row, true));
+    }
+    // rows array goes out of scope here, allowing GC to reclaim the raw data
+  }
+  return items;
 }
 
 export function getItemsSince(since: number, stripImages = false, userId: string) {
-  const rows = stmts.getSince.all(userId, since, since) as ItemRow[];
-  return rows.map(r => rowToItem(r, stripImages));
+  const items: any[] = [];
+  for (const row of stmts.getSince.iterate(userId, since, since) as Iterable<ItemRow>) {
+    items.push(rowToItem(row, stripImages));
+  }
+  return items;
 }
 
 export function upsertItem(item: any, userId: string) {
