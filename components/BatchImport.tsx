@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { StoredItem, VocabCard } from '../types';
+import { StoredItem, VocabCard, ProjectInfo } from '../types';
 import { X, Loader2, Check, ClipboardPaste, Trash2, ListPlus, Sparkles, RotateCcw, SkipForward } from 'lucide-react';
 import { analyzeInput, generateIllustration } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
@@ -26,6 +26,8 @@ interface BatchImportProps {
   onUpdateStoredItem?: (item: StoredItem) => void;
   savedItems: StoredItem[];
   isOnline: boolean;
+  projects?: ProjectInfo[];
+  activeProject?: string;
 }
 
 export const BatchImport: React.FC<BatchImportProps> = ({
@@ -35,9 +37,12 @@ export const BatchImport: React.FC<BatchImportProps> = ({
   onUpdateStoredItem,
   savedItems,
   isOnline,
+  projects = [],
+  activeProject,
 }) => {
   const [step, setStep] = useState<BatchStep>('input');
   const [inputText, setInputText] = useState('');
+  const [selectedProject, setSelectedProject] = useState<string | undefined>(activeProject);
 
   // Analysis state
   const [completedCount, setCompletedCount] = useState(0);
@@ -89,6 +94,7 @@ export const BatchImport: React.FC<BatchImportProps> = ({
           type: 'vocab',
           savedAt: Date.now(),
           srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
+          ...(selectedProject ? { project: selectedProject } : {}),
         };
         onSave(storedItem);
         wordSaved++;
@@ -215,7 +221,8 @@ export const BatchImport: React.FC<BatchImportProps> = ({
     setStep('input');
     setAnalyzedResults([]);
     setTotalVocabsSaved(0);
-  }, []);
+    setSelectedProject(activeProject);
+  }, [activeProject]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -298,6 +305,23 @@ run the gamut"
                 )}
               </div>
             </div>
+
+            {/* Project picker */}
+            {projects.length > 0 && (
+              <div className="mt-3 flex items-center gap-2">
+                <span className="text-xs text-slate-500 shrink-0">Import to:</span>
+                <select
+                  value={selectedProject || ''}
+                  onChange={e => setSelectedProject(e.target.value || undefined)}
+                  className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                >
+                  <option value="">No project (uncategorized)</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Start Button */}
             <button

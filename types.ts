@@ -72,7 +72,15 @@ export interface StoredItem {
   updatedAt?: number;
   isDeleted?: boolean; // Soft delete flag for sync
   isArchived?: boolean; // Archive flag - keeps item but excludes from study
+  project?: string; // Project ID — undefined means uncategorized/default
   lastSyncedHash?: string; // Local-only: hash of content as last synced to Firestore
+}
+
+// Project — a named collection of items
+export interface ProjectInfo {
+  id: string;
+  name: string;
+  createdAt: number;
 }
 
 // Group type for items with same spelling - Shared across views

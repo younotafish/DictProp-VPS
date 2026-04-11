@@ -57,14 +57,31 @@ if (!columns.some(c => c.name === 'user_id')) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user_id ON items(user_id)`);
 }
 
+// Migration: add project column to items if missing
+if (!columns.some(c => c.name === 'project')) {
+  db.exec(`ALTER TABLE items ADD COLUMN project TEXT`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_items_project ON items(project)`);
+}
+
+// Projects table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    user_id TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+`);
+
 // ─── Item prepared statements ───
 
 const stmts = {
   getAll: db.prepare(`SELECT * FROM items WHERE user_id = ?`),
   getSince: db.prepare(`SELECT * FROM items WHERE user_id = ? AND (updated_at > ? OR (updated_at IS NULL AND saved_at > ?))`),
   upsert: db.prepare(`
-    INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id)
-    VALUES (@id, @type, @data, @srs, @saved_at, @updated_at, @is_deleted, @is_archived, @user_id)
+    INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, project)
+    VALUES (@id, @type, @data, @srs, @saved_at, @updated_at, @is_deleted, @is_archived, @user_id, @project)
     ON CONFLICT(id) DO UPDATE SET
       type = @type,
       data = @data,
@@ -72,7 +89,8 @@ const stmts = {
       saved_at = @saved_at,
       updated_at = @updated_at,
       is_deleted = @is_deleted,
-      is_archived = @is_archived
+      is_archived = @is_archived,
+      project = @project
   `),
   softDelete: db.prepare(`UPDATE items SET is_deleted = 1, updated_at = ? WHERE id = ? AND user_id = ?`),
   getById: db.prepare(`SELECT * FROM items WHERE id = ?`),
@@ -117,6 +135,7 @@ interface ItemRow {
   is_deleted: number;
   is_archived: number;
   user_id: string | null;
+  project: string | null;
 }
 
 export interface UserRow {
@@ -154,6 +173,7 @@ function rowToItem(row: ItemRow, stripImages = false) {
     updatedAt: row.updated_at ?? undefined,
     isDeleted: row.is_deleted === 1 ? true : undefined,
     isArchived: row.is_archived === 1 ? true : undefined,
+    project: row.project ?? undefined,
   };
 }
 
@@ -211,6 +231,7 @@ export function upsertItem(item: any, userId: string) {
     is_deleted: item.isDeleted ? 1 : 0,
     is_archived: item.isArchived ? 1 : 0,
     user_id: userId,
+    project: item.project || null,
   });
 }
 
@@ -340,5 +361,40 @@ export function getSessionUser(token: string): UserRow | null {
 export function deleteSession(token: string) {
   sessionStmts.delete.run(token);
 }
+
+// ─── Project CRUD ───
+
+const projectStmts = {
+  getAll: db.prepare(`SELECT * FROM projects WHERE user_id = ? ORDER BY created_at`),
+  create: db.prepare(`INSERT INTO projects (id, name, user_id, created_at) VALUES (@id, @name, @user_id, @created_at)`),
+  rename: db.prepare(`UPDATE projects SET name = ? WHERE id = ? AND user_id = ?`),
+  delete: db.prepare(`DELETE FROM projects WHERE id = ? AND user_id = ?`),
+  clearItemsProject: db.prepare(`UPDATE items SET project = NULL, updated_at = ? WHERE project = ? AND user_id = ?`),
+};
+
+export interface ProjectRow {
+  id: string;
+  name: string;
+  user_id: string;
+  created_at: number;
+}
+
+export function getProjects(userId: string): ProjectRow[] {
+  return projectStmts.getAll.all(userId) as ProjectRow[];
+}
+
+export function createProject(id: string, name: string, userId: string) {
+  projectStmts.create.run({ id, name, user_id: userId, created_at: Date.now() });
+}
+
+export function renameProject(id: string, name: string, userId: string) {
+  projectStmts.rename.run(name, id, userId);
+}
+
+export const deleteProject = db.transaction((id: string, userId: string) => {
+  // Clear project from all items that belonged to it
+  projectStmts.clearItemsProject.run(Date.now(), id, userId);
+  projectStmts.delete.run(id, userId);
+});
 
 export { db };

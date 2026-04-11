@@ -1,4 +1,4 @@
-import { StoredItem, SearchResult, ComparisonResult } from '../types';
+import { StoredItem, SearchResult, ComparisonResult, ProjectInfo } from '../types';
 import { log, warn, error as logError } from './logger';
 
 // Same origin — Hono serves both API and static files
@@ -90,6 +90,42 @@ const blobToBase64 = (blob: Blob): Promise<string> =>
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+
+// ============================================================================
+// Projects API
+// ============================================================================
+
+export const loadProjects = async (): Promise<ProjectInfo[]> => {
+  const res = await fetch(`${API_BASE}/api/projects`);
+  if (!res.ok) throw new Error(`Failed to load projects: ${res.status}`);
+  return res.json();
+};
+
+export const createProjectApi = async (name: string): Promise<ProjectInfo> => {
+  const res = await fetch(`${API_BASE}/api/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to create project: ${res.status}`);
+  return res.json();
+};
+
+export const renameProjectApi = async (id: string, name: string): Promise<void> => {
+  const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to rename project: ${res.status}`);
+};
+
+export const deleteProjectApi = async (id: string): Promise<void> => {
+  const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Failed to delete project: ${res.status}`);
+};
 
 // ============================================================================
 // AI API (replaces aiService.ts)

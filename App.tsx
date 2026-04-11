@@ -4,11 +4,11 @@ import { StudyEnhanced } from './views/StudyEnhanced';
 import { SentencesView } from './views/SentencesView';
 import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
-import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem } from './types';
+import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, ProjectInfo } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync, getStoredImageIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, loadProjects, createProjectApi, renameProjectApi, deleteProjectApi } from './services/api';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
@@ -30,6 +30,7 @@ const createLightweightCache = (items: StoredItem[]): any[] =>
     };
     if (item.isDeleted) entry.isDeleted = true;
     if (item.isArchived) entry.isArchived = true;
+    if (item.project) entry.project = item.project;
 
     if (isPhraseItem(item)) {
       entry.data = {
@@ -294,8 +295,13 @@ const App: React.FC = () => {
 
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
-  const activeItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
-  // Items available for study (excludes archived and sentences)
+  const allActiveItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
+  // Filter by project for notebook display (null = show all)
+  const activeItems = useMemo(() => {
+    if (!activeProject) return allActiveItems;
+    return allActiveItems.filter(i => i.project === activeProject);
+  }, [allActiveItems, activeProject]);
+  // Items available for study — always all projects (excludes archived and sentences)
   const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
   // Sentence items
   const sentenceItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type === 'sentence'), [savedItems]);
@@ -314,6 +320,10 @@ const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [imagePrefetchProgress, setImagePrefetchProgress] = useState<{ done: number; total: number } | null>(null);
   const prefetchAbortRef = useRef(false);
+
+  // Projects
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [activeProject, setActiveProject] = useState<string | null>(null); // null = show all
 
   // Auth is required — app gates on authState below
 
@@ -455,6 +465,9 @@ const App: React.FC = () => {
     setSyncStatus('syncing');
 
     try {
+      // Reload projects
+      loadProjects().then(p => setProjects(p)).catch(e => warn("Failed to load projects:", e));
+
       // 1. Pull latest items from server
       const remoteItems = await loadAllItems();
 
@@ -829,6 +842,9 @@ const App: React.FC = () => {
   useEffect(() => {
     const syncFromServer = async () => {
       try {
+        // Load projects alongside items
+        loadProjects().then(p => setProjects(p)).catch(e => warn("Failed to load projects:", e));
+
         const remoteItems = await loadAllItems();
         if (remoteItems.length === 0) return;
 
@@ -1857,6 +1873,28 @@ const App: React.FC = () => {
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
             hasOverlay={!!detailContext || !!confirmModal || !!comparisonWords || showKeyboardHelp}
+            projects={projects}
+            activeProject={activeProject}
+            onSetActiveProject={setActiveProject}
+            onCreateProject={async (name: string) => {
+              const p = await createProjectApi(name);
+              setProjects(prev => [...prev, p]);
+              return p;
+            }}
+            onRenameProject={async (id: string, name: string) => {
+              await renameProjectApi(id, name);
+              setProjects(prev => prev.map(p => p.id === id ? { ...p, name } : p));
+            }}
+            onDeleteProject={async (id: string) => {
+              await deleteProjectApi(id);
+              setProjects(prev => prev.filter(p => p.id !== id));
+              if (activeProject === id) setActiveProject(null);
+              // Clear project from local items
+              setSyncState(prev => ({
+                items: prev.items.map(item => item.project === id ? { ...item, project: undefined, updatedAt: Date.now() } : item)
+              }));
+            }}
+            allItems={allActiveItems}
           />
         )}
 

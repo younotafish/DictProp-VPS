@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch } from '../db.js';
+import { randomUUID } from 'crypto';
+import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getProjects, createProject, renameProject, deleteProject } from '../db.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 export const itemsRoutes = new Hono<{ Variables: AuthVariables }>();
@@ -101,4 +102,42 @@ itemsRoutes.post('/import', async (c) => {
   }
   upsertMany(valid, userId);
   return c.json({ ok: true, imported: valid.length, skipped: body.length - valid.length });
+});
+
+// ─── Project routes ───
+
+itemsRoutes.get('/projects', (c) => {
+  const userId = c.get('user').id;
+  return c.json(getProjects(userId).map(p => ({
+    id: p.id,
+    name: p.name,
+    createdAt: p.created_at,
+  })));
+});
+
+itemsRoutes.post('/projects', async (c) => {
+  const userId = c.get('user').id;
+  const { name } = await c.req.json();
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return c.json({ error: 'Project name is required' }, 400);
+  }
+  const id = randomUUID();
+  createProject(id, name.trim(), userId);
+  return c.json({ id, name: name.trim(), createdAt: Date.now() });
+});
+
+itemsRoutes.put('/projects/:id', async (c) => {
+  const userId = c.get('user').id;
+  const { name } = await c.req.json();
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return c.json({ error: 'Project name is required' }, 400);
+  }
+  renameProject(c.req.param('id'), name.trim(), userId);
+  return c.json({ ok: true });
+});
+
+itemsRoutes.delete('/projects/:id', (c) => {
+  const userId = c.get('user').id;
+  deleteProject(c.req.param('id'), userId);
+  return c.json({ ok: true });
 });

@@ -1,14 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
-import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus } from 'lucide-react';
+import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, ProjectInfo } from '../types';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
+import { ProjectManager } from '../components/ProjectManager';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
@@ -514,13 +515,21 @@ interface NotebookProps {
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
   hasOverlay?: boolean;
+  projects?: ProjectInfo[];
+  activeProject?: string | null;
+  onSetActiveProject?: (id: string | null) => void;
+  onCreateProject?: (name: string) => Promise<ProjectInfo>;
+  onRenameProject?: (id: string, name: string) => Promise<void>;
+  onDeleteProject?: (id: string) => Promise<void>;
+  allItems?: StoredItem[];
 }
 
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
     onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
-    onSaveSentence, isSentenceSaved, hasOverlay
+    onSaveSentence, isSentenceSaved, hasOverlay,
+    projects = [], activeProject, onSetActiveProject, onCreateProject, onRenameProject, onDeleteProject, allItems
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -540,6 +549,23 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
+
+  // Project state
+  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  const [showProjectManager, setShowProjectManager] = useState(false);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close project dropdown on outside click
+  useEffect(() => {
+    if (!showProjectDropdown) return;
+    const handleClick = (e: MouseEvent) => {
+      if (projectDropdownRef.current && !projectDropdownRef.current.contains(e.target as Node)) {
+        setShowProjectDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showProjectDropdown]);
 
   // Compare mode state
   const [compareMode, setCompareMode] = useState(false);
@@ -1335,6 +1361,59 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             >
               {sortMode === 'familiarity' ? <Sparkles size={16} /> : <ArrowDownAZ size={16} />}
             </button>
+            {/* Project filter */}
+            {onSetActiveProject && (
+              <div className="relative shrink-0" ref={projectDropdownRef}>
+                <button
+                  onClick={() => projects.length > 0 ? setShowProjectDropdown(prev => !prev) : setShowProjectManager(true)}
+                  className={`h-8 shrink-0 flex items-center gap-1 rounded-full px-2 transition-colors ${
+                    activeProject
+                      ? 'text-indigo-600 bg-indigo-50'
+                      : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  }`}
+                  title={activeProject ? `Project: ${projects.find(p => p.id === activeProject)?.name}` : 'Projects'}
+                >
+                  <FolderOpen size={14} />
+                  {activeProject && (
+                    <span className="text-[11px] font-semibold max-w-[60px] truncate">
+                      {projects.find(p => p.id === activeProject)?.name}
+                    </span>
+                  )}
+                </button>
+                {showProjectDropdown && (
+                  <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    <button
+                      onClick={() => { onSetActiveProject(null); setShowProjectDropdown(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                        !activeProject ? 'text-indigo-600 bg-indigo-50 font-semibold' : 'text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      All Projects
+                    </button>
+                    <div className="h-px bg-slate-100 my-1" />
+                    {projects.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => { onSetActiveProject(p.id); setShowProjectDropdown(false); }}
+                        className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                          activeProject === p.id ? 'text-indigo-600 bg-indigo-50 font-semibold' : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                    <div className="h-px bg-slate-100 my-1" />
+                    <button
+                      onClick={() => { setShowProjectDropdown(false); setShowProjectManager(true); }}
+                      className="w-full text-left px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 flex items-center gap-2"
+                    >
+                      <Settings size={12} />
+                      Manage Projects
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
             {/* Refresh All Button */}
             {onBulkRefresh && isOnline && (
@@ -1535,6 +1614,21 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           onUpdateStoredItem={onUpdateStoredItem}
           savedItems={items}
           isOnline={isOnline}
+          projects={projects}
+          activeProject={activeProject ?? undefined}
+        />
+      )}
+
+      {/* Project Manager Modal */}
+      {onCreateProject && onRenameProject && onDeleteProject && (
+        <ProjectManager
+          isOpen={showProjectManager}
+          onClose={() => setShowProjectManager(false)}
+          projects={projects}
+          onCreateProject={onCreateProject}
+          onRenameProject={onRenameProject}
+          onDeleteProject={onDeleteProject}
+          allItems={allItems || items}
         />
       )}
 

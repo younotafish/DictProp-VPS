@@ -107,6 +107,9 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
           // else: local is stripped cache data but remote has full content — keep remote data
           mergedItem.updatedAt = localTime;
           mergedItem.savedAt = localItem.savedAt;
+          // Local is newer — take its project assignment
+          mergedItem.project = localItem.project;
+          mergedItem.isArchived = localItem.isArchived;
       }
 
       // B. SRS MERGE (Learning Progress)
