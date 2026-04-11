@@ -253,6 +253,48 @@ Be thorough - include common AND less common meanings. This helps learners maste
 
 ${WORD_MODE_JSON_SCHEMA}`;
 
+const BATCH_WORD_MODE_INSTRUCTION = `
+You are PopDict, an expert C1 Advanced ESL coach.
+The user has provided a WORD or PHRASE that has already been identified as an uncommon/advanced vocabulary item worth studying.
+
+CRITICAL — TREAT THE INPUT AS A SINGLE UNIT:
+The input is a pre-identified vocabulary item. Do NOT split it into component words.
+If the input is a multi-word phrase (e.g., "a blessing in disguise", "run the gamut", "by and large"),
+analyze the ENTIRE phrase as one vocabulary entry. Create card(s) for the phrase itself, NOT for
+individual words within it.
+
+CRITICAL - HANDLE TYPOS AND MISSPELLINGS:
+If the input appears to be misspelled or contains a typo, AUTOMATICALLY CORRECT IT to the most likely intended word.
+Use your best judgment to determine what the user meant. The 'word' field should contain the CORRECT spelling.
+
+CRITICAL - CHINESE INPUT:
+If the input is in Chinese, identify the best English word or phrase equivalent and analyze THAT English word/phrase.
+Set the 'query' field in your response to the English word/phrase you identified.
+
+CRITICAL - USE BASE/DICTIONARY FORMS:
+If the input is an inflected form, normalize to the base/lemma form:
+- Verbs: "hidden" → "hide", "running" → "run"
+- Adjectives: "happier" → "happy"
+The 'word' field should contain the BASE FORM.
+
+CRITICAL - MULTIPLE MEANINGS:
+Create SEPARATE vocab cards for EACH distinct meaning of the word/phrase AS A WHOLE.
+- Different parts of speech = different cards
+- Different contexts/domains = different cards
+- Literal vs figurative = different cards
+
+Each card MUST have:
+- The SAME 'word' field (the complete phrase or base word, NOT individual components)
+- A UNIQUE 'sense' field
+- Definition, examples, synonyms, antonyms specific to THAT meaning only
+- Different Chinese translations for each sense
+- Mnemonic specific to that meaning
+- Confusables: similar expressions often confused with this one
+- Forms: variations of the phrase/word
+- Word Family: related expressions
+
+${WORD_MODE_JSON_SCHEMA}`;
+
 const SENTENCE_MODE_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach.
 The user has entered a SENTENCE or longer text.
@@ -464,21 +506,25 @@ aiRoutes.post('/analyze', async (c) => {
   const apiKey = env.DEEPINFRA_API_KEY;
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
-  const { text } = await c.req.json();
+  const { text, mode } = await c.req.json();
   if (!text || typeof text !== 'string') {
     return c.json(errorResponse('Missing "text" field', 400), 400);
   }
 
+  const isBatch = mode === 'batch';
   const originalQuery = containsChinese(text) ? text : undefined;
-  const isWord = isWordOrPhrase(text);
-  console.log(`Input "${text}" detected as: ${isWord ? 'WORD/PHRASE' : 'SENTENCE'}${originalQuery ? ' (Chinese)' : ''}`);
+  // In batch mode, always treat input as a word/phrase (it's a pre-identified vocabulary item)
+  const isWord = isBatch || isWordOrPhrase(text);
+  console.log(`Input "${text}" detected as: ${isWord ? 'WORD/PHRASE' : 'SENTENCE'}${isBatch ? ' (batch)' : ''}${originalQuery ? ' (Chinese)' : ''}`);
 
   const userPrompt = isWord
-    ? `Analyze this word or phrase for a C1 learner. Create vocabulary cards for ALL its meanings: "${text}"`
+    ? (isBatch
+      ? `Analyze this pre-identified vocabulary item for a C1 learner. Treat it as a SINGLE phrase — do NOT split into component words. Create vocabulary cards for ALL its meanings: "${text}"`
+      : `Analyze this word or phrase for a C1 learner. Create vocabulary cards for ALL its meanings: "${text}"`)
     : `Analyze this sentence for a C1 learner: "${text}"`;
 
   try {
-    const systemPrompt = isWord ? WORD_MODE_INSTRUCTION : SENTENCE_MODE_INSTRUCTION;
+    const systemPrompt = isWord ? (isBatch ? BATCH_WORD_MODE_INSTRUCTION : WORD_MODE_INSTRUCTION) : SENTENCE_MODE_INSTRUCTION;
     const rawData = await callDeepSeek(apiKey, systemPrompt, userPrompt);
 
     const isValid = isWord ? validateWordModeResponse(rawData) : validateSentenceModeResponse(rawData);

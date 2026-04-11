@@ -1228,7 +1228,7 @@ const App: React.FC = () => {
         const word = newWords[currentIndex];
 
         try {
-          const result = await analyzeInput(word);
+          const result = await analyzeInput(word, { mode: 'batch' });
 
           for (const vocab of result.vocabs || []) {
             const vocabWord = (vocab.word || '').toLowerCase().trim();
@@ -1551,10 +1551,23 @@ const App: React.FC = () => {
 
   const handleDelete = useCallback(async (id: string) => {
     log('🗑️ App: Deleting item', id);
-    
+
     const now = Date.now();
-    
-    // Use functional update to avoid stale closure issues
+
+    // Update latestItemsRef IMMEDIATELY (before state update settles) so the
+    // debounced IDB save and any concurrent reads see the deletion right away.
+    // This prevents the bug where IDB saves the non-deleted version, which then
+    // resurrects the item on next app load via merge.
+    const refIndex = latestItemsRef.current.findIndex(i => i.data.id === id);
+    let itemWithDelete: StoredItem | null = null;
+    if (refIndex >= 0) {
+      const newItems = [...latestItemsRef.current];
+      itemWithDelete = { ...newItems[refIndex], isDeleted: true, updatedAt: now };
+      newItems[refIndex] = itemWithDelete;
+      latestItemsRef.current = newItems;
+    }
+
+    // Also update React state
     setSyncState(prevState => {
       const index = prevState.items.findIndex(i => i.data.id === id);
       if (index >= 0) {
@@ -1564,7 +1577,7 @@ const App: React.FC = () => {
           isDeleted: true,
           updatedAt: now
         };
-        
+
         return {
           ...prevState,
           items: newItems
@@ -1574,14 +1587,12 @@ const App: React.FC = () => {
       return prevState;
     });
 
-    // Update carousel immediately (before Firebase sync) so card disappears instantly
+    // Update carousel immediately so card disappears instantly
     removeItemFromDetailContext(id);
 
     // Immediately sync deletion to server (don't wait for 5s debounce)
     try {
-      const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
-      if (itemToSync) {
-        const itemWithDelete = { ...itemToSync, isDeleted: true, updatedAt: now };
+      if (itemWithDelete) {
         log('🗑️ App: Immediately syncing deletion to server');
         syncGenerationRef.current++;
         await saveItems([itemWithDelete]);
@@ -1630,6 +1641,52 @@ const App: React.FC = () => {
       }
     } catch (e) {
       logError('📦 App: Failed to sync archive to server:', e);
+    }
+  }, []);
+
+  const handleRemoveVocabFromPhrase = useCallback(async (phraseId: string, vocabId: string) => {
+    log('🗑️ App: Removing vocab', vocabId, 'from phrase', phraseId);
+
+    const now = Date.now();
+
+    // Update ref immediately
+    const refIndex = latestItemsRef.current.findIndex(i => i.data.id === phraseId);
+    let updatedItem: StoredItem | null = null;
+    if (refIndex >= 0) {
+      const phrase = latestItemsRef.current[refIndex];
+      const phraseData = phrase.data as any;
+      if (Array.isArray(phraseData.vocabs) && phraseData.vocabs.length > 1) {
+        const newVocabs = phraseData.vocabs.filter((v: any) => v.id !== vocabId);
+        updatedItem = {
+          ...phrase,
+          data: { ...phraseData, vocabs: newVocabs },
+          updatedAt: now,
+        };
+        const newItems = [...latestItemsRef.current];
+        newItems[refIndex] = updatedItem;
+        latestItemsRef.current = newItems;
+      }
+    }
+
+    if (!updatedItem) return;
+
+    setSyncState(prevState => {
+      const index = prevState.items.findIndex(i => i.data.id === phraseId);
+      if (index >= 0) {
+        const newItems = [...prevState.items];
+        newItems[index] = updatedItem!;
+        return { ...prevState, items: newItems };
+      }
+      return prevState;
+    });
+
+    // Sync to server
+    try {
+      syncGenerationRef.current++;
+      await saveItems([updatedItem]);
+      updatedItem.lastSyncedHash = getItemContentHash(updatedItem);
+    } catch (e) {
+      logError('🗑️ App: Failed to sync vocab removal to server:', e);
     }
   }, []);
 
@@ -1969,6 +2026,7 @@ const App: React.FC = () => {
               onCompare={handleCompare}
               onSaveSentence={handleSaveSentence}
               isSentenceSaved={isSentenceSaved}
+              onRemoveVocabFromPhrase={handleRemoveVocabFromPhrase}
           />
         </ErrorBoundary>
       )}

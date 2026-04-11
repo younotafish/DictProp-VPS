@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -68,6 +68,7 @@ interface DetailViewProps {
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
+  onRemoveVocabFromPhrase?: (phraseId: string, vocabId: string) => void;
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({ 
@@ -86,6 +87,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onCompare,
   onSaveSentence,
   isSentenceSaved,
+  onRemoveVocabFromPhrase,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
@@ -96,7 +98,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [rememberInfo, setRememberInfo] = useState<{
     intervalDays: number;
@@ -435,7 +436,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onArrowUp: handlePrevGroup,
     onArrowDown: handleNextGroup,
     onSave: handleToggleSave,
-    enabled: !showDeleteConfirm && !showActionMenu,
+    enabled: !showActionMenu,
   });
 
   // Trackpad wheel navigation
@@ -483,11 +484,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
       warn('Delete failed: No valid ID found');
       return;
     }
-    
+
     log('🗑️ DetailView: Deleting item:', idToDelete, title);
-    setShowDeleteConfirm(false);
     setShowActionMenu(false);
-    
+
     // App.tsx handles updating detailContext and navigation
     onDelete(idToDelete);
   };
@@ -627,7 +627,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Keyboard shortcuts
   useEffect(() => {
-    if (showDeleteConfirm || showActionMenu) return;
+    if (showActionMenu) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip if in input
@@ -665,11 +665,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
         }
       }
 
-      // D: Delete (show confirm dialog)
+      // D: Delete directly
       if (e.key === 'd' || e.key === 'D') {
         if (!e.metaKey && !e.ctrlKey) {
           e.preventDefault();
-          if (isSaved) setShowDeleteConfirm(true);
+          if (isSaved) handleDeleteItem();
         }
       }
 
@@ -684,7 +684,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showDeleteConfirm, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved]);
+  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved]);
 
   return (
     <div 
@@ -750,9 +750,20 @@ export const DetailView: React.FC<DetailViewProps> = ({
               >
                 <RefreshCw size={18} />
               </Button>
-              <Button 
-                variant="ghost" 
-                size="sm" 
+              {isSaved && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleDeleteItem}
+                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                  title="Delete (D)"
+                >
+                  <Trash2 size={18} />
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={handleToggleSave}
                 className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
               >
@@ -892,19 +903,30 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   <div className="grid gap-4">
                     {((data as SearchResult).vocabs || []).map((vocab) => (
                       <ErrorBoundary key={vocab.id} variant="inline" fallbackMessage="This card couldn't be displayed.">
-                        <VocabCardDisplay
-                          data={vocab}
-                          onSave={() => handleSaveVocab(vocab)}
-                          isSaved={savedItems.some(i => getItemSpelling(i) === (vocab.word || '').toLowerCase().trim() && getItemSense(i) === vocab.sense)}
-                          onSearch={handleVocabSearch}
-                          scrollable={false}
-                          showSave={true}
-                          className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
-                          onCompare={onCompare}
-                          onSaveSentence={onSaveSentence}
-                          isSentenceSaved={isSentenceSaved}
-                          onLazyLoadImage={onLazyLoadImage}
-                        />
+                        <div className="relative group/vocab">
+                          {onRemoveVocabFromPhrase && (data as SearchResult).vocabs.length > 1 && (
+                            <button
+                              onClick={() => onRemoveVocabFromPhrase(data.id, vocab.id)}
+                              className="absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full bg-slate-200 text-slate-500 hover:bg-rose-500 hover:text-white flex items-center justify-center opacity-0 group-hover/vocab:opacity-100 transition-all duration-150 shadow-sm"
+                              title="Remove this vocab"
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
+                          <VocabCardDisplay
+                            data={vocab}
+                            onSave={() => handleSaveVocab(vocab)}
+                            isSaved={savedItems.some(i => getItemSpelling(i) === (vocab.word || '').toLowerCase().trim() && getItemSense(i) === vocab.sense)}
+                            onSearch={handleVocabSearch}
+                            scrollable={false}
+                            showSave={true}
+                            className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
+                            onCompare={onCompare}
+                            onSaveSentence={onSaveSentence}
+                            isSentenceSaved={isSentenceSaved}
+                            onLazyLoadImage={onLazyLoadImage}
+                          />
+                        </div>
                       </ErrorBoundary>
                     ))}
                   </div>
@@ -1022,10 +1044,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
               Reset Memory Strength
             </button>
             <button
-              onClick={() => {
-                setShowActionMenu(false);
-                setShowDeleteConfirm(true);
-              }}
+              onClick={handleDeleteItem}
               className="w-full px-4 py-2.5 text-left text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 transition-colors"
             >
               <Trash2 size={16} />
@@ -1035,42 +1054,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
         </>
       )}
 
-      {/* Delete confirmation modal */}
-      {showDeleteConfirm && (
-        <div 
-          className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-150"
-          onClick={() => setShowDeleteConfirm(false)}
-        >
-          <div 
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center animate-in zoom-in-95 duration-150"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="w-14 h-14 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Trash2 size={28} />
-            </div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Delete this word?</h3>
-            <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-              This will remove <span className="font-semibold text-slate-700">"{title}"</span> from your notebook and erase all learning progress.
-            </p>
-            <div className="flex gap-3">
-              <Button 
-                variant="ghost" 
-                onClick={() => setShowDeleteConfirm(false)} 
-                className="flex-1 py-3"
-              >
-                Cancel
-              </Button>
-              <Button 
-                variant="primary" 
-                onClick={handleDeleteItem}
-                className="flex-1 py-3 bg-rose-500 hover:bg-rose-600 border-0 text-white"
-              >
-                Delete
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

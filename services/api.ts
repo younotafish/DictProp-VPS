@@ -134,7 +134,7 @@ export const deleteProjectApi = async (id: string): Promise<void> => {
 // AI API (replaces aiService.ts)
 // ============================================================================
 
-export const analyzeInput = async (text: string): Promise<SearchResult> => {
+export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): Promise<SearchResult> => {
   if (!text || text.trim().length === 0) {
     throw new Error("Cannot analyze empty text");
   }
@@ -143,7 +143,7 @@ export const analyzeInput = async (text: string): Promise<SearchResult> => {
     const res = await fetch(`${API_BASE}/api/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(options?.mode ? { mode: options.mode } : {}) }),
     });
 
     if (!res.ok) {
