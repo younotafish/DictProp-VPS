@@ -58,19 +58,22 @@ if (!columns.some(c => c.name === 'user_id')) {
 }
 
 // Migration: add project column to items if missing
-if (!columns.some(c => c.name === 'project')) {
-  db.exec(`ALTER TABLE items ADD COLUMN project TEXT`);
+try {
+  if (!columns.some(c => c.name === 'project')) {
+    db.exec(`ALTER TABLE items ADD COLUMN project TEXT`);
+  }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_items_project ON items(project)`);
+} catch (e) {
+  console.warn('Project column migration:', e);
 }
 
 // Projects table
-db.exec(`CREATE TABLE IF NOT EXISTS projects (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  user_id TEXT,
-  created_at INTEGER NOT NULL
-)`);
-db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
+} catch (e) {
+  console.warn('Projects table creation:', e);
+}
 
 // ─── Item prepared statements ───
 

@@ -102,13 +102,20 @@ export const loadProjects = async (): Promise<ProjectInfo[]> => {
 };
 
 export const createProjectApi = async (name: string): Promise<ProjectInfo> => {
-  const res = await fetch(`${API_BASE}/api/projects`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) throw new Error(`Failed to create project: ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(`${API_BASE}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Failed to create project: ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 export const renameProjectApi = async (id: string, name: string): Promise<void> => {
