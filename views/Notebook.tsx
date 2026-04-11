@@ -522,6 +522,8 @@ interface NotebookProps {
   onRenameProject?: (id: string, name: string) => Promise<void>;
   onDeleteProject?: (id: string) => Promise<void>;
   allItems?: StoredItem[];
+  onBatchImport?: (words: string[], project?: string) => void;
+  batchImportProgress?: { current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean } | null;
 }
 
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
@@ -529,7 +531,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
     onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
-    projects = [], activeProject, onSetActiveProject, onCreateProject, onRenameProject, onDeleteProject, allItems
+    projects = [], activeProject, onSetActiveProject, onCreateProject, onRenameProject, onDeleteProject, allItems,
+    onBatchImport, batchImportProgress
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -1547,9 +1550,34 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               </div>
             </div>
             <div className="w-24 h-2 bg-violet-400 rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-white transition-all duration-300"
                 style={{ width: `${(bulkRefreshProgress.current / bulkRefreshProgress.total) * 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Import Progress Banner */}
+      {batchImportProgress?.isRunning && (
+        <div className="sticky top-[72px] z-[9] bg-indigo-500 text-white px-4 py-3 shadow-md">
+          <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Loader2 className="animate-spin" size={18} />
+              <div>
+                <p className="font-medium text-sm">Importing words...</p>
+                <p className="text-xs text-indigo-200">
+                  {batchImportProgress.current}/{batchImportProgress.total} done
+                  {batchImportProgress.saved > 0 && ` · ${batchImportProgress.saved} saved`}
+                  {batchImportProgress.skipped > 0 && ` · ${batchImportProgress.skipped} skipped`}
+                </p>
+              </div>
+            </div>
+            <div className="w-24 h-2 bg-indigo-400 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-white transition-all duration-300"
+                style={{ width: `${batchImportProgress.total > 0 ? (batchImportProgress.current / batchImportProgress.total) * 100 : 0}%` }}
               />
             </div>
           </div>
@@ -1606,14 +1634,11 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       )}
 
       {/* Batch Import Modal */}
-      {onSave && (
+      {onBatchImport && (
         <BatchImport
           isOpen={showBatchImport}
           onClose={() => setShowBatchImport(false)}
-          onSave={onSave}
-          onUpdateStoredItem={onUpdateStoredItem}
-          savedItems={items}
-          isOnline={isOnline}
+          onSubmit={onBatchImport}
           projects={projects}
           activeProject={activeProject ?? undefined}
         />

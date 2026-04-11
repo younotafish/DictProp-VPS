@@ -8,7 +8,7 @@ import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, ge
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync, getStoredImageIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, loadProjects, createProjectApi, renameProjectApi, deleteProjectApi } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, createProjectApi, renameProjectApi, deleteProjectApi } from './services/api';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
@@ -372,6 +372,12 @@ const App: React.FC = () => {
 
   // Bulk refresh state
   const [bulkRefreshProgress, setBulkRefreshProgress] = useState<{ current: number; total: number; isRunning: boolean } | null>(null);
+
+  // Batch import state
+  const [batchImportProgress, setBatchImportProgress] = useState<{
+    current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean;
+  } | null>(null);
+  const batchImportAbortRef = useRef(false);
 
   // Confirm modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -1167,6 +1173,127 @@ const App: React.FC = () => {
     });
   }, [activeItems, executeBulkRefresh]);
 
+  // ── Batch Import (background processing) ──────────────────────────────────
+
+  const BATCH_CONCURRENCY = 3;
+
+  // Refs for batch import to avoid stale closures
+  const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
+  const handleUpdateRef = useRef<(item: StoredItem) => void>(() => {});
+
+  const handleBatchImport = useCallback(async (words: string[], project?: string) => {
+    if (words.length === 0) return;
+
+    // Deduplicate against existing items
+    const currentItems = latestItemsRef.current;
+    const newWords: string[] = [];
+    let skipped = 0;
+    for (const word of words) {
+      const w = word.toLowerCase().trim();
+      const exists = currentItems.some(item => {
+        if (item.isDeleted || item.type !== 'vocab') return false;
+        return ((item.data as VocabCard).word || '').toLowerCase().trim() === w;
+      });
+      if (exists) {
+        skipped++;
+      } else {
+        newWords.push(word);
+      }
+    }
+
+    if (newWords.length === 0) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'All Already Saved',
+        message: `All ${words.length} words are already in your notebook.`,
+        confirmText: 'OK',
+        variant: 'info',
+        onConfirm: () => setConfirmModal(null),
+        showCancel: false,
+      });
+      return;
+    }
+
+    setBatchImportProgress({ current: 0, total: newWords.length, skipped, failed: 0, saved: 0, isRunning: true });
+    batchImportAbortRef.current = false;
+
+    let completed = 0;
+    let failed = 0;
+    let saved = 0;
+    let index = 0;
+
+    const processWord = async () => {
+      while (index < newWords.length && !batchImportAbortRef.current) {
+        const currentIndex = index++;
+        const word = newWords[currentIndex];
+
+        try {
+          const result = await analyzeInput(word);
+
+          for (const vocab of result.vocabs || []) {
+            const vocabWord = (vocab.word || '').toLowerCase().trim();
+            const alreadySaved = latestItemsRef.current.some(item => {
+              if (item.type !== 'vocab') return false;
+              const sw = ((item.data as VocabCard).word || '').toLowerCase().trim();
+              const ss = (item.data as VocabCard).sense || '';
+              return sw === vocabWord && ss === vocab.sense;
+            });
+
+            if (!alreadySaved) {
+              const storedItem: StoredItem = {
+                data: vocab,
+                type: 'vocab',
+                savedAt: Date.now(),
+                srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
+                ...(project ? { project } : {}),
+              };
+              handleSaveRef.current(storedItem);
+              saved++;
+
+              // Fire-and-forget image generation
+              if (vocab.imagePrompt && !vocab.imageUrl) {
+                generateIllustration(vocab.imagePrompt, '16:9')
+                  .then(imageData => {
+                    if (imageData) {
+                      handleUpdateRef.current({
+                        ...storedItem,
+                        data: { ...vocab, imageUrl: imageData },
+                      });
+                    }
+                  })
+                  .catch(() => {});
+              }
+            }
+          }
+        } catch {
+          failed++;
+        }
+
+        completed++;
+        setBatchImportProgress({ current: completed, total: newWords.length, skipped, failed, saved, isRunning: true });
+      }
+    };
+
+    // Launch concurrent workers
+    const workers = Array.from(
+      { length: Math.min(BATCH_CONCURRENCY, newWords.length) },
+      () => processWord()
+    );
+    await Promise.all(workers);
+
+    setBatchImportProgress(null);
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Batch Import Complete',
+      message: `${saved} vocab cards saved${skipped > 0 ? `\n${skipped} skipped (already saved)` : ''}${failed > 0 ? `\n${failed} failed` : ''}`,
+      confirmText: 'OK',
+      variant: failed > 0 ? 'warning' : 'success',
+      onConfirm: () => setConfirmModal(null),
+      showCancel: false,
+    });
+  }, []);
+
   const handleSave = (item: StoredItem) => {
     try {
       if (!item || !item.data || !item.data.id) return;
@@ -1397,6 +1524,10 @@ const App: React.FC = () => {
       return prevState;
     });
   };
+
+  // Keep batch import refs up to date
+  handleSaveRef.current = handleSave;
+  handleUpdateRef.current = handleUpdateStoredItem;
 
   /**
    * Lazy load image from server via dedicated binary endpoint.
@@ -1895,6 +2026,8 @@ const App: React.FC = () => {
               }));
             }}
             allItems={allActiveItems}
+            onBatchImport={handleBatchImport}
+            batchImportProgress={batchImportProgress}
           />
         )}
 
