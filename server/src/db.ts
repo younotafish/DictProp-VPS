@@ -64,15 +64,13 @@ if (!columns.some(c => c.name === 'project')) {
 }
 
 // Projects table
-db.exec(`
-  CREATE TABLE IF NOT EXISTS projects (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    user_id TEXT,
-    created_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
-`);
+db.exec(`CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  user_id TEXT,
+  created_at INTEGER NOT NULL
+)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
 
 // ─── Item prepared statements ───
 
