@@ -46,6 +46,14 @@ app.use('/*', serveStatic({ root: distDir }));
 // SPA fallback — serve index.html for all non-API, non-file routes
 app.get('*', serveStatic({ root: distDir, path: 'index.html' }));
 
+// Prevent server from crashing on unhandled errors
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
+});
+
 console.log(`DictProp server starting on port ${env.PORT}...`);
 
 serve({

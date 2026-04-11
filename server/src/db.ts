@@ -365,7 +365,7 @@ export function deleteSession(token: string) {
 
 // ─── Project CRUD ───
 
-const projectStmts = {
+let projectStmts = {
   getAll: db.prepare(`SELECT * FROM projects WHERE user_id = ? ORDER BY created_at`),
   create: db.prepare(`INSERT INTO projects (id, name, user_id, created_at) VALUES (@id, @name, @user_id, @created_at)`),
   rename: db.prepare(`UPDATE projects SET name = ? WHERE id = ? AND user_id = ?`),
@@ -381,11 +381,34 @@ export interface ProjectRow {
 }
 
 export function getProjects(userId: string): ProjectRow[] {
-  return projectStmts.getAll.all(userId) as ProjectRow[];
+  try {
+    return projectStmts.getAll.all(userId) as ProjectRow[];
+  } catch (e: any) {
+    if (e.message?.includes('no such table')) {
+      db.exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
+      projectStmts.getAll = db.prepare(`SELECT * FROM projects WHERE user_id = ? ORDER BY created_at`);
+      return projectStmts.getAll.all(userId) as ProjectRow[];
+    }
+    throw e;
+  }
 }
 
 export function createProject(id: string, name: string, userId: string) {
-  projectStmts.create.run({ id, name, user_id: userId, created_at: Date.now() });
+  try {
+    projectStmts.create.run({ id, name, user_id: userId, created_at: Date.now() });
+  } catch (e: any) {
+    // Table might not exist — create it and retry
+    if (e.message?.includes('no such table')) {
+      db.exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
+      // Re-prepare the statement since table was just created
+      projectStmts.create = db.prepare(`INSERT INTO projects (id, name, user_id, created_at) VALUES (@id, @name, @user_id, @created_at)`);
+      projectStmts.create.run({ id, name, user_id: userId, created_at: Date.now() });
+    } else {
+      throw e;
+    }
+  }
 }
 
 export function renameProject(id: string, name: string, userId: string) {
