@@ -19,7 +19,10 @@ jobs:
             cd /opt/dictprop-vps
             git pull origin main
             docker compose up -d --build
+            docker system prune -f
             echo "Deploy complete"
             sleep 15
             curl -sf http://localhost:3000/api/health || echo "Health check failed"
-            docker compose logs --tail=30
+            docker compose ps
+            docker compose logs --tail=50
+            dmesg | grep -i "oom\|killed" | tail -5
