@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { StoredItem, VocabCard } from '../types';
-import { X, Loader2, Check, ClipboardPaste, Trash2, ListPlus, Sparkles, RotateCcw } from 'lucide-react';
+import { X, Loader2, Check, ClipboardPaste, Trash2, ListPlus, Sparkles, RotateCcw, SkipForward } from 'lucide-react';
 import { analyzeInput, generateIllustration } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
@@ -12,6 +12,7 @@ interface AnalyzedResult {
   word: string;
   vocabCount: number;
   error?: string;
+  skipped?: boolean;
 }
 
 const CONCURRENCY = 3;
@@ -146,24 +147,49 @@ export const BatchImport: React.FC<BatchImportProps> = ({
     await Promise.all(workers);
   }, [processWord]);
 
+  // ── Check if word already exists in notebook ──────────────────────────────
+
+  const isWordSaved = useCallback((word: string): boolean => {
+    const w = word.toLowerCase().trim();
+    return savedItems.some(item => {
+      if (item.type === 'vocab') {
+        return ((item.data as VocabCard).word || '').toLowerCase().trim() === w;
+      }
+      return false;
+    });
+  }, [savedItems]);
+
   // ── Start analysis ───────────────────────────────────────────────────────
 
   const handleStart = useCallback(async (wordsOverride?: string[]) => {
-    const words = wordsOverride || parseWords(inputText);
-    if (words.length === 0 || !isOnline) return;
+    const allWords = wordsOverride || parseWords(inputText);
+    if (allWords.length === 0 || !isOnline) return;
+
+    // Dedupe: separate already-saved words from new ones
+    const newWords: string[] = [];
+    const skippedResults: AnalyzedResult[] = [];
+    for (const word of allWords) {
+      if (isWordSaved(word)) {
+        skippedResults.push({ word, vocabCount: 0, skipped: true });
+      } else {
+        newWords.push(word);
+      }
+    }
 
     setStep('analyzing');
-    setCompletedCount(0);
-    setAnalysisTotal(words.length);
+    setCompletedCount(skippedResults.length);
+    setAnalysisTotal(allWords.length);
     setActiveWords([]);
-    setAnalyzedResults([]);
+    setAnalyzedResults(skippedResults);
     setTotalVocabsSaved(0);
     savedCountRef.current = 0;
     abortRef.current = false;
 
-    await runBatch(words);
+    if (newWords.length > 0) {
+      await runBatch(newWords);
+    }
     setStep('done');
-  }, [inputText, parseWords, isOnline, runBatch]);
+  }, [inputText, parseWords, isOnline, runBatch, isWordSaved]);
 
   // ── Retry failed words ───────────────────────────────────────────────────
 
@@ -208,6 +234,7 @@ export const BatchImport: React.FC<BatchImportProps> = ({
   if (!isOpen) return null;
 
   const failedCount = analyzedResults.filter(r => r.error).length;
+  const skippedCount = analyzedResults.filter(r => r.skipped).length;
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -365,19 +392,25 @@ run the gamut"
                 <div
                   key={i}
                   className={`flex items-center gap-3 p-3 rounded-xl border animate-in slide-in-from-left duration-200 ${
-                    result.error
-                      ? 'bg-rose-50 border-rose-200'
-                      : 'bg-emerald-50 border-emerald-200'
+                    result.skipped
+                      ? 'bg-slate-50 border-slate-200'
+                      : result.error
+                        ? 'bg-rose-50 border-rose-200'
+                        : 'bg-emerald-50 border-emerald-200'
                   }`}
                 >
-                  {result.error ? (
+                  {result.skipped ? (
+                    <SkipForward size={16} className="text-slate-400 shrink-0" />
+                  ) : result.error ? (
                     <X size={16} className="text-rose-500 shrink-0" />
                   ) : (
                     <Check size={16} className="text-emerald-600 shrink-0" strokeWidth={3} />
                   )}
                   <div className="flex-1 min-w-0">
                     <span className="font-semibold text-slate-700 text-sm">{result.word}</span>
-                    {result.error ? (
+                    {result.skipped ? (
+                      <p className="text-xs text-slate-400 mt-0.5">Already in notebook</p>
+                    ) : result.error ? (
                       <p className="text-xs text-rose-500 mt-0.5">{result.error}</p>
                     ) : (
                       <p className="text-xs text-emerald-600 mt-0.5">
@@ -415,9 +448,11 @@ run the gamut"
                   'All words were already in your notebook'
                 )}
               </p>
-              {failedCount > 0 && (
-                <p className="text-sm text-rose-500 mt-1">
-                  {failedCount} {failedCount === 1 ? 'word' : 'words'} failed
+              {(skippedCount > 0 || failedCount > 0) && (
+                <p className="text-sm text-slate-400 mt-1">
+                  {skippedCount > 0 && <>{skippedCount} skipped (already saved)</>}
+                  {skippedCount > 0 && failedCount > 0 && ' · '}
+                  {failedCount > 0 && <span className="text-rose-500">{failedCount} failed</span>}
                 </p>
               )}
             </div>
@@ -428,16 +463,24 @@ run the gamut"
                 <div
                   key={i}
                   className={`flex items-center gap-3 p-3 rounded-xl border ${
-                    result.error ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-100'
+                    result.skipped
+                      ? 'bg-slate-50 border-slate-200'
+                      : result.error
+                        ? 'bg-rose-50 border-rose-200'
+                        : 'bg-white border-slate-100'
                   }`}
                 >
-                  {result.error ? (
+                  {result.skipped ? (
+                    <SkipForward size={16} className="text-slate-400 shrink-0" />
+                  ) : result.error ? (
                     <X size={16} className="text-rose-500 shrink-0" />
                   ) : (
                     <Check size={16} className="text-emerald-600 shrink-0" strokeWidth={3} />
                   )}
                   <span className="font-medium text-slate-700 text-sm flex-1">{result.word}</span>
-                  {result.error ? (
+                  {result.skipped ? (
+                    <span className="text-xs text-slate-400">already saved</span>
+                  ) : result.error ? (
                     <span className="text-xs text-rose-500">{result.error}</span>
                   ) : (
                     <span className="text-xs text-slate-400">{result.vocabCount} meanings</span>
