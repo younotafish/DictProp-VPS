@@ -18,6 +18,11 @@ jobs:
           script: |
             cd /opt/dictprop-vps
             git pull origin main
+            # Ensure swap exists for low-memory VPS
+            if [ ! -f /swapfile ]; then
+              fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+            fi
+            swapon /swapfile 2>/dev/null || true
             docker compose up -d --build
             docker system prune -f
             echo "Deploy complete"
@@ -25,4 +30,3 @@ jobs:
             curl -sf http://localhost:3000/api/health || echo "Health check failed"
             docker compose ps
             docker compose logs --tail=50
-            dmesg | grep -i "oom\|killed" | tail -5
