@@ -27,6 +27,54 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_THRESHOLD = 50;
 
+  // Listen for programmatic search triggers (e.g., from inline highlighted words)
+  useEffect(() => {
+    const handleTrigger = (e: Event) => {
+      const q = (e as CustomEvent).detail?.query;
+      if (q && typeof q === 'string') {
+        setQuery(q);
+        setMode('searching');
+        setError(null);
+        setResults(null);
+        setCurrentIndex(0);
+        // Trigger search after state updates
+        setTimeout(() => {
+          searchGenRef.current++;
+          const currentGenId = searchGenRef.current;
+          analyzeInput(q).then(result => {
+            if (searchGenRef.current !== currentGenId) return;
+            setResults(result);
+            setMode('ready');
+            if (result.vocabs?.length > 0) speak(result.vocabs[0].word || q);
+            result.vocabs?.forEach(async (vocab, index) => {
+              if (vocab.imagePrompt && !vocab.imageUrl) {
+                try {
+                  const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
+                  if (searchGenRef.current !== currentGenId) return;
+                  if (imageData) {
+                    setResults(prev => {
+                      if (!prev?.vocabs) return prev;
+                      const updated = [...prev.vocabs];
+                      if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
+                      return { ...prev, vocabs: updated };
+                    });
+                  }
+                } catch {}
+              }
+            });
+          }).catch(err => {
+            if (searchGenRef.current !== currentGenId) return;
+            setError(err.message || 'Search failed');
+            setMode('idle');
+            setTimeout(() => setError(null), 3000);
+          });
+        }, 0);
+      }
+    };
+    window.addEventListener('global-search', handleTrigger);
+    return () => window.removeEventListener('global-search', handleTrigger);
+  }, []);
+
   // Cmd+F / Ctrl+F keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

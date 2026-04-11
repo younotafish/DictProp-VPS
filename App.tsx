@@ -1803,12 +1803,15 @@ const App: React.FC = () => {
     });
   }, [activeItems]);
 
-  // Search handler - now triggers search in notebook
+  // Search handler - triggers GlobalSearch popup (bottom-right search icon)
   const handleRecursiveSearch = useCallback((text: string) => {
+      window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text } }));
+  }, []);
+
+  // Search handler that navigates to notebook (used by notebook's own search)
+  const handleNotebookSearch = useCallback((text: string) => {
       setCurrentView('notebook');
       setDetailContext(null);
-      // The notebook will handle the search via its own search bar
-      // We dispatch a custom event to set the search query
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: false, autoAIIfNoMatch: true } }));
       }, 100);
