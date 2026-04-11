@@ -293,6 +293,10 @@ const App: React.FC = () => {
     latestItemsRef.current = syncState.items;
   }, [syncState.items]);
 
+  // Projects
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [activeProject, setActiveProject] = useState<string | null>(null); // null = show all
+
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
   const allActiveItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
@@ -320,10 +324,6 @@ const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [imagePrefetchProgress, setImagePrefetchProgress] = useState<{ done: number; total: number } | null>(null);
   const prefetchAbortRef = useRef(false);
-
-  // Projects
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [activeProject, setActiveProject] = useState<string | null>(null); // null = show all
 
   // Auth is required — app gates on authState below
 
