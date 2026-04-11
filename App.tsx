@@ -8,7 +8,7 @@ import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, ge
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync, getStoredImageIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, createProjectApi, renameProjectApi, deleteProjectApi } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects } from './services/api';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
@@ -2007,30 +2007,7 @@ const App: React.FC = () => {
             projects={projects}
             activeProject={activeProject}
             onSetActiveProject={setActiveProject}
-            onRefreshProjects={async () => {
-              try {
-                const p = await loadProjects();
-                setProjects(p);
-              } catch { /* ignore */ }
-            }}
-            onCreateProject={async (name: string) => {
-              const p = await createProjectApi(name);
-              setProjects(prev => [...prev, p]);
-              return p;
-            }}
-            onRenameProject={async (id: string, name: string) => {
-              await renameProjectApi(id, name);
-              setProjects(prev => prev.map(p => p.id === id ? { ...p, name } : p));
-            }}
-            onDeleteProject={async (id: string) => {
-              await deleteProjectApi(id);
-              setProjects(prev => prev.filter(p => p.id !== id));
-              if (activeProject === id) setActiveProject(null);
-              // Clear project from local items
-              setSyncState(prev => ({
-                items: prev.items.map(item => item.project === id ? { ...item, project: undefined, updatedAt: Date.now() } : item)
-              }));
-            }}
+            onProjectsChanged={(p) => setProjects(p)}
             allItems={allActiveItems}
             onBatchImport={handleBatchImport}
             batchImportProgress={batchImportProgress}

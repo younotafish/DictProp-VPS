@@ -1,30 +1,25 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ProjectInfo, StoredItem } from '../types';
 import { X, Plus, Pencil, Trash2, FolderOpen, Check, Loader2 } from 'lucide-react';
+import { loadProjects, createProjectApi, renameProjectApi, deleteProjectApi } from '../services/api';
 
 interface ProjectManagerProps {
   isOpen: boolean;
   onClose: () => void;
-  projects: ProjectInfo[];
-  onRefreshProjects?: () => Promise<void>;
-  onCreateProject: (name: string) => Promise<ProjectInfo>;
-  onRenameProject: (id: string, name: string) => Promise<void>;
-  onDeleteProject: (id: string) => Promise<void>;
+  onProjectsChanged: (projects: ProjectInfo[]) => void;
   allItems: StoredItem[];
 }
 
 export const ProjectManager: React.FC<ProjectManagerProps> = ({
   isOpen,
   onClose,
-  projects,
-  onRefreshProjects,
-  onCreateProject,
-  onRenameProject,
-  onDeleteProject,
+  onProjectsChanged,
   allItems,
 }) => {
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [newName, setNewName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -32,12 +27,26 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
   const newInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
-  // Refresh projects from server when modal opens
-  useEffect(() => {
-    if (isOpen && onRefreshProjects) {
-      onRefreshProjects();
+  // Fetch projects directly from API when modal opens
+  const fetchProjects = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const p = await loadProjects();
+      setProjects(p);
+      onProjectsChanged(p);
+    } catch (e: any) {
+      setError(e.message || 'Failed to load projects');
+    } finally {
+      setIsLoading(false);
     }
-  }, [isOpen]);
+  }, [onProjectsChanged]);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchProjects();
+    }
+  }, [isOpen, fetchProjects]);
 
   useEffect(() => {
     if (editingId && editInputRef.current) {
@@ -54,7 +63,10 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
     setIsCreating(true);
     setError(null);
     try {
-      await onCreateProject(newName.trim());
+      const p = await createProjectApi(newName.trim());
+      const updated = [...projects, p];
+      setProjects(updated);
+      onProjectsChanged(updated);
       setNewName('');
     } catch (e: any) {
       setError(e.message || 'Failed to create project');
@@ -67,7 +79,10 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
     if (!editName.trim()) { setEditingId(null); return; }
     setError(null);
     try {
-      await onRenameProject(id, editName.trim());
+      await renameProjectApi(id, editName.trim());
+      const updated = projects.map(p => p.id === id ? { ...p, name: editName.trim() } : p);
+      setProjects(updated);
+      onProjectsChanged(updated);
       setEditingId(null);
     } catch (e: any) {
       setError(e.message || 'Failed to rename project');
@@ -78,7 +93,10 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
     setError(null);
     setDeletingId(id);
     try {
-      await onDeleteProject(id);
+      await deleteProjectApi(id);
+      const updated = projects.filter(p => p.id !== id);
+      setProjects(updated);
+      onProjectsChanged(updated);
     } catch (e: any) {
       setError(e.message || 'Failed to delete project');
     } finally {
@@ -141,8 +159,15 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
           </button>
         </div>
 
+        {/* Loading */}
+        {isLoading && projects.length === 0 && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 size={24} className="animate-spin text-indigo-400" />
+          </div>
+        )}
+
         {/* Project list */}
-        {projects.length === 0 ? (
+        {!isLoading && projects.length === 0 ? (
           <div className="flex flex-col items-center py-12 px-6 text-center">
             <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-5">
               <FolderOpen size={32} className="text-indigo-300" />
