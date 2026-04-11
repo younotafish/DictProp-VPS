@@ -23,10 +23,16 @@ jobs:
               fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
             fi
             swapon /swapfile 2>/dev/null || true
+            # Grab logs BEFORE rebuild to capture the crash
+            echo "=== CONTAINER LOGS BEFORE REBUILD ==="
+            docker compose logs --tail=200
+            echo "=== CONTAINER STATUS ==="
+            docker compose ps
+            echo "=== DMESG OOM ==="
+            dmesg | grep -i "oom\|killed\|out of memory" | tail -10
+            echo "=== REBUILDING ==="
             docker compose up -d --build
             docker system prune -f
             echo "Deploy complete"
             sleep 15
             curl -sf http://localhost:3000/api/health || echo "Health check failed"
-            docker compose ps
-            docker compose logs --tail=100
