@@ -2,7 +2,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { compress } from 'hono/compress';
+// compress removed — Caddy handles gzip at the proxy level
 import { logger } from 'hono/logger';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -25,13 +25,6 @@ app.onError((err, c) => {
 
 // Middleware
 app.use('*', logger());
-// Skip compression for /api/items (large payload, causes OOM on low-memory VPS)
-app.use('*', async (c, next) => {
-  if (c.req.path === '/api/items' && !c.req.query('since')) {
-    return next();
-  }
-  return compress()(c, next);
-});
 app.use('*', cors({
   origin: ['https://dictprop.online', 'http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
