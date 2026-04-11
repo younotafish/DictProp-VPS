@@ -2,12 +2,13 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { TextAnalyzer } from '../components/TextAnalyzer';
+import { BatchImport } from '../components/BatchImport';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
@@ -538,6 +539,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
+  const [showBatchImport, setShowBatchImport] = useState(false);
 
   // Compare mode state
   const [compareMode, setCompareMode] = useState(false);
@@ -1286,6 +1288,16 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 <ScanText size={16} />
               </button>
             )}
+            {/* Batch Import button */}
+            {isOnline && (
+              <button
+                onClick={() => setShowBatchImport(true)}
+                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                title="Batch Import — Paste a word list to analyze and save in bulk"
+              >
+                <ListPlus size={16} />
+              </button>
+            )}
             {/* Compare mode toggle */}
             {onCompare && isOnline && (
               <button
@@ -1507,6 +1519,18 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         <TextAnalyzer
           isOpen={showTextAnalyzer}
           onClose={() => setShowTextAnalyzer(false)}
+          onSave={onSave}
+          onUpdateStoredItem={onUpdateStoredItem}
+          savedItems={items}
+          isOnline={isOnline}
+        />
+      )}
+
+      {/* Batch Import Modal */}
+      {onSave && (
+        <BatchImport
+          isOpen={showBatchImport}
+          onClose={() => setShowBatchImport(false)}
           onSave={onSave}
           onUpdateStoredItem={onUpdateStoredItem}
           savedItems={items}
