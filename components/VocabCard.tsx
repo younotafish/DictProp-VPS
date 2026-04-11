@@ -188,10 +188,11 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                 </Button>
             )}
             {showSave && onSave && (
-            <Button 
-                variant="icon" 
-                onClick={(e) => { e.stopPropagation(); onSave(); }}
-                className={isSaved ? "text-indigo-600 bg-indigo-50" : ""}
+            <Button
+                variant="icon"
+                onClick={(e) => { e.stopPropagation(); console.log('⭐ VocabCard save clicked:', data.word, data.sense); onSave(); }}
+                className={`relative ${isSaved ? "text-indigo-600 bg-indigo-50" : ""}`}
+                title={isSaved ? "Saved" : "Save to notebook"}
             >
                 <Sparkles size={20} fill={isSaved ? "currentColor" : "none"} />
             </Button>

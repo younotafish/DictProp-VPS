@@ -135,6 +135,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
   }, [query, isOnline]);
 
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
+    log('⭐ GlobalSearch: saving vocab', vocab.word, vocab.sense, 'id:', vocab.id);
     onSave({
       data: vocab,
       type: 'vocab',

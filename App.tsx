@@ -1328,11 +1328,18 @@ const App: React.FC = () => {
 
   const handleSave = (item: StoredItem) => {
     try {
-      if (!item || !item.data || !item.data.id) return;
+      if (!item || !item.data || !item.data.id) {
+        warn('⭐ handleSave: early return - missing item/data/id', item?.data?.id);
+        return;
+      }
 
       const rawTitle = getItemTitle(item);
       const incomingTitle = String(rawTitle || '').toLowerCase().trim();
-      if (!incomingTitle) return;
+      if (!incomingTitle) {
+        warn('⭐ handleSave: early return - empty title', rawTitle);
+        return;
+      }
+      log('⭐ handleSave: saving', incomingTitle, 'type:', item.type, 'id:', item.data.id);
 
       // Offload any base64 images to IDB before putting into state
       const imagesToSave: Array<{ id: string; base64: string }> = [];
