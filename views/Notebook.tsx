@@ -518,6 +518,7 @@ interface NotebookProps {
   projects?: ProjectInfo[];
   activeProject?: string | null;
   onSetActiveProject?: (id: string | null) => void;
+  onRefreshProjects?: () => Promise<void>;
   onCreateProject?: (name: string) => Promise<ProjectInfo>;
   onRenameProject?: (id: string, name: string) => Promise<void>;
   onDeleteProject?: (id: string) => Promise<void>;
@@ -531,7 +532,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
     onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
-    projects = [], activeProject, onSetActiveProject, onCreateProject, onRenameProject, onDeleteProject, allItems,
+    projects = [], activeProject, onSetActiveProject, onRefreshProjects, onCreateProject, onRenameProject, onDeleteProject, allItems,
     onBatchImport, batchImportProgress
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
@@ -1650,6 +1651,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           isOpen={showProjectManager}
           onClose={() => setShowProjectManager(false)}
           projects={projects}
+          onRefreshProjects={onRefreshProjects}
           onCreateProject={onCreateProject}
           onRenameProject={onRenameProject}
           onDeleteProject={onDeleteProject}

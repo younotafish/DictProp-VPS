@@ -2007,6 +2007,12 @@ const App: React.FC = () => {
             projects={projects}
             activeProject={activeProject}
             onSetActiveProject={setActiveProject}
+            onRefreshProjects={async () => {
+              try {
+                const p = await loadProjects();
+                setProjects(p);
+              } catch { /* ignore */ }
+            }}
             onCreateProject={async (name: string) => {
               const p = await createProjectApi(name);
               setProjects(prev => [...prev, p]);

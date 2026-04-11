@@ -6,6 +6,7 @@ interface ProjectManagerProps {
   isOpen: boolean;
   onClose: () => void;
   projects: ProjectInfo[];
+  onRefreshProjects?: () => Promise<void>;
   onCreateProject: (name: string) => Promise<ProjectInfo>;
   onRenameProject: (id: string, name: string) => Promise<void>;
   onDeleteProject: (id: string) => Promise<void>;
@@ -16,6 +17,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
   isOpen,
   onClose,
   projects,
+  onRefreshProjects,
   onCreateProject,
   onRenameProject,
   onDeleteProject,
@@ -29,6 +31,13 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
   const [error, setError] = useState<string | null>(null);
   const newInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+
+  // Refresh projects from server when modal opens
+  useEffect(() => {
+    if (isOpen && onRefreshProjects) {
+      onRefreshProjects();
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (editingId && editInputRef.current) {
