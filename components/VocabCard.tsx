@@ -132,7 +132,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
   return (
     <div
-      className={`bg-white rounded-2xl p-5 pb-8 md:pb-4 shadow-md border border-slate-100 flex flex-col ${scrollable ? 'overflow-y-auto' : 'overflow-hidden'} ${className}`}
+      className={`bg-white rounded-2xl p-5 pb-8 md:pb-4 shadow-md border border-slate-100 flex flex-col select-text ${scrollable ? 'overflow-y-auto' : 'overflow-hidden'} ${className}`}
+      style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
     >
       {/* Header — no text selection so buttons always work */}
       <div className="flex justify-between items-start mb-3 shrink-0 select-none">
