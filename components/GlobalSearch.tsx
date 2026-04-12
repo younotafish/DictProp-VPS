@@ -284,9 +284,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       if (firstReady?.results?.vocabs?.[0]?.word) {
         speak(firstReady.results.vocabs[0].word);
       }
-    } else if (searchingCount > 0) {
-      // Still loading — do nothing
     } else {
+      // Open input — works even while searching, so you can queue more words
       setMode('input');
     }
   };
