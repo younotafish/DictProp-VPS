@@ -449,7 +449,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   });
 
   const handleVocabSearch = (term: string) => {
-    onClose();
     onSearch(term);
   };
 
