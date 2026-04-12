@@ -366,30 +366,28 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                   // Bracketed words — strong green style
                   if (isBracketed) {
                     return (
-                      <span
+                      <a
                         key={`${keyPrefix}-${j}`}
-                        role="button"
-                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); console.log('🔗 Bracketed word clicked:', trimmed); onSearch?.(trimmed); }}
-                        className="text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors select-none"
-                        style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
+                        href="#"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSearch?.(trimmed); }}
+                        className="text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors"
                       >
                         {token}
-                      </span>
+                      </a>
                     );
                   }
 
                   // Non-trivial words — subtle clickable style
                   if (isClickableWord(trimmed)) {
                     return (
-                      <span
+                      <a
                         key={`${keyPrefix}-${j}`}
-                        role="button"
-                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); console.log('🔗 Word clicked:', trimmed); onSearch?.(trimmed); }}
-                        className="hover:text-emerald-600 hover:underline hover:decoration-dotted hover:decoration-emerald-300 cursor-pointer rounded px-0 transition-colors select-none"
-                        style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
+                        href="#"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSearch?.(trimmed); }}
+                        className="text-inherit no-underline hover:text-emerald-600 hover:underline hover:decoration-dotted hover:decoration-emerald-300 cursor-pointer rounded transition-colors"
                       >
                         {token}
-                      </span>
+                      </a>
                     );
                   }
 
