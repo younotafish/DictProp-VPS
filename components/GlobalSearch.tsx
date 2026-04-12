@@ -445,7 +445,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                         }`}
                       >
                         <Sparkles size={14} fill={allSaved ? 'currentColor' : 'none'} />
-                        {allSaved ? 'Saved' : meaningCount > 1 ? `Save ${meaningCount} meanings` : 'Save'}
+                        {allSaved ? 'All saved' : meaningCount > 1 ? `Save all ${meaningCount}` : 'Save'}
                       </button>
                     );
                   })()}
@@ -486,7 +486,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       data={viewingVocab}
                       isSaved={isVocabSaved(viewingVocab)}
                       onSave={() => handleSaveVocab(viewingVocab)}
-                      showSave={false}
+                      showSave={true}
                       onSearch={onSearch}
                       scrollable={false}
                       className="!h-auto !overflow-visible border-indigo-200 shadow-sm bg-white"
