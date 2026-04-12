@@ -7,7 +7,14 @@ import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { speak } from '../services/speech';
 import { log, warn } from '../services/logger';
 
-type Mode = 'idle' | 'input' | 'searching' | 'ready' | 'viewing';
+interface QueueItem {
+  id: string;
+  query: string;
+  status: 'pending' | 'searching' | 'ready' | 'failed';
+  results: SearchResult | null;
+}
+
+type Mode = 'idle' | 'input' | 'viewing';
 
 interface Props {
   onSave: (item: StoredItem) => void;
@@ -16,64 +23,92 @@ interface Props {
   isOnline: boolean;
 }
 
+let queueIdCounter = 0;
+
 export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, isOnline }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  // Viewing state: which queue item and which vocab within it
+  const [viewingQueueIdx, setViewingQueueIdx] = useState(0);
+  const [viewingVocabIdx, setViewingVocabIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const searchGenRef = useRef(0);
+  const processingRef = useRef(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_THRESHOLD = 50;
 
+  // Derived state
+  const readyItems = queue.filter(q => q.status === 'ready');
+  const searchingCount = queue.filter(q => q.status === 'searching' || q.status === 'pending').length;
+  const readyCount = readyItems.length;
+  const hasWork = searchingCount > 0 || readyCount > 0;
+
+  // Add a query to the queue
+  const enqueue = useCallback((q: string) => {
+    const trimmed = q.trim();
+    if (!trimmed) return;
+    // Don't add duplicates that are already pending/searching/ready
+    setQueue(prev => {
+      if (prev.some(item => item.query.toLowerCase() === trimmed.toLowerCase() && item.status !== 'failed')) {
+        log('🔍 Queue: skipping duplicate "' + trimmed + '"');
+        return prev;
+      }
+      log('🔍 Queue: adding "' + trimmed + '"');
+      return [...prev, { id: `q-${++queueIdCounter}`, query: trimmed, status: 'pending', results: null }];
+    });
+  }, []);
+
+  // Process queue — pick up next pending item and search it
+  useEffect(() => {
+    if (processingRef.current) return;
+    const pending = queue.find(q => q.status === 'pending');
+    if (!pending) return;
+
+    processingRef.current = true;
+    const itemId = pending.id;
+
+    // Mark as searching
+    setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'searching' as const } : q));
+
+    log('🔍 Queue: searching "' + pending.query + '"');
+    analyzeInput(pending.query).then(result => {
+      setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: result } : q));
+      // Generate images in background
+      result.vocabs?.forEach(async (vocab, index) => {
+        if (vocab.imagePrompt && !vocab.imageUrl) {
+          try {
+            const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
+            if (imageData) {
+              setQueue(prev => prev.map(q => {
+                if (q.id !== itemId || !q.results?.vocabs) return q;
+                const updated = [...q.results.vocabs];
+                if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
+                return { ...q, results: { ...q.results, vocabs: updated } };
+              }));
+            }
+          } catch {}
+        }
+      });
+    }).catch(err => {
+      warn('🔍 Queue: failed "' + pending.query + '":', err.message);
+      setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
+    }).finally(() => {
+      processingRef.current = false;
+    });
+  }, [queue]);
+
   // Listen for programmatic search triggers (e.g., from inline highlighted words)
-  // Runs search in the background — floating icon shows spinner then badge when ready
   useEffect(() => {
     const handleTrigger = (e: Event) => {
       const q = (e as CustomEvent).detail?.query;
       if (q && typeof q === 'string') {
-        log('🔍 Global search (background): "' + q + '"');
-        setQuery(q);
-        setMode('searching');
-        setError(null);
-        setResults(null);
-        setCurrentIndex(0);
-
-        searchGenRef.current++;
-        const currentGenId = searchGenRef.current;
-        analyzeInput(q).then(result => {
-          if (searchGenRef.current !== currentGenId) return;
-          setResults(result);
-          setMode('ready'); // Badge appears — user taps icon to view
-          // Generate images in background
-          result.vocabs?.forEach(async (vocab, index) => {
-            if (vocab.imagePrompt && !vocab.imageUrl) {
-              try {
-                const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
-                if (searchGenRef.current !== currentGenId) return;
-                if (imageData) {
-                  setResults(prev => {
-                    if (!prev?.vocabs) return prev;
-                    const updated = [...prev.vocabs];
-                    if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
-                    return { ...prev, vocabs: updated };
-                  });
-                }
-              } catch {}
-            }
-          });
-        }).catch(err => {
-          if (searchGenRef.current !== currentGenId) return;
-          setError(err.message || 'Search failed');
-          setMode('idle');
-          setTimeout(() => setError(null), 3000);
-        });
+        enqueue(q);
       }
     };
     window.addEventListener('global-search', handleTrigger);
     return () => window.removeEventListener('global-search', handleTrigger);
-  }, []);
+  }, [enqueue]);
 
   // Cmd+F / Ctrl+F keyboard shortcut
   useEffect(() => {
@@ -82,7 +117,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
         e.preventDefault();
         e.stopImmediatePropagation();
         if (mode === 'input') {
-          // Already in input mode — just re-focus
           inputRef.current?.focus();
         } else {
           setMode('input');
@@ -92,95 +126,51 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
         if (mode === 'input') {
           e.preventDefault();
           e.stopImmediatePropagation();
-          setMode(results ? 'ready' : 'idle');
+          setMode('idle');
         } else if (mode === 'viewing') {
           e.preventDefault();
           e.stopImmediatePropagation();
           setMode('idle');
         }
       }
-      // Arrow key navigation in results popup
-      if (mode === 'viewing' && results?.vocabs && results.vocabs.length > 1) {
+      // Arrow key navigation in viewing mode
+      if (mode === 'viewing' && readyItems.length > 0) {
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-        if (e.key === 'ArrowLeft') {
+        const currentResult = readyItems[viewingQueueIdx]?.results;
+        const vocabCount = currentResult?.vocabs?.length || 0;
+        if (e.key === 'ArrowLeft' && vocabCount > 1) {
           e.preventDefault();
-          if (currentIndex > 0) {
-            setCurrentIndex(currentIndex - 1);
-            if (results.vocabs[currentIndex - 1]?.word) speak(results.vocabs[currentIndex - 1].word);
-          }
-        } else if (e.key === 'ArrowRight') {
+          const prev = viewingVocabIdx > 0 ? viewingVocabIdx - 1 : vocabCount - 1;
+          setViewingVocabIdx(prev);
+          if (currentResult?.vocabs?.[prev]?.word) speak(currentResult.vocabs[prev].word);
+        } else if (e.key === 'ArrowRight' && vocabCount > 1) {
           e.preventDefault();
-          const next = (currentIndex + 1) % results.vocabs.length;
-          setCurrentIndex(next);
-          if (results.vocabs[next]?.word) speak(results.vocabs[next].word);
+          const next = (viewingVocabIdx + 1) % vocabCount;
+          setViewingVocabIdx(next);
+          if (currentResult?.vocabs?.[next]?.word) speak(currentResult.vocabs[next].word);
         }
       }
     };
-    // Use capture phase so we intercept before DetailView/App handlers
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [mode, results, currentIndex]);
+  }, [mode, readyItems, viewingQueueIdx, viewingVocabIdx]);
 
-  // Auto-focus input when entering input mode
+  // Auto-focus input
   useEffect(() => {
     if (mode === 'input') {
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [mode]);
 
-  const handleSubmit = useCallback(async () => {
+  // Submit from input box — add to queue and switch to viewing once ready
+  const handleSubmit = useCallback(() => {
     const q = query.trim();
     if (!q || !isOnline) return;
-
-    setMode('searching');
-    setError(null);
-    setResults(null);
-    setCurrentIndex(0);
-
-    const currentGenId = ++searchGenRef.current;
-
-    try {
-      log(`🔍 Global search: "${q}"`);
-      const result = await analyzeInput(q);
-      if (searchGenRef.current !== currentGenId) return;
-
-      setResults(result);
-      setMode('ready');
-
-      // Auto-pronounce
-      if (result.vocabs?.length > 0) {
-        speak(result.vocabs[0].word || q);
-      }
-
-      // Generate images asynchronously
-      result.vocabs?.forEach(async (vocab, index) => {
-        if (vocab.imagePrompt && !vocab.imageUrl) {
-          try {
-            const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
-            if (searchGenRef.current !== currentGenId) return;
-            if (imageData) {
-              setResults(prev => {
-                if (!prev?.vocabs) return prev;
-                const updated = [...prev.vocabs];
-                if (updated[index]) {
-                  updated[index] = { ...updated[index], imageUrl: imageData };
-                }
-                return { ...prev, vocabs: updated };
-              });
-            }
-          } catch (e) {
-            warn('Global search image gen failed:', e);
-          }
-        }
-      });
-    } catch (err: any) {
-      if (searchGenRef.current !== currentGenId) return;
-      setError(err.message || 'Search failed');
-      setMode('idle');
-      setTimeout(() => setError(null), 3000);
-    }
-  }, [query, isOnline]);
+    enqueue(q);
+    setQuery('');
+    setMode('idle'); // Go back to idle — spinner shows on floating button
+  }, [query, isOnline, enqueue]);
 
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
     log('⭐ GlobalSearch: saving vocab', vocab.word, vocab.sense, 'id:', vocab.id);
@@ -192,14 +182,49 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
     });
   }, [onSave]);
 
-  const navigateTo = useCallback((index: number) => {
-    setCurrentIndex(index);
-    if (results?.vocabs?.[index]?.word) {
-      speak(results.vocabs[index].word);
-    }
-  }, [results]);
+  // Remove a single item from queue
+  const dismissQueueItem = useCallback((id: string) => {
+    setQueue(prev => prev.filter(q => q.id !== id));
+    // Adjust viewing index if needed
+    setViewingQueueIdx(prev => {
+      const newReady = queue.filter(q => q.id !== id && q.status === 'ready');
+      if (newReady.length === 0) {
+        setMode('idle');
+        return 0;
+      }
+      return Math.min(prev, newReady.length - 1);
+    });
+    setViewingVocabIdx(0);
+  }, [queue]);
 
-  const totalItems = results?.vocabs?.length || 0;
+  // Clear all completed items
+  const clearQueue = useCallback(() => {
+    setQueue(prev => prev.filter(q => q.status === 'pending' || q.status === 'searching'));
+    setMode('idle');
+    setViewingQueueIdx(0);
+    setViewingVocabIdx(0);
+  }, []);
+
+  const handleFloatingClick = () => {
+    if (readyCount > 0) {
+      // Show results
+      setViewingQueueIdx(0);
+      setViewingVocabIdx(0);
+      setMode('viewing');
+      const firstReady = readyItems[0];
+      if (firstReady?.results?.vocabs?.[0]?.word) {
+        speak(firstReady.results.vocabs[0].word);
+      }
+    } else if (searchingCount > 0) {
+      // Still loading — do nothing
+    } else {
+      setMode('input');
+    }
+  };
+
+  const handleClose = () => {
+    setMode('idle');
+  };
 
   // Touch handlers for swipe navigation in results popup
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -207,40 +232,33 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStart.current || totalItems <= 1) return;
+    if (!touchStart.current) return;
     const diffX = e.changedTouches[0].clientX - touchStart.current.x;
     const diffY = e.changedTouches[0].clientY - touchStart.current.y;
-    if (Math.abs(diffX) > Math.abs(diffY) * 1.5 && Math.abs(diffX) > SWIPE_THRESHOLD) {
-      if (diffX < 0) {
-        navigateTo((currentIndex + 1) % totalItems);
-      } else if (currentIndex > 0) {
-        navigateTo(currentIndex - 1);
-      }
-    }
     touchStart.current = null;
-  };
 
-  const handleFloatingClick = () => {
-    if (mode === 'idle') {
-      setMode('input');
-    } else if (mode === 'ready') {
-      setMode('viewing');
-      setCurrentIndex(0);
-      if (results?.vocabs?.[0]?.word) {
-        speak(results.vocabs[0].word);
+    if (Math.abs(diffX) <= Math.abs(diffY) * 1.5 || Math.abs(diffX) <= SWIPE_THRESHOLD) return;
+
+    const currentResult = readyItems[viewingQueueIdx]?.results;
+    const vocabCount = currentResult?.vocabs?.length || 0;
+
+    if (vocabCount > 1) {
+      if (diffX < 0) {
+        const next = (viewingVocabIdx + 1) % vocabCount;
+        setViewingVocabIdx(next);
+        if (currentResult?.vocabs?.[next]?.word) speak(currentResult.vocabs[next].word);
+      } else if (viewingVocabIdx > 0) {
+        setViewingVocabIdx(viewingVocabIdx - 1);
+        if (currentResult?.vocabs?.[viewingVocabIdx - 1]?.word) speak(currentResult.vocabs[viewingVocabIdx - 1].word);
       }
-    } else if (mode === 'searching') {
-      // Do nothing while searching — show spinner
     }
   };
 
-  const handleClose = () => {
-    setMode('idle');
-    setResults(null);
-    setQuery('');
-  };
-
-  const currentVocab = results?.vocabs?.[currentIndex];
+  // Current viewing state
+  const viewingItem = mode === 'viewing' ? readyItems[viewingQueueIdx] : null;
+  const viewingResult = viewingItem?.results;
+  const viewingVocab = viewingResult?.vocabs?.[viewingVocabIdx];
+  const viewingVocabCount = viewingResult?.vocabs?.length || 0;
 
   return (
     <>
@@ -267,7 +285,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
                   handleSubmit();
                 }
                 if (e.key === 'Escape') {
-                  setMode(results ? 'ready' : 'idle');
+                  setMode('idle');
                 }
               }}
               placeholder="Look up a word..."
@@ -284,7 +302,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
               </button>
             )}
             <button
-              onClick={() => setMode(results ? 'ready' : 'idle')}
+              onClick={() => setMode('idle')}
               className="shrink-0 text-slate-400 hover:text-slate-600"
             >
               <X size={18} />
@@ -294,7 +312,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
       )}
 
       {/* Results popup */}
-      {mode === 'viewing' && results && currentVocab && (
+      {mode === 'viewing' && viewingItem && viewingVocab && (
         <>
           {/* Backdrop */}
           <div
@@ -306,38 +324,64 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
             <div className="bg-white rounded-t-3xl shadow-2xl max-h-[85vh] flex flex-col">
               {/* Header */}
               <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Search size={14} className="text-indigo-500" />
-                  <span className="text-sm font-semibold text-slate-700">"{results.query || query}"</span>
-                  {totalItems > 1 && (
-                    <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
-                      {currentIndex + 1}/{totalItems}
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <Search size={14} className="text-indigo-500 shrink-0" />
+                  <span className="text-sm font-semibold text-slate-700 truncate">"{viewingResult?.query || viewingItem.query}"</span>
+                  {viewingVocabCount > 1 && (
+                    <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full shrink-0">
+                      {viewingVocabIdx + 1}/{viewingVocabCount}
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={handleClose}
-                  className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  <X size={18} />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Queue navigation — if multiple ready items */}
+                  {readyItems.length > 1 && (
+                    <div className="flex items-center gap-1 mr-2">
+                      <button
+                        onClick={() => { setViewingQueueIdx(prev => Math.max(0, prev - 1)); setViewingVocabIdx(0); }}
+                        disabled={viewingQueueIdx === 0}
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">
+                        {viewingQueueIdx + 1}/{readyItems.length}
+                      </span>
+                      <button
+                        onClick={() => { setViewingQueueIdx(prev => Math.min(readyItems.length - 1, prev + 1)); setViewingVocabIdx(0); }}
+                        disabled={viewingQueueIdx >= readyItems.length - 1}
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  )}
+                  {/* Dismiss this result */}
+                  <button
+                    onClick={() => dismissQueueItem(viewingItem.id)}
+                    className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
+                    title="Dismiss"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
 
               {/* Card area */}
               <div className="flex-1 overflow-y-auto overscroll-contain p-4">
                 <div className="relative max-w-screen-md mx-auto">
-                  {/* Navigation arrows */}
-                  {totalItems > 1 && currentIndex > 0 && (
+                  {/* Navigation arrows for vocabs */}
+                  {viewingVocabCount > 1 && viewingVocabIdx > 0 && (
                     <button
-                      onClick={() => navigateTo(currentIndex - 1)}
+                      onClick={() => { setViewingVocabIdx(viewingVocabIdx - 1); }}
                       className="absolute -left-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
                     >
                       <ChevronLeft size={16} />
                     </button>
                   )}
-                  {totalItems > 1 && (
+                  {viewingVocabCount > 1 && (
                     <button
-                      onClick={() => navigateTo((currentIndex + 1) % totalItems)}
+                      onClick={() => { setViewingVocabIdx((viewingVocabIdx + 1) % viewingVocabCount); }}
                       className="absolute -right-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
                     >
                       <ChevronRight size={16} />
@@ -346,9 +390,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
 
                   <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
                     <VocabCardDisplay
-                      data={currentVocab}
-                      isSaved={isVocabSaved(currentVocab)}
-                      onSave={() => handleSaveVocab(currentVocab)}
+                      data={viewingVocab}
+                      isSaved={isVocabSaved(viewingVocab)}
+                      onSave={() => handleSaveVocab(viewingVocab)}
                       showSave={true}
                       onSearch={onSearch}
                       scrollable={false}
@@ -356,15 +400,15 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
                     />
                   </div>
 
-                  {/* Dot indicators */}
-                  {totalItems > 1 && (
+                  {/* Vocab dot indicators */}
+                  {viewingVocabCount > 1 && (
                     <div className="flex justify-center gap-1.5 mt-3">
-                      {results.vocabs.map((_, idx) => (
+                      {viewingResult!.vocabs.map((_, idx) => (
                         <button
                           key={idx}
-                          onClick={() => navigateTo(idx)}
+                          onClick={() => setViewingVocabIdx(idx)}
                           className={`w-2 h-2 rounded-full transition-all ${
-                            idx === currentIndex
+                            idx === viewingVocabIdx
                               ? 'bg-indigo-500 w-4'
                               : 'bg-slate-300 hover:bg-slate-400'
                           }`}
@@ -374,36 +418,71 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
                   )}
                 </div>
               </div>
+
+              {/* Queue strip — show all ready items as tabs at bottom */}
+              {readyItems.length > 1 && (
+                <div className="px-4 pb-3 pt-2 border-t border-slate-100 flex gap-2 overflow-x-auto no-scrollbar">
+                  {readyItems.map((item, idx) => (
+                    <button
+                      key={item.id}
+                      onClick={() => { setViewingQueueIdx(idx); setViewingVocabIdx(0); }}
+                      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                        idx === viewingQueueIdx
+                          ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {item.query}
+                    </button>
+                  ))}
+                  {readyItems.length > 1 && (
+                    <button
+                      onClick={clearQueue}
+                      className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </>
       )}
 
-      {/* Floating button — hidden when input is open */}
+      {/* Floating button — hidden when input or viewing is open */}
       {mode !== 'input' && mode !== 'viewing' && (
         <button
           onClick={handleFloatingClick}
           className={`fixed bottom-24 right-4 z-[55] w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
-            ${mode === 'ready'
+            ${readyCount > 0
               ? 'bg-indigo-500 text-white shadow-indigo-300'
-              : mode === 'searching'
+              : searchingCount > 0
               ? 'bg-white/90 text-indigo-500 border border-slate-200'
               : 'bg-white/70 text-slate-500 border border-slate-200/50 opacity-60 hover:opacity-100'
             }`}
         >
-          {mode === 'searching' && (
-            <Loader2 size={20} className="animate-spin" />
+          {searchingCount > 0 && (
+            <>
+              <Loader2 size={20} className="animate-spin" />
+              {/* Count badge */}
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-indigo-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white">
+                {searchingCount}
+              </span>
+            </>
           )}
-          {mode === 'ready' && (
+          {searchingCount === 0 && readyCount > 0 && (
             <>
               <Search size={20} />
               {/* Pulse ring */}
               <span className="absolute inset-0 rounded-full border-2 border-indigo-400 animate-ping opacity-40" />
-              {/* Badge dot */}
-              <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 rounded-full border-2 border-white" />
+              {/* Count badge */}
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white">
+                {readyCount}
+              </span>
             </>
           )}
-          {mode === 'idle' && (
+          {!hasWork && (
             <Search size={20} />
           )}
         </button>
