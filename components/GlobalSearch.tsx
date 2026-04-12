@@ -195,24 +195,61 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
   const [saveToast, setSaveToast] = useState<string | null>(null);
 
+  // Save a single vocab
+  const saveOneVocab = useCallback((vocab: VocabCard) => {
+    if (isVocabSaved(vocab)) return false; // already saved
+    onSave({
+      data: vocab,
+      type: 'vocab',
+      savedAt: Date.now(),
+      srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
+      ...(activeProject ? { project: activeProject } : {}),
+    });
+    return true;
+  }, [onSave, activeProject, isVocabSaved]);
+
+  // Save ALL meanings of a specific queue item's results
+  const handleSaveWord = useCallback((result: SearchResult | null) => {
+    if (!result?.vocabs?.length) return;
+    let count = 0;
+    for (const vocab of result.vocabs) {
+      if (saveOneVocab(vocab)) count++;
+    }
+    if (count > 0) {
+      setSaveToast(`Saved "${result.query}" (${count} ${count === 1 ? 'meaning' : 'meanings'})`);
+    } else {
+      setSaveToast(`"${result.query}" already saved`);
+    }
+    setTimeout(() => setSaveToast(null), 2000);
+  }, [saveOneVocab]);
+
+  // Save ALL meanings of ALL ready queue items
+  const handleSaveAll = useCallback(() => {
+    let totalCount = 0;
+    let wordCount = 0;
+    for (const item of readyItems) {
+      if (!item.results?.vocabs?.length) continue;
+      let wordSaved = false;
+      for (const vocab of item.results.vocabs) {
+        if (saveOneVocab(vocab)) { totalCount++; wordSaved = true; }
+      }
+      if (wordSaved) wordCount++;
+    }
+    if (totalCount > 0) {
+      setSaveToast(`Saved ${totalCount} meanings from ${wordCount} ${wordCount === 1 ? 'word' : 'words'}`);
+    } else {
+      setSaveToast('All items already saved');
+    }
+    setTimeout(() => setSaveToast(null), 2000);
+  }, [readyItems, saveOneVocab]);
+
+  // Keep single-vocab save for VocabCard's internal use
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
-    console.error('⭐ SAVE CLICKED:', vocab.word, vocab.sense, 'id:', vocab.id, 'project:', activeProject);
-    try {
-      const item: StoredItem = {
-        data: vocab,
-        type: 'vocab',
-        savedAt: Date.now(),
-        srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-        ...(activeProject ? { project: activeProject } : {}),
-      };
-      onSave(item);
+    if (saveOneVocab(vocab)) {
       setSaveToast(`Saved "${vocab.word}"`);
       setTimeout(() => setSaveToast(null), 2000);
-      console.error('⭐ SAVE DISPATCHED OK');
-    } catch (err) {
-      console.error('⭐ SAVE ERROR:', err);
     }
-  }, [onSave, activeProject]);
+  }, [saveOneVocab]);
 
   // Remove a single item from queue
   const dismissQueueItem = useCallback((id: string) => {
@@ -394,18 +431,24 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       </button>
                     </div>
                   )}
-                  {/* Save button — in popup header so it's always clickable */}
-                  <button
-                    onClick={() => { if (viewingVocab) handleSaveVocab(viewingVocab); }}
-                    className={`h-8 px-3 rounded-full flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
-                      viewingVocab && isVocabSaved(viewingVocab)
-                        ? 'bg-indigo-100 text-indigo-600 border border-indigo-200'
-                        : 'bg-indigo-500 text-white hover:bg-indigo-600 shadow-sm'
-                    }`}
-                  >
-                    <Sparkles size={14} fill={viewingVocab && isVocabSaved(viewingVocab) ? 'currentColor' : 'none'} />
-                    {viewingVocab && isVocabSaved(viewingVocab) ? 'Saved' : 'Save'}
-                  </button>
+                  {/* Save all meanings of current word */}
+                  {(() => {
+                    const allSaved = viewingResult?.vocabs?.every(v => isVocabSaved(v)) ?? false;
+                    const meaningCount = viewingResult?.vocabs?.length ?? 0;
+                    return (
+                      <button
+                        onClick={() => handleSaveWord(viewingResult)}
+                        className={`h-8 px-3 rounded-full flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
+                          allSaved
+                            ? 'bg-indigo-100 text-indigo-600 border border-indigo-200'
+                            : 'bg-indigo-500 text-white hover:bg-indigo-600 shadow-sm'
+                        }`}
+                      >
+                        <Sparkles size={14} fill={allSaved ? 'currentColor' : 'none'} />
+                        {allSaved ? 'Saved' : meaningCount > 1 ? `Save ${meaningCount} meanings` : 'Save'}
+                      </button>
+                    );
+                  })()}
                   {/* Dismiss this result */}
                   <button
                     onClick={() => dismissQueueItem(viewingItem.id)}
@@ -486,12 +529,20 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                     </button>
                   ))}
                   {readyItems.length > 1 && (
-                    <button
-                      onClick={clearQueue}
-                      className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors"
-                    >
-                      Clear all
-                    </button>
+                    <>
+                      <button
+                        onClick={handleSaveAll}
+                        className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-indigo-500 text-white hover:bg-indigo-600 transition-colors shadow-sm"
+                      >
+                        Save all
+                      </button>
+                      <button
+                        onClick={clearQueue}
+                        className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors"
+                      >
+                        Clear all
+                      </button>
+                    </>
                   )}
                 </div>
               )}
