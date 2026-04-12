@@ -169,32 +169,34 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
         </div>
         <div className="flex items-center gap-1">
             {showRefresh && onSearch && (
-                 <Button
-                    variant="icon"
-                    onClick={(e) => { e.stopPropagation(); onSearch(data.word); }}
+                 <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSearch(data.word); }}
                     title="Refresh / Search Again"
+                    className="p-2 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
                  >
                     <RefreshCw size={18} className="text-slate-400 hover:text-indigo-600" />
-                 </Button>
+                 </a>
             )}
             {onExpand && (
-                <Button 
-                    variant="icon" 
-                    onClick={(e) => { e.stopPropagation(); onExpand(); }}
+                <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onExpand(); }}
                     title="View Details"
+                    className="p-2 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
                 >
                     <Maximize2 size={20} className="text-slate-400 hover:text-indigo-600" />
-                </Button>
+                </a>
             )}
             {showSave && onSave && (
-            <Button
-                variant="icon"
-                onClick={(e) => { e.stopPropagation(); console.log('⭐ VocabCard save clicked:', data.word, data.sense); onSave(); }}
-                className={`relative ${isSaved ? "text-indigo-600 bg-indigo-50" : ""}`}
+            <a
+                href="#"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSave(); }}
+                className={`p-2 rounded-full shadow-sm flex items-center justify-center ${isSaved ? "text-indigo-600 bg-indigo-50" : "bg-white/80 hover:bg-white text-slate-700"}`}
                 title={isSaved ? "Saved" : "Save to notebook"}
             >
                 <Sparkles size={20} fill={isSaved ? "currentColor" : "none"} />
-            </Button>
+            </a>
             )}
         </div>
       </div>
