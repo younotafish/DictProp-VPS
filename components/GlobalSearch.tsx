@@ -22,11 +22,12 @@ interface Props {
   findSavedByWord: (word: string) => VocabCard[];
   onSearch: (text: string) => void;
   isOnline: boolean;
+  activeProject?: string;
 }
 
 let queueIdCounter = 0;
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -192,15 +193,26 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setMode('idle'); // Go back to idle — spinner shows on floating button
   }, [query, isOnline, enqueue]);
 
+  const [saveToast, setSaveToast] = useState<string | null>(null);
+
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
-    log('⭐ GlobalSearch: saving vocab', vocab.word, vocab.sense, 'id:', vocab.id);
-    onSave({
-      data: vocab,
-      type: 'vocab',
-      savedAt: Date.now(),
-      srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-    });
-  }, [onSave]);
+    console.error('⭐ SAVE CLICKED:', vocab.word, vocab.sense, 'id:', vocab.id, 'project:', activeProject);
+    try {
+      const item: StoredItem = {
+        data: vocab,
+        type: 'vocab',
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
+        ...(activeProject ? { project: activeProject } : {}),
+      };
+      onSave(item);
+      setSaveToast(`Saved "${vocab.word}"`);
+      setTimeout(() => setSaveToast(null), 2000);
+      console.error('⭐ SAVE DISPATCHED OK');
+    } catch (err) {
+      console.error('⭐ SAVE ERROR:', err);
+    }
+  }, [onSave, activeProject]);
 
   // Remove a single item from queue
   const dismissQueueItem = useCallback((id: string) => {
@@ -282,6 +294,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
   return (
     <>
+      {/* Save toast */}
+      {saveToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-full shadow-lg animate-in fade-in zoom-in-95 duration-200">
+          {saveToast}
+        </div>
+      )}
       {/* Error toast */}
       {error && (
         <div className="fixed bottom-28 right-4 z-[56] bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg animate-in fade-in duration-200">
