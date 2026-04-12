@@ -321,36 +321,86 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                 );
               })();
 
-              // Two-pass rendering: first split on [[brackets]], then highlight current word in plain segments
-              const highlightWord = (text: string, keyPrefix: string) => {
-                if (!word || !text) return text;
-                try {
-                  return text.split(new RegExp(`(${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, j) =>
-                    part.toLowerCase() === word.toLowerCase()
-                      ? <span key={`${keyPrefix}-w${j}`} className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">{part}</span>
-                      : part
-                  );
-                } catch { return text; }
+              // Common words that shouldn't be clickable
+              const STOPWORDS = new Set([
+                'a','an','the','is','am','are','was','were','be','been','being',
+                'i','you','he','she','it','we','they','me','him','her','us','them',
+                'my','your','his','its','our','their','mine','yours','hers','ours','theirs',
+                'this','that','these','those','what','which','who','whom','whose',
+                'and','but','or','nor','for','so','yet','not','no','if','then',
+                'in','on','at','to','of','by','with','from','up','out','off','as',
+                'do','does','did','has','have','had','will','would','shall','should',
+                'can','could','may','might','must',
+                'very','just','also','too','even','only','still','already',
+                'all','each','every','both','few','more','most','some','any','many',
+                'much','own','other','another','such','than','when','where','how','why',
+                'here','there','now','about','after','before','between','over','under',
+                'again','further','once','during','while','because','until',
+                's','t','d','ll','re','ve','m',
+              ]);
+
+              const isClickableWord = (w: string) => {
+                if (!onSearch) return false;
+                const clean = w.replace(/[^a-zA-Z'-]/g, '').toLowerCase();
+                if (clean.length <= 2) return false;
+                if (STOPWORDS.has(clean)) return false;
+                // Don't make the current word clickable (it's the one being studied)
+                if (word && clean === word.toLowerCase()) return false;
+                return true;
+              };
+
+              // Render a text segment: make each non-trivial word clickable
+              const renderClickableText = (text: string, keyPrefix: string, isBracketed: boolean) => {
+                if (!text) return null;
+                // Split into words and whitespace/punctuation, preserving separators
+                const tokens = text.split(/(\s+|(?=[.,!?;:'")\]])|(?<=[.,!?;:'"(\[]))/);
+                return tokens.map((token, j) => {
+                  const trimmed = token.replace(/[^a-zA-Z'-]/g, '');
+                  if (!trimmed) return <React.Fragment key={`${keyPrefix}-${j}`}>{token}</React.Fragment>;
+
+                  // Current word being studied — bold indigo, not clickable
+                  if (word && trimmed.toLowerCase() === word.toLowerCase()) {
+                    return <span key={`${keyPrefix}-${j}`} className="text-indigo-600 font-bold bg-indigo-50 px-0.5 rounded">{token}</span>;
+                  }
+
+                  // Bracketed words — strong green style
+                  if (isBracketed) {
+                    return (
+                      <button
+                        key={`${keyPrefix}-${j}`}
+                        onClick={(e) => { e.stopPropagation(); onSearch?.(trimmed); }}
+                        className="text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors"
+                      >
+                        {token}
+                      </button>
+                    );
+                  }
+
+                  // Non-trivial words — subtle clickable style
+                  if (isClickableWord(trimmed)) {
+                    return (
+                      <button
+                        key={`${keyPrefix}-${j}`}
+                        onClick={(e) => { e.stopPropagation(); onSearch?.(trimmed); }}
+                        className="hover:text-emerald-600 hover:underline hover:decoration-dotted hover:decoration-emerald-300 cursor-pointer rounded px-0 transition-colors"
+                      >
+                        {token}
+                      </button>
+                    );
+                  }
+
+                  return <React.Fragment key={`${keyPrefix}-${j}`}>{token}</React.Fragment>;
+                });
               };
 
               const renderExample = () => {
                 if (!ex) return null;
-                // Split on [[...]] brackets for clickable C1/C2 words
+                // Split on [[...]] brackets — bracketed parts get extra emphasis
                 const parts = ex.split(/\[\[(.+?)\]\]/g);
-                if (parts.length === 1) {
-                  // No brackets found — just highlight the current word
-                  return highlightWord(ex, `ex${i}`);
-                }
                 return parts.map((part, j) =>
-                  j % 2 === 1 ? (
-                    <button
-                      key={`ex${i}-b${j}`}
-                      onClick={(e) => { e.stopPropagation(); onSearch?.(part); }}
-                      className="text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors"
-                    >
-                      {part}
-                    </button>
-                  ) : highlightWord(part, `ex${i}-p${j}`)
+                  <React.Fragment key={`ex${i}-${j}`}>
+                    {renderClickableText(part, `ex${i}-${j}`, j % 2 === 1)}
+                  </React.Fragment>
                 );
               };
 
