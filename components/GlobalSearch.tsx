@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, X, Loader2, Send, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { SearchResult, VocabCard, StoredItem } from '../types';
 import { analyzeInput, generateIllustration } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
@@ -376,6 +376,18 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       </button>
                     </div>
                   )}
+                  {/* Save button — in popup header so it's always clickable */}
+                  <button
+                    onClick={() => { if (viewingVocab) handleSaveVocab(viewingVocab); }}
+                    className={`h-8 px-3 rounded-full flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
+                      viewingVocab && isVocabSaved(viewingVocab)
+                        ? 'bg-indigo-100 text-indigo-600 border border-indigo-200'
+                        : 'bg-indigo-500 text-white hover:bg-indigo-600 shadow-sm'
+                    }`}
+                  >
+                    <Sparkles size={14} fill={viewingVocab && isVocabSaved(viewingVocab) ? 'currentColor' : 'none'} />
+                    {viewingVocab && isVocabSaved(viewingVocab) ? 'Saved' : 'Save'}
+                  </button>
                   {/* Dismiss this result */}
                   <button
                     onClick={() => dismissQueueItem(viewingItem.id)}
@@ -413,7 +425,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       data={viewingVocab}
                       isSaved={isVocabSaved(viewingVocab)}
                       onSave={() => handleSaveVocab(viewingVocab)}
-                      showSave={true}
+                      showSave={false}
                       onSearch={onSearch}
                       scrollable={false}
                       className="!h-auto !overflow-visible border-indigo-200 shadow-sm bg-white"
