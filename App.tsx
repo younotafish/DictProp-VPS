@@ -1803,6 +1803,13 @@ const App: React.FC = () => {
     });
   }, [activeItems]);
 
+  const findSavedByWord = useCallback((word: string): VocabCard[] => {
+    const w = word.toLowerCase().trim();
+    return activeItems
+      .filter(i => i.type === 'vocab' && ((i.data as VocabCard).word || '').toLowerCase().trim() === w)
+      .map(i => i.data as VocabCard);
+  }, [activeItems]);
+
   // Search handler - triggers GlobalSearch popup (bottom-right search icon)
   const handleRecursiveSearch = useCallback((text: string) => {
       window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text } }));
@@ -2136,6 +2143,7 @@ const App: React.FC = () => {
       <GlobalSearch
         onSave={handleSave}
         isVocabSaved={isVocabSaved}
+        findSavedByWord={findSavedByWord}
         onSearch={handleRecursiveSearch}
         isOnline={isOnline}
       />

@@ -19,13 +19,14 @@ type Mode = 'idle' | 'input' | 'viewing';
 interface Props {
   onSave: (item: StoredItem) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
+  findSavedByWord: (word: string) => VocabCard[];
   onSearch: (text: string) => void;
   isOnline: boolean;
 }
 
 let queueIdCounter = 0;
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, isOnline }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -68,6 +69,25 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
     processingRef.current = true;
     const itemId = pending.id;
 
+    // Check if word is already saved — skip API call if so
+    const savedVocabs = findSavedByWord(pending.query);
+    if (savedVocabs.length > 0) {
+      log('🔍 Queue: "' + pending.query + '" already saved (' + savedVocabs.length + ' meanings), skipping API');
+      const cachedResult: SearchResult = {
+        id: 'saved-' + itemId,
+        query: pending.query,
+        translation: '',
+        grammar: '',
+        visualKeyword: savedVocabs[0].word,
+        pronunciation: savedVocabs[0].ipa || '',
+        vocabs: savedVocabs,
+        timestamp: Date.now(),
+      };
+      setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: cachedResult } : q));
+      processingRef.current = false;
+      return;
+    }
+
     // Mark as searching
     setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'searching' as const } : q));
 
@@ -96,7 +116,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, onSearch, 
     }).finally(() => {
       processingRef.current = false;
     });
-  }, [queue]);
+  }, [queue, findSavedByWord]);
 
   // Listen for programmatic search triggers (e.g., from inline highlighted words)
   useEffect(() => {
