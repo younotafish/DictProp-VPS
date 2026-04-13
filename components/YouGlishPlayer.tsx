@@ -143,10 +143,14 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' })
               for (const node of Array.from(mutation.addedNodes)) {
                 if (node instanceof HTMLIFrameElement) {
                   node.allow = 'autoplay; encrypted-media';
+                  node.referrerPolicy = 'no-referrer';
+                  node.sandbox.add('allow-scripts', 'allow-popups', 'allow-presentation');
                 }
                 if (node instanceof HTMLElement) {
                   node.querySelectorAll('iframe').forEach(iframe => {
                     iframe.allow = 'autoplay; encrypted-media';
+                    iframe.referrerPolicy = 'no-referrer';
+                    iframe.sandbox.add('allow-scripts', 'allow-popups', 'allow-presentation');
                   });
                 }
               }
@@ -202,6 +206,7 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' })
         const script = document.createElement('script');
         script.src = 'https://youglish.com/public/emb/widget.js';
         script.charset = 'utf-8';
+        script.referrerPolicy = 'no-referrer';
         script.onerror = () => {
           if (!mounted) return;
           setLoading(false);
