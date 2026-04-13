@@ -154,22 +154,28 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           setMode('idle');
         }
       }
-      // Arrow key navigation in viewing mode
+      // Arrow key navigation in viewing mode — stop propagation so background carousel doesn't also move
       if (mode === 'viewing' && readyItems.length > 0) {
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
         const currentResult = readyItems[viewingQueueIdx]?.results;
         const vocabCount = currentResult?.vocabs?.length || 0;
-        if (e.key === 'ArrowLeft' && vocabCount > 1) {
+        if (e.key === 'ArrowLeft') {
           e.preventDefault();
-          const prev = viewingVocabIdx > 0 ? viewingVocabIdx - 1 : vocabCount - 1;
-          setViewingVocabIdx(prev);
-          if (currentResult?.vocabs?.[prev]?.word) speak(currentResult.vocabs[prev].word);
-        } else if (e.key === 'ArrowRight' && vocabCount > 1) {
+          e.stopImmediatePropagation();
+          if (vocabCount > 1) {
+            const prev = viewingVocabIdx > 0 ? viewingVocabIdx - 1 : vocabCount - 1;
+            setViewingVocabIdx(prev);
+            if (currentResult?.vocabs?.[prev]?.word) speak(currentResult.vocabs[prev].word);
+          }
+        } else if (e.key === 'ArrowRight') {
           e.preventDefault();
-          const next = (viewingVocabIdx + 1) % vocabCount;
-          setViewingVocabIdx(next);
-          if (currentResult?.vocabs?.[next]?.word) speak(currentResult.vocabs[next].word);
+          e.stopImmediatePropagation();
+          if (vocabCount > 1) {
+            const next = (viewingVocabIdx + 1) % vocabCount;
+            setViewingVocabIdx(next);
+            if (currentResult?.vocabs?.[next]?.word) speak(currentResult.vocabs[next].word);
+          }
         }
       }
     };
@@ -275,18 +281,17 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, []);
 
   const handleFloatingClick = () => {
-    if (readyCount > 0) {
-      // Show results
-      setViewingQueueIdx(0);
-      setViewingVocabIdx(0);
-      setMode('viewing');
-      const firstReady = readyItems[0];
-      if (firstReady?.results?.vocabs?.[0]?.word) {
-        speak(firstReady.results.vocabs[0].word);
-      }
-    } else {
-      // Open input — works even while searching, so you can queue more words
-      setMode('input');
+    // Always open input — lets user search more even when results are ready
+    setMode('input');
+  };
+
+  const handleViewResults = () => {
+    setViewingQueueIdx(0);
+    setViewingVocabIdx(0);
+    setMode('viewing');
+    const firstReady = readyItems[0];
+    if (firstReady?.results?.vocabs?.[0]?.word) {
+      speak(firstReady.results.vocabs[0].word);
     }
   };
 
@@ -373,6 +378,15 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                 className="shrink-0 w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center hover:bg-indigo-600 transition-colors"
               >
                 <Send size={14} />
+              </button>
+            )}
+            {readyCount > 0 && (
+              <button
+                onClick={handleViewResults}
+                className="shrink-0 h-7 px-2.5 rounded-full bg-indigo-500 text-white text-xs font-bold flex items-center gap-1 hover:bg-indigo-600 transition-colors animate-pulse"
+              >
+                <Search size={12} />
+                {readyCount}
               </button>
             )}
             <button

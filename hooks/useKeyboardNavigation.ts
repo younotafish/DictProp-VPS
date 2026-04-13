@@ -80,30 +80,34 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
         break;
       
       case 'ArrowLeft':
-        if (!isInputElement) {
+        if (!isInputElement && onArrowLeft) {
           e.preventDefault();
-          onArrowLeft?.();
+          e.stopImmediatePropagation();
+          onArrowLeft();
         }
         break;
-      
+
       case 'ArrowRight':
-        if (!isInputElement) {
+        if (!isInputElement && onArrowRight) {
           e.preventDefault();
-          onArrowRight?.();
+          e.stopImmediatePropagation();
+          onArrowRight();
         }
         break;
-      
+
       case 'ArrowUp':
-        if (!isInputElement) {
+        if (!isInputElement && onArrowUp) {
           e.preventDefault();
-          onArrowUp?.();
+          e.stopImmediatePropagation();
+          onArrowUp();
         }
         break;
-      
+
       case 'ArrowDown':
-        if (!isInputElement) {
+        if (!isInputElement && onArrowDown) {
           e.preventDefault();
-          onArrowDown?.();
+          e.stopImmediatePropagation();
+          onArrowDown();
         }
         break;
       
