@@ -233,23 +233,50 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           <div className="mb-4 md:mb-2 shrink-0" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
         <p className="text-xl text-slate-700 font-medium leading-relaxed select-text">{data.chinese}</p>
         <p className="text-slate-500 mt-1 italic leading-relaxed select-text">{data.definition}</p>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            try {
-              // Flush app state before external navigation — iOS PWA may reload when returning
-              window.dispatchEvent(new Event('dictprop:before-external-nav'));
-              window.open(`https://www.vocabulary.com/dictionary/${encodeURIComponent(data.word)}`, '_blank', 'noopener,noreferrer');
-            } catch (_) {
-              // Silently ignore — never crash the app for an external link
-            }
-          }}
-          className="inline-flex items-center gap-1 mt-2 px-2.5 py-1 rounded-lg text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 transition-all active:scale-95 shadow-sm"
-          title="Learn more on Vocabulary.com"
-        >
-          <ExternalLink size={12} />
-          Vocabulary.com
-        </button>
+        <div className="flex flex-wrap gap-2 mt-2">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              try {
+                window.dispatchEvent(new Event('dictprop:before-external-nav'));
+                window.open(`https://www.vocabulary.com/dictionary/${encodeURIComponent(data.word)}`, '_blank', 'noopener,noreferrer');
+              } catch (_) {}
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 transition-all active:scale-95 shadow-sm"
+            title="Learn more on Vocabulary.com"
+          >
+            <ExternalLink size={12} />
+            Vocabulary.com
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              try {
+                window.dispatchEvent(new Event('dictprop:before-external-nav'));
+                window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(data.word)}`, '_blank', 'noopener,noreferrer');
+              } catch (_) {}
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 hover:border-red-300 transition-all active:scale-95 shadow-sm"
+            title="Search on YouTube"
+          >
+            <ExternalLink size={12} />
+            YouTube
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              try {
+                window.dispatchEvent(new Event('dictprop:before-external-nav'));
+                window.open(`https://www.tiktok.com/search?q=${encodeURIComponent(data.word)}`, '_blank', 'noopener,noreferrer');
+              } catch (_) {}
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-700 bg-slate-50 border border-slate-300 hover:bg-slate-100 hover:border-slate-400 transition-all active:scale-95 shadow-sm"
+            title="Search on TikTok"
+          >
+            <ExternalLink size={12} />
+            TikTok
+          </button>
+        </div>
       </div>
 
       {/* Word Forms */}
