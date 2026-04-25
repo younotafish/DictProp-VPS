@@ -263,9 +263,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             YouTube
           </a>
           <a
-            href={`https://www.tiktok.com/search?q=${encodeURIComponent(data.word)}`}
-            target="_blank"
-            rel="noopener noreferrer"
+            href={`tiktok://search?keyword=${encodeURIComponent(data.word)}`}
             onClick={(e) => {
               e.stopPropagation();
               try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
