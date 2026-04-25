@@ -43,6 +43,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   onLazyLoadImage,
 }) => {
   
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
   // Compare-pick mode state
   const [comparePicking, setComparePicking] = useState<'synonyms' | 'confusables' | null>(null);
   const [compareSelected, setCompareSelected] = useState<Set<string>>(new Set());
@@ -263,7 +265,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             YouTube
           </a>
           <a
-            href={`https://www.tiktok.com/discover/${encodeURIComponent(data.word)}`}
+            href={isIOS ? `https://www.tiktok.com/discover/${encodeURIComponent(data.word)}` : `https://www.tiktok.com/search?q=${encodeURIComponent(data.word)}`}
+            {...(!isIOS && { target: '_blank', rel: 'noopener noreferrer' })}
             onClick={(e) => {
               e.stopPropagation();
               try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
