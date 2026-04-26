@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -98,6 +98,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
+  const [isAutoPlaying, setIsAutoPlaying] = useState(false);
+  const [autoPlaySpeed, setAutoPlaySpeed] = useState(1000); // ms
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [rememberInfo, setRememberInfo] = useState<{
     intervalDays: number;
@@ -262,6 +264,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (isVerticalSwipe && isLongSwipe && groups) {
       // Swipe UP -> Next Group (Word) - only when at bottom or content is short
       if (diffY < -longSwipeMin && hasNextGroup && (isAtBottom || scrollHeight <= clientHeight)) {
+        setIsAutoPlaying(false);
         setShowHeader(false); // Hide header on navigation
         setIsAnimating(true);
         setCurrentGroupIndex(prev => prev + 1);
@@ -271,6 +274,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
       // Swipe DOWN -> Previous Group (Word) - only when at top
       else if (diffY > longSwipeMin && hasPrevGroup && isAtTop) {
+        setIsAutoPlaying(false);
         setShowHeader(false); // Hide header on navigation
         setIsAnimating(true);
         setCurrentGroupIndex(prev => prev - 1);
@@ -284,6 +288,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       
       // Swipe LEFT -> Next Item (Meaning)
       if (diffX < -horizontalSwipeMin && totalItems >= 1) {
+        setIsAutoPlaying(false);
         if (totalItems === 1) {
           // Single meaning: just pronounce, no scroll/animation reset
           if (currentItem) {
@@ -302,6 +307,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       
       // Swipe RIGHT -> Prev Item (Meaning) or Close
       if (diffX > horizontalSwipeMin) {
+        setIsAutoPlaying(false);
         if (hasPrevItem) {
           setShowHeader(false); // Hide header on navigation
           setIsAnimating(true);
@@ -383,6 +389,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Navigation handlers for keyboard
   const handlePrevItem = useCallback(() => {
     if (hasPrevItem && !isAnimating) {
+      setIsAutoPlaying(false);
       setIsAnimating(true);
       setCurrentItemIndex(prev => prev - 1);
       setTimeout(() => setIsAnimating(false), 300);
@@ -392,6 +399,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handleNextItem = useCallback(() => {
     const totalItems = currentGroup ? currentGroup.items.length : 0;
     if (totalItems >= 1 && !isAnimating) {
+      setIsAutoPlaying(false);
       if (totalItems === 1) {
         // Single meaning: just pronounce
         if (currentItem) {
@@ -410,6 +418,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   const handlePrevGroup = useCallback(() => {
     if (hasPrevGroup && !isAnimating && groups) {
+      setIsAutoPlaying(false);
       setIsAnimating(true);
       setCurrentGroupIndex(prev => prev - 1);
       setCurrentItemIndex(0);
@@ -420,6 +429,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   const handleNextGroup = useCallback(() => {
     if (hasNextGroup && !isAnimating && groups) {
+      setIsAutoPlaying(false);
       setIsAnimating(true);
       setCurrentGroupIndex(prev => prev + 1);
       setCurrentItemIndex(0);
@@ -427,6 +437,56 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setTimeout(() => setIsAnimating(false), 300);
     }
   }, [hasNextGroup, isAnimating, groups]);
+
+  // Auto-play slideshow effect
+  const autoPlaySpeedRef = useRef(autoPlaySpeed);
+  useEffect(() => { autoPlaySpeedRef.current = autoPlaySpeed; }, [autoPlaySpeed]);
+
+  useEffect(() => {
+    if (!isAutoPlaying || !groups) return;
+
+    const timer = setTimeout(() => {
+      const safeGroupIdx = Math.min(currentGroupIndex, groups.length - 1);
+      const group = groups[safeGroupIdx];
+      if (!group) { setIsAutoPlaying(false); return; }
+
+      const safeItemIdx = Math.min(currentItemIndex, group.items.length - 1);
+      const isLastItem = safeItemIdx >= group.items.length - 1;
+      const isLastGroup = safeGroupIdx >= groups.length - 1;
+
+      if (!isLastItem) {
+        // Advance to next meaning within current group
+        setIsAnimating(true);
+        setCurrentItemIndex(prev => prev + 1);
+        setTimeout(() => setIsAnimating(false), 300);
+      } else if (!isLastGroup) {
+        // Advance to next group (word)
+        setIsAnimating(true);
+        setCurrentGroupIndex(prev => prev + 1);
+        setCurrentItemIndex(0);
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+        setTimeout(() => setIsAnimating(false), 300);
+      } else {
+        // Reached the end
+        setIsAutoPlaying(false);
+      }
+    }, autoPlaySpeedRef.current);
+
+    return () => clearTimeout(timer);
+  }, [isAutoPlaying, currentGroupIndex, currentItemIndex, groups]);
+
+  const SPEED_PRESETS = [1000, 1500, 3000, 5000];
+
+  const cycleSpeed = useCallback(() => {
+    setAutoPlaySpeed(prev => {
+      const idx = SPEED_PRESETS.indexOf(prev);
+      return SPEED_PRESETS[(idx + 1) % SPEED_PRESETS.length];
+    });
+  }, []);
+
+  const toggleAutoPlay = useCallback(() => {
+    setIsAutoPlaying(prev => !prev);
+  }, []);
 
   // Keyboard navigation
   useKeyboardNavigation({
@@ -679,11 +739,23 @@ export const DetailView: React.FC<DetailViewProps> = ({
           if (isSaved) handleArchiveItem();
         }
       }
+
+      // Space: Toggle auto-play
+      if (e.key === ' ') {
+        e.preventDefault();
+        setIsAutoPlaying(prev => !prev);
+      }
+
+      // +/=: Cycle speed forward
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        cycleSpeed();
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved]);
+  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed]);
 
   return (
     <div 
@@ -992,6 +1064,29 @@ export const DetailView: React.FC<DetailViewProps> = ({
             )}
           </div>
         </div>
+      </div>
+
+      {/* Auto-play control */}
+      <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2">
+        {isAutoPlaying && (
+          <button
+            onClick={cycleSpeed}
+            className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+          >
+            {autoPlaySpeed / 1000}s
+          </button>
+        )}
+        <button
+          onClick={toggleAutoPlay}
+          className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
+            isAutoPlaying
+              ? 'bg-violet-500 text-white hover:bg-violet-600'
+              : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+          title={isAutoPlaying ? 'Pause (Space)' : 'Auto-play (Space)'}
+        >
+          {isAutoPlaying ? <Pause size={20} /> : <Play size={20} className="ml-0.5" />}
+        </button>
       </div>
 
       {/* Success Animation Overlay */}
