@@ -99,7 +99,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
-  const [autoPlaySpeed, setAutoPlaySpeed] = useState(1000); // ms
+  const [autoPlaySpeed, setAutoPlaySpeed] = useState(1500); // ms
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [rememberInfo, setRememberInfo] = useState<{
     intervalDays: number;
