@@ -502,9 +502,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
         setGroupPlayCount(prev => prev + 1);
         setTimeout(() => setIsAnimating(false), 300);
       } else if (needsRepeat) {
-        // Single-meaning word: replay it once with a fade
+        // Single-meaning word: replay it once with a fade and re-pronounce
         setIsAnimating(true);
         setGroupPlayCount(prev => prev + 1);
+        if (title) speak(title);
         setTimeout(() => setIsAnimating(false), 300);
       } else if (!isLastGroup) {
         // Advance to next group (word)
