@@ -477,6 +477,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const autoPlaySpeedRef = useRef(autoPlaySpeed);
   useEffect(() => { autoPlaySpeedRef.current = autoPlaySpeed; }, [autoPlaySpeed]);
 
+  // Counts displays of the current group during auto-play. Single-meaning words
+  // need a second display to satisfy "play each word at least twice".
+  const [groupPlayCount, setGroupPlayCount] = useState(1);
+  useEffect(() => { setGroupPlayCount(1); }, [currentGroupIndex, isAutoPlaying]);
+
   useEffect(() => {
     if (!isAutoPlaying || !groups) return;
 
@@ -488,11 +493,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
       const safeItemIdx = Math.min(currentItemIndex, group.items.length - 1);
       const isLastItem = safeItemIdx >= group.items.length - 1;
       const isLastGroup = safeGroupIdx >= groups.length - 1;
+      const needsRepeat = isLastItem && group.items.length < 2 && groupPlayCount < 2;
 
       if (!isLastItem) {
         // Advance to next meaning within current group
         setIsAnimating(true);
         setCurrentItemIndex(prev => prev + 1);
+        setGroupPlayCount(prev => prev + 1);
+        setTimeout(() => setIsAnimating(false), 300);
+      } else if (needsRepeat) {
+        // Single-meaning word: replay it once with a fade
+        setIsAnimating(true);
+        setGroupPlayCount(prev => prev + 1);
         setTimeout(() => setIsAnimating(false), 300);
       } else if (!isLastGroup) {
         // Advance to next group (word)
@@ -508,7 +520,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }, autoPlaySpeedRef.current);
 
     return () => clearTimeout(timer);
-  }, [isAutoPlaying, currentGroupIndex, currentItemIndex, groups]);
+  }, [isAutoPlaying, currentGroupIndex, currentItemIndex, groups, groupPlayCount]);
 
   const SPEED_PRESETS = [1000, 1500, 3000, 5000];
 
