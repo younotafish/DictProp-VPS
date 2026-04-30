@@ -438,6 +438,41 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   }, [hasNextGroup, isAnimating, groups]);
 
+  // Keep screen awake while auto-play is active (prevents display sleep pausing playback).
+  // Wake lock auto-releases when the tab is hidden, so re-acquire on visibilitychange.
+  useEffect(() => {
+    if (!isAutoPlaying) return;
+    const wakeLockApi = (navigator as any).wakeLock;
+    if (!wakeLockApi?.request) return;
+
+    let sentinel: any = null;
+    let cancelled = false;
+
+    const acquire = async () => {
+      try {
+        const lock = await wakeLockApi.request('screen');
+        if (cancelled) { lock.release?.(); return; }
+        sentinel = lock;
+      } catch {
+        // Ignore — user may have denied, or document not visible
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && !sentinel) acquire();
+    };
+
+    acquire();
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      sentinel?.release?.();
+      sentinel = null;
+    };
+  }, [isAutoPlaying]);
+
   // Auto-play slideshow effect
   const autoPlaySpeedRef = useRef(autoPlaySpeed);
   useEffect(() => { autoPlaySpeedRef.current = autoPlaySpeed; }, [autoPlaySpeed]);
