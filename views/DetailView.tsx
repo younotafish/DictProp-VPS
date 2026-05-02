@@ -99,7 +99,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
-  const [autoPlaySpeed, setAutoPlaySpeed] = useState(1500); // ms
+  const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
+  const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(10);
+  const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
+  const [, setAutoPlayNowTick] = useState(0);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [rememberInfo, setRememberInfo] = useState<{
     intervalDays: number;
@@ -523,7 +526,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return () => clearTimeout(timer);
   }, [isAutoPlaying, currentGroupIndex, currentItemIndex, groups, groupPlayCount]);
 
-  const SPEED_PRESETS = [1000, 1500, 3000, 5000];
+  const SPEED_PRESETS = [1000, 1500, 2000, 3000, 5000];
+  const TIMER_PRESETS = [5, 10, 15, 20, 25];
 
   const cycleSpeed = useCallback(() => {
     setAutoPlaySpeed(prev => {
@@ -532,9 +536,46 @@ export const DetailView: React.FC<DetailViewProps> = ({
     });
   }, []);
 
+  const cycleTimerDuration = useCallback(() => {
+    setAutoPlayTimerMinutes(prev => {
+      const idx = TIMER_PRESETS.indexOf(prev);
+      return TIMER_PRESETS[(idx + 1) % TIMER_PRESETS.length];
+    });
+  }, []);
+
   const toggleAutoPlay = useCallback(() => {
     setIsAutoPlaying(prev => !prev);
   }, []);
+
+  // Timer: stamp start time on play, clear on stop
+  useEffect(() => {
+    setAutoPlayStartedAt(isAutoPlaying ? Date.now() : null);
+  }, [isAutoPlaying]);
+
+  // Tick once a second while playing, and stop auto-play when the timer expires
+  useEffect(() => {
+    if (!isAutoPlaying || autoPlayStartedAt === null) return;
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - autoPlayStartedAt;
+      if (elapsed >= autoPlayTimerMinutes * 60 * 1000) {
+        setIsAutoPlaying(false);
+      } else {
+        setAutoPlayNowTick(t => t + 1);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isAutoPlaying, autoPlayStartedAt, autoPlayTimerMinutes]);
+
+  const timerDisplay = (() => {
+    if (!isAutoPlaying || autoPlayStartedAt === null) {
+      return `${autoPlayTimerMinutes}m`;
+    }
+    const remainingMs = Math.max(0, autoPlayStartedAt + autoPlayTimerMinutes * 60_000 - Date.now());
+    const remainingSec = Math.ceil(remainingMs / 1000);
+    const mm = Math.floor(remainingSec / 60);
+    const ss = remainingSec % 60;
+    return `${mm}:${String(ss).padStart(2, '0')}`;
+  })();
 
   // Keyboard navigation
   useKeyboardNavigation({
@@ -1116,10 +1157,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
       {/* Auto-play control */}
       <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2">
+        <button
+          onClick={cycleTimerDuration}
+          className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+          title="Auto-play duration"
+        >
+          {timerDisplay}
+        </button>
         {isAutoPlaying && (
           <button
             onClick={cycleSpeed}
             className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            title="Speed per slide"
           >
             {autoPlaySpeed / 1000}s
           </button>
