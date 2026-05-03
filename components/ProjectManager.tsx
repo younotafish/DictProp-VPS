@@ -1,11 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ProjectInfo, StoredItem } from '../types';
 import { X, Plus, Pencil, Trash2, FolderOpen, Check, Loader2 } from 'lucide-react';
-import { loadProjects, createProjectApi, renameProjectApi, deleteProjectApi } from '../services/api';
+import { createProjectApi, renameProjectApi, deleteProjectApi } from '../services/api';
 
 interface ProjectManagerProps {
   isOpen: boolean;
   onClose: () => void;
+  projects: ProjectInfo[];
   onProjectsChanged: (projects: ProjectInfo[]) => void;
   allItems: StoredItem[];
 }
@@ -13,41 +14,18 @@ interface ProjectManagerProps {
 export const ProjectManager: React.FC<ProjectManagerProps> = ({
   isOpen,
   onClose,
+  projects,
   onProjectsChanged,
   allItems,
 }) => {
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [newName, setNewName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const newInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
-
-  // Fetch projects directly from API when modal opens
-  const onProjectsChangedRef = useRef(onProjectsChanged);
-  onProjectsChangedRef.current = onProjectsChanged;
-
-  useEffect(() => {
-    if (!isOpen) return;
-    let cancelled = false;
-    setIsLoading(true);
-    setError(null);
-    loadProjects().then(p => {
-      if (cancelled) return;
-      setProjects(p);
-      onProjectsChangedRef.current(p);
-    }).catch(e => {
-      if (cancelled) return;
-      setError(e.message || 'Failed to load projects');
-    }).finally(() => {
-      if (!cancelled) setIsLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [isOpen]);
 
   useEffect(() => {
     if (editingId && editInputRef.current) {
@@ -65,9 +43,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
     setError(null);
     try {
       const p = await createProjectApi(newName.trim());
-      const updated = [...projects, p];
-      setProjects(updated);
-      onProjectsChanged(updated);
+      onProjectsChanged([...projects, p]);
       setNewName('');
     } catch (e: any) {
       setError(e.message || 'Failed to create project');
@@ -81,9 +57,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
     setError(null);
     try {
       await renameProjectApi(id, editName.trim());
-      const updated = projects.map(p => p.id === id ? { ...p, name: editName.trim() } : p);
-      setProjects(updated);
-      onProjectsChanged(updated);
+      onProjectsChanged(projects.map(p => p.id === id ? { ...p, name: editName.trim() } : p));
       setEditingId(null);
     } catch (e: any) {
       setError(e.message || 'Failed to rename project');
@@ -95,9 +69,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
     setDeletingId(id);
     try {
       await deleteProjectApi(id);
-      const updated = projects.filter(p => p.id !== id);
-      setProjects(updated);
-      onProjectsChanged(updated);
+      onProjectsChanged(projects.filter(p => p.id !== id));
     } catch (e: any) {
       setError(e.message || 'Failed to delete project');
     } finally {
@@ -160,15 +132,8 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({
           </button>
         </div>
 
-        {/* Loading */}
-        {isLoading && projects.length === 0 && (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 size={24} className="animate-spin text-indigo-400" />
-          </div>
-        )}
-
         {/* Project list */}
-        {!isLoading && projects.length === 0 ? (
+        {projects.length === 0 ? (
           <div className="flex flex-col items-center py-12 px-6 text-center">
             <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-5">
               <FolderOpen size={32} className="text-indigo-300" />

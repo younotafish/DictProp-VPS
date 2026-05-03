@@ -2,13 +2,14 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, ProjectInfo } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
+import { JSONImport } from '../components/JSONImport';
 import { ProjectManager } from '../components/ProjectManager';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
@@ -522,6 +523,7 @@ interface NotebookProps {
   allItems?: StoredItem[];
   onBatchImport?: (words: string[], project?: string) => void;
   batchImportProgress?: { current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean } | null;
+  onJSONImported?: () => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
@@ -530,7 +532,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     projects = [], activeProject, onSetActiveProject, onProjectsChanged, allItems,
-    onBatchImport, batchImportProgress
+    onBatchImport, batchImportProgress, onJSONImported
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -550,6 +552,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
+  const [showJSONImport, setShowJSONImport] = useState(false);
 
   // Project state
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
@@ -1325,6 +1328,16 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 <ListPlus size={16} />
               </button>
             )}
+            {/* JSON Import button */}
+            {isOnline && onJSONImported && (
+              <button
+                onClick={() => setShowJSONImport(true)}
+                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-emerald-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
+                title="Import JSON — Paste pre-built vocab cards from an external AI"
+              >
+                <FileJson size={16} />
+              </button>
+            )}
             {/* Compare mode toggle */}
             {onCompare && isOnline && (
               <button
@@ -1642,11 +1655,23 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         />
       )}
 
+      {/* JSON Import Modal */}
+      {onJSONImported && (
+        <JSONImport
+          isOpen={showJSONImport}
+          onClose={() => setShowJSONImport(false)}
+          onImported={onJSONImported}
+          projects={projects}
+          activeProject={activeProject ?? undefined}
+        />
+      )}
+
       {/* Project Manager Modal */}
       {onProjectsChanged && (
         <ProjectManager
           isOpen={showProjectManager}
           onClose={() => setShowProjectManager(false)}
+          projects={projects}
           onProjectsChanged={onProjectsChanged}
           allItems={allItems || items}
         />
