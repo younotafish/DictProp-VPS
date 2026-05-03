@@ -1175,7 +1175,7 @@ const App: React.FC = () => {
 
   // ── Batch Import (background processing) ──────────────────────────────────
 
-  const BATCH_CONCURRENCY = 3;
+  const BATCH_CONCURRENCY = 5;
 
   // Refs for batch import to avoid stale closures
   const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
@@ -1259,19 +1259,8 @@ const App: React.FC = () => {
                 handleSaveRef.current(storedItem);
                 saved++;
 
-                // Fire-and-forget image generation
-                if (vocab.imagePrompt && !vocab.imageUrl) {
-                  generateIllustration(vocab.imagePrompt, '16:9')
-                    .then(imageData => {
-                      if (imageData) {
-                        handleUpdateRef.current({
-                          ...storedItem,
-                          data: { ...vocab, imageUrl: imageData },
-                        });
-                      }
-                    })
-                    .catch(() => {});
-                }
+                // Skip image generation during batch import — it floods the server
+                // and causes AI calls to time out. Images can be generated later.
               }
             }
             lastError = null;
@@ -2117,6 +2106,7 @@ const App: React.FC = () => {
             onProjectsChanged={(p) => setProjects(p)}
             allItems={allActiveItems}
             onBatchImport={handleBatchImport}
+            onJSONImported={handleForceSync}
             batchImportProgress={batchImportProgress}
           />
         )}

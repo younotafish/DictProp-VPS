@@ -131,6 +131,29 @@ export const deleteProjectApi = async (id: string): Promise<void> => {
 };
 
 // ============================================================================
+// JSON Import API
+// ============================================================================
+
+export const importJSON = async (
+  items: any[],
+  project?: string
+): Promise<{ ok: boolean; imported: number; skipped: number; imagesFetched: number }> => {
+  const url = project
+    ? `${API_BASE}/api/import?project=${encodeURIComponent(project)}`
+    : `${API_BASE}/api/import`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(items),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(errText || `Import failed: ${res.status}`);
+  }
+  return res.json();
+};
+
+// ============================================================================
 // AI API (replaces aiService.ts)
 // ============================================================================
 
