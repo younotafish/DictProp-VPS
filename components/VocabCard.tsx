@@ -277,6 +277,34 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             <ExternalLink size={12} />
             TikTok
           </a>
+          <a
+            href={`https://en.wiktionary.org/wiki/${encodeURIComponent(data.word)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.stopPropagation();
+              try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 hover:border-amber-300 transition-all active:scale-95 shadow-sm"
+            title="Look up on Wiktionary — etymology and cross-language depth"
+          >
+            <ExternalLink size={12} />
+            Wiktionary
+          </a>
+          <a
+            href={`https://books.google.com/ngrams/graph?content=${encodeURIComponent(data.word)}&year_start=1800&year_end=2019&corpus=en&smoothing=3`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.stopPropagation();
+              try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 hover:bg-sky-100 hover:border-sky-300 transition-all active:scale-95 shadow-sm"
+            title="See word frequency over time on Google Ngram Viewer"
+          >
+            <ExternalLink size={12} />
+            Ngram
+          </a>
         </div>
       </div>
 
