@@ -379,6 +379,13 @@ const App: React.FC = () => {
   } | null>(null);
   const batchImportAbortRef = useRef(false);
 
+  // Image backfill state — generates missing images for vocab cards that have an
+  // imagePrompt but no imageUrl (typically from batch-imported items).
+  const [imageBackfillProgress, setImageBackfillProgress] = useState<{
+    current: number; total: number; succeeded: number; failed: number; isRunning: boolean;
+  } | null>(null);
+  const imageBackfillAbortRef = useRef(false);
+
   // Confirm modal state
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -1180,6 +1187,7 @@ const App: React.FC = () => {
   // Refs for batch import to avoid stale closures
   const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
   const handleUpdateRef = useRef<(item: StoredItem) => void>(() => {});
+  const runImageBackfillRef = useRef<(itemIds?: string[]) => Promise<void>>(async () => {});
 
   const handleBatchImport = useCallback(async (words: string[], project?: string) => {
     if (words.length === 0) return;
@@ -1222,6 +1230,7 @@ const App: React.FC = () => {
     let saved = 0;
     let index = 0;
     const failedWords: string[] = [];
+    const importedItemIds: string[] = [];
 
     const processWord = async () => {
       while (index < newWords.length && !batchImportAbortRef.current) {
@@ -1258,9 +1267,11 @@ const App: React.FC = () => {
                 };
                 handleSaveRef.current(storedItem);
                 saved++;
+                importedItemIds.push(vocab.id);
 
-                // Skip image generation during batch import — it floods the server
-                // and causes AI calls to time out. Images can be generated later.
+                // Image generation runs as a separate phase after text analysis
+                // completes — see runImageBackfillRef call below. Doing it here
+                // floods the server and times out the analyzeInput requests.
               }
             }
             lastError = null;
@@ -1313,7 +1324,172 @@ const App: React.FC = () => {
       showCancel: failedWords.length > 0,
       cancelText: 'Dismiss',
     });
+
+    // Phase 2: backfill images for the items we just imported. Runs in the
+    // background at low concurrency so it doesn't compete with text analysis.
+    if (importedItemIds.length > 0) {
+      runImageBackfillRef.current(importedItemIds).catch(e => warn('Post-batch image backfill failed:', e));
+    }
   }, []);
+
+  // ── Image backfill ────────────────────────────────────────────────────────
+  // Generates missing images for vocab cards that have an imagePrompt but no
+  // imageUrl. Used both for explicit user action ("Generate missing images"
+  // button) and for the post-batch-import sweep.
+
+  const IMAGE_BACKFILL_CONCURRENCY = 2;
+
+  const runImageBackfill = useCallback(async (itemIds?: string[]) => {
+    const all = latestItemsRef.current;
+    const candidates = itemIds
+      ? all.filter(i => itemIds.includes(i.data.id))
+      : all.filter(i => !i.isDeleted && !i.isArchived);
+
+    type Target = { itemId: string; vocabId: string; prompt: string };
+    const targets: Target[] = [];
+    for (const item of candidates) {
+      if (item.isDeleted) continue;
+      if (isVocabItem(item)) {
+        const v = item.data;
+        if (v.imagePrompt && !v.imageUrl) {
+          targets.push({ itemId: v.id, vocabId: v.id, prompt: v.imagePrompt });
+        }
+      } else if (isPhraseItem(item)) {
+        for (const v of item.data.vocabs || []) {
+          if (v.imagePrompt && !v.imageUrl) {
+            targets.push({ itemId: item.data.id, vocabId: v.id, prompt: v.imagePrompt });
+          }
+        }
+      }
+    }
+    if (targets.length === 0) {
+      setImageBackfillProgress(null);
+      return;
+    }
+
+    setImageBackfillProgress({ current: 0, total: targets.length, succeeded: 0, failed: 0, isRunning: true });
+    imageBackfillAbortRef.current = false;
+
+    let completed = 0;
+    let succeeded = 0;
+    let failed = 0;
+    let idx = 0;
+
+    const processOne = async () => {
+      while (idx < targets.length && !imageBackfillAbortRef.current) {
+        const target = targets[idx++];
+        try {
+          const imageData = await generateIllustration(target.prompt, '16:9');
+          if (imageData) {
+            const item = latestItemsRef.current.find(i =>
+              (isVocabItem(i) && i.data.id === target.itemId) ||
+              (isPhraseItem(i) && i.data.id === target.itemId)
+            );
+            if (item) {
+              let updated: StoredItem = item;
+              if (isVocabItem(item) && item.data.id === target.vocabId) {
+                updated = { ...item, data: { ...item.data, imageUrl: imageData } };
+              } else if (isPhraseItem(item)) {
+                updated = {
+                  ...item,
+                  data: {
+                    ...item.data,
+                    vocabs: item.data.vocabs.map(v =>
+                      v.id === target.vocabId ? { ...v, imageUrl: imageData } : v
+                    ),
+                  },
+                };
+              }
+              handleSaveRef.current(updated);
+              succeeded++;
+            } else {
+              failed++;
+            }
+          } else {
+            failed++;
+          }
+        } catch (e) {
+          warn('Image backfill failed for', target.vocabId, e);
+          failed++;
+        }
+        completed++;
+        setImageBackfillProgress({ current: completed, total: targets.length, succeeded, failed, isRunning: true });
+        await new Promise(r => setTimeout(r, 300));
+      }
+    };
+
+    const workers = Array.from(
+      { length: Math.min(IMAGE_BACKFILL_CONCURRENCY, targets.length) },
+      () => processOne()
+    );
+    await Promise.all(workers);
+    setImageBackfillProgress(null);
+  }, []);
+
+  // Wire up the ref so handleBatchImport (declared earlier with empty deps) can call it
+  runImageBackfillRef.current = runImageBackfill;
+
+  // User-initiated backfill: count missing items, confirm, then run. Scope is
+  // current view (active project if filtered, else all items).
+  const handleGenerateMissingImages = useCallback(() => {
+    const items = latestItemsRef.current.filter(i => {
+      if (i.isDeleted || i.isArchived) return false;
+      if (activeProject) return i.project === activeProject;
+      return true;
+    });
+
+    let missing = 0;
+    for (const item of items) {
+      if (isVocabItem(item)) {
+        if (item.data.imagePrompt && !item.data.imageUrl) missing++;
+      } else if (isPhraseItem(item)) {
+        for (const v of item.data.vocabs || []) {
+          if (v.imagePrompt && !v.imageUrl) missing++;
+        }
+      }
+    }
+
+    if (missing === 0) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'No Missing Images',
+        message: activeProject
+          ? 'Every item in this project already has an image.'
+          : 'Every item already has an image.',
+        confirmText: 'OK',
+        variant: 'info',
+        onConfirm: () => setConfirmModal(null),
+        showCancel: false,
+      });
+      return;
+    }
+
+    const scopeLabel = activeProject
+      ? `project "${projects.find(p => p.id === activeProject)?.name ?? '?'}"`
+      : 'your notebook';
+    const estSeconds = Math.ceil((missing * 5) / IMAGE_BACKFILL_CONCURRENCY);
+    const estMin = Math.ceil(estSeconds / 60);
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Generate Missing Images',
+      message: `${missing} item${missing === 1 ? '' : 's'} in ${scopeLabel} are missing images. This will use ~${missing} image API call${missing === 1 ? '' : 's'} and take ~${estMin} min. Continue?`,
+      confirmText: 'Generate',
+      variant: 'info',
+      onConfirm: () => {
+        setConfirmModal(null);
+        const itemIds = items
+          .filter(i => {
+            if (isVocabItem(i)) return i.data.imagePrompt && !i.data.imageUrl;
+            if (isPhraseItem(i)) return (i.data.vocabs || []).some(v => v.imagePrompt && !v.imageUrl);
+            return false;
+          })
+          .map(i => i.data.id);
+        runImageBackfill(itemIds).catch(e => warn('Image backfill failed:', e));
+      },
+      showCancel: true,
+    });
+  }, [activeProject, projects, runImageBackfill]);
 
   const handleSave = (item: StoredItem) => {
     try {
@@ -2108,6 +2284,8 @@ const App: React.FC = () => {
             onBatchImport={handleBatchImport}
             onJSONImported={handleForceSync}
             batchImportProgress={batchImportProgress}
+            onGenerateMissingImages={handleGenerateMissingImages}
+            imageBackfillProgress={imageBackfillProgress}
           />
         )}
 

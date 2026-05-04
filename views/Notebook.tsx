@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, ProjectInfo } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -524,6 +524,8 @@ interface NotebookProps {
   onBatchImport?: (words: string[], project?: string) => void;
   batchImportProgress?: { current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean } | null;
   onJSONImported?: () => void;
+  onGenerateMissingImages?: () => void;
+  imageBackfillProgress?: { current: number; total: number; succeeded: number; failed: number; isRunning: boolean } | null;
 }
 
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
@@ -532,7 +534,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     projects = [], activeProject, onSetActiveProject, onProjectsChanged, allItems,
-    onBatchImport, batchImportProgress, onJSONImported
+    onBatchImport, batchImportProgress, onJSONImported,
+    onGenerateMissingImages, imageBackfillProgress
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -1338,6 +1341,17 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 <FileJson size={16} />
               </button>
             )}
+            {/* Generate Missing Images */}
+            {isOnline && onGenerateMissingImages && (
+              <button
+                onClick={onGenerateMissingImages}
+                disabled={imageBackfillProgress?.isRunning}
+                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${imageBackfillProgress?.isRunning ? 'cursor-not-allowed opacity-50 text-pink-400' : 'text-pink-400 hover:text-pink-600 hover:bg-pink-50'}`}
+                title={activeProject ? 'Generate missing images for this project' : 'Generate missing images for all items'}
+              >
+                {imageBackfillProgress?.isRunning ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}
+              </button>
+            )}
             {/* Compare mode toggle */}
             {onCompare && isOnline && (
               <button
@@ -1589,6 +1603,31 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               <div
                 className="h-full bg-white transition-all duration-300"
                 style={{ width: `${batchImportProgress.total > 0 ? (batchImportProgress.current / batchImportProgress.total) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Backfill Progress Banner */}
+      {imageBackfillProgress?.isRunning && (
+        <div className="sticky top-[72px] z-[9] bg-pink-500 text-white px-4 py-3 shadow-md">
+          <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Loader2 className="animate-spin" size={18} />
+              <div>
+                <p className="font-medium text-sm">Generating images...</p>
+                <p className="text-xs text-pink-200">
+                  {imageBackfillProgress.current}/{imageBackfillProgress.total} done
+                  {imageBackfillProgress.succeeded > 0 && ` · ${imageBackfillProgress.succeeded} ok`}
+                  {imageBackfillProgress.failed > 0 && ` · ${imageBackfillProgress.failed} failed`}
+                </p>
+              </div>
+            </div>
+            <div className="w-24 h-2 bg-pink-400 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-white transition-all duration-300"
+                style={{ width: `${imageBackfillProgress.total > 0 ? (imageBackfillProgress.current / imageBackfillProgress.total) * 100 : 0}%` }}
               />
             </div>
           </div>
