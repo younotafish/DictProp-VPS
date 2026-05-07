@@ -297,6 +297,35 @@ const App: React.FC = () => {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [activeProject, setActiveProject] = useState<string | null>(null); // null = show all
 
+  const projectsCacheKey = authState.user ? `vps_projects_cache_${authState.user.id}` : 'vps_projects_cache';
+
+  // setProjects + write-through to localStorage so the next page load can render
+  // them instantly instead of waiting on the network round-trip.
+  const persistProjects = useCallback((p: ProjectInfo[]) => {
+    setProjects(p);
+    try {
+      localStorage.setItem(projectsCacheKey, JSON.stringify(p));
+    } catch (e) {
+      warn("Failed to cache projects to localStorage", e);
+    }
+  }, [projectsCacheKey]);
+
+  // Restore projects from localStorage cache once auth is resolved
+  useEffect(() => {
+    if (authState.loading || !authState.user) return;
+    try {
+      const cached = localStorage.getItem(projectsCacheKey);
+      if (cached) {
+        const cachedProjects = JSON.parse(cached);
+        if (Array.isArray(cachedProjects) && cachedProjects.length > 0) {
+          setProjects(cachedProjects);
+        }
+      }
+    } catch (e) {
+      warn("Failed to restore projects from cache", e);
+    }
+  }, [authState.loading, authState.user?.id, projectsCacheKey]);
+
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
   const allActiveItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
@@ -479,7 +508,7 @@ const App: React.FC = () => {
 
     try {
       // Reload projects
-      loadProjects().then(p => setProjects(p)).catch(e => warn("Failed to load projects:", e));
+      loadProjects().then(p => persistProjects(p)).catch(e => warn("Failed to load projects:", e));
 
       // 1. Pull latest items from server
       const remoteItems = await loadAllItems();
@@ -856,7 +885,7 @@ const App: React.FC = () => {
     const syncFromServer = async () => {
       try {
         // Load projects alongside items
-        loadProjects().then(p => setProjects(p)).catch(e => warn("Failed to load projects:", e));
+        loadProjects().then(p => persistProjects(p)).catch(e => warn("Failed to load projects:", e));
 
         const remoteItems = await loadAllItems();
         if (remoteItems.length === 0) return;
@@ -2279,7 +2308,7 @@ const App: React.FC = () => {
             projects={projects}
             activeProject={activeProject}
             onSetActiveProject={setActiveProject}
-            onProjectsChanged={(p) => setProjects(p)}
+            onProjectsChanged={(p) => persistProjects(p)}
             allItems={allActiveItems}
             onBatchImport={handleBatchImport}
             onJSONImported={handleForceSync}
