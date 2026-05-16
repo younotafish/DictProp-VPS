@@ -87,6 +87,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 }) => {
   
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/.test(navigator.userAgent);
+  const isMobile = isIOS || isAndroid;
 
   // Compare-pick mode state
   const [comparePicking, setComparePicking] = useState<'synonyms' | 'confusables' | null>(null);
@@ -350,8 +352,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           </a>
           <a
             href={buildChatGPTUrl(data.word)}
-            target="_blank"
-            rel="noopener noreferrer"
+            {...(!isMobile && { target: '_blank', rel: 'noopener noreferrer' })}
             onClick={(e) => {
               e.stopPropagation();
               try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}

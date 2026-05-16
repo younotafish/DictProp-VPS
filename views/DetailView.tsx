@@ -90,7 +90,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onRemoveVocabFromPhrase,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/.test(navigator.userAgent);
+  const isMobile = isIOS || isAndroid;
+
   // State for 2D navigation
   const [currentGroupIndex, setCurrentGroupIndex] = useState(initialGroupIndex);
   const [currentItemIndex, setCurrentItemIndex] = useState(initialItemIndex);
@@ -1042,8 +1046,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     <div className="mt-3">
                       <a
                         href={buildChatGPTUrl((data as SearchResult).query)}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        {...(!isMobile && { target: '_blank', rel: 'noopener noreferrer' })}
                         onClick={(e) => {
                           e.stopPropagation();
                           try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
