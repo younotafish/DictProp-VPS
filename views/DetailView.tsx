@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, ExternalLink } from 'lucide-react';
 import { Button } from '../components/Button';
-import { VocabCardDisplay } from '../components/VocabCard';
+import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
@@ -1039,6 +1039,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
                       ipa={(data as SearchResult).pronunciation}
                       className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
                     />
+                    <div className="mt-3">
+                      <a
+                        href={buildChatGPTUrl((data as SearchResult).query)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 hover:border-teal-300 transition-all active:scale-95 shadow-sm"
+                        title="Ask ChatGPT (translator mode)"
+                      >
+                        <ExternalLink size={12} />
+                        ChatGPT
+                      </a>
+                    </div>
                   </div>
 
                   <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">
