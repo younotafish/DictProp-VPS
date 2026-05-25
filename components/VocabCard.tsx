@@ -320,6 +320,20 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             TikTok
           </a>
           <a
+            href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(data.word)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.stopPropagation();
+              try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 hover:border-purple-300 transition-all active:scale-95 shadow-sm"
+            title="Hear in movie & TV clips on PlayPhrase.me"
+          >
+            <ExternalLink size={12} />
+            PlayPhrase
+          </a>
+          <a
             href={`https://en.wiktionary.org/wiki/${encodeURIComponent(data.word)}`}
             target="_blank"
             rel="noopener noreferrer"

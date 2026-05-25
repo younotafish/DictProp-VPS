@@ -1043,7 +1043,21 @@ export const DetailView: React.FC<DetailViewProps> = ({
                       ipa={(data as SearchResult).pronunciation}
                       className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
                     />
-                    <div className="mt-3">
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <a
+                        href={`https://www.playphrase.me/#/search?q=${encodeURIComponent((data as SearchResult).query)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 hover:border-purple-300 transition-all active:scale-95 shadow-sm"
+                        title="Hear in movie & TV clips on PlayPhrase.me"
+                      >
+                        <ExternalLink size={12} />
+                        PlayPhrase
+                      </a>
                       <a
                         href={buildChatGPTUrl((data as SearchResult).query)}
                         {...(!isMobile && { target: '_blank', rel: 'noopener noreferrer' })}
