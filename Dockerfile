@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install frontend dependencies and build
 COPY package.json package-lock.json ./
-RUN npm pkg delete devDependencies.canvas devDependencies.@playwright/test && npm ci
+RUN npm pkg delete devDependencies.canvas && npm ci
 COPY index.html index.tsx tsconfig.json postcss.config.js ./
 COPY App.tsx types.ts ./
 COPY src/ ./src/

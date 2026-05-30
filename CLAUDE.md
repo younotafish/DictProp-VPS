@@ -25,10 +25,9 @@ DictProp is an AI-powered vocabulary learning web app for English learners. User
 - **GitHub is the bridge**: push code → GitHub Actions deploys to VPS automatically
 - NEVER attempt `ssh`, `scp`, or `rsync` to the VPS — it will always fail with EPERM
 
-### Playwright Chromium crashes
-- Chromium headless shell segfaults (SIGSEGV) on this macOS machine
-- **Use Node.js fetch-based smoke tests** instead of Playwright for verification
-- Playwright tests exist in `e2e/` but cannot run locally
+### No automated test suite
+- There is no test runner in this repo — verify changes with the build plus curl-based smoke tests (see Local Verification below)
+- Browser-driven testing isn't viable here anyway: Chromium headless shell segfaults (SIGSEGV) on this macOS machine
 
 ## Deploy Flow (Fully Automated)
 
@@ -73,7 +72,7 @@ npm run dev
 
 Open http://localhost:3000. Vite proxies `/api/*` to the Hono backend.
 
-### Local Verification (instead of Playwright)
+### Local Verification
 
 After making changes, verify with curl-based tests:
 ```bash
@@ -93,7 +92,7 @@ npm run build            # Production build to dist/
 # Server (run from server/ directory)
 npm run dev              # Hono dev server with hot reload (port 3001)
 npm run build            # TypeScript compile to server/dist/
-npx tsc --noEmit         # Type-check only (use this, NOT root tsc which hits old firebase files)
+npx tsc --noEmit         # Server type-check (frontend: use `npm run build`)
 
 # Deploy
 git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
@@ -103,9 +102,8 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 ```
 
 ### IMPORTANT: Type-checking
-- Run `cd server && npx tsc --noEmit` for server type-checks
-- Do NOT run `npx tsc` from the project root — it will fail on old `firebase.ts` and `aiService.ts` files that still reference Firebase SDK (these files are unused but not deleted)
-- Frontend builds fine with `npm run build` (Vite handles its own TS compilation)
+- Server: `cd server && npx tsc --noEmit`
+- Frontend: `npm run build` (Vite handles its own TS compilation). A raw root `npx tsc` surfaces a few long-standing, non-blocking type errors, so prefer the build for verification.
 
 ## Project Structure
 
@@ -113,27 +111,28 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 ├── App.tsx                    # Root component (~1800 lines), owns all state
 ├── types.ts                   # StoredItem, VocabCard, SearchResult, SRS types
 ├── services/
-│   ├── api.ts                 # REST client — replaces firebase.ts + aiService.ts
+│   ├── api.ts                 # REST + AI client for the Hono backend
+│   ├── auth.ts                # Client auth helpers (calls /api/auth/*)
 │   ├── storage.ts             # IndexedDB local storage (key: 'items_vps')
 │   ├── sync.ts                # mergeDatasets() for local↔server conflict resolution
 │   ├── srsAlgorithm.ts        # Fixed-schedule SRS (12 steps)
 │   ├── speech.ts              # Browser speech synthesis
-│   ├── logger.ts              # Console logging (silenced in production)
-│   ├── firebase.ts            # UNUSED — old Firebase code, kept for reference only
-│   └── aiService.ts           # UNUSED — old Firebase Cloud Functions client
+│   └── logger.ts              # Console logging (silenced in production)
 ├── server/
 │   ├── src/
 │   │   ├── index.ts           # Hono app + static file serving
 │   │   ├── db.ts              # SQLite schema + CRUD (better-sqlite3)
 │   │   ├── env.ts             # Environment variables (.env from project root)
 │   │   ├── proxy-fetch.ts     # MUST use for ALL outbound HTTP (proxy-aware)
+│   │   ├── middleware/auth.ts # requireAuth — session-cookie gate for /api/*
 │   │   └── routes/
+│   │       ├── auth.ts        # /api/auth/* — Google OAuth login + session
 │   │       ├── items.ts       # GET/PUT/DELETE /api/items, POST /api/import
 │   │       ├── ai.ts          # /api/analyze, /api/compare, /api/extract-vocabulary, /api/transcribe
 │   │       └── images.ts      # /api/generate-image
 │   └── package.json
 ├── views/                     # Notebook, StudyEnhanced, SentencesView, DetailView, ComparisonView
-├── components/                # UI components (UserMenu exists but hidden in VPS mode)
+├── components/                # UI components (incl. UserMenu — Google auth is active)
 ├── hooks/                     # Keyboard/gesture hooks
 ├── Dockerfile                 # Multi-stage: npm ci + vite build + tsc inside Docker
 ├── docker-compose.yml         # Single service, SQLite volume at ./data
@@ -180,8 +179,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 - **Each domain/origin has separate browser storage** — data on `localhost:3000` is separate from `dictprop.online` and `107.152.47.101:3000`
 
 ### Docker Build Pitfalls
-- `canvas` npm package requires Python + native build tools — excluded via `npm pkg delete` in Dockerfile
-- `@playwright/test` also excluded (not needed for production)
+- `canvas` npm package (used only by `generate-icons.js`) requires Python + native build tools — excluded from the image via `npm pkg delete` in the Dockerfile
 - Rollup needs platform-specific binaries — do NOT use `--ignore-scripts` with npm ci
 - VPS has only 1GB RAM — Docker builds can OOM. Add swap: `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`
 

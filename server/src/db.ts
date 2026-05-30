@@ -96,7 +96,6 @@ const stmts = {
       project = @project
   `),
   softDelete: db.prepare(`UPDATE items SET is_deleted = 1, updated_at = ? WHERE id = ? AND user_id = ?`),
-  getById: db.prepare(`SELECT * FROM items WHERE id = ?`),
   getByIdScoped: db.prepare(`SELECT * FROM items WHERE id = ? AND user_id = ?`),
   assignOrphanItems: db.prepare(`UPDATE items SET user_id = ? WHERE user_id IS NULL`),
   getImageData: db.prepare(`SELECT data FROM items WHERE id = ? AND user_id = ?`),
@@ -113,7 +112,6 @@ const userStmts = {
   `),
   count: db.prepare(`SELECT COUNT(*) as cnt FROM users`),
   approve: db.prepare(`UPDATE users SET is_approved = 1 WHERE id = ?`),
-  getById: db.prepare(`SELECT * FROM users WHERE id = ?`),
   listAll: db.prepare(`SELECT * FROM users ORDER BY created_at`),
 };
 
@@ -345,10 +343,6 @@ export const createUserAndClaimItems = db.transaction((opts: {
 
 export function approveUser(userId: string) {
   userStmts.approve.run(userId);
-}
-
-export function getUserById(userId: string): UserRow | null {
-  return (userStmts.getById.get(userId) as UserRow) || null;
 }
 
 export function listAllUsers(): UserRow[] {

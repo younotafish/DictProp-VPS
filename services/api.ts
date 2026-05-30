@@ -22,19 +22,6 @@ export const loadAllItems = async (): Promise<StoredItem[]> => {
   return res.json();
 };
 
-export const loadItemsSince = async (since: number): Promise<StoredItem[]> => {
-  const res = await fetch(`${API_BASE}/api/items?since=${since}`);
-  if (!res.ok) throw new Error(`Failed to load items: ${res.status}`);
-  return res.json();
-};
-
-export const loadSingleItem = async (itemId: string): Promise<StoredItem | null> => {
-  const res = await fetch(`${API_BASE}/api/items/${itemId}`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Failed to load item: ${res.status}`);
-  return res.json();
-};
-
 export const saveItems = async (items: StoredItem[]): Promise<void> => {
   const res = await fetch(`${API_BASE}/api/items`, {
     method: 'PUT',
@@ -42,11 +29,6 @@ export const saveItems = async (items: StoredItem[]): Promise<void> => {
     body: JSON.stringify(items),
   });
   if (!res.ok) throw new Error(`Failed to save items: ${res.status}`);
-};
-
-export const deleteItem = async (id: string): Promise<void> => {
-  const res = await fetch(`${API_BASE}/api/items/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`Failed to delete item: ${res.status}`);
 };
 
 /**
