@@ -5,6 +5,7 @@ import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
 import { YouGlishPlayer } from './YouGlishPlayer';
+import { HighlightedSentence } from './HighlightedSentence';
 
 const CHATGPT_TRANSLATOR_PROMPT = `You are an American English ↔ Chinese visual translator. Your ONLY output is a single generated image — produce no text response of any kind. Follow every rule below — with no exceptions or questions — each time you receive user input.
 
@@ -179,9 +180,9 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
       className={`bg-white rounded-2xl p-5 pb-8 md:pb-4 shadow-md border border-slate-100 flex flex-col select-text ${scrollable ? 'overflow-y-auto' : 'overflow-hidden'} ${className}`}
       style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
     >
-      {/* Header — no text selection so buttons always work */}
-      <div className="flex justify-between items-start mb-3 shrink-0 select-none">
-        <div>
+      {/* Header — title is selectable/copyable; only the action buttons opt out of selection */}
+      <div className="flex justify-between items-start mb-3 shrink-0">
+        <div className="select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
           <h3 className="text-2xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
           {/* Sense/Meaning Label */}
           {data.sense && (
@@ -212,7 +213,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           </div>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 select-none">
             {showRefresh && onSearch && (
                  <a
                     href="#"
@@ -433,7 +434,6 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           </div>
           <ul className="space-y-2">
             {ensureArray(data.examples).map((ex, i) => {
-              const word = data.word || '';
               const saveBtn = onSaveSentence && (() => {
                 const saved = isSentenceSaved?.(ex) ?? false;
                 return (
@@ -448,94 +448,9 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                 );
               })();
 
-              // Common words that shouldn't be clickable
-              const STOPWORDS = new Set([
-                'a','an','the','is','am','are','was','were','be','been','being',
-                'i','you','he','she','it','we','they','me','him','her','us','them',
-                'my','your','his','its','our','their','mine','yours','hers','ours','theirs',
-                'this','that','these','those','what','which','who','whom','whose',
-                'and','but','or','nor','for','so','yet','not','no','if','then',
-                'in','on','at','to','of','by','with','from','up','out','off','as',
-                'do','does','did','has','have','had','will','would','shall','should',
-                'can','could','may','might','must',
-                'very','just','also','too','even','only','still','already',
-                'all','each','every','both','few','more','most','some','any','many',
-                'much','own','other','another','such','than','when','where','how','why',
-                'here','there','now','about','after','before','between','over','under',
-                'again','further','once','during','while','because','until',
-                's','t','d','ll','re','ve','m',
-              ]);
-
-              const isClickableWord = (w: string) => {
-                if (!onSearch) return false;
-                const clean = w.replace(/[^a-zA-Z'-]/g, '').toLowerCase();
-                if (clean.length <= 2) return false;
-                if (STOPWORDS.has(clean)) return false;
-                // Don't make the current word clickable (it's the one being studied)
-                if (word && clean === word.toLowerCase()) return false;
-                return true;
-              };
-
-              // Render a text segment: make each non-trivial word clickable
-              const renderClickableText = (text: string, keyPrefix: string, isBracketed: boolean) => {
-                if (!text) return null;
-                // Split into words and whitespace/punctuation, preserving separators
-                const tokens = text.split(/(\s+|(?=[.,!?;:'")\]])|(?<=[.,!?;:'"(\[]))/);
-                return tokens.map((token, j) => {
-                  const trimmed = token.replace(/[^a-zA-Z'-]/g, '');
-                  if (!trimmed) return <React.Fragment key={`${keyPrefix}-${j}`}>{token}</React.Fragment>;
-
-                  // Current word being studied — bold indigo, not clickable
-                  if (word && trimmed.toLowerCase() === word.toLowerCase()) {
-                    return <span key={`${keyPrefix}-${j}`} className="text-indigo-600 font-bold bg-indigo-50 px-0.5 rounded">{token}</span>;
-                  }
-
-                  // Bracketed words — strong green style
-                  if (isBracketed) {
-                    return (
-                      <a
-                        key={`${keyPrefix}-${j}`}
-                        href="#"
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSearch?.(trimmed); }}
-                        className="text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors"
-                      >
-                        {token}
-                      </a>
-                    );
-                  }
-
-                  // Non-trivial words — subtle clickable style
-                  if (isClickableWord(trimmed)) {
-                    return (
-                      <a
-                        key={`${keyPrefix}-${j}`}
-                        href="#"
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSearch?.(trimmed); }}
-                        className="text-inherit no-underline hover:text-emerald-600 hover:underline hover:decoration-dotted hover:decoration-emerald-300 cursor-pointer rounded transition-colors"
-                      >
-                        {token}
-                      </a>
-                    );
-                  }
-
-                  return <React.Fragment key={`${keyPrefix}-${j}`}>{token}</React.Fragment>;
-                });
-              };
-
-              const renderExample = () => {
-                if (!ex) return null;
-                // Split on [[...]] brackets — bracketed parts get extra emphasis
-                const parts = ex.split(/\[\[(.+?)\]\]/g);
-                return parts.map((part, j) =>
-                  <React.Fragment key={`ex${i}-${j}`}>
-                    {renderClickableText(part, `ex${i}-${j}`, j % 2 === 1)}
-                  </React.Fragment>
-                );
-              };
-
               return (
                 <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">
-                  {renderExample()}
+                  <HighlightedSentence text={ex} itemWord={data.word || ''} onSearchWord={onSearch} />
                   {saveBtn}
                 </li>
               );

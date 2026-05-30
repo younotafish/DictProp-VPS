@@ -8,7 +8,7 @@ export const aiRoutes = new Hono();
 // DeepSeek-V3 Helper (Text model via DeepInfra)
 // ============================================================================
 
-const DEEPSEEK_TIMEOUT_MS = 100000;
+const DEEPSEEK_TIMEOUT_MS = 45000;
 const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
 const DEEPINFRA_WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo';
 const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V3';
@@ -154,7 +154,7 @@ Each vocab object MUST have these fields:
   "synonyms": ["array of strings - Synonyms for THIS specific meaning"],
   "antonyms": ["array of strings - Antonyms for THIS specific meaning"],
   "confusables": ["array of strings - Words easily confused with this (similar spelling, sound, or meaning)"],
-  "examples": ["array of 2 strings - Natural contemporary sentences showing THIS specific meaning. CRITICAL: You MUST wrap ALL interesting, uncommon, or C1/C2 level words and phrases (other than the word being defined) in [[double brackets]] so they become clickable links. Be generous — wrap anything a learner might want to look up: collocations, phrasal verbs, advanced adjectives/adverbs, idioms, formal words. e.g. 'She managed to [[reconcile]] her personal beliefs with the [[prevailing]] social norms.' Another: 'Her [[grand entrance]] at the [[gala]] was nothing short of a splashdown.'"],
+  "examples": ["array of 2 strings - Natural contemporary sentences showing THIS specific meaning. Use TWO kinds of markup: (1) Each sentence MUST contain the word/phrase being defined (or a natural variant — different tense/number, or for an idiom a substituted word); wrap THAT target item, exactly as it appears, in {{double curly braces}}. (2) Separately, wrap other genuinely uncommon / C1-C2 words, idioms, collocations, or advanced phrases — NOT the target item, and NEVER basic/common words — in [[double square brackets]] so learners can tap them to look them up. Be reasonably generous with [[...]] for advanced vocabulary, but leave ordinary words as plain text. e.g. for the word 'reckless': 'His {{reckless}} spending [[bankrupted]] the company despite [[repeated]] warnings.' e.g. for the idiom 'fall on deaf ears': 'Her [[impassioned]] plea {{fell on deaf ears}}.' and the variant 'The manager's [[blunt]] advice {{fell on deaf ears}}.'"],
   "history": "string - Etymology and semantic evolution: Where the word comes from AND how/why it evolved to its current meaning. Explain the journey from original meaning to modern usage (2-3 sentences)",
   "register": "string - Frequency/register note (formal, slang, etc.)",
   "mnemonic": "string - A simple memory aid for THIS specific meaning",

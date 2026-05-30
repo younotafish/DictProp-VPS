@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { StoredItem, isSentenceItem, SentenceData } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { MessageSquareQuote, Check, Trash2 } from 'lucide-react';
+import { HighlightedSentence } from '../components/HighlightedSentence';
 
 interface SentencesViewProps {
   items: StoredItem[];
@@ -10,19 +11,6 @@ interface SentencesViewProps {
   onSearch: (term: string) => void;
   onScroll: (e: React.UIEvent<HTMLElement>) => void;
 }
-
-const renderSentenceText = (text: string, onSearch: (term: string) => void) =>
-  (text || '').split(/\[\[(.+?)\]\]/g).map((part, i) =>
-    i % 2 === 1 ? (
-      <button
-        key={i}
-        onClick={(e) => { e.stopPropagation(); onSearch(part); }}
-        className="text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors"
-      >
-        {part}
-      </button>
-    ) : part || null
-  );
 
 export const SentencesView: React.FC<SentencesViewProps> = ({
   items,
@@ -113,7 +101,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
               <div className="pl-3">
                 <p className="text-sm text-slate-700 leading-relaxed mb-2">
-                  {renderSentenceText(d.text, onSearch)}
+                  <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} />
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">

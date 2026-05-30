@@ -41,7 +41,7 @@ export interface SearchResult {
 // Sentence — saved example sentence from a vocabulary card
 export interface SentenceData {
   id: string;
-  text: string; // The sentence text, with [[word]] markup for linked words
+  text: string; // The sentence text. Markup: {{studied item}} (emphasis) and [[uncommon term]] (clickable lookup)
   sourceWord: string; // The vocab word this sentence came from
   sourceSense?: string; // The sense label of the source word
 }
