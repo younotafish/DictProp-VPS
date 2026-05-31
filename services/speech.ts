@@ -24,13 +24,19 @@ const getPreferredVoice = (): SpeechSynthesisVoice | undefined => {
   const voices = window.speechSynthesis.getVoices();
   if (voices.length === 0) return undefined;
 
-  // Priority: best American English voices first
+  // Prefer LOCAL (on-device) voices. Chrome's network voices (e.g. "Google US
+  // English") frequently fail silently — the utterance "plays" but no audio is
+  // produced — so we only fall back to a network voice if no local one exists.
+  const byName = (n: string) => voices.find(v => v.name === n);
   return (
-    voices.find(v => v.name === 'Samantha') ||              // macOS/iOS native US English
-    voices.find(v => v.name === 'Google US English') ||      // Chrome cloud voice
-    voices.find(v => v.name === 'Alex') ||                   // macOS native US English
-    voices.find(v => v.name.includes('Zira')) ||             // Windows US English
-    voices.find(v => v.lang === 'en-US') ||                  // Any en-US voice (incl. Google)
+    byName('Samantha') ||                                            // macOS/iOS local US English
+    byName('Alex') ||                                                // macOS local US English
+    voices.find(v => v.name.includes('Zira')) ||                     // Windows local US English
+    voices.find(v => v.lang === 'en-US' && v.localService) ||        // any local en-US
+    voices.find(v => v.lang.startsWith('en') && v.localService) ||   // any local English
+    byName('Google US English') ||                                   // network fallback
+    voices.find(v => v.lang === 'en-US') ||                          // any en-US (incl. network)
+    voices.find(v => v.lang.startsWith('en')) ||                     // any English
     undefined
   );
 };
@@ -94,17 +100,26 @@ export const speak = (
   if (options?.onError) utterance.onerror = options.onError;
 
   const doSpeak = () => {
-    // Chrome bug: cancel() + immediate speak() = silent drop.
-    // Stop any current speech, then delay before speaking.
-    window.speechSynthesis.cancel();
+    const synth = window.speechSynthesis;
+    // Chrome can leave the engine stuck in a "paused" state after a previous
+    // cancel()/utterance, which makes speak() silently do nothing. resume()
+    // un-sticks it (and is harmless when the engine isn't paused).
+    try { synth.resume(); } catch {}
+    synth.cancel(); // stop anything currently queued/playing
 
-    // Use setTimeout(0) to let Chrome's internal state settle after cancel()
-    setTimeout(() => {
-      if (cachedVoice) {
-        utterance.voice = cachedVoice;
-      }
-      window.speechSynthesis.speak(utterance);
-    }, 10);
+    if (cachedVoice) utterance.voice = cachedVoice;
+
+    // Speak SYNCHRONOUSLY. iOS Safari only honors speak() when it's called
+    // directly inside the user-gesture handler — deferring it (the old
+    // setTimeout) makes iOS treat it as non-user-initiated and drop it
+    // silently. This is safe on Chrome too: the cancel() above is virtually
+    // always a no-op here (the button stops playback on the second click
+    // rather than re-entering this path mid-utterance).
+    synth.speak(utterance);
+
+    // Belt-and-suspenders for the Chrome post-cancel "paused" race: if the
+    // engine ends up paused a moment later, kick it back into playing.
+    setTimeout(() => { try { if (synth.paused) synth.resume(); } catch {} }, 60);
   };
 
   if (cachedVoice || voicesLoaded) {
