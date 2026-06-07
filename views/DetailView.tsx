@@ -763,18 +763,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
       readHandleRef.current = null;
       readingSentencesRef.current = false;
     }
-    let sentence: string | undefined;
-    if (sentenceModeRef.current && currentSentenceRef.current) {
-      // Sentence mode: only one sentence per card — index 0 reads it, index 1 is a no-op.
-      sentence = index === 0 ? stripSentenceMarkers((currentSentenceRef.current.data as SentenceData).text) : undefined;
-    } else {
-      const item = currentItemRef.current;
-      if (!item) return;
-      const ex = isPhraseItem(item)
-        ? [(item.data as SearchResult).query].filter(Boolean)
-        : ((item.data as VocabCard).examples || []);
-      sentence = (ex as string[])[index];
-    }
+    // Cmd+1 / Cmd+2 always read the displayed card's example sentences (positional), in both modes —
+    // the saved sentence has its own controls (E + the banner speaker). On a synthetic fallback card
+    // (deleted source word) the saved sentence is the sole example, so Cmd+1 reads it.
+    const item = currentItemRef.current;
+    if (!item) return;
+    const ex = isPhraseItem(item)
+      ? [(item.data as SearchResult).query].filter(Boolean)
+      : ((item.data as VocabCard).examples || []);
+    const sentence = (ex as string[])[index];
     if (!sentence) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
