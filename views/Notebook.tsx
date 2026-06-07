@@ -14,10 +14,7 @@ import { ProjectManager } from '../components/ProjectManager';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { speakNatural } from '../services/neuralTts';
-// Automatic / navigation speech: upgrade to the natural voice only if the model is already
-// loaded — never trigger the one-time model download from non-deliberate speech.
-const speak = (text: string) => speakNatural(text, { allowDownload: false });
+import { speak } from '../services/speech';
 import { warn, error as logError } from '../services/logger';
 
 interface NotebookItemProps {

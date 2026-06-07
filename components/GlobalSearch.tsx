@@ -4,11 +4,8 @@ import { SearchResult, VocabCard, StoredItem } from '../types';
 import { analyzeInput, generateIllustration } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { speakNatural } from '../services/neuralTts';
+import { speak } from '../services/speech';
 import { log, warn } from '../services/logger';
-// Automatic / navigation speech: upgrade to the natural voice only if the model is already
-// loaded — never trigger the one-time model download from non-deliberate speech.
-const speak = (text: string) => speakNatural(text, { allowDownload: false });
 
 interface QueueItem {
   id: string;

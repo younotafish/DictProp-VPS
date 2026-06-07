@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, ExternalLink } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -9,10 +9,8 @@ import { OfflineImage } from '../components/OfflineImage';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural } from '../services/neuralTts';
-// Automatic / navigation speech: upgrade to the natural voice only if the model is already
-// loaded — never trigger the one-time model download from non-deliberate speech.
-const speak = (text: string) => speakNatural(text, { allowDownload: false });
+import { speak } from '../services/speech';
+import { speakNatural, type SpeakHandle } from '../services/neuralTts';
 import { log, warn } from '../services/logger';
 
 // Helper to format relative time for next review
@@ -110,6 +108,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(10);
   const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
   const [, setAutoPlayNowTick] = useState(0);
+  const [isSentenceAutoPlaying, setIsSentenceAutoPlaying] = useState(false);
+  const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between sentences (end → next start)
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [rememberInfo, setRememberInfo] = useState<{
     intervalDays: number;
@@ -448,10 +448,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   }, [hasNextGroup, isAnimating, groups]);
 
-  // Keep screen awake while auto-play is active (prevents display sleep pausing playback).
-  // Wake lock auto-releases when the tab is hidden, so re-acquire on visibilitychange.
+  // Keep the screen awake while EITHER auto-play mode is active, so the phone doesn't
+  // auto-dim/lock and pause playback. Wake lock auto-releases when the tab is hidden, so we
+  // re-acquire on visibilitychange. (Requires HTTPS + iOS 16.4+; manual lock still suspends.)
   useEffect(() => {
-    if (!isAutoPlaying) return;
+    if (!isAutoPlaying && !isSentenceAutoPlaying) return;
     const wakeLockApi = (navigator as any).wakeLock;
     if (!wakeLockApi?.request) return;
 
@@ -481,7 +482,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       sentinel?.release?.();
       sentinel = null;
     };
-  }, [isAutoPlaying]);
+  }, [isAutoPlaying, isSentenceAutoPlaying]);
 
   // Auto-play slideshow effect
   const autoPlaySpeedRef = useRef(autoPlaySpeed);
@@ -551,8 +552,87 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, []);
 
   const toggleAutoPlay = useCallback(() => {
-    setIsAutoPlaying(prev => !prev);
+    setIsAutoPlaying(prev => {
+      const next = !prev;
+      if (next) setIsSentenceAutoPlaying(false); // the two auto-play modes are mutually exclusive
+      return next;
+    });
   }, []);
+
+  // ── Sentence auto-play: read the first example sentence of each card in turn (neural voice) ──
+  const GAP_PRESETS = [1000, 2000, 3000, 5000, 10000];
+  const cycleGap = useCallback(() => {
+    setSentenceGap(prev => {
+      const idx = GAP_PRESETS.indexOf(prev);
+      return GAP_PRESETS[(idx + 1) % GAP_PRESETS.length];
+    });
+  }, []);
+
+  const toggleSentenceAutoPlay = useCallback(() => {
+    setIsSentenceAutoPlaying(prev => {
+      const next = !prev;
+      if (next) setIsAutoPlaying(false);
+      return next;
+    });
+  }, []);
+
+  const firstExampleOf = (item: StoredItem | null): string => {
+    if (!item) return '';
+    if (isPhraseItem(item)) return (item.data as SearchResult).query || '';
+    const ex = (item.data as VocabCard).examples;
+    return Array.isArray(ex) && ex.length > 0 ? ex[0] : '';
+  };
+
+  const sentenceGapRef = useRef(sentenceGap);
+  useEffect(() => { sentenceGapRef.current = sentenceGap; }, [sentenceGap]);
+
+  useEffect(() => {
+    if (!isSentenceAutoPlaying || !groups) return;
+
+    const advanceCard = () => {
+      const safeGroupIdx = Math.min(currentGroupIndex, groups.length - 1);
+      const group = groups[safeGroupIdx];
+      if (!group) { setIsSentenceAutoPlaying(false); return; }
+      const safeItemIdx = Math.min(currentItemIndex, group.items.length - 1);
+      const isLastItem = safeItemIdx >= group.items.length - 1;
+      const isLastGroup = safeGroupIdx >= groups.length - 1;
+      if (!isLastItem) {
+        setIsAnimating(true);
+        setCurrentItemIndex(p => p + 1);
+        setTimeout(() => setIsAnimating(false), 300);
+      } else if (!isLastGroup) {
+        setIsAnimating(true);
+        setCurrentGroupIndex(p => p + 1);
+        setCurrentItemIndex(0);
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+        setTimeout(() => setIsAnimating(false), 300);
+      } else {
+        setIsSentenceAutoPlaying(false); // played the last card → stop
+      }
+    };
+
+    const sentence = firstExampleOf(currentItem);
+    let gapTimer: ReturnType<typeof setTimeout> | undefined;
+    let handle: SpeakHandle | undefined;
+
+    if (!sentence) {
+      gapTimer = setTimeout(advanceCard, 400); // card has no example → move on quickly
+    } else {
+      // Deliberate action → allow the one-time model download. The gap is measured from the
+      // end of this sentence to the start of the next.
+      handle = speakNatural(sentence, {
+        allowDownload: true,
+        onEnd: () => { gapTimer = setTimeout(advanceCard, sentenceGapRef.current); },
+        onError: () => { gapTimer = setTimeout(advanceCard, sentenceGapRef.current); },
+      });
+    }
+
+    return () => {
+      handle?.stop();
+      if (gapTimer) clearTimeout(gapTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSentenceAutoPlaying, currentGroupIndex, currentItemIndex, groups]);
 
   // Timer: stamp start time on play, clear on stop
   useEffect(() => {
@@ -583,6 +663,52 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const ss = remainingSec % 60;
     return `${mm}:${String(ss).padStart(2, '0')}`;
   })();
+
+  // Read the current card's example sentence(s) aloud with the neural voice, toggled by E.
+  const currentItemRef = useRef(currentItem);
+  useEffect(() => { currentItemRef.current = currentItem; });
+  const readHandleRef = useRef<SpeakHandle | null>(null);
+  const readingSentencesRef = useRef(false);
+
+  const readBothSentences = useCallback(() => {
+    // Pressing again while reading stops it.
+    if (readingSentencesRef.current) {
+      readHandleRef.current?.stop();
+      readHandleRef.current = null;
+      readingSentencesRef.current = false;
+      return;
+    }
+    const item = currentItemRef.current;
+    if (!item) return;
+    const ex = isPhraseItem(item)
+      ? [(item.data as SearchResult).query].filter(Boolean)
+      : ((item.data as VocabCard).examples || []);
+    const sentences = ex.slice(0, 2).filter(Boolean) as string[];
+    if (!sentences.length) return;
+    setIsAutoPlaying(false);
+    setIsSentenceAutoPlaying(false);
+    readingSentencesRef.current = true;
+    let idx = 0;
+    const playNext = () => {
+      if (!readingSentencesRef.current) return;
+      if (idx >= sentences.length) { readingSentencesRef.current = false; return; }
+      const s = sentences[idx++];
+      readHandleRef.current = speakNatural(s, {
+        allowDownload: true,
+        onEnd: () => setTimeout(playNext, 400), // small breath between the two sentences
+        onError: () => setTimeout(playNext, 400),
+      });
+    };
+    playNext();
+  }, []);
+
+  // Stop reading when the card changes or the view unmounts.
+  useEffect(() => () => {
+    if (readingSentencesRef.current) {
+      readHandleRef.current?.stop();
+      readingSentencesRef.current = false;
+    }
+  }, [currentGroupIndex, currentItemIndex]);
 
   // Keyboard navigation
   useKeyboardNavigation({
@@ -795,12 +921,20 @@ export const DetailView: React.FC<DetailViewProps> = ({
         setShowHeader(prev => !prev);
       }
 
-      // P: Pronounce
+      // P: Pronounce the word (system voice)
       if (e.key === 'p' || e.key === 'P') {
         e.preventDefault();
         if (title) speak(title);
       }
-      
+
+      // E: Read the example sentence(s) aloud (neural voice); press again to stop
+      if (e.key === 'e' || e.key === 'E') {
+        if (!e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          readBothSentences();
+        }
+      }
+
       // R: Remember (Shift+R: Reset)
       if (e.key === 'r' || e.key === 'R') {
          if (e.shiftKey) {
@@ -851,7 +985,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed]);
+  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences]);
 
   return (
     <div 
@@ -1209,6 +1343,26 @@ export const DetailView: React.FC<DetailViewProps> = ({
             {autoPlaySpeed / 1000}s
           </button>
         )}
+        {isSentenceAutoPlaying && (
+          <button
+            onClick={cycleGap}
+            className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            title="Gap between sentences"
+          >
+            {sentenceGap / 1000}s gap
+          </button>
+        )}
+        <button
+          onClick={toggleSentenceAutoPlay}
+          className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
+            isSentenceAutoPlaying
+              ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+              : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+          title={isSentenceAutoPlaying ? 'Stop sentence auto-play' : 'Auto-play first sentence of each card'}
+        >
+          {isSentenceAutoPlaying ? <Pause size={20} /> : <AudioLines size={20} />}
+        </button>
         <button
           onClick={toggleAutoPlay}
           className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
