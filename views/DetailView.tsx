@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { VocabCard, SearchResult, StoredItem, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, ExternalLink } from 'lucide-react';
+import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, ExternalLink, MessageSquareQuote } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
+import { HighlightedSentence, stripSentenceMarkers } from '../components/HighlightedSentence';
+import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
@@ -70,9 +72,12 @@ interface DetailViewProps {
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
   onRemoveVocabFromPhrase?: (phraseId: string, vocabId: string) => void;
+  /** When provided, DetailView enters "sentence mode": aligned 1:1 with `groups`, sentenceItems[i] is
+   *  the saved sentence whose source card is groups[i]. Drives the banner, SRS, TTS, autoplay & delete. */
+  sentenceItems?: StoredItem[];
 }
 
-export const DetailView: React.FC<DetailViewProps> = ({ 
+export const DetailView: React.FC<DetailViewProps> = ({
   groups,
   initialGroupIndex = 0,
   initialItemIndex = 0,
@@ -89,6 +94,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onSaveSentence,
   isSentenceSaved,
   onRemoveVocabFromPhrase,
+  sentenceItems,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -192,6 +198,41 @@ export const DetailView: React.FC<DetailViewProps> = ({
   
   const data = currentItem.data;
   const type = currentItem.type;
+
+  // ── Sentence mode ────────────────────────────────────────────────────────────
+  // Opened from the Sentences tab: each group is one saved sentence's source card, and
+  // sentenceItems[currentGroupIndex] is the sentence being reviewed. Drives the banner,
+  // SRS/TTS/delete targeting, and the natural-voice sentence autoplay.
+  const sentenceMode = !!(sentenceItems && sentenceItems.length > 0);
+  // Clamp to the (possibly shrunk-by-deletion) list so the shown card AND the "i / N" counter stay valid
+  // even when the local index is briefly stale relative to the latest sentenceItems.
+  const sentenceIndex = sentenceMode ? Math.min(currentGroupIndex, sentenceItems!.length - 1) : 0;
+  const currentSentence = sentenceMode ? (sentenceItems![sentenceIndex] ?? null) : null;
+  const currentSentenceText = currentSentence ? (currentSentence.data as SentenceData).text : '';
+
+  // Refs so the post-remember timer and key handlers read fresh sentence state without re-subscribing.
+  const sentenceModeRef = useRef(sentenceMode);
+  const currentSentenceRef = useRef(currentSentence);
+  const sentenceItemsRef = useRef(sentenceItems);
+  const currentGroupIndexRef = useRef(currentGroupIndex);
+  useEffect(() => {
+    sentenceModeRef.current = sentenceMode;
+    currentSentenceRef.current = currentSentence;
+    sentenceItemsRef.current = sentenceItems;
+    currentGroupIndexRef.current = currentGroupIndex;
+  });
+
+  // Sentence-mode stats (mirror the word-card stats below, computed across the saved sentences).
+  const sentenceMastery = currentSentence?.srs ? SRSAlgorithm.getMasteryLevel(currentSentence.srs) : null;
+  const sentenceMasteryColors = sentenceMastery ? getMasteryColors(sentenceMastery.color) : null;
+  const { sentenceMemorizedCount, sentenceDueCount } = useMemo(() => {
+    const list = sentenceItems ?? [];
+    const now = Date.now();
+    return {
+      sentenceMemorizedCount: list.filter(s => (s.srs?.memoryStrength ?? 0) >= 70).length,
+      sentenceDueCount: list.filter(s => (s.srs?.nextReview ?? 0) <= now).length,
+    };
+  }, [sentenceItems]);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
@@ -339,7 +380,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Auto-pronounce the word when the card changes — but NOT during sentence auto-play, which
   // reads the example sentence instead (we don't want the word spoken over it).
   useEffect(() => {
-    if (!title || isSentenceAutoPlaying) return;
+    if (!title || isSentenceAutoPlaying || sentenceMode) return;
 
     // Small delay to let animation settle before pronouncing
     const timer = setTimeout(() => {
@@ -347,7 +388,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [title, currentGroupIndex, currentItemIndex, isSentenceAutoPlaying]);
+  }, [title, currentGroupIndex, currentItemIndex, isSentenceAutoPlaying, sentenceMode]);
 
   // P key to pronounce current word
   // Moved to bottom to access handlers
@@ -612,7 +653,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
     };
 
-    const sentence = firstExampleOf(currentItem);
+    // Sentence mode: read the saved sentence for this card; otherwise the card's first example.
+    const sentence = sentenceMode ? stripSentenceMarkers(currentSentenceText) : firstExampleOf(currentItem);
     let gapTimer: ReturnType<typeof setTimeout> | undefined;
     let handle: SpeakHandle | undefined;
 
@@ -635,27 +677,28 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSentenceAutoPlaying, currentGroupIndex, currentItemIndex, groups]);
 
-  // Timer: stamp start time on play, clear on stop
+  // Timer: stamp start time on play, clear on stop (covers both word- and sentence-autoplay)
   useEffect(() => {
-    setAutoPlayStartedAt(isAutoPlaying ? Date.now() : null);
-  }, [isAutoPlaying]);
+    setAutoPlayStartedAt((isAutoPlaying || isSentenceAutoPlaying) ? Date.now() : null);
+  }, [isAutoPlaying, isSentenceAutoPlaying]);
 
   // Tick once a second while playing, and stop auto-play when the timer expires
   useEffect(() => {
-    if (!isAutoPlaying || autoPlayStartedAt === null) return;
+    if ((!isAutoPlaying && !isSentenceAutoPlaying) || autoPlayStartedAt === null) return;
     const interval = setInterval(() => {
       const elapsed = Date.now() - autoPlayStartedAt;
       if (elapsed >= autoPlayTimerMinutes * 60 * 1000) {
         setIsAutoPlaying(false);
+        setIsSentenceAutoPlaying(false);
       } else {
         setAutoPlayNowTick(t => t + 1);
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [isAutoPlaying, autoPlayStartedAt, autoPlayTimerMinutes]);
+  }, [isAutoPlaying, isSentenceAutoPlaying, autoPlayStartedAt, autoPlayTimerMinutes]);
 
   const timerDisplay = (() => {
-    if (!isAutoPlaying || autoPlayStartedAt === null) {
+    if ((!isAutoPlaying && !isSentenceAutoPlaying) || autoPlayStartedAt === null) {
       return `${autoPlayTimerMinutes}m`;
     }
     const remainingMs = Math.max(0, autoPlayStartedAt + autoPlayTimerMinutes * 60_000 - Date.now());
@@ -679,12 +722,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
       readingSentencesRef.current = false;
       return;
     }
-    const item = currentItemRef.current;
-    if (!item) return;
-    const ex = isPhraseItem(item)
-      ? [(item.data as SearchResult).query].filter(Boolean)
-      : ((item.data as VocabCard).examples || []);
-    const sentences = ex.slice(0, 2).filter(Boolean) as string[];
+    let sentences: string[];
+    if (sentenceModeRef.current && currentSentenceRef.current) {
+      // Sentence mode: read the saved sentence.
+      sentences = [stripSentenceMarkers((currentSentenceRef.current.data as SentenceData).text)].filter(Boolean);
+    } else {
+      const item = currentItemRef.current;
+      if (!item) return;
+      const ex = isPhraseItem(item)
+        ? [(item.data as SearchResult).query].filter(Boolean)
+        : ((item.data as VocabCard).examples || []);
+      sentences = ex.slice(0, 2).filter(Boolean) as string[];
+    }
     if (!sentences.length) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
@@ -714,12 +763,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
       readHandleRef.current = null;
       readingSentencesRef.current = false;
     }
-    const item = currentItemRef.current;
-    if (!item) return;
-    const ex = isPhraseItem(item)
-      ? [(item.data as SearchResult).query].filter(Boolean)
-      : ((item.data as VocabCard).examples || []);
-    const sentence = (ex as string[])[index];
+    let sentence: string | undefined;
+    if (sentenceModeRef.current && currentSentenceRef.current) {
+      // Sentence mode: only one sentence per card — index 0 reads it, index 1 is a no-op.
+      sentence = index === 0 ? stripSentenceMarkers((currentSentenceRef.current.data as SentenceData).text) : undefined;
+    } else {
+      const item = currentItemRef.current;
+      if (!item) return;
+      const ex = isPhraseItem(item)
+        ? [(item.data as SearchResult).query].filter(Boolean)
+        : ((item.data as VocabCard).examples || []);
+      sentence = (ex as string[])[index];
+    }
     if (!sentence) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
@@ -788,6 +843,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
 
   const handleDeleteItem = () => {
+    // Sentence mode: delete the SENTENCE (App removes its group + advances/closes the flow).
+    if (sentenceMode && currentSentence) {
+      log('🗑️ DetailView: Deleting sentence:', currentSentence.data.id);
+      setShowActionMenu(false);
+      onDelete(currentSentence.data.id);
+      return;
+    }
     // Use savedItemMatch ID if available, otherwise use currentItem's ID
     const idToDelete = savedItemMatch?.data.id || data.id;
     if (!idToDelete) {
@@ -820,6 +882,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
 
   const handleResetSRS = useCallback(() => {
+    // Sentence mode: reset just this sentence's SRS.
+    if (sentenceModeRef.current && currentSentenceRef.current) {
+      const s = currentSentenceRef.current;
+      log('🔄 DetailView: Resetting SRS for sentence:', s.data.id);
+      onSave({ ...s, srs: SRSAlgorithm.createNew(s.data.id, 'sentence') });
+      setShowActionMenu(false);
+      return;
+    }
     // Reset SRS progress
     if (!data.id) return;
     
@@ -854,6 +924,33 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, [data, title, type, onSave]);
 
   const handleRemember = useCallback(() => {
+    // Sentence mode: remember THIS sentence (its own SRS), show the success overlay, then auto-advance.
+    if (sentenceModeRef.current && currentSentenceRef.current) {
+      const s = currentSentenceRef.current;
+      const baseSRS = SRSAlgorithm.ensure(s.srs, s.data.id, 'sentence');
+      const previewSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
+      const penalty = SRSAlgorithm.getOverduePenalty(baseSRS);
+      const daysOverdue = Math.max(0, Math.round((Date.now() - baseSRS.nextReview) / 86400000));
+      const schedule = SRSAlgorithm.getSchedule();
+      const noPenaltyStep = Math.min(baseSRS.totalReviews + 1, schedule.length);
+      const intervalWithout = schedule[Math.max(0, Math.min(noPenaltyStep - 1, schedule.length - 1))];
+      setRememberInfo({ intervalDays: Math.round(previewSRS.stability), penalty, daysOverdue, intervalWithout });
+      onUpdateSRS?.(s.data.id);
+      setShowSuccessAnim(true);
+      setTimeout(() => {
+        setShowSuccessAnim(false);
+        setRememberInfo(null);
+        // Auto-advance to the next saved sentence; close back to the tab when this was the last.
+        const len = sentenceItemsRef.current?.length ?? 0;
+        const cur = currentGroupIndexRef.current;
+        if (cur + 1 >= len) { onClose(); return; }
+        setCurrentGroupIndex(cur + 1);
+        setCurrentItemIndex(0);
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      }, 1500);
+      return;
+    }
+
     log('🧠 DetailView: Marking as remembered via shortcut/gesture');
 
     const targetTitle = (title || '').toLowerCase().trim();
@@ -922,7 +1019,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setShowSuccessAnim(false);
       setRememberInfo(null);
     }, 1500);
-  }, [data, type, onSave, onUpdateSRS, title]);
+  }, [data, type, onSave, onUpdateSRS, title, onClose]);
 
   const handleDoubleClick = () => {
     // Avoid triggering when selecting text
@@ -981,34 +1078,35 @@ export const DetailView: React.FC<DetailViewProps> = ({
          }
       }
       
-      // S: Toggle save
+      // S: Toggle save (word only; suppressed in sentence mode)
       if (e.key === 's' || e.key === 'S') {
-        if (!e.metaKey && !e.ctrlKey) { // Don't interfere with Cmd+S
+        if (!e.metaKey && !e.ctrlKey && !sentenceMode) { // Don't interfere with Cmd+S
           e.preventDefault();
           handleToggleSave();
         }
       }
 
-      // D: Delete directly
+      // D: Delete directly (the sentence in sentence mode, else the saved word)
       if (e.key === 'd' || e.key === 'D') {
         if (!e.metaKey && !e.ctrlKey) {
           e.preventDefault();
-          if (isSaved) handleDeleteItem();
+          if (isSaved || sentenceMode) handleDeleteItem();
         }
       }
 
-      // A: Archive / Unarchive
+      // A: Archive / Unarchive (suppressed in sentence mode)
       if (e.key === 'a' || e.key === 'A') {
-        if (!e.metaKey && !e.ctrlKey) {
+        if (!e.metaKey && !e.ctrlKey && !sentenceMode) {
           e.preventDefault();
           if (isSaved) handleArchiveItem();
         }
       }
 
-      // Space: Toggle auto-play
+      // Space: Toggle auto-play — sentence autoplay (natural voice) in sentence mode
       if (e.key === ' ') {
         e.preventDefault();
-        setIsAutoPlaying(prev => !prev);
+        if (sentenceMode) toggleSentenceAutoPlay();
+        else setIsAutoPlaying(prev => !prev);
       }
 
       // +/=: Cycle speed forward
@@ -1020,12 +1118,81 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt]);
+  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, toggleSentenceAutoPlay]);
 
   return (
     <div 
       className="fixed inset-0 z-50 bg-slate-50 flex flex-col animate-in slide-in-from-right duration-300 shadow-2xl"
     >
+      {/* Sentence-mode banner — the saved sentence's "card header": back, the sentence + natural-voice
+          speaker, position, and the complete memorization/statistics row. Sits above the scroll area. */}
+      {sentenceMode && currentSentence && (
+        <div className="shrink-0 bg-white border-b border-slate-200 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 shadow-sm">
+          <div className="max-w-3xl mx-auto">
+            {/* Row 1: back + position */}
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <button
+                onClick={onClose}
+                className="flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-indigo-600 -ml-1 px-1 py-0.5 rounded-lg hover:bg-slate-100 transition-colors"
+                title="Back to Sentences (Esc)"
+              >
+                <ArrowLeft size={18} /> Sentences
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
+                  <MessageSquareQuote size={12} /> {sentenceIndex + 1} / {sentenceItems?.length ?? 0}
+                </span>
+                {sentenceDueCount > 0 && (
+                  <span className="text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                    {sentenceDueCount} due
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Row 2: the saved sentence + natural-voice speaker */}
+            <div className="flex items-start gap-1.5">
+              <p className="flex-1 text-[15px] leading-relaxed text-slate-800 max-h-24 overflow-y-auto no-scrollbar">
+                <HighlightedSentence text={currentSentenceText} itemWord={(currentSentence.data as SentenceData).sourceWord} onSearchWord={onSearch} />
+              </p>
+              <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} className="mt-0.5 shrink-0" />
+            </div>
+
+            {/* Row 3: memorization stats + actions */}
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              {sentenceMastery && sentenceMasteryColors && (
+                <>
+                  <span className={`${sentenceMasteryColors.bg} ${sentenceMasteryColors.text} px-2 py-0.5 rounded-full font-semibold whitespace-nowrap`}>
+                    {sentenceMastery.label} {Math.round(sentenceMastery.percentage)}%
+                  </span>
+                  <div className="hidden sm:block flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                    <div className={`h-full ${sentenceMasteryColors.bar} transition-all duration-300`} style={{ width: `${sentenceMastery.percentage}%` }} />
+                  </div>
+                  <span className="text-slate-400 whitespace-nowrap">{currentSentence.srs?.totalReviews ?? 0}×</span>
+                  {(currentSentence.srs?.correctStreak ?? 0) > 0 && (
+                    <span className="text-orange-500 flex items-center gap-0.5"><Flame size={12} />{currentSentence.srs?.correctStreak}</span>
+                  )}
+                  <span className="text-emerald-600 flex items-center gap-0.5"><CheckCircle2 size={12} />{sentenceMemorizedCount}</span>
+                  <span className="text-slate-500 whitespace-nowrap">
+                    {(currentSentence.srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatRelativeTime(currentSentence.srs?.nextReview ?? 0)}
+                  </span>
+                </>
+              )}
+              <div className="ml-auto flex items-center gap-1">
+                <button onClick={handleResetSRS} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)">
+                  <RotateCcw size={15} />
+                </button>
+                <button onClick={handleDeleteItem} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete sentence (D)">
+                  <Trash2 size={15} />
+                </button>
+                <button onClick={handleRemember} className="flex items-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg transition-colors" title="Remember (R)">
+                  <CheckCircle2 size={14} /> Got it
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <div
         ref={scrollContainerRef}
         className={`flex-1 overflow-y-auto no-scrollbar transition-opacity duration-300 ${isAnimating ? 'opacity-50' : 'opacity-100'}`}
@@ -1086,7 +1253,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
               >
                 <RefreshCw size={18} />
               </Button>
-              {isSaved && (
+              {!sentenceMode && isSaved && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1097,6 +1264,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   <Trash2 size={18} />
                 </Button>
               )}
+              {!sentenceMode && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1106,8 +1274,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
                 <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
               </Button>
+              )}
               {/* Action menu for saved items */}
-              {isSaved && (
+              {!sentenceMode && isSaved && (
                 <div className="relative">
                   <Button 
                     variant="ghost" 
@@ -1123,8 +1292,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
             </div>
           </div>
           
-          {/* Bottom row: Progress bar - shown for saved items */}
-          {isSaved && savedItemMatch && mastery && masteryColors && (
+          {/* Bottom row: Progress bar - shown for saved items (word mastery; sentence stats live in the banner) */}
+          {!sentenceMode && isSaved && savedItemMatch && mastery && masteryColors && (
             <div className="px-4 pb-2">
               <div className="flex items-center gap-2 text-xs">
                 {/* Mastery badge with percentage */}
@@ -1394,10 +1563,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
               ? 'bg-emerald-500 text-white hover:bg-emerald-600'
               : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
           }`}
-          title={isSentenceAutoPlaying ? 'Stop sentence auto-play' : 'Auto-play first sentence of each card'}
+          title={isSentenceAutoPlaying ? 'Stop auto-play (Space)' : (sentenceMode ? 'Auto-play saved sentences · natural voice (Space)' : 'Auto-play first sentence of each card')}
         >
           {isSentenceAutoPlaying ? <Pause size={20} /> : <AudioLines size={20} />}
         </button>
+        {!sentenceMode && (
         <button
           onClick={toggleAutoPlay}
           className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
@@ -1409,6 +1579,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         >
           {isAutoPlaying ? <Pause size={20} /> : <Play size={20} className="ml-0.5" />}
         </button>
+        )}
       </div>
 
       {/* Success Animation Overlay */}

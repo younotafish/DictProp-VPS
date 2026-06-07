@@ -394,7 +394,9 @@ const App: React.FC = () => {
   // can contain stale/corrupted StoredItem data that crashes DetailView on reload.
   // The trade-off is minor: users return to the notebook after a reload instead of
   // resuming exactly where they were in the detail view.
-  const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number } | null>(null);
+  // `sentenceItems` (when present) puts DetailView in "sentence mode": it is aligned 1:1 with
+  // `groups` — groups[i] is the resolved source card for the saved sentence sentenceItems[i].
+  const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number, sentenceItems?: StoredItem[] } | null>(null);
 
   // Persist detailContext (only group/item indices for potential future use)
   useEffect(() => {
@@ -833,6 +835,7 @@ const App: React.FC = () => {
   const removeItemFromDetailContext = (id: string) => {
     setDetailContext(prev => {
       if (!prev) return null;
+      if (prev.sentenceItems) return prev; // sentence mode → removeSentenceFromDetailContext handles it
 
       const newGroups = prev.groups.map(group => ({
         ...group,
@@ -846,6 +849,22 @@ const App: React.FC = () => {
       newItemIndex = Math.max(0, newItemIndex);
 
       return { groups: newGroups, groupIndex: newGroupIndex, itemIndex: newItemIndex };
+    });
+  };
+
+  // Sentence-mode counterpart: a sentence's group is keyed by its source-word card id, so the
+  // sentence's own id never matches in removeItemFromDetailContext. Remove the sentence and its
+  // aligned group together, keeping `groups` and `sentenceItems` in lockstep. No-op outside sentence mode.
+  const removeSentenceFromDetailContext = (sentenceId: string) => {
+    setDetailContext(prev => {
+      if (!prev || !prev.sentenceItems) return prev;
+      const idx = prev.sentenceItems.findIndex(s => s.data.id === sentenceId);
+      if (idx === -1) return prev;
+      const newSentenceItems = prev.sentenceItems.filter((_, i) => i !== idx);
+      const newGroups = prev.groups.filter((_, i) => i !== idx);
+      if (newSentenceItems.length === 0) return null; // reviewed/deleted the last one → close
+      const newGroupIndex = Math.min(prev.groupIndex, newGroups.length - 1);
+      return { ...prev, groups: newGroups, sentenceItems: newSentenceItems, groupIndex: newGroupIndex, itemIndex: 0 };
     });
   };
 
@@ -1906,8 +1925,10 @@ const App: React.FC = () => {
       return prevState;
     });
 
-    // Update carousel immediately so card disappears instantly
+    // Update carousel immediately so card disappears instantly. Call both removers — each is a
+    // no-op for the other mode (word id vs sentence id), so handleDelete stays mode-agnostic.
     removeItemFromDetailContext(id);
+    removeSentenceFromDetailContext(id);
 
     // Immediately sync deletion to server (don't wait for 5s debounce)
     try {
@@ -2121,6 +2142,45 @@ const App: React.FC = () => {
   const handleViewStoredItem = useCallback((groups: ItemGroup[], groupIndex: number, itemIndex: number) => {
       setDetailContext({ groups, groupIndex, itemIndex });
   }, []);
+
+  // Open a saved sentence's source card in DetailView (sentence mode). `ordered` is the on-screen
+  // (due-first) order from SentencesView, so swipe/arrow order matches the list exactly. Each sentence
+  // maps to one group whose single item is its resolved source vocab card — matched by word + sense
+  // across ALL projects (allActiveItems), falling back to a synthetic minimal card (showing the
+  // sentence as its sole example) when the source word no longer exists.
+  const handleViewSentence = useCallback((ordered: StoredItem[], index: number) => {
+    if (ordered.length === 0) return;
+    const groups: ItemGroup[] = ordered.map(s => {
+      const d = s.data as SentenceData;
+      const w = (d.sourceWord || '').toLowerCase().trim();
+      const matches = allActiveItems.filter(i => i.type === 'vocab' && getItemSpelling(i) === w);
+      const exact = d.sourceSense ? matches.find(i => getItemSense(i) === d.sourceSense) : undefined;
+      let resolved: StoredItem | undefined = exact || matches[0];
+      if (!resolved) {
+        const synthetic: VocabCard = {
+          id: `sentence-src:${d.id}`,
+          word: d.sourceWord || '(unknown word)',
+          sense: d.sourceSense,
+          chinese: '',
+          ipa: '',
+          definition: '',
+          forms: [],
+          wordFamily: [],
+          synonyms: [],
+          antonyms: [],
+          confusables: [],
+          examples: [d.text],
+          history: '',
+          register: '',
+          mnemonic: '',
+        };
+        resolved = { data: synthetic, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(synthetic.id, 'vocab') };
+      }
+      return { title: getItemTitle(resolved), items: [resolved] };
+    });
+    const safeIndex = Math.min(Math.max(0, index), groups.length - 1);
+    setDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered });
+  }, [allActiveItems]);
 
   // SRS update — handles shared SRS atomically (all items with same title updated together)
   // Uses refs to communicate between the setSyncState updater and the post-update save logic,
@@ -2354,6 +2414,7 @@ const App: React.FC = () => {
               groups={detailContext.groups}
               initialGroupIndex={detailContext.groupIndex}
               initialItemIndex={detailContext.itemIndex}
+              sentenceItems={detailContext.sentenceItems}
               onClose={() => setDetailContext(null)}
               onSave={handleSave}
               onDelete={handleDelete}
@@ -2431,6 +2492,7 @@ const App: React.FC = () => {
             onDelete={handleDelete}
             onSearch={handleRecursiveSearch}
             onScroll={handleScroll}
+            onOpenSentence={handleViewSentence}
           />
         )}
 
@@ -2508,6 +2570,26 @@ const App: React.FC = () => {
                   <ShortcutRow keys={['H']} description="Toggle header bar" />
                   <ShortcutRow keys={['D']} description="Delete current item" />
                   <ShortcutRow keys={['A']} description="Archive / Unarchive" />
+                  <ShortcutRow keys={['E']} description="Speak example sentence(s)" />
+                  <ShortcutRow keys={['⌘', '1']} description="Speak 1st example sentence" />
+                  <ShortcutRow keys={['⌘', '2']} description="Speak 2nd example sentence" />
+                  <ShortcutRow keys={['Space']} description="Auto-play" />
+                </div>
+              </div>
+
+              {/* Sentences flow */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Sentences</h4>
+                <div className="space-y-2">
+                  <ShortcutRow keys={['Tap']} description="Open a sentence's card" />
+                  <ShortcutRow keys={['↑', '↓']} description="Switch between saved sentences" />
+                  <ShortcutRow keys={['E']} description="Speak the sentence (natural voice)" />
+                  <ShortcutRow keys={['⌘', '1']} description="Speak the sentence" />
+                  <ShortcutRow keys={['Space']} description="Auto-play saved sentences" />
+                  <ShortcutRow keys={['R']} description="Remember (advances to next)" />
+                  <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />
+                  <ShortcutRow keys={['D']} description="Delete the sentence" />
+                  <ShortcutRow keys={['Esc']} description="Back to Sentences" />
                 </div>
               </div>
 

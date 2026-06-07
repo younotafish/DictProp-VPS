@@ -10,6 +10,8 @@ interface SentencesViewProps {
   onDelete: (itemId: string) => void;
   onSearch: (term: string) => void;
   onScroll: (e: React.UIEvent<HTMLElement>) => void;
+  /** Open a sentence's source card in DetailView. Receives the on-screen sorted order + clicked index. */
+  onOpenSentence: (ordered: StoredItem[], index: number) => void;
 }
 
 export const SentencesView: React.FC<SentencesViewProps> = ({
@@ -18,6 +20,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   onDelete,
   onSearch,
   onScroll,
+  onOpenSentence,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   // Only recompute "now" when items change (when SRS state could have changed)
@@ -74,13 +77,13 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
           <MessageSquareQuote size={48} className="text-slate-200 mb-4" />
           <p className="text-slate-400 text-sm">No saved sentences yet</p>
           <p className="text-slate-300 text-xs mt-1">
-            Save example sentences from vocabulary cards to review them here
+            Save example sentences from vocabulary cards, then tap one here to study it
           </p>
         </div>
       )}
 
       <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-2 w-full max-w-screen-md mx-auto mt-2">
-        {sorted.map(item => {
+        {sorted.map((item, index) => {
           if (!isSentenceItem(item)) return null;
           const d = item.data as SentenceData;
           const isDue = ((item.srs?.nextReview ?? 0) <= now);
@@ -96,7 +99,12 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
           return (
             <div
               key={d.id}
-              className={`relative rounded-xl border p-3 transition-colors ${isDue ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100 bg-white'}`}
+              onClick={() => onOpenSentence(sorted, index)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter') onOpenSentence(sorted, index); }}
+              title="Open card to study this sentence"
+              className={`relative rounded-xl border p-3 transition-colors cursor-pointer hover:border-indigo-300 hover:shadow-sm ${isDue ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100 bg-white'}`}
             >
               <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
               <div className="pl-3">
@@ -116,7 +124,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                   <div className="flex items-center gap-1">
                     {isDue && (
                       <button
-                        onClick={() => onUpdateSRS(d.id)}
+                        onClick={(e) => { e.stopPropagation(); onUpdateSRS(d.id); }}
                         className="flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-lg transition-colors"
                         title="Mark as reviewed"
                       >
@@ -127,13 +135,13 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                     {confirmDeleteId === d.id ? (
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => { onDelete(d.id); setConfirmDeleteId(null); }}
+                          onClick={(e) => { e.stopPropagation(); onDelete(d.id); setConfirmDeleteId(null); }}
                           className="text-xs text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-lg transition-colors"
                         >
                           Delete
                         </button>
                         <button
-                          onClick={() => setConfirmDeleteId(null)}
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
                           className="text-xs text-slate-500 bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded-lg transition-colors"
                         >
                           Cancel
@@ -141,7 +149,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                       </div>
                     ) : (
                       <button
-                        onClick={() => setConfirmDeleteId(d.id)}
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(d.id); }}
                         className="text-slate-300 hover:text-red-400 p-1 rounded-lg transition-colors"
                         title="Delete sentence"
                       >
