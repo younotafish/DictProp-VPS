@@ -1,6 +1,7 @@
 import { Context, Next } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { getSessionUser, UserRow } from '../db.js';
+import { env } from '../env.js';
 
 export type AuthUser = {
   id: string;
@@ -12,6 +13,15 @@ export type AuthUser = {
 
 export type AuthVariables = {
   user: AuthUser;
+};
+
+// Synthetic user used ONLY when DEV_AUTH_BYPASS=1 (local development). Never enabled in prod.
+export const DEV_AUTH_USER: AuthUser = {
+  id: 'dev-user',
+  email: 'dev@localhost',
+  displayName: 'Dev (auth bypass)',
+  photoUrl: null,
+  isAdmin: true,
 };
 
 function userRowToAuthUser(row: UserRow): AuthUser {
@@ -29,6 +39,12 @@ export async function requireAuth(c: Context, next: Next) {
 
   // Skip auth for public routes
   if (path === '/api/health' || path.startsWith('/api/auth/')) {
+    return next();
+  }
+
+  // Local dev only (DEV_AUTH_BYPASS=1): skip Google auth and act as a synthetic admin user.
+  if (env.DEV_AUTH_BYPASS) {
+    c.set('user', DEV_AUTH_USER);
     return next();
   }
 

@@ -3,6 +3,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { randomUUID } from 'crypto';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
+import { DEV_AUTH_USER } from '../middleware/auth.js';
 import {
   findUserByGoogleId,
   createUserAndClaimItems,
@@ -135,6 +136,11 @@ authRoutes.get('/callback', async (c) => {
 
 // GET /api/auth/me — current user info
 authRoutes.get('/me', (c) => {
+  // Local dev only: report the synthetic bypass user so the client treats us as signed in.
+  if (env.DEV_AUTH_BYPASS) {
+    return c.json({ user: DEV_AUTH_USER, pending: false });
+  }
+
   const token = getCookie(c, 'session');
   if (!token) {
     return c.json({ error: 'Not authenticated' }, 401);

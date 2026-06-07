@@ -32,3 +32,11 @@ server/node_modules/
 .playwright/
 test-results/
 playwright-report/
+
+# Local upload helper: session cookie + chatbot-generated import data
+.session
+import*.json
+popdict_all_books/
+popdict_all_books*.zip
+scripts/.upload-books-state.json
+scripts/.DS_Store
