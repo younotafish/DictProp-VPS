@@ -6,6 +6,7 @@ import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
 import { YouGlishPlayer } from './YouGlishPlayer';
 import { HighlightedSentence } from './HighlightedSentence';
+import { SentenceSpeakerButton } from './SentenceSpeakerButton';
 
 const CHATGPT_TRANSLATOR_PROMPT = `You are an American English ↔ Chinese visual translator. Your ONLY output is a single generated image — produce no text response of any kind. Follow every rule below — with no exceptions or questions — each time you receive user input.
 
@@ -449,8 +450,9 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               })();
 
               return (
-                <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-6">
+                <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-12">
                   <HighlightedSentence text={ex} itemWord={data.word || ''} onSearchWord={onSearch} />
+                  <SentenceSpeakerButton text={ex} className="absolute right-6 top-0" />
                   {saveBtn}
                 </li>
               );

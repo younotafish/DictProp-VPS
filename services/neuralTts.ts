@@ -1,0 +1,299 @@
+/**
+ * In-browser neural TTS (Kokoro-82M via kokoro-js / Transformers.js).
+ *
+ * Produces a natural voice that runs 100% on-device — zero network roundtrip after a
+ * one-time ~86 MB model download (fetched from the Hugging Face CDN into the browser's
+ * Cache Storage, so it works offline afterward and never touches our server).
+ *
+ * Device policy (see speakNatural):
+ *  - WebGPU present  -> use Kokoro.
+ *  - No WebGPU       -> use the system Web Speech voice (services/speech.ts) — today's
+ *                       behavior, no download, no regression.
+ *  - Runtime failure -> fall back to the system voice and disable neural for the session.
+ *
+ * The 86 MB model is only ever downloaded on a *deliberate* speaker-button click
+ * (allowDownload: true). Automatic/navigation speech passes allowDownload: false, so it
+ * upgrades to the natural voice once the model is already resident but never triggers a
+ * download on its own.
+ */
+import { speak as systemSpeak } from './speech';
+import { stripSentenceMarkers } from '../components/HighlightedSentence';
+import { log, warn } from './logger';
+
+const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+// dtype for the WebGPU backend (we run WebGPU-only). Observed on WebGPU:
+//   q8  (~86 MB)  — garbled audio (int8 ops misbehave on the WebGPU EP). Do NOT use.
+//   fp16 (~163 MB) — correct words but audible static/noise (reduced precision).
+//   fp32 (~326 MB) — clean, full quality. kokoro-js recommends fp32 for WebGPU.
+const DTYPE = 'fp32';
+export const DEFAULT_VOICE = 'af_heart'; // American female, grade A (matches our GA/rhotic IPA)
+
+// Tiny valid silent WAV — played once inside a user gesture to unlock <audio> on iOS Safari,
+// so a later play() after the async synth await isn't blocked as non-user-initiated.
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+
+const CONSENT_KEY = 'tts_neural_consent'; // mobile one-time download consent
+
+type KokoroModule = typeof import('kokoro-js');
+type KokoroInstance = InstanceType<KokoroModule['KokoroTTS']>;
+
+// ---------------------------------------------------------------------------
+// Status (optional global indicator)
+// ---------------------------------------------------------------------------
+export type TtsStatus = 'idle' | 'loading' | 'ready' | 'error';
+let status: TtsStatus = 'idle';
+let progress = 0; // 0..1 during the one-time download
+const listeners = new Set<(status: TtsStatus, progress: number) => void>();
+
+const emit = () => listeners.forEach((cb) => cb(status, progress));
+const setStatus = (s: TtsStatus, p?: number) => {
+  status = s;
+  if (p !== undefined) progress = p;
+  emit();
+};
+
+/** Subscribe to model status/progress. Fires immediately with the current value. */
+export const subscribe = (cb: (status: TtsStatus, progress: number) => void): (() => void) => {
+  listeners.add(cb);
+  cb(status, progress);
+  return () => listeners.delete(cb);
+};
+export const getStatus = (): TtsStatus => status;
+export const isModelReady = (): boolean => status === 'ready';
+
+// ---------------------------------------------------------------------------
+// Capability gate
+// ---------------------------------------------------------------------------
+let neuralDisabled = false; // set after a runtime failure — system voice for the rest of the session
+
+/** True when the device can run Kokoro acceptably (WebGPU). The gate for Kokoro vs. system voice. */
+export const isNeuralSupported = (): boolean =>
+  typeof navigator !== 'undefined' && !!(navigator as any).gpu;
+
+const isMobile = (): boolean =>
+  typeof navigator !== 'undefined' &&
+  (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)); // iPadOS
+
+const hasConsent = (): boolean => {
+  try {
+    return localStorage.getItem(CONSENT_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+/** On mobile, confirm the one-time ~86 MB download before pulling it (respect cellular data). */
+const confirmDownloadIfNeeded = (): boolean => {
+  if (!isMobile() || hasConsent()) return true;
+  const ok =
+    typeof window !== 'undefined' &&
+    window.confirm(
+      'Download the natural voice? About 330 MB, one-time. After that it works offline with no further data.',
+    );
+  if (ok) {
+    try {
+      localStorage.setItem(CONSENT_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+  }
+  return !!ok;
+};
+
+// ---------------------------------------------------------------------------
+// Model + synthesis
+// ---------------------------------------------------------------------------
+let modelPromise: Promise<KokoroInstance> | null = null;
+
+const ensureModel = (): Promise<KokoroInstance> => {
+  if (modelPromise) return modelPromise;
+  setStatus('loading', 0);
+  modelPromise = (async () => {
+    const { KokoroTTS } = await import('kokoro-js');
+    // Skip the local /models/* lookup (404s) — load straight from the HF Hub + browser cache.
+    // Non-fatal: a direct import of the (transitive) transformers dep shouldn't fail the load.
+    try {
+      const transformers: any = await import('@huggingface/transformers');
+      transformers.env.allowLocalModels = false;
+    } catch {
+      /* ignore */
+    }
+    const tts = await KokoroTTS.from_pretrained(MODEL_ID, {
+      dtype: DTYPE as any,
+      device: 'webgpu',
+      progress_callback: (p: any) => {
+        if (p && p.status === 'progress' && typeof p.progress === 'number') {
+          setStatus('loading', Math.max(0, Math.min(1, p.progress / 100)));
+        }
+      },
+    });
+    log(`🔊 Neural TTS: Kokoro model ready (${DTYPE}, webgpu)`);
+    setStatus('ready', 1);
+    return tts;
+  })();
+  modelPromise.catch(() => {
+    neuralDisabled = true; // don't retry the big download this session
+    modelPromise = null;
+    setStatus('error');
+  });
+  return modelPromise;
+};
+
+const audioCache = new Map<string, string>(); // `${voice}:${text}` -> object URL
+
+const synthesize = async (text: string, voice: string): Promise<string> => {
+  const key = `${voice}:${text}`;
+  const cached = audioCache.get(key);
+  if (cached) return cached;
+  const tts = await ensureModel();
+  const audio = await tts.generate(text, { voice: voice as any });
+  const url = URL.createObjectURL(audio.toBlob());
+  audioCache.set(key, url);
+  return url;
+};
+
+// ---------------------------------------------------------------------------
+// Playback
+// ---------------------------------------------------------------------------
+let audioEl: HTMLAudioElement | null = null;
+let audioUnlocked = false;
+
+const getAudioEl = (): HTMLAudioElement => {
+  if (!audioEl) audioEl = new Audio();
+  return audioEl;
+};
+
+/** Play a silent clip inside the click gesture so iOS lets us play the real audio later. */
+const unlockAudio = (): void => {
+  if (audioUnlocked) return;
+  try {
+    const el = getAudioEl();
+    el.src = SILENT_WAV;
+    const p = el.play();
+    if (p && typeof p.then === 'function') {
+      p.then(() => {
+        audioUnlocked = true;
+      }).catch(() => {
+        /* will fall back to system voice if the real play() is later blocked */
+      });
+    } else {
+      audioUnlocked = true;
+    }
+  } catch {
+    /* ignore */
+  }
+};
+
+const stopPlayback = (): void => {
+  try {
+    audioEl?.pause();
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.speechSynthesis?.cancel();
+  } catch {
+    /* ignore */
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+export interface SpeakHandle {
+  stop: () => void;
+}
+
+export interface SpeakOptions {
+  voice?: string;
+  rate?: number;
+  /** Allow triggering the one-time model download. true for deliberate clicks, false for auto/nav. */
+  allowDownload?: boolean;
+  onStart?: () => void;
+  onEnd?: () => void;
+  onError?: (event: any) => void;
+}
+
+let currentToken = 0;
+
+/**
+ * Speak `text` with the natural neural voice when the device supports it and the model is
+ * available (or a download is permitted); otherwise fall back to the system Web Speech voice.
+ * Returns a handle whose stop() halts playback.
+ */
+export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle => {
+  const plain = stripSentenceMarkers(text).trim();
+  if (!plain) return { stop: () => {} };
+
+  const { voice = DEFAULT_VOICE, rate, onStart, onEnd, onError, allowDownload = true } = opts;
+
+  const token = ++currentToken;
+  const isCurrent = () => token === currentToken;
+
+  const fallback = () => systemSpeak(plain, { rate, onStart, onEnd, onError });
+
+  // Decide engine. Neural needs WebGPU, not session-disabled, and either an already-loaded
+  // model or permission to download it.
+  const wouldDownload = !isModelReady();
+  let useNeural = isNeuralSupported() && !neuralDisabled && (isModelReady() || allowDownload);
+
+  // On mobile, get one-time consent before the first (downloading) use.
+  if (useNeural && wouldDownload && allowDownload && !confirmDownloadIfNeeded()) {
+    useNeural = false;
+  }
+
+  if (!useNeural) {
+    fallback();
+    return {
+      stop: () => {
+        if (isCurrent()) currentToken++;
+        try {
+          window.speechSynthesis?.cancel();
+        } catch {
+          /* ignore */
+        }
+      },
+    };
+  }
+
+  // Neural path — unlock audio synchronously (iOS) and stop anything currently playing.
+  unlockAudio();
+  stopPlayback();
+
+  (async () => {
+    try {
+      const url = await synthesize(plain, voice);
+      if (!isCurrent()) return; // superseded by a newer call
+      const el = getAudioEl();
+      el.onplaying = () => {
+        if (isCurrent()) onStart?.();
+      };
+      el.onended = () => {
+        if (isCurrent()) onEnd?.();
+      };
+      el.onerror = () => {
+        if (isCurrent()) onEnd?.();
+      };
+      el.src = url;
+      try {
+        el.currentTime = 0; // restart when replaying the same cached clip
+      } catch {
+        /* media not ready yet — the fresh src already starts at 0 */
+      }
+      await el.play();
+    } catch (err) {
+      if (!isCurrent()) return;
+      warn('🔊 Neural TTS failed, falling back to system voice', err);
+      fallback();
+    }
+  })();
+
+  return {
+    stop: () => {
+      if (isCurrent()) currentToken++;
+      stopPlayback();
+    },
+  };
+};

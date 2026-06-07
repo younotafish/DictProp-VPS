@@ -22,6 +22,12 @@ export default defineConfig({
   plugins: [
     react(),
   ],
+  optimizeDeps: {
+    // kokoro-js + transformers.js (onnxruntime-web wasm/workers) don't play well with Vite's
+    // dev pre-bundling. They're loaded via dynamic import() so they stay code-split out of the
+    // main bundle either way; excluding them here avoids dev-server pre-bundle errors.
+    exclude: ['kokoro-js', '@huggingface/transformers'],
+  },
   build: {
     rollupOptions: {
       output: {

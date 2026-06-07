@@ -18,6 +18,13 @@ const ITEM_CLASS = 'text-indigo-700 font-semibold bg-indigo-50 rounded px-0.5';
 const LINK_CLASS =
   'text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors';
 
+/**
+ * Strip the {{studied item}} and [[uncommon term]] emphasis markers, leaving plain,
+ * speakable text. Used for TTS (and anywhere the raw sentence is needed without markup).
+ */
+export const stripSentenceMarkers = (text: string): string =>
+  (text || '').replace(/\{\{(.+?)\}\}/g, '$1').replace(/\[\[(.+?)\]\]/g, '$1');
+
 interface HighlightedSentenceProps {
   text: string;
   /** The studied word/phrase — emphasized as the item and matched in legacy plain text. */

@@ -9,7 +9,10 @@ import { OfflineImage } from '../components/OfflineImage';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speak } from '../services/speech';
+import { speakNatural } from '../services/neuralTts';
+// Automatic / navigation speech: upgrade to the natural voice only if the model is already
+// loaded — never trigger the one-time model download from non-deliberate speech.
+const speak = (text: string) => speakNatural(text, { allowDownload: false });
 import { log, warn } from '../services/logger';
 
 // Helper to format relative time for next review
