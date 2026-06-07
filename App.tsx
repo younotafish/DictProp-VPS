@@ -6,9 +6,9 @@ import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, ProjectInfo } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
-import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, rehydrateImagesForSync, getStoredImageIds } from './services/storage';
+import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest } from './services/api';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
@@ -110,6 +110,38 @@ const IMAGE_IDB_MARKER = 'idb:stored';
 const isImageMarker = (url: string | undefined): boolean =>
   !!url && !url.startsWith('data:image/') && (url === IMAGE_IDB_MARKER || url === 'server:has_image');
 
+/** Push offloaded base64 images to the server (item_images) in small chunks, with a light retry. */
+async function uploadImagesToServer(images: Array<{ id: string; base64: string }>): Promise<void> {
+  const CHUNK = 8;
+  for (let i = 0; i < images.length; i += CHUNK) {
+    const chunk = images.slice(i, i + CHUNK);
+    const map: Record<string, string> = {};
+    for (const img of chunk) map[img.id] = img.base64;
+    let ok = false;
+    for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+      try {
+        await uploadImages(map);
+        ok = true;
+      } catch (e) {
+        if (attempt === 1) warn('Image upload chunk failed (Restore action will backstop):', e);
+        else await new Promise(r => setTimeout(r, 800));
+      }
+    }
+  }
+}
+
+/**
+ * Offload base64 images to BOTH local IDB and the server. Local save is awaited (needed
+ * for offline display); the server upload runs in the background so "saved locally" and
+ * "uploaded to server" stay coupled — this is the sole path that gets new images to the
+ * server now that item PUTs no longer carry base64.
+ */
+async function offloadAndUpload(images: Array<{ id: string; base64: string }>): Promise<void> {
+  if (images.length === 0) return;
+  await saveImagesBatch(images);
+  void uploadImagesToServer(images);
+}
+
 /**
  * Strip base64 imageUrl fields from items and store them in IDB images store.
  * Also normalizes server markers ('server:has_image') to the client marker ('idb:stored').
@@ -171,8 +203,8 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
   });
 
   if (imagesToSave.length > 0) {
-    log(`🖼️ Offloading ${imagesToSave.length} images to IDB`);
-    await saveImagesBatch(imagesToSave);
+    log(`🖼️ Offloading ${imagesToSave.length} images to IDB + server`);
+    await offloadAndUpload(imagesToSave);
   }
 
   return stripped;
@@ -352,6 +384,7 @@ const App: React.FC = () => {
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [imagePrefetchProgress, setImagePrefetchProgress] = useState<{ done: number; total: number } | null>(null);
+  const [imageRestoreProgress, setImageRestoreProgress] = useState<{ done: number; total: number } | null>(null);
   const prefetchAbortRef = useRef(false);
 
   // Auth is required — app gates on authState below
@@ -538,8 +571,8 @@ const App: React.FC = () => {
       }
       if (changedItems.length > 0) {
         log(`Server: Force sync uploading ${changedItems.length} changed items`);
-        const rehydrated = await rehydrateImagesForSync(changedItems);
-        await saveItems(rehydrated);
+        // Images are uploaded separately via the image endpoint; item PUTs carry no base64.
+        await saveItems(changedItems);
         for (const item of changedItems) {
           item.lastSyncedHash = getItemContentHash(item);
         }
@@ -837,10 +870,10 @@ const App: React.FC = () => {
     const missing = idsWithImages.filter(id => !alreadyStored.has(id));
     if (missing.length === 0) return;
 
-    // Sort by SRS nextReviewDate (soonest first) so study-relevant images load first
+    // Sort by SRS nextReview (soonest first) so study-relevant images load first
     const srsMap = new Map<string, number>();
     for (const item of items) {
-      const nrd = (item.srs as any)?.nextReviewDate;
+      const nrd = (item.srs as any)?.nextReview;
       if (nrd) {
         srsMap.set(item.data.id, nrd);
         if (Array.isArray((item.data as any).vocabs)) {
@@ -878,6 +911,56 @@ const App: React.FC = () => {
     log(`🖼️ Pre-fetch complete: ${done}/${missing.length} images`);
     // Clear progress after a short delay
     setTimeout(() => setImagePrefetchProgress(null), 3000);
+  }, []);
+
+  // Recovery: re-upload images that exist in THIS device's IndexedDB but are missing on
+  // the server (e.g. images corrupted by the old marker-clobber bug). Run from a device
+  // that still has the images cached. No-op on a fresh device (empty IDB).
+  const handleRestoreImagesToServer = useCallback(async () => {
+    try {
+      setImageRestoreProgress({ done: 0, total: 0 });
+      const [manifest, localIds] = await Promise.all([
+        getServerImageManifest(),
+        getAllStoredImageIds(),
+      ]);
+
+      // Only restore images that belong to a current (non-deleted) item or vocab.
+      const liveIds = new Set<string>();
+      for (const item of latestItemsRef.current) {
+        if (item.isDeleted) continue;
+        liveIds.add(item.data.id);
+        const vocabs = (item.data as any).vocabs;
+        if (Array.isArray(vocabs)) for (const v of vocabs) if (v?.id) liveIds.add(v.id);
+      }
+
+      const missing = [...localIds].filter(id => !manifest.has(id) && liveIds.has(id));
+      log(`🖼️ Restore: ${localIds.size} local, ${manifest.size} on server, ${missing.length} to upload`);
+      if (missing.length === 0) {
+        setImageRestoreProgress({ done: 0, total: 0 });
+        setTimeout(() => setImageRestoreProgress(null), 3000);
+        return;
+      }
+
+      setImageRestoreProgress({ done: 0, total: missing.length });
+      const BATCH = 8;
+      let done = 0;
+      for (let i = 0; i < missing.length; i += BATCH) {
+        const batchIds = missing.slice(i, i + BATCH);
+        const imgs = await loadImagesByIds(batchIds);
+        const map: Record<string, string> = {};
+        for (const [id, b64] of imgs) map[id] = b64;
+        if (Object.keys(map).length > 0) {
+          try { await uploadImages(map); } catch (e) { warn('Restore upload batch failed:', e); }
+        }
+        done += batchIds.length;
+        setImageRestoreProgress({ done, total: missing.length });
+      }
+      log(`🖼️ Restore complete: uploaded ${done}/${missing.length}`);
+      setTimeout(() => setImageRestoreProgress(null), 3000);
+    } catch (e) {
+      warn('Restore images to server failed:', e);
+      setImageRestoreProgress(null);
+    }
   }, []);
 
   // 2. SERVER SYNC — pull from server on mount, merge with local
@@ -918,7 +1001,8 @@ const App: React.FC = () => {
         // Push items that differ from server
         if (catchUpItems.length > 0) {
           log(`Server: ${catchUpItems.length} items differ, uploading...`);
-          rehydrateImagesForSync(catchUpItems).then(rehydrated => saveItems(rehydrated)).then(() => {
+          // Images sync separately via the image endpoint; item PUTs carry no base64.
+          saveItems(catchUpItems).then(() => {
             for (const item of catchUpItems) {
               item.lastSyncedHash = getItemContentHash(item);
             }
@@ -1062,11 +1146,11 @@ const App: React.FC = () => {
       log(`Server: ${itemsWithHashes.length} items changed, pushing...`);
 
       try {
-        // Rehydrate images from IDB before pushing to server
-        const itemsToSync = await rehydrateImagesForSync(itemsWithHashes.map(i => i.item));
+        // Images sync separately via the image endpoint; item PUTs carry no base64.
+        const itemsToSync = itemsWithHashes.map(i => i.item);
 
-        // If an immediate sync (SRS/delete/archive) happened during rehydration,
-        // skip this push — our data is stale. Next debounce cycle will pick up.
+        // If an immediate sync (SRS/delete/archive) happened, our data is stale —
+        // skip this push. Next debounce cycle will pick up.
         if (syncGenerationRef.current !== myGeneration) {
           log("⏭️ Skipping debounced push (immediate sync happened, next cycle will handle)");
           setSyncStatus('saved');
@@ -1561,7 +1645,7 @@ const App: React.FC = () => {
           if (vc) data = { ...data, vocabs: nv } as SearchResult;
         }
       }
-      if (imagesToSave.length > 0) saveImagesBatch(imagesToSave);
+      if (imagesToSave.length > 0) offloadAndUpload(imagesToSave);
 
       const now = Date.now();
       const itemToSave = {
@@ -1674,18 +1758,20 @@ const App: React.FC = () => {
     const incomingTitle = String(rawTitle || '').toLowerCase().trim();
     if (!incomingTitle) return;
 
-    // Offload any incoming images to IDB before updating state
+    // Offload any incoming images to IDB + server before updating state
+    const incomingImages: Array<{ id: string; base64: string }> = [];
     const incomingImageUrl = getItemImageUrl(item);
     if (incomingImageUrl?.startsWith('data:image/')) {
-      saveImage(item.data.id, incomingImageUrl);
+      incomingImages.push({ id: item.data.id, base64: incomingImageUrl });
     }
     if (isPhraseItem(item) && item.data.vocabs) {
       for (const v of item.data.vocabs) {
         if (v.imageUrl?.startsWith('data:image/')) {
-          saveImage(v.id, v.imageUrl);
+          incomingImages.push({ id: v.id, base64: v.imageUrl });
         }
       }
     }
+    if (incomingImages.length > 0) offloadAndUpload(incomingImages);
 
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
@@ -2234,6 +2320,14 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {imageRestoreProgress && (
+        <div className="bg-emerald-50 text-emerald-700 text-center py-1 text-xs font-medium shrink-0">
+          {imageRestoreProgress.total === 0
+            ? 'All images already on the server ✓'
+            : `Restoring images to server: ${imageRestoreProgress.done}/${imageRestoreProgress.total}`}
+        </div>
+      )}
+
       {confirmModal && (
         <ConfirmModal
           isOpen={confirmModal.isOpen}
@@ -2315,6 +2409,8 @@ const App: React.FC = () => {
             batchImportProgress={batchImportProgress}
             onGenerateMissingImages={handleGenerateMissingImages}
             imageBackfillProgress={imageBackfillProgress}
+            onRestoreImagesToServer={handleRestoreImagesToServer}
+            imageRestoreRunning={imageRestoreProgress !== null}
           />
         )}
 

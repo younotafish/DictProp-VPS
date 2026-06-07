@@ -64,6 +64,33 @@ export const loadItemImagesBatch = async (ids: string[]): Promise<Record<string,
   }
 };
 
+/**
+ * Fetch the set of image ids the server currently has stored (item + vocab ids).
+ * Used by the recovery action to compute which local images are missing on the server.
+ */
+export const getServerImageManifest = async (): Promise<Set<string>> => {
+  const res = await fetch(`${API_BASE}/api/items/images/manifest`);
+  if (!res.ok) throw new Error(`Failed to load image manifest: ${res.status}`);
+  const ids = await res.json();
+  return new Set(Array.isArray(ids) ? ids : []);
+};
+
+/**
+ * Upload base64 images to the server (upload-on-create and recovery).
+ * Callers should chunk to <=10 entries per call to keep payloads small.
+ */
+export const uploadImages = async (
+  images: Record<string, string>
+): Promise<{ ok: boolean; saved: number }> => {
+  const res = await fetch(`${API_BASE}/api/items/images`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(images),
+  });
+  if (!res.ok) throw new Error(`Failed to upload images: ${res.status}`);
+  return res.json();
+};
+
 /** Convert a Blob to a base64 data URI string. */
 const blobToBase64 = (blob: Blob): Promise<string> =>
   new Promise((resolve, reject) => {

@@ -340,6 +340,65 @@ export const getStoredImageIds = async (ids: string[]): Promise<Set<string>> => 
 };
 
 /**
+ * Enumerate ALL image ids currently stored in IDB (the keys of the images store).
+ * Used by the "restore images to server" recovery action to diff against the server.
+ */
+export const getAllStoredImageIds = async (): Promise<Set<string>> => {
+  const found = new Set<string>();
+  const idbAvailable = await checkIndexedDBAvailability();
+  if (!idbAvailable) return found;
+
+  try {
+    const db = await getDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IMAGES_STORE, 'readonly');
+      const store = tx.objectStore(IMAGES_STORE);
+      const req = store.getAllKeys();
+      req.onsuccess = () => {
+        for (const k of req.result as IDBValidKey[]) {
+          if (typeof k === 'string') found.add(k);
+        }
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    warn("Failed to enumerate stored image ids", e);
+  }
+  return found;
+};
+
+/** Batch-load base64 data URIs from IDB for the given ids (missing ids are omitted). */
+export const loadImagesByIds = async (ids: string[]): Promise<Map<string, string>> => {
+  const result = new Map<string, string>();
+  if (ids.length === 0) return result;
+
+  const idbAvailable = await checkIndexedDBAvailability();
+  if (!idbAvailable) return result;
+
+  try {
+    const db = await getDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IMAGES_STORE, 'readonly');
+      const store = tx.objectStore(IMAGES_STORE);
+      let pending = ids.length;
+      for (const id of ids) {
+        const req = store.get(id);
+        req.onsuccess = () => {
+          if (typeof req.result === 'string') result.set(id, req.result);
+          if (--pending === 0) resolve();
+        };
+        req.onerror = () => { if (--pending === 0) resolve(); };
+      }
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    warn("Failed to load images by ids", e);
+  }
+  return result;
+};
+
+/**
  * Restore base64 images from IDB into items before pushing to server.
  * Replaces 'idb:stored' markers with actual base64 data so the server stores real images.
  */

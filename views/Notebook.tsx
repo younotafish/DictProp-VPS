@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, ProjectInfo } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus, UploadCloud } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -526,6 +526,8 @@ interface NotebookProps {
   onJSONImported?: () => void;
   onGenerateMissingImages?: () => void;
   imageBackfillProgress?: { current: number; total: number; succeeded: number; failed: number; isRunning: boolean } | null;
+  onRestoreImagesToServer?: () => void;
+  imageRestoreRunning?: boolean;
 }
 
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
@@ -535,7 +537,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onSaveSentence, isSentenceSaved, hasOverlay,
     projects = [], activeProject, onSetActiveProject, onProjectsChanged, allItems,
     onBatchImport, batchImportProgress, onJSONImported,
-    onGenerateMissingImages, imageBackfillProgress
+    onGenerateMissingImages, imageBackfillProgress,
+    onRestoreImagesToServer, imageRestoreRunning
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -1350,6 +1353,17 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 title={activeProject ? 'Generate missing images for this project' : 'Generate missing images for all items'}
               >
                 {imageBackfillProgress?.isRunning ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}
+              </button>
+            )}
+            {/* Restore images to server (heals images missing on the server from this device's cache) */}
+            {isOnline && onRestoreImagesToServer && (
+              <button
+                onClick={onRestoreImagesToServer}
+                disabled={imageRestoreRunning}
+                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${imageRestoreRunning ? 'cursor-not-allowed opacity-50 text-emerald-400' : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
+                title="Restore images to server (re-upload images this device has cached but the server is missing)"
+              >
+                {imageRestoreRunning ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
               </button>
             )}
             {/* Compare mode toggle */}
