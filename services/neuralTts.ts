@@ -157,35 +157,33 @@ const loadModel = async (engine: Engine): Promise<KokoroInstance> => {
   });
 };
 
-// Device init and the one-time model download can flake transiently, so retry each engine a
-// couple of times — already-fetched files come from the browser cache, so retries are cheap. A
-// WebGPU-capable device that still fails (e.g. flaky GPU init) falls through to WASM before we
-// give up. On final failure we reset modelPromise so the NEXT play tries again: no permanent
-// session lockout, no hard-refresh needed.
+// Try each engine once (WebGPU then WASM on Chromium; WASM on Apple). We deliberately DON'T retry
+// in a tight loop here: the fp32 model is ~326 MB and a failed fetch isn't cached, so an immediate
+// retry just re-downloads it — wasteful, especially on mobile. Transient flakes are instead healed
+// by spaced, backed-off retries in preloadNeural() (and by the next deliberate play). On failure we
+// reset modelPromise so the next attempt starts clean — no session lockout, no hard-refresh needed.
+// A fully-downloaded file is cached, so any later attempt loads from cache instantly.
 const ensureModel = (): Promise<KokoroInstance> => {
   if (modelPromise) return modelPromise;
   setStatus('loading', 0);
   modelPromise = (async () => {
     let lastErr: unknown;
     for (const engine of pickEngines()) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const tts = await loadModel(engine);
-          log(`🔊 Neural TTS: Kokoro model ready (${engine.dtype}, ${engine.device})`);
-          setStatus('ready', 1);
-          return tts;
-        } catch (e) {
-          lastErr = e;
-          warn(`🔊 Neural TTS: ${engine.device} load attempt ${attempt}/2 failed; retrying…`, e);
-          setStatus('loading', 0);
-          await new Promise((r) => setTimeout(r, 600 * attempt));
-        }
+      try {
+        const tts = await loadModel(engine);
+        log(`🔊 Neural TTS: Kokoro model ready (${engine.dtype}, ${engine.device})`);
+        setStatus('ready', 1);
+        return tts;
+      } catch (e) {
+        lastErr = e;
+        warn(`🔊 Neural TTS: ${engine.device} load failed`, e);
+        setStatus('loading', 0);
       }
     }
     throw lastErr;
   })();
   modelPromise.catch(() => {
-    modelPromise = null; // allow a fresh attempt on the next play
+    modelPromise = null; // allow a fresh attempt on the next play / preload retry
     setStatus('error');
   });
   return modelPromise;
@@ -193,17 +191,38 @@ const ensureModel = (): Promise<KokoroInstance> => {
 
 /**
  * Proactively download + initialize the model in the background so the first play (or autoplay) is
- * instant. Safe to call repeatedly — it no-ops when neural can't run, when a load is already
- * underway/done/errored this session, or (on mobile) when the one-time download hasn't been
- * consented to yet (we never pull it silently over cellular).
+ * instant. Because the ~326 MB fp32 fetch can fail partway on a flaky link, this RETRIES with
+ * backoff instead of giving up for the session — giving up was what used to force a manual
+ * hard-refresh to get the natural voice. A successful load clears the budget; an `online` event
+ * starts a fresh round. No-ops without WebAssembly, while a load is in flight / already done, once
+ * the retry budget is spent, or (on mobile) before the one-time download is consented to.
  */
+const MAX_WARM_ROUNDS = 3;
+let warmRounds = 0;
+let warmTimer: ReturnType<typeof setTimeout> | null = null;
+
 export const preloadNeural = (): void => {
-  if (!isNeuralSupported()) return;        // no WebAssembly at all → system-voice path
-  if (status !== 'idle') return;           // already loading / ready / errored this session
-  if (isMobile() && !hasConsent()) return; // wait for deliberate consent before a big mobile download
-  log('🔊 Neural TTS: preloading model in the background');
-  ensureModel().catch(() => { /* ensureModel resets state so a later deliberate play can retry */ });
+  if (!isNeuralSupported()) return;                       // no WebAssembly at all → system-voice path
+  if (isMobile() && !hasConsent()) return;                // wait for consent before a big mobile download
+  if (status === 'loading' || status === 'ready') return; // in flight or already warm
+  if (warmRounds >= MAX_WARM_ROUNDS) return;              // spent the budget; wait for `online` to reset
+  if (warmTimer) { clearTimeout(warmTimer); warmTimer = null; }
+  log(`🔊 Neural TTS: warming model in the background (round ${warmRounds + 1}/${MAX_WARM_ROUNDS})`);
+  ensureModel().then(
+    () => { warmRounds = 0; },
+    () => {
+      warmRounds++;
+      if (warmRounds >= MAX_WARM_ROUNDS) return;
+      const delay = Math.min(30000, 4000 * 2 ** (warmRounds - 1)); // 4s, 8s, 16s
+      warmTimer = setTimeout(() => { warmTimer = null; preloadNeural(); }, delay);
+    },
+  );
 };
+
+// A restored connection is the best moment to try again from scratch — reset the budget and re-warm.
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => { warmRounds = 0; preloadNeural(); });
+}
 
 const audioCache = new Map<string, string>(); // `${voice}:${text}` -> object URL
 

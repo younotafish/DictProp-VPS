@@ -601,7 +601,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     });
   }, []);
 
-  // ── Sentence auto-play: read the first example sentence of each card in turn (neural voice) ──
+  // ── Sentence auto-play: read each card's example sentences (both) in turn (neural voice) ──
   const GAP_PRESETS = [1000, 2000, 3000, 5000, 10000];
   const cycleGap = useCallback(() => {
     setSentenceGap(prev => {
@@ -618,11 +618,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
     });
   }, []);
 
-  const firstExampleOf = (item: StoredItem | null): string => {
-    if (!item) return '';
-    if (isPhraseItem(item)) return (item.data as SearchResult).query || '';
+  // Sentences to read for a card during auto-play: a phrase's query, or a vocab card's example
+  // sentences (both — capped at 2 to match the E / Cmd+1·2 readers). Stripped, empties dropped.
+  const examplesOf = (item: StoredItem | null): string[] => {
+    if (!item) return [];
+    if (isPhraseItem(item)) {
+      const q = stripSentenceMarkers((item.data as SearchResult).query || '');
+      return q ? [q] : [];
+    }
     const ex = (item.data as VocabCard).examples;
-    return Array.isArray(ex) && ex.length > 0 ? ex[0] : '';
+    return (Array.isArray(ex) ? ex.slice(0, 2) : []).map(stripSentenceMarkers).filter(Boolean);
   };
 
   const sentenceGapRef = useRef(sentenceGap);
@@ -653,21 +658,31 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
     };
 
-    // Sentence mode: read the saved sentence for this card; otherwise the card's first example.
-    const sentence = sentenceMode ? stripSentenceMarkers(currentSentenceText) : firstExampleOf(currentItem);
+    // In sentence mode, read this card's saved sentence; otherwise read ALL of the card's example
+    // sentences (both) in turn, then advance to the next card.
+    const sentences = sentenceMode
+      ? [stripSentenceMarkers(currentSentenceText)].filter(Boolean)
+      : examplesOf(currentItem);
     let gapTimer: ReturnType<typeof setTimeout> | undefined;
     let handle: SpeakHandle | undefined;
+    let idx = 0;
 
-    if (!sentence) {
+    // Deliberate action → allow the one-time model download. Within a card a short breath separates
+    // the sentences; after the last one we wait the configurable card gap, then advance.
+    const playNext = () => {
+      if (idx >= sentences.length) { gapTimer = setTimeout(advanceCard, sentenceGapRef.current); return; }
+      const s = sentences[idx++];
+      const afterEach = () => {
+        const more = idx < sentences.length;
+        gapTimer = setTimeout(more ? playNext : advanceCard, more ? 600 : sentenceGapRef.current);
+      };
+      handle = speakNatural(s, { allowDownload: true, onEnd: afterEach, onError: afterEach });
+    };
+
+    if (!sentences.length) {
       gapTimer = setTimeout(advanceCard, 400); // card has no example → move on quickly
     } else {
-      // Deliberate action → allow the one-time model download. The gap is measured from the
-      // end of this sentence to the start of the next.
-      handle = speakNatural(sentence, {
-        allowDownload: true,
-        onEnd: () => { gapTimer = setTimeout(advanceCard, sentenceGapRef.current); },
-        onError: () => { gapTimer = setTimeout(advanceCard, sentenceGapRef.current); },
-      });
+      playNext();
     }
 
     return () => {
