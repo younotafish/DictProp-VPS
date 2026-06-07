@@ -5,12 +5,11 @@
  * one-time model download (fetched from the Hugging Face CDN into the browser's Cache
  * Storage, so it works offline afterward and never touches our server).
  *
- * Engine policy (see pickEngines / speakNatural):
- *  - Chromium + WebGPU -> Kokoro on the WebGPU backend (fp32, ~326 MB). Fast.
- *  - Everything else   -> Kokoro on the WASM/CPU backend (q8, ~86 MB). Works on Safari,
- *                         iOS/iPadOS, and any browser with WebAssembly — slower, but the
- *                         natural voice still plays. (q8 is only garbled on the *WebGPU*
- *                         backend; on WASM it's the correct, well-tested path.)
+ * Engine policy (see pickEngines / speakNatural) — always fp32, the only clean precision:
+ *  - Chromium + WebGPU -> Kokoro on the WebGPU backend (fp32). Fast.
+ *  - Everything else   -> Kokoro on the WASM/CPU backend (fp32). Works on Safari, iOS/iPadOS,
+ *                         and any browser with WebAssembly — CPU-bound so slower (seconds per
+ *                         sentence on a phone), but the audio is clean.
  *  - WebGPU load fails -> automatically retried on WASM before giving up.
  *  - All engines fail  -> fall back to the system Web Speech voice (services/speech.ts).
  *
@@ -28,15 +27,17 @@ import { log, warn } from './logger';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
-// An execution backend paired with the dtype that's known-good on it. Observed dtype behavior:
-//   WebGPU: q8 → garbled (int8 ops misbehave on the WebGPU EP), fp16 → static, fp32 → clean.
-//   WASM:   q8 → clean and the standard CPU path (~4x smaller than fp32, much faster to fetch).
+// An execution backend. dtype is fp32 on BOTH — it's the only precision that produces clean audio
+// for this model. Hard-won, confirmed on real devices: q8 → "radio static"/garbled and fp16 → static
+// on *every* backend (the int8/fp16 weights are lossy for Kokoro), not just on WebGPU. fp32 costs a
+// ~326 MB download (vs ~86 MB for q8) and is CPU-bound on WASM, but a correct slow voice beats a
+// fast broken one.
 interface Engine {
   device: 'webgpu' | 'wasm';
-  dtype: 'fp32' | 'q8';
+  dtype: 'fp32'; // fp32 only — q8/fp16 sound like radio static on every backend (see above).
 }
 const WEBGPU_ENGINE: Engine = { device: 'webgpu', dtype: 'fp32' };
-const WASM_ENGINE: Engine = { device: 'wasm', dtype: 'q8' };
+const WASM_ENGINE: Engine = { device: 'wasm', dtype: 'fp32' };
 
 export const DEFAULT_VOICE = 'af_heart'; // American female, grade A (matches our GA/rhotic IPA)
 
@@ -112,13 +113,13 @@ const hasConsent = (): boolean => {
   }
 };
 
-/** On mobile, confirm the one-time ~90 MB (WASM q8) download before pulling it (respect cellular data). */
+/** On mobile, confirm the one-time ~330 MB (fp32) download before pulling it (respect cellular data). */
 const confirmDownloadIfNeeded = (): boolean => {
   if (!isMobile() || hasConsent()) return true;
   const ok =
     typeof window !== 'undefined' &&
     window.confirm(
-      'Download the natural voice? About 90 MB, one-time. After that it works offline with no further data.',
+      'Download the natural voice? About 330 MB, one-time. After that it works offline with no further data.',
     );
   if (ok) {
     try {
