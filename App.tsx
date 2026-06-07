@@ -2083,12 +2083,15 @@ const App: React.FC = () => {
     });
   }, [activeItems]);
 
+  // Global lookup across ALL projects (not just the active one) so clicking a saved word
+  // pops up its existing card instead of re-running an AI search. isVocabSaved stays
+  // active-project scoped so the popup's Save button can still re-file it into the current project.
   const findSavedByWord = useCallback((word: string): VocabCard[] => {
     const w = word.toLowerCase().trim();
-    return activeItems
+    return allActiveItems
       .filter(i => i.type === 'vocab' && ((i.data as VocabCard).word || '').toLowerCase().trim() === w)
       .map(i => i.data as VocabCard);
-  }, [activeItems]);
+  }, [allActiveItems]);
 
   // Search handler - triggers GlobalSearch popup (bottom-right search icon)
   const handleRecursiveSearch = useCallback((text: string) => {
@@ -2440,6 +2443,7 @@ const App: React.FC = () => {
         onSearch={handleRecursiveSearch}
         isOnline={isOnline}
         activeProject={activeProject || undefined}
+        onLazyLoadImage={handleLazyLoadImage}
       />
 
       <nav ref={navRef} className="fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 translate-y-0">

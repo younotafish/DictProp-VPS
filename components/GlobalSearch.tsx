@@ -23,11 +23,12 @@ interface Props {
   onSearch: (text: string) => void;
   isOnline: boolean;
   activeProject?: string;
+  onLazyLoadImage?: (itemId: string) => Promise<string | null>;
 }
 
 let queueIdCounter = 0;
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -35,6 +36,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // Viewing state: which queue item and which vocab within it
   const [viewingQueueIdx, setViewingQueueIdx] = useState(0);
   const [viewingVocabIdx, setViewingVocabIdx] = useState(0);
+  // When a DB hit (already-saved word) becomes ready, auto-open its card. AI results don't set this.
+  const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -85,6 +88,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         timestamp: Date.now(),
       };
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: cachedResult } : q));
+      setPendingOpenId(itemId); // instant DB hit → auto-open the saved card
       processingRef.current = false;
       return;
     }
@@ -118,6 +122,19 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       processingRef.current = false;
     });
   }, [queue, findSavedByWord]);
+
+  // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
+  useEffect(() => {
+    if (!pendingOpenId) return;
+    const idx = readyItems.findIndex(q => q.id === pendingOpenId);
+    if (idx < 0) return;
+    setViewingQueueIdx(idx);
+    setViewingVocabIdx(0);
+    setMode('viewing');
+    setPendingOpenId(null);
+    const w = readyItems[idx]?.results?.vocabs?.[0]?.word;
+    if (w) speak(w);
+  }, [pendingOpenId, readyItems]);
 
   // Listen for programmatic search triggers (e.g., from inline highlighted words)
   useEffect(() => {
@@ -502,6 +519,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       showSave={true}
                       onSearch={onSearch}
                       scrollable={false}
+                      onLazyLoadImage={onLazyLoadImage}
                       className="!h-auto !overflow-visible border-indigo-200 shadow-sm bg-white"
                     />
                   </div>
