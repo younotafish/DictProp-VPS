@@ -14,6 +14,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
+import { preloadNeural } from './services/neuralTts';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 
@@ -256,6 +257,14 @@ const App: React.FC = () => {
     }).catch(() => {
       setAuthState({ user: null, pending: false, loading: false });
     });
+  }, []);
+
+  // Warm up the on-device natural voice (Kokoro) in the background a few seconds after load, so
+  // sentence TTS/autoplay is ready without waiting for a first click. preloadNeural() no-ops without
+  // WebGPU, if it's already loading/ready, or (on mobile) before the one-time download is consented to.
+  useEffect(() => {
+    const t = setTimeout(() => preloadNeural(), 3000);
+    return () => clearTimeout(t);
   }, []);
 
   const [currentView, setCurrentView] = useState<ViewState>(() => {

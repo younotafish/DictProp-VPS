@@ -157,6 +157,20 @@ const ensureModel = (): Promise<KokoroInstance> => {
   return modelPromise;
 };
 
+/**
+ * Proactively download + initialize the model in the background so the first play (or autoplay) is
+ * instant. Safe to call repeatedly — it no-ops when WebGPU is absent, when a load is already
+ * underway/done/errored this session, or (on mobile) when the one-time ~330 MB download hasn't been
+ * consented to yet (we never pull it silently over cellular).
+ */
+export const preloadNeural = (): void => {
+  if (!isNeuralSupported()) return;        // no WebGPU → system-voice path, nothing to fetch
+  if (status !== 'idle') return;           // already loading / ready / errored this session
+  if (isMobile() && !hasConsent()) return; // wait for deliberate consent before a big mobile download
+  log('🔊 Neural TTS: preloading model in the background');
+  ensureModel().catch(() => { /* ensureModel resets state so a later deliberate play can retry */ });
+};
+
 const audioCache = new Map<string, string>(); // `${voice}:${text}` -> object URL
 
 const synthesize = async (text: string, voice: string): Promise<string> => {
