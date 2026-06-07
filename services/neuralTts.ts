@@ -2,16 +2,22 @@
  * In-browser neural TTS (Kokoro-82M via kokoro-js / Transformers.js).
  *
  * Produces a natural voice that runs 100% on-device — zero network roundtrip after a
- * one-time ~86 MB model download (fetched from the Hugging Face CDN into the browser's
- * Cache Storage, so it works offline afterward and never touches our server).
+ * one-time model download (fetched from the Hugging Face CDN into the browser's Cache
+ * Storage, so it works offline afterward and never touches our server).
  *
- * Device policy (see speakNatural):
- *  - WebGPU present  -> use Kokoro.
- *  - No WebGPU       -> use the system Web Speech voice (services/speech.ts) — today's
- *                       behavior, no download, no regression.
- *  - Runtime failure -> fall back to the system voice and disable neural for the session.
+ * Engine policy (see pickEngines / speakNatural):
+ *  - Chromium + WebGPU -> Kokoro on the WebGPU backend (fp32, ~326 MB). Fast.
+ *  - Everything else   -> Kokoro on the WASM/CPU backend (q8, ~86 MB). Works on Safari,
+ *                         iOS/iPadOS, and any browser with WebAssembly — slower, but the
+ *                         natural voice still plays. (q8 is only garbled on the *WebGPU*
+ *                         backend; on WASM it's the correct, well-tested path.)
+ *  - WebGPU load fails -> automatically retried on WASM before giving up.
+ *  - All engines fail  -> fall back to the system Web Speech voice (services/speech.ts).
  *
- * The 86 MB model is only ever downloaded on a *deliberate* speaker-button click
+ * Why not WebGPU on Safari/iOS? Safari exposes navigator.gpu (iOS/iPadOS/macOS 26+) but
+ * onnxruntime-web's WebGPU backend is unreliable there, so Apple devices use WASM.
+ *
+ * The model is only ever downloaded on a *deliberate* speaker-button click
  * (allowDownload: true). Automatic/navigation speech passes allowDownload: false, so it
  * upgrades to the natural voice once the model is already resident but never triggers a
  * download on its own.
@@ -21,11 +27,17 @@ import { stripSentenceMarkers } from '../components/HighlightedSentence';
 import { log, warn } from './logger';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
-// dtype for the WebGPU backend (we run WebGPU-only). Observed on WebGPU:
-//   q8  (~86 MB)  — garbled audio (int8 ops misbehave on the WebGPU EP). Do NOT use.
-//   fp16 (~163 MB) — correct words but audible static/noise (reduced precision).
-//   fp32 (~326 MB) — clean, full quality. kokoro-js recommends fp32 for WebGPU.
-const DTYPE = 'fp32';
+
+// An execution backend paired with the dtype that's known-good on it. Observed dtype behavior:
+//   WebGPU: q8 → garbled (int8 ops misbehave on the WebGPU EP), fp16 → static, fp32 → clean.
+//   WASM:   q8 → clean and the standard CPU path (~4x smaller than fp32, much faster to fetch).
+interface Engine {
+  device: 'webgpu' | 'wasm';
+  dtype: 'fp32' | 'q8';
+}
+const WEBGPU_ENGINE: Engine = { device: 'webgpu', dtype: 'fp32' };
+const WASM_ENGINE: Engine = { device: 'wasm', dtype: 'q8' };
+
 export const DEFAULT_VOICE = 'af_heart'; // American female, grade A (matches our GA/rhotic IPA)
 
 // Tiny valid silent WAV — played once inside a user gesture to unlock <audio> on iOS Safari,
@@ -65,9 +77,27 @@ export const isModelReady = (): boolean => status === 'ready';
 // ---------------------------------------------------------------------------
 // Capability gate
 // ---------------------------------------------------------------------------
-/** True when the device can run Kokoro acceptably (WebGPU). The gate for Kokoro vs. system voice. */
+/** navigator.userAgentData only exists on Chromium — our proxy for "WebGPU is reliable here". */
+const isChromium = (): boolean =>
+  typeof navigator !== 'undefined' && !!(navigator as any).userAgentData;
+
+/**
+ * WebGPU is only reliable through onnxruntime-web on Chromium. Safari exposes navigator.gpu
+ * (iOS/iPadOS/macOS 26+) but its WebGPU breaks our ONNX runtime, so we keep Apple on WASM.
+ */
+const canUseWebGPU = (): boolean =>
+  typeof navigator !== 'undefined' && !!(navigator as any).gpu && isChromium();
+
+/** Engines to try, best-first. WebGPU-capable devices fall back to WASM if WebGPU load fails. */
+const pickEngines = (): Engine[] => (canUseWebGPU() ? [WEBGPU_ENGINE, WASM_ENGINE] : [WASM_ENGINE]);
+
+/**
+ * True when the device can run Kokoro at all. WASM runs anywhere with WebAssembly (every modern
+ * browser, including iOS/iPadOS Safari), so neural is broadly supported — it uses the GPU when it
+ * can and the CPU otherwise.
+ */
 export const isNeuralSupported = (): boolean =>
-  typeof navigator !== 'undefined' && !!(navigator as any).gpu;
+  typeof navigator !== 'undefined' && typeof WebAssembly !== 'undefined';
 
 const isMobile = (): boolean =>
   typeof navigator !== 'undefined' &&
@@ -82,13 +112,13 @@ const hasConsent = (): boolean => {
   }
 };
 
-/** On mobile, confirm the one-time ~86 MB download before pulling it (respect cellular data). */
+/** On mobile, confirm the one-time ~90 MB (WASM q8) download before pulling it (respect cellular data). */
 const confirmDownloadIfNeeded = (): boolean => {
   if (!isMobile() || hasConsent()) return true;
   const ok =
     typeof window !== 'undefined' &&
     window.confirm(
-      'Download the natural voice? About 330 MB, one-time. After that it works offline with no further data.',
+      'Download the natural voice? About 90 MB, one-time. After that it works offline with no further data.',
     );
   if (ok) {
     try {
@@ -105,7 +135,7 @@ const confirmDownloadIfNeeded = (): boolean => {
 // ---------------------------------------------------------------------------
 let modelPromise: Promise<KokoroInstance> | null = null;
 
-const loadModel = async (): Promise<KokoroInstance> => {
+const loadModel = async (engine: Engine): Promise<KokoroInstance> => {
   const { KokoroTTS } = await import('kokoro-js');
   // Skip the local /models/* lookup (404s) — load straight from the HF Hub + browser cache.
   // Non-fatal: a direct import of the (transitive) transformers dep shouldn't fail the load.
@@ -116,8 +146,8 @@ const loadModel = async (): Promise<KokoroInstance> => {
     /* ignore */
   }
   return KokoroTTS.from_pretrained(MODEL_ID, {
-    dtype: DTYPE as any,
-    device: 'webgpu',
+    dtype: engine.dtype as any,
+    device: engine.device as any,
     progress_callback: (p: any) => {
       if (p && p.status === 'progress' && typeof p.progress === 'number') {
         setStatus('loading', Math.max(0, Math.min(1, p.progress / 100)));
@@ -126,26 +156,29 @@ const loadModel = async (): Promise<KokoroInstance> => {
   });
 };
 
-// WebGPU device init and the one-time ~330 MB download can flake transiently, so retry a few
-// times — already-fetched files come from the browser cache, so retries are cheap. On final
-// failure we reset modelPromise so the NEXT play tries again: no permanent session lockout,
-// no need to hard-refresh.
+// Device init and the one-time model download can flake transiently, so retry each engine a
+// couple of times — already-fetched files come from the browser cache, so retries are cheap. A
+// WebGPU-capable device that still fails (e.g. flaky GPU init) falls through to WASM before we
+// give up. On final failure we reset modelPromise so the NEXT play tries again: no permanent
+// session lockout, no hard-refresh needed.
 const ensureModel = (): Promise<KokoroInstance> => {
   if (modelPromise) return modelPromise;
   setStatus('loading', 0);
   modelPromise = (async () => {
     let lastErr: unknown;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const tts = await loadModel();
-        log(`🔊 Neural TTS: Kokoro model ready (${DTYPE}, webgpu)`);
-        setStatus('ready', 1);
-        return tts;
-      } catch (e) {
-        lastErr = e;
-        warn(`🔊 Neural TTS: model load attempt ${attempt}/3 failed; retrying…`, e);
-        setStatus('loading', 0);
-        await new Promise((r) => setTimeout(r, 800 * attempt));
+    for (const engine of pickEngines()) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const tts = await loadModel(engine);
+          log(`🔊 Neural TTS: Kokoro model ready (${engine.dtype}, ${engine.device})`);
+          setStatus('ready', 1);
+          return tts;
+        } catch (e) {
+          lastErr = e;
+          warn(`🔊 Neural TTS: ${engine.device} load attempt ${attempt}/2 failed; retrying…`, e);
+          setStatus('loading', 0);
+          await new Promise((r) => setTimeout(r, 600 * attempt));
+        }
       }
     }
     throw lastErr;
@@ -159,12 +192,12 @@ const ensureModel = (): Promise<KokoroInstance> => {
 
 /**
  * Proactively download + initialize the model in the background so the first play (or autoplay) is
- * instant. Safe to call repeatedly — it no-ops when WebGPU is absent, when a load is already
- * underway/done/errored this session, or (on mobile) when the one-time ~330 MB download hasn't been
+ * instant. Safe to call repeatedly — it no-ops when neural can't run, when a load is already
+ * underway/done/errored this session, or (on mobile) when the one-time download hasn't been
  * consented to yet (we never pull it silently over cellular).
  */
 export const preloadNeural = (): void => {
-  if (!isNeuralSupported()) return;        // no WebGPU → system-voice path, nothing to fetch
+  if (!isNeuralSupported()) return;        // no WebAssembly at all → system-voice path
   if (status !== 'idle') return;           // already loading / ready / errored this session
   if (isMobile() && !hasConsent()) return; // wait for deliberate consent before a big mobile download
   log('🔊 Neural TTS: preloading model in the background');
@@ -298,8 +331,8 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
 
   const fallback = () => systemSpeak(plain, { rate, onStart, onEnd, onError });
 
-  // Decide engine. Neural needs WebGPU, not session-disabled, and either an already-loaded
-  // model or permission to download it.
+  // Decide engine. Neural needs a runnable engine (WASM or WebGPU), not session-disabled, and
+  // either an already-loaded model or permission to download it.
   const wouldDownload = !isModelReady();
   let useNeural = isNeuralSupported() && (isModelReady() || allowDownload);
 

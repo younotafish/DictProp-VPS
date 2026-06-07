@@ -261,7 +261,7 @@ const App: React.FC = () => {
 
   // Warm up the on-device natural voice (Kokoro) in the background a few seconds after load, so
   // sentence TTS/autoplay is ready without waiting for a first click. preloadNeural() no-ops without
-  // WebGPU, if it's already loading/ready, or (on mobile) before the one-time download is consented to.
+  // WebAssembly, if it's already loading/ready, or (on mobile) before the one-time download is consented to.
   useEffect(() => {
     const t = setTimeout(() => preloadNeural(), 3000);
     return () => clearTimeout(t);

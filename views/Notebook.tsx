@@ -1308,12 +1308,12 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     >
       {/* Header */}
       <div className={`sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md border-b border-slate-200/50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
-        <div className="px-6 py-4 flex justify-between items-center">
-          <div>
+        <div className="px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
+          <div className="min-w-0">
             <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-            <p className="text-xs text-slate-500 font-medium">{groupedItems.length} saved · {reviewedToday} reviewed today · {dueCount} due</p>
+            <p className="text-xs text-slate-500 font-medium truncate">{groupedItems.length} saved · {reviewedToday} reviewed today · {dueCount} due</p>
           </div>
-          <div className="flex items-center gap-1 bg-white rounded-full p-1 border border-slate-100 shadow-sm flex-nowrap shrink-0">
+          <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 bg-white rounded-2xl md:rounded-full p-1 border border-slate-100 shadow-sm min-w-0">
             {/* Text Analyzer button */}
             {isOnline && (
               <button
@@ -1456,7 +1456,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 )}
               </div>
             )}
-            <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
+            <div className="hidden md:block h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
             {/* Refresh All Button */}
             {onBulkRefresh && isOnline && (
               <button 
@@ -1492,7 +1492,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             )}
             {user && (
               <>
-                <div className="h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
+                <div className="hidden md:block h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
                 <div className="shrink-0">
                   <UserMenu
                     user={user}
