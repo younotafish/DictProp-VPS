@@ -7,6 +7,7 @@ import { logger } from 'hono/logger';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { env } from './env.js';
+import { migrateInlineImages } from './db.js';
 import { authRoutes } from './routes/auth.js';
 import { itemsRoutes } from './routes/items.js';
 import { aiRoutes } from './routes/ai.js';
@@ -67,3 +68,12 @@ serve({
 });
 
 console.log(`Server running at http://localhost:${env.PORT}`);
+
+// Migrate inline base64 images → item_images in the BACKGROUND, after the port is open.
+// Runs in event-loop-yielding chunks so health/reads stay responsive; resumes each boot
+// until no inline images remain. A short delay lets the listener bind first.
+setTimeout(() => {
+  migrateInlineImages()
+    .then(() => console.log('[migrate] item_images pass complete'))
+    .catch((e) => console.error('[migrate] item_images failed (will retry next boot):', e));
+}, 500);

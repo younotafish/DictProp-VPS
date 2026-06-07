@@ -136,8 +136,11 @@ const imageStmts = {
 };
 
 /**
- * One-time, incremental, crash-resumable migration: pull base64 images out of
- * items.data into the item_images table. Runs at module import (before serve()).
+ * Incremental, crash-resumable migration: pull base64 images out of items.data into
+ * the item_images table. Invoked from index.ts AFTER serve() (in the background), NOT
+ * at import — a synchronous pass over ~150MB would block the boot and the port would
+ * never open. It yields to the event loop between batches so /api/health and reads stay
+ * responsive while it runs; reads fall back to inline base64 for any not-yet-migrated row.
  *
  * - Resumable: "no rows still contain data:image/" IS the done-state (no flag needed).
  * - Forward-progress guaranteed: walks by rowid high-water mark, so it terminates
@@ -146,8 +149,8 @@ const imageStmts = {
  *   row's data, in one transaction — a crash leaves the row fully migrated or untouched.
  * - Bounded memory: small batches keep peak RSS low on the 1GB VPS. No VACUUM.
  */
-function migrateInlineImages() {
-  const BATCH = 50;
+export async function migrateInlineImages() {
+  const BATCH = 20;
   const selectBatch = db.prepare(
     `SELECT rowid AS rid, id, data, user_id FROM items
      WHERE rowid > ? AND data LIKE '%data:image/%' ORDER BY rowid LIMIT ${BATCH}`
@@ -190,6 +193,9 @@ function migrateInlineImages() {
   let totalRows = 0;
   let totalImages = 0;
   for (;;) {
+    // Yield to the event loop before each batch so the server stays responsive
+    // (the port is already open; health checks and reads run in these gaps).
+    await new Promise((r) => setTimeout(r, 0));
     const rows = selectBatch.all(mark) as Array<{ rid: number; id: string; data: string; user_id: string | null }>;
     if (rows.length === 0) break;
     totalImages += runBatch(rows);
@@ -200,14 +206,6 @@ function migrateInlineImages() {
   if (totalImages > 0) {
     console.log(`[migrate] item_images: extracted ${totalImages} inline image(s) from ${totalRows} row(s)`);
   }
-}
-
-// Run the migration at startup. Wrapped so a failure never blocks the server boot —
-// reads fall back to inline base64 for any row not yet migrated.
-try {
-  migrateInlineImages();
-} catch (e) {
-  console.error('[migrate] item_images migration failed (will retry next boot):', e);
 }
 
 // ─── User / Session prepared statements ───
