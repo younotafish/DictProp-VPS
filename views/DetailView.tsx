@@ -703,6 +703,34 @@ export const DetailView: React.FC<DetailViewProps> = ({
     playNext();
   }, []);
 
+  // Read a single example sentence aloud (neural voice) — first (0) or second (1).
+  // Bound to Cmd/Ctrl+1 / +2. Reuses the read refs so it cooperates with the E shortcut
+  // (read-both) and the stop-on-card-change cleanup below; press again to replay.
+  const speakSentenceAt = useCallback((index: number) => {
+    // Stop anything currently reading (the read-both chain or another single sentence) so
+    // they don't overlap before starting the requested one.
+    if (readingSentencesRef.current) {
+      readHandleRef.current?.stop();
+      readHandleRef.current = null;
+      readingSentencesRef.current = false;
+    }
+    const item = currentItemRef.current;
+    if (!item) return;
+    const ex = isPhraseItem(item)
+      ? [(item.data as SearchResult).query].filter(Boolean)
+      : ((item.data as VocabCard).examples || []);
+    const sentence = (ex as string[])[index];
+    if (!sentence) return;
+    setIsAutoPlaying(false);
+    setIsSentenceAutoPlaying(false);
+    readingSentencesRef.current = true;
+    readHandleRef.current = speakNatural(sentence, {
+      allowDownload: true,
+      onEnd: () => { readingSentencesRef.current = false; readHandleRef.current = null; },
+      onError: () => { readingSentencesRef.current = false; readHandleRef.current = null; },
+    });
+  }, []);
+
   // Stop reading when the card changes or the view unmounts.
   useEffect(() => () => {
     if (readingSentencesRef.current) {
@@ -936,6 +964,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
         }
       }
 
+      // Cmd/Ctrl+1 / +2: Read the first / second example sentence aloud (neural voice)
+      if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
+        e.preventDefault();
+        speakSentenceAt(e.key === '1' ? 0 : 1);
+      }
+
       // R: Remember (Shift+R: Reset)
       if (e.key === 'r' || e.key === 'R') {
          if (e.shiftKey) {
@@ -986,7 +1020,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences]);
+  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt]);
 
   return (
     <div 
