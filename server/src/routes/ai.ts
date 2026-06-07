@@ -216,17 +216,29 @@ If the input is an inflected form, you MUST normalize it to the base/lemma form 
 The 'word' field in your response should contain the BASE FORM that a learner would look up in a dictionary.
 Include the original input form in the 'forms' array.
 
-CRITICAL - MULTIPLE MEANINGS:
-You MUST create SEPARATE vocab cards for EACH distinct, uncommon meaning or sense of the word/phrase.
+CRITICAL - WHICH MEANINGS TO INCLUDE:
+Create SEPARATE vocab cards ONLY for the meanings that are COMMON and CURRENT — the senses
+an educated native speaker actually meets in everyday books, news, and conversation.
 - Different parts of speech = different cards (noun vs verb vs adjective)
-- Different contexts/domains = different cards (technical vs casual, literal vs figurative)
-- Different common usages = different cards
+- Different everyday contexts = different cards (literal vs figurative)
 
-Example: "bank" should produce 3+ cards:
+DO NOT create a card for a sense that is:
+- Archaic, obsolete, historical, or purely literary/poetic (e.g. the old subjunctive "be")
+- Narrow domain jargon a layperson wouldn't know — the chemistry / anatomy / geology /
+  aerospace / law / finance / computing sense of a word — UNLESS that technical sense IS the
+  word's main everyday meaning
+- So rare, regional, or specialized that even a well-read high-school student wouldn't know it
+When unsure, LEAVE IT OUT. One or two solid mainstream senses beats padding the card with
+meanings no learner will ever meet. Also do NOT split a single meaning into two near-identical
+cards — if two senses would share essentially the same definition, keep only one.
+(Do still analyze the exact word the user typed — this rule trims EXTRA senses; it never
+refuses the headword itself.)
+
+Example: "bank" should produce these everyday cards:
 1. bank (noun: finance) - "A financial institution..."
 2. bank (noun: geography) - "The side of a river..."
 3. bank (verb: to rely) - "To depend on something..."
-4. bank (verb: aviation) - "To tilt an aircraft..."
+(Skip narrow or archaic senses — e.g. heraldry, obsolete uses, or hyper-technical jargon.)
 
 Each card MUST have:
 - The SAME 'word' field (the BASE/DICTIONARY form, not the original inflected input)
@@ -249,7 +261,7 @@ Each card MUST have:
     { "word": "creator", "pos": "noun", "chinese": "创造者" }
     { "word": "creativity", "pos": "noun", "chinese": "创造力" }
 
-Be thorough - include common AND less common meanings. This helps learners master all usages.
+Focus on the meanings a learner will actually encounter. It is better to omit a rare, archaic, or jargon sense than to include it — skip the long tail.
 
 ${WORD_MODE_JSON_SCHEMA}`;
 
@@ -277,11 +289,14 @@ If the input is an inflected form, normalize to the base/lemma form:
 - Adjectives: "happier" → "happy"
 The 'word' field should contain the BASE FORM.
 
-CRITICAL - MULTIPLE MEANINGS:
-Create SEPARATE vocab cards for EACH distinct meaning of the word/phrase AS A WHOLE.
+CRITICAL - WHICH MEANINGS TO INCLUDE:
+Create SEPARATE vocab cards only for the COMMON, CURRENT meanings of the word/phrase AS A WHOLE.
 - Different parts of speech = different cards
-- Different contexts/domains = different cards
 - Literal vs figurative = different cards
+SKIP senses that are archaic/obsolete, narrow domain jargon, or so rare that even a well-read
+high-school student wouldn't know them — UNLESS such a sense is the item's main everyday
+meaning. Don't split one meaning into near-identical cards. When unsure, leave the obscure
+sense out.
 
 Each card MUST have:
 - The SAME 'word' field (the complete phrase or base word, NOT individual components)
@@ -334,17 +349,21 @@ Extract phrasal verbs, idioms, and multi-word expressions as COMPLETE phrases (n
 - "couldn't help but" should be extracted as "couldn't help but"
 - "even though" can be extracted if it adds learning value
 
-CRITICAL - INCLUDE ALL MEANINGS (most important rule):
-Once a word/phrase is selected for extraction, you MUST include ALL its common meanings/senses as SEPARATE vocab cards.
-Do NOT limit to only the meaning used in the sentence context!
+CRITICAL - INCLUDE THE COMMON MEANINGS (most important rule):
+Once a word/phrase is selected for extraction, include its COMMON, CURRENT meanings as
+SEPARATE vocab cards — not only the one used in the sentence context.
+But DO NOT add a sense that is archaic/obsolete, narrow domain jargon, or so rare that even a
+well-read high-school student wouldn't know it. Don't split one meaning into near-identical
+cards. When unsure, leave the obscure sense out.
 
 Example: If extracting "zest" from a cooking sentence:
 - Card 1: zest (noun: culinary) - "The outer peel of citrus fruit..."
 - Card 2: zest (noun: enthusiasm) - "Great energy and enjoyment..."
-The user should learn ALL meanings of the word, not just the one in context.
+Both senses are everyday, so include both.
 
 Example: If extracting "bank" from any sentence:
-- Create cards for ALL meanings: financial institution, river bank, to rely on, to tilt aircraft, etc.
+- Create cards for its everyday meanings: financial institution, river bank, to rely on.
+- Skip the narrow/technical senses (e.g. tilting an aircraft) unless that is the sense used.
 
 Each card MUST include ALL fields with the SAME depth as Word Mode:
 - word, sense, chinese, ipa, definition, forms, synonyms, antonyms, confusables, examples, history, register, mnemonic, imagePrompt
@@ -366,7 +385,7 @@ Scan the user's text and identify all rare, advanced (C1/C2+), idiomatic, or int
 - Phrasal verbs with non-obvious meanings ("bank on", "come across")
 - C1/C2 level vocabulary (tenacity, ephemeral, ubiquitous, etc.)
 - Academic or formal register words
-- Domain-specific terminology a learner might not know
+- Widely-used domain terms that have entered general usage (e.g. "algorithm", "placebo") — but NOT narrow specialist jargon
 - Words used in figurative, metaphorical, or unusual ways
 - Interesting collocations and fixed expressions
 
@@ -375,6 +394,9 @@ Scan the user's text and identify all rare, advanced (C1/C2+), idiomatic, or int
 - Basic B1/B2 vocabulary that intermediate learners already know comfortably
 - Proper nouns (names of people, places, brands)
 - Function words (the, a, an, is, are, was, were, this, that, which, etc.)
+- Archaic, obsolete, or purely literary/poetic words and senses
+- Narrow domain jargon (chemistry, anatomy, geology, law, finance, computing, etc.) that a general educated reader wouldn't know — unless it has crossed into everyday use
+- Ultra-rare words so specialized that even a well-read high-school student wouldn't know them
 
 ## EXTRACTION COUNT
 - Short text (under 50 words): 3-8 items
