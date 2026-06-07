@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
-import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getProjects, createProject, renameProject, deleteProject } from '../db.js';
+import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, getProjects, createProject, renameProject, deleteProject } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -114,6 +114,37 @@ itemsRoutes.post('/items/images', async (c) => {
   const capped = ids.slice(0, 20);
   const images = getItemImagesBatch(capped, userId);
   return c.json(images);
+});
+
+// GET /api/items/images/manifest — ids of every image this user has stored.
+// Lightweight (ids only); the client diffs this against its IndexedDB to know what to re-upload.
+// Registered before GET /items/:id so the literal path isn't captured as an :id.
+itemsRoutes.get('/items/images/manifest', (c) => {
+  const userId = c.get('user').id;
+  return c.json(getImageManifest(userId));
+});
+
+// PUT /api/items/images — upload base64 images straight into item_images.
+// Body: { [id]: 'data:image/...;base64,...' }. Used by upload-on-create and the recovery action.
+// Registered before PUT /items/:id and PUT /items so it isn't shadowed.
+itemsRoutes.put('/items/images', async (c) => {
+  const userId = c.get('user').id;
+  const body = await c.req.json();
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return c.json({ error: 'Expected { [id]: dataUri }' }, 400);
+  }
+  const MAX_ENTRIES = 25;
+  const MAX_LEN = 14 * 1024 * 1024; // ~10MB binary encoded as base64
+  const images: Array<{ id: string; data: string }> = [];
+  for (const [id, val] of Object.entries(body)) {
+    if (images.length >= MAX_ENTRIES) break;
+    if (typeof val === 'string' && val.startsWith('data:image/') && val.length <= MAX_LEN) {
+      images.push({ id, data: val });
+    }
+  }
+  if (images.length === 0) return c.json({ error: 'No valid images' }, 400);
+  const saved = upsertItemImages(images, userId);
+  return c.json({ ok: true, saved });
 });
 
 // GET /api/items/:id — return a single item

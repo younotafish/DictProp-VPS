@@ -75,6 +75,22 @@ try {
   console.warn('Projects table creation:', e);
 }
 
+// Image storage: base64 data URIs live here, OUT of items.data, so item reads/writes
+// never touch image bytes. Keyed by id — a SHARED keyspace for both top-level item ids
+// and nested phrase-vocab ids (a vocab id can appear as both; see DetailView "save vocab").
+// user_id mirrors items.user_id (nullable for legacy orphan rows, claimed on first signup).
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS item_images (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    data TEXT NOT NULL,
+    updated_at INTEGER
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_user_id ON item_images(user_id)`);
+} catch (e) {
+  console.warn('item_images table creation:', e);
+}
+
 // ─── Item prepared statements ───
 
 const stmts = {
@@ -101,6 +117,98 @@ const stmts = {
   getImageData: db.prepare(`SELECT data FROM items WHERE id = ? AND user_id = ?`),
   findVocabInPhrase: db.prepare(`SELECT data FROM items WHERE type = 'phrase' AND user_id = ? AND data LIKE ? LIMIT 1`),
 };
+
+// ─── Image (item_images) prepared statements ───
+
+const imageStmts = {
+  upsert: db.prepare(`
+    INSERT INTO item_images (id, user_id, data, updated_at)
+    VALUES (@id, @user_id, @data, @updated_at)
+    ON CONFLICT(id) DO UPDATE SET
+      user_id = @user_id,
+      data = @data,
+      updated_at = @updated_at
+  `),
+  get: db.prepare(`SELECT data FROM item_images WHERE id = ? AND user_id = ?`),
+  manifest: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
+  allIdsForUser: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
+  assignOrphan: db.prepare(`UPDATE item_images SET user_id = ? WHERE user_id IS NULL`),
+};
+
+/**
+ * One-time, incremental, crash-resumable migration: pull base64 images out of
+ * items.data into the item_images table. Runs at module import (before serve()).
+ *
+ * - Resumable: "no rows still contain data:image/" IS the done-state (no flag needed).
+ * - Forward-progress guaranteed: walks by rowid high-water mark, so it terminates
+ *   even if a stray "data:image/" substring lingers in some non-image field.
+ * - Atomic per batch: each batch inserts into item_images first, then strips the
+ *   row's data, in one transaction — a crash leaves the row fully migrated or untouched.
+ * - Bounded memory: small batches keep peak RSS low on the 1GB VPS. No VACUUM.
+ */
+function migrateInlineImages() {
+  const BATCH = 50;
+  const selectBatch = db.prepare(
+    `SELECT rowid AS rid, id, data, user_id FROM items
+     WHERE rowid > ? AND data LIKE '%data:image/%' ORDER BY rowid LIMIT ${BATCH}`
+  );
+  const updateData = db.prepare(`UPDATE items SET data = ? WHERE rowid = ?`);
+
+  const runBatch = db.transaction((rows: Array<{ rid: number; id: string; data: string; user_id: string | null }>) => {
+    let imagesInBatch = 0;
+    const now = Date.now();
+    for (const row of rows) {
+      let data: any;
+      try { data = JSON.parse(row.data); } catch { continue; } // skip unparseable rows
+
+      const images: Array<{ id: string; data: string }> = [];
+      if (typeof data.imageUrl === 'string' && data.imageUrl.startsWith('data:image/')) {
+        if (data.id) images.push({ id: data.id, data: data.imageUrl });
+        delete data.imageUrl;
+      }
+      if (Array.isArray(data.vocabs)) {
+        for (const v of data.vocabs) {
+          if (v && typeof v.imageUrl === 'string' && v.imageUrl.startsWith('data:image/')) {
+            if (v.id) images.push({ id: v.id, data: v.imageUrl });
+            delete v.imageUrl;
+          }
+        }
+      }
+
+      if (images.length === 0) continue; // LIKE matched a stray substring — leave row as-is
+      // Insert images FIRST, then rewrite the (now image-free) row.
+      for (const img of images) {
+        imageStmts.upsert.run({ id: img.id, user_id: row.user_id, data: img.data, updated_at: now });
+      }
+      updateData.run(JSON.stringify(data), row.rid);
+      imagesInBatch += images.length;
+    }
+    return imagesInBatch;
+  });
+
+  let mark = 0;
+  let totalRows = 0;
+  let totalImages = 0;
+  for (;;) {
+    const rows = selectBatch.all(mark) as Array<{ rid: number; id: string; data: string; user_id: string | null }>;
+    if (rows.length === 0) break;
+    totalImages += runBatch(rows);
+    totalRows += rows.length;
+    mark = rows[rows.length - 1].rid;
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* best-effort */ }
+  }
+  if (totalImages > 0) {
+    console.log(`[migrate] item_images: extracted ${totalImages} inline image(s) from ${totalRows} row(s)`);
+  }
+}
+
+// Run the migration at startup. Wrapped so a failure never blocks the server boot —
+// reads fall back to inline base64 for any row not yet migrated.
+try {
+  migrateInlineImages();
+} catch (e) {
+  console.error('[migrate] item_images migration failed (will retry next boot):', e);
+}
 
 // ─── User / Session prepared statements ───
 
@@ -150,16 +258,19 @@ export interface UserRow {
   created_at: number;
 }
 
-function rowToItem(row: ItemRow, stripImages = false) {
+function rowToItem(row: ItemRow, stripImages = false, imageIds?: Set<string>) {
   const data = JSON.parse(row.data);
   if (stripImages) {
-    // Replace base64 with marker instead of deleting — client needs to know an image exists
-    if (data.imageUrl && data.imageUrl.startsWith('data:image/')) {
+    // An image exists if it's in item_images (post-migration) OR still inline (transition).
+    // Replace it with a marker so the client knows to fetch it via the image endpoint.
+    const hasImage = (id: string, url: any): boolean =>
+      (!!imageIds && imageIds.has(id)) || (typeof url === 'string' && url.startsWith('data:image/'));
+    if (hasImage(data.id, data.imageUrl)) {
       data.imageUrl = 'server:has_image';
     }
     if (Array.isArray(data.vocabs)) {
       data.vocabs = data.vocabs.map((v: any) => {
-        if (v.imageUrl && v.imageUrl.startsWith('data:image/')) {
+        if (hasImage(v.id, v.imageUrl)) {
           return { ...v, imageUrl: 'server:has_image' };
         }
         return v;
@@ -180,19 +291,47 @@ function rowToItem(row: ItemRow, stripImages = false) {
 
 // ─── Item CRUD (all scoped by userId) ───
 
+/** Set of all ids (item + vocab) that have an image, for cheap "has image" marking. */
+function getImageIdSet(userId: string): Set<string> {
+  const rows = imageStmts.allIdsForUser.all(userId) as Array<{ id: string }>;
+  return new Set(rows.map(r => r.id));
+}
+
+/** Inject base64 from item_images back into already-parsed items (the ?images=true path). */
+function rehydrateImages(items: any[], userId: string) {
+  const rows = db.prepare(`SELECT id, data FROM item_images WHERE user_id = ?`).all(userId) as Array<{ id: string; data: string }>;
+  if (rows.length === 0) return;
+  const map = new Map(rows.map(r => [r.id, r.data]));
+  for (const item of items) {
+    const d = item.data as any;
+    const top = map.get(d.id);
+    if (top) d.imageUrl = top;
+    if (Array.isArray(d.vocabs)) {
+      for (const v of d.vocabs) {
+        const vi = map.get(v.id);
+        if (vi) v.imageUrl = vi;
+      }
+    }
+  }
+}
+
 export function getAllItems(stripImages = false, userId: string) {
   if (!stripImages) {
-    // Full load (with images) — only used for explicit ?images=true requests
-    return (stmts.getAll.all(userId) as ItemRow[]).map(r => rowToItem(r, false));
+    // Full load (?images=true) — rehydrate base64 from item_images back into the data.
+    const items = (stmts.getAll.all(userId) as ItemRow[]).map(r => rowToItem(r, false));
+    rehydrateImages(items, userId);
+    return items;
   }
-  // Chunked load to avoid OOM on low-memory VPS (3700 items with base64 images = ~150MB raw)
+  // Stripped list path: images live in item_images, so items.data is now tiny.
+  // One cheap id-only query tells us which items/vocabs to mark as having an image.
+  const imageIds = getImageIdSet(userId);
   const CHUNK = 200;
   const { count } = stmts.getCount.get(userId) as { count: number };
   const items: any[] = [];
   for (let offset = 0; offset < count; offset += CHUNK) {
     const rows = stmts.getAllChunk.all(userId, CHUNK, offset) as ItemRow[];
     for (const row of rows) {
-      items.push(rowToItem(row, true));
+      items.push(rowToItem(row, true, imageIds));
     }
     // rows array goes out of scope here, allowing GC to reclaim the raw data
   }
@@ -200,10 +339,12 @@ export function getAllItems(stripImages = false, userId: string) {
 }
 
 export function getItemsSince(since: number, stripImages = false, userId: string) {
+  const imageIds = stripImages ? getImageIdSet(userId) : undefined;
   const items: any[] = [];
   for (const row of stmts.getSince.iterate(userId, since, since) as Iterable<ItemRow>) {
-    items.push(rowToItem(row, stripImages));
+    items.push(rowToItem(row, stripImages, imageIds));
   }
+  if (!stripImages) rehydrateImages(items, userId);
   return items;
 }
 
@@ -211,32 +352,33 @@ export function upsertItem(item: any, userId: string) {
   const data = item.data;
   if (!data || !data.id) throw new Error('Item missing data.id');
 
-  // Preserve existing images when client sends marker ('idb:stored') or no image.
-  // Client strips base64 images from React state to save memory; server is source of truth.
-  let finalData = data;
-  const existingRow = stmts.getByIdScoped.get(data.id, userId) as ItemRow | undefined;
-  if (existingRow) {
-    const existingData = JSON.parse(existingRow.data);
-    const needsImagePreserve = (url: string | undefined) =>
-      !url || url === 'idb:stored' || url === 'server:has_image' || !url.startsWith('data:image/');
+  const now = Date.now();
 
-    if (needsImagePreserve(data.imageUrl) && existingData.imageUrl?.startsWith('data:image/')) {
-      finalData = { ...finalData, imageUrl: existingData.imageUrl };
+  // Capture any incoming base64 into item_images, then strip imageUrl from the data we
+  // store — base64 and markers ('idb:stored'/'server:has_image') never live in items.data.
+  // For markers / missing / non-base64, we leave item_images untouched (and NEVER delete:
+  // a vocab id can be shared with a standalone item). This replaces the old fragile,
+  // index-based image-preservation, which could clobber real images with markers.
+  const captureImage = (id: string | undefined, url: unknown) => {
+    if (id && typeof url === 'string' && url.startsWith('data:image/')) {
+      imageStmts.upsert.run({ id, user_id: userId, data: url, updated_at: now });
     }
+  };
 
-    // Preserve vocab images within phrase items
-    if (Array.isArray(data.vocabs) && Array.isArray(existingData.vocabs)) {
-      finalData = {
-        ...finalData,
-        vocabs: data.vocabs.map((v: any, i: number) => {
-          const existingVocab = existingData.vocabs[i];
-          if (existingVocab && needsImagePreserve(v?.imageUrl) && existingVocab.imageUrl?.startsWith('data:image/')) {
-            return { ...v, imageUrl: existingVocab.imageUrl };
-          }
-          return v;
-        }),
-      };
-    }
+  captureImage(data.id, data.imageUrl);
+  const { imageUrl: _topImageUrl, ...rest } = data;
+  const finalData: any = rest;
+  if (Array.isArray(data.vocabs)) {
+    finalData.vocabs = data.vocabs.map((v: any) => {
+      if (v && typeof v === 'object') {
+        captureImage(v.id, v.imageUrl);
+        if ('imageUrl' in v) {
+          const { imageUrl: _vImageUrl, ...vRest } = v;
+          return vRest;
+        }
+      }
+      return v;
+    });
   }
 
   stmts.upsert.run({
@@ -244,8 +386,8 @@ export function upsertItem(item: any, userId: string) {
     type: item.type,
     data: JSON.stringify(finalData),
     srs: JSON.stringify(item.srs),
-    saved_at: item.savedAt || Date.now(),
-    updated_at: item.updatedAt || Date.now(),
+    saved_at: item.savedAt || now,
+    updated_at: item.updatedAt || now,
     is_deleted: item.isDeleted ? 1 : 0,
     is_archived: item.isArchived ? 1 : 0,
     user_id: userId,
@@ -265,15 +407,23 @@ export function softDeleteItem(id: string, userId: string) {
 
 export function getItemById(id: string, userId: string) {
   const row = stmts.getByIdScoped.get(id, userId) as ItemRow | undefined;
-  return row ? rowToItem(row) : null;
+  if (!row) return null;
+  const item = rowToItem(row);
+  // Re-inject base64 from item_images for this single item.
+  const d = item.data as any;
+  const ids = [d.id, ...(Array.isArray(d.vocabs) ? d.vocabs.map((v: any) => v.id) : [])].filter(Boolean);
+  const imgs = getItemImagesBatch(ids, userId);
+  if (imgs[d.id]) d.imageUrl = imgs[d.id];
+  if (Array.isArray(d.vocabs)) for (const v of d.vocabs) if (imgs[v.id]) v.imageUrl = imgs[v.id];
+  return item;
 }
 
 /**
- * Get just the base64 image data URI for an item.
- * Searches top-level items first, then vocab images nested within phrases.
+ * TRANSITIONAL fallback: read a base64 image still inlined in items.data for rows
+ * the migration hasn't reached yet. Searches top-level items, then nested phrase vocabs.
+ * (Removed in a later cleanup once prod confirms zero inline images remain.)
  */
-export function getItemImage(id: string, userId: string): string | null {
-  // Direct lookup by item id
+function getInlineItemImage(id: string, userId: string): string | null {
   const row = stmts.getImageData.get(id, userId) as { data: string } | undefined;
   if (row) {
     const data = JSON.parse(row.data);
@@ -281,7 +431,7 @@ export function getItemImage(id: string, userId: string): string | null {
     return null;
   }
 
-  // Search within phrase vocabs (id might be a vocab id nested in a phrase)
+  // id might be a vocab id nested in a phrase
   const phraseRow = stmts.findVocabInPhrase.get(userId, `%"id":"${id}"%`) as { data: string } | undefined;
   if (phraseRow) {
     const data = JSON.parse(phraseRow.data);
@@ -295,17 +445,58 @@ export function getItemImage(id: string, userId: string): string | null {
 }
 
 /**
- * Get base64 image data URIs for multiple item IDs in one call.
- * Returns a map of { id: dataUri } for items that have images.
+ * Get the base64 image data URI for an item or vocab id.
+ * Fast path: the item_images table (direct primary-key lookup).
+ * Fallback: inline base64 in items.data (only until the migration finishes).
+ */
+export function getItemImage(id: string, userId: string): string | null {
+  const imgRow = imageStmts.get.get(id, userId) as { data: string } | undefined;
+  if (imgRow?.data) return imgRow.data;
+  return getInlineItemImage(id, userId);
+}
+
+/**
+ * Get base64 image data URIs for multiple ids in one call.
+ * Returns a map of { id: dataUri } for ids that have images.
  */
 export function getItemImagesBatch(ids: string[], userId: string): Record<string, string> {
   const result: Record<string, string> = {};
+  if (ids.length === 0) return result;
+
+  // Fast path: one IN query against item_images.
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(`SELECT id, data FROM item_images WHERE user_id = ? AND id IN (${placeholders})`)
+    .all(userId, ...ids) as Array<{ id: string; data: string }>;
+  for (const r of rows) if (r.data) result[r.id] = r.data;
+
+  // Transitional fallback for any ids not yet migrated.
   for (const id of ids) {
-    const uri = getItemImage(id, userId);
-    if (uri) result[id] = uri;
+    if (!result[id]) {
+      const inline = getInlineItemImage(id, userId);
+      if (inline) result[id] = inline;
+    }
   }
   return result;
 }
+
+/** All image ids this user has stored — for the recovery diff (client uploads what's missing). */
+export function getImageManifest(userId: string): string[] {
+  return (imageStmts.manifest.all(userId) as Array<{ id: string }>).map(r => r.id);
+}
+
+/** Upsert base64 images directly into item_images (upload-on-create + recovery). */
+export const upsertItemImages = db.transaction((images: Array<{ id: string; data: string }>, userId: string): number => {
+  const now = Date.now();
+  let count = 0;
+  for (const img of images) {
+    if (img && img.id && typeof img.data === 'string' && img.data.startsWith('data:image/')) {
+      imageStmts.upsert.run({ id: img.id, user_id: userId, data: img.data, updated_at: now });
+      count++;
+    }
+  }
+  return count;
+});
 
 // ─── User CRUD ───
 
@@ -337,6 +528,7 @@ export const createUserAndClaimItems = db.transaction((opts: {
   userStmts.create.run(user);
   if (isFirstUser) {
     stmts.assignOrphanItems.run(user.id);
+    imageStmts.assignOrphan.run(user.id);
   }
   return user;
 });
