@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, ProjectInfo } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus, UploadCloud } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus, UploadCloud, GitMerge } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -508,6 +508,8 @@ interface NotebookProps {
   isOnline?: boolean;
   onBulkRefresh?: () => void;
   bulkRefreshProgress?: { current: number; total: number; isRunning: boolean } | null;
+  hasSavedVariant?: (query: string) => boolean;
+  onFindDuplicates?: () => void;
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
   onSave?: (item: StoredItem) => void;
@@ -533,7 +535,7 @@ interface NotebookProps {
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
+    onBulkRefresh, bulkRefreshProgress, hasSavedVariant, onFindDuplicates, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     projects = [], activeProject, onSetActiveProject, onProjectsChanged, allItems,
     onBatchImport, batchImportProgress, onJSONImported,
@@ -789,16 +791,20 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       if (forceAI && query.trim()) {
         performAISearch(query);
       } else if (autoAIIfNoMatch && query.trim()) {
-        // Check if any saved item has an exact word match
+        // Skip the AI call if a saved item matches the query OR any inflected variant
+        // of it (running→run, cats→cat). Falls back to a local exact check if the
+        // shared variant matcher isn't wired in.
         const queryLower = query.toLowerCase().trim();
-        const hasExactMatch = items.some(item => {
-          const title = item.type === 'phrase'
-            ? (item.data as SearchResult).query
-            : (item.data as VocabCard).word;
-          return (title || '').toLowerCase().trim() === queryLower;
-        });
+        const hasMatch = hasSavedVariant
+          ? hasSavedVariant(query)
+          : items.some(item => {
+              const title = item.type === 'phrase'
+                ? (item.data as SearchResult).query
+                : (item.data as VocabCard).word;
+              return (title || '').toLowerCase().trim() === queryLower;
+            });
 
-        if (!hasExactMatch) {
+        if (!hasMatch) {
           performAISearch(query);
         }
       }
@@ -806,7 +812,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
 
     window.addEventListener('notebook-search', handleNotebookSearch as EventListener);
     return () => window.removeEventListener('notebook-search', handleNotebookSearch as EventListener);
-  }, [performAISearch, items]);
+  }, [performAISearch, items, hasSavedVariant]);
 
   // Escape key to exit compare mode
   useEffect(() => {
@@ -1470,6 +1476,16 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 ) : (
                   <RotateCcw className="text-violet-400 hover:text-violet-600 transition-colors" size={14} />
                 )}
+              </button>
+            )}
+            {/* Find & Merge Duplicates */}
+            {onFindDuplicates && (
+              <button
+                onClick={onFindDuplicates}
+                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full cursor-pointer hover:bg-indigo-50"
+                title="Find & merge duplicate words (variants saved separately)"
+              >
+                <GitMerge className="text-indigo-400 hover:text-indigo-600 transition-colors" size={14} />
               </button>
             )}
             {!isOnline ? (

@@ -13,7 +13,9 @@ import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
 import { ConfirmModal } from './components/ConfirmModal';
+import { DuplicatesModal, DuplicateClusterView } from './components/DuplicatesModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
+import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
 import { preloadNeural } from './services/neuralTts';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
@@ -102,6 +104,92 @@ function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
     const newSRS = updates.get(item.data.id);
     return newSRS ? { ...item, srs: newSRS } : item;
   });
+}
+
+// Merge variant-duplicate clusters (Phase 2 of the dedup tool). For each merge, every
+// live vocab card whose word is a variant in the cluster is relabeled to the canonical
+// headword and given the UNION of all members' forms (plus the original variant spellings,
+// so future searches still resolve). Cards that collide on the same sense after relabel are
+// deduped — the richer / more-reviewed one survives, the rest are soft-deleted. Shared SRS is
+// reconciled at the end. Pure & deterministic; returns a new array (unchanged refs preserved).
+function applyMerges(
+  items: StoredItem[],
+  merges: Array<{ baseWords: string[]; canonical: string }>
+): StoredItem[] {
+  if (!merges || merges.length === 0) return items;
+  const now = Date.now();
+  const result = items.slice();
+
+  const scoreCard = (it: StoredItem): number => {
+    const reviews = it.srs?.totalReviews || 0;
+    const c = it.data as VocabCard;
+    const richness =
+      (c.definition?.length || 0) +
+      (Array.isArray(c.examples) ? c.examples.length : 0) * 50 +
+      (c.history?.length || 0) +
+      (c.imageUrl ? 1000 : 0);
+    return reviews * 100000 + richness;
+  };
+
+  for (const { baseWords, canonical } of merges) {
+    const canon = normalizeKey(canonical);
+    if (!canon) continue;
+    const baseSet = new Set(baseWords.map(b => normalizeKey(b)));
+
+    const members = result
+      .map((it, idx) => ({ it, idx }))
+      .filter(({ it }) =>
+        it.type === 'vocab' && !it.isDeleted &&
+        baseSet.has(normalizeKey((it.data as VocabCard).word || ''))
+      );
+    if (members.length < 2) continue;
+
+    // Display spelling of the canonical headword: reuse an existing card's exact spelling if present.
+    let canonDisplay = canonical.trim();
+    for (const { it } of members) {
+      if (normalizeKey((it.data as VocabCard).word || '') === canon) {
+        canonDisplay = ((it.data as VocabCard).word || '').trim();
+        break;
+      }
+    }
+
+    // Union of forms + the original variant spellings (minus the canonical itself).
+    const unionForms = new Set<string>();
+    for (const { it } of members) {
+      const c = it.data as VocabCard;
+      if (Array.isArray(c.forms)) for (const f of c.forms) { const t = (f || '').trim(); if (t) unionForms.add(t); }
+      const w = (c.word || '').trim();
+      if (w && normalizeKey(w) !== canon) unionForms.add(w);
+    }
+    const mergedForms = [...unionForms].filter(f => normalizeKey(f) !== canon);
+
+    // Dedupe by sense — keep the best card per sense, soft-delete the rest.
+    const bestBySense = new Map<string, number>();
+    const losers = new Set<number>();
+    for (const { it, idx } of members) {
+      const senseKey = ((it.data as VocabCard).sense || '').toLowerCase().trim();
+      const prevIdx = bestBySense.get(senseKey);
+      if (prevIdx === undefined) {
+        bestBySense.set(senseKey, idx);
+      } else if (scoreCard(result[prevIdx]) >= scoreCard(it)) {
+        losers.add(idx);
+      } else {
+        losers.add(prevIdx);
+        bestBySense.set(senseKey, idx);
+      }
+    }
+
+    for (const { it, idx } of members) {
+      if (losers.has(idx)) {
+        result[idx] = { ...it, isDeleted: true, updatedAt: now };
+      } else {
+        const c = it.data as VocabCard;
+        result[idx] = { ...it, data: { ...c, word: canonDisplay, forms: mergedForms }, updatedAt: now };
+      }
+    }
+  }
+
+  return normalizeSharedSRS(result);
 }
 
 // Sentinel value replacing base64 in React state — tells OfflineImage to load from IDB
@@ -370,6 +458,9 @@ const App: React.FC = () => {
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
   const allActiveItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
+  // Variant-aware lookup index (base word + each inflected form → base word), rebuilt
+  // only when items change. Powers "search a variant → pop up the saved card, skip AI".
+  const variantIndex = useMemo(() => buildVariantIndex(allActiveItems), [allActiveItems]);
   // Filter by project for notebook display (null = show all)
   const activeItems = useMemo(() => {
     if (!activeProject) return allActiveItems;
@@ -445,6 +536,8 @@ const App: React.FC = () => {
 
   // Bulk refresh state
   const [bulkRefreshProgress, setBulkRefreshProgress] = useState<{ current: number; total: number; isRunning: boolean } | null>(null);
+  // Phase 2 dedup tool: variant-duplicate clusters under review (null = modal closed).
+  const [duplicateClusters, setDuplicateClusters] = useState<DuplicateClusterView[] | null>(null);
 
   // Batch import state
   const [batchImportProgress, setBatchImportProgress] = useState<{
@@ -1321,6 +1414,62 @@ const App: React.FC = () => {
     });
   }, [activeItems, executeBulkRefresh]);
 
+  // ── Find & merge variant duplicates (Phase 2 dedup tool) ──────────────────
+  // Detection is read-only: cluster base words that are variants of one another
+  // (run/running/ran), then open the review modal. Scans across ALL projects.
+  const handleFindDuplicates = useCallback(() => {
+    const clusters = findDuplicateClusters(allActiveItems);
+    const detailed: DuplicateClusterView[] = clusters
+      .map((baseWords, i) => {
+        const set = new Set(baseWords);
+        const clusterItems = allActiveItems.filter(
+          it => it.type === 'vocab' && set.has(normalizeKey((it.data as VocabCard).word || ''))
+        );
+        const suggestedCanonical = [...baseWords].sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
+        return { id: `dup-${i}`, baseWords, items: clusterItems, suggestedCanonical };
+      })
+      .filter(c => c.items.length >= 2);
+
+    if (detailed.length === 0) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'No Duplicates Found',
+        message: 'No variant duplicates detected — your words are already consolidated. 🎉',
+        confirmText: 'OK',
+        variant: 'success',
+        onConfirm: () => setConfirmModal(null),
+        showCancel: false,
+      });
+      return;
+    }
+    setDuplicateClusters(detailed);
+  }, [allActiveItems]);
+
+  // Apply the user-confirmed merges: relabel to canonical, union forms, dedupe senses,
+  // reconcile shared SRS, and push the changed items immediately (like delete/SRS paths).
+  const handleMergeDuplicates = useCallback(async (merges: Array<{ baseWords: string[]; canonical: string }>) => {
+    setDuplicateClusters(null);
+    if (!merges || merges.length === 0) return;
+
+    const before = new Map(latestItemsRef.current.map(it => [it.data.id, getItemContentHash(it)]));
+    const newItems = applyMerges(latestItemsRef.current, merges);
+    latestItemsRef.current = newItems;
+    setSyncState(prev => ({ ...prev, items: applyMerges(prev.items, merges) }));
+
+    const changed = newItems.filter(it => before.get(it.data.id) !== getItemContentHash(it));
+    log(`🔀 Merge: ${changed.length} item(s) changed across ${merges.length} cluster(s)`);
+
+    try {
+      if (changed.length > 0) {
+        syncGenerationRef.current++; // make any in-flight debounced push skip (data is now stale)
+        await saveItems(changed);
+        for (const it of changed) it.lastSyncedHash = getItemContentHash(it);
+      }
+    } catch (e) {
+      logError('🔀 Merge: failed to sync to server:', e);
+    }
+  }, []);
+
   // ── Batch Import (background processing) ──────────────────────────────────
 
   const BATCH_CONCURRENCY = 5;
@@ -2113,15 +2262,21 @@ const App: React.FC = () => {
     });
   }, [activeItems]);
 
-  // Global lookup across ALL projects (not just the active one) so clicking a saved word
-  // pops up its existing card instead of re-running an AI search. isVocabSaved stays
+  // Global lookup across ALL projects (not just the active one) so searching a saved word
+  // — OR any inflected variant of it (running→run, cats→cat, happier→happy) — pops up the
+  // existing card instead of re-running an AI search. Variant matching is via variantIndex
+  // (forms + conservative lemmatiser; see services/wordMatch). isVocabSaved stays exact and
   // active-project scoped so the popup's Save button can still re-file it into the current project.
   const findSavedByWord = useCallback((word: string): VocabCard[] => {
-    const w = word.toLowerCase().trim();
+    const bases = matchBaseWords(word, variantIndex);
+    if (bases.size === 0) return [];
     return allActiveItems
-      .filter(i => i.type === 'vocab' && ((i.data as VocabCard).word || '').toLowerCase().trim() === w)
+      .filter(i => i.type === 'vocab' && bases.has(normalizeKey((i.data as VocabCard).word || '')))
       .map(i => i.data as VocabCard);
-  }, [allActiveItems]);
+  }, [allActiveItems, variantIndex]);
+
+  // Cheap boolean variant check (no card collection) — for Notebook's "auto-AI if no match" gate.
+  const hasSavedVariant = useCallback((q: string) => matchBaseWords(q, variantIndex).size > 0, [variantIndex]);
 
   // Search handler - triggers GlobalSearch popup (bottom-right search icon)
   const handleRecursiveSearch = useCallback((text: string) => {
@@ -2414,6 +2569,14 @@ const App: React.FC = () => {
         />
       )}
 
+      {duplicateClusters && (
+        <DuplicatesModal
+          clusters={duplicateClusters}
+          onClose={() => setDuplicateClusters(null)}
+          onMerge={handleMergeDuplicates}
+        />
+      )}
+
       {detailContext && (
         <ErrorBoundary
           onReset={() => setDetailContext(null)}
@@ -2464,6 +2627,8 @@ const App: React.FC = () => {
             isOnline={isOnline}
             onBulkRefresh={handleBulkRefresh}
             bulkRefreshProgress={bulkRefreshProgress}
+            hasSavedVariant={hasSavedVariant}
+            onFindDuplicates={handleFindDuplicates}
             onArchive={handleArchive}
             onUnarchive={handleUnarchive}
             onSave={handleSave}
