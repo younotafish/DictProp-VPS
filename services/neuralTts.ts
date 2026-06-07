@@ -229,11 +229,45 @@ const stopPlayback = (): void => {
   }
 };
 
+// Pause keeps the current position (unlike stop, which also bumps the token so onEnd won't fire and
+// the clip can't resume). The element/synth retains currentTime, so resume() continues from there.
+const pausePlayback = (): void => {
+  try {
+    audioEl?.pause();
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.speechSynthesis?.pause();
+  } catch {
+    /* ignore */
+  }
+};
+
+const resumePlayback = (): void => {
+  try {
+    if (audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0) void audioEl.play();
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.speechSynthesis?.resume();
+  } catch {
+    /* ignore */
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 export interface SpeakHandle {
   stop: () => void;
+  /** Pause playback, preserving position so resume() continues from where it paused. */
+  pause: () => void;
+  /** Resume after a pause(). No-op if not paused. */
+  resume: () => void;
+  /** True while paused mid-playback (false before start, after end, or after stop). */
+  isPaused: () => boolean;
 }
 
 export interface SpeakOptions {
@@ -255,7 +289,7 @@ let currentToken = 0;
  */
 export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle => {
   const plain = stripSentenceMarkers(text).trim();
-  if (!plain) return { stop: () => {} };
+  if (!plain) return { stop: () => {}, pause: () => {}, resume: () => {}, isPaused: () => false };
 
   const { voice = DEFAULT_VOICE, rate, onStart, onEnd, onError, allowDownload = true } = opts;
 
@@ -285,6 +319,17 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
           /* ignore */
         }
       },
+      pause: () => {
+        if (isCurrent()) {
+          try { window.speechSynthesis?.pause(); } catch { /* ignore */ }
+        }
+      },
+      resume: () => {
+        if (isCurrent()) {
+          try { window.speechSynthesis?.resume(); } catch { /* ignore */ }
+        }
+      },
+      isPaused: () => isCurrent() && typeof window !== 'undefined' && !!window.speechSynthesis?.paused,
     };
   }
 
@@ -325,5 +370,8 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
       if (isCurrent()) currentToken++;
       stopPlayback();
     },
+    pause: () => { if (isCurrent()) pausePlayback(); },
+    resume: () => { if (isCurrent()) resumePlayback(); },
+    isPaused: () => isCurrent() && !!audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0,
   };
 };

@@ -713,14 +713,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
   useEffect(() => { currentItemRef.current = currentItem; });
   const readHandleRef = useRef<SpeakHandle | null>(null);
   const readingSentencesRef = useRef(false);
+  const readPausedRef = useRef(false);
+  const readingKindRef = useRef<string | null>(null); // identifies what's playing: 'both' (E) | 'idx:0' | 'idx:1' (Cmd+N)
 
   const readBothSentences = useCallback(() => {
-    // Pressing again while reading stops it.
+    // Pressing E again on the same read pauses; pressing once more resumes from where it paused.
+    if (readingSentencesRef.current && readingKindRef.current === 'both') {
+      if (readPausedRef.current) { readHandleRef.current?.resume(); readPausedRef.current = false; }
+      else { readHandleRef.current?.pause(); readPausedRef.current = true; }
+      return;
+    }
+    // A different read (a Cmd+N single sentence) is playing → stop it, then start read-both.
     if (readingSentencesRef.current) {
       readHandleRef.current?.stop();
       readHandleRef.current = null;
       readingSentencesRef.current = false;
-      return;
+      readPausedRef.current = false;
     }
     let sentences: string[];
     if (sentenceModeRef.current && currentSentenceRef.current) {
@@ -738,10 +746,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
     readingSentencesRef.current = true;
+    readPausedRef.current = false;
+    readingKindRef.current = 'both';
     let idx = 0;
     const playNext = () => {
       if (!readingSentencesRef.current) return;
-      if (idx >= sentences.length) { readingSentencesRef.current = false; return; }
+      if (idx >= sentences.length) { readingSentencesRef.current = false; readingKindRef.current = null; return; }
       const s = sentences[idx++];
       readHandleRef.current = speakNatural(s, {
         allowDownload: true,
@@ -754,14 +764,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Read a single example sentence aloud (neural voice) — first (0) or second (1).
   // Bound to Cmd/Ctrl+1 / +2. Reuses the read refs so it cooperates with the E shortcut
-  // (read-both) and the stop-on-card-change cleanup below; press again to replay.
+  // (read-both) and the stop-on-card-change cleanup below. Pressing the SAME key again pauses;
+  // pressing once more resumes from where it paused. A different key switches sentences.
   const speakSentenceAt = useCallback((index: number) => {
-    // Stop anything currently reading (the read-both chain or another single sentence) so
-    // they don't overlap before starting the requested one.
+    const kind = `idx:${index}`;
+    // Same single sentence already playing → toggle pause / resume.
+    if (readingSentencesRef.current && readingKindRef.current === kind) {
+      if (readPausedRef.current) { readHandleRef.current?.resume(); readPausedRef.current = false; }
+      else { readHandleRef.current?.pause(); readPausedRef.current = true; }
+      return;
+    }
+    // Different content reading (the other index, or the read-both chain) → stop it, then start this one.
     if (readingSentencesRef.current) {
       readHandleRef.current?.stop();
       readHandleRef.current = null;
       readingSentencesRef.current = false;
+      readPausedRef.current = false;
     }
     // Cmd+1 / Cmd+2 always read the displayed card's example sentences (positional), in both modes —
     // the saved sentence has its own controls (E + the banner speaker). On a synthetic fallback card
@@ -776,20 +794,36 @@ export const DetailView: React.FC<DetailViewProps> = ({
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
     readingSentencesRef.current = true;
+    readPausedRef.current = false;
+    readingKindRef.current = kind;
     readHandleRef.current = speakNatural(sentence, {
       allowDownload: true,
-      onEnd: () => { readingSentencesRef.current = false; readHandleRef.current = null; },
-      onError: () => { readingSentencesRef.current = false; readHandleRef.current = null; },
+      onEnd: () => { readingSentencesRef.current = false; readHandleRef.current = null; readingKindRef.current = null; readPausedRef.current = false; },
+      onError: () => { readingSentencesRef.current = false; readHandleRef.current = null; readingKindRef.current = null; readPausedRef.current = false; },
     });
   }, []);
 
-  // Stop reading when the card changes or the view unmounts.
+  // Stop reading when the card changes or the view unmounts (also clears any paused state).
   useEffect(() => () => {
     if (readingSentencesRef.current) {
       readHandleRef.current?.stop();
       readingSentencesRef.current = false;
+      readPausedRef.current = false;
+      readingKindRef.current = null;
     }
   }, [currentGroupIndex, currentItemIndex]);
+
+  // Either auto-play supersedes a manual E/Cmd read (shared audio element). Clear the manual-read
+  // bookkeeping — without stopping the audio auto-play now owns — so a later E/Cmd press starts
+  // fresh instead of trying to pause/resume a stale handle.
+  useEffect(() => {
+    if (isAutoPlaying || isSentenceAutoPlaying) {
+      readingSentencesRef.current = false;
+      readPausedRef.current = false;
+      readingKindRef.current = null;
+      readHandleRef.current = null;
+    }
+  }, [isAutoPlaying, isSentenceAutoPlaying]);
 
   // Keyboard navigation
   useKeyboardNavigation({
