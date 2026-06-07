@@ -336,17 +336,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
   
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
 
-  // Auto-pronounce word when card changes
+  // Auto-pronounce the word when the card changes — but NOT during sentence auto-play, which
+  // reads the example sentence instead (we don't want the word spoken over it).
   useEffect(() => {
-    if (!title) return;
-    
+    if (!title || isSentenceAutoPlaying) return;
+
     // Small delay to let animation settle before pronouncing
     const timer = setTimeout(() => {
       speak(title);
     }, 100);
-    
+
     return () => clearTimeout(timer);
-  }, [title, currentGroupIndex, currentItemIndex]);
+  }, [title, currentGroupIndex, currentItemIndex, isSentenceAutoPlaying]);
 
   // P key to pronounce current word
   // Moved to bottom to access handlers

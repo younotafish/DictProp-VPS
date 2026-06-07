@@ -65,8 +65,6 @@ export const isModelReady = (): boolean => status === 'ready';
 // ---------------------------------------------------------------------------
 // Capability gate
 // ---------------------------------------------------------------------------
-let neuralDisabled = false; // set after a runtime failure — system voice for the rest of the session
-
 /** True when the device can run Kokoro acceptably (WebGPU). The gate for Kokoro vs. system voice. */
 export const isNeuralSupported = (): boolean =>
   typeof navigator !== 'undefined' && !!(navigator as any).gpu;
@@ -107,35 +105,53 @@ const confirmDownloadIfNeeded = (): boolean => {
 // ---------------------------------------------------------------------------
 let modelPromise: Promise<KokoroInstance> | null = null;
 
+const loadModel = async (): Promise<KokoroInstance> => {
+  const { KokoroTTS } = await import('kokoro-js');
+  // Skip the local /models/* lookup (404s) — load straight from the HF Hub + browser cache.
+  // Non-fatal: a direct import of the (transitive) transformers dep shouldn't fail the load.
+  try {
+    const transformers: any = await import('@huggingface/transformers');
+    transformers.env.allowLocalModels = false;
+  } catch {
+    /* ignore */
+  }
+  return KokoroTTS.from_pretrained(MODEL_ID, {
+    dtype: DTYPE as any,
+    device: 'webgpu',
+    progress_callback: (p: any) => {
+      if (p && p.status === 'progress' && typeof p.progress === 'number') {
+        setStatus('loading', Math.max(0, Math.min(1, p.progress / 100)));
+      }
+    },
+  });
+};
+
+// WebGPU device init and the one-time ~330 MB download can flake transiently, so retry a few
+// times — already-fetched files come from the browser cache, so retries are cheap. On final
+// failure we reset modelPromise so the NEXT play tries again: no permanent session lockout,
+// no need to hard-refresh.
 const ensureModel = (): Promise<KokoroInstance> => {
   if (modelPromise) return modelPromise;
   setStatus('loading', 0);
   modelPromise = (async () => {
-    const { KokoroTTS } = await import('kokoro-js');
-    // Skip the local /models/* lookup (404s) — load straight from the HF Hub + browser cache.
-    // Non-fatal: a direct import of the (transitive) transformers dep shouldn't fail the load.
-    try {
-      const transformers: any = await import('@huggingface/transformers');
-      transformers.env.allowLocalModels = false;
-    } catch {
-      /* ignore */
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const tts = await loadModel();
+        log(`🔊 Neural TTS: Kokoro model ready (${DTYPE}, webgpu)`);
+        setStatus('ready', 1);
+        return tts;
+      } catch (e) {
+        lastErr = e;
+        warn(`🔊 Neural TTS: model load attempt ${attempt}/3 failed; retrying…`, e);
+        setStatus('loading', 0);
+        await new Promise((r) => setTimeout(r, 800 * attempt));
+      }
     }
-    const tts = await KokoroTTS.from_pretrained(MODEL_ID, {
-      dtype: DTYPE as any,
-      device: 'webgpu',
-      progress_callback: (p: any) => {
-        if (p && p.status === 'progress' && typeof p.progress === 'number') {
-          setStatus('loading', Math.max(0, Math.min(1, p.progress / 100)));
-        }
-      },
-    });
-    log(`🔊 Neural TTS: Kokoro model ready (${DTYPE}, webgpu)`);
-    setStatus('ready', 1);
-    return tts;
+    throw lastErr;
   })();
   modelPromise.catch(() => {
-    neuralDisabled = true; // don't retry the big download this session
-    modelPromise = null;
+    modelPromise = null; // allow a fresh attempt on the next play
     setStatus('error');
   });
   return modelPromise;
@@ -237,7 +253,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   // Decide engine. Neural needs WebGPU, not session-disabled, and either an already-loaded
   // model or permission to download it.
   const wouldDownload = !isModelReady();
-  let useNeural = isNeuralSupported() && !neuralDisabled && (isModelReady() || allowDownload);
+  let useNeural = isNeuralSupported() && (isModelReady() || allowDownload);
 
   // On mobile, get one-time consent before the first (downloading) use.
   if (useNeural && wouldDownload && allowDownload && !confirmDownloadIfNeeded()) {
