@@ -20,9 +20,10 @@ COPY hooks/ ./hooks/
 COPY vite.config.ts ./
 RUN npm run build
 
-# Install server dependencies and build
+# Install server dependencies and build. better-sqlite3 is a native module with no reliable musl
+# (Alpine) prebuilt, so install the toolchain to build it from source instead of a flaky download.
 COPY server/package.json server/package-lock.json ./server/
-RUN cd server && npm ci
+RUN apk add --no-cache python3 make g++ && cd server && npm ci
 COPY server/tsconfig.json ./server/
 COPY server/src/ ./server/src/
 RUN cd server && npm run build
@@ -35,9 +36,12 @@ WORKDIR /app
 # ffmpeg: transcode MiMo's WAV output to MP3 for the TTS cache (smaller + universal playback)
 RUN apk add --no-cache ffmpeg
 
-# Server production deps only
+# Server production deps only. Build better-sqlite3 from source (no musl prebuilt), then drop the
+# toolchain so the final image stays slim.
 COPY server/package.json server/package-lock.json ./server/
-RUN cd server && npm ci --production
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+  && cd server && npm ci --production \
+  && apk del .build-deps
 
 # Copy built artifacts from builder
 COPY --from=builder /app/server/dist/ ./server/dist/
