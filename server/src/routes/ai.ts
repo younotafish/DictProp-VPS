@@ -11,7 +11,7 @@ export const aiRoutes = new Hono();
 const DEEPSEEK_TIMEOUT_MS = 45000;
 const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
 const DEEPINFRA_WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo';
-const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V3';
+const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
 const DEFAULT_TEMPERATURE = 0.7;
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
