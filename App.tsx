@@ -1433,10 +1433,10 @@ const App: React.FC = () => {
     });
   }, [activeItems, executeBulkRefresh]);
 
-  // ── Bulk "Generate all speech" sweep ──────────────────────────────────────
-  // Pre-generates MiMo audio for every word + example sentence + saved sentence and caches it on
-  // the server, so all devices (esp. iPhone/iPad) play everything instantly. Skips already-cached
-  // clips via the manifest; resumable (re-running only fills what's missing).
+  // ── Bulk "Generate all sentence speech" sweep ─────────────────────────────
+  // Pre-generates MiMo audio for every example sentence + saved sentence and caches it on the
+  // server, so all devices (esp. iPhone/iPad) play sentences instantly. Words use the system
+  // voice, so they're NOT generated. Skips already-cached clips; resumable (fills only what's missing).
   const TTS_GEN_CONCURRENCY = 4;
   const handleGenerateAllSpeech = useCallback(async () => {
     const all = latestItemsRef.current;
@@ -1444,13 +1444,13 @@ const App: React.FC = () => {
     const add = (t?: string) => { const s = stripSentenceMarkers(t || '').trim(); if (s) texts.add(s); };
     for (const it of all) {
       if (it.isDeleted) continue;
-      if (isVocabItem(it)) { add(it.data.word); (it.data.examples || []).forEach(add); }
-      else if (isPhraseItem(it)) { add(it.data.query); (it.data.vocabs || []).forEach(v => { add(v.word); (v.examples || []).forEach(add); }); }
+      if (isVocabItem(it)) { (it.data.examples || []).forEach(add); }
+      else if (isPhraseItem(it)) { (it.data.vocabs || []).forEach(v => { (v.examples || []).forEach(add); }); }
       else if (isSentenceItem(it)) { add((it.data as SentenceData).text); }
     }
     const list = [...texts];
     if (list.length === 0) {
-      setConfirmModal({ isOpen: true, title: 'Nothing to Generate', message: 'No words or sentences found.', confirmText: 'OK', variant: 'info', onConfirm: () => setConfirmModal(null), showCancel: false });
+      setConfirmModal({ isOpen: true, title: 'Nothing to Generate', message: 'No example sentences found.', confirmText: 'OK', variant: 'info', onConfirm: () => setConfirmModal(null), showCancel: false });
       return;
     }
 

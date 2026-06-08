@@ -1364,13 +1364,13 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 {imageBackfillProgress?.isRunning ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}
               </button>
             )}
-            {/* Generate & cache speech (MiMo) for all words + sentences so every device plays instantly */}
+            {/* Generate & cache MiMo speech for all example sentences so every device plays them instantly */}
             {isOnline && onGenerateAllSpeech && (
               <button
                 onClick={onGenerateAllSpeech}
                 disabled={ttsGenProgress?.isRunning}
                 className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${ttsGenProgress?.isRunning ? 'cursor-not-allowed opacity-50 text-indigo-400' : 'text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
-                title="Generate & cache speech for all words and sentences"
+                title="Generate & cache speech for all example sentences"
               >
                 {ttsGenProgress?.isRunning ? <Loader2 size={16} className="animate-spin" /> : <Volume2 size={16} />}
               </button>

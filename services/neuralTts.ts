@@ -473,8 +473,18 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
 };
 
 /**
- * Speak a single word / card title with the best voice. Same cache-first chain as speakNatural,
- * but never triggers the one-time Kokoro download — incidental word taps shouldn't pull 326 MB.
- * (On a macOS cache miss with Kokoro already warmed it still uses Kokoro; otherwise system voice.)
+ * Speak a single word / card title (the item itself) with the BUILT-IN system voice — instant,
+ * free, and fine for one word. Only example SENTENCES use the cached MiMo voice (speakNatural).
+ * Stops any cached/Kokoro sentence first so a word tap interrupts cleanly.
  */
-export const speakWord = (text: string): SpeakHandle => speakNatural(text, { allowDownload: false });
+export const speakWord = (text: string): SpeakHandle => {
+  const plain = stripSentenceMarkers(text).trim();
+  stopPlayback();
+  systemSpeak(plain);
+  return {
+    stop: () => { try { window.speechSynthesis?.cancel(); } catch { /* ignore */ } },
+    pause: () => { try { window.speechSynthesis?.pause(); } catch { /* ignore */ } },
+    resume: () => { try { window.speechSynthesis?.resume(); } catch { /* ignore */ } },
+    isPaused: () => typeof window !== 'undefined' && !!window.speechSynthesis?.paused,
+  };
+};

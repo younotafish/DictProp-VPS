@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Volume2 } from 'lucide-react';
-import { speakNatural, type SpeakHandle } from '../services/neuralTts';
+import { speak } from '../services/speech';
 import { error as logError } from '../services/logger';
 
 interface PronunciationBlockProps {
@@ -11,8 +11,8 @@ interface PronunciationBlockProps {
   showIcon?: boolean;
 }
 
-// Words/phrases play the cached MiMo voice (from the server cache) when available, falling back
-// to macOS Kokoro / iOS Web Speech on a miss — the same chain as example sentences (see neuralTts).
+// The word/item itself uses the instant built-in system voice (no model latency). Only example
+// sentences use the cached neural (MiMo) voice (see SentenceSpeakerButton / neuralTts).
 export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   text,
   ipa,
@@ -21,30 +21,29 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   showIcon = true // Always show icon by default to indicate clickable audio
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const handleRef = useRef<SpeakHandle | null>(null);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      handleRef.current?.stop();
+      window.speechSynthesis?.cancel();
       setIsPlaying(false);
     };
   }, []);
 
   const handlePlay = useCallback((e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!text) return;
+    if (!text || !window.speechSynthesis) return;
 
     // If currently playing, stop it
     if (isPlaying) {
-      handleRef.current?.stop();
+      window.speechSynthesis.cancel();
       setIsPlaying(false);
       return;
     }
 
     try {
-      handleRef.current = speakNatural(text, {
-        allowDownload: false,
+      utteranceRef.current = speak(text, {
         onStart: () => setIsPlaying(true),
         onEnd: () => setIsPlaying(false),
         onError: (event) => {

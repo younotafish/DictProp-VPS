@@ -350,10 +350,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const viewingVocab = viewingResult?.vocabs?.[viewingVocabIdx];
   const viewingVocabCount = viewingResult?.vocabs?.length || 0;
 
-  // Warm the TTS cache for the card on screen (word + examples) so taps are instant.
+  // Warm the TTS cache for the card's example SENTENCES (the word uses the system voice) so taps are instant.
   useEffect(() => {
     if (!viewingVocab) return;
-    prefetchTTS([viewingVocab.word, ...(viewingVocab.examples || [])].filter(Boolean) as string[]);
+    prefetchTTS((viewingVocab.examples || []).filter(Boolean) as string[]);
   }, [viewingVocab]);
 
   return (

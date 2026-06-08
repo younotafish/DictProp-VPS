@@ -389,13 +389,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return () => clearTimeout(timer);
   }, [title, currentGroupIndex, currentItemIndex, isSentenceAutoPlaying, sentenceMode]);
 
-  // Warm the TTS cache for the visible card (word + example sentences) so taps/auto-play are
-  // instant and play through the iOS-unlocked <audio> element rather than falling back.
+  // Warm the TTS cache for the visible card's example SENTENCES (the word itself uses the system
+  // voice) so sentence taps/auto-play are instant and play through the iOS-unlocked <audio> element.
   useEffect(() => {
     const card = type === 'vocab' ? (data as VocabCard) : null;
-    const texts = [title, ...(card?.examples || [])].filter(Boolean) as string[];
-    if (texts.length) prefetchTTS(texts);
-  }, [title, currentGroupIndex, currentItemIndex, type, data]);
+    const sentences = (card?.examples || []).filter(Boolean) as string[];
+    if (sentences.length) prefetchTTS(sentences);
+  }, [currentGroupIndex, currentItemIndex, type, data]);
 
   // P key to pronounce current word
   // Moved to bottom to access handlers
