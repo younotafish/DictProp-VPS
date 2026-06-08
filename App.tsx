@@ -20,6 +20,10 @@ import { preloadNeural } from './services/neuralTts';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 
+// Project to land on by default each session (matched by name, case-insensitive).
+// Falls back to "All Projects" if no project with this name exists. Change here to retarget.
+const DEFAULT_PROJECT_NAME = 'everyone ESL';
+
 // Create lightweight cache for localStorage (target: <1MB for 3000+ items)
 // Only includes fields needed for list display + SRS scheduling
 // Full data loads from IndexedDB after initial render
@@ -425,6 +429,7 @@ const App: React.FC = () => {
   // Projects
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [activeProject, setActiveProject] = useState<string | null>(null); // null = show all
+  const didInitDefaultProjectRef = useRef(false); // ensures the default-project landing runs once per session
 
   const projectsCacheKey = authState.user ? `vps_projects_cache_${authState.user.id}` : 'vps_projects_cache';
 
@@ -454,6 +459,16 @@ const App: React.FC = () => {
       warn("Failed to restore projects from cache", e);
     }
   }, [authState.loading, authState.user?.id, projectsCacheKey]);
+
+  // Land on the default project (DEFAULT_PROJECT_NAME) once projects are known. Runs once per
+  // session, so switching projects mid-session sticks; a fresh load returns to the default.
+  useEffect(() => {
+    if (didInitDefaultProjectRef.current) return;
+    if (authState.loading || !authState.user || projects.length === 0) return;
+    const def = projects.find(p => (p.name || '').trim().toLowerCase() === DEFAULT_PROJECT_NAME.toLowerCase());
+    if (def) setActiveProject(def.id);
+    didInitDefaultProjectRef.current = true;
+  }, [authState.loading, authState.user?.id, projects]);
 
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
