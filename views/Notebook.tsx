@@ -1290,7 +1290,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         <p className="text-sm mb-8 max-w-xs mx-auto">Search for a word or phrase to get started.</p>
 
         <div className="w-full max-w-sm">
-          <form onSubmit={(e) => { e.preventDefault(); if (localSearchQuery.trim()) handleSearch(localSearchQuery.trim()); }} className="relative">
+          <form onSubmit={(e) => { e.preventDefault(); if (localSearchQuery.trim()) onSearch(localSearchQuery.trim()); }} className="relative">
             <input
               ref={searchInputRef}
               type="text"
