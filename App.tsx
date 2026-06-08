@@ -5,7 +5,7 @@ import { SentencesView } from './views/SentencesView';
 import { DetailView } from './views/DetailView';
 import { ComparisonView } from './views/ComparisonView';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, ProjectInfo } from './types';
-import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
+import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, ttsKey, requestTTSGeneration, ttsManifest, TTS_VOICE } from './services/api';
@@ -2650,6 +2650,35 @@ const App: React.FC = () => {
           onClose={() => setDuplicateClusters(null)}
           onMerge={handleMergeDuplicates}
         />
+      )}
+
+      {/* Global, always-visible TTS sweep progress — shows on every tab/view while generating. */}
+      {ttsGenProgress?.isRunning && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[80] bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <Loader2 size={16} className="animate-spin shrink-0" />
+          <span className="text-sm font-medium whitespace-nowrap">
+            Generating sentence audio · {ttsGenProgress.current}/{ttsGenProgress.total}
+            {(() => {
+              const rem = ttsGenProgress.total - ttsGenProgress.current;
+              if (rem <= 0) return '';
+              const mins = Math.ceil((rem * 2.75) / 4 / 60);
+              return ` · ~${mins}m left`;
+            })()}
+          </span>
+          <div className="w-16 h-1.5 bg-indigo-400/60 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-white transition-all duration-300"
+              style={{ width: `${ttsGenProgress.total > 0 ? (ttsGenProgress.current / ttsGenProgress.total) * 100 : 0}%` }}
+            />
+          </div>
+          <button
+            onClick={() => { ttsGenAbortRef.current = true; }}
+            className="ml-1 shrink-0 text-indigo-200 hover:text-white"
+            title="Stop generating"
+          >
+            <X size={15} />
+          </button>
+        </div>
       )}
 
       {detailContext && (

@@ -1678,26 +1678,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         </div>
       )}
 
-      {ttsGenProgress?.isRunning && (
-        <div className="sticky top-[72px] z-[9] bg-indigo-500 text-white px-4 py-3 shadow-md">
-          <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Loader2 className="animate-spin" size={18} />
-              <div>
-                <p className="font-medium text-sm">Generating speech...</p>
-                <p className="text-xs text-indigo-200">{ttsGenProgress.current}/{ttsGenProgress.total} done</p>
-              </div>
-            </div>
-            <div className="w-24 h-2 bg-indigo-400 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-white transition-all duration-300"
-                style={{ width: `${ttsGenProgress.total > 0 ? (ttsGenProgress.current / ttsGenProgress.total) * 100 : 0}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* AI Search Results */}
       {searchError && (
         <div className="px-4 py-3 mx-3 mt-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm flex items-center justify-between gap-3">
