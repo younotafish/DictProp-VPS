@@ -27,6 +27,9 @@ RUN apk add --no-cache python3 make g++ && cd server && npm ci
 COPY server/tsconfig.json ./server/
 COPY server/src/ ./server/src/
 RUN cd server && npm run build
+# Strip dev deps but keep the already-compiled native modules — this becomes the prod node_modules,
+# so better-sqlite3 is compiled ONCE (here) and just copied into the prod image below.
+RUN cd server && npm prune --omit=dev
 
 # --- Production image ---
 FROM node:22-alpine
@@ -36,12 +39,10 @@ WORKDIR /app
 # ffmpeg: transcode MiMo's WAV output to MP3 for the TTS cache (smaller + universal playback)
 RUN apk add --no-cache ffmpeg
 
-# Server production deps only. Build better-sqlite3 from source (no musl prebuilt), then drop the
-# toolchain so the final image stays slim.
-COPY server/package.json server/package-lock.json ./server/
-RUN apk add --no-cache --virtual .build-deps python3 make g++ \
-  && cd server && npm ci --production \
-  && apk del .build-deps
+# Reuse the production server deps already built in the builder (better-sqlite3 compiled once there),
+# so the prod image needs no toolchain and no second compile — just a fast copy.
+COPY server/package.json ./server/
+COPY --from=builder /app/server/node_modules/ ./server/node_modules/
 
 # Copy built artifacts from builder
 COPY --from=builder /app/server/dist/ ./server/dist/
