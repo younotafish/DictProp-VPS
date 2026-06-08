@@ -12,6 +12,7 @@ interface QueueItem {
   query: string;
   status: 'pending' | 'searching' | 'ready' | 'failed';
   results: SearchResult | null;
+  forceAI?: boolean; // refresh: re-run the AI, bypassing the saved-card reuse
 }
 
 type Mode = 'idle' | 'input' | 'viewing';
@@ -49,18 +50,22 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const readyCount = readyItems.length;
   const hasWork = searchingCount > 0 || readyCount > 0;
 
-  // Add a query to the queue
-  const enqueue = useCallback((q: string) => {
+  // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
+  // replace any existing queue entry for it so the fresh result supersedes the old/reused one.
+  const enqueue = useCallback((q: string, forceAI = false) => {
     const trimmed = q.trim();
     if (!trimmed) return;
-    // Don't add duplicates that are already pending/searching/ready
     setQueue(prev => {
-      if (prev.some(item => item.query.toLowerCase() === trimmed.toLowerCase() && item.status !== 'failed')) {
+      const dup = prev.some(item => item.query.toLowerCase() === trimmed.toLowerCase() && item.status !== 'failed');
+      if (dup && !forceAI) {
         log('🔍 Queue: skipping duplicate "' + trimmed + '"');
         return prev;
       }
-      log('🔍 Queue: adding "' + trimmed + '"');
-      return [...prev, { id: `q-${++queueIdCounter}`, query: trimmed, status: 'pending', results: null }];
+      const base = forceAI
+        ? prev.filter(item => item.query.toLowerCase() !== trimmed.toLowerCase())
+        : prev;
+      log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : ''));
+      return [...base, { id: `q-${++queueIdCounter}`, query: trimmed, status: 'pending', results: null, forceAI }];
     });
   }, []);
 
@@ -73,8 +78,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     processingRef.current = true;
     const itemId = pending.id;
 
-    // Check if word is already saved — skip API call if so
-    const savedVocabs = findSavedByWord(pending.query);
+    // Reuse the saved card to skip the API call — UNLESS this is a refresh (forceAI), which must
+    // always re-run the AI (otherwise "refresh" would just show the same saved card again).
+    const savedVocabs = pending.forceAI ? [] : findSavedByWord(pending.query);
     if (savedVocabs.length > 0) {
       log('🔍 Queue: "' + pending.query + '" already saved (' + savedVocabs.length + ' meanings), skipping API');
       const cachedResult: SearchResult = {
@@ -99,6 +105,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     log('🔍 Queue: searching "' + pending.query + '"');
     analyzeInput(pending.query).then(result => {
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: result } : q));
+      if (pending.forceAI) setPendingOpenId(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
       // Generate images in background
       result.vocabs?.forEach(async (vocab, index) => {
         if (vocab.imagePrompt && !vocab.imageUrl) {
@@ -139,9 +146,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // Listen for programmatic search triggers (e.g., from inline highlighted words)
   useEffect(() => {
     const handleTrigger = (e: Event) => {
-      const q = (e as CustomEvent).detail?.query;
+      const detail = (e as CustomEvent).detail;
+      const q = detail?.query;
       if (q && typeof q === 'string') {
-        enqueue(q);
+        enqueue(q, !!detail?.forceAI);
       }
     };
     window.addEventListener('global-search', handleTrigger);

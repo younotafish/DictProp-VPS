@@ -145,10 +145,10 @@ const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
       {/* Long-press actions */}
       {showActions && (
         <div className="absolute top-3 right-3 flex flex-col gap-2 z-20">
-          <button 
-            onClick={(e) => { e.stopPropagation(); onSearch(title); setShowActions(false); }}
+          <button
+            onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('global-search', { detail: { query: title, forceAI: true } })); setShowActions(false); }}
             className="p-2 bg-white text-indigo-500 shadow rounded-full hover:bg-indigo-50 active:scale-95 transition-all"
-            title="Refresh / Search Again"
+            title="Refresh with AI (re-run, don't reuse)"
           >
             <RefreshCw size={18} />
           </button>
