@@ -23,6 +23,7 @@
  */
 import { speak as systemSpeak } from './speech';
 import { stripSentenceMarkers } from '../components/HighlightedSentence';
+import { ttsKey, fetchCachedTTS, requestTTSGeneration, TTS_VOICE } from './api';
 import { log, warn } from './logger';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
@@ -39,7 +40,8 @@ interface Engine {
 const WEBGPU_ENGINE: Engine = { device: 'webgpu', dtype: 'fp32' };
 const WASM_ENGINE: Engine = { device: 'wasm', dtype: 'fp32' };
 
-export const DEFAULT_VOICE = 'af_heart'; // American female, grade A (matches our GA/rhotic IPA)
+export const DEFAULT_VOICE = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
+// MiMo voice for the server-cached PRIMARY TTS comes from api.ts (TTS_VOICE) — single source of truth.
 
 // Tiny valid silent WAV — played once inside a user gesture to unlock <audio> on iOS Safari,
 // so a later play() after the async synth await isn't blocked as non-user-initiated.
@@ -104,6 +106,16 @@ const isMobile = (): boolean =>
   typeof navigator !== 'undefined' &&
   (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)); // iPadOS
+
+/**
+ * iOS / iPadOS — where in-browser Kokoro is impractical (no big download / slow WASM). These devices
+ * use the system Web Speech voice as the cache-miss fallback and never download the Kokoro model.
+ * Catches iPadOS Safari masquerading as Mac (platform 'MacIntel' + touch).
+ */
+const isIOS = (): boolean =>
+  typeof navigator !== 'undefined' &&
+  (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
 const hasConsent = (): boolean => {
   try {
@@ -203,6 +215,7 @@ let warmTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const preloadNeural = (): void => {
   if (!isNeuralSupported()) return;                       // no WebAssembly at all → system-voice path
+  if (isIOS()) return;                                    // iPhone/iPad use cached MiMo + Web Speech; never download Kokoro
   if (isMobile() && !hasConsent()) return;                // wait for consent before a big mobile download
   if (status === 'loading' || status === 'ready') return; // in flight or already warm
   if (warmRounds >= MAX_WARM_ROUNDS) return;              // spent the budget; wait for `online` to reset
@@ -335,96 +348,133 @@ export interface SpeakOptions {
 
 let currentToken = 0;
 
+// Device-local cache of ready-to-play object URLs (cached MiMo clips, keyed by ttsKey hash) — replays are instant.
+const ttsUrlCache = new Map<string, string>();
+
+// Play an object URL through the shared, iOS-unlocked <audio> element (cached MiMo + Kokoro both use this).
+const playUrl = async (
+  url: string,
+  isCurrent: () => boolean,
+  onStart?: () => void,
+  onEnd?: () => void,
+): Promise<void> => {
+  const el = getAudioEl();
+  el.onplaying = () => { if (isCurrent()) onStart?.(); };
+  el.onended = () => { if (isCurrent()) onEnd?.(); };
+  el.onerror = () => { if (isCurrent()) onEnd?.(); };
+  el.src = url;
+  try { el.currentTime = 0; } catch { /* fresh src already starts at 0 */ }
+  await el.play();
+};
+
+// macOS / desktop cache-miss fallback: synthesize in-browser with Kokoro, then play. Falls back to
+// the system voice if the model can't load / consent is declined. iOS/iPadOS never reaches here.
+const speakViaKokoro = async (
+  plain: string,
+  opts: { onStart?: () => void; onEnd?: () => void; allowDownload: boolean },
+  isCurrent: () => boolean,
+  systemFallback: () => void,
+): Promise<void> => {
+  const { onStart, onEnd, allowDownload } = opts;
+  const wouldDownload = !isModelReady();
+  let useNeural = isNeuralSupported() && (isModelReady() || allowDownload);
+  if (useNeural && wouldDownload && allowDownload && !confirmDownloadIfNeeded()) useNeural = false;
+  if (!useNeural) { systemFallback(); return; }
+  try {
+    const url = await synthesize(plain, DEFAULT_VOICE);
+    if (!isCurrent()) return;
+    await playUrl(url, isCurrent, onStart, onEnd);
+  } catch (err) {
+    if (!isCurrent()) return;
+    warn('🔊 Kokoro failed, falling back to system voice', err);
+    systemFallback();
+  }
+};
+
 /**
- * Speak `text` with the natural neural voice when the device supports it and the model is
- * available (or a download is permitted); otherwise fall back to the system Web Speech voice.
- * Returns a handle whose stop() halts playback.
+ * Prefetch cached clips for the given texts into the device-local cache so a later tap is instant
+ * (and plays through the iOS-unlocked <audio> element, avoiding the gesture-after-await problem).
+ * Fetch-only — never triggers generation.
+ */
+export const prefetchTTS = (texts: string[]): void => {
+  for (const raw of texts) {
+    const plain = stripSentenceMarkers(raw || '').trim();
+    if (!plain) continue;
+    (async () => {
+      const key = await ttsKey(plain, TTS_VOICE);
+      if (ttsUrlCache.has(key)) return;
+      const blob = await fetchCachedTTS(key);
+      if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+    })().catch(() => { /* best-effort */ });
+  }
+};
+
+/**
+ * Speak `text` with the best available voice:
+ *   1. cached MiMo clip from the server (instant, on every device) — the primary path
+ *   2. on a cache MISS: kick off background generation (fills the cache for next time), then fall
+ *      back immediately — macOS/desktop → in-browser Kokoro, iOS/iPadOS → system Web Speech voice.
+ * The cache miss never blocks the tap on the ~2.75 s generation. Returns a handle whose
+ * stop()/pause()/resume() control whichever backend ends up playing.
  */
 export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle => {
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return { stop: () => {}, pause: () => {}, resume: () => {}, isPaused: () => false };
 
-  const { voice = DEFAULT_VOICE, rate, onStart, onEnd, onError, allowDownload = true } = opts;
-
+  const { rate, onStart, onEnd, onError, allowDownload = true } = opts;
   const token = ++currentToken;
   const isCurrent = () => token === currentToken;
+  const systemFallback = () => systemSpeak(plain, { rate, onStart, onEnd, onError });
 
-  const fallback = () => systemSpeak(plain, { rate, onStart, onEnd, onError });
-
-  // Decide engine. Neural needs a runnable engine (WASM or WebGPU), not session-disabled, and
-  // either an already-loaded model or permission to download it.
-  const wouldDownload = !isModelReady();
-  let useNeural = isNeuralSupported() && (isModelReady() || allowDownload);
-
-  // On mobile, get one-time consent before the first (downloading) use.
-  if (useNeural && wouldDownload && allowDownload && !confirmDownloadIfNeeded()) {
-    useNeural = false;
-  }
-
-  if (!useNeural) {
-    fallback();
-    return {
-      stop: () => {
-        if (isCurrent()) currentToken++;
-        try {
-          window.speechSynthesis?.cancel();
-        } catch {
-          /* ignore */
-        }
-      },
-      pause: () => {
-        if (isCurrent()) {
-          try { window.speechSynthesis?.pause(); } catch { /* ignore */ }
-        }
-      },
-      resume: () => {
-        if (isCurrent()) {
-          try { window.speechSynthesis?.resume(); } catch { /* ignore */ }
-        }
-      },
-      isPaused: () => isCurrent() && typeof window !== 'undefined' && !!window.speechSynthesis?.paused,
-    };
-  }
-
-  // Neural path — unlock audio synchronously (iOS) and stop anything currently playing.
+  // Unlock <audio> synchronously inside the gesture (iOS) and stop anything currently playing.
   unlockAudio();
   stopPlayback();
 
   (async () => {
     try {
-      const url = await synthesize(plain, voice);
+      const key = await ttsKey(plain, TTS_VOICE);
       if (!isCurrent()) return; // superseded by a newer call
-      const el = getAudioEl();
-      el.onplaying = () => {
-        if (isCurrent()) onStart?.();
-      };
-      el.onended = () => {
-        if (isCurrent()) onEnd?.();
-      };
-      el.onerror = () => {
-        if (isCurrent()) onEnd?.();
-      };
-      el.src = url;
-      try {
-        el.currentTime = 0; // restart when replaying the same cached clip
-      } catch {
-        /* media not ready yet — the fresh src already starts at 0 */
+
+      // 1) device-local cache, then 2) server cache
+      let url = ttsUrlCache.get(key);
+      if (!url) {
+        const blob = await fetchCachedTTS(key);
+        if (!isCurrent()) return;
+        if (blob) {
+          url = URL.createObjectURL(blob);
+          ttsUrlCache.set(key, url);
+        }
       }
-      await el.play();
+      if (url) {
+        await playUrl(url, isCurrent, onStart, onEnd);
+        return;
+      }
+
+      // 3) MISS — fill the cache for next time (fire-and-forget), then fall back now.
+      requestTTSGeneration([{ text: plain }]).catch(() => { /* best-effort */ });
+      if (isIOS()) { systemFallback(); return; }
+      await speakViaKokoro(plain, { onStart, onEnd, allowDownload }, isCurrent, systemFallback);
     } catch (err) {
       if (!isCurrent()) return;
-      warn('🔊 Neural TTS failed, falling back to system voice', err);
-      fallback();
+      warn('🔊 TTS chain failed, falling back to system voice', err);
+      systemFallback();
     }
   })();
 
   return {
-    stop: () => {
-      if (isCurrent()) currentToken++;
-      stopPlayback();
-    },
+    stop: () => { if (isCurrent()) currentToken++; stopPlayback(); },
     pause: () => { if (isCurrent()) pausePlayback(); },
     resume: () => { if (isCurrent()) resumePlayback(); },
-    isPaused: () => isCurrent() && !!audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0,
+    isPaused: () =>
+      isCurrent() &&
+      ((!!audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0) ||
+        (typeof window !== 'undefined' && !!window.speechSynthesis?.paused)),
   };
 };
+
+/**
+ * Speak a single word / card title with the best voice. Same cache-first chain as speakNatural,
+ * but never triggers the one-time Kokoro download — incidental word taps shouldn't pull 326 MB.
+ * (On a macOS cache miss with Kokoro already warmed it still uses Kokoro; otherwise system voice.)
+ */
+export const speakWord = (text: string): SpeakHandle => speakNatural(text, { allowDownload: false });

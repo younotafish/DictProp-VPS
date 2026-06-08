@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Volume2 } from 'lucide-react';
-import { speak } from '../services/speech';
+import { speakNatural, type SpeakHandle } from '../services/neuralTts';
 import { error as logError } from '../services/logger';
 
 interface PronunciationBlockProps {
@@ -11,8 +11,8 @@ interface PronunciationBlockProps {
   showIcon?: boolean;
 }
 
-// Single words/phrases use the instant system voice (no model latency). Only example
-// sentences use the on-device neural voice (see SentenceSpeakerButton / neuralTts).
+// Words/phrases play the cached MiMo voice (from the server cache) when available, falling back
+// to macOS Kokoro / iOS Web Speech on a miss — the same chain as example sentences (see neuralTts).
 export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   text,
   ipa,
@@ -21,29 +21,30 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   showIcon = true // Always show icon by default to indicate clickable audio
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const handleRef = useRef<SpeakHandle | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      window.speechSynthesis?.cancel();
+      handleRef.current?.stop();
       setIsPlaying(false);
     };
   }, []);
 
   const handlePlay = useCallback((e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!text || !window.speechSynthesis) return;
+    if (!text) return;
 
     // If currently playing, stop it
     if (isPlaying) {
-      window.speechSynthesis.cancel();
+      handleRef.current?.stop();
       setIsPlaying(false);
       return;
     }
 
     try {
-      utteranceRef.current = speak(text, {
+      handleRef.current = speakNatural(text, {
+        allowDownload: false,
         onStart: () => setIsPlaying(true),
         onEnd: () => setIsPlaying(false),
         onError: (event) => {

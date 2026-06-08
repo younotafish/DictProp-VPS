@@ -28,6 +28,9 @@ FROM node:22-alpine
 
 WORKDIR /app
 
+# ffmpeg: transcode MiMo's WAV output to MP3 for the TTS cache (smaller + universal playback)
+RUN apk add --no-cache ffmpeg
+
 # Server production deps only
 COPY server/package.json server/package-lock.json ./server/
 RUN cd server && npm ci --production

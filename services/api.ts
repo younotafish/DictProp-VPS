@@ -364,6 +364,64 @@ export const generateIllustration = async (
 };
 
 // ============================================================================
+// TTS cache (server-side MiMo audio, fetched as cached clips)
+// ============================================================================
+
+// MiMo voice for the server-cached TTS. MUST match the server default (server/src/routes/tts.ts MIMO_VOICE).
+export const TTS_VOICE = 'Mia';
+
+/**
+ * Cache key for a clip — sha256(voice + "\n" + text.trim()), hex.
+ * MUST match the server's ttsKey (server/src/routes/tts.ts).
+ */
+export const ttsKey = async (text: string, voice: string): Promise<string> => {
+  const data = new TextEncoder().encode(`${voice}\n${text.trim()}`);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
+/** Fetch a cached clip by key. Returns the audio Blob, or null on miss (404) / error. */
+export const fetchCachedTTS = async (key: string): Promise<Blob | null> => {
+  try {
+    const res = await fetch(`${API_BASE}/api/tts/${key}.mp3`);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
+  }
+};
+
+/** Ask the server to generate + cache clips (used by the live cache-miss trigger and the bulk sweep). */
+export const requestTTSGeneration = async (
+  items: Array<{ text: string; voice?: string }>
+): Promise<{ generated: number; skipped: number; failed: number }> => {
+  const res = await fetch(`${API_BASE}/api/tts/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  });
+  if (!res.ok) throw new Error(`TTS generate failed: ${res.status}`);
+  return res.json();
+};
+
+/** Of the given keys, which are already cached on the server (so the bulk sweep can skip them). */
+export const ttsManifest = async (keys: string[]): Promise<Set<string>> => {
+  if (keys.length === 0) return new Set();
+  try {
+    const res = await fetch(`${API_BASE}/api/tts/manifest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys }),
+    });
+    if (!res.ok) return new Set();
+    const data = await res.json();
+    return new Set(Array.isArray(data.have) ? data.have : []);
+  } catch {
+    return new Set();
+  }
+};
+
+// ============================================================================
 // Content hashing (moved from firebase.ts — needed for dirty tracking)
 // ============================================================================
 

@@ -4,7 +4,7 @@ import { SearchResult, VocabCard, StoredItem } from '../types';
 import { analyzeInput, generateIllustration } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { speak } from '../services/speech';
+import { speakWord, prefetchTTS } from '../services/neuralTts';
 import { log, warn } from '../services/logger';
 
 interface QueueItem {
@@ -133,7 +133,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setMode('viewing');
     setPendingOpenId(null);
     const w = readyItems[idx]?.results?.vocabs?.[0]?.word;
-    if (w) speak(w);
+    if (w) speakWord(w);
   }, [pendingOpenId, readyItems]);
 
   // Listen for programmatic search triggers (e.g., from inline highlighted words)
@@ -183,7 +183,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           if (vocabCount > 1) {
             const prev = viewingVocabIdx > 0 ? viewingVocabIdx - 1 : vocabCount - 1;
             setViewingVocabIdx(prev);
-            if (currentResult?.vocabs?.[prev]?.word) speak(currentResult.vocabs[prev].word);
+            if (currentResult?.vocabs?.[prev]?.word) speakWord(currentResult.vocabs[prev].word);
           }
         } else if (e.key === 'ArrowRight') {
           e.preventDefault();
@@ -191,7 +191,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           if (vocabCount > 1) {
             const next = (viewingVocabIdx + 1) % vocabCount;
             setViewingVocabIdx(next);
-            if (currentResult?.vocabs?.[next]?.word) speak(currentResult.vocabs[next].word);
+            if (currentResult?.vocabs?.[next]?.word) speakWord(currentResult.vocabs[next].word);
           }
         }
       }
@@ -308,7 +308,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setMode('viewing');
     const firstReady = readyItems[0];
     if (firstReady?.results?.vocabs?.[0]?.word) {
-      speak(firstReady.results.vocabs[0].word);
+      speakWord(firstReady.results.vocabs[0].word);
     }
   };
 
@@ -336,10 +336,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       if (diffX < 0) {
         const next = (viewingVocabIdx + 1) % vocabCount;
         setViewingVocabIdx(next);
-        if (currentResult?.vocabs?.[next]?.word) speak(currentResult.vocabs[next].word);
+        if (currentResult?.vocabs?.[next]?.word) speakWord(currentResult.vocabs[next].word);
       } else if (viewingVocabIdx > 0) {
         setViewingVocabIdx(viewingVocabIdx - 1);
-        if (currentResult?.vocabs?.[viewingVocabIdx - 1]?.word) speak(currentResult.vocabs[viewingVocabIdx - 1].word);
+        if (currentResult?.vocabs?.[viewingVocabIdx - 1]?.word) speakWord(currentResult.vocabs[viewingVocabIdx - 1].word);
       }
     }
   };
@@ -349,6 +349,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const viewingResult = viewingItem?.results;
   const viewingVocab = viewingResult?.vocabs?.[viewingVocabIdx];
   const viewingVocabCount = viewingResult?.vocabs?.length || 0;
+
+  // Warm the TTS cache for the card on screen (word + examples) so taps are instant.
+  useEffect(() => {
+    if (!viewingVocab) return;
+    prefetchTTS([viewingVocab.word, ...(viewingVocab.examples || [])].filter(Boolean) as string[]);
+  }, [viewingVocab]);
 
   return (
     <>

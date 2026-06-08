@@ -8,7 +8,8 @@ import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, ge
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, ttsKey, requestTTSGeneration, ttsManifest, TTS_VOICE } from './services/api';
+import { stripSentenceMarkers } from './components/HighlightedSentence';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
@@ -553,6 +554,9 @@ const App: React.FC = () => {
   const [bulkRefreshProgress, setBulkRefreshProgress] = useState<{ current: number; total: number; isRunning: boolean } | null>(null);
   // Phase 2 dedup tool: variant-duplicate clusters under review (null = modal closed).
   const [duplicateClusters, setDuplicateClusters] = useState<DuplicateClusterView[] | null>(null);
+  // Bulk TTS pre-generation sweep progress (null = not running).
+  const [ttsGenProgress, setTtsGenProgress] = useState<{ current: number; total: number; isRunning: boolean } | null>(null);
+  const ttsGenAbortRef = useRef(false);
 
   // Batch import state
   const [batchImportProgress, setBatchImportProgress] = useState<{
@@ -1428,6 +1432,62 @@ const App: React.FC = () => {
       }
     });
   }, [activeItems, executeBulkRefresh]);
+
+  // ── Bulk "Generate all speech" sweep ──────────────────────────────────────
+  // Pre-generates MiMo audio for every word + example sentence + saved sentence and caches it on
+  // the server, so all devices (esp. iPhone/iPad) play everything instantly. Skips already-cached
+  // clips via the manifest; resumable (re-running only fills what's missing).
+  const TTS_GEN_CONCURRENCY = 4;
+  const handleGenerateAllSpeech = useCallback(async () => {
+    const all = latestItemsRef.current;
+    const texts = new Set<string>();
+    const add = (t?: string) => { const s = stripSentenceMarkers(t || '').trim(); if (s) texts.add(s); };
+    for (const it of all) {
+      if (it.isDeleted) continue;
+      if (isVocabItem(it)) { add(it.data.word); (it.data.examples || []).forEach(add); }
+      else if (isPhraseItem(it)) { add(it.data.query); (it.data.vocabs || []).forEach(v => { add(v.word); (v.examples || []).forEach(add); }); }
+      else if (isSentenceItem(it)) { add((it.data as SentenceData).text); }
+    }
+    const list = [...texts];
+    if (list.length === 0) {
+      setConfirmModal({ isOpen: true, title: 'Nothing to Generate', message: 'No words or sentences found.', confirmText: 'OK', variant: 'info', onConfirm: () => setConfirmModal(null), showCancel: false });
+      return;
+    }
+
+    setTtsGenProgress({ current: 0, total: list.length, isRunning: true });
+    ttsGenAbortRef.current = false;
+
+    // Skip clips already cached on the server.
+    const keys = await Promise.all(list.map(t => ttsKey(t, TTS_VOICE)));
+    const cached = new Set<string>();
+    for (let i = 0; i < keys.length; i += 200) {
+      const have = await ttsManifest(keys.slice(i, i + 200));
+      have.forEach(k => cached.add(k));
+    }
+    const pending = list.filter((_, i) => !cached.has(keys[i]));
+    const alreadyCached = list.length - pending.length;
+    let done = alreadyCached;
+    setTtsGenProgress({ current: done, total: list.length, isRunning: true });
+
+    let idx = 0;
+    const worker = async () => {
+      while (idx < pending.length && !ttsGenAbortRef.current) {
+        const text = pending[idx++];
+        try { await requestTTSGeneration([{ text }]); } catch { /* best-effort, still counts as processed */ }
+        done++;
+        setTtsGenProgress({ current: done, total: list.length, isRunning: true });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(TTS_GEN_CONCURRENCY, pending.length) }, () => worker()));
+
+    setTtsGenProgress(null);
+    setConfirmModal({
+      isOpen: true,
+      title: 'Speech Generated',
+      message: `${pending.length} new clip${pending.length === 1 ? '' : 's'} generated\n${alreadyCached} already cached`,
+      confirmText: 'OK', variant: 'success', onConfirm: () => setConfirmModal(null), showCancel: false,
+    });
+  }, []);
 
   // ── Find & merge variant duplicates (Phase 2 dedup tool) ──────────────────
   // Detection is read-only: cluster base words that are variants of one another
@@ -2662,6 +2722,8 @@ const App: React.FC = () => {
             batchImportProgress={batchImportProgress}
             onGenerateMissingImages={handleGenerateMissingImages}
             imageBackfillProgress={imageBackfillProgress}
+            onGenerateAllSpeech={handleGenerateAllSpeech}
+            ttsGenProgress={ttsGenProgress}
             onRestoreImagesToServer={handleRestoreImagesToServer}
             imageRestoreRunning={imageRestoreProgress !== null}
           />

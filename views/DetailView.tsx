@@ -11,8 +11,7 @@ import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speak } from '../services/speech';
-import { speakNatural, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, type SpeakHandle } from '../services/neuralTts';
 import { log, warn } from '../services/logger';
 
 // Helper to format relative time for next review
@@ -346,7 +345,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             const wordToSpeak = currentItem.type === 'phrase'
               ? (currentItem.data as SearchResult).query
               : (currentItem.data as VocabCard).word;
-            if (wordToSpeak) speak(wordToSpeak);
+            if (wordToSpeak) speakWord(wordToSpeak);
           }
         } else {
           setShowHeader(false);
@@ -384,11 +383,19 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     // Small delay to let animation settle before pronouncing
     const timer = setTimeout(() => {
-      speak(title);
+      speakWord(title);
     }, 100);
 
     return () => clearTimeout(timer);
   }, [title, currentGroupIndex, currentItemIndex, isSentenceAutoPlaying, sentenceMode]);
+
+  // Warm the TTS cache for the visible card (word + example sentences) so taps/auto-play are
+  // instant and play through the iOS-unlocked <audio> element rather than falling back.
+  useEffect(() => {
+    const card = type === 'vocab' ? (data as VocabCard) : null;
+    const texts = [title, ...(card?.examples || [])].filter(Boolean) as string[];
+    if (texts.length) prefetchTTS(texts);
+  }, [title, currentGroupIndex, currentItemIndex, type, data]);
 
   // P key to pronounce current word
   // Moved to bottom to access handlers
@@ -458,7 +465,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           const wordToSpeak = currentItem.type === 'phrase'
             ? (currentItem.data as SearchResult).query
             : (currentItem.data as VocabCard).word;
-          if (wordToSpeak) speak(wordToSpeak);
+          if (wordToSpeak) speakWord(wordToSpeak);
         }
       } else {
         setIsAnimating(true);
@@ -558,7 +565,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         // Single-meaning word: replay it once with a fade and re-pronounce
         setIsAnimating(true);
         setGroupPlayCount(prev => prev + 1);
-        if (title) speak(title);
+        if (title) speakWord(title);
         setTimeout(() => setIsAnimating(false), 300);
       } else if (!isLastGroup) {
         // Advance to next group (word)
@@ -1096,7 +1103,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // P: Pronounce the word (system voice)
       if (e.key === 'p' || e.key === 'P') {
         e.preventDefault();
-        if (title) speak(title);
+        if (title) speakWord(title);
       }
 
       // E: Read the example sentence(s) aloud (neural voice); press again to stop

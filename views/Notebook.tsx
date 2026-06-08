@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, ProjectInfo } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus, UploadCloud, GitMerge } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus, UploadCloud, GitMerge, Volume2 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { PronunciationBlock } from '../components/PronunciationBlock';
@@ -14,7 +14,7 @@ import { ProjectManager } from '../components/ProjectManager';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { speak } from '../services/speech';
+import { speakWord } from '../services/neuralTts';
 import { warn, error as logError } from '../services/logger';
 
 interface NotebookItemProps {
@@ -355,7 +355,7 @@ const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
     setCurrentIndex(newIndex);
     const vocab = vocabs[newIndex];
     if (vocab?.word) {
-      speak(vocab.word);
+      speakWord(vocab.word);
     }
   }, [vocabs]);
   
@@ -528,6 +528,8 @@ interface NotebookProps {
   onJSONImported?: () => void;
   onGenerateMissingImages?: () => void;
   imageBackfillProgress?: { current: number; total: number; succeeded: number; failed: number; isRunning: boolean } | null;
+  onGenerateAllSpeech?: () => void;
+  ttsGenProgress?: { current: number; total: number; isRunning: boolean } | null;
   onRestoreImagesToServer?: () => void;
   imageRestoreRunning?: boolean;
 }
@@ -540,6 +542,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     projects = [], activeProject, onSetActiveProject, onProjectsChanged, allItems,
     onBatchImport, batchImportProgress, onJSONImported,
     onGenerateMissingImages, imageBackfillProgress,
+    onGenerateAllSpeech, ttsGenProgress,
     onRestoreImagesToServer, imageRestoreRunning
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
@@ -654,7 +657,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       // Auto-pronounce the word once when results arrive
       if (result.vocabs && result.vocabs.length > 0) {
         const wordToSpeak = result.vocabs[0].word || query.trim();
-        setTimeout(() => speak(wordToSpeak), 100);
+        setTimeout(() => speakWord(wordToSpeak), 100);
 
         // Generate images asynchronously for each vocab (don't block UI)
         result.vocabs.forEach(async (vocab, index) => {
@@ -1361,6 +1364,17 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 {imageBackfillProgress?.isRunning ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}
               </button>
             )}
+            {/* Generate & cache speech (MiMo) for all words + sentences so every device plays instantly */}
+            {isOnline && onGenerateAllSpeech && (
+              <button
+                onClick={onGenerateAllSpeech}
+                disabled={ttsGenProgress?.isRunning}
+                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${ttsGenProgress?.isRunning ? 'cursor-not-allowed opacity-50 text-indigo-400' : 'text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+                title="Generate & cache speech for all words and sentences"
+              >
+                {ttsGenProgress?.isRunning ? <Loader2 size={16} className="animate-spin" /> : <Volume2 size={16} />}
+              </button>
+            )}
             {/* Restore images to server (heals images missing on the server from this device's cache) */}
             {isOnline && onRestoreImagesToServer && (
               <button
@@ -1658,6 +1672,26 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               <div
                 className="h-full bg-white transition-all duration-300"
                 style={{ width: `${imageBackfillProgress.total > 0 ? (imageBackfillProgress.current / imageBackfillProgress.total) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ttsGenProgress?.isRunning && (
+        <div className="sticky top-[72px] z-[9] bg-indigo-500 text-white px-4 py-3 shadow-md">
+          <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Loader2 className="animate-spin" size={18} />
+              <div>
+                <p className="font-medium text-sm">Generating speech...</p>
+                <p className="text-xs text-indigo-200">{ttsGenProgress.current}/{ttsGenProgress.total} done</p>
+              </div>
+            </div>
+            <div className="w-24 h-2 bg-indigo-400 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-white transition-all duration-300"
+                style={{ width: `${ttsGenProgress.total > 0 ? (ttsGenProgress.current / ttsGenProgress.total) * 100 : 0}%` }}
               />
             </div>
           </div>
