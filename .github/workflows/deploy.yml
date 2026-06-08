@@ -14,25 +14,29 @@ jobs:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 15m
+          command_timeout: 20m
           script: |
+            set -e
             cd /opt/dictprop-vps
             git pull origin main
             # Ensure swap exists for low-memory VPS
             if [ ! -f /swapfile ]; then
-              fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+              (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile) || true
             fi
             swapon /swapfile 2>/dev/null || true
-            # Grab logs BEFORE rebuild to capture the crash
+            # Diagnostics before rebuild — never fail the deploy on these
             echo "=== CONTAINER LOGS BEFORE REBUILD ==="
-            docker compose logs --tail=200
+            docker compose logs --tail=200 || true
             echo "=== CONTAINER STATUS ==="
-            docker compose ps
+            docker compose ps || true
             echo "=== DMESG OOM ==="
-            dmesg | grep -i "oom\|killed\|out of memory" | tail -10
+            dmesg | grep -i "oom\|killed\|out of memory" | tail -10 || true
             echo "=== REBUILDING ==="
+            # set -e makes a failed build fail the job (no more silent false-success).
             docker compose up -d --build
-            docker system prune -f
+            # Prune dangling images only — keep build cache so npm ci stays warm between deploys.
+            docker image prune -f || true
             echo "Deploy complete"
             sleep 15
-            curl -sf http://localhost:3000/api/health || echo "Health check failed"
+            # Fail the deploy if the new container isn't healthy.
+            curl -sf http://localhost:3000/api/health || { echo "Health check failed"; exit 1; }

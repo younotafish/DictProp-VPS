@@ -2,9 +2,13 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install frontend dependencies and build
+# Install frontend dependencies and build.
+# Skip onnxruntime-node's GPU-binary download: the browser uses onnxruntime-WEB, never the Node
+# build, but its postinstall fetches a large CUDA tarball from GitHub that intermittently 504s and
+# breaks `npm ci` (which silently kept the old container running). Skipping it makes builds reliable.
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 COPY package.json package-lock.json ./
-RUN npm pkg delete devDependencies.canvas && npm ci
+RUN npm pkg delete devDependencies.canvas && npm ci --onnxruntime-node-install-cuda=skip
 COPY index.html index.tsx tsconfig.json postcss.config.js ./
 COPY App.tsx types.ts ./
 COPY src/ ./src/
