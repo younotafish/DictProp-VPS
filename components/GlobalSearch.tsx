@@ -25,11 +25,13 @@ interface Props {
   isOnline: boolean;
   activeProject?: string;
   onLazyLoadImage?: (itemId: string) => Promise<string | null>;
+  /** Replace an already-saved word's card(s) with a freshly re-run AI result (refresh). Keeps SRS. */
+  onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
 }
 
 let queueIdCounter = 0;
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -69,6 +71,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     });
   }, []);
 
+  // Refresh button on a card: a REAL re-run of the AI for this word (bypassing the saved-card reuse).
+  // When the fresh result returns, the queue processor replaces the saved card (see onRefreshReplace).
+  const handleRefreshCard = useCallback((word: string) => {
+    enqueue(word, true);
+  }, [enqueue]);
+
   // Process queue — pick up next pending item and search it
   useEffect(() => {
     if (processingRef.current) return;
@@ -106,18 +114,28 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     analyzeInput(pending.query).then(result => {
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: result } : q));
       if (pending.forceAI) setPendingOpenId(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
+
+      // A real refresh of an already-saved word: replace its saved card(s) with this fresh result.
+      // We capture wasSaved now (before replacing) and re-push as images stream in so the saved card
+      // keeps its illustration. onRefreshReplace updates in place by word+sense, preserving SRS.
+      const liveVocabs = result.vocabs ? [...result.vocabs] : [];
+      const isReplace = !!(pending.forceAI && onRefreshReplace && findSavedByWord(pending.query).length > 0);
+      if (isReplace && liveVocabs.length) onRefreshReplace!(pending.query, liveVocabs);
+
       // Generate images in background
       result.vocabs?.forEach(async (vocab, index) => {
         if (vocab.imagePrompt && !vocab.imageUrl) {
           try {
             const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
             if (imageData) {
+              if (liveVocabs[index]) liveVocabs[index] = { ...liveVocabs[index], imageUrl: imageData };
               setQueue(prev => prev.map(q => {
                 if (q.id !== itemId || !q.results?.vocabs) return q;
                 const updated = [...q.results.vocabs];
                 if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
                 return { ...q, results: { ...q.results, vocabs: updated } };
               }));
+              if (isReplace) onRefreshReplace!(pending.query, [...liveVocabs]); // re-save with the new image
             }
           } catch {}
         }
@@ -128,7 +146,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }).finally(() => {
       processingRef.current = false;
     });
-  }, [queue, findSavedByWord]);
+  }, [queue, findSavedByWord, onRefreshReplace]);
 
   // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
   useEffect(() => {
@@ -532,6 +550,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       onSave={() => handleSaveVocab(viewingVocab)}
                       showSave={true}
                       onSearch={onSearch}
+                      onRefresh={handleRefreshCard}
                       scrollable={false}
                       onLazyLoadImage={onLazyLoadImage}
                       className="!h-auto !overflow-visible border-indigo-200 shadow-sm bg-white"

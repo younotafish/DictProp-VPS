@@ -2353,6 +2353,38 @@ const App: React.FC = () => {
   // Cheap boolean variant check (no card collection) — for Notebook's "auto-AI if no match" gate.
   const hasSavedVariant = useCallback((q: string) => matchBaseWords(q, variantIndex).size > 0, [variantIndex]);
 
+  // Refresh-replace: a real re-run of the AI for an already-saved word replaces its saved card(s).
+  // A meaning present in both old and new updates IN PLACE (handleSave matches by word+sense and we pass
+  // its existing SRS), so spaced-repetition progress survives the refresh; meanings the refresh dropped
+  // are deleted; brand-new meanings are added. Called again as illustrations stream in (see GlobalSearch).
+  const handleRefreshReplace = useCallback((word: string, vocabs: VocabCard[]) => {
+    if (!vocabs?.length) return;
+    const spelling = word.toLowerCase().trim();
+    const oldItems = latestItemsRef.current.filter(i =>
+      !i.isDeleted && isVocabItem(i) && getItemSpelling(i) === spelling
+    );
+    const newSenses = new Set(vocabs.map(v => v.sense || ''));
+    oldItems.forEach(o => {
+      if (!newSenses.has((o.data as VocabCard).sense || '')) handleDelete(o.data.id); // meaning dropped by refresh
+    });
+    const projectOf = oldItems[0]?.project; // new meanings inherit the word's project
+    vocabs.forEach(vocab => {
+      const match = oldItems.find(o => ((o.data as VocabCard).sense || '') === (vocab.sense || ''));
+      if (match) {
+        // Update IN PLACE: keep the saved item's id/srs/savedAt/project, swap in the fresh content.
+        handleSaveRef.current({ ...match, data: { ...vocab, id: match.data.id }, srs: match.srs, savedAt: match.savedAt });
+      } else {
+        handleSaveRef.current({
+          data: vocab,
+          type: 'vocab',
+          savedAt: Date.now(),
+          srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
+          ...(projectOf ? { project: projectOf } : {}),
+        });
+      }
+    });
+  }, [handleDelete]);
+
   // Search handler - triggers GlobalSearch popup (bottom-right search icon)
   const handleRecursiveSearch = useCallback((text: string) => {
       window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text } }));
@@ -2786,6 +2818,7 @@ const App: React.FC = () => {
         isOnline={isOnline}
         activeProject={activeProject || undefined}
         onLazyLoadImage={handleLazyLoadImage}
+        onRefreshReplace={handleRefreshReplace}
       />
 
       <nav ref={navRef} className="fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 translate-y-0">

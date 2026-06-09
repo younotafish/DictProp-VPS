@@ -60,6 +60,8 @@ interface Props {
   showAudio?: boolean;
   showPronunciation?: boolean;
   showRefresh?: boolean;
+  /** Real refresh: re-run the AI for this word (bypassing the saved-card reuse). Falls back to onSearch. */
+  onRefresh?: (term: string) => void;
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
@@ -79,6 +81,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   showAudio = true,
   showPronunciation = true,
   showRefresh = true,
+  onRefresh,
   onCompare,
   onSaveSentence,
   isSentenceSaved,
@@ -215,11 +218,11 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           )}
         </div>
         <div className="flex items-center gap-1 select-none">
-            {showRefresh && onSearch && (
+            {showRefresh && (onRefresh || onSearch) && (
                  <a
                     href="#"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSearch(data.word); }}
-                    title="Refresh / Search Again"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); (onRefresh ?? onSearch)!(data.word); }}
+                    title="Refresh — re-run the AI for this word"
                     className="p-2 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
                  >
                     <RefreshCw size={18} className="text-slate-400 hover:text-indigo-600" />
