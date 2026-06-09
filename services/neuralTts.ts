@@ -334,6 +334,8 @@ export interface SpeakHandle {
   resume: () => void;
   /** True while paused mid-playback (false before start, after end, or after stop). */
   isPaused: () => boolean;
+  /** True while this handle still owns the engine — i.e. not superseded by a newer speak/word/stop. */
+  isActive: () => boolean;
 }
 
 export interface SpeakOptions {
@@ -347,6 +349,70 @@ export interface SpeakOptions {
 }
 
 let currentToken = 0;
+
+// ---------------------------------------------------------------------------
+// Shared playback state — single source of truth for the one audio engine
+// ---------------------------------------------------------------------------
+// Only one thing can play at a time (one <audio> element + speechSynthesis), yet many things start
+// playback: the megaphone buttons, the E / Cmd+1·2 keyboard readers, swipe-to-speak, and auto-play.
+// They ALL funnel their status through here, keyed by the (stripped) text being spoken, so every
+// speaker button can render the TRUE state of whatever is playing — no matter what started it. This
+// keeps the megaphone icon in sync (play ⇄ pause) and structurally prevents the old "frozen on the
+// pause icon, won't restart" bug: the buttons keep no private playing/paused state to desync.
+export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused';
+export interface PlaybackState {
+  /** Stripped text currently loading/playing/paused, or null when nothing is active. */
+  text: string | null;
+  status: PlaybackStatus;
+}
+
+let playbackState: PlaybackState = { text: null, status: 'idle' };
+const playbackListeners = new Set<(s: PlaybackState) => void>();
+
+const setPlaybackState = (patch: Partial<PlaybackState>): void => {
+  const next: PlaybackState = { ...playbackState, ...patch };
+  if (next.text === playbackState.text && next.status === playbackState.status) return; // no real change
+  playbackState = next;
+  playbackListeners.forEach((cb) => { try { cb(playbackState); } catch { /* ignore */ } });
+};
+
+/** Read the current playback state (text + status) synchronously. */
+export const getPlaybackState = (): PlaybackState => playbackState;
+
+/** Subscribe to playback-state changes; fires immediately with the current value. Returns unsubscribe. */
+export const subscribePlayback = (cb: (s: PlaybackState) => void): (() => void) => {
+  playbackListeners.add(cb);
+  cb(playbackState);
+  return () => { playbackListeners.delete(cb); };
+};
+
+/** Fraction (0..1) of the active <audio> clip already played; 0 when unknown (e.g. system voice). */
+export const getPlaybackProgress = (): number => {
+  const a = audioEl;
+  if (a && isFinite(a.duration) && a.duration > 0) return Math.min(1, Math.max(0, a.currentTime / a.duration));
+  return 0;
+};
+
+/** Pause whatever is currently playing (no-op unless something is playing). Keeps position for resume. */
+export const pauseCurrent = (): void => {
+  if (playbackState.status !== 'playing') return;
+  pausePlayback();
+  setPlaybackState({ status: 'paused' });
+};
+
+/** Resume after pauseCurrent() (no-op unless paused). */
+export const resumeCurrent = (): void => {
+  if (playbackState.status !== 'paused') return;
+  resumePlayback();
+  setPlaybackState({ status: 'playing' });
+};
+
+/** Stop playback entirely and clear the active text (supersedes the in-flight handle). */
+export const stopCurrent = (): void => {
+  currentToken++;
+  stopPlayback();
+  setPlaybackState({ text: null, status: 'idle' });
+};
 
 // Device-local cache of ready-to-play object URLs (cached MiMo clips, keyed by ttsKey hash) — replays are instant.
 const ttsUrlCache = new Map<string, string>();
@@ -419,16 +485,23 @@ export const prefetchTTS = (texts: string[]): void => {
  */
 export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle => {
   const plain = stripSentenceMarkers(text).trim();
-  if (!plain) return { stop: () => {}, pause: () => {}, resume: () => {}, isPaused: () => false };
+  if (!plain) return { stop: () => {}, pause: () => {}, resume: () => {}, isPaused: () => false, isActive: () => false };
 
   const { rate, onStart, onEnd, onError, allowDownload = true } = opts;
   const token = ++currentToken;
   const isCurrent = () => token === currentToken;
-  const systemFallback = () => systemSpeak(plain, { rate, onStart, onEnd, onError });
+
+  // Drive the shared playback state so every speaker UI reflects THIS playback (keyed by text),
+  // whatever triggered it. Gated by isCurrent() so a superseded call can't clobber a newer one's state.
+  const markStart = () => { if (isCurrent()) setPlaybackState({ status: 'playing' }); onStart?.(); };
+  const markEnd = () => { if (isCurrent()) setPlaybackState({ text: null, status: 'idle' }); onEnd?.(); };
+  const markError = (e: any) => { if (isCurrent()) setPlaybackState({ text: null, status: 'idle' }); onError?.(e); };
+  const systemFallback = () => systemSpeak(plain, { rate, onStart: markStart, onEnd: markEnd, onError: markError });
 
   // Unlock <audio> synchronously inside the gesture (iOS) and stop anything currently playing.
   unlockAudio();
   stopPlayback();
+  setPlaybackState({ text: plain, status: 'loading' });
 
   (async () => {
     try {
@@ -446,14 +519,14 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         }
       }
       if (url) {
-        await playUrl(url, isCurrent, onStart, onEnd);
+        await playUrl(url, isCurrent, markStart, markEnd);
         return;
       }
 
       // 3) MISS — fill the cache for next time (fire-and-forget), then fall back now.
       requestTTSGeneration([{ text: plain }]).catch(() => { /* best-effort */ });
       if (isIOS()) { systemFallback(); return; }
-      await speakViaKokoro(plain, { onStart, onEnd, allowDownload }, isCurrent, systemFallback);
+      await speakViaKokoro(plain, { onStart: markStart, onEnd: markEnd, allowDownload }, isCurrent, systemFallback);
     } catch (err) {
       if (!isCurrent()) return;
       warn('🔊 TTS chain failed, falling back to system voice', err);
@@ -462,13 +535,11 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   })();
 
   return {
-    stop: () => { if (isCurrent()) currentToken++; stopPlayback(); },
-    pause: () => { if (isCurrent()) pausePlayback(); },
-    resume: () => { if (isCurrent()) resumePlayback(); },
-    isPaused: () =>
-      isCurrent() &&
-      ((!!audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0) ||
-        (typeof window !== 'undefined' && !!window.speechSynthesis?.paused)),
+    stop: () => { if (isCurrent()) stopCurrent(); },
+    pause: () => { if (isCurrent()) pauseCurrent(); },
+    resume: () => { if (isCurrent()) resumeCurrent(); },
+    isPaused: () => isCurrent() && playbackState.status === 'paused',
+    isActive: () => isCurrent(),
   };
 };
 
@@ -479,12 +550,16 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
  */
 export const speakWord = (text: string): SpeakHandle => {
   const plain = stripSentenceMarkers(text).trim();
+  const token = ++currentToken;                       // supersede any active sentence handle
+  setPlaybackState({ text: null, status: 'idle' });   // a word isn't shown by any speaker button → clear them
   stopPlayback();
   systemSpeak(plain);
+  const isCurrent = () => token === currentToken;
   return {
     stop: () => { try { window.speechSynthesis?.cancel(); } catch { /* ignore */ } },
     pause: () => { try { window.speechSynthesis?.pause(); } catch { /* ignore */ } },
     resume: () => { try { window.speechSynthesis?.resume(); } catch { /* ignore */ } },
     isPaused: () => typeof window !== 'undefined' && !!window.speechSynthesis?.paused,
+    isActive: () => isCurrent() && typeof window !== 'undefined' && !!(window.speechSynthesis?.speaking || window.speechSynthesis?.paused),
   };
 };

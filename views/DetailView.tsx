@@ -11,7 +11,7 @@ import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural, speakWord, prefetchTTS, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, type SpeakHandle } from '../services/neuralTts';
 import { log, warn } from '../services/logger';
 
 // Helper to format relative time for next review
@@ -295,6 +295,24 @@ export const DetailView: React.FC<DetailViewProps> = ({
     
     // Horizontal Swipe (Meanings) - more sensitive threshold
     const isHorizontalSwipe = absX > absY * 1.5 && absX > horizontalSwipeMin;
+
+    // ── Sentence review mode: ←/→ speak the saved sentence; ↑/↓ switch sentence + speak it ──
+    if (sentenceMode) {
+      if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
+        setShowHeader(true);                                    // keep short-swipe-down → reveal header
+      } else if (isVerticalSwipe && isLongSwipe) {
+        if (diffY < -longSwipeMin && (isAtBottom || scrollHeight <= clientHeight)) {
+          goToSentence(currentGroupIndexRef.current + 1);      // swipe up → next sentence
+        } else if (diffY > longSwipeMin && isAtTop) {
+          goToSentence(currentGroupIndexRef.current - 1);      // swipe down → previous sentence
+        }
+      } else if (isHorizontalSwipe) {
+        speakCurrentSentence();                                 // swipe ←/→ → speak current sentence
+      }
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
 
     // Short swipe down at top -> show header bar
     if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
@@ -674,14 +692,17 @@ export const DetailView: React.FC<DetailViewProps> = ({
     let handle: SpeakHandle | undefined;
     let idx = 0;
 
-    // Deliberate action → allow the one-time model download. Within a card a short breath separates
-    // the sentences; after the last one we wait the configurable card gap, then advance.
+    // Deliberate action → allow the one-time model download. The configurable gap separates a card's
+    // example sentences; moving to the NEXT card uses a short beat instead. (In sentence mode each card
+    // is a single saved sentence, so the configurable gap applies across cards there too.)
+    const CARD_GAP = 600; // short beat between cards in item mode
     const playNext = () => {
-      if (idx >= sentences.length) { gapTimer = setTimeout(advanceCard, sentenceGapRef.current); return; }
+      if (idx >= sentences.length) { gapTimer = setTimeout(advanceCard, CARD_GAP); return; }
       const s = sentences[idx++];
       const afterEach = () => {
         const more = idx < sentences.length;
-        gapTimer = setTimeout(more ? playNext : advanceCard, more ? 600 : sentenceGapRef.current);
+        const gap = (more || sentenceModeRef.current) ? sentenceGapRef.current : CARD_GAP;
+        gapTimer = setTimeout(more ? playNext : advanceCard, gap);
       };
       handle = speakNatural(s, { allowDownload: true, onEnd: afterEach, onError: afterEach });
     };
@@ -730,138 +751,132 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return `${mm}:${String(ss).padStart(2, '0')}`;
   })();
 
-  // Read the current card's example sentence(s) aloud with the neural voice, toggled by E.
+  // Fresh ref to the on-screen card so the keyboard readers below read current data without re-subscribing.
   const currentItemRef = useRef(currentItem);
   useEffect(() => { currentItemRef.current = currentItem; });
-  const readHandleRef = useRef<SpeakHandle | null>(null);
-  const readingSentencesRef = useRef(false);
-  const readPausedRef = useRef(false);
-  const readingKindRef = useRef<string | null>(null); // identifies what's playing: 'both' (E) | 'idx:0' | 'idx:1' (Cmd+N)
 
+  // ── Manual sentence reading — all speech funnels through the shared playback state (neuralTts), so
+  // the megaphone icons stay in sync and a second press can pause / resume / restart what's playing. ──
+
+  // E: read the displayed card's example sentences in turn (or, in sentence mode, the saved sentence).
+  // Press again to pause; once more to resume.
   const readBothSentences = useCallback(() => {
-    // Pressing E again on the same read pauses; pressing once more resumes from where it paused.
-    if (readingSentencesRef.current && readingKindRef.current === 'both') {
-      if (readPausedRef.current) { readHandleRef.current?.resume(); readPausedRef.current = false; }
-      else { readHandleRef.current?.pause(); readPausedRef.current = true; }
-      return;
-    }
-    // A different read (a Cmd+N single sentence) is playing → stop it, then start read-both.
-    if (readingSentencesRef.current) {
-      readHandleRef.current?.stop();
-      readHandleRef.current = null;
-      readingSentencesRef.current = false;
-      readPausedRef.current = false;
-    }
     let sentences: string[];
     if (sentenceModeRef.current && currentSentenceRef.current) {
-      // Sentence mode: read the saved sentence.
       sentences = [stripSentenceMarkers((currentSentenceRef.current.data as SentenceData).text)].filter(Boolean);
     } else {
       const item = currentItemRef.current;
       if (!item) return;
       const ex = isPhraseItem(item)
-        ? [(item.data as SearchResult).query].filter(Boolean)
+        ? [(item.data as SearchResult).query]
         : ((item.data as VocabCard).examples || []);
-      sentences = ex.slice(0, 2).filter(Boolean) as string[];
+      sentences = (ex as string[]).slice(0, 2).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean);
     }
     if (!sentences.length) return;
+
+    // Already reading one of these → toggle pause / resume.
+    const pb = getPlaybackState();
+    if (pb.text && sentences.includes(pb.text) && (pb.status === 'playing' || pb.status === 'paused')) {
+      if (pb.status === 'playing') pauseCurrent(); else resumeCurrent();
+      return;
+    }
+
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
-    readingSentencesRef.current = true;
-    readPausedRef.current = false;
-    readingKindRef.current = 'both';
     let idx = 0;
+    let handle: SpeakHandle | undefined;
     const playNext = () => {
-      if (!readingSentencesRef.current) return;
-      if (idx >= sentences.length) { readingSentencesRef.current = false; readingKindRef.current = null; return; }
+      if (idx >= sentences.length) return;
+      if (handle && !handle.isActive()) return; // superseded by other speech / navigation → stop the chain
       const s = sentences[idx++];
-      readHandleRef.current = speakNatural(s, {
+      handle = speakNatural(s, {
         allowDownload: true,
-        onEnd: () => setTimeout(playNext, 400), // small breath between the two sentences
+        onEnd: () => setTimeout(playNext, 400),   // small breath between the two sentences
         onError: () => setTimeout(playNext, 400),
       });
     };
     playNext();
   }, []);
 
-  // Read a single example sentence aloud (neural voice) — first (0) or second (1).
-  // Bound to Cmd/Ctrl+1 / +2. Reuses the read refs so it cooperates with the E shortcut
-  // (read-both) and the stop-on-card-change cleanup below. Pressing the SAME key again pauses;
-  // pressing once more resumes from where it paused. A different key switches sentences.
+  // Cmd/Ctrl+1 / +2: read the displayed card's first / second example sentence. A second press on the
+  // same sentence pauses/resumes — unless it's almost finished, in which case it restarts from the top.
   const speakSentenceAt = useCallback((index: number) => {
-    const kind = `idx:${index}`;
-    // Same single sentence already playing → toggle pause / resume.
-    if (readingSentencesRef.current && readingKindRef.current === kind) {
-      if (readPausedRef.current) { readHandleRef.current?.resume(); readPausedRef.current = false; }
-      else { readHandleRef.current?.pause(); readPausedRef.current = true; }
-      return;
-    }
-    // Different content reading (the other index, or the read-both chain) → stop it, then start this one.
-    if (readingSentencesRef.current) {
-      readHandleRef.current?.stop();
-      readHandleRef.current = null;
-      readingSentencesRef.current = false;
-      readPausedRef.current = false;
-    }
-    // Cmd+1 / Cmd+2 always read the displayed card's example sentences (positional), in both modes —
-    // the saved sentence has its own controls (E + the banner speaker). On a synthetic fallback card
-    // (deleted source word) the saved sentence is the sole example, so Cmd+1 reads it.
     const item = currentItemRef.current;
     if (!item) return;
     const ex = isPhraseItem(item)
-      ? [(item.data as SearchResult).query].filter(Boolean)
+      ? [(item.data as SearchResult).query]
       : ((item.data as VocabCard).examples || []);
-    const sentence = (ex as string[])[index];
+    const sentence = stripSentenceMarkers((ex as string[])[index] || '').trim();
+    if (!sentence) return;
+
+    const pb = getPlaybackState();
+    if (pb.text === sentence) {
+      if (pb.status === 'loading') return;                          // already starting this very sentence
+      if (pb.status === 'paused') { resumeCurrent(); return; }
+      if (pb.status === 'playing') {
+        // Mid-clip → pause; almost done → fall through and restart from the top.
+        if (getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
+      }
+    }
+    setIsAutoPlaying(false);
+    setIsSentenceAutoPlaying(false);
+    speakNatural(sentence, { allowDownload: true });
+  }, []);
+
+  // ── Sentence review mode: speak the saved sentence, or switch to another and speak it immediately ──
+  // Shared by the swipe gestures and the arrow keys / trackpad wheel below.
+  const speakCurrentSentence = useCallback(() => {
+    const s = currentSentenceRef.current;
+    if (!s) return;
+    const sentence = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
     if (!sentence) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
-    readingSentencesRef.current = true;
-    readPausedRef.current = false;
-    readingKindRef.current = kind;
-    readHandleRef.current = speakNatural(sentence, {
-      allowDownload: true,
-      onEnd: () => { readingSentencesRef.current = false; readHandleRef.current = null; readingKindRef.current = null; readPausedRef.current = false; },
-      onError: () => { readingSentencesRef.current = false; readHandleRef.current = null; readingKindRef.current = null; readPausedRef.current = false; },
-    });
+    speakNatural(sentence, { allowDownload: true });
   }, []);
 
-  // Stop reading when the card changes or the view unmounts (also clears any paused state).
-  useEffect(() => () => {
-    if (readingSentencesRef.current) {
-      readHandleRef.current?.stop();
-      readingSentencesRef.current = false;
-      readPausedRef.current = false;
-      readingKindRef.current = null;
-    }
-  }, [currentGroupIndex, currentItemIndex]);
+  const goToSentence = useCallback((nextIndex: number) => {
+    const list = sentenceItemsRef.current ?? [];
+    if (list.length === 0) return;
+    const clamped = Math.max(0, Math.min(nextIndex, list.length - 1));
+    if (clamped === currentGroupIndexRef.current) { speakCurrentSentence(); return; } // already at an end → re-speak
+    setIsAutoPlaying(false);
+    setIsSentenceAutoPlaying(false);
+    setShowHeader(false);
+    setIsAnimating(true);
+    setCurrentGroupIndex(clamped);
+    setCurrentItemIndex(0);
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+    setTimeout(() => setIsAnimating(false), 300);
+    const next = list[clamped];
+    const sentence = next ? stripSentenceMarkers((next.data as SentenceData).text || '').trim() : '';
+    if (sentence) speakNatural(sentence, { allowDownload: true });
+  }, [speakCurrentSentence]);
 
-  // Either auto-play supersedes a manual E/Cmd read (shared audio element). Clear the manual-read
-  // bookkeeping — without stopping the audio auto-play now owns — so a later E/Cmd press starts
-  // fresh instead of trying to pause/resume a stale handle.
-  useEffect(() => {
-    if (isAutoPlaying || isSentenceAutoPlaying) {
-      readingSentencesRef.current = false;
-      readPausedRef.current = false;
-      readingKindRef.current = null;
-      readHandleRef.current = null;
-    }
-  }, [isAutoPlaying, isSentenceAutoPlaying]);
+  // Arrow keys / trackpad wheel: in sentence mode ←/→ speak and ↑/↓ switch+speak; else normal nav.
+  const navLeft = useCallback(() => { if (sentenceModeRef.current) speakCurrentSentence(); else handlePrevItem(); }, [handlePrevItem, speakCurrentSentence]);
+  const navRight = useCallback(() => { if (sentenceModeRef.current) speakCurrentSentence(); else handleNextItem(); }, [handleNextItem, speakCurrentSentence]);
+  const navUp = useCallback(() => { if (sentenceModeRef.current) goToSentence(currentGroupIndexRef.current - 1); else handlePrevGroup(); }, [handlePrevGroup, goToSentence]);
+  const navDown = useCallback(() => { if (sentenceModeRef.current) goToSentence(currentGroupIndexRef.current + 1); else handleNextGroup(); }, [handleNextGroup, goToSentence]);
+
+  // Stop any playback when DetailView closes (covers a manual read still going at close time).
+  useEffect(() => () => { stopCurrent(); }, []);
 
   // Keyboard navigation
   useKeyboardNavigation({
     onEscape: onClose,
-    onArrowLeft: handlePrevItem,
-    onArrowRight: handleNextItem,
-    onArrowUp: handlePrevGroup,
-    onArrowDown: handleNextGroup,
+    onArrowLeft: navLeft,
+    onArrowRight: navRight,
+    onArrowUp: navUp,
+    onArrowDown: navDown,
     onSave: handleToggleSave,
     enabled: !showActionMenu,
   });
 
   // Trackpad wheel navigation
   useWheelNavigation({
-    onScrollLeft: handlePrevItem,
-    onScrollRight: handleNextItem,
+    onScrollLeft: navLeft,
+    onScrollRight: navRight,
     containerRef: scrollContainerRef,
     threshold: 80,
     enabled: !!(currentGroup && currentGroup.items.length >= 1),
