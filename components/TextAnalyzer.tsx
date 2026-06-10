@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { StoredItem, VocabCard } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
 import { detectVocabulary, DetectedWord, analyzeInput, generateIllustration } from '../services/api';
+import { ensureTTS } from '../services/neuralTts';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -187,6 +188,10 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
       try {
         // Call the existing full AI analysis (word mode — returns all meanings)
         const result = await analyzeInput(detected.word);
+
+        // Pre-generate + cache the API audio for this word's example sentences up front (fire-and-forget)
+        // so the first play is the instant cached voice instead of a cache-miss fallback.
+        ensureTTS((result.vocabs || []).flatMap(v => v.examples || []));
 
         // Auto-save each vocab card
         let wordSaved = 0;

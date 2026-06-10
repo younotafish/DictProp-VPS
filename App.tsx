@@ -1433,16 +1433,19 @@ const App: React.FC = () => {
     });
   }, [activeItems, executeBulkRefresh]);
 
-  // ── Bulk "Generate all sentence speech" sweep ─────────────────────────────
-  // Pre-generates MiMo audio for every example sentence + saved sentence and caches it on the
-  // server, so all devices (esp. iPhone/iPad) play sentences instantly. Words use the system
-  // voice, so they're NOT generated. Skips already-cached clips; resumable (fills only what's missing).
+  // ── "Generate sentence speech" sweep ──────────────────────────────────────
+  // Pre-generates MiMo audio for example/saved sentences and caches it on the server, so all devices
+  // (esp. iPhone/iPad) play sentences instantly. Words use the system voice, so they're NOT generated.
+  // Skips already-cached clips; resumable (fills only what's missing). Scope is ALL items, or just
+  // `itemIds` when given (the post-batch-import sweep). `silent` suppresses the modals for background
+  // runs — the progress bar (with its abort button) still shows.
   const TTS_GEN_CONCURRENCY = 4;
-  const handleGenerateAllSpeech = useCallback(async () => {
+  const runSpeechGeneration = useCallback(async (itemIds?: string[], opts?: { silent?: boolean }) => {
     const all = latestItemsRef.current;
+    const scoped = itemIds ? all.filter(it => itemIds.includes(it.data.id)) : all;
     const texts = new Set<string>();
     const add = (t?: string) => { const s = stripSentenceMarkers(t || '').trim(); if (s) texts.add(s); };
-    for (const it of all) {
+    for (const it of scoped) {
       if (it.isDeleted) continue;
       if (isVocabItem(it)) { (it.data.examples || []).forEach(add); }
       else if (isPhraseItem(it)) { (it.data.vocabs || []).forEach(v => { (v.examples || []).forEach(add); }); }
@@ -1450,7 +1453,7 @@ const App: React.FC = () => {
     }
     const list = [...texts];
     if (list.length === 0) {
-      setConfirmModal({ isOpen: true, title: 'Nothing to Generate', message: 'No example sentences found.', confirmText: 'OK', variant: 'info', onConfirm: () => setConfirmModal(null), showCancel: false });
+      if (!opts?.silent) setConfirmModal({ isOpen: true, title: 'Nothing to Generate', message: 'No example sentences found.', confirmText: 'OK', variant: 'info', onConfirm: () => setConfirmModal(null), showCancel: false });
       return;
     }
 
@@ -1481,13 +1484,19 @@ const App: React.FC = () => {
     await Promise.all(Array.from({ length: Math.min(TTS_GEN_CONCURRENCY, pending.length) }, () => worker()));
 
     setTtsGenProgress(null);
-    setConfirmModal({
+    if (!opts?.silent) setConfirmModal({
       isOpen: true,
       title: 'Speech Generated',
       message: `${pending.length} new clip${pending.length === 1 ? '' : 's'} generated\n${alreadyCached} already cached`,
       confirmText: 'OK', variant: 'success', onConfirm: () => setConfirmModal(null), showCancel: false,
     });
   }, []);
+
+  // Button handler: sweep ALL items, with modals. Wrapped so a click event isn't passed as `itemIds`.
+  const handleGenerateAllSpeech = useCallback(() => { void runSpeechGeneration(); }, [runSpeechGeneration]);
+  // Ref so handleBatchImport (declared with empty deps) can fire the post-import sweep.
+  const runSpeechGenerationRef = useRef(runSpeechGeneration);
+  runSpeechGenerationRef.current = runSpeechGeneration;
 
   // ── Find & merge variant duplicates (Phase 2 dedup tool) ──────────────────
   // Detection is read-only: cluster base words that are variants of one another
@@ -1690,10 +1699,11 @@ const App: React.FC = () => {
       cancelText: 'Dismiss',
     });
 
-    // Phase 2: backfill images for the items we just imported. Runs in the
-    // background at low concurrency so it doesn't compete with text analysis.
+    // Phase 2: backfill images AND pre-generate sentence audio for the items we just imported. Both
+    // run in the background (after the text analysis is done) so the new words play instantly later.
     if (importedItemIds.length > 0) {
       runImageBackfillRef.current(importedItemIds).catch(e => warn('Post-batch image backfill failed:', e));
+      runSpeechGenerationRef.current(importedItemIds, { silent: true }).catch(e => warn('Post-batch speech generation failed:', e));
     }
   }, []);
 
