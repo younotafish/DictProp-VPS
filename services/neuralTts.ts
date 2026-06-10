@@ -476,6 +476,40 @@ export const prefetchTTS = (texts: string[]): void => {
 };
 
 /**
+ * Like prefetchTTS, but GENERATES any clip that isn't cached yet (then pulls it into the device cache),
+ * so a later tap plays the API voice instantly instead of hitting a cache-miss fallback. Use this when
+ * fresh AI results arrive (search / refresh) to prepare the audio up front. Fire-and-forget.
+ */
+export const ensureTTS = async (texts: string[]): Promise<void> => {
+  try {
+    const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
+    if (!plains.length) return;
+
+    // Pull anything already cached (device → server) into the device cache; collect what's still missing.
+    const missing: string[] = [];
+    await Promise.all(plains.map(async (plain) => {
+      const key = await ttsKey(plain, TTS_VOICE);
+      if (ttsUrlCache.has(key)) return;
+      const blob = await fetchCachedTTS(key);
+      if (blob) { if (!ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob)); return; }
+      missing.push(plain);
+    }));
+    if (!missing.length) return;
+
+    // Generate the missing clips server-side (one batch), then fetch them into the device cache.
+    await requestTTSGeneration(missing.map(text => ({ text })));
+    await Promise.all(missing.map(async (plain) => {
+      const key = await ttsKey(plain, TTS_VOICE);
+      if (ttsUrlCache.has(key)) return;
+      const blob = await fetchCachedTTS(key);
+      if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+    }));
+  } catch {
+    /* best-effort — speakNatural still falls back at play time */
+  }
+};
+
+/**
  * Speak `text` with the best available voice:
  *   1. cached MiMo clip from the server (instant, on every device) — the primary path
  *   2. on a cache MISS: kick off background generation (fills the cache for next time), then fall

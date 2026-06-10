@@ -14,7 +14,7 @@ import { ProjectManager } from '../components/ProjectManager';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { speakWord } from '../services/neuralTts';
+import { speakWord, ensureTTS } from '../services/neuralTts';
 import { warn, error as logError } from '../services/logger';
 
 interface NotebookItemProps {
@@ -653,6 +653,10 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       const result = await analyzeInput(query.trim());
       if (searchGenerationIdRef.current !== currentGenId) return; // Superseded by new search
       setSearchResults(result);
+
+      // Prepare the API audio for the example sentences up front (generate if needed) so the first
+      // tap plays instantly from the cache instead of hitting a cache-miss fallback.
+      ensureTTS((result.vocabs || []).flatMap(v => v.examples || []));
 
       // Auto-pronounce the word once when results arrive
       if (result.vocabs && result.vocabs.length > 0) {

@@ -4,7 +4,7 @@ import { SearchResult, VocabCard, StoredItem } from '../types';
 import { analyzeInput, generateIllustration } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { speakWord, prefetchTTS } from '../services/neuralTts';
+import { speakWord, prefetchTTS, ensureTTS } from '../services/neuralTts';
 import { log, warn } from '../services/logger';
 
 interface QueueItem {
@@ -13,6 +13,7 @@ interface QueueItem {
   status: 'pending' | 'searching' | 'ready' | 'failed';
   results: SearchResult | null;
   forceAI?: boolean; // refresh: re-run the AI, bypassing the saved-card reuse
+  refreshing?: boolean; // in-place refresh in flight: keep showing the old results with a spinner
 }
 
 type Mode = 'idle' | 'input' | 'viewing';
@@ -71,11 +72,34 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     });
   }, []);
 
-  // Refresh button on a card: a REAL re-run of the AI for this word (bypassing the saved-card reuse).
-  // When the fresh result returns, the queue processor replaces the saved card (see onRefreshReplace).
-  const handleRefreshCard = useCallback((word: string) => {
-    enqueue(word, true);
-  }, [enqueue]);
+  // Post-process a fresh AI result for queue item `itemId`: prepare its audio, replace the saved card
+  // if this word was already saved (refresh), and stream in illustrations (re-saving so the saved card
+  // keeps its image). Shared by the queue processor and the in-place card refresh below.
+  const finalizeResult = useCallback((itemId: string, queryWord: string, result: SearchResult) => {
+    const liveVocabs = result.vocabs ? [...result.vocabs] : [];
+    // Prepare the API audio up front so the first play is instant (generates if not cached yet).
+    ensureTTS(liveVocabs.flatMap(v => v.examples || []));
+    // If this word was already saved, a fresh AI result replaces its saved card (keeps SRS).
+    const isReplace = !!(onRefreshReplace && findSavedByWord(queryWord).length > 0);
+    if (isReplace && liveVocabs.length) onRefreshReplace!(queryWord, liveVocabs);
+
+    result.vocabs?.forEach(async (vocab, index) => {
+      if (vocab.imagePrompt && !vocab.imageUrl) {
+        try {
+          const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
+          if (!imageData) return;
+          if (liveVocabs[index]) liveVocabs[index] = { ...liveVocabs[index], imageUrl: imageData };
+          setQueue(prev => prev.map(q => {
+            if (q.id !== itemId || !q.results?.vocabs) return q;
+            const updated = [...q.results.vocabs];
+            if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
+            return { ...q, results: { ...q.results, vocabs: updated } };
+          }));
+          if (isReplace) onRefreshReplace!(queryWord, [...liveVocabs]); // re-save with the new image
+        } catch {}
+      }
+    });
+  }, [onRefreshReplace, findSavedByWord]);
 
   // Process queue — pick up next pending item and search it
   useEffect(() => {
@@ -114,39 +138,14 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     analyzeInput(pending.query).then(result => {
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: result } : q));
       if (pending.forceAI) setPendingOpenId(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
-
-      // A real refresh of an already-saved word: replace its saved card(s) with this fresh result.
-      // We capture wasSaved now (before replacing) and re-push as images stream in so the saved card
-      // keeps its illustration. onRefreshReplace updates in place by word+sense, preserving SRS.
-      const liveVocabs = result.vocabs ? [...result.vocabs] : [];
-      const isReplace = !!(pending.forceAI && onRefreshReplace && findSavedByWord(pending.query).length > 0);
-      if (isReplace && liveVocabs.length) onRefreshReplace!(pending.query, liveVocabs);
-
-      // Generate images in background
-      result.vocabs?.forEach(async (vocab, index) => {
-        if (vocab.imagePrompt && !vocab.imageUrl) {
-          try {
-            const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
-            if (imageData) {
-              if (liveVocabs[index]) liveVocabs[index] = { ...liveVocabs[index], imageUrl: imageData };
-              setQueue(prev => prev.map(q => {
-                if (q.id !== itemId || !q.results?.vocabs) return q;
-                const updated = [...q.results.vocabs];
-                if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
-                return { ...q, results: { ...q.results, vocabs: updated } };
-              }));
-              if (isReplace) onRefreshReplace!(pending.query, [...liveVocabs]); // re-save with the new image
-            }
-          } catch {}
-        }
-      });
+      finalizeResult(itemId, pending.query, result); // prepare audio, replace saved card, stream images
     }).catch(err => {
       warn('🔍 Queue: failed "' + pending.query + '":', err.message);
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
     }).finally(() => {
       processingRef.current = false;
     });
-  }, [queue, findSavedByWord, onRefreshReplace]);
+  }, [queue, findSavedByWord, finalizeResult]);
 
   // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
   useEffect(() => {
@@ -382,6 +381,25 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     prefetchTTS((viewingVocab.examples || []).filter(Boolean) as string[]);
   }, [viewingVocab]);
 
+  // Refresh button on the card: a REAL re-run of the AI for this word. We refresh the viewed item
+  // IN PLACE — keep showing its current card (with a spinner) while the AI runs, then swap in the fresh
+  // result — instead of clearing the queue entry (which blanked the popup until the API returned).
+  const handleRefreshCard = useCallback((word: string) => {
+    const trimmed = word.trim();
+    const item = mode === 'viewing' ? readyItems[viewingQueueIdx] : null;
+    if (!trimmed || !item || item.refreshing) return;
+    const id = item.id;
+    setQueue(prev => prev.map(q => q.id === id ? { ...q, refreshing: true } : q)); // keep results visible
+    analyzeInput(trimmed).then(result => {
+      setQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'ready' as const, results: result, query: trimmed, refreshing: false } : q));
+      setViewingVocabIdx(0);
+      finalizeResult(id, trimmed, result);
+    }).catch(err => {
+      warn('🔍 Refresh failed "' + trimmed + '":', err?.message);
+      setQueue(prev => prev.map(q => q.id === id ? { ...q, refreshing: false } : q));
+    });
+  }, [mode, readyItems, viewingQueueIdx, finalizeResult]);
+
   return (
     <>
       {/* Save toast */}
@@ -464,6 +482,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                   <Search size={14} className="text-indigo-500 shrink-0" />
                   <span className="text-sm font-semibold text-slate-700 truncate">"{viewingResult?.query || viewingItem.query}"</span>
+                  {viewingItem.refreshing && (
+                    <span className="flex items-center gap-1 text-xs font-medium text-indigo-500 shrink-0">
+                      <Loader2 size={12} className="animate-spin" /> Refreshing…
+                    </span>
+                  )}
                   {viewingVocabCount > 1 && (
                     <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full shrink-0">
                       {viewingVocabIdx + 1}/{viewingVocabCount}
