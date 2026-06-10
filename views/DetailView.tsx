@@ -691,15 +691,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
     let gapTimer: ReturnType<typeof setTimeout> | undefined;
     let handle: SpeakHandle | undefined;
     let idx = 0;
+    let rep = 0;
 
-    // Deliberate action → allow the one-time model download. The configurable gap separates a card's
-    // example sentences; moving to the NEXT card uses a short beat instead. (In sentence mode each card
-    // is a single saved sentence, so the configurable gap applies across cards there too.)
-    const CARD_GAP = 600; // short beat between cards in item mode
+    // Deliberate action → allow the one-time model download. Each sentence is spoken twice with a
+    // short beat between the two reads; the configurable gap separates distinct sentences within a
+    // card, and moving to the NEXT card uses a short beat instead. (In sentence mode each card is a
+    // single saved sentence, so the configurable gap applies across cards there too.)
+    const REPEATS = 2;      // speak each sentence twice
+    const REPEAT_GAP = 700; // short beat between the two reads of the same sentence
+    const CARD_GAP = 600;   // short beat between cards in item mode
     const playNext = () => {
       if (idx >= sentences.length) { gapTimer = setTimeout(advanceCard, CARD_GAP); return; }
-      const s = sentences[idx++];
+      const s = sentences[idx];
       const afterEach = () => {
+        if (++rep < REPEATS) { gapTimer = setTimeout(playNext, REPEAT_GAP); return; } // read again
+        rep = 0;
+        idx++;
         const more = idx < sentences.length;
         const gap = (more || sentenceModeRef.current) ? sentenceGapRef.current : CARD_GAP;
         gapTimer = setTimeout(more ? playNext : advanceCard, gap);
