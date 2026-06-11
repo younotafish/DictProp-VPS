@@ -83,6 +83,7 @@ interface TextAnalyzerProps {
   onUpdateStoredItem?: (item: StoredItem) => void;
   savedItems: StoredItem[];
   isOnline: boolean;
+  activeProject?: string | null;
 }
 
 export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
@@ -92,6 +93,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   onUpdateStoredItem,
   savedItems,
   isOnline,
+  activeProject,
 }) => {
   // ── State ───────────────────────────────────────────────────────────────
   const [step, setStep] = useState<AnalyzerStep>('input');
@@ -202,7 +204,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
             if (item.type !== 'vocab') return false;
             const sw = ((item.data as VocabCard).word || '').toLowerCase().trim();
             const ss = (item.data as VocabCard).sense || '';
-            return sw === vocabWord && ss === vocab.sense;
+            return sw === vocabWord && ss === (vocab.sense || '');
           });
 
           if (!alreadySaved) {
@@ -211,6 +213,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
               type: 'vocab',
               savedAt: Date.now(),
               srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
+              ...(activeProject ? { project: activeProject } : {}),
             };
             onSave(storedItem);
             wordSaved++;
@@ -252,7 +255,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     }
 
     setStep('done');
-  }, [detectedWords, selectedWords, savedItems, onSave, onUpdateStoredItem]);
+  }, [detectedWords, selectedWords, savedItems, onSave, onUpdateStoredItem, activeProject]);
 
   // ── Navigation ─────────────────────────────────────────────────────────
 

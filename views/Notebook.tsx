@@ -861,17 +861,20 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     }
   }, [localSearchQuery]);
 
-  // Save a vocab from search results
+  // Save a vocab from search results. Tag it with the active project so it lands in (and stays
+  // visible in) the project the user is currently viewing — otherwise the project filter hides the
+  // just-saved item and it looks like the save failed. Mirrors GlobalSearch + batch import.
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
     if (!onSave) return;
-    
+
     onSave({
       data: vocab,
       type: 'vocab',
       savedAt: Date.now(),
-      srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
+      srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
+      ...(activeProject ? { project: activeProject } : {}),
     });
-  }, [onSave]);
+  }, [onSave, activeProject]);
 
   // Check if a vocab is already saved
   const isVocabSaved = useCallback((vocab: VocabCard) => {
@@ -880,7 +883,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       if (i.type !== 'vocab') return false;
       const savedWord = ((i.data as VocabCard).word || '').toLowerCase().trim();
       const savedSense = (i.data as VocabCard).sense || '';
-      return savedWord === vocabWord && savedSense === vocab.sense;
+      return savedWord === vocabWord && savedSense === (vocab.sense || '');
     });
   }, [items]);
 
@@ -1728,6 +1731,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           onUpdateStoredItem={onUpdateStoredItem}
           savedItems={items}
           isOnline={isOnline}
+          activeProject={activeProject}
         />
       )}
 
