@@ -2909,7 +2909,8 @@ const App: React.FC = () => {
                   <ShortcutRow keys={['E']} description="Speak the saved sentence (natural voice)" />
                   <ShortcutRow keys={['⌘', '1']} description="Speak 1st example sentence" />
                   <ShortcutRow keys={['⌘', '2']} description="Speak 2nd example sentence" />
-                  <ShortcutRow keys={['Space']} description="Auto-play saved sentences" />
+                  <ShortcutRow keys={['Space']} description="Pause / resume sentence · auto-play when idle" />
+                  <ShortcutRow keys={['Tap']} description="Tap the sentence to play / pause" />
                   <ShortcutRow keys={['R']} description="Remember (advances to next)" />
                   <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />
                   <ShortcutRow keys={['D']} description="Delete the sentence" />

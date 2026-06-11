@@ -842,6 +842,25 @@ export const DetailView: React.FC<DetailViewProps> = ({
     speakNatural(sentence, { allowDownload: true });
   }, []);
 
+  // Tap the sentence (or context-aware Space): pause it if it's playing, resume if paused, otherwise
+  // (re)start it from the top. Routed through the shared playback state so it stays in sync with the
+  // megaphone button — whoever started the audio, this controls it.
+  const toggleSentencePlayback = useCallback(() => {
+    const s = currentSentenceRef.current;
+    if (!s) return;
+    const sentence = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
+    if (!sentence) return;
+    const pb = getPlaybackState();
+    if (pb.text === sentence) {
+      if (pb.status === 'loading') return;                       // already starting this one
+      if (pb.status === 'playing') { pauseCurrent(); return; }
+      if (pb.status === 'paused') { resumeCurrent(); return; }
+    }
+    setIsAutoPlaying(false);
+    setIsSentenceAutoPlaying(false);
+    speakNatural(sentence, { allowDownload: true });
+  }, []);
+
   const goToSentence = useCallback((nextIndex: number) => {
     const list = sentenceItemsRef.current ?? [];
     if (list.length === 0) return;
@@ -1177,11 +1196,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
         }
       }
 
-      // Space: Toggle auto-play — sentence autoplay (natural voice) in sentence mode
+      // Space: in sentence mode, pause/resume the sentence that's playing; if nothing is playing,
+      // start/stop continuous auto-play. Elsewhere it toggles the word-card auto-play slideshow.
       if (e.key === ' ') {
         e.preventDefault();
-        if (sentenceMode) toggleSentenceAutoPlay();
-        else setIsAutoPlaying(prev => !prev);
+        if (sentenceMode) {
+          const st = getPlaybackState().status;
+          if (st === 'playing') pauseCurrent();
+          else if (st === 'paused') resumeCurrent();
+          else toggleSentenceAutoPlay();              // idle/loading → start/stop continuous auto-play
+        } else {
+          setIsAutoPlaying(prev => !prev);
+        }
       }
 
       // +/=: Cycle speed forward
@@ -1227,7 +1253,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
             {/* Row 2: the saved sentence + natural-voice speaker */}
             <div className="flex items-start gap-1.5">
-              <p className="flex-1 text-[15px] leading-relaxed text-slate-800 max-h-24 overflow-y-auto no-scrollbar">
+              <p
+                className="flex-1 text-[15px] leading-relaxed text-slate-800 max-h-24 overflow-y-auto no-scrollbar cursor-pointer"
+                onClick={toggleSentencePlayback}
+                title="Tap to play / pause · resume (Space)"
+              >
                 <HighlightedSentence text={currentSentenceText} itemWord={(currentSentence.data as SentenceData).sourceWord} onSearchWord={onSearch} />
               </p>
               <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} className="mt-0.5 shrink-0" />
