@@ -6,7 +6,9 @@ export default defineConfig({
     port: 3000,
     host: '0.0.0.0',
     watch: {
-      ignored: ['**/test-results/**', '**/playwright-report/**', '**/.playwright/**']
+      // Ignore Watchman's ephemeral cookie files — it creates and instantly deletes them, and the
+      // dev watcher otherwise races to realpath() a now-gone file and crashes the server with ENOENT.
+      ignored: ['**/test-results/**', '**/playwright-report/**', '**/.playwright/**', '**/.watchman-cookie-*']
     },
     hmr: {
       overlay: process.env.CI ? false : true
