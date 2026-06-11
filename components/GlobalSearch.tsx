@@ -4,7 +4,8 @@ import { SearchResult, VocabCard, StoredItem } from '../types';
 import { analyzeInput, generateIllustration } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { speakWord, prefetchTTS, ensureTTS } from '../services/neuralTts';
+import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent } from '../services/neuralTts';
+import { stripSentenceMarkers } from './HighlightedSentence';
 import { log, warn } from '../services/logger';
 
 interface QueueItem {
@@ -202,6 +203,25 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
         const currentResult = readyItems[viewingQueueIdx]?.results;
         const vocabCount = currentResult?.vocabs?.length || 0;
+
+        // Cmd/Ctrl+1 / +2: read the displayed card's first / second example sentence (natural voice).
+        // A second press on the same sentence pauses/resumes — matches the DetailView shortcut.
+        if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const vocab = currentResult?.vocabs?.[viewingVocabIdx];
+          const sentence = stripSentenceMarkers((vocab?.examples || [])[e.key === '1' ? 0 : 1] || '').trim();
+          if (!sentence) return;
+          const pb = getPlaybackState();
+          if (pb.text === sentence) {
+            if (pb.status === 'loading') return;                       // already starting this one
+            if (pb.status === 'paused') { resumeCurrent(); return; }
+            if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; } // mid-clip → pause
+          }
+          speakNatural(sentence, { allowDownload: true });
+          return;
+        }
+
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
           e.stopImmediatePropagation();
