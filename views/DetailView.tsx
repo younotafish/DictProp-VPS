@@ -316,6 +316,39 @@ export const DetailView: React.FC<DetailViewProps> = ({
       return;
     }
 
+    // ── Eyes-free zone tap (word-card / phrase view): a still one-finger tap on blank space reads by
+    // SCREEN HALF. Word card → top half = 1st example sentence, bottom half = 2nd. Phrase → top half =
+    // the phrase itself, bottom half = its first Key Vocabulary example (matching the on-screen layout:
+    // phrase up top, vocab examples below). The target is a whole screen half (not a small,
+    // position-shifting icon), so it works on an iPad without looking. Clickable words, buttons and
+    // links are excluded so normal tapping still works; tapping the same half again pauses/resumes. ──
+    const TAP_MOVE_MAX = 10; // px — finger essentially didn't move → it's a tap, not a swipe/scroll
+    if (absX <= TAP_MOVE_MAX && absY <= TAP_MOVE_MAX) {
+      const tapTarget = e.target as HTMLElement | null;
+      const onControl = !!tapTarget?.closest(
+        'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]'
+      );
+      if (!onControl) {
+        const topHalf = e.changedTouches[0].clientY < window.innerHeight / 2;
+        if (currentItem && isPhraseItem(currentItem)) {
+          const phrase = currentItem.data as SearchResult;
+          const firstVocabExample = (phrase.vocabs || [])
+            .flatMap(v => v.examples || [])
+            .map(s => stripSentenceMarkers(s || '').trim())
+            .find(Boolean);
+          toggleSpeak(topHalf ? phrase.query : (firstVocabExample || phrase.query));
+        } else {
+          const count = examplesOf(currentItem).length;
+          if (count > 0) {
+            speakSentenceAt(Math.min(topHalf ? 0 : 1, count - 1)); // single example → either half reads it
+          }
+        }
+      }
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
+
     // Short swipe down at top -> show header bar
     if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
       setShowHeader(true);
@@ -817,30 +850,35 @@ export const DetailView: React.FC<DetailViewProps> = ({
     playNext();
   }, []);
 
-  // Cmd/Ctrl+1 / +2: read the displayed card's first / second example sentence. A second press on the
-  // same sentence pauses/resumes — unless it's almost finished, in which case it restarts from the top.
+  // Toggle natural-voice playback for an arbitrary sentence, routed through the shared playback state so
+  // the megaphone icons stay in sync: same clip already playing → pause; paused → resume; almost done →
+  // restart from the top; otherwise start fresh. Shared by the Cmd+1·2 readers and the eyes-free zone tap.
+  const toggleSpeak = useCallback((raw: string) => {
+    const sentence = stripSentenceMarkers(raw || '').trim();
+    if (!sentence) return;
+    const pb = getPlaybackState();
+    if (pb.text === sentence) {
+      if (pb.status === 'loading') return;                          // already starting this very sentence
+      if (pb.status === 'paused') { resumeCurrent(); return; }
+      // Mid-clip → pause; almost done → fall through and restart from the top.
+      if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
+    }
+    setIsAutoPlaying(false);
+    setIsSentenceAutoPlaying(false);
+    speakNatural(sentence, { allowDownload: true });
+  }, []);
+
+  // Cmd/Ctrl+1 / +2: read the displayed card's first / second example sentence (a phrase has one:
+  // its query). A second press on the same sentence pauses/resumes — unless it's almost finished, in
+  // which case it restarts from the top.
   const speakSentenceAt = useCallback((index: number) => {
     const item = currentItemRef.current;
     if (!item) return;
     const ex = isPhraseItem(item)
       ? [(item.data as SearchResult).query]
       : ((item.data as VocabCard).examples || []);
-    const sentence = stripSentenceMarkers((ex as string[])[index] || '').trim();
-    if (!sentence) return;
-
-    const pb = getPlaybackState();
-    if (pb.text === sentence) {
-      if (pb.status === 'loading') return;                          // already starting this very sentence
-      if (pb.status === 'paused') { resumeCurrent(); return; }
-      if (pb.status === 'playing') {
-        // Mid-clip → pause; almost done → fall through and restart from the top.
-        if (getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
-      }
-    }
-    setIsAutoPlaying(false);
-    setIsSentenceAutoPlaying(false);
-    speakNatural(sentence, { allowDownload: true });
-  }, []);
+    toggleSpeak((ex as string[])[index] || '');
+  }, [toggleSpeak]);
 
   // ── Sentence review mode: speak the saved sentence, or switch to another and speak it immediately ──
   // Shared by the swipe gestures and the arrow keys / trackpad wheel below.
