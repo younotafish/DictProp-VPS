@@ -23,7 +23,7 @@
  */
 import { speak as systemSpeak } from './speech';
 import { stripSentenceMarkers } from '../components/HighlightedSentence';
-import { ttsKey, fetchCachedTTS, requestTTSGeneration, TTS_VOICE } from './api';
+import { ttsKey, fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, TTS_VOICE, type WordTiming } from './api';
 import { log, warn } from './logger';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
@@ -343,6 +343,8 @@ export interface SpeakOptions {
   rate?: number;
   /** Allow triggering the one-time model download. true for deliberate clicks, false for auto/nav. */
   allowDownload?: boolean;
+  /** Start playback this many seconds into the clip (word-level seek). Cached-clip path only. */
+  startAt?: number;
   onStart?: () => void;
   onEnd?: () => void;
   onError?: (event: any) => void;
@@ -416,6 +418,23 @@ export const stopCurrent = (): void => {
 
 // Device-local cache of ready-to-play object URLs (cached MiMo clips, keyed by ttsKey hash) — replays are instant.
 const ttsUrlCache = new Map<string, string>();
+// Per-word timings for cached clips, keyed by the SAME ttsKey hash (parallel to ttsUrlCache).
+const ttsTimingsCache = new Map<string, WordTiming[]>();
+// Timings for whatever the shared <audio> element is currently playing — null on the in-browser /
+// system-voice fallbacks (which have no server timings). Powers word-level seek (see seekCurrent).
+let currentTimings: WordTiming[] | null = null;
+
+/** Word timings for the clip currently loaded in the audio element, or null when none are available. */
+export const getCurrentTimings = (): WordTiming[] | null => currentTimings;
+
+/** Seek the currently-playing clip to a time offset (seconds) and ensure it's playing. No-op if idle. */
+export const seekCurrent = (timeSec: number): void => {
+  const a = audioEl;
+  if (!a) return;
+  try { a.currentTime = Math.max(0, timeSec); } catch { /* ignore */ }
+  if (a.paused && !a.ended) { void a.play().catch(() => {}); }
+  if (playbackState.status === 'paused') setPlaybackState({ status: 'playing' });
+};
 
 // Play an object URL through the shared, iOS-unlocked <audio> element (cached MiMo + Kokoro both use this).
 const playUrl = async (
@@ -423,13 +442,18 @@ const playUrl = async (
   isCurrent: () => boolean,
   onStart?: () => void,
   onEnd?: () => void,
+  startAt?: number,
 ): Promise<void> => {
   const el = getAudioEl();
   el.onplaying = () => { if (isCurrent()) onStart?.(); };
   el.onended = () => { if (isCurrent()) onEnd?.(); };
   el.onerror = () => { if (isCurrent()) onEnd?.(); };
+  el.onloadedmetadata = null;
   el.src = url;
-  try { el.currentTime = 0; } catch { /* fresh src already starts at 0 */ }
+  const begin = startAt && startAt > 0 ? startAt : 0;
+  try { el.currentTime = begin; } catch { /* fresh src already starts at 0 */ }
+  // Some browsers ignore currentTime set before metadata loads — re-apply once it's ready.
+  if (begin > 0) el.onloadedmetadata = () => { try { el.currentTime = begin; } catch { /* ignore */ } };
   await el.play();
 };
 
@@ -468,9 +492,14 @@ export const prefetchTTS = (texts: string[]): void => {
     if (!plain) continue;
     (async () => {
       const key = await ttsKey(plain, TTS_VOICE);
-      if (ttsUrlCache.has(key)) return;
-      const blob = await fetchCachedTTS(key);
-      if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+      if (!ttsUrlCache.has(key)) {
+        const blob = await fetchCachedTTS(key);
+        if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+      }
+      if (!ttsTimingsCache.has(key)) {
+        const t = await fetchCachedTTSTimings(key);
+        if (t && t.length) ttsTimingsCache.set(key, t);
+      }
     })().catch(() => { /* best-effort */ });
   }
 };
@@ -494,15 +523,22 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
       if (blob) { if (!ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob)); return; }
       missing.push(plain);
     }));
-    if (!missing.length) return;
-
-    // Generate the missing clips server-side (one batch), then fetch them into the device cache.
-    await requestTTSGeneration(missing.map(text => ({ text })));
-    await Promise.all(missing.map(async (plain) => {
+    if (missing.length) {
+      // Generate the missing clips server-side (one batch), then fetch them into the device cache.
+      await requestTTSGeneration(missing.map(text => ({ text })));
+      await Promise.all(missing.map(async (plain) => {
+        const key = await ttsKey(plain, TTS_VOICE);
+        if (ttsUrlCache.has(key)) return;
+        const blob = await fetchCachedTTS(key);
+        if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+      }));
+    }
+    // Warm per-word timings for all of these so word-seek is ready on the first tap.
+    await Promise.all(plains.map(async (plain) => {
       const key = await ttsKey(plain, TTS_VOICE);
-      if (ttsUrlCache.has(key)) return;
-      const blob = await fetchCachedTTS(key);
-      if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+      if (ttsTimingsCache.has(key)) return;
+      const t = await fetchCachedTTSTimings(key);
+      if (t && t.length) ttsTimingsCache.set(key, t);
     }));
   } catch {
     /* best-effort — speakNatural still falls back at play time */
@@ -521,7 +557,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return { stop: () => {}, pause: () => {}, resume: () => {}, isPaused: () => false, isActive: () => false };
 
-  const { rate, onStart, onEnd, onError, allowDownload = true } = opts;
+  const { rate, startAt, onStart, onEnd, onError, allowDownload = true } = opts;
   const token = ++currentToken;
   const isCurrent = () => token === currentToken;
 
@@ -553,11 +589,20 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         }
       }
       if (url) {
-        await playUrl(url, isCurrent, markStart, markEnd);
+        // Resolve per-word timings for seek: device cache, else fetch from server (non-blocking).
+        currentTimings = ttsTimingsCache.get(key) ?? null;
+        if (!currentTimings) {
+          fetchCachedTTSTimings(key).then((t) => {
+            if (t && t.length) { ttsTimingsCache.set(key, t); if (isCurrent()) currentTimings = t; }
+            else { requestTTSGeneration([{ text: plain }]).catch(() => {}); } // legacy audio-only clip → backfill timings
+          }).catch(() => {});
+        }
+        await playUrl(url, isCurrent, markStart, markEnd, startAt);
         return;
       }
 
-      // 3) MISS — fill the cache for next time (fire-and-forget), then fall back now.
+      // 3) MISS — fill the cache for next time (fire-and-forget), then fall back now (no timings).
+      currentTimings = null;
       requestTTSGeneration([{ text: plain }]).catch(() => { /* best-effort */ });
       if (isIOS()) { systemFallback(); return; }
       await speakViaKokoro(plain, { onStart: markStart, onEnd: markEnd, allowDownload }, isCurrent, systemFallback);
@@ -585,6 +630,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
 export const speakWord = (text: string): SpeakHandle => {
   const plain = stripSentenceMarkers(text).trim();
   const token = ++currentToken;                       // supersede any active sentence handle
+  currentTimings = null;                              // a word read has no seekable sentence timings
   setPlaybackState({ text: null, status: 'idle' });   // a word isn't shown by any speaker button → clear them
   stopPlayback();
   systemSpeak(plain);

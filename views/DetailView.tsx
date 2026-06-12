@@ -11,7 +11,8 @@ import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural, speakWord, prefetchTTS, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getCurrentTimings, type SpeakHandle } from '../services/neuralTts';
+import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { log, warn } from '../services/logger';
 
 // Helper to format relative time for next review
@@ -861,6 +862,44 @@ export const DetailView: React.FC<DetailViewProps> = ({
     speakNatural(sentence, { allowDownload: true });
   }, []);
 
+  // Play the current sentence starting at a clicked/selected word (by its char offset in the stripped
+  // sentence). If this sentence's clip is already the active audio, seek it in place (seamless);
+  // otherwise (re)start the sentence and seek once it's playing. Falls back to whole-sentence playback
+  // when no word timings are available (legacy clip / in-browser / system voice).
+  const playFromWordOffset = useCallback((offset: number) => {
+    const s = currentSentenceRef.current;
+    if (!s) return;
+    const stripped = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
+    if (!stripped) return;
+    const pb = getPlaybackState();
+    if (pb.text === stripped && (pb.status === 'playing' || pb.status === 'paused')) {
+      const t = seekTimeForOffset(alignWordsToStripped(stripped, getCurrentTimings()), offset);
+      if (t != null) { seekCurrent(t); return; }
+    }
+    setIsAutoPlaying(false);
+    setIsSentenceAutoPlaying(false);
+    speakNatural(stripped, {
+      allowDownload: true,
+      onStart: () => {
+        const t = seekTimeForOffset(alignWordsToStripped(stripped, getCurrentTimings()), offset);
+        if (t != null && t > 0.05) seekCurrent(t);
+      },
+    });
+  }, []);
+
+  // Enter (sentence mode): play from the word the caret/selection sits in. No-op if not in a word, so
+  // it never hijacks Enter elsewhere. Words carry data-word-offset (see HighlightedSentence).
+  const handleEnterFromSelection = useCallback(() => {
+    if (!sentenceModeRef.current) return;
+    const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+    const node: Node | null = sel?.anchorNode ?? null;
+    let el: HTMLElement | null = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement | null);
+    while (el && !(el.hasAttribute && el.hasAttribute('data-word-offset'))) el = el.parentElement;
+    if (!el) return;
+    const off = Number(el.getAttribute('data-word-offset'));
+    if (Number.isFinite(off)) playFromWordOffset(off);
+  }, [playFromWordOffset]);
+
   const goToSentence = useCallback((nextIndex: number) => {
     const list = sentenceItemsRef.current ?? [];
     if (list.length === 0) return;
@@ -895,6 +934,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onArrowRight: navRight,
     onArrowUp: navUp,
     onArrowDown: navDown,
+    onEnter: handleEnterFromSelection,
     onSave: handleToggleSave,
     enabled: !showActionMenu,
   });
@@ -1256,9 +1296,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
               <p
                 className="flex-1 text-[15px] leading-relaxed text-slate-800 max-h-24 overflow-y-auto no-scrollbar cursor-pointer"
                 onClick={toggleSentencePlayback}
-                title="Tap to play / pause · resume (Space)"
+                title="Tap to play / pause · double-click a word to play from it (Enter on a selected word)"
               >
-                <HighlightedSentence text={currentSentenceText} itemWord={(currentSentence.data as SentenceData).sourceWord} onSearchWord={onSearch} />
+                <HighlightedSentence text={currentSentenceText} itemWord={(currentSentence.data as SentenceData).sourceWord} onSearchWord={onSearch} onPlayFromWord={playFromWordOffset} />
               </p>
               <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} className="mt-0.5 shrink-0" />
             </div>

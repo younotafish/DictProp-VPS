@@ -370,6 +370,9 @@ export const generateIllustration = async (
 // MiMo voice for the server-cached TTS. MUST match the server default (server/src/routes/tts.ts MIMO_VOICE).
 export const TTS_VOICE = 'Mia';
 
+/** One word's playback timing within a cached clip (from the server's whisper word-alignment pass). */
+export interface WordTiming { start: number; end: number; text: string }
+
 /**
  * Cache key for a clip — sha256(voice + "\n" + text.trim()), hex.
  * MUST match the server's ttsKey (server/src/routes/tts.ts).
@@ -386,6 +389,18 @@ export const fetchCachedTTS = async (key: string): Promise<Blob | null> => {
     const res = await fetch(`${API_BASE}/api/tts/${key}.mp3`);
     if (!res.ok) return null;
     return await res.blob();
+  } catch {
+    return null;
+  }
+};
+
+/** Fetch a clip's per-word timings by key. Returns the WordTiming[] or null on miss (404) / error. */
+export const fetchCachedTTSTimings = async (key: string): Promise<WordTiming[] | null> => {
+  try {
+    const res = await fetch(`${API_BASE}/api/tts/${key}/timings`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data) ? data : null;
   } catch {
     return null;
   }

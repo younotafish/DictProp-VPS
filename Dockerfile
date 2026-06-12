@@ -35,7 +35,9 @@ FROM node:22-alpine
 WORKDIR /app
 
 # ffmpeg: transcode MiMo's WAV output to MP3 for the TTS cache (smaller + universal playback)
-RUN apk add --no-cache ffmpeg
+# curl: used to POST audio to the whisper word-alignment endpoint (undici's proxy agent stalls on a
+#       large request body; curl is reliable and goes direct on the VPS where there's no proxy)
+RUN apk add --no-cache ffmpeg curl
 
 # Server production deps only (better-sqlite3 via prebuilt binary — fast, no compile).
 COPY server/package.json server/package-lock.json ./server/
