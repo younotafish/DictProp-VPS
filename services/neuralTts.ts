@@ -427,6 +427,18 @@ let currentTimings: WordTiming[] | null = null;
 /** Word timings for the clip currently loaded in the audio element, or null when none are available. */
 export const getCurrentTimings = (): WordTiming[] | null => currentTimings;
 
+/** Word timings for `text`, from the device cache or fetched from the server. Null if none exist. */
+export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> => {
+  const plain = stripSentenceMarkers(text).trim();
+  if (!plain) return null;
+  const key = await ttsKey(plain, TTS_VOICE);
+  const cached = ttsTimingsCache.get(key);
+  if (cached) return cached;
+  const t = await fetchCachedTTSTimings(key);
+  if (t && t.length) { ttsTimingsCache.set(key, t); return t; }
+  return null;
+};
+
 /** Seek the currently-playing clip to a time offset (seconds) and ensure it's playing. No-op if idle. */
 export const seekCurrent = (timeSec: number): void => {
   const a = audioEl;

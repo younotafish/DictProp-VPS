@@ -11,7 +11,7 @@ import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural, speakWord, prefetchTTS, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getCurrentTimings, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, type SpeakHandle } from '../services/neuralTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { log, warn } from '../services/logger';
 
@@ -415,6 +415,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const sentences = (card?.examples || []).filter(Boolean) as string[];
     if (sentences.length) prefetchTTS(sentences);
   }, [currentGroupIndex, currentItemIndex, type, data]);
+
+  // In sentence review, warm the CURRENT sentence's audio + word timings so a double-click / Enter seek
+  // is instant and reliable (otherwise the first interaction races the async timings fetch).
+  useEffect(() => {
+    if (sentenceMode && currentSentenceText) prefetchTTS([currentSentenceText]);
+  }, [sentenceMode, currentSentenceText]);
 
   // P key to pronounce current word
   // Moved to bottom to access handlers
@@ -866,25 +872,23 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // sentence). If this sentence's clip is already the active audio, seek it in place (seamless);
   // otherwise (re)start the sentence and seek once it's playing. Falls back to whole-sentence playback
   // when no word timings are available (legacy clip / in-browser / system voice).
-  const playFromWordOffset = useCallback((offset: number) => {
+  const playFromWordOffset = useCallback(async (offset: number) => {
     const s = currentSentenceRef.current;
     if (!s) return;
     const stripped = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
     if (!stripped) return;
+    // Resolve timings up-front (instant if warmed on mount, else a quick fetch) and compute the start
+    // time BEFORE playing — avoids the start-from-zero-then-late-seek race.
+    const timings = await getTimingsFor(stripped);
+    const startAt = timings ? seekTimeForOffset(alignWordsToStripped(stripped, timings), offset) : null;
     const pb = getPlaybackState();
-    if (pb.text === stripped && (pb.status === 'playing' || pb.status === 'paused')) {
-      const t = seekTimeForOffset(alignWordsToStripped(stripped, getCurrentTimings()), offset);
-      if (t != null) { seekCurrent(t); return; }
+    if (pb.text === stripped && (pb.status === 'playing' || pb.status === 'paused') && startAt != null) {
+      seekCurrent(startAt); // already this sentence's clip → seek in place (seamless)
+      return;
     }
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
-    speakNatural(stripped, {
-      allowDownload: true,
-      onStart: () => {
-        const t = seekTimeForOffset(alignWordsToStripped(stripped, getCurrentTimings()), offset);
-        if (t != null && t > 0.05) seekCurrent(t);
-      },
-    });
+    speakNatural(stripped, { allowDownload: true, startAt: startAt ?? undefined }); // (re)start AT the word
   }, []);
 
   // Enter (sentence mode): play from the word the caret/selection sits in. No-op if not in a word, so
