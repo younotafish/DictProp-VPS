@@ -157,18 +157,6 @@ async function alignTimings(audio: Buffer): Promise<WordTiming[]> {
   }
 }
 
-// TEMP DIAGNOSTIC (remove after verifying VPS): synth a fixed clip + run whisper alignment, report
-// word count or the error. Mounted UNGATED in index.ts so it can be curled without a session.
-export async function ttsSelfTest(): Promise<any> {
-  try {
-    const buf = await synthMiMo('The quick brown fox jumps over the lazy dog.', MIMO_VOICE);
-    const words = await alignTimings(buf);
-    return { ok: true, audioBytes: buf.length, wordCount: words.length, sample: words.slice(0, 12) };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-}
-
 // In-flight dedupe so concurrent requests for the same key generate only once.
 const inFlight = new Map<string, Promise<void>>();
 

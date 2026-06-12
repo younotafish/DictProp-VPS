@@ -12,7 +12,7 @@ import { authRoutes } from './routes/auth.js';
 import { itemsRoutes } from './routes/items.js';
 import { aiRoutes } from './routes/ai.js';
 import { imageRoutes } from './routes/images.js';
-import { ttsRoutes, ttsSelfTest } from './routes/tts.js';
+import { ttsRoutes } from './routes/tts.js';
 import { requireAuth, type AuthVariables } from './middleware/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,9 +34,6 @@ app.use('*', cors({
 
 // Auth routes (public — before auth middleware)
 app.route('/api/auth', authRoutes);
-
-// TEMP DIAGNOSTIC (public, remove after VPS verification): confirm the whisper word-alignment works.
-app.get('/api/tts/_selftest', async (c) => c.json(await ttsSelfTest()));
 
 // Auth middleware for all other /api/* routes (skips /api/health and /api/auth/*)
 app.use('/api/*', requireAuth);

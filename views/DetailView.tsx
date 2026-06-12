@@ -11,7 +11,7 @@ import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural, speakWord, prefetchTTS, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, type SpeakHandle } from '../services/neuralTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { log, warn } from '../services/logger';
 
@@ -417,9 +417,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, [currentGroupIndex, currentItemIndex, type, data]);
 
   // In sentence review, warm the CURRENT sentence's audio + word timings so a double-click / Enter seek
-  // is instant and reliable (otherwise the first interaction races the async timings fetch).
+  // is reliable. ensureTimings also kicks off background generation if this sentence has no timings yet
+  // (whisper cold-start is ~a minute) so they're ready by the time the user goes to seek.
   useEffect(() => {
-    if (sentenceMode && currentSentenceText) prefetchTTS([currentSentenceText]);
+    if (sentenceMode && currentSentenceText) {
+      prefetchTTS([currentSentenceText]);
+      ensureTimings(currentSentenceText);
+    }
   }, [sentenceMode, currentSentenceText]);
 
   // P key to pronounce current word

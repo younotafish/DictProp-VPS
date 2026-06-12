@@ -439,6 +439,15 @@ export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> 
   return null;
 };
 
+/** Ensure word timings exist for `text`: warm them if present, else kick off background generation
+ *  (whisper cold-start is ~a minute, so call this when a sentence is shown — not at click time). */
+export const ensureTimings = async (text: string): Promise<void> => {
+  const t = await getTimingsFor(text);
+  if (t) return;
+  const plain = stripSentenceMarkers(text).trim();
+  if (plain) requestTTSGeneration([{ text: plain }]).catch(() => { /* best-effort backfill */ });
+};
+
 /** Seek the currently-playing clip to a time offset (seconds) and ensure it's playing. No-op if idle. */
 export const seekCurrent = (timeSec: number): void => {
   const a = audioEl;
