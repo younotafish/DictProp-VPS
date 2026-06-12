@@ -12,7 +12,7 @@ import { authRoutes } from './routes/auth.js';
 import { itemsRoutes } from './routes/items.js';
 import { aiRoutes } from './routes/ai.js';
 import { imageRoutes } from './routes/images.js';
-import { ttsRoutes } from './routes/tts.js';
+import { ttsRoutes, runBackfill } from './routes/tts.js';
 import { requireAuth, type AuthVariables } from './middleware/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -79,3 +79,10 @@ setTimeout(() => {
     .then(() => console.log('[migrate] item_images pass complete'))
     .catch((e) => console.error('[migrate] item_images failed (will retry next boot):', e));
 }, 500);
+
+// Backfill TTS audio + word timings for every saved sentence in the BACKGROUND, server-side, so the
+// client never needs to stay open. Idempotent + resumable (skips clips that are already complete).
+// Delayed so boot + the image migration settle first; low concurrency keeps the 1-vCPU box responsive.
+setTimeout(() => {
+  runBackfill().catch((e) => console.error('[tts] startup backfill failed:', e?.message));
+}, 20_000);

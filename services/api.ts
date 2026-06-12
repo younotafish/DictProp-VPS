@@ -419,6 +419,22 @@ export const requestTTSGeneration = async (
   return res.json();
 };
 
+export interface TtsBackfillStatus { running: boolean; total: number; done: number; generated: number; failed: number }
+
+/** Start the server-side background backfill (audio + word timings for every sentence). Idempotent. */
+export const startTtsBackfill = async (): Promise<TtsBackfillStatus> => {
+  const res = await fetch(`${API_BASE}/api/tts/backfill`, { method: 'POST' });
+  if (!res.ok) throw new Error(`backfill start failed: ${res.status}`);
+  return res.json();
+};
+
+/** Poll the server-side backfill progress. */
+export const getTtsBackfillStatus = async (): Promise<TtsBackfillStatus> => {
+  const res = await fetch(`${API_BASE}/api/tts/backfill`);
+  if (!res.ok) throw new Error(`backfill status failed: ${res.status}`);
+  return res.json();
+};
+
 /** Of the given keys, which are already cached on the server (so the bulk sweep can skip them). */
 export const ttsManifest = async (keys: string[]): Promise<Set<string>> => {
   if (keys.length === 0) return new Set();

@@ -18,6 +18,7 @@ import { readFile, writeFile, access } from 'fs/promises';
 import { join, resolve } from 'path';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
+import { getAllSentenceTexts } from '../db.js';
 
 export const ttsRoutes = new Hono();
 
@@ -183,6 +184,64 @@ function generateAndStore(text: string, voice: string): Promise<void> {
   inFlight.set(key, job);
   return job;
 }
+
+// ── Background backfill ─────────────────────────────────────────────────────
+// Generates audio + word timings for EVERY saved sentence, server-side, detached from any request —
+// so the client never has to stay open. Idempotent (generateAndStore skips clips that already have
+// both files) and resumable (a restart just re-scans and skips what's done). Low concurrency since the
+// work is I/O-bound (DeepInfra + tiny file writes), so it doesn't starve normal request serving.
+const stripMarkers = (t: string): string =>
+  (t || '').replace(/\{\{(.+?)\}\}/g, '$1').replace(/\[\[(.+?)\]\]/g, '$1').trim();
+
+type BackfillStatus = { running: boolean; total: number; done: number; generated: number; failed: number; startedAt: number; finishedAt: number };
+let backfill: BackfillStatus = { running: false, total: 0, done: 0, generated: 0, failed: 0, startedAt: 0, finishedAt: 0 };
+export function getBackfillStatus(): BackfillStatus { return { ...backfill }; }
+
+const BACKFILL_CONCURRENCY = 2;
+export async function runBackfill(): Promise<void> {
+  if (backfill.running) return;
+  // Synchronous setup (runs before the first await, so a non-awaiting caller still sees `total`).
+  let texts: string[];
+  try {
+    texts = Array.from(new Set(getAllSentenceTexts().map(stripMarkers).filter(Boolean)));
+  } catch (e: any) {
+    console.warn('[tts] backfill: failed to read items:', e?.message);
+    return;
+  }
+  backfill = { running: true, total: texts.length, done: 0, generated: 0, failed: 0, startedAt: Date.now(), finishedAt: 0 };
+  console.log(`[tts] backfill: starting for ${texts.length} sentences`);
+  let idx = 0;
+  const worker = async () => {
+    while (idx < texts.length) {
+      const text = texts[idx++];
+      try {
+        const key = ttsKey(text, MIMO_VOICE);
+        if (await fileExists(pathForKey(key)) && await fileExists(timingsPathForKey(key))) {
+          // already complete — skip
+        } else {
+          await generateAndStore(text, MIMO_VOICE);
+          backfill.generated++;
+        }
+      } catch (e: any) {
+        backfill.failed++;
+        console.warn('[tts] backfill item failed:', e?.message);
+      }
+      backfill.done++;
+    }
+  };
+  await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => worker()));
+  backfill.running = false;
+  backfill.finishedAt = Date.now();
+  console.log(`[tts] backfill done: generated=${backfill.generated} skipped=${backfill.total - backfill.generated - backfill.failed} failed=${backfill.failed}`);
+}
+
+// POST /api/tts/backfill — start the background backfill (no-op if already running); returns status.
+// GET  /api/tts/backfill — current progress. Registered BEFORE /tts/:name so "backfill" isn't read as a key.
+ttsRoutes.post('/tts/backfill', (c) => {
+  runBackfill().catch((e) => console.warn('[tts] backfill error:', e?.message));
+  return c.json(getBackfillStatus());
+});
+ttsRoutes.get('/tts/backfill', (c) => c.json(getBackfillStatus()));
 
 // GET /api/tts/:name  (name = "<64-hex-key>.mp3") — serve the cached clip or 404. Never generates.
 ttsRoutes.get('/tts/:name', async (c) => {

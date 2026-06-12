@@ -336,6 +336,25 @@ export function getAllItems(stripImages = false, userId: string) {
   return items;
 }
 
+// All distinct speakable sentence texts across ALL users' non-deleted items (vocab examples, phrase
+// vocab examples, saved sentence text). Used by the TTS backfill (the audio cache is global by
+// voice+text, so it's not user-scoped). Streams rows to keep memory low. Texts keep their {{}}/[[]]
+// markers — the caller strips them to match the client's cache key.
+export function getAllSentenceTexts(): string[] {
+  const texts = new Set<string>();
+  const add = (t: any) => { if (typeof t === 'string' && t.trim()) texts.add(t.trim()); };
+  const stmt = db.prepare(`SELECT data FROM items WHERE is_deleted IS NOT 1`);
+  for (const row of stmt.iterate() as Iterable<{ data: string }>) {
+    let d: any;
+    try { d = JSON.parse(row.data); } catch { continue; }
+    if (!d) continue;
+    if (Array.isArray(d.examples)) d.examples.forEach(add);                                  // vocab card
+    if (Array.isArray(d.vocabs)) for (const v of d.vocabs) if (Array.isArray(v?.examples)) v.examples.forEach(add); // phrase
+    if (typeof d.text === 'string') add(d.text);                                             // saved sentence
+  }
+  return [...texts];
+}
+
 export function getItemsSince(since: number, stripImages = false, userId: string) {
   const imageIds = stripImages ? getImageIdSet(userId) : undefined;
   const items: any[] = [];

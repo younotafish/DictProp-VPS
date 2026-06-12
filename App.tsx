@@ -8,7 +8,7 @@ import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, ge
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, ttsKey, requestTTSGeneration, ttsManifest, TTS_VOICE } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus } from './services/api';
 import { stripSentenceMarkers } from './components/HighlightedSentence';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -1433,61 +1433,36 @@ const App: React.FC = () => {
     });
   }, [activeItems, executeBulkRefresh]);
 
-  // ── "Generate sentence speech" sweep ──────────────────────────────────────
-  // Pre-generates MiMo audio for example/saved sentences and caches it on the server, so all devices
-  // (esp. iPhone/iPad) play sentences instantly. Words use the system voice, so they're NOT generated.
-  // Skips already-cached clips; resumable (fills only what's missing). Scope is ALL items, or just
-  // `itemIds` when given (the post-batch-import sweep). `silent` suppresses the modals for background
-  // runs — the progress bar (with its abort button) still shows.
-  const TTS_GEN_CONCURRENCY = 4;
-  const runSpeechGeneration = useCallback(async (itemIds?: string[], opts?: { silent?: boolean }) => {
-    const all = latestItemsRef.current;
-    const scoped = itemIds ? all.filter(it => itemIds.includes(it.data.id)) : all;
-    const texts = new Set<string>();
-    const add = (t?: string) => { const s = stripSentenceMarkers(t || '').trim(); if (s) texts.add(s); };
-    for (const it of scoped) {
-      if (it.isDeleted) continue;
-      if (isVocabItem(it)) { (it.data.examples || []).forEach(add); }
-      else if (isPhraseItem(it)) { (it.data.vocabs || []).forEach(v => { (v.examples || []).forEach(add); }); }
-      else if (isSentenceItem(it)) { add((it.data as SentenceData).text); }
-    }
-    const list = [...texts];
-    if (list.length === 0) {
-      if (!opts?.silent) setConfirmModal({ isOpen: true, title: 'Nothing to Generate', message: 'No example sentences found.', confirmText: 'OK', variant: 'info', onConfirm: () => setConfirmModal(null), showCancel: false });
+  // ── "Generate sentence speech" — server-side background backfill ───────────
+  // Triggers the server to generate MiMo audio + whisper word-timings for EVERY saved sentence,
+  // entirely on the box (idempotent + resumable) — the app does NOT need to stay open. Foreground
+  // calls poll progress into the bar; `silent` (post-batch-import) just fires it. `itemIds` is ignored
+  // now (the server backfills everything; idempotent so it costs nothing for already-done clips).
+  const runSpeechGeneration = useCallback(async (_itemIds?: string[], opts?: { silent?: boolean }) => {
+    let status;
+    try {
+      status = await startTtsBackfill();
+    } catch {
+      if (!opts?.silent) setConfirmModal({ isOpen: true, title: "Couldn't Start", message: 'Failed to reach the server to start generation.', confirmText: 'OK', variant: 'warning', onConfirm: () => setConfirmModal(null), showCancel: false });
       return;
     }
+    if (opts?.silent) return; // background trigger — the server handles it; no UI, app can close.
 
-    setTtsGenProgress({ current: 0, total: list.length, isRunning: true });
+    // Foreground: poll the server job's progress. Closing the app does NOT stop the server.
     ttsGenAbortRef.current = false;
-
-    // Skip clips already cached on the server.
-    const keys = await Promise.all(list.map(t => ttsKey(t, TTS_VOICE)));
-    const cached = new Set<string>();
-    for (let i = 0; i < keys.length; i += 200) {
-      const have = await ttsManifest(keys.slice(i, i + 200));
-      have.forEach(k => cached.add(k));
+    setTtsGenProgress({ current: status.done, total: status.total, isRunning: true });
+    let last = status;
+    while (!ttsGenAbortRef.current) {
+      await new Promise(r => setTimeout(r, 3000));
+      try { last = await getTtsBackfillStatus(); } catch { break; }
+      setTtsGenProgress({ current: last.done, total: last.total, isRunning: !!last.running });
+      if (!last.running) break;
     }
-    const pending = list.filter((_, i) => !cached.has(keys[i]));
-    const alreadyCached = list.length - pending.length;
-    let done = alreadyCached;
-    setTtsGenProgress({ current: done, total: list.length, isRunning: true });
-
-    let idx = 0;
-    const worker = async () => {
-      while (idx < pending.length && !ttsGenAbortRef.current) {
-        const text = pending[idx++];
-        try { await requestTTSGeneration([{ text }]); } catch { /* best-effort, still counts as processed */ }
-        done++;
-        setTtsGenProgress({ current: done, total: list.length, isRunning: true });
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(TTS_GEN_CONCURRENCY, pending.length) }, () => worker()));
-
     setTtsGenProgress(null);
-    if (!opts?.silent) setConfirmModal({
+    if (!ttsGenAbortRef.current) setConfirmModal({
       isOpen: true,
       title: 'Speech Generated',
-      message: `${pending.length} new clip${pending.length === 1 ? '' : 's'} generated\n${alreadyCached} already cached`,
+      message: `${last.generated} generated · ${Math.max(0, last.total - last.generated - last.failed)} already cached${last.failed ? `\n${last.failed} failed` : ''}`,
       confirmText: 'OK', variant: 'success', onConfirm: () => setConfirmModal(null), showCancel: false,
     });
   }, []);
