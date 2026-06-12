@@ -119,30 +119,24 @@ export const HighlightedSentence: React.FC<HighlightedSentenceProps> = ({
       );
       strippedOffset += inner.length;
     } else {
-      // Uncommon term — clickable lookup (single-click); play-from here is keyboard-only.
+      // Uncommon term — single-click is a lookup ONLY when onSearchWord is given (e.g. word cards).
+      // In the sentence review (onPlayFromWord set, NO onSearchWord) it isn't a lookup: the click falls
+      // through to the sentence's play/pause, and double-click plays from the word like any other.
       const term = m[2];
+      const off = strippedOffset;
       nodes.push(
-        onSearchWord ? (
-          <span
-            key={`l${n}`}
-            role="button"
-            tabIndex={0}
-            data-word-offset={tokenize ? strippedOffset : undefined}
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSearchWord(term); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                e.stopPropagation();
-                onSearchWord(term);
-              }
-            }}
-            className={LINK_CLASS}
-          >
-            {term}
-          </span>
-        ) : (
-          <span key={`l${n}`} className={LINK_CLASS} data-word-offset={tokenize ? strippedOffset : undefined}>{term}</span>
-        ),
+        <span
+          key={`l${n}`}
+          className={LINK_CLASS}
+          data-word-offset={tokenize ? off : undefined}
+          role={onSearchWord ? 'button' : undefined}
+          tabIndex={onSearchWord ? 0 : undefined}
+          onClick={onSearchWord ? (e) => { e.preventDefault(); e.stopPropagation(); onSearchWord(term); } : undefined}
+          onKeyDown={onSearchWord ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSearchWord(term); } } : undefined}
+          onDoubleClick={tokenize ? (e) => { e.preventDefault(); onPlayFromWord!(off); } : undefined}
+        >
+          {term}
+        </span>,
       );
       strippedOffset += term.length;
     }

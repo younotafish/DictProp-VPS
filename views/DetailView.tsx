@@ -109,6 +109,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
+  const [cardCollapsed, setCardCollapsed] = useState(true); // sentence review: word card collapsed → the sentence is the full-page focus
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
   const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
   const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(10);
@@ -1276,8 +1277,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {/* Sentence-mode banner — the saved sentence's "card header": back, the sentence + natural-voice
           speaker, position, and the complete memorization/statistics row. Sits above the scroll area. */}
       {sentenceMode && currentSentence && (
-        <div className="shrink-0 bg-white border-b border-slate-200 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 shadow-sm">
-          <div className="max-w-3xl mx-auto">
+        <div
+          className={`bg-white border-b border-slate-200 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 shadow-sm ${cardCollapsed ? 'flex-1 flex flex-col min-h-0' : 'shrink-0'}`}
+          onTouchStart={onContentTouchStart}
+          onTouchEnd={onContentTouchEnd}
+        >
+          <div className={`max-w-3xl mx-auto w-full ${cardCollapsed ? 'flex-1 flex flex-col min-h-0' : ''}`}>
             {/* Row 1: back + position */}
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <button
@@ -1299,16 +1304,33 @@ export const DetailView: React.FC<DetailViewProps> = ({
               </div>
             </div>
 
-            {/* Row 2: the saved sentence + natural-voice speaker */}
-            <div className="flex items-start gap-1.5">
-              <p
-                className="flex-1 text-[15px] leading-relaxed text-slate-800 max-h-24 overflow-y-auto no-scrollbar cursor-pointer"
-                onClick={toggleSentencePlayback}
-                title="Tap to play / pause · double-click a word to play from it (Enter on a selected word)"
+            {/* Row 2: the sentence — the hero. Fills + vertically centers the page when the card is
+                collapsed; compact when the card is expanded. */}
+            <div className={cardCollapsed ? 'flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col' : 'py-3'}>
+              <div className={cardCollapsed ? 'my-auto w-full py-4' : ''}>
+                <p
+                  className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
+                  onClick={toggleSentencePlayback}
+                  title="Tap to play / pause · double-click a word to play from it (Enter on a selected word)"
+                >
+                  <HighlightedSentence text={currentSentenceText} itemWord={(currentSentence.data as SentenceData).sourceWord} onPlayFromWord={playFromWordOffset} />
+                </p>
+                <div className="mt-5 flex justify-center">
+                  <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
+                </div>
+              </div>
+            </div>
+
+            {/* Toggle the supporting word card below */}
+            <div className="shrink-0 flex justify-center mt-1">
+              <button
+                onClick={() => setCardCollapsed((v) => !v)}
+                className="flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-indigo-600 px-2.5 py-1 rounded-lg hover:bg-slate-100 transition-colors"
+                title={cardCollapsed ? 'Show word card' : 'Hide word card'}
               >
-                <HighlightedSentence text={currentSentenceText} itemWord={(currentSentence.data as SentenceData).sourceWord} onSearchWord={onSearch} onPlayFromWord={playFromWordOffset} />
-              </p>
-              <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} className="mt-0.5 shrink-0" />
+                {cardCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                {cardCollapsed ? 'Word card' : 'Hide card'}
+              </button>
             </div>
 
             {/* Row 3: memorization stats + actions */}
@@ -1346,6 +1368,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
           </div>
         </div>
       )}
+      {/* Word card — the supporting source-word detail. Hidden in sentence review when collapsed
+          (so the sentence owns the page); always shown in regular card mode. */}
+      {(!sentenceMode || !cardCollapsed) && (
       <div
         ref={scrollContainerRef}
         className={`flex-1 overflow-y-auto no-scrollbar transition-opacity duration-300 ${isAnimating ? 'opacity-50' : 'opacity-100'}`}
@@ -1681,6 +1706,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* Auto-play control */}
       <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2">
