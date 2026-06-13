@@ -316,12 +316,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
       return;
     }
 
-    // ── Eyes-free zone tap (word-card / phrase view): a still one-finger tap on blank space reads by
-    // SCREEN HALF. Word card → top half = 1st example sentence, bottom half = 2nd. Phrase → top half =
-    // the phrase itself, bottom half = its first Key Vocabulary example (matching the on-screen layout:
-    // phrase up top, vocab examples below). The target is a whole screen half (not a small,
-    // position-shifting icon), so it works on an iPad without looking. Clickable words, buttons and
-    // links are excluded so normal tapping still works; tapping the same half again pauses/resumes. ──
+    // ── Eyes-free zone tap (word-card / phrase view): a still one-finger tap on blank space reads by a
+    // fixed SCREEN ZONE confined to the TOP HALF — top quarter = 1st example sentence, second quarter =
+    // 2nd; the bottom half is left as empty/safe space (a tap there does nothing). Phrase → top quarter
+    // = the phrase itself, second quarter = its first Key Vocabulary example (matching the on-screen
+    // layout: phrase up top, vocab examples below). The zones are whole, fixed bands anchored to the top
+    // edge (not small, position-shifting icons), so they work on an iPad without looking. Clickable
+    // words, buttons and links are excluded so normal tapping still works; tapping the same zone again
+    // pauses/resumes. ──
     const TAP_MOVE_MAX = 10; // px — finger essentially didn't move → it's a tap, not a swipe/scroll
     if (absX <= TAP_MOVE_MAX && absY <= TAP_MOVE_MAX) {
       const tapTarget = e.target as HTMLElement | null;
@@ -329,18 +331,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
         'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]'
       );
       if (!onControl) {
-        const topHalf = e.changedTouches[0].clientY < window.innerHeight / 2;
-        if (currentItem && isPhraseItem(currentItem)) {
-          const phrase = currentItem.data as SearchResult;
-          const firstVocabExample = (phrase.vocabs || [])
-            .flatMap(v => v.examples || [])
-            .map(s => stripSentenceMarkers(s || '').trim())
-            .find(Boolean);
-          toggleSpeak(topHalf ? phrase.query : (firstVocabExample || phrase.query));
-        } else {
-          const count = examplesOf(currentItem).length;
-          if (count > 0) {
-            speakSentenceAt(Math.min(topHalf ? 0 : 1, count - 1)); // single example → either half reads it
+        // Two stacked bands in the top half; the bottom half (zone -1) is inert empty space.
+        const y = e.changedTouches[0].clientY;
+        const zone = y < window.innerHeight / 4 ? 0 : y < window.innerHeight / 2 ? 1 : -1;
+        if (zone >= 0) {
+          if (currentItem && isPhraseItem(currentItem)) {
+            const phrase = currentItem.data as SearchResult;
+            const firstVocabExample = (phrase.vocabs || [])
+              .flatMap(v => v.examples || [])
+              .map(s => stripSentenceMarkers(s || '').trim())
+              .find(Boolean);
+            toggleSpeak(zone === 0 ? phrase.query : (firstVocabExample || phrase.query));
+          } else {
+            const count = examplesOf(currentItem).length;
+            if (count > 0) {
+              speakSentenceAt(Math.min(zone, count - 1)); // single example → either zone reads it
+            }
           }
         }
       }
