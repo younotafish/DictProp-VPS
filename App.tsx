@@ -2707,7 +2707,14 @@ const App: React.FC = () => {
               groups={detailContext.groups}
               initialGroupIndex={detailContext.groupIndex}
               initialItemIndex={detailContext.itemIndex}
-              sentenceItems={detailContext.sentenceItems}
+              sentenceItems={detailContext.sentenceItems?.map(s => {
+                // Refresh each snapshot sentence with its LIVE saved copy (fresh SRS) so remembering
+                // actually shows/records progress. detailContext.sentenceItems is frozen at open time and
+                // never sees updateSRS bumps; sentences also aren't in activeItems (no project), so the
+                // live source is the project-independent `sentenceItems` memo. Order preserved; a
+                // since-deleted sentence falls back to its snapshot (deletion is handled separately).
+                return sentenceItems.find(li => li.data.id === s.data.id) ?? s;
+              })}
               onClose={() => setDetailContext(null)}
               onSave={handleSave}
               onDelete={handleDelete}
