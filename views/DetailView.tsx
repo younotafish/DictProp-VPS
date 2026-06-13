@@ -250,7 +250,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
-  
+  // Sentence-mode eyes-free taps: last tap (time + position) so a quick second tap reads as a double-tap.
+  const lastSentenceTapRef = useRef<{ t: number; x: number; y: number } | null>(null);
+  // Guard so a remember can't fire twice from one gesture (touch double-tap + a synthesized dblclick).
+  const rememberingRef = useRef(false);
+
   const onContentTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
@@ -298,9 +302,37 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // Horizontal Swipe (Meanings) - more sensitive threshold
     const isHorizontalSwipe = absX > absY * 1.5 && absX > horizontalSwipeMin;
 
-    // ── Sentence review mode: ←/→ speak the saved sentence; ↑/↓ switch sentence + speak it ──
+    // Tap detection (shared by sentence + word/phrase eyes-free zones). A "still" tap is a finger that
+    // essentially didn't move; controls keep their own handlers so normal tapping still works.
+    const TAP_MOVE_MAX = 10;     // px — finger essentially didn't move → it's a tap, not a swipe/scroll
+    const DOUBLE_TAP_MS = 320;   // two still taps within this long (and near each other) → a double-tap
+    const DOUBLE_TAP_SLOP = 40;  // px — max gap between the two taps to still count as a double-tap
+    const isStillTap = absX <= TAP_MOVE_MAX && absY <= TAP_MOVE_MAX;
+    const tapTarget = e.target as HTMLElement | null;
+    const onControl = !!tapTarget?.closest(
+      'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]'
+    );
+
+    // ── Sentence review mode (eyes-free, mirrors the word card): a still one-finger tap on blank space
+    // toggles natural-voice playback — play → pause → resume; a double-tap marks the sentence remembered
+    // (same as the item-review double-click). The sentence text keeps its own onClick handler, so we act
+    // on the blank area only; ↑/↓ swipes still switch sentences. ──
     if (sentenceMode) {
-      if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
+      if (isStillTap && !onControl && !tapTarget?.closest('[data-sentence-hero]')) {
+        const x = e.changedTouches[0].clientX;
+        const y = e.changedTouches[0].clientY;
+        const prev = lastSentenceTapRef.current;
+        const isDoubleTap = !!prev && (Date.now() - prev.t) < DOUBLE_TAP_MS
+          && Math.abs(x - prev.x) < DOUBLE_TAP_SLOP && Math.abs(y - prev.y) < DOUBLE_TAP_SLOP;
+        if (isDoubleTap) {
+          lastSentenceTapRef.current = null;
+          stopCurrent();        // drop the audio the first tap started — we're moving on
+          handleRemember();     // mark remembered → success overlay → auto-advance
+        } else {
+          lastSentenceTapRef.current = { t: Date.now(), x, y };
+          toggleSentencePlayback();
+        }
+      } else if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
         setShowHeader(true);                                    // keep short-swipe-down → reveal header
       } else if (isVerticalSwipe && isLongSwipe) {
         if (diffY < -longSwipeMin && (isAtBottom || scrollHeight <= clientHeight)) {
@@ -308,8 +340,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
         } else if (diffY > longSwipeMin && isAtTop) {
           goToSentence(currentGroupIndexRef.current - 1);      // swipe down → previous sentence
         }
-      } else if (isHorizontalSwipe) {
-        speakCurrentSentence();                                 // swipe ←/→ → speak current sentence
       }
       touchStartX.current = null;
       touchStartY.current = null;
@@ -324,12 +354,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // edge (not small, position-shifting icons), so they work on an iPad without looking. Clickable
     // words, buttons and links are excluded so normal tapping still works; tapping the same zone again
     // pauses/resumes. ──
-    const TAP_MOVE_MAX = 10; // px — finger essentially didn't move → it's a tap, not a swipe/scroll
-    if (absX <= TAP_MOVE_MAX && absY <= TAP_MOVE_MAX) {
-      const tapTarget = e.target as HTMLElement | null;
-      const onControl = !!tapTarget?.closest(
-        'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]'
-      );
+    if (isStillTap) {
       if (!onControl) {
         // Two stacked bands in the top half; the bottom half (zone -1) is inert empty space.
         const y = e.changedTouches[0].clientY;
@@ -1111,6 +1136,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, [data, title, type, onSave]);
 
   const handleRemember = useCallback(() => {
+    // Ignore re-entry while a remember is mid-animation — a touch double-tap and the synthesized
+    // dblclick can both land, and we must not advance/score the same sentence twice.
+    if (rememberingRef.current) return;
+    rememberingRef.current = true;
     // Sentence mode: remember THIS sentence (its own SRS), show the success overlay, then auto-advance.
     if (sentenceModeRef.current && currentSentenceRef.current) {
       const s = currentSentenceRef.current;
@@ -1127,6 +1156,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setTimeout(() => {
         setShowSuccessAnim(false);
         setRememberInfo(null);
+        rememberingRef.current = false;
         // Auto-advance to the next saved sentence; close back to the tab when this was the last.
         const len = sentenceItemsRef.current?.length ?? 0;
         const cur = currentGroupIndexRef.current;
@@ -1186,7 +1216,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
     } else {
       // Create new item and immediately mark as remembered
-      if (!data.id) return;
+      if (!data.id) { rememberingRef.current = false; return; }
 
       let newSRS = SRSAlgorithm.createNew(data.id, type);
       newSRS = SRSAlgorithm.updateAfterRemember(newSRS);
@@ -1205,6 +1235,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     setTimeout(() => {
       setShowSuccessAnim(false);
       setRememberInfo(null);
+      rememberingRef.current = false;
     }, 1500);
   }, [data, type, onSave, onUpdateSRS, title, onClose]);
 
@@ -1353,9 +1384,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
             <div className={cardCollapsed ? 'flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col' : 'py-3'}>
               <div className={cardCollapsed ? 'my-auto w-full py-4' : ''}>
                 <p
+                  data-sentence-hero
                   className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
                   onClick={toggleSentencePlayback}
-                  title="Tap to play / pause · double-click a word to play from it (Enter on a selected word)"
+                  title="Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember"
                 >
                   <HighlightedSentence text={currentSentenceText} itemWord={(currentSentence.data as SentenceData).sourceWord} onPlayFromWord={playFromWordOffset} />
                 </p>

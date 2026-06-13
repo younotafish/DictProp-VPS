@@ -10,7 +10,7 @@ import React from 'react';
  *                        Emphasis (color B) AND clickable → triggers a lookup search.
  *
  * Everything else is plain, selectable text. When `onPlayFromWord` is provided (sentence review),
- * every word becomes individually addressable: double-click a word to play from it, and each word
+ * every word becomes individually addressable: tap/click a word to play from it, and each word
  * carries a `data-word-offset` (its position in the marker-STRIPPED sentence) so a keyboard shortcut
  * can resolve the selected/caret word. As a fallback for legacy cards/sentences (saved before the
  * {{...}} marker existed), any literal occurrence of the full `itemWord` in a plain run is also
@@ -34,7 +34,7 @@ interface HighlightedSentenceProps {
   itemWord?: string;
   /** When provided, [[uncommon]] segments become clickable and call this to look the term up. */
   onSearchWord?: (term: string) => void;
-  /** When provided, words become double-clickable + carry data-word-offset, calling this with the
+  /** When provided, words become click/tap-to-play + carry data-word-offset, calling this with the
    *  clicked word's character offset in the STRIPPED sentence (for word-level playback seek). */
   onPlayFromWord?: (offset: number) => void;
 }
@@ -78,7 +78,7 @@ export const HighlightedSentence: React.FC<HighlightedSentenceProps> = ({
           <span
             key={`${key}-${k}`}
             data-word-offset={off}
-            onDoubleClick={(e) => { e.preventDefault(); onPlayFromWord!(off); }}
+            onClick={(e) => { e.stopPropagation(); if (window.getSelection()?.toString().trim()) return; onPlayFromWord!(off); }}
             className={wordLower && part.toLowerCase() === wordLower ? ITEM_CLASS : undefined}
           >
             {part}
@@ -112,7 +112,7 @@ export const HighlightedSentence: React.FC<HighlightedSentenceProps> = ({
           key={`i${n}`}
           className={ITEM_CLASS}
           data-word-offset={tokenize ? off : undefined}
-          onDoubleClick={tokenize ? (e) => { e.preventDefault(); onPlayFromWord!(off); } : undefined}
+          onClick={tokenize ? (e) => { e.stopPropagation(); if (window.getSelection()?.toString().trim()) return; onPlayFromWord!(off); } : undefined}
         >
           {inner}
         </span>,
@@ -120,8 +120,8 @@ export const HighlightedSentence: React.FC<HighlightedSentenceProps> = ({
       strippedOffset += inner.length;
     } else {
       // Uncommon term — single-click is a lookup ONLY when onSearchWord is given (e.g. word cards).
-      // In the sentence review (onPlayFromWord set, NO onSearchWord) it isn't a lookup: the click falls
-      // through to the sentence's play/pause, and double-click plays from the word like any other.
+      // In the sentence review (onPlayFromWord set, NO onSearchWord) it isn't a lookup: a single tap
+      // plays from this word, like any other word.
       const term = m[2];
       const off = strippedOffset;
       nodes.push(
@@ -131,9 +131,14 @@ export const HighlightedSentence: React.FC<HighlightedSentenceProps> = ({
           data-word-offset={tokenize ? off : undefined}
           role={onSearchWord ? 'button' : undefined}
           tabIndex={onSearchWord ? 0 : undefined}
-          onClick={onSearchWord ? (e) => { e.preventDefault(); e.stopPropagation(); onSearchWord(term); } : undefined}
+          onClick={
+            onSearchWord
+              ? (e) => { e.preventDefault(); e.stopPropagation(); onSearchWord(term); }
+              : tokenize
+              ? (e) => { e.stopPropagation(); if (window.getSelection()?.toString().trim()) return; onPlayFromWord!(off); }
+              : undefined
+          }
           onKeyDown={onSearchWord ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSearchWord(term); } } : undefined}
-          onDoubleClick={tokenize ? (e) => { e.preventDefault(); onPlayFromWord!(off); } : undefined}
         >
           {term}
         </span>,
