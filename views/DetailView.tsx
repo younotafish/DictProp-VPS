@@ -1142,7 +1142,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // dblclick can both land, and we must not advance/score the same sentence twice.
     if (rememberingRef.current) return;
     rememberingRef.current = true;
-    // Sentence mode: remember THIS sentence (its own SRS), show the success overlay, then auto-advance.
+    // Sentence mode: remember THIS sentence (its own SRS) and show the success overlay. The card STAYS
+    // put afterwards — same as word-item review — so you can keep looking at it; switch sentences manually
+    // (swipe ↑/↓, arrow keys, or the next-sentence gesture) when you're ready. The live SRS refresh means
+    // the banner now reflects the bumped step/next-review in place.
     if (sentenceModeRef.current && currentSentenceRef.current) {
       const s = currentSentenceRef.current;
       const baseSRS = SRSAlgorithm.ensure(s.srs, s.data.id, 'sentence');
@@ -1159,13 +1162,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
         setShowSuccessAnim(false);
         setRememberInfo(null);
         rememberingRef.current = false;
-        // Auto-advance to the next saved sentence; close back to the tab when this was the last.
-        const len = sentenceItemsRef.current?.length ?? 0;
-        const cur = currentGroupIndexRef.current;
-        if (cur + 1 >= len) { onClose(); return; }
-        setCurrentGroupIndex(cur + 1);
-        setCurrentItemIndex(0);
-        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       }, 1500);
       return;
     }
