@@ -29,11 +29,14 @@ interface Props {
   onLazyLoadImage?: (itemId: string) => Promise<string | null>;
   /** Replace an already-saved word's card(s) with a freshly re-run AI result (refresh). Keeps SRS. */
   onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
+  /** Save an example sentence for review (shows the bookmark beside each USAGE megaphone). */
+  onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  isSentenceSaved?: (text: string) => boolean;
 }
 
 let queueIdCounter = 0;
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -420,6 +423,31 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     });
   }, [mode, readyItems, viewingQueueIdx, finalizeResult]);
 
+  // Eyes-free zone read: a click/tap in the card's top quarter plays the 1st example sentence, the
+  // second quarter the 2nd; the bottom half is inert. Zones are measured against the card element so they
+  // match the card the user sees. Mirrors the DetailView word-card zones and routes through the shared
+  // playback so a second tap on the same zone pauses/resumes. One onClick path covers desktop clicks AND
+  // mobile taps (synthesized click); controls inside the card stopPropagation, and the guard skips the rest.
+  const handleCardZoneRead = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    if (window.getSelection()?.toString().trim()) return; // don't hijack a text selection
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return; // a control
+    const examples = (viewingVocab?.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean);
+    if (!examples.length) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rel = e.clientY - rect.top;
+    const zone = rel < rect.height / 4 ? 0 : rel < rect.height / 2 ? 1 : -1; // top ¼ → 1st, 2nd ¼ → 2nd
+    if (zone < 0) return;
+    const sentence = examples[Math.min(zone, examples.length - 1)];
+    const pb = getPlaybackState();
+    if (pb.text === sentence) {
+      if (pb.status === 'loading') return;                                          // already starting this one
+      if (pb.status === 'paused') { resumeCurrent(); return; }
+      if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; } // mid-clip → pause
+    }
+    speakNatural(sentence, { allowDownload: true });
+  }, [viewingVocab]);
+
   return (
     <>
       {/* Save toast */}
@@ -586,7 +614,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                     </button>
                   )}
 
-                  <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+                  <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} onClick={handleCardZoneRead}>
                     <VocabCardDisplay
                       data={viewingVocab}
                       isSaved={isVocabSaved(viewingVocab)}
@@ -596,6 +624,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       onRefresh={handleRefreshCard}
                       scrollable={false}
                       onLazyLoadImage={onLazyLoadImage}
+                      onSaveSentence={onSaveSentence}
+                      isSentenceSaved={isSentenceSaved}
                       className="!h-auto !overflow-visible border-indigo-200 shadow-sm bg-white"
                     />
                   </div>

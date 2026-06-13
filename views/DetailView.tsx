@@ -318,7 +318,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // (same as the item-review double-click). The sentence text keeps its own onClick handler, so we act
     // on the blank area only; ↑/↓ swipes still switch sentences. ──
     if (sentenceMode) {
-      if (isStillTap && !onControl && !tapTarget?.closest('[data-sentence-hero]')) {
+      // A still tap inside the expanded word card is handled by its onClick (eyes-free zone read),
+      // so the sentence play/pause/remember below ignores it — avoids a touch + synthesized-click double-fire.
+      if (isStillTap && !onControl && !tapTarget?.closest('[data-sentence-hero]') && !tapTarget?.closest('[data-word-card-scroll]')) {
         const x = e.changedTouches[0].clientX;
         const y = e.changedTouches[0].clientY;
         const prev = lastSentenceTapRef.current;
@@ -1250,6 +1252,26 @@ export const DetailView: React.FC<DetailViewProps> = ({
     handleRemember();
   };
 
+  // Eyes-free zone read on the EXPANDED word card during sentence review: a click/tap in the card's top
+  // quarter plays the source word's 1st example sentence, the second quarter plays the 2nd; the bottom
+  // half is inert. Zones are measured against the card element (not the viewport) so they line up below
+  // the sentence banner. One onClick path serves desktop clicks AND mobile taps (synthesized click), so
+  // the touch handler bows out for still taps inside this card (see onContentTouchEnd) to avoid a
+  // double-fire. Mirrors the standalone word card's eyes-free zones and routes through toggleSpeak so a
+  // second tap on the same zone pauses/resumes the shared playback.
+  const handleWordCardZoneRead = (e: React.MouseEvent<HTMLElement>) => {
+    if (window.getSelection()?.toString().trim()) return; // don't hijack a text selection
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return; // a control
+    const ex = examplesOf(currentItem);
+    if (!ex.length) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rel = e.clientY - rect.top;
+    const zone = rel < rect.height / 4 ? 0 : rel < rect.height / 2 ? 1 : -1; // top ¼ → 1st, 2nd ¼ → 2nd
+    if (zone < 0) return;
+    toggleSpeak(ex[Math.min(zone, ex.length - 1)]);
+  };
+
   // Keyboard shortcuts
   useEffect(() => {
     if (showActionMenu) return;
@@ -1354,8 +1376,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {sentenceMode && currentSentence && (
         <div
           className={`bg-white border-b border-slate-200 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 shadow-sm ${cardCollapsed ? 'flex-1 flex flex-col min-h-0' : 'shrink-0'}`}
+          style={{ touchAction: 'manipulation' }}
           onTouchStart={onContentTouchStart}
           onTouchEnd={onContentTouchEnd}
+          onDoubleClick={handleDoubleClick}
         >
           <div className={`max-w-3xl mx-auto w-full ${cardCollapsed ? 'flex-1 flex flex-col min-h-0' : ''}`}>
             {/* Row 1: back + position */}
@@ -1449,12 +1473,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {(!sentenceMode || !cardCollapsed) && (
       <div
         ref={scrollContainerRef}
+        data-word-card-scroll
         className={`flex-1 overflow-y-auto no-scrollbar transition-opacity duration-300 ${isAnimating ? 'opacity-50' : 'opacity-100'}`}
         style={{ touchAction: 'pan-y pinch-zoom' }}
         onScroll={handleScroll}
         onTouchStart={onContentTouchStart}
         onTouchEnd={onContentTouchEnd}
-        onDoubleClick={handleDoubleClick}
+        onClick={sentenceMode ? handleWordCardZoneRead : undefined}
+        onDoubleClick={sentenceMode ? undefined : handleDoubleClick}
       >
         {/* Minimal meaning indicator when header is hidden */}
         {!showHeader && currentGroup && currentGroup.items.length > 1 && (
