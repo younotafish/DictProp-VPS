@@ -423,11 +423,13 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     });
   }, [mode, readyItems, viewingQueueIdx, finalizeResult]);
 
-  // Eyes-free zone read: a click/tap in the card's top quarter plays the 1st example sentence, the
-  // second quarter the 2nd; the bottom half is inert. Zones are measured against the card element so they
-  // match the card the user sees. Mirrors the DetailView word-card zones and routes through the shared
-  // playback so a second tap on the same zone pauses/resumes. One onClick path covers desktop clicks AND
-  // mobile taps (synthesized click); controls inside the card stopPropagation, and the guard skips the rest.
+  // Eyes-free zone read: a click/tap in the popup body's top quarter plays the 1st example sentence, the
+  // second quarter the 2nd; the bottom half is inert. Zones are measured against the VISIBLE popup body
+  // (the scroll container is e.currentTarget), NOT the full card — so they stay the same on-screen bands no
+  // matter how far a tall card is scrolled, and you never have to chase the tiny speaker icon. Mirrors the
+  // DetailView eyes-free zones and routes through the shared playback so a second tap on the same zone
+  // pauses/resumes. One onClick path covers desktop clicks AND mobile taps (synthesized click); controls
+  // inside the card stopPropagation, and the guard skips the rest.
   const handleCardZoneRead = useCallback((e: React.MouseEvent<HTMLElement>) => {
     if (window.getSelection()?.toString().trim()) return; // don't hijack a text selection
     const target = e.target as HTMLElement | null;
@@ -593,8 +595,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                 </div>
               </div>
 
-              {/* Card area */}
-              <div className="flex-1 overflow-y-auto overscroll-contain p-4">
+              {/* Card area — onClick on THIS scroll container (not the card) so the eyes-free quarter-bands
+                  are anchored to the visible popup body and work regardless of how far the card is scrolled. */}
+              <div className="flex-1 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
                 <div className="relative max-w-screen-md mx-auto">
                   {/* Navigation arrows for vocabs */}
                   {viewingVocabCount > 1 && viewingVocabIdx > 0 && (
@@ -614,7 +617,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                     </button>
                   )}
 
-                  <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} onClick={handleCardZoneRead}>
+                  <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
                     <VocabCardDisplay
                       data={viewingVocab}
                       isSaved={isVocabSaved(viewingVocab)}
