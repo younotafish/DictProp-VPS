@@ -267,10 +267,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
     zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
   }, []);
   useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
-  // Show the word/phrase-view guides wherever taps are possible (the zones fire from touchend), i.e.
-  // any device with a coarse pointer — including a touchscreen laptop whose primary pointer is a mouse.
-  const coarsePointer = useMemo(
-    () => typeof window !== 'undefined' && !!window.matchMedia?.('(any-pointer: coarse)')?.matches,
+  // Show the word/phrase-view guides wherever taps are possible. The zones fire from touchend, so gate
+  // on touch CAPABILITY (maxTouchPoints) — NOT a pointer media query: iPadOS Safari defaults to
+  // "desktop-class" browsing and then reports (any-pointer: coarse) as false even though touch works,
+  // which would hide the guides on the exact device they're meant for. matchMedia is an OR fallback.
+  const touchCapable = useMemo(
+    () =>
+      typeof navigator !== 'undefined' &&
+      ((navigator.maxTouchPoints ?? 0) > 0 ||
+        (typeof window !== 'undefined' && !!window.matchMedia?.('(any-pointer: coarse)')?.matches)),
     [],
   );
 
@@ -1405,7 +1410,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     >
       {/* Eyes-free read-zone guides (word/phrase view) — touch-only, since the screen-zone taps that
           drive them fire from a tap, not a mouse click. */}
-      {coarsePointer && wordZoneBands > 0 && (
+      {touchCapable && wordZoneBands > 0 && (
         <EyesFreeZones anchor="viewport" bands={wordZoneBands} flash={zoneFlash} />
       )}
       {/* Sentence-mode banner — the saved sentence's "card header": back, the sentence + natural-voice
