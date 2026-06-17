@@ -8,6 +8,7 @@ import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
 import { HighlightedSentence, stripSentenceMarkers } from '../components/HighlightedSentence';
 import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
+import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
@@ -254,6 +255,24 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const lastSentenceTapRef = useRef<{ t: number; x: number; y: number } | null>(null);
   // Guard so a remember can't fire twice from one gesture (touch double-tap + a synthesized dblclick).
   const rememberingRef = useRef(false);
+  // Eyes-free zone tap-confirmation flash (see EyesFreeZones). The word/phrase-view guides only render
+  // on touch devices, since those zones only fire from taps (a mouse click does nothing there).
+  const [zoneFlash, setZoneFlash] = useState<ZoneFlash | null>(null);
+  const zoneFlashN = useRef(0);
+  const zoneFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashZone = useCallback((zone: number) => {
+    zoneFlashN.current += 1;
+    setZoneFlash({ zone, n: zoneFlashN.current });
+    if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current);
+    zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
+  }, []);
+  useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
+  // Show the word/phrase-view guides wherever taps are possible (the zones fire from touchend), i.e.
+  // any device with a coarse pointer — including a touchscreen laptop whose primary pointer is a mouse.
+  const coarsePointer = useMemo(
+    () => typeof window !== 'undefined' && !!window.matchMedia?.('(any-pointer: coarse)')?.matches,
+    [],
+  );
 
   const onContentTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
@@ -362,6 +381,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         const y = e.changedTouches[0].clientY;
         const zone = y < window.innerHeight / 4 ? 0 : y < window.innerHeight / 2 ? 1 : -1;
         if (zone >= 0) {
+          flashZone(zone);
           if (currentItem && isPhraseItem(currentItem)) {
             const phrase = currentItem.data as SearchResult;
             const firstVocabExample = (phrase.vocabs || [])
@@ -1265,6 +1285,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const rel = e.clientY - rect.top;
     const zone = rel < rect.height / 4 ? 0 : rel < rect.height / 2 ? 1 : -1; // top ¼ → 1st, 2nd ¼ → 2nd
     if (zone < 0) return;
+    flashZone(zone);
     toggleSpeak(ex[Math.min(zone, ex.length - 1)]);
   };
 
@@ -1363,10 +1384,30 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, toggleSentenceAutoPlay]);
 
+  // Eyes-free read-zone band counts — how many of the two quarter-bands actually read something
+  // (so the guides only draw the bands that do something). Word view: a phrase always has band 1
+  // (the phrase itself) and gets band 2 when a Key-Vocabulary example exists; a vocab card mirrors
+  // its example count. Sentence-review word card: the source word's example count.
+  const wordZoneBands = (() => {
+    if (sentenceMode || !currentItem) return 0;
+    if (isPhraseItem(currentItem)) {
+      const phrase = currentItem.data as SearchResult;
+      const hasVocabEx = (phrase.vocabs || []).some(v => (v.examples || []).some(s => stripSentenceMarkers(s || '').trim()));
+      return hasVocabEx ? 2 : 1;
+    }
+    return Math.min(2, examplesOf(currentItem).length);
+  })();
+  const cardZoneBands = sentenceMode ? Math.min(2, examplesOf(currentItem).length) : 0;
+
   return (
-    <div 
+    <div
       className="fixed inset-0 z-50 bg-slate-50 flex flex-col animate-in slide-in-from-right duration-300 shadow-2xl"
     >
+      {/* Eyes-free read-zone guides (word/phrase view) — touch-only, since the screen-zone taps that
+          drive them fire from a tap, not a mouse click. */}
+      {coarsePointer && wordZoneBands > 0 && (
+        <EyesFreeZones anchor="viewport" bands={wordZoneBands} flash={zoneFlash} />
+      )}
       {/* Sentence-mode banner — the saved sentence's "card header": back, the sentence + natural-voice
           speaker, position, and the complete memorization/statistics row. Sits above the scroll area. */}
       {sentenceMode && currentSentence && (
@@ -1467,10 +1508,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {/* Word card — the supporting source-word detail. Hidden in sentence review when collapsed
           (so the sentence owns the page); always shown in regular card mode. */}
       {(!sentenceMode || !cardCollapsed) && (
+      <div className="relative flex-1 min-h-0 flex flex-col">
       <div
         ref={scrollContainerRef}
         data-word-card-scroll
-        className={`flex-1 overflow-y-auto no-scrollbar transition-opacity duration-300 ${isAnimating ? 'opacity-50' : 'opacity-100'}`}
+        className={`flex-1 min-h-0 overflow-y-auto no-scrollbar transition-opacity duration-300 ${isAnimating ? 'opacity-50' : 'opacity-100'}`}
         style={{ touchAction: 'pan-y pinch-zoom' }}
         onScroll={handleScroll}
         onTouchStart={onContentTouchStart}
@@ -1803,6 +1845,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
             )}
           </div>
         </div>
+      </div>
+      {/* Eyes-free read-zone guides for the sentence-review word card (card-anchored, click + tap). */}
+      {cardZoneBands > 0 && (
+        <EyesFreeZones anchor="fill" bands={cardZoneBands} flash={zoneFlash} />
+      )}
       </div>
       )}
 

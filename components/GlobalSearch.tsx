@@ -6,6 +6,7 @@ import { VocabCardDisplay } from './VocabCard';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent } from '../services/neuralTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
+import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';
 import { log, warn } from '../services/logger';
 
 interface QueueItem {
@@ -50,6 +51,17 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const processingRef = useRef(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_THRESHOLD = 50;
+  // Eyes-free zone tap-confirmation flash (see EyesFreeZones).
+  const [zoneFlash, setZoneFlash] = useState<ZoneFlash | null>(null);
+  const zoneFlashN = useRef(0);
+  const zoneFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashZone = useCallback((zone: number) => {
+    zoneFlashN.current += 1;
+    setZoneFlash({ zone, n: zoneFlashN.current });
+    if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current);
+    zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
+  }, []);
+  useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
 
   // Derived state
   const readyItems = queue.filter(q => q.status === 'ready');
@@ -440,6 +452,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const rel = e.clientY - rect.top;
     const zone = rel < rect.height / 4 ? 0 : rel < rect.height / 2 ? 1 : -1; // top ¼ → 1st, 2nd ¼ → 2nd
     if (zone < 0) return;
+    flashZone(zone);
     const sentence = examples[Math.min(zone, examples.length - 1)];
     const pb = getPlaybackState();
     if (pb.text === sentence) {
@@ -448,7 +461,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; } // mid-clip → pause
     }
     speakNatural(sentence, { allowDownload: true });
-  }, [viewingVocab]);
+  }, [viewingVocab, flashZone]);
 
   return (
     <>
@@ -596,8 +609,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               </div>
 
               {/* Card area — onClick on THIS scroll container (not the card) so the eyes-free quarter-bands
-                  are anchored to the visible popup body and work regardless of how far the card is scrolled. */}
-              <div className="flex-1 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
+                  are anchored to the visible popup body and work regardless of how far the card is scrolled.
+                  The relative wrapper hosts the zone guides as a non-scrolling sibling overlay. */}
+              <div className="relative flex-1 min-h-0">
+              <div className="absolute inset-0 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
                 <div className="relative max-w-screen-md mx-auto">
                   {/* Navigation arrows for vocabs */}
                   {viewingVocabCount > 1 && viewingVocabIdx > 0 && (
@@ -650,6 +665,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                     </div>
                   )}
                 </div>
+              </div>
+              <EyesFreeZones
+                anchor="fill"
+                bands={Math.min(2, (viewingVocab?.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean).length)}
+                flash={zoneFlash}
+              />
               </div>
 
               {/* Queue strip — show all ready items as tabs at bottom */}

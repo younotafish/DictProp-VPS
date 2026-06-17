@@ -51,6 +51,15 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Eyes-free read-zone tap confirmation — a quick fade-out tint over the tapped band */
+.zone-flash {
+  animation: zoneFlash 0.45s ease-out forwards;
+}
+@keyframes zoneFlash {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 /* iOS Safari: Prevent text size adjustment */
 input, textarea, select {
   font-size: 16px !important; /* Prevents zoom on focus in iOS */

@@ -566,6 +566,16 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
   }
 };
 
+// MiMo clips carry a quiet ~100ms lead-in (a soft breath/onset) before speech — heard as "starts quiet,
+// then louder". When the caller hasn't asked for a specific start, begin at the first word's timestamp
+// (less a small preroll so a soft onset isn't clipped) to drop that lead-in. Falls back to 0 when
+// timings aren't warm yet, so it degrades to the old behaviour rather than guessing a fixed offset.
+const LEAD_IN_PREROLL = 0.04; // seconds of onset kept before the first word, as a safety margin
+const leadInSkip = (timings: WordTiming[] | null): number => {
+  const first = timings?.[0]?.start;
+  return first && isFinite(first) ? Math.max(0, first - LEAD_IN_PREROLL) : 0;
+};
+
 /**
  * Speak `text` with the best available voice:
  *   1. cached MiMo clip from the server (instant, on every device) — the primary path
@@ -618,7 +628,9 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
             else { requestTTSGeneration([{ text: plain }]).catch(() => {}); } // legacy audio-only clip → backfill timings
           }).catch(() => {});
         }
-        await playUrl(url, isCurrent, markStart, markEnd, startAt);
+        // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
+        const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
+        await playUrl(url, isCurrent, markStart, markEnd, begin);
         return;
       }
 
