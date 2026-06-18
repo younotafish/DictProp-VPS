@@ -29,8 +29,8 @@ interface Props {
 }
 
 const ZONE = [
-  { line: 'border-indigo-400/80', bar: 'bg-indigo-400', chip: 'bg-indigo-500', wash: 'bg-indigo-400/[0.06]', tint: 'bg-indigo-400/25' },
-  { line: 'border-emerald-400/80', bar: 'bg-emerald-400', chip: 'bg-emerald-500', wash: 'bg-emerald-400/[0.06]', tint: 'bg-emerald-400/25' },
+  { bar: 'bg-indigo-400', chip: 'bg-indigo-500', wash: 'bg-indigo-400/[0.06]', tint: 'bg-indigo-400/25' },
+  { bar: 'bg-emerald-400', chip: 'bg-emerald-500', wash: 'bg-emerald-400/[0.06]', tint: 'bg-emerald-400/25' },
 ] as const;
 
 export const EyesFreeZones: React.FC<Props> = ({ bands, anchor, flash }) => {
@@ -50,10 +50,11 @@ export const EyesFreeZones: React.FC<Props> = ({ bands, anchor, flash }) => {
         return (
           <div
             key={z}
-            className={`absolute inset-x-0 h-1/2 border-b border-dashed ${C.line} ${C.wash}`}
+            className={`absolute inset-x-0 h-1/2 ${C.wash}`}
             style={{ top: z === 0 ? 0 : '50%' }}
           >
-            {/* right-edge accent bar — marks the band without covering the card content */}
+            {/* accent bars on BOTH edges — frame the band without covering the card content */}
+            <div className={`absolute left-0 top-1.5 bottom-1.5 w-1 rounded-full ${C.bar} opacity-80`} />
             <div className={`absolute right-0 top-1.5 bottom-1.5 w-1 rounded-full ${C.bar} opacity-80`} />
             {/* numbered marker, centred in the band so it clears the header bar */}
             <div

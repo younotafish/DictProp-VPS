@@ -611,8 +611,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               {/* Card area — onClick on THIS scroll container (not the card) so the eyes-free quarter-bands
                   are anchored to the visible popup body and work regardless of how far the card is scrolled.
                   The relative wrapper hosts the zone guides as a non-scrolling sibling overlay. */}
-              <div className="relative flex-1 min-h-0">
-              <div className="absolute inset-0 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
+              <div className="relative flex-1 min-h-0 flex flex-col">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
                 <div className="relative max-w-screen-md mx-auto">
                   {/* Navigation arrows for vocabs */}
                   {viewingVocabCount > 1 && viewingVocabIdx > 0 && (
