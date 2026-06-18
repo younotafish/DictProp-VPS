@@ -29,8 +29,8 @@ interface Props {
 }
 
 const ZONE = [
-  { bar: 'bg-indigo-400', chip: 'bg-indigo-500', wash: 'bg-indigo-400/[0.06]', tint: 'bg-indigo-400/25' },
-  { bar: 'bg-emerald-400', chip: 'bg-emerald-500', wash: 'bg-emerald-400/[0.06]', tint: 'bg-emerald-400/25' },
+  { bar: 'bg-indigo-400', tint: 'bg-indigo-400/25' },
+  { bar: 'bg-emerald-400', tint: 'bg-emerald-400/25' },
 ] as const;
 
 export const EyesFreeZones: React.FC<Props> = ({ bands, anchor, flash }) => {
@@ -50,19 +50,13 @@ export const EyesFreeZones: React.FC<Props> = ({ bands, anchor, flash }) => {
         return (
           <div
             key={z}
-            className={`absolute inset-x-0 h-1/2 ${C.wash}`}
+            className="absolute inset-x-0 h-1/2"
             style={{ top: z === 0 ? 0 : '50%' }}
           >
             {/* accent bars on BOTH edges — frame the band without covering the card content */}
             <div className={`absolute left-0 top-1.5 bottom-1.5 w-1 rounded-full ${C.bar} opacity-80`} />
             <div className={`absolute right-0 top-1.5 bottom-1.5 w-1 rounded-full ${C.bar} opacity-80`} />
-            {/* numbered marker, centred in the band so it clears the header bar */}
-            <div
-              className={`absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full ${C.chip} text-white text-xs font-bold flex items-center justify-center shadow-md ring-2 ring-white/70`}
-            >
-              {z + 1}
-            </div>
-            {/* tap confirmation — quick fade-out tint, re-keyed so repeat taps replay it */}
+            {/* tap/click confirmation — quick fade-out tint, re-keyed so repeat taps replay it */}
             {flash && flash.zone === z && (
               <div key={flash.n} className={`absolute inset-0 ${C.tint} zone-flash`} />
             )}
