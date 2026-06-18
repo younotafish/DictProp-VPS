@@ -470,12 +470,26 @@ const playUrl = async (
   el.onended = () => { if (isCurrent()) onEnd?.(); };
   el.onerror = () => { if (isCurrent()) onEnd?.(); };
   el.onloadedmetadata = null;
-  el.src = url;
   const begin = startAt && startAt > 0 ? startAt : 0;
-  try { el.currentTime = begin; } catch { /* fresh src already starts at 0 */ }
-  // Some browsers ignore currentTime set before metadata loads — re-apply once it's ready.
-  if (begin > 0) el.onloadedmetadata = () => { try { el.currentTime = begin; } catch { /* ignore */ } };
-  await el.play();
+  el.src = url;
+  if (begin <= 0) { try { el.currentTime = 0; } catch { /* ignore */ } await el.play(); return; }
+  // Start partway in (skip the lead-in / word seek). CRITICAL on iOS: a currentTime set before
+  // metadata is loaded is IGNORED, and setting it *after* play() makes the clip start at 0 and then
+  // audibly jump to `begin` — i.e. the quiet lead-in plays first and sounds like a fade-in. So wait
+  // for metadata, seek, and only THEN play, so playback truly begins at `begin`.
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      el.onloadedmetadata = null;
+      if (!isCurrent()) { resolve(); return; } // superseded → let the newer call drive playback
+      try { el.currentTime = begin; } catch { /* ignore */ }
+      el.play().then(() => resolve(), () => resolve());
+    };
+    if (el.readyState >= 1 /* HAVE_METADATA */) go();
+    else { el.onloadedmetadata = go; setTimeout(go, 1500); } // fallback if metadata stalls
+  });
 };
 
 // macOS / desktop cache-miss fallback: synthesize in-browser with Kokoro, then play. Falls back to
@@ -570,7 +584,7 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
 // then louder". When the caller hasn't asked for a specific start, begin at the first word's timestamp
 // (less a small preroll so a soft onset isn't clipped) to drop that lead-in. Falls back to 0 when
 // timings aren't warm yet, so it degrades to the old behaviour rather than guessing a fixed offset.
-const LEAD_IN_PREROLL = 0.04; // seconds of onset kept before the first word, as a safety margin
+const LEAD_IN_PREROLL = 0.03; // seconds kept before the first word, as a safety margin vs clipping the onset
 const leadInSkip = (timings: WordTiming[] | null): number => {
   const first = timings?.[0]?.start;
   return first && isFinite(first) ? Math.max(0, first - LEAD_IN_PREROLL) : 0;
