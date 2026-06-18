@@ -2357,7 +2357,12 @@ const App: React.FC = () => {
       const match = oldItems.find(o => ((o.data as VocabCard).sense || '') === (vocab.sense || ''));
       if (match) {
         // Update IN PLACE: keep the saved item's id/srs/savedAt/project, swap in the fresh content.
-        handleSaveRef.current({ ...match, data: { ...vocab, id: match.data.id }, srs: match.srs, savedAt: match.savedAt });
+        // A refresh replaces the card BEFORE its new image has been generated, then re-saves once the
+        // image streams in. Carry the existing image forward when the fresh vocab has none yet, so the
+        // word is never left imageless — if the user navigates away (or the image gen fails) mid-refresh
+        // it simply keeps its old image instead of losing it.
+        const prevImage = (match.data as VocabCard).imageUrl;
+        handleSaveRef.current({ ...match, data: { ...vocab, id: match.data.id, imageUrl: vocab.imageUrl ?? prevImage }, srs: match.srs, savedAt: match.savedAt });
       } else {
         handleSaveRef.current({
           data: vocab,
