@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -12,8 +12,9 @@ import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural, speakWord, prefetchTTS, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, type SpeakHandle } from '../services/neuralTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
+import { loadImage } from '../services/storage';
 import { log, warn } from '../services/logger';
 
 // Helper to format relative time for next review
@@ -123,6 +124,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [, setAutoPlayNowTick] = useState(0);
   const [isSentenceAutoPlaying, setIsSentenceAutoPlaying] = useState(false);
   const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between sentences (end → next start)
+  // Whole-session preload progress (audio clips + images), null when idle/done. See the preload effect below.
+  const [preloadProgress, setPreloadProgress] = useState<{ done: number; total: number } | null>(null);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [rememberInfo, setRememberInfo] = useState<{
     intervalDays: number;
@@ -762,6 +765,59 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const ex = (item.data as VocabCard).examples;
     return (Array.isArray(ex) ? ex.slice(0, 2) : []).map(stripSentenceMarkers).filter(Boolean);
   };
+
+  // Preload the WHOLE session up front (once, on open) so a poor/unstable network can't interrupt
+  // review: warm every example/saved sentence's audio + timings, and pull every card's image into IDB.
+  // Best-effort and cancellable; per-item failures still advance the progress so it always completes.
+  useEffect(() => {
+    let cancelled = false;
+
+    // Audio: saved sentences in sentence mode, else every card's example sentences across the session.
+    const texts = sentenceMode
+      ? (sentenceItems ?? []).map(s => (s.data as SentenceData).text || '')
+      : (groups ?? []).flatMap(g => g.items.flatMap(it => examplesOf(it)));
+    // Images: the displayed word/phrase cards (in sentence mode these are the sentences' source cards).
+    const ids = Array.from(new Set((groups ?? []).flatMap(g => g.items.map(it => it.data.id))));
+
+    const audioTotal = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean))).length;
+    const imageTotal = onLazyLoadImage ? ids.length : 0;
+    const grandTotal = audioTotal + imageTotal;
+    if (grandTotal === 0) return;
+
+    let audioDone = 0;
+    let imageDone = 0;
+    const report = () => {
+      if (cancelled) return;
+      const done = audioDone + imageDone;
+      setPreloadProgress(done >= grandTotal ? null : { done, total: grandTotal });
+    };
+    report();
+
+    // Audio — one progress-reporting batch (de-dupes + generates missing internally).
+    preloadAudio(texts, (d) => { audioDone = d; report(); }).catch(() => {});
+
+    // Images — bounded concurrency; skip any already in IDB so repeat sessions don't re-download.
+    (async () => {
+      if (!onLazyLoadImage || ids.length === 0) return;
+      const CONCURRENCY = 4;
+      let i = 0;
+      const worker = async () => {
+        while (i < ids.length && !cancelled) {
+          const id = ids[i++];
+          try {
+            const cached = await loadImage(id);
+            if (!cached && !cancelled) await onLazyLoadImage(id);
+          } catch { /* best-effort */ }
+          imageDone++;
+          report();
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const sentenceGapRef = useRef(sentenceGap);
   useEffect(() => { sentenceGapRef.current = sentenceGap; }, [sentenceGap]);
@@ -1874,6 +1930,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
         <EyesFreeZones anchor="fill" bands={cardZoneBands} flash={zoneFlash} />
       )}
       </div>
+      )}
+
+      {/* Whole-session preload indicator (audio + images), bottom-left so it clears the autoplay cluster. */}
+      {preloadProgress && (
+        <div className="fixed bottom-6 left-6 z-[60] flex items-center gap-2 bg-white/90 backdrop-blur-sm text-slate-600 text-xs font-medium px-3 py-2 rounded-full shadow-lg border border-slate-200 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <Loader2 size={14} className="animate-spin text-indigo-500" />
+          <span>Preloading {preloadProgress.done}/{preloadProgress.total}</span>
+        </div>
       )}
 
       {/* Auto-play control */}

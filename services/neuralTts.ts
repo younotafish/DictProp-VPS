@@ -580,6 +580,64 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
   }
 };
 
+/**
+ * Like ensureTTS, but reports progress (done/total over the de-duplicated set) so a UI can show a
+ * "preloading N/M" indicator. Used to warm the WHOLE review session up front (audio clips + per-word
+ * timings) so an unstable network can't interrupt playback mid-session. Best-effort per item: a
+ * failure still ticks progress and never rejects the whole batch.
+ */
+export const preloadAudio = async (
+  texts: string[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> => {
+  const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
+  const total = plains.length;
+  onProgress?.(0, total);
+  if (!total) return;
+  let done = 0;
+  const tick = () => onProgress?.(++done, total);
+
+  // 1) Pull anything already cached (device → server) into the device cache + warm its timings;
+  //    collect what still needs generating.
+  const missing: string[] = [];
+  await Promise.all(plains.map(async (plain) => {
+    try {
+      const key = await ttsKey(plain, TTS_VOICE);
+      if (ttsUrlCache.has(key)) { tick(); return; }
+      const blob = await fetchCachedTTS(key);
+      if (blob) {
+        if (!ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+        if (!ttsTimingsCache.has(key)) {
+          const t = await fetchCachedTTSTimings(key);
+          if (t && t.length) ttsTimingsCache.set(key, t);
+        }
+        tick();
+        return;
+      }
+      missing.push(plain); // still missing → generate below
+    } catch { tick(); }
+  }));
+
+  // 2) Generate the missing clips server-side (one batch), then fetch them into the device cache.
+  if (missing.length) {
+    try { await requestTTSGeneration(missing.map(text => ({ text }))); } catch { /* best-effort */ }
+    await Promise.all(missing.map(async (plain) => {
+      try {
+        const key = await ttsKey(plain, TTS_VOICE);
+        if (!ttsUrlCache.has(key)) {
+          const blob = await fetchCachedTTS(key);
+          if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+        }
+        if (!ttsTimingsCache.has(key)) {
+          const t = await fetchCachedTTSTimings(key);
+          if (t && t.length) ttsTimingsCache.set(key, t);
+        }
+      } catch { /* ignore */ }
+      tick();
+    }));
+  }
+};
+
 // MiMo clips carry a quiet ~100ms lead-in (a soft breath/onset) before speech — heard as "starts quiet,
 // then louder". When the caller hasn't asked for a specific start, begin at the first word's timestamp
 // (less a small preroll so a soft onset isn't clipped) to drop that lead-in. Falls back to 0 when
