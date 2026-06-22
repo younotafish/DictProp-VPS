@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, ExternalLink, MessageSquareQuote } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -111,6 +111,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [cardCollapsed, setCardCollapsed] = useState(true); // sentence review: word card collapsed → the sentence is the full-page focus
+  // Sentence review — what tapping a word does. true (default) = play from that word (current behaviour);
+  // false = look up the dotted [[uncommon]] term via the bottom-right search, like every other view. Persisted.
+  const [tapToPlay, setTapToPlay] = useState(() => {
+    try { return localStorage.getItem('dictprop_sentence_tap_play') !== '0'; } catch { return true; }
+  });
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
   const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
   const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(10);
@@ -1434,6 +1439,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <ArrowLeft size={18} /> Sentences
               </button>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setTapToPlay(v => { const next = !v; try { localStorage.setItem('dictprop_sentence_tap_play', next ? '1' : '0'); } catch { /* ignore */ } return next; }); }}
+                  className={`flex items-center justify-center w-7 h-7 rounded-full transition-colors ${tapToPlay ? 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}
+                  title={tapToPlay ? 'Tap a word = play from it. Tap here to switch to look-up.' : 'Tap an underlined word = look it up. Tap here to switch to play-from-word.'}
+                >
+                  {tapToPlay ? <Volume2 size={15} /> : <SearchIcon size={15} />}
+                </button>
                 <span className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
                   <MessageSquareQuote size={12} /> {sentenceIndex + 1} / {sentenceItems?.length ?? 0}
                 </span>
@@ -1453,9 +1465,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   data-sentence-hero
                   className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
                   onClick={toggleSentencePlayback}
-                  title="Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember"
+                  title={tapToPlay
+                    ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
+                    : 'Tap an underlined word to look it up · tap blank space to play/pause · double-tap blank space to remember'}
                 >
-                  <HighlightedSentence text={currentSentenceText} itemWord={(currentSentence.data as SentenceData).sourceWord} onPlayFromWord={playFromWordOffset} />
+                  <HighlightedSentence
+                    text={currentSentenceText}
+                    itemWord={(currentSentence.data as SentenceData).sourceWord}
+                    {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch })}
+                  />
                 </p>
                 <div className="mt-5 flex justify-center">
                   <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
