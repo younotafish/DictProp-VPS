@@ -12,7 +12,7 @@ import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, startKeepAlive, stopKeepAlive, type SpeakHandle } from '../services/neuralTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { loadImage } from '../services/storage';
 import { log, warn } from '../services/logger';
@@ -752,6 +752,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (next) setIsAutoPlaying(false);
       return next;
     });
+    // Start the silent keep-alive inside this user gesture so iOS unlocks it (the registration effect's
+    // own start() runs after paint, outside the gesture). Harmless when stopping — the effect cleanup
+    // pauses it right back.
+    startKeepAlive();
   }, []);
 
   // Sentences to read for a card during auto-play: a phrase's query, or a vocab card's example
@@ -824,6 +828,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   useEffect(() => {
     if (!isSentenceAutoPlaying || !groups) return;
+
+    // Lock-screen "now playing" for this card/sentence (refreshed as autoplay advances).
+    setMediaMetadata({
+      title: (sentenceMode ? stripSentenceMarkers(currentSentenceText || '') : title) || 'DictProp',
+      artist: sentenceMode ? ((currentSentence?.data as SentenceData)?.sourceWord || 'DictProp') : 'DictProp',
+      album: 'DictProp',
+      artworkUrl: (() => { const u = getItemImageUrl(currentItem); return u && u.startsWith('data:image') ? u : undefined; })(),
+    });
 
     const advanceCard = () => {
       const safeGroupIdx = Math.min(currentGroupIndex, groups.length - 1);
@@ -1092,6 +1104,37 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Stop any playback when DetailView closes (covers a manual read still going at close time).
   useEffect(() => () => { stopCurrent(); }, []);
+
+  // Background sentence autoplay — while it runs, hold the audio session open (silent keep-alive) and
+  // expose lock-screen controls so the installed PWA keeps reading sentences with the screen off.
+  // next/prev just bump the index (the autoplay effect re-runs and continues); they don't stop autoplay.
+  useEffect(() => {
+    if (!isSentenceAutoPlaying) return;
+    startKeepAlive();
+    const step = (delta: number) => {
+      const len = sentenceModeRef.current ? (sentenceItemsRef.current?.length ?? 0) : (groups?.length ?? 0);
+      if (!len) return;
+      const cur = currentGroupIndexRef.current;
+      const nextIdx = Math.max(0, Math.min(cur + delta, len - 1));
+      if (nextIdx === cur) return;
+      setIsAnimating(true);
+      setCurrentGroupIndex(nextIdx);
+      setCurrentItemIndex(0);
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      setTimeout(() => setIsAnimating(false), 300);
+    };
+    setMediaSessionHandlers({
+      onPlay: () => resumeCurrent(),
+      onPause: () => pauseCurrent(),
+      onStop: () => setIsSentenceAutoPlaying(false),
+      onNext: () => step(1),
+      onPrev: () => step(-1),
+    });
+    return () => {
+      setMediaSessionHandlers(null);
+      stopKeepAlive();
+    };
+  }, [isSentenceAutoPlaying, groups]);
 
   // Keyboard navigation
   useKeyboardNavigation({

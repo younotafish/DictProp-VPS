@@ -375,6 +375,15 @@ const setPlaybackState = (patch: Partial<PlaybackState>): void => {
   const next: PlaybackState = { ...playbackState, ...patch };
   if (next.text === playbackState.text && next.status === playbackState.status) return; // no real change
   playbackState = next;
+  // Mirror to the OS media session so the lock screen reflects play ⇄ pause in the background.
+  if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+    try {
+      navigator.mediaSession.playbackState =
+        next.status === 'playing' || next.status === 'loading' ? 'playing'
+        : next.status === 'paused' ? 'paused'
+        : 'none';
+    } catch { /* ignore */ }
+  }
   playbackListeners.forEach((cb) => { try { cb(playbackState); } catch { /* ignore */ } });
 };
 
@@ -414,6 +423,97 @@ export const stopCurrent = (): void => {
   currentToken++;
   stopPlayback();
   setPlaybackState({ text: null, status: 'idle' });
+};
+
+// ---------------------------------------------------------------------------
+// Media Session — lock-screen controls + background audio for sentence autoplay
+// ---------------------------------------------------------------------------
+// Playback already runs through one <audio> element, so wiring the OS Media Session lets the installed
+// PWA keep reading sentences with the screen locked and exposes play/pause/next/prev on the lock screen.
+// Playback state is mirrored centrally in setPlaybackState (above); metadata + action handlers are driven
+// by the autoplay caller (DetailView).
+const hasMediaSession = (): boolean => typeof navigator !== 'undefined' && 'mediaSession' in navigator;
+
+/** Set the lock-screen "now playing" card. Safe no-op where Media Session is unsupported. */
+export const setMediaMetadata = (info: { title: string; artist?: string; album?: string; artworkUrl?: string }): void => {
+  if (!hasMediaSession()) return;
+  try {
+    const artwork: MediaImage[] = [];
+    if (info.artworkUrl) {
+      const m = info.artworkUrl.match(/^data:(image\/[a-z0-9.+-]+)/i);
+      artwork.push({ src: info.artworkUrl, sizes: '512x512', type: m ? m[1] : 'image/jpeg' });
+    }
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: info.title || 'DictProp',
+      artist: info.artist || 'DictProp',
+      album: info.album || '',
+      artwork,
+    });
+  } catch { /* ignore */ }
+};
+
+export interface MediaSessionHandlers {
+  onPlay?: () => void;
+  onPause?: () => void;
+  onStop?: () => void;
+  onNext?: () => void;
+  onPrev?: () => void;
+}
+
+/** Register lock-screen action handlers, or pass null to clear them (and the metadata). */
+export const setMediaSessionHandlers = (handlers: MediaSessionHandlers | null): void => {
+  if (!hasMediaSession()) return;
+  const ms = navigator.mediaSession;
+  const set = (action: MediaSessionAction, cb?: () => void) => {
+    try { ms.setActionHandler(action, cb ? () => cb() : null); } catch { /* action unsupported here */ }
+  };
+  if (!handlers) {
+    (['play', 'pause', 'stop', 'nexttrack', 'previoustrack'] as MediaSessionAction[]).forEach((a) => set(a));
+    try { ms.metadata = null; } catch { /* ignore */ }
+    return;
+  }
+  set('play', handlers.onPlay ?? (() => resumeCurrent()));
+  set('pause', handlers.onPause ?? (() => pauseCurrent()));
+  set('stop', handlers.onStop ?? (() => stopCurrent()));
+  set('nexttrack', handlers.onNext);
+  set('previoustrack', handlers.onPrev);
+};
+
+// Silent keep-alive: a separate, always-on, muted <audio> looped during autoplay so iOS never suspends
+// the page during the (up to 10s) gaps between sentences. Both are HTMLAudioElements, so iOS mixes them —
+// the keep-alive is inaudible and just holds the audio session open. Started for the whole autoplay run.
+let keepAliveEl: HTMLAudioElement | null = null;
+const buildSilentWavUrl = (seconds: number): string => {
+  const sampleRate = 8000;
+  const numSamples = sampleRate * seconds;
+  const buffer = new ArrayBuffer(44 + numSamples);
+  const view = new DataView(buffer);
+  const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, 'RIFF'); view.setUint32(4, 36 + numSamples, true); writeStr(8, 'WAVE');
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);   // PCM
+  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate, true);
+  view.setUint16(32, 1, true); view.setUint16(34, 8, true);                          // mono, 8-bit
+  writeStr(36, 'data'); view.setUint32(40, numSamples, true);
+  for (let i = 0; i < numSamples; i++) view.setUint8(44 + i, 128);                    // 8-bit silence = unsigned midpoint
+  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+};
+
+/** Begin the silent keep-alive (idempotent). Call when sentence autoplay starts. */
+export const startKeepAlive = (): void => {
+  try {
+    if (!keepAliveEl) {
+      keepAliveEl = new Audio(buildSilentWavUrl(2));
+      keepAliveEl.loop = true;
+      keepAliveEl.volume = 0;
+      (keepAliveEl as any).playsInline = true;
+    }
+    void keepAliveEl.play().catch(() => { /* retried on the next start */ });
+  } catch { /* ignore */ }
+};
+
+/** Stop the silent keep-alive. Call when sentence autoplay ends. */
+export const stopKeepAlive = (): void => {
+  try { keepAliveEl?.pause(); } catch { /* ignore */ }
 };
 
 // Device-local cache of ready-to-play object URLs (cached MiMo clips, keyed by ttsKey hash) — replays are instant.
