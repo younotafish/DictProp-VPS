@@ -2380,22 +2380,19 @@ const App: React.FC = () => {
       window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text } }));
   }, []);
 
+  // Refresh handler - re-runs the AI for a word through the SAME bottom-right GlobalSearch
+  // (forceAI bypasses the saved-card reuse and auto-opens the result). Used by the detail-view
+  // refresh button so refreshing routes to the bottom-right icon, not the notebook top bar.
+  const handleRefreshViaGlobal = useCallback((text: string) => {
+      window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text, forceAI: true } }));
+  }, []);
+
   // Search handler that navigates to notebook (used by notebook's own search)
   const handleNotebookSearch = useCallback((text: string) => {
       setCurrentView('notebook');
       setDetailContext(null);
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: false, autoAIIfNoMatch: true } }));
-      }, 100);
-  }, []);
-
-  // Force refresh search - bypasses local cache and calls AI
-  const handleForceRefreshSearch = useCallback((text: string) => {
-      setCurrentView('notebook');
-      setDetailContext(null);
-      // Dispatch event to trigger AI search in notebook
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('notebook-search', { detail: { query: text, forceAI: true } }));
       }, 100);
   }, []);
 
@@ -2726,7 +2723,7 @@ const App: React.FC = () => {
               onArchive={handleArchive}
               savedItems={activeItems}
               onSearch={handleRecursiveSearch}
-              onRefresh={handleForceRefreshSearch}
+              onRefresh={handleRefreshViaGlobal}
               onLazyLoadImage={handleLazyLoadImage}
               onUpdateSRS={updateSRS}
               onCompare={handleCompare}
