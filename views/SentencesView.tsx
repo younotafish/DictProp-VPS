@@ -58,7 +58,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   return (
     <div className="h-full overflow-y-auto" onScroll={onScroll}>
       <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-slate-100 px-4 py-3">
-        <div className="max-w-screen-md mx-auto flex items-center justify-between">
+        <div className="max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <MessageSquareQuote size={18} className="text-indigo-500" />
             <h2 className="font-bold text-slate-800">Sentences</h2>
@@ -82,7 +82,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
         </div>
       )}
 
-      <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-2 w-full max-w-screen-md mx-auto mt-2">
+      <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-2 w-full max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto mt-2">
         {sorted.map((item, index) => {
           if (!isSentenceItem(item)) return null;
           const d = item.data as SentenceData;
@@ -108,7 +108,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
             >
               <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
               <div className="pl-3">
-                <p className="text-sm text-slate-700 leading-relaxed mb-2">
+                <p className="text-sm xl:text-base text-slate-700 leading-relaxed mb-2">
                   <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} />
                 </p>
                 <div className="flex items-center justify-between">

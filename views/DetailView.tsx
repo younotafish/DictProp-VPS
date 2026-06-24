@@ -1790,7 +1790,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 onExpand={undefined}
                 onSearch={handleVocabSearch}
                 scrollable={false}
-                className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl md:max-w-5xl lg:max-w-6xl mx-auto"
+                className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto"
                 showRefresh={false}
                 onCompare={onCompare}
                 onSaveSentence={onSaveSentence}
@@ -1801,7 +1801,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           )}
 
           {type === 'phrase' && (
-            <div className="space-y-6 max-w-3xl md:max-w-5xl lg:max-w-6xl mx-auto">
+            <div className="space-y-6 max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto">
               <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="md:flex">
                   <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group max-h-48 md:max-h-none md:w-2/5 md:shrink-0">
@@ -1817,8 +1817,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
                 <div className="p-6 sm:p-8 md:flex-1 md:min-w-0">
                   <div className="mb-6">
-                    <h2 className="text-2xl font-bold text-slate-900 leading-tight mb-2">{(data as SearchResult).translation}</h2>
-                    <p className="text-lg text-slate-600 mb-3 leading-relaxed">{(data as SearchResult).query}</p>
+                    <h2 className="text-2xl xl:text-3xl font-bold text-slate-900 leading-tight mb-2">{(data as SearchResult).translation}</h2>
+                    <p className="text-lg xl:text-xl text-slate-600 mb-3 leading-relaxed">{(data as SearchResult).query}</p>
                     <PronunciationBlock
                       text={(data as SearchResult).query}
                       ipa={(data as SearchResult).pronunciation}
@@ -1855,7 +1855,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="prose prose-indigo prose-sm sm:prose-base max-w-none text-slate-600">
+                  <div className="prose prose-indigo prose-sm sm:prose-base xl:text-lg max-w-none text-slate-600">
                     <ReactMarkdown
                       components={{
                         strong: (props) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />

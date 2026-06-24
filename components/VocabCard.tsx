@@ -187,7 +187,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
       {/* Header — title is selectable/copyable; only the action buttons opt out of selection */}
       <div className="flex justify-between items-start mb-3 shrink-0">
         <div className="select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
-          <h3 className="text-2xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
+          <h3 className="text-2xl xl:text-3xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
           {/* Sense/Meaning Label */}
           {data.sense && (
             <span className="inline-block mt-1 px-2 py-0.5 bg-violet-100 text-violet-700 text-xs font-medium rounded-full">
@@ -256,7 +256,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
         {/* Generated Image + YouGlish on desktop (click to load) */}
         {data.imageUrl && (
           <div className="mb-4 md:mb-0 w-full md:w-2/5 md:shrink-0">
-            <div className="rounded-xl overflow-hidden max-h-48 md:max-h-64 bg-slate-50 border border-slate-100 shadow-inner">
+            <div className="rounded-xl overflow-hidden max-h-48 md:max-h-64 xl:max-h-80 bg-slate-50 border border-slate-100 shadow-inner">
               <OfflineImage src={data.imageUrl?.startsWith('data:') ? data.imageUrl : undefined} itemId={data.id} alt={data.word} className="w-full h-full object-cover fade-in" onMissing={onLazyLoadImage} />
             </div>
             {/* Inline YouGlish below image on desktop — click to load (preserves daily quota) */}
@@ -280,8 +280,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
         <div className="md:flex-1 md:min-w-0">
           {/* Core Meaning */}
           <div className="mb-4 md:mb-2 shrink-0" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
-        <p className="text-xl text-slate-700 font-medium leading-relaxed select-text">{data.chinese}</p>
-        <p className="text-slate-500 mt-1 italic leading-relaxed select-text">{data.definition}</p>
+        <p className="text-xl xl:text-2xl text-slate-700 font-medium leading-relaxed select-text">{data.chinese}</p>
+        <p className="text-slate-500 xl:text-lg mt-1 italic leading-relaxed select-text">{data.definition}</p>
         <div className="flex flex-wrap gap-2 mt-2">
           <button
             onClick={(e) => {
@@ -453,7 +453,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               })();
 
               return (
-                <li key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-12">
+                <li key={i} className="text-slate-700 text-sm xl:text-base leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-12">
                   <HighlightedSentence text={ex} itemWord={data.word || ''} onSearchWord={onSearch} />
                   <SentenceSpeakerButton text={ex} className="absolute right-6 top-0" />
                   {saveBtn}
@@ -469,13 +469,13 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             <div className="flex items-center gap-2 text-xs font-bold text-orange-400 uppercase mb-1">
               <History size={12} /> Origins
             </div>
-            <p className="text-xs text-slate-700">{data.history}</p>
+            <p className="text-xs xl:text-sm text-slate-700">{data.history}</p>
           </div>
           <div className="bg-emerald-50 p-3 rounded-xl">
              <div className="flex items-center gap-2 text-xs font-bold text-emerald-500 uppercase mb-1">
               <Lightbulb size={12} /> Mnemonic
             </div>
-            <p className="text-xs text-slate-700">{data.mnemonic}</p>
+            <p className="text-xs xl:text-sm text-slate-700">{data.mnemonic}</p>
           </div>
         </div>
 
@@ -570,7 +570,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
            )}
         </div>
         
-         <div className="text-xs text-slate-400 pt-2 border-t border-slate-100 select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+         <div className="text-xs xl:text-sm text-slate-400 pt-2 border-t border-slate-100 select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
             <span className="font-semibold">Register:</span> {data.register}
          </div>
       </div>

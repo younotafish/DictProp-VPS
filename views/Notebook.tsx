@@ -434,7 +434,7 @@ const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
         )}
       </div>
       
-      <div ref={carouselRef} className="relative max-w-screen-md mx-auto" style={{ touchAction: 'pan-y' }}>
+      <div ref={carouselRef} className="relative max-w-screen-md lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto" style={{ touchAction: 'pan-y' }}>
         {/* Navigation arrows for desktop */}
         {/* Previous arrow - only shows when not at first item */}
         {totalItems > 1 && currentIndex > 0 && (
@@ -1711,7 +1711,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         />
       )}
 
-      <div className="w-full max-w-screen-md mx-auto pb-[calc(5rem+env(safe-area-inset-bottom))]">
+      <div className="w-full max-w-screen-md lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto pb-[calc(5rem+env(safe-area-inset-bottom))]">
         {scrollParent && (
           <Virtuoso
             customScrollParent={scrollParent}
