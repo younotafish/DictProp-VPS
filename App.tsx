@@ -2090,19 +2090,41 @@ const App: React.FC = () => {
    * Returns base64 data URI directly (no polling needed).
    * Also saves to IDB for offline access.
    */
+  // Items we've already tried to regenerate a lost image for this session — so a failed regen (or a
+  // promptless item) doesn't re-trigger costly generation on every swipe past it.
+  const regenAttemptedRef = useRef<Set<string>>(new Set());
+
   const handleLazyLoadImage = useCallback(async (itemId: string): Promise<string | null> => {
-    try {
-      const base64 = await loadItemImage(itemId);
-      if (base64) {
-        await saveImage(itemId, base64);
-        log(`🖼️ Lazy-loaded image from server for: ${itemId}`);
-        return base64;
-      }
-      return null;
-    } catch (e) {
-      warn("Failed to lazy-load image from server:", e);
-      return null;
+    // 1) Server has it? loadItemImage THROWS on a transient failure (OfflineImage retries) and returns
+    //    null only for a genuine 404 (the image is truly gone). Persist a hit to IDB for instant replay.
+    const existing = await loadItemImage(itemId);
+    if (existing) {
+      try { await saveImage(itemId, existing); } catch { /* cache write is best-effort */ }
+      log(`🖼️ Lazy-loaded image from server for: ${itemId}`);
+      return existing;
     }
+
+    // 2) Truly lost (404) — regenerate ONCE per session from the item's saved prompt, then persist it
+    //    back to the server (so it isn't lost again) + IDB, and return it so the card shows immediately.
+    if (regenAttemptedRef.current.has(itemId)) return null;
+    regenAttemptedRef.current.add(itemId);
+    let prompt: string | undefined;
+    for (const it of latestItemsRef.current) {
+      if (isVocabItem(it)) {
+        if (it.data.id === itemId) { prompt = it.data.imagePrompt; break; }
+      } else if (isPhraseItem(it)) {
+        if (it.data.id === itemId) { prompt = it.data.visualKeyword || it.data.query; break; }
+        const v = it.data.vocabs?.find((vv) => vv.id === itemId);
+        if (v) { prompt = v.imagePrompt; break; }
+      }
+    }
+    if (!prompt) return null; // nothing to regenerate from → placeholder
+    log(`🖼️ Image lost for ${itemId} — regenerating from prompt`);
+    const regenerated = await generateIllustration(prompt, '16:9');
+    if (!regenerated) return null;
+    try { await saveImage(itemId, regenerated); } catch { /* best-effort */ }
+    try { await uploadImages({ [itemId]: regenerated }); } catch (e) { warn('Failed to persist regenerated image:', e); }
+    return regenerated;
   }, []);
 
   const handleDelete = useCallback(async (id: string) => {

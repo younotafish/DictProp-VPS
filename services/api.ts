@@ -33,16 +33,15 @@ export const saveItems = async (items: StoredItem[]): Promise<void> => {
 
 /**
  * Fetch a single item's image as a base64 data URI via the binary image endpoint.
- * Returns null if the item has no image.
+ * - 404 → null: the item genuinely has no image (callers should NOT retry).
+ * - network error / 5xx → throws: a transient failure (callers MAY retry).
+ * This distinction lets OfflineImage retry flaky downloads instead of giving up on the first miss.
  */
 export const loadItemImage = async (itemId: string): Promise<string | null> => {
-  try {
-    const res = await fetch(`${API_BASE}/api/items/${itemId}/image`);
-    if (!res.ok) return null;
-    return await blobToBase64(await res.blob());
-  } catch {
-    return null;
-  }
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/image`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to load image: ${res.status}`);
+  return blobToBase64(await res.blob());
 };
 
 /**
