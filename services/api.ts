@@ -209,18 +209,13 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
     const msg = error.message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
 
-    // Retry once on timeout
-    if (msg.includes('timed out') || msg.includes('504') || error.name === 'AbortError') {
-      warn('Search timed out, retrying once...');
-      try {
-        return await attemptCall();
-      } catch (retryError: any) {
-        logError('Retry also failed', retryError);
-        throw new Error('Search timed out. The AI service may be busy — please try again.');
-      }
-    }
-
     logError('Analysis failed', error);
+    // The server already waits a full window and retries transient upstream errors internally, so a
+    // client-side retry would just double an already-long wait for a busy model. Surface it instead —
+    // callers must show this so the search no longer fails silently.
+    if (msg.includes('timed out') || msg.includes('504') || error.name === 'AbortError') {
+      throw new Error('The search timed out — the AI service is busy. Please try again.');
+    }
     throw new Error(msg || 'Search failed. Please try again.');
   }
 };
@@ -317,17 +312,11 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
     const msg = error.message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
 
-    if (msg.includes('timed out') || msg.includes('504') || error.name === 'AbortError') {
-      warn('Comparison timed out, retrying once...');
-      try {
-        return await attemptCall();
-      } catch (retryError: any) {
-        logError('Comparison retry also failed', retryError);
-        throw new Error('Comparison timed out. The AI service may be busy — please try again.');
-      }
-    }
-
     logError('Word comparison failed', error);
+    // See analyzeInput: the server owns the timeout + transient-retry, so don't double the wait here.
+    if (msg.includes('timed out') || msg.includes('504') || error.name === 'AbortError') {
+      throw new Error('The comparison timed out — the AI service is busy. Please try again.');
+    }
     throw new Error(msg || 'Word comparison failed. Please try again.');
   }
 };

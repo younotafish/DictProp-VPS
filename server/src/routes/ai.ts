@@ -8,7 +8,11 @@ export const aiRoutes = new Hono();
 // DeepSeek-V3 Helper (Text model via DeepInfra)
 // ============================================================================
 
-const DEEPSEEK_TIMEOUT_MS = 45000;
+// DeepSeek-V4-Flash can take 60-90s to emit a full multi-sense vocab card (the schema is large and
+// word mode asks for every common meaning). At 45s, responses that would have succeeded were being
+// cut off — surfacing as intermittent 504s for slower phrases (e.g. "cannon effect" failed ~2/3 of
+// the time, each attempt returning at ~34-85s). Give a single generous window instead.
+const DEEPSEEK_TIMEOUT_MS = 90000;
 const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
 const DEEPINFRA_WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo';
 const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
@@ -80,9 +84,10 @@ async function callDeepSeek(apiKey: string, systemPrompt: string, userPrompt: st
     } catch (error: any) {
       lastError = error;
       const msg = error.message || '';
+      // Retry transient upstream failures (5xx/429/network) — these fail fast, so a retry is cheap.
+      // Do NOT retry a timeout: the request already burned the full 90s window, and a second 90s wait
+      // for a busy model rarely helps and just doubles how long the user stares at a spinner.
       const isRetryable =
-        error.name === 'AbortError' ||
-        msg.includes('aborted') ||
         msg.includes('DeepSeek API error: 5') ||
         msg.includes('DeepSeek API error: 429') ||
         msg.includes('fetch failed');

@@ -37,11 +37,20 @@ interface Props {
 
 let queueIdCounter = 0;
 
+// Friendly, specific message for a failed analyze() call so the floating search never fails silently.
+const describeError = (query: string, err: any): string => {
+  const m = err?.message || '';
+  if (m === 'QUOTA_EXCEEDED') return 'Daily AI limit reached — please try again later.';
+  if (m.includes('timed out') || m.includes('504') || err?.name === 'AbortError')
+    return `"${query}" timed out — the AI service is busy.`;
+  return `Couldn't analyze "${query}" — please try again.`;
+};
+
 export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ msg: string; query?: string } | null>(null);
   // Viewing state: which queue item and which vocab within it
   const [viewingQueueIdx, setViewingQueueIdx] = useState(0);
   const [viewingVocabIdx, setViewingVocabIdx] = useState(0);
@@ -62,6 +71,16 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
   }, []);
   useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
+
+  // Surface a failed search as an auto-dismissing toast. The floating search has no inline results
+  // area, so without this a failed queue item just vanishes (the bug behind silent search failures).
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showError = useCallback((msg: string, query?: string) => {
+    setError({ msg, query });
+    if (errorTimer.current) clearTimeout(errorTimer.current);
+    errorTimer.current = setTimeout(() => setError(null), 6000);
+  }, []);
+  useEffect(() => () => { if (errorTimer.current) clearTimeout(errorTimer.current); }, []);
 
   // Derived state
   const readyItems = queue.filter(q => q.status === 'ready');
@@ -152,16 +171,18 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
     log('🔍 Queue: searching "' + pending.query + '"');
     analyzeInput(pending.query).then(result => {
+      setError(null); // a fresh success clears any lingering failure toast
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: result } : q));
       if (pending.forceAI) setPendingOpenId(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
       finalizeResult(itemId, pending.query, result); // prepare audio, replace saved card, stream images
     }).catch(err => {
-      warn('🔍 Queue: failed "' + pending.query + '":', err.message);
+      warn('🔍 Queue: failed "' + pending.query + '":', err?.message);
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
+      showError(describeError(pending.query, err), pending.query);
     }).finally(() => {
       processingRef.current = false;
     });
-  }, [queue, findSavedByWord, finalizeResult]);
+  }, [queue, findSavedByWord, finalizeResult, showError]);
 
   // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
   useEffect(() => {
@@ -432,8 +453,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }).catch(err => {
       warn('🔍 Refresh failed "' + trimmed + '":', err?.message);
       setQueue(prev => prev.map(q => q.id === id ? { ...q, refreshing: false } : q));
+      showError(describeError(trimmed, err), trimmed);
     });
-  }, [mode, readyItems, viewingQueueIdx, finalizeResult]);
+  }, [mode, readyItems, viewingQueueIdx, finalizeResult, showError]);
 
   // Eyes-free zone read: a click/tap in the popup body's top quarter plays the 1st example sentence, the
   // second quarter the 2nd; the bottom half is inert. Zones are measured against the VISIBLE popup body
@@ -471,11 +493,15 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           {saveToast}
         </div>
       )}
-      {/* Error toast */}
+      {/* Error toast — failures surface here instead of vanishing. Tappable: retry the failed query
+          (force-refresh bypasses the saved-card reuse + dedup) and dismiss the toast. */}
       {error && (
-        <div className="fixed bottom-28 right-4 z-[56] bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg animate-in fade-in duration-200">
-          {error}
-        </div>
+        <button
+          onClick={() => { const q = error.query; setError(null); if (q) enqueue(q, true); }}
+          className="fixed bottom-44 right-4 z-[56] max-w-[18rem] text-left bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg animate-in fade-in duration-200 hover:bg-red-100 transition-colors"
+        >
+          {error.msg}{error.query ? ' · Tap to retry' : ''}
+        </button>
       )}
 
       {/* Input overlay */}
