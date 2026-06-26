@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { spawn } from 'child_process';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
 
@@ -100,6 +101,61 @@ async function callDeepSeek(apiKey: string, systemPrompt: string, userPrompt: st
     }
   }
   throw lastError;
+}
+
+// Extract a JSON object from a model's text content (strips ``` fences; falls back to the first {...}).
+function parseModelJson(content: string): any {
+  let jsonStr = content.trim();
+  const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (fenceMatch) jsonStr = fenceMatch[1].trim();
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    const objMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (objMatch) return JSON.parse(objMatch[0]);
+    throw new Error('Failed to parse JSON from DeepSeek response');
+  }
+}
+
+// POST a chat request to DeepInfra via curl. undici's ProxyAgent STALLS on large request bodies behind
+// the corporate proxy (same reason tts.ts shells out for whisper), and the compare prompt is large — so
+// curl is the reliable transport (it also goes direct on the VPS, honoring HTTPS_PROXY automatically),
+// with a generous timeout since the comparison output is big. Returns the parsed JSON object.
+function callDeepSeekViaCurl(apiKey: string, systemPrompt: string, userPrompt: string, timeoutSec = 180): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      model: DEEPSEEK_MODEL,
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      response_format: { type: 'json_object' },
+      temperature: DEFAULT_TEMPERATURE,
+    });
+    const args = [
+      '-s', '--max-time', String(timeoutSec), '-X', 'POST',
+      '-H', `Authorization: Bearer ${apiKey}`,
+      '-H', 'Content-Type: application/json',
+      '--data-binary', '@-', DEEPINFRA_CHAT_URL,
+    ];
+    const cp = spawn('curl', args);
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    cp.stdout.on('data', (d) => out.push(d));
+    cp.stderr.on('data', (d) => err.push(d));
+    cp.on('error', (e) => reject(e));
+    cp.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`curl exit ${code}: ${Buffer.concat(err).toString().slice(0, 200)}`));
+      try {
+        const data: any = JSON.parse(Buffer.concat(out).toString('utf8'));
+        if (data?.error) return reject(new Error(`DeepSeek API error: ${JSON.stringify(data.error).slice(0, 200)}`));
+        const content = data?.choices?.[0]?.message?.content;
+        if (!content) return reject(new Error('DeepSeek returned empty response'));
+        resolve(parseModelJson(content));
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error('Failed to parse DeepSeek curl response'));
+      }
+    });
+    cp.stdin.on('error', () => {});
+    try { cp.stdin.write(body); cp.stdin.end(); } catch (e) { reject(e as Error); }
+  });
 }
 
 // ============================================================================
@@ -643,7 +699,8 @@ aiRoutes.post('/compare', async (c) => {
   const userPrompt = `Compare these words: ${cleanWords.join(', ')}`;
 
   try {
-    const rawData = await callDeepSeek(apiKey, COMPARE_WORDS_INSTRUCTION, userPrompt);
+    // Use the curl transport: the compare prompt is large and undici's proxy fetch stalls on big bodies.
+    const rawData = await callDeepSeekViaCurl(apiKey, COMPARE_WORDS_INSTRUCTION, userPrompt);
     if (!rawData || !Array.isArray(rawData.dimensions) || rawData.dimensions.length === 0) {
       return c.json(errorResponse('Comparison failed. Please try again.', 500), 500);
     }

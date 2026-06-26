@@ -2358,7 +2358,7 @@ const App: React.FC = () => {
   // if we already have this comparison, open it instantly; otherwise enqueue it for background
   // generation (the bottom-right search button shows it in progress) and let the user keep working.
   const handleCompare = useCallback((words: string[]) => {
-    if (words.length < 2 || words.length > 3) return;
+    if (words.length < 2) return; // no upper bound — compare against any number of words
     const key = comparisonKey(words);
     if (!key) return;
     const existing = comparisonsRef.current.find((c) => c.key === key);
