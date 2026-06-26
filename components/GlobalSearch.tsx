@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
-import { SearchResult, VocabCard, StoredItem } from '../types';
-import { analyzeInput, generateIllustration } from '../services/api';
+import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles, Scale } from 'lucide-react';
+import { SearchResult, VocabCard, StoredItem, ComparisonResult, comparisonKey } from '../types';
+import { analyzeInput, generateIllustration, compareWords } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
+import { ComparisonBody } from './ComparisonBody';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent } from '../services/neuralTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
@@ -11,9 +12,12 @@ import { log, warn } from '../services/logger';
 
 interface QueueItem {
   id: string;
-  query: string;
+  kind: 'search' | 'compare';            // 'search' = analyze a word; 'compare' = compare 2+ words
+  query: string;                         // search: the query; compare: "a vs b" for display
   status: 'pending' | 'searching' | 'ready' | 'failed';
-  results: SearchResult | null;
+  results: SearchResult | null;          // search result
+  words?: string[];                      // compare: the words being compared
+  comparison?: ComparisonResult | null;  // compare result
   forceAI?: boolean; // refresh: re-run the AI, bypassing the saved-card reuse
   refreshing?: boolean; // in-place refresh in flight: keep showing the old results with a spinner
 }
@@ -33,8 +37,8 @@ interface Props {
   /** Save an example sentence for review (shows the bookmark beside each USAGE megaphone). */
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
-  /** Background word-comparisons in flight — counted into the floating button so they read as queued. */
-  pendingCompareCount?: number;
+  /** A finished comparison — persist it (server + local) so it shows on each involved word's page. */
+  onCompareReady?: (words: string[], result: ComparisonResult) => void;
 }
 
 let queueIdCounter = 0;
@@ -48,7 +52,7 @@ const describeError = (query: string, err: any): string => {
   return `Couldn't analyze "${query}" — please try again.`;
 };
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, pendingCompareCount = 0 }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -60,6 +64,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
+  const queueRef = useRef<QueueItem[]>([]); // fresh queue for synchronous dedup/open checks
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_THRESHOLD = 50;
   // Eyes-free zone tap-confirmation flash (see EyesFreeZones).
@@ -84,12 +89,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, []);
   useEffect(() => () => { if (errorTimer.current) clearTimeout(errorTimer.current); }, []);
 
-  // Derived state
+  // Derived state — searches AND comparisons are both queue items, so all counts include both.
   const readyItems = queue.filter(q => q.status === 'ready');
-  const searchingCount = queue.filter(q => q.status === 'searching' || q.status === 'pending').length;
+  const busyCount = queue.filter(q => q.status === 'searching' || q.status === 'pending').length;
   const readyCount = readyItems.length;
-  // The floating button reflects BOTH searches and background comparisons as "in progress".
-  const busyCount = searchingCount + pendingCompareCount;
   const hasWork = busyCount > 0 || readyCount > 0;
 
   // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
@@ -107,8 +110,31 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         ? prev.filter(item => item.query.toLowerCase() !== trimmed.toLowerCase())
         : prev;
       log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : ''));
-      return [...base, { id: `q-${++queueIdCounter}`, query: trimmed, status: 'pending', results: null, forceAI }];
+      return [...base, { id: `q-${++queueIdCounter}`, kind: 'search' as const, query: trimmed, status: 'pending', results: null, forceAI }];
     });
+  }, []);
+
+  // Keep a fresh snapshot of the queue for synchronous dedup/open decisions in enqueueCompare.
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+
+  // Add a comparison to the SAME queue as searches. With a cachedResult (already saved) it drops in as
+  // 'ready' and auto-opens; otherwise it's 'pending' and generates in the background like a search.
+  const enqueueCompare = useCallback((words: string[], cachedResult?: ComparisonResult | null) => {
+    const clean = words.map(w => w.trim()).filter(Boolean);
+    if (clean.length < 2) return;
+    const key = comparisonKey(clean);
+    const existing = queueRef.current.find(q => q.kind === 'compare' && comparisonKey(q.words || []) === key && q.status !== 'failed');
+    if (existing) {
+      if (existing.status === 'ready') setPendingOpenId(existing.id); // already done → just open it
+      return; // already queued/generating → don't duplicate
+    }
+    const id = `q-${++queueIdCounter}`;
+    log('⚖️ Queue: comparing "' + clean.join(' vs ') + '"' + (cachedResult ? ' (saved)' : ''));
+    setQueue(prev => [...prev, {
+      id, kind: 'compare' as const, query: clean.join(' vs '), words: clean,
+      status: cachedResult ? 'ready' as const : 'pending' as const, results: null, comparison: cachedResult ?? null,
+    }]);
+    if (cachedResult) setPendingOpenId(id); // saved comparison → open instantly in the popup
   }, []);
 
   // Post-process a fresh AI result for queue item `itemId`: prepare its audio, replace the saved card
@@ -149,6 +175,24 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     processingRef.current = true;
     const itemId = pending.id;
 
+    // Comparison items run compareWords (the heavy call uses curl server-side) and persist on success.
+    if (pending.kind === 'compare') {
+      setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'searching' as const } : q));
+      log('⚖️ Queue: generating comparison "' + pending.query + '"');
+      compareWords(pending.words || []).then(result => {
+        setError(null);
+        setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, comparison: result } : q));
+        onCompareReady?.(pending.words || [], result); // persist (server + local) for the word pages
+      }).catch(err => {
+        warn('⚖️ Queue: compare failed "' + pending.query + '":', err?.message);
+        setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
+        showError(describeError(pending.query, err), undefined);
+      }).finally(() => {
+        processingRef.current = false;
+      });
+      return;
+    }
+
     // Reuse the saved card to skip the API call — UNLESS this is a refresh (forceAI), which must
     // always re-run the AI (otherwise "refresh" would just show the same saved card again).
     const savedVocabs = pending.forceAI ? [] : findSavedByWord(pending.query);
@@ -186,7 +230,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }).finally(() => {
       processingRef.current = false;
     });
-  }, [queue, findSavedByWord, finalizeResult, showError]);
+  }, [queue, findSavedByWord, finalizeResult, showError, onCompareReady]);
 
   // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
   useEffect(() => {
@@ -213,6 +257,16 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     window.addEventListener('global-search', handleTrigger);
     return () => window.removeEventListener('global-search', handleTrigger);
   }, [enqueue]);
+
+  // Listen for comparison triggers — same queue as search. detail = { words, result? } (result = cached).
+  useEffect(() => {
+    const handleCompareTrigger = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (Array.isArray(detail?.words)) enqueueCompare(detail.words, detail.result ?? null);
+    };
+    window.addEventListener('global-compare', handleCompareTrigger);
+    return () => window.removeEventListener('global-compare', handleCompareTrigger);
+  }, [enqueueCompare]);
 
   // Cmd+F / Ctrl+F keyboard shortcut
   useEffect(() => {
@@ -560,7 +614,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       )}
 
       {/* Results popup */}
-      {mode === 'viewing' && viewingItem && viewingVocab && (
+      {mode === 'viewing' && viewingItem && (viewingVocab || viewingItem.kind === 'compare') && (
         <>
           {/* Backdrop */}
           <div
@@ -573,7 +627,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               {/* Header */}
               <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100">
                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <Search size={14} className="text-indigo-500 shrink-0" />
+                  {viewingItem.kind === 'compare'
+                    ? <Scale size={14} className="text-indigo-500 shrink-0" />
+                    : <Search size={14} className="text-indigo-500 shrink-0" />}
                   <span className="text-sm font-semibold text-slate-700 truncate">"{viewingResult?.query || viewingItem.query}"</span>
                   {viewingItem.refreshing && (
                     <span className="flex items-center gap-1 text-xs font-medium text-indigo-500 shrink-0">
@@ -609,8 +665,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       </button>
                     </div>
                   )}
-                  {/* Save all meanings of current word */}
-                  {(() => {
+                  {/* Save all meanings of current word (searches only — comparisons auto-save) */}
+                  {viewingItem.kind !== 'compare' && (() => {
                     const allSaved = viewingResult?.vocabs?.every(v => isVocabSaved(v)) ?? false;
                     const meaningCount = viewingResult?.vocabs?.length ?? 0;
                     return (
@@ -642,6 +698,16 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                   are anchored to the visible popup body and work regardless of how far the card is scrolled.
                   The relative wrapper hosts the zone guides as a non-scrolling sibling overlay. */}
               <div className="relative flex-1 min-h-0 flex flex-col">
+              {viewingItem.kind === 'compare' ? (
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4">
+                  <div className="max-w-screen-md mx-auto">
+                    {viewingItem.comparison
+                      ? <ComparisonBody result={viewingItem.comparison} />
+                      : <div className="text-center text-slate-400 py-12 text-sm">Comparison unavailable.</div>}
+                  </div>
+                </div>
+              ) : (
+              <>
               <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
                 <div className="relative max-w-screen-md mx-auto">
                   {/* Navigation arrows for vocabs */}
@@ -701,6 +767,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                 bands={Math.min(2, (viewingVocab?.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean).length)}
                 flash={zoneFlash}
               />
+              </>
+              )}
               </div>
 
               {/* Queue strip — show all ready items as tabs at bottom */}

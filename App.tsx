@@ -8,7 +8,7 @@ import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, ge
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, compareWords } from './services/api';
+import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi } from './services/api';
 import { stripSentenceMarkers } from './components/HighlightedSentence';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -462,8 +462,9 @@ const App: React.FC = () => {
   }, [authState.loading, authState.user?.id, projectsCacheKey]);
 
   // ── Word comparisons (persisted server + local, keyed by the word-set) ──────
+  // The GENERATION queue lives in GlobalSearch (the bottom-right search queue) so comparisons behave
+  // exactly like word searches. App just owns the persisted store + the save/lookup callbacks.
   const [comparisons, setComparisons] = useState<StoredComparison[]>([]);
-  const [comparisonQueue, setComparisonQueue] = useState<{ key: string; words: string[] }[]>([]);
   const comparisonsRef = useRef<StoredComparison[]>([]);
   useEffect(() => { comparisonsRef.current = comparisons; }, [comparisons]);
   const comparisonsCacheKey = authState.user ? `vps_comparisons_cache_${authState.user.id}` : 'vps_comparisons_cache';
@@ -483,30 +484,13 @@ const App: React.FC = () => {
     loadComparisons().then(persistComparisons).catch((e) => warn('Failed to load comparisons:', e));
   }, [authState.loading, authState.user?.id, comparisonsCacheKey, persistComparisons]);
 
-  // Upsert one comparison (by word-set key) into state + local cache + server.
-  const applyComparison = useCallback((c: StoredComparison) => {
+  // A finished comparison from the search queue → save it (state + local cache + server).
+  const handleCompareReady = useCallback((words: string[], data: ComparisonResult) => {
+    const c: StoredComparison = { key: comparisonKey(words), words, data, updatedAt: Date.now() };
     persistComparisons([...comparisonsRef.current.filter((x) => x.key !== c.key), c]);
     saveComparisonApi(c).catch((e) => warn('Failed to save comparison to server:', e));
   }, [persistComparisons]);
 
-  // Background comparison queue — one at a time so it never blocks normal usage (mirrors the search
-  // queue). On success the result is saved and surfaces on every involved word's page.
-  const comparisonProcessingRef = useRef(false);
-  useEffect(() => {
-    if (comparisonProcessingRef.current) return;
-    const next = comparisonQueue[0];
-    if (!next) return;
-    comparisonProcessingRef.current = true;
-    compareWords(next.words)
-      .then((data: ComparisonResult) => {
-        applyComparison({ key: next.key, words: next.words, data, updatedAt: Date.now() });
-      })
-      .catch((e: any) => { warn('Comparison failed:', next.words, e?.message); })
-      .finally(() => {
-        comparisonProcessingRef.current = false;
-        setComparisonQueue((prev) => prev.filter((q) => q.key !== next.key));
-      });
-  }, [comparisonQueue, applyComparison]);
 
   // Land on the default project (DEFAULT_PROJECT_NAME) once projects are known. Runs once per
   // session, so switching projects mid-session sticks; a fresh load returns to the default.
@@ -2357,19 +2341,17 @@ const App: React.FC = () => {
   // Word comparison handler (used by EVERY Compare button — synonyms + confusables). Non-blocking:
   // if we already have this comparison, open it instantly; otherwise enqueue it for background
   // generation (the bottom-right search button shows it in progress) and let the user keep working.
+  // Trigger a comparison through the SAME bottom-right queue as word search (background, non-blocking).
+  // If it's already saved, pass the cached result so the popup opens instantly; else it generates.
   const handleCompare = useCallback((words: string[]) => {
     if (words.length < 2) return; // no upper bound — compare against any number of words
     const key = comparisonKey(words);
     if (!key) return;
     const existing = comparisonsRef.current.find((c) => c.key === key);
-    if (existing) { setComparisonWords(existing.words); return; }
-    setComparisonQueue((prev) => (prev.some((q) => q.key === key) ? prev : [...prev, { key, words }]));
+    window.dispatchEvent(new CustomEvent('global-compare', { detail: { words, result: existing?.data ?? null } }));
   }, []);
-
-  // Open an already-saved comparison (from a word page's Comparisons section).
-  const handleOpenComparison = useCallback((words: string[]) => {
-    setComparisonWords(words);
-  }, []);
+  // Opening a saved comparison (from a word page) routes to the same place — the search popup.
+  const handleOpenComparison = handleCompare;
 
   // Save sentence for review
   const handleSaveSentence = useCallback((text: string, sourceWord: string, sourceSense?: string) => {
@@ -2807,7 +2789,6 @@ const App: React.FC = () => {
               onUpdateSRS={updateSRS}
               onCompare={handleCompare}
               comparisons={comparisons}
-              comparingKeys={comparisonQueue.map((q) => q.key)}
               onOpenComparison={handleOpenComparison}
               onSaveSentence={handleSaveSentence}
               isSentenceSaved={isSentenceSaved}
@@ -2898,7 +2879,7 @@ const App: React.FC = () => {
         onRefreshReplace={handleRefreshReplace}
         onSaveSentence={handleSaveSentence}
         isSentenceSaved={isSentenceSaved}
-        pendingCompareCount={comparisonQueue.length}
+        onCompareReady={handleCompareReady}
       />
 
       <nav ref={navRef} className="fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 translate-y-0">
