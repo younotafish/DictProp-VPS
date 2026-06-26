@@ -12,12 +12,13 @@ const WORD_COLORS = [
 
 interface ComparisonViewProps {
   words: string[];
+  result?: ComparisonResult; // cached result — when present, this is a pure viewer (no generation)
   onClose: () => void;
 }
 
-export const ComparisonView: React.FC<ComparisonViewProps> = ({ words, onClose }) => {
-  const [result, setResult] = useState<ComparisonResult | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+export const ComparisonView: React.FC<ComparisonViewProps> = ({ words, result: cachedResult, onClose }) => {
+  const [result, setResult] = useState<ComparisonResult | null>(cachedResult ?? null);
+  const [isLoading, setIsLoading] = useState(!cachedResult);
   const [error, setError] = useState<string | null>(null);
   const [collapsedDimensions, setCollapsedDimensions] = useState<Set<number>>(new Set());
 
@@ -41,9 +42,12 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ words, onClose }
     }
   }, [words]);
 
+  // Cached result → just show it (comparisons are generated in the background queue now). Only the
+  // rare uncached open (or the manual Retry button) hits the AI.
   useEffect(() => {
+    if (cachedResult) { setResult(cachedResult); setIsLoading(false); setError(null); return; }
     fetchComparison();
-  }, [fetchComparison]);
+  }, [cachedResult, fetchComparison]);
 
   // Note: Escape key is handled by App.tsx's global handler (closes comparisonWords state)
 

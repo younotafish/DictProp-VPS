@@ -186,6 +186,19 @@ export interface ComparisonResult {
   verdict: string;
 }
 
+// A persisted comparison (server + local), keyed by the normalized word-set so direction doesn't
+// matter and it surfaces on every involved word's page.
+export interface StoredComparison {
+  key: string;        // e.g. 'fable|parable'
+  words: string[];    // the words as compared (original order/casing for display)
+  data: ComparisonResult;
+  updatedAt: number;
+}
+
+/** Normalized key for a comparison: words lowercased, trimmed, de-duped, sorted, joined with '|'. */
+export const comparisonKey = (words: string[]): string =>
+  Array.from(new Set(words.map((w) => w.toLowerCase().trim()).filter(Boolean))).sort().join('|');
+
 // Simplified Firebase User type for props
 export interface AppUser {
   uid: string;

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2 } from 'lucide-react';
+import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison } from '../types';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -72,6 +72,9 @@ interface DetailViewProps {
   onLazyLoadImage?: (itemId: string) => Promise<string | null>; // Fetch image from server if missing locally
   onUpdateSRS?: (itemId: string) => void; // Direct SRS update (triggers "remember")
   onCompare?: (words: string[]) => void;
+  comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
+  comparingKeys?: string[];                   // comparison keys currently generating (background queue)
+  onOpenComparison?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
   onRemoveVocabFromPhrase?: (phraseId: string, vocabId: string) => void;
@@ -94,6 +97,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onLazyLoadImage,
   onUpdateSRS,
   onCompare,
+  comparisons,
+  comparingKeys,
+  onOpenComparison,
   onSaveSentence,
   isSentenceSaved,
   onRemoveVocabFromPhrase,
@@ -495,6 +501,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
   
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
+
+  // Saved + in-flight comparisons that involve THIS word — surfaced as a "Comparisons" section below
+  // the card, so a "parable vs fable" comparison shows on both the parable and fable pages.
+  const normTitle = (title || '').toLowerCase().trim();
+  const wordComparisons = (comparisons || [])
+    .filter((c) => c.words.some((w) => w.toLowerCase().trim() === normTitle))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const wordComparingPairs = (comparingKeys || []).filter((k) => k.split('|').includes(normTitle));
 
   // Auto-pronounce the word when the card changes — but NOT during sentence auto-play, which
   // reads the example sentence instead (we don't want the word spoken over it).
@@ -1799,6 +1813,38 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 onLazyLoadImage={onLazyLoadImage}
               />
             </ErrorBoundary>
+          )}
+
+          {/* Saved comparisons involving this word (+ any still generating in the background queue). */}
+          {onOpenComparison && (wordComparisons.length > 0 || wordComparingPairs.length > 0) && (
+            <div className="max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto mt-5">
+              <div className="flex items-center gap-2 mb-2">
+                <Scale size={14} className="text-indigo-500" />
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Comparisons</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {wordComparisons.map((c) => (
+                  <button
+                    key={c.key}
+                    onClick={() => onOpenComparison(c.words)}
+                    className="px-3 py-1.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors"
+                    title="View this comparison"
+                  >
+                    {c.words.join(' vs ')}
+                  </button>
+                ))}
+                {wordComparingPairs.map((k) => (
+                  <span
+                    key={k}
+                    className="px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1.5"
+                    title="Generating in the background"
+                  >
+                    <Loader2 size={12} className="animate-spin" />
+                    {k.split('|').join(' vs ')} · comparing…
+                  </span>
+                ))}
+              </div>
+            </div>
           )}
 
           {type === 'phrase' && (

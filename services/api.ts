@@ -1,4 +1,4 @@
-import { StoredItem, SearchResult, ComparisonResult, ProjectInfo } from '../types';
+import { StoredItem, SearchResult, ComparisonResult, ProjectInfo, StoredComparison } from '../types';
 import { log, warn, error as logError } from './logger';
 
 // Same origin — Hono serves both API and static files
@@ -318,6 +318,25 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
     }
     throw new Error(msg || 'Word comparison failed. Please try again.');
   }
+};
+
+// ============================================================================
+// Comparisons API (persisted side-by-side analyses, keyed by the word-set)
+// ============================================================================
+
+export const loadComparisons = async (): Promise<StoredComparison[]> => {
+  const res = await fetch(`${API_BASE}/api/comparisons`);
+  if (!res.ok) throw new Error(`Failed to load comparisons: ${res.status}`);
+  return res.json();
+};
+
+export const saveComparisonApi = async (comparison: StoredComparison): Promise<void> => {
+  const res = await fetch(`${API_BASE}/api/comparisons`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(comparison),
+  });
+  if (!res.ok) throw new Error(`Failed to save comparison: ${res.status}`);
 };
 
 export const generateIllustration = async (

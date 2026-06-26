@@ -33,6 +33,8 @@ interface Props {
   /** Save an example sentence for review (shows the bookmark beside each USAGE megaphone). */
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
+  /** Background word-comparisons in flight — counted into the floating button so they read as queued. */
+  pendingCompareCount?: number;
 }
 
 let queueIdCounter = 0;
@@ -46,7 +48,7 @@ const describeError = (query: string, err: any): string => {
   return `Couldn't analyze "${query}" — please try again.`;
 };
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, pendingCompareCount = 0 }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -86,7 +88,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const readyItems = queue.filter(q => q.status === 'ready');
   const searchingCount = queue.filter(q => q.status === 'searching' || q.status === 'pending').length;
   const readyCount = readyItems.length;
-  const hasWork = searchingCount > 0 || readyCount > 0;
+  // The floating button reflects BOTH searches and background comparisons as "in progress".
+  const busyCount = searchingCount + pendingCompareCount;
+  const hasWork = busyCount > 0 || readyCount > 0;
 
   // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
   // replace any existing queue entry for it so the fresh result supersedes the old/reused one.
@@ -745,21 +749,21 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           className={`fixed bottom-24 right-4 z-[55] w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
             ${readyCount > 0
               ? 'bg-indigo-500 text-white shadow-indigo-300'
-              : searchingCount > 0
+              : busyCount > 0
               ? 'bg-white/90 text-indigo-500 border border-slate-200'
               : 'bg-white/70 text-slate-500 border border-slate-200/50 opacity-60 hover:opacity-100'
             }`}
         >
-          {searchingCount > 0 && (
+          {busyCount > 0 && (
             <>
               <Loader2 size={20} className="animate-spin" />
               {/* Count badge */}
               <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-indigo-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white">
-                {searchingCount}
+                {busyCount}
               </span>
             </>
           )}
-          {searchingCount === 0 && readyCount > 0 && (
+          {busyCount === 0 && readyCount > 0 && (
             <>
               <Search size={20} />
               {/* Pulse ring */}
