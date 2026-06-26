@@ -499,14 +499,12 @@ example's "sentences" (one key per word, no omissions).
 
 Your task: Create a detailed, structured comparison that helps a Chinese-speaking learner understand EXACTLY when to use each word.
 
-Analyze the words across these dimensions:
+Analyze the words across EXACTLY these THREE dimensions (keep each concise — about one sentence per word):
 1. Core Meaning — What each word fundamentally means and how the meanings differ
 2. Register & Formality — Is one more formal, literary, casual, or technical?
 3. Collocations — What words commonly appear WITH each one? (e.g., "fleeting glance" but NOT "transient glance")
-4. Connotation & Emotion — Does one carry positive, negative, or neutral weight?
-5. Grammar & Usage — Are there syntactic differences? (e.g., one is used predicatively only)
 
-Provide 2-3 contextual examples showing the SAME scenario but using each word, so the learner can see the difference in practice.
+Provide 2 contextual examples showing the SAME scenario but using each word, so the learner can see the difference in practice.
 
 List common mistakes Chinese learners make when choosing between these words.
 
@@ -519,7 +517,7 @@ You MUST respond with valid JSON in this exact format:
   "dimensions": [
     {
       "label": "string - Dimension name (e.g., 'Core Meaning')",
-      "analysis": "string - 2-3 sentence overview comparing all words on this dimension",
+      "analysis": "string - ONE concise sentence comparing all words on this dimension",
       "perWord": {
         "word1": "string - How word1 relates to this dimension",
         "word2": "string - How word2 relates to this dimension",
@@ -541,11 +539,11 @@ You MUST respond with valid JSON in this exact format:
   "verdict": "string - A memorable rule of thumb (2-3 sentences) for choosing between these words"
 }
 
-IMPORTANT:
-- Include 4-5 dimensions covering meaning, register, collocation, connotation, and grammar
-- Include 2-3 contextual examples
-- Include 2-4 common mistakes
-- The verdict should be practical and memorable
+IMPORTANT (keep the response compact so it generates quickly):
+- Include EXACTLY 3 dimensions (core meaning, register, collocation) — concise, not exhaustive
+- Include 2 contextual examples
+- Include 2-3 common mistakes
+- The verdict should be practical and memorable (1-2 sentences)
 - Use Chinese translations in parentheses where helpful for the Chinese-speaking learner
 - Be specific and concrete, not vague`;
 
@@ -699,8 +697,9 @@ aiRoutes.post('/compare', async (c) => {
   const userPrompt = `Compare these words: ${cleanWords.join(', ')}`;
 
   try {
-    // Use the curl transport: the compare prompt is large and undici's proxy fetch stalls on big bodies.
-    const rawData = await callDeepSeekViaCurl(apiKey, COMPARE_WORDS_INSTRUCTION, userPrompt);
+    // Use the curl transport (undici stalls on the big body) with a generous budget — the output is
+    // trimmed to 3 dimensions / 2 examples so it generates fast, but give margin for a busy model.
+    const rawData = await callDeepSeekViaCurl(apiKey, COMPARE_WORDS_INSTRUCTION, userPrompt, 240);
     if (!rawData || !Array.isArray(rawData.dimensions) || rawData.dimensions.length === 0) {
       return c.json(errorResponse('Comparison failed. Please try again.', 500), 500);
     }
