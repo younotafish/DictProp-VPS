@@ -697,9 +697,9 @@ aiRoutes.post('/compare', async (c) => {
   const userPrompt = `Compare these words: ${cleanWords.join(', ')}`;
 
   try {
-    // Use the curl transport (undici stalls on the big body) with a generous budget — the output is
-    // trimmed to 3 dimensions / 2 examples so it generates fast, but give margin for a busy model.
-    const rawData = await callDeepSeekViaCurl(apiKey, COMPARE_WORDS_INSTRUCTION, userPrompt, 240);
+    // Use the curl transport (undici stalls on the big body). Comparisons run in the background queue
+    // and aren't time-sensitive, so give a very large budget (10 min) — better to wait than time out.
+    const rawData = await callDeepSeekViaCurl(apiKey, COMPARE_WORDS_INSTRUCTION, userPrompt, 600);
     if (!rawData || !Array.isArray(rawData.dimensions) || rawData.dimensions.length === 0) {
       return c.json(errorResponse('Comparison failed. Please try again.', 500), 500);
     }

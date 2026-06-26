@@ -190,12 +190,10 @@ function isCasual(voice: string): boolean {
   return voice === CASUAL_STYLE;
 }
 
-// A clip is "complete" when it has everything its style needs: clear needs audio + word timings;
-// casual needs only audio (it has no timings). Used by /generate, /manifest, and the backfill to skip.
-async function isComplete(key: string, voice: string): Promise<boolean> {
-  if (!(await fileExists(pathForKey(key)))) return false;
-  if (isCasual(voice)) return true;
-  return fileExists(timingsPathForKey(key));
+// A clip is "complete" when it has both audio and word timings (both styles now). Used by /generate
+// and the backfill to skip finished clips (and to backfill timings onto legacy audio-only clips).
+async function isComplete(key: string): Promise<boolean> {
+  return (await fileExists(pathForKey(key))) && (await fileExists(timingsPathForKey(key)));
 }
 
 // Call the voice-design model (natural-language voice/style description) → mp3 bytes to store.
@@ -281,33 +279,34 @@ async function reduceCasualBatch(sentences: string[]): Promise<string[]> {
 const inFlight = new Map<string, Promise<void>>();
 
 // Generate + store a clip. `voice` doubles as the style: the CASUAL_STYLE sentinel runs the casual
-// recipe (AI-reduce the text, then voice-design TTS, no timings); any other value is a MiMo voice
-// (clear track, with word timings). `reduced` lets the backfill pass a pre-batched casual respelling.
+// recipe (AI-reduce the text, then voice-design TTS); any other value is a MiMo voice (clear track).
+// BOTH styles get word timings now, so tap-to-seek works on the casual track too. `reduced` lets the
+// backfill pass a pre-batched casual respelling.
 function generateAndStore(text: string, voice: string, reduced?: string): Promise<void> {
   const key = ttsKey(text, voice);
   const existing = inFlight.get(key);
   if (existing) return existing;
   const job = (async () => {
     const p = pathForKey(key);
-    if (isCasual(voice)) {
-      if (!(await fileExists(p))) {
-        const spoken = reduced ?? (await reduceToCasual(text));
-        const audioBuf = await synthVoiceDesign(spoken, CASUAL_VOICE);
-        mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
-        await writeFile(p, audioBuf);
-        // Persist the spoken respelling next to the clip (transparency / future display). Best-effort.
-        await writeFile(pathForKey(key) + '.txt', spoken).catch(() => {});
-      }
-      return; // casual track is audio-only — no word timings
-    }
     const tp = timingsPathForKey(key);
     let audioBuf: Buffer | null = null;
     if (!(await fileExists(p))) {
-      audioBuf = await synthMiMo(text, voice);
-      mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
-      await writeFile(p, audioBuf);
+      if (isCasual(voice)) {
+        const spoken = reduced ?? (await reduceToCasual(text));
+        audioBuf = await synthVoiceDesign(spoken, CASUAL_VOICE);
+        mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
+        await writeFile(p, audioBuf);
+        // Persist the spoken respelling next to the clip (transparency / future display). Best-effort.
+        await writeFile(p + '.txt', spoken).catch(() => {});
+      } else {
+        audioBuf = await synthMiMo(text, voice);
+        mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
+        await writeFile(p, audioBuf);
+      }
     }
-    // Add word timings if missing — covers fresh clips AND legacy audio-only clips (no audio regen).
+    // Word timings for BOTH styles. The casual audio's reduced text keeps word order, so index-aligned
+    // seek lands close (start times stay correct even if whisper mishears a mumbled word). Covers fresh
+    // clips AND legacy audio-only clips (no audio regen).
     if (!(await fileExists(tp))) {
       const buf = audioBuf ?? (await readFile(p));
       const words = await alignTimings(buf);
@@ -352,7 +351,7 @@ export async function runBackfill(): Promise<void> {
       const text = texts[idx++];
       try {
         const key = ttsKey(text, MIMO_VOICE);
-        if (!(await isComplete(key, MIMO_VOICE))) {
+        if (!(await isComplete(key))) {
           await generateAndStore(text, MIMO_VOICE);
           backfill.generated++;
         }
@@ -365,15 +364,37 @@ export async function runBackfill(): Promise<void> {
   };
   await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => clearWorker()));
 
-  // ── Casual pass: batch-reduce the spoken text (cheap throughput), then synth each clip. ──
-  const pending: string[] = [];
+  // ── Casual pass ──
+  // Split work: clips MISSING audio need a (batched) reduce + voice-design synth; clips that already
+  // have audio but lack timings (legacy casual clips) just need a whisper alignment — no reduce/synth.
+  const needAudio: string[] = [];
+  const needTimingsOnly: string[] = [];
   for (const text of texts) {
-    if (!(await isComplete(ttsKey(text, CASUAL_STYLE), CASUAL_STYLE))) pending.push(text);
+    const k = ttsKey(text, CASUAL_STYLE);
+    if (await isComplete(k)) continue;
+    if (await fileExists(pathForKey(k))) needTimingsOnly.push(text);
+    else needAudio.push(text);
   }
-  backfill.done += texts.length - pending.length; // already-cached casual count as done
+  backfill.done += texts.length - needAudio.length - needTimingsOnly.length; // already-complete casual
+
+  // Timings-only: cheap, parallel (generateAndStore skips synth, just aligns + writes timings).
+  {
+    let t = 0;
+    const timingsWorker = async () => {
+      while (t < needTimingsOnly.length) {
+        const text = needTimingsOnly[t++];
+        try { await generateAndStore(text, CASUAL_STYLE); backfill.generated++; }
+        catch (e: any) { backfill.failed++; console.warn('[tts] backfill casual timings failed:', e?.message); }
+        backfill.done++;
+      }
+    };
+    await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => timingsWorker()));
+  }
+
+  // Missing-audio: batch-reduce the spoken text (cheap throughput), then synth + align each clip.
   const CHUNK = 20;
-  for (let i = 0; i < pending.length; i += CHUNK) {
-    const chunk = pending.slice(i, i + CHUNK);
+  for (let i = 0; i < needAudio.length; i += CHUNK) {
+    const chunk = needAudio.slice(i, i + CHUNK);
     let reduced: string[];
     try {
       reduced = await reduceCasualBatch(chunk);
@@ -457,7 +478,7 @@ ttsRoutes.post('/tts/generate', async (c) => {
     try {
       const key = ttsKey(text, voice);
       // Skip when the clip is complete for its style (clear: audio+timings; casual: audio only).
-      if (await isComplete(key, voice)) { skipped++; continue; }
+      if (await isComplete(key)) { skipped++; continue; }
       await generateAndStore(text, voice);
       generated++;
     } catch (e: any) {

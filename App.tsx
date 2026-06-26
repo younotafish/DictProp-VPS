@@ -2880,6 +2880,7 @@ const App: React.FC = () => {
         onSaveSentence={handleSaveSentence}
         isSentenceSaved={isSentenceSaved}
         onCompareReady={handleCompareReady}
+        onCompare={handleCompare}
       />
 
       <nav ref={navRef} className="fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 translate-y-0">

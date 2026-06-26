@@ -39,6 +39,8 @@ interface Props {
   isSentenceSaved?: (text: string) => boolean;
   /** A finished comparison — persist it (server + local) so it shows on each involved word's page. */
   onCompareReady?: (words: string[], result: ComparisonResult) => void;
+  /** Compare from within a search-result card (parity with the notebook detail card). */
+  onCompare?: (words: string[]) => void;
 }
 
 let queueIdCounter = 0;
@@ -52,7 +54,7 @@ const describeError = (query: string, err: any): string => {
   return `Couldn't analyze "${query}" — please try again.`;
 };
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -736,6 +738,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       showSave={true}
                       onSearch={onSearch}
                       onRefresh={handleRefreshCard}
+                      onCompare={onCompare}
                       scrollable={false}
                       onLazyLoadImage={onLazyLoadImage}
                       onSaveSentence={onSaveSentence}

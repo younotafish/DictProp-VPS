@@ -554,12 +554,12 @@ let currentTimings: WordTiming[] | null = null;
 /** Word timings for the clip currently loaded in the audio element, or null when none are available. */
 export const getCurrentTimings = (): WordTiming[] | null => currentTimings;
 
-/** Word timings for `text`, from the device cache or fetched from the server. Null if none exist. */
+/** Word timings for the CURRENT style's clip of `text` (device cache or server). Null if none exist.
+ *  Both styles have timings now, so word-seek works on clear AND casual (keyed by the active style). */
 export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> => {
-  if (ttsStyle === 'casual') return null; // casual clips are audio-only — no word timings
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return null;
-  const key = await ttsKey(plain, TTS_VOICE);
+  const key = await ttsKey(plain, styleToken());
   const cached = ttsTimingsCache.get(key);
   if (cached) return cached;
   const t = await fetchCachedTTSTimings(key);
@@ -567,14 +567,13 @@ export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> 
   return null;
 };
 
-/** Ensure word timings exist for `text`: warm them if present, else kick off background generation
- *  (whisper cold-start is ~a minute, so call this when a sentence is shown — not at click time). */
+/** Ensure word timings exist for `text` (current style): warm them if present, else kick off background
+ *  generation (whisper cold-start is ~a minute, so call this when a sentence is shown, not at click). */
 export const ensureTimings = async (text: string): Promise<void> => {
-  if (ttsStyle === 'casual') return; // casual has no word timings to ensure
   const t = await getTimingsFor(text);
   if (t) return;
   const plain = stripSentenceMarkers(text).trim();
-  if (plain) requestTTSGeneration([{ text: plain, voice: TTS_VOICE }]).catch(() => { /* best-effort backfill */ });
+  if (plain) requestTTSGeneration([{ text: plain, voice: styleToken() }]).catch(() => { /* best-effort backfill */ });
 };
 
 /** Seek the currently-playing clip to a time offset (seconds) and ensure it's playing. No-op if idle. */
@@ -652,7 +651,6 @@ const speakViaKokoro = async (
  */
 export const prefetchTTS = (texts: string[]): void => {
   const token = styleToken();
-  const casual = ttsStyle === 'casual';
   for (const raw of texts) {
     const plain = stripSentenceMarkers(raw || '').trim();
     if (!plain) continue;
@@ -662,7 +660,7 @@ export const prefetchTTS = (texts: string[]): void => {
         const blob = await fetchCachedTTS(key);
         if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
       }
-      if (!casual && !ttsTimingsCache.has(key)) {
+      if (!ttsTimingsCache.has(key)) {
         const t = await fetchCachedTTSTimings(key);
         if (t && t.length) ttsTimingsCache.set(key, t);
       }
@@ -678,7 +676,6 @@ export const prefetchTTS = (texts: string[]): void => {
 export const ensureTTS = async (texts: string[]): Promise<void> => {
   try {
     const token = styleToken();
-    const casual = ttsStyle === 'casual';
     const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
     if (!plains.length) return;
 
@@ -701,15 +698,13 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
         if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
       }));
     }
-    // Warm per-word timings (clear track only — casual clips have none) so word-seek is ready.
-    if (!casual) {
-      await Promise.all(plains.map(async (plain) => {
-        const key = await ttsKey(plain, token);
-        if (ttsTimingsCache.has(key)) return;
-        const t = await fetchCachedTTSTimings(key);
-        if (t && t.length) ttsTimingsCache.set(key, t);
-      }));
-    }
+    // Warm per-word timings (both styles have them now) so tap-to-seek is ready on the first tap.
+    await Promise.all(plains.map(async (plain) => {
+      const key = await ttsKey(plain, token);
+      if (ttsTimingsCache.has(key)) return;
+      const t = await fetchCachedTTSTimings(key);
+      if (t && t.length) ttsTimingsCache.set(key, t);
+    }));
   } catch {
     /* best-effort — speakNatural still falls back at play time */
   }
@@ -726,7 +721,6 @@ export const preloadAudio = async (
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> => {
   const token = styleToken();
-  const casual = ttsStyle === 'casual';
   const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
   const total = plains.length;
   onProgress?.(0, total);
@@ -735,7 +729,7 @@ export const preloadAudio = async (
   const tick = () => onProgress?.(++done, total);
 
   // 1) Pull anything already cached (device → server) into the device cache + warm its timings
-  //    (clear track only — casual is audio-only); collect what still needs generating.
+  //    (both styles have timings now); collect what still needs generating.
   const missing: string[] = [];
   await Promise.all(plains.map(async (plain) => {
     try {
@@ -744,7 +738,7 @@ export const preloadAudio = async (
       const blob = await fetchCachedTTS(key);
       if (blob) {
         if (!ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
-        if (!casual && !ttsTimingsCache.has(key)) {
+        if (!ttsTimingsCache.has(key)) {
           const t = await fetchCachedTTSTimings(key);
           if (t && t.length) ttsTimingsCache.set(key, t);
         }
@@ -765,7 +759,7 @@ export const preloadAudio = async (
           const blob = await fetchCachedTTS(key);
           if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
         }
-        if (!casual && !ttsTimingsCache.has(key)) {
+        if (!ttsTimingsCache.has(key)) {
           const t = await fetchCachedTTSTimings(key);
           if (t && t.length) ttsTimingsCache.set(key, t);
         }
@@ -833,20 +827,17 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         }
       }
       if (url) {
-        if (casual) {
-          currentTimings = null; // casual is audio-only — no word seek, no lead-in skip
-        } else {
-          // Resolve per-word timings for seek: device cache, else fetch from server (non-blocking).
-          currentTimings = ttsTimingsCache.get(key) ?? null;
-          if (!currentTimings) {
-            fetchCachedTTSTimings(key).then((t) => {
-              if (t && t.length) { ttsTimingsCache.set(key, t); if (isCurrent()) currentTimings = t; }
-              else { requestTTSGeneration([{ text: plain, voice: TTS_VOICE }]).catch(() => {}); } // legacy audio-only clip → backfill timings
-            }).catch(() => {});
-          }
+        // Resolve per-word timings for seek (both styles have them): device cache, else fetch from
+        // server (non-blocking). On a legacy timings-less clip, kick off generation to backfill them.
+        currentTimings = ttsTimingsCache.get(key) ?? null;
+        if (!currentTimings) {
+          fetchCachedTTSTimings(key).then((t) => {
+            if (t && t.length) { ttsTimingsCache.set(key, t); if (isCurrent()) currentTimings = t; }
+            else { requestTTSGeneration([{ text: plain, voice: voiceTok }]).catch(() => {}); } // backfill timings for this style
+          }).catch(() => {});
         }
-        // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in (clear only).
-        const begin = startAt && startAt > 0 ? startAt : (casual ? 0 : leadInSkip(currentTimings));
+        // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
+        const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
         await playUrl(url, isCurrent, markStart, markEnd, begin);
         return;
       }
