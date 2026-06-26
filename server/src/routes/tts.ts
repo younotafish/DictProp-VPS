@@ -341,28 +341,63 @@ export async function runBackfill(): Promise<void> {
     console.warn('[tts] backfill: failed to read items:', e?.message);
     return;
   }
-  backfill = { running: true, total: texts.length, done: 0, generated: 0, failed: 0, startedAt: Date.now(), finishedAt: 0 };
-  console.log(`[tts] backfill: starting for ${texts.length} sentences`);
+  // Two styles per sentence — clear (audio + word timings) and casual (audio only).
+  backfill = { running: true, total: texts.length * 2, done: 0, generated: 0, failed: 0, startedAt: Date.now(), finishedAt: 0 };
+  console.log(`[tts] backfill: starting for ${texts.length} sentences × 2 styles`);
+
+  // ── Clear pass: per-item parallel (each item also runs a whisper alignment). ──
   let idx = 0;
-  const worker = async () => {
+  const clearWorker = async () => {
     while (idx < texts.length) {
       const text = texts[idx++];
       try {
         const key = ttsKey(text, MIMO_VOICE);
-        if (await fileExists(pathForKey(key)) && await fileExists(timingsPathForKey(key))) {
-          // already complete — skip
-        } else {
+        if (!(await isComplete(key, MIMO_VOICE))) {
           await generateAndStore(text, MIMO_VOICE);
           backfill.generated++;
         }
       } catch (e: any) {
         backfill.failed++;
-        console.warn('[tts] backfill item failed:', e?.message);
+        console.warn('[tts] backfill clear item failed:', e?.message);
       }
       backfill.done++;
     }
   };
-  await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => worker()));
+  await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => clearWorker()));
+
+  // ── Casual pass: batch-reduce the spoken text (cheap throughput), then synth each clip. ──
+  const pending: string[] = [];
+  for (const text of texts) {
+    if (!(await isComplete(ttsKey(text, CASUAL_STYLE), CASUAL_STYLE))) pending.push(text);
+  }
+  backfill.done += texts.length - pending.length; // already-cached casual count as done
+  const CHUNK = 20;
+  for (let i = 0; i < pending.length; i += CHUNK) {
+    const chunk = pending.slice(i, i + CHUNK);
+    let reduced: string[];
+    try {
+      reduced = await reduceCasualBatch(chunk);
+    } catch (e: any) {
+      console.warn('[tts] backfill reduce batch failed, using originals:', e?.message);
+      reduced = chunk; // degrade to the casual VOICE over the original spelling
+    }
+    let j = 0;
+    const casualWorker = async () => {
+      while (j < chunk.length) {
+        const k = j++;
+        try {
+          await generateAndStore(chunk[k], CASUAL_STYLE, reduced[k]);
+          backfill.generated++;
+        } catch (e: any) {
+          backfill.failed++;
+          console.warn('[tts] backfill casual item failed:', e?.message);
+        }
+        backfill.done++;
+      }
+    };
+    await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => casualWorker()));
+  }
+
   backfill.running = false;
   backfill.finishedAt = Date.now();
   console.log(`[tts] backfill done: generated=${backfill.generated} skipped=${backfill.total - backfill.generated - backfill.failed} failed=${backfill.failed}`);
