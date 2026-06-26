@@ -6,6 +6,7 @@ import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
+import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
 import { HighlightedSentence, stripSentenceMarkers } from '../components/HighlightedSentence';
 import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
@@ -1985,6 +1986,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
       {/* Auto-play control */}
       <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2">
+        {/* Clear ⇄ Casual speech style (global) — sits with the playback controls. */}
+        <SpeechStyleToggle className="bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200" />
         <button
           onClick={cycleTimerDuration}
           className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"

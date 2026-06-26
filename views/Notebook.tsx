@@ -5,6 +5,7 @@ import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, Pr
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus, UploadCloud, GitMerge, Volume2 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
+import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { TextAnalyzer } from '../components/TextAnalyzer';
@@ -1330,6 +1331,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             <p className="text-xs text-slate-500 font-medium truncate">{groupedItems.length} saved · {reviewedToday} reviewed today · {dueCount} due</p>
           </div>
           <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 bg-white rounded-2xl md:rounded-full p-1 border border-slate-100 shadow-sm min-w-0">
+            {/* Global Clear ⇄ Casual speech style (also in the review control bar) */}
+            <SpeechStyleToggle className="shrink-0" />
             {/* Text Analyzer button */}
             {isOnline && (
               <button

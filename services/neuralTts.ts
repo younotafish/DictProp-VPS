@@ -43,6 +43,33 @@ const WASM_ENGINE: Engine = { device: 'wasm', dtype: 'fp32' };
 export const DEFAULT_VOICE = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
 // MiMo voice for the server-cached PRIMARY TTS comes from api.ts (TTS_VOICE) — single source of truth.
 
+// ── Speech style: clear (crisp MiMo) ⇄ casual (reduced, mumbled) ──────────────
+// A persisted GLOBAL choice of which cached track to play. Every play site routes through this engine,
+// so the one toggle governs word review, sentence review, and the global-search popup at once. The
+// style maps to the cache "voice" token: clear -> TTS_VOICE (e.g. 'Mia'); casual -> 'casual' (MUST
+// match the server's CASUAL_STYLE). Casual clips are audio-only — no word timings / lead-in skip.
+export type TtsStyle = 'clear' | 'casual';
+const CASUAL_TOKEN = 'casual';
+const TTS_STYLE_KEY = 'tts_style';
+let ttsStyle: TtsStyle =
+  (typeof localStorage !== 'undefined' && localStorage.getItem(TTS_STYLE_KEY) === 'casual') ? 'casual' : 'clear';
+const styleListeners = new Set<(s: TtsStyle) => void>();
+const styleToken = (): string => (ttsStyle === 'casual' ? CASUAL_TOKEN : TTS_VOICE);
+
+export const getTtsStyle = (): TtsStyle => ttsStyle;
+export const subscribeTtsStyle = (cb: (s: TtsStyle) => void): (() => void) => {
+  styleListeners.add(cb);
+  cb(ttsStyle);
+  return () => { styleListeners.delete(cb); };
+};
+export const setTtsStyle = (s: TtsStyle): void => {
+  if (s === ttsStyle) return;
+  ttsStyle = s;
+  try { localStorage.setItem(TTS_STYLE_KEY, s); } catch { /* ignore */ }
+  stopCurrent(); // stop the in-flight clip so the next play uses the newly-chosen track
+  styleListeners.forEach((cb) => { try { cb(s); } catch { /* ignore */ } });
+};
+
 // Tiny valid silent WAV — played once inside a user gesture to unlock <audio> on iOS Safari,
 // so a later play() after the async synth await isn't blocked as non-user-initiated.
 const SILENT_WAV =
@@ -529,6 +556,7 @@ export const getCurrentTimings = (): WordTiming[] | null => currentTimings;
 
 /** Word timings for `text`, from the device cache or fetched from the server. Null if none exist. */
 export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> => {
+  if (ttsStyle === 'casual') return null; // casual clips are audio-only — no word timings
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return null;
   const key = await ttsKey(plain, TTS_VOICE);
@@ -542,10 +570,11 @@ export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> 
 /** Ensure word timings exist for `text`: warm them if present, else kick off background generation
  *  (whisper cold-start is ~a minute, so call this when a sentence is shown — not at click time). */
 export const ensureTimings = async (text: string): Promise<void> => {
+  if (ttsStyle === 'casual') return; // casual has no word timings to ensure
   const t = await getTimingsFor(text);
   if (t) return;
   const plain = stripSentenceMarkers(text).trim();
-  if (plain) requestTTSGeneration([{ text: plain }]).catch(() => { /* best-effort backfill */ });
+  if (plain) requestTTSGeneration([{ text: plain, voice: TTS_VOICE }]).catch(() => { /* best-effort backfill */ });
 };
 
 /** Seek the currently-playing clip to a time offset (seconds) and ensure it's playing. No-op if idle. */
@@ -622,16 +651,18 @@ const speakViaKokoro = async (
  * Fetch-only — never triggers generation.
  */
 export const prefetchTTS = (texts: string[]): void => {
+  const token = styleToken();
+  const casual = ttsStyle === 'casual';
   for (const raw of texts) {
     const plain = stripSentenceMarkers(raw || '').trim();
     if (!plain) continue;
     (async () => {
-      const key = await ttsKey(plain, TTS_VOICE);
+      const key = await ttsKey(plain, token);
       if (!ttsUrlCache.has(key)) {
         const blob = await fetchCachedTTS(key);
         if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
       }
-      if (!ttsTimingsCache.has(key)) {
+      if (!casual && !ttsTimingsCache.has(key)) {
         const t = await fetchCachedTTSTimings(key);
         if (t && t.length) ttsTimingsCache.set(key, t);
       }
@@ -646,13 +677,15 @@ export const prefetchTTS = (texts: string[]): void => {
  */
 export const ensureTTS = async (texts: string[]): Promise<void> => {
   try {
+    const token = styleToken();
+    const casual = ttsStyle === 'casual';
     const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
     if (!plains.length) return;
 
     // Pull anything already cached (device → server) into the device cache; collect what's still missing.
     const missing: string[] = [];
     await Promise.all(plains.map(async (plain) => {
-      const key = await ttsKey(plain, TTS_VOICE);
+      const key = await ttsKey(plain, token);
       if (ttsUrlCache.has(key)) return;
       const blob = await fetchCachedTTS(key);
       if (blob) { if (!ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob)); return; }
@@ -660,21 +693,23 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
     }));
     if (missing.length) {
       // Generate the missing clips server-side (one batch), then fetch them into the device cache.
-      await requestTTSGeneration(missing.map(text => ({ text })));
+      await requestTTSGeneration(missing.map(text => ({ text, voice: token })));
       await Promise.all(missing.map(async (plain) => {
-        const key = await ttsKey(plain, TTS_VOICE);
+        const key = await ttsKey(plain, token);
         if (ttsUrlCache.has(key)) return;
         const blob = await fetchCachedTTS(key);
         if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
       }));
     }
-    // Warm per-word timings for all of these so word-seek is ready on the first tap.
-    await Promise.all(plains.map(async (plain) => {
-      const key = await ttsKey(plain, TTS_VOICE);
-      if (ttsTimingsCache.has(key)) return;
-      const t = await fetchCachedTTSTimings(key);
-      if (t && t.length) ttsTimingsCache.set(key, t);
-    }));
+    // Warm per-word timings (clear track only — casual clips have none) so word-seek is ready.
+    if (!casual) {
+      await Promise.all(plains.map(async (plain) => {
+        const key = await ttsKey(plain, token);
+        if (ttsTimingsCache.has(key)) return;
+        const t = await fetchCachedTTSTimings(key);
+        if (t && t.length) ttsTimingsCache.set(key, t);
+      }));
+    }
   } catch {
     /* best-effort — speakNatural still falls back at play time */
   }
@@ -690,6 +725,8 @@ export const preloadAudio = async (
   texts: string[],
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> => {
+  const token = styleToken();
+  const casual = ttsStyle === 'casual';
   const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
   const total = plains.length;
   onProgress?.(0, total);
@@ -697,17 +734,17 @@ export const preloadAudio = async (
   let done = 0;
   const tick = () => onProgress?.(++done, total);
 
-  // 1) Pull anything already cached (device → server) into the device cache + warm its timings;
-  //    collect what still needs generating.
+  // 1) Pull anything already cached (device → server) into the device cache + warm its timings
+  //    (clear track only — casual is audio-only); collect what still needs generating.
   const missing: string[] = [];
   await Promise.all(plains.map(async (plain) => {
     try {
-      const key = await ttsKey(plain, TTS_VOICE);
+      const key = await ttsKey(plain, token);
       if (ttsUrlCache.has(key)) { tick(); return; }
       const blob = await fetchCachedTTS(key);
       if (blob) {
         if (!ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
-        if (!ttsTimingsCache.has(key)) {
+        if (!casual && !ttsTimingsCache.has(key)) {
           const t = await fetchCachedTTSTimings(key);
           if (t && t.length) ttsTimingsCache.set(key, t);
         }
@@ -720,15 +757,15 @@ export const preloadAudio = async (
 
   // 2) Generate the missing clips server-side (one batch), then fetch them into the device cache.
   if (missing.length) {
-    try { await requestTTSGeneration(missing.map(text => ({ text }))); } catch { /* best-effort */ }
+    try { await requestTTSGeneration(missing.map(text => ({ text, voice: token }))); } catch { /* best-effort */ }
     await Promise.all(missing.map(async (plain) => {
       try {
-        const key = await ttsKey(plain, TTS_VOICE);
+        const key = await ttsKey(plain, token);
         if (!ttsUrlCache.has(key)) {
           const blob = await fetchCachedTTS(key);
           if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
         }
-        if (!ttsTimingsCache.has(key)) {
+        if (!casual && !ttsTimingsCache.has(key)) {
           const t = await fetchCachedTTSTimings(key);
           if (t && t.length) ttsTimingsCache.set(key, t);
         }
@@ -776,12 +813,16 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   stopPlayback();
   setPlaybackState({ text: plain, status: 'loading' });
 
+  // Capture the style for THIS call so a mid-play toggle can't switch tracks underneath it.
+  const casual = ttsStyle === 'casual';
+  const voiceTok = casual ? CASUAL_TOKEN : TTS_VOICE;
+
   (async () => {
     try {
-      const key = await ttsKey(plain, TTS_VOICE);
+      const key = await ttsKey(plain, voiceTok);
       if (!isCurrent()) return; // superseded by a newer call
 
-      // 1) device-local cache, then 2) server cache
+      // 1) device-local cache, then 2) server cache (for the chosen style)
       let url = ttsUrlCache.get(key);
       if (!url) {
         const blob = await fetchCachedTTS(key);
@@ -792,23 +833,48 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         }
       }
       if (url) {
-        // Resolve per-word timings for seek: device cache, else fetch from server (non-blocking).
-        currentTimings = ttsTimingsCache.get(key) ?? null;
-        if (!currentTimings) {
-          fetchCachedTTSTimings(key).then((t) => {
-            if (t && t.length) { ttsTimingsCache.set(key, t); if (isCurrent()) currentTimings = t; }
-            else { requestTTSGeneration([{ text: plain }]).catch(() => {}); } // legacy audio-only clip → backfill timings
-          }).catch(() => {});
+        if (casual) {
+          currentTimings = null; // casual is audio-only — no word seek, no lead-in skip
+        } else {
+          // Resolve per-word timings for seek: device cache, else fetch from server (non-blocking).
+          currentTimings = ttsTimingsCache.get(key) ?? null;
+          if (!currentTimings) {
+            fetchCachedTTSTimings(key).then((t) => {
+              if (t && t.length) { ttsTimingsCache.set(key, t); if (isCurrent()) currentTimings = t; }
+              else { requestTTSGeneration([{ text: plain, voice: TTS_VOICE }]).catch(() => {}); } // legacy audio-only clip → backfill timings
+            }).catch(() => {});
+          }
         }
-        // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
-        const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
+        // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in (clear only).
+        const begin = startAt && startAt > 0 ? startAt : (casual ? 0 : leadInSkip(currentTimings));
         await playUrl(url, isCurrent, markStart, markEnd, begin);
         return;
       }
 
-      // 3) MISS — fill the cache for next time (fire-and-forget), then fall back now (no timings).
+      // Casual MISS → queue its generation, but don't make the user wait: fall back to the
+      // (essentially always-cached) CLEAR clip right now so the sentence still plays immediately.
+      if (casual) {
+        requestTTSGeneration([{ text: plain, voice: CASUAL_TOKEN }]).catch(() => { /* best-effort */ });
+        const clearKey = await ttsKey(plain, TTS_VOICE);
+        if (!isCurrent()) return;
+        let clearUrl = ttsUrlCache.get(clearKey);
+        if (!clearUrl) {
+          const blob = await fetchCachedTTS(clearKey);
+          if (!isCurrent()) return;
+          if (blob) { clearUrl = URL.createObjectURL(blob); ttsUrlCache.set(clearKey, clearUrl); }
+        }
+        if (clearUrl) {
+          currentTimings = ttsTimingsCache.get(clearKey) ?? null;
+          const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
+          await playUrl(clearUrl, isCurrent, markStart, markEnd, begin);
+          return;
+        }
+        // clear also absent → fall through to the generic miss path below
+      }
+
+      // 3) MISS — fill the clear cache for next time (fire-and-forget), then fall back now (no timings).
       currentTimings = null;
-      requestTTSGeneration([{ text: plain }]).catch(() => { /* best-effort */ });
+      requestTTSGeneration([{ text: plain, voice: TTS_VOICE }]).catch(() => { /* best-effort */ });
       if (isIOS()) { systemFallback(); return; }
       await speakViaKokoro(plain, { onStart: markStart, onEnd: markEnd, allowDownload }, isCurrent, systemFallback);
     } catch (err) {
