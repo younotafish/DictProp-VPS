@@ -25,6 +25,7 @@ dist-ssr
 .firebase/
 .env
 data/
+tts-samples/
 server/dist/
 server/node_modules/
 

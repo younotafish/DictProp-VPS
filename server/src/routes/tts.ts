@@ -31,6 +31,34 @@ const WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-times
 const TTS_DIR = resolve(env.DATA_DIR, 'tts');
 const GEN_TIMEOUT_MS = 90_000;
 
+// ── Casual "style" track ─────────────────────────────────────────────────────
+// A second rendition of each sentence in fast, reduced, movie-like speech. The cache "voice" field
+// doubles as a STYLE token: any MiMo voice name (e.g. 'Mia') = the clear track; the CASUAL_STYLE
+// sentinel = the casual recipe below. The clip is keyed by (style, ORIGINAL sentence) — so the
+// client finds it from the on-screen text — while the AUDIO is a phonetically-reduced respelling the
+// AI produces (e.g. "reaching"->"reachin'", "to him"->"ta 'im"). Vocabulary words are preserved; only
+// pronunciation changes. Casual clips have NO word timings (tap-to-seek stays on the clear track).
+const CASUAL_STYLE = 'casual';
+const VOICEDESIGN_URL = 'https://api.deepinfra.com/v1/inference/XiaomiMiMo/MiMo-V2.5-tts-voicedesign';
+const CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
+const REDUCE_MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
+const CASUAL_VOICE = (
+  'Very casual, mumbled American woman, almost careless — slurs and runs words together, drops ' +
+  'consonants and word-endings, talks fast and low under her breath, half-swallowing sounds like ' +
+  'candid background dialogue in a naturalistic indie film. Deliberately unclear, reduced and lazy ' +
+  '— NOT articulate, NOT crisp, NOT a voice actor.'
+);
+// Strict: respell for casual PRONUNCIATION only — never paraphrase, or the studied vocab is lost.
+const REDUCE_SYS = (
+  'Respell an English sentence to show how it is ACTUALLY pronounced in fast, casual, everyday/movie ' +
+  'speech. This is for a vocabulary learner, so you MUST preserve every content word (nouns, verbs, ' +
+  'adjectives, adverbs) EXACTLY as given — do NOT paraphrase, swap synonyms, delete/add words, or ' +
+  'change the structure. ONLY allowed changes: contractions (cannot->can\'t, I am->I\'m); function-word ' +
+  'reductions (going to->gonna, want to->wanna, got to->gotta, kind of->kinda, have to->hafta, for->fer, ' +
+  'to->ta, them->\'em, him->\'im, and->an\', of->o\', because->\'cause); dropped -g (-ing -> -in\'); and ' +
+  'optional "..." for a natural pause. Output ONLY the respelled line, nothing else.'
+);
+
 mkdirSync(TTS_DIR, { recursive: true });
 
 // key = sha256(voice + "\n" + text.trim()) hex — MUST match the client (services/api.ts ttsKey).
@@ -158,15 +186,120 @@ async function alignTimings(audio: Buffer): Promise<WordTiming[]> {
   }
 }
 
+function isCasual(voice: string): boolean {
+  return voice === CASUAL_STYLE;
+}
+
+// A clip is "complete" when it has everything its style needs: clear needs audio + word timings;
+// casual needs only audio (it has no timings). Used by /generate, /manifest, and the backfill to skip.
+async function isComplete(key: string, voice: string): Promise<boolean> {
+  if (!(await fileExists(pathForKey(key)))) return false;
+  if (isCasual(voice)) return true;
+  return fileExists(timingsPathForKey(key));
+}
+
+// Call the voice-design model (natural-language voice/style description) → mp3 bytes to store.
+async function synthVoiceDesign(text: string, voiceDesc: string): Promise<Buffer> {
+  if (!env.DEEPINFRA_API_KEY) throw new Error('DEEPINFRA_API_KEY not configured');
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), GEN_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await proxyFetch(VOICEDESIGN_URL, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${env.DEEPINFRA_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: voiceDesc, output_format: 'wav' }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(t);
+  }
+  if (!res.ok) {
+    const e = await res.text().catch(() => '');
+    throw new Error(`voicedesign error ${res.status}: ${e.slice(0, 200)}`);
+  }
+  const data: any = await res.json();
+  let audio: string = data?.audio || '';
+  if (!audio) throw new Error('voicedesign returned no audio');
+  if (audio.startsWith('data:')) audio = audio.slice(audio.indexOf(',') + 1);
+  const raw = Buffer.from(audio, 'base64');
+  if (raw.length === 0) throw new Error('voicedesign returned empty audio');
+  return transcodeToMp3(raw);
+}
+
+// Respell ONE sentence into its casual spoken form (vocabulary preserved). Falls back to the original.
+async function reduceToCasual(sentence: string): Promise<string> {
+  const body = JSON.stringify({
+    model: REDUCE_MODEL,
+    messages: [{ role: 'system', content: REDUCE_SYS }, { role: 'user', content: sentence }],
+    temperature: 0.3,
+    max_tokens: 200,
+  });
+  const raw = await curlPostJson(CHAT_URL, body);
+  if (!raw) return sentence;
+  try {
+    const data: any = JSON.parse(raw);
+    const out = String(data?.choices?.[0]?.message?.content || '').trim().replace(/^["']+|["']+$/g, '');
+    return out || sentence;
+  } catch {
+    return sentence;
+  }
+}
+
+// Respell MANY sentences in one chat call (batch throughput for the backfill). Returns reduced forms
+// aligned 1:1 with the input; on any count mismatch / parse failure, falls back to per-sentence reduce.
+async function reduceCasualBatch(sentences: string[]): Promise<string[]> {
+  if (sentences.length <= 1) return sentences.length ? [await reduceToCasual(sentences[0])] : [];
+  const numbered = sentences.map((s, i) => `${i + 1}. ${s}`).join('\n');
+  const sys = REDUCE_SYS + ' You will receive a numbered list; respond with JSON {"lines":[...]} ' +
+    'containing one respelled line per input, in the SAME order and the SAME count.';
+  const body = JSON.stringify({
+    model: REDUCE_MODEL,
+    messages: [{ role: 'system', content: sys }, { role: 'user', content: numbered }],
+    temperature: 0.3,
+    response_format: { type: 'json_object' },
+    max_tokens: 4000,
+  });
+  const raw = await curlPostJson(CHAT_URL, body);
+  try {
+    const data: any = JSON.parse(raw);
+    let content: any = data?.choices?.[0]?.message?.content ?? '';
+    if (typeof content === 'string') content = JSON.parse(content);
+    const lines = Array.isArray(content?.lines) ? content.lines : null;
+    if (lines && lines.length === sentences.length) {
+      return lines.map((l: any, i: number) => String(l || '').trim() || sentences[i]);
+    }
+  } catch {
+    /* fall through to per-sentence */
+  }
+  const out: string[] = [];
+  for (const s of sentences) out.push(await reduceToCasual(s));
+  return out;
+}
+
 // In-flight dedupe so concurrent requests for the same key generate only once.
 const inFlight = new Map<string, Promise<void>>();
 
-function generateAndStore(text: string, voice: string): Promise<void> {
+// Generate + store a clip. `voice` doubles as the style: the CASUAL_STYLE sentinel runs the casual
+// recipe (AI-reduce the text, then voice-design TTS, no timings); any other value is a MiMo voice
+// (clear track, with word timings). `reduced` lets the backfill pass a pre-batched casual respelling.
+function generateAndStore(text: string, voice: string, reduced?: string): Promise<void> {
   const key = ttsKey(text, voice);
   const existing = inFlight.get(key);
   if (existing) return existing;
   const job = (async () => {
     const p = pathForKey(key);
+    if (isCasual(voice)) {
+      if (!(await fileExists(p))) {
+        const spoken = reduced ?? (await reduceToCasual(text));
+        const audioBuf = await synthVoiceDesign(spoken, CASUAL_VOICE);
+        mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
+        await writeFile(p, audioBuf);
+        // Persist the spoken respelling next to the clip (transparency / future display). Best-effort.
+        await writeFile(pathForKey(key) + '.txt', spoken).catch(() => {});
+      }
+      return; // casual track is audio-only — no word timings
+    }
     const tp = timingsPathForKey(key);
     let audioBuf: Buffer | null = null;
     if (!(await fileExists(p))) {
@@ -288,8 +421,8 @@ ttsRoutes.post('/tts/generate', async (c) => {
     const voice = it.voice || MIMO_VOICE;
     try {
       const key = ttsKey(text, voice);
-      // Skip only when BOTH audio and timings exist — a legacy audio-only clip still needs timings.
-      if (await fileExists(pathForKey(key)) && await fileExists(timingsPathForKey(key))) { skipped++; continue; }
+      // Skip when the clip is complete for its style (clear: audio+timings; casual: audio only).
+      if (await isComplete(key, voice)) { skipped++; continue; }
       await generateAndStore(text, voice);
       generated++;
     } catch (e: any) {
@@ -300,15 +433,18 @@ ttsRoutes.post('/tts/generate', async (c) => {
   return c.json({ generated, skipped, failed });
 });
 
-// POST /api/tts/manifest  { keys: [...] } -> { have: [...] }  (which keys are already cached).
+// POST /api/tts/manifest  { keys: [...], audioOnly?: bool } -> { have: [...] }  (which keys are cached).
+// audioOnly=true (casual sweeps) treats a key as cached once its audio exists — casual clips have no
+// timings. Default (clear) requires audio + timings so the sweep backfills timings for legacy clips.
 ttsRoutes.post('/tts/manifest', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const keys: string[] = Array.isArray(body?.keys) ? body.keys : [];
+  const audioOnly = body?.audioOnly === true;
   const have: string[] = [];
   for (const k of keys) {
-    // "have" = fully cached (audio + timings); a clip missing timings should be (re)generated so the
-    // bulk sweep backfills word timings for legacy audio-only clips.
-    if (/^[0-9a-f]{64}$/.test(k) && (await fileExists(pathForKey(k))) && (await fileExists(timingsPathForKey(k)))) have.push(k);
+    if (!/^[0-9a-f]{64}$/.test(k)) continue;
+    if (!(await fileExists(pathForKey(k)))) continue;
+    if (audioOnly || (await fileExists(timingsPathForKey(k)))) have.push(k);
   }
   return c.json({ have });
 });
