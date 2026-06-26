@@ -118,8 +118,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
       const next = new Set(prev);
       if (next.has(word)) {
         next.delete(word);
-      } else if (next.size < 2) { // Max 2 picks + current word = 3 total
-        next.add(word);
+      } else {
+        next.add(word); // no cap — compare the current word against any number of others
       }
       return next;
     });

@@ -277,8 +277,8 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
 };
 
 export const compareWords = async (words: string[]): Promise<ComparisonResult> => {
-  if (!words || words.length < 2 || words.length > 3) {
-    throw new Error('Please provide 2-3 words to compare.');
+  if (!words || words.length < 2) {
+    throw new Error('Please provide at least 2 words to compare.');
   }
 
   const attemptCall = async (): Promise<ComparisonResult> => {

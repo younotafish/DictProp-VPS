@@ -436,7 +436,10 @@ This is a quick scan — the user will choose which words to study in depth.`;
 
 const COMPARE_WORDS_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach specializing in vocabulary nuance.
-The user will give you 2-3 English words that are similar in meaning.
+The user will give you TWO OR MORE English words that are similar in meaning (often 2-3, but possibly more).
+There may be more than three words — the "word1"/"word2"/"word3" keys below are just examples; include an
+entry for EVERY word the user gives, using the word itself as the key, in "words", every "perWord", and each
+example's "sentences" (one key per word, no omissions).
 
 Your task: Create a detailed, structured comparison that helps a Chinese-speaking learner understand EXACTLY when to use each word.
 
@@ -628,8 +631,8 @@ aiRoutes.post('/compare', async (c) => {
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
   const { words } = await c.req.json();
-  if (!words || !Array.isArray(words) || words.length < 2 || words.length > 3) {
-    return c.json(errorResponse('Please provide 2-3 words to compare.', 400), 400);
+  if (!words || !Array.isArray(words) || words.length < 2) {
+    return c.json(errorResponse('Please provide at least 2 words to compare.', 400), 400);
   }
 
   const cleanWords = words.map((w: any) => (typeof w === 'string' ? w.trim() : '')).filter((w: string) => w.length > 0);

@@ -3,11 +3,16 @@ import { ComparisonResult } from '../types';
 import { ArrowLeft, Loader2, AlertTriangle, ChevronDown, ChevronUp, Lightbulb, Scale, RefreshCw } from 'lucide-react';
 import { compareWords } from '../services/api';
 
-// Color assignments for each word (up to 3)
+// Per-word color slots. Cycled (index % length) so a comparison of any number of words renders.
 const WORD_COLORS = [
   { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', pill: 'bg-indigo-100 text-indigo-700', dot: 'bg-indigo-500', light: 'bg-indigo-50/50' },
   { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', light: 'bg-emerald-50/50' },
   { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', pill: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', light: 'bg-amber-50/50' },
+  { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', pill: 'bg-rose-100 text-rose-700', dot: 'bg-rose-500', light: 'bg-rose-50/50' },
+  { bg: 'bg-sky-50', text: 'text-sky-700', border: 'border-sky-200', pill: 'bg-sky-100 text-sky-700', dot: 'bg-sky-500', light: 'bg-sky-50/50' },
+  { bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', pill: 'bg-violet-100 text-violet-700', dot: 'bg-violet-500', light: 'bg-violet-50/50' },
+  { bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200', pill: 'bg-teal-100 text-teal-700', dot: 'bg-teal-500', light: 'bg-teal-50/50' },
+  { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', pill: 'bg-orange-100 text-orange-700', dot: 'bg-orange-500', light: 'bg-orange-50/50' },
 ];
 
 interface ComparisonViewProps {
@@ -66,7 +71,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ words, result: c
   const getWordColor = (word: string) => {
     const displayWords = result?.words || words;
     const index = displayWords.findIndex(w => w.toLowerCase() === word.toLowerCase());
-    return WORD_COLORS[index >= 0 ? index : 0];
+    return WORD_COLORS[(index >= 0 ? index : 0) % WORD_COLORS.length];
   };
 
   return (
@@ -86,7 +91,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ words, result: c
             {words.map((word, i) => (
               <React.Fragment key={word}>
                 {i > 0 && <span className="text-slate-300 text-sm font-medium">vs</span>}
-                <span className={`px-3 py-1 rounded-full text-sm font-bold ${WORD_COLORS[i]?.pill || WORD_COLORS[0].pill}`}>
+                <span className={`px-3 py-1 rounded-full text-sm font-bold ${WORD_COLORS[i % WORD_COLORS.length].pill}`}>
                   {word}
                 </span>
               </React.Fragment>
