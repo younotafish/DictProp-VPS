@@ -91,6 +91,23 @@ try {
   console.warn('item_images table creation:', e);
 }
 
+// Word comparisons: AI-generated side-by-side analyses, kept OUT of the items table (its CHECK
+// constraint only allows vocab/phrase/sentence). Keyed by the normalized word-set (e.g. 'fable|parable')
+// so direction doesn't matter and each pair stores once; surfaced on every involved word's page.
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS comparisons (
+    key TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    words TEXT NOT NULL,
+    data TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (key, user_id)
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_comparisons_user_id ON comparisons(user_id)`);
+} catch (e) {
+  console.warn('comparisons table creation:', e);
+}
+
 // ─── Item prepared statements ───
 
 const stmts = {
@@ -117,6 +134,39 @@ const stmts = {
   getImageData: db.prepare(`SELECT data FROM items WHERE id = ? AND user_id = ?`),
   findVocabInPhrase: db.prepare(`SELECT data FROM items WHERE type = 'phrase' AND user_id = ? AND data LIKE ? LIMIT 1`),
 };
+
+// ─── Comparison prepared statements + accessors ───
+
+const compStmts = {
+  getAll: db.prepare(`SELECT key, words, data, updated_at FROM comparisons WHERE user_id = ?`),
+  upsert: db.prepare(`
+    INSERT INTO comparisons (key, user_id, words, data, updated_at)
+    VALUES (@key, @user_id, @words, @data, @updated_at)
+    ON CONFLICT(key, user_id) DO UPDATE SET words = @words, data = @data, updated_at = @updated_at
+  `),
+};
+
+export interface StoredComparisonRow { key: string; words: string[]; data: any; updatedAt: number }
+
+export function getComparisons(userId: string): StoredComparisonRow[] {
+  const rows = compStmts.getAll.all(userId) as any[];
+  return rows.map((r) => ({
+    key: r.key,
+    words: JSON.parse(r.words),
+    data: JSON.parse(r.data),
+    updatedAt: r.updated_at,
+  }));
+}
+
+export function upsertComparison(userId: string, key: string, words: string[], data: any, updatedAt: number): void {
+  compStmts.upsert.run({
+    key,
+    user_id: userId,
+    words: JSON.stringify(words),
+    data: JSON.stringify(data),
+    updated_at: updatedAt,
+  });
+}
 
 // ─── Image (item_images) prepared statements ───
 

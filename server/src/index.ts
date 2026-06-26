@@ -13,6 +13,7 @@ import { itemsRoutes } from './routes/items.js';
 import { aiRoutes } from './routes/ai.js';
 import { imageRoutes } from './routes/images.js';
 import { ttsRoutes, runBackfill } from './routes/tts.js';
+import { comparisonsRoutes } from './routes/comparisons.js';
 import { requireAuth, type AuthVariables } from './middleware/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,7 @@ app.route('/api', itemsRoutes);
 app.route('/api', aiRoutes);
 app.route('/api', imageRoutes);
 app.route('/api', ttsRoutes);
+app.route('/api', comparisonsRoutes);
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
