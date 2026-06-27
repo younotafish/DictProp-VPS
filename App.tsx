@@ -3,6 +3,7 @@ import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { SentencesView } from './views/SentencesView';
 import { DetailView } from './views/DetailView';
+import { KeyboardHelpModal } from './components/KeyboardHelpModal';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, ProjectInfo, StoredComparison, ComparisonResult, comparisonKey } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
@@ -306,22 +307,6 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
 
 // Keyboard shortcut display component
 const DETAIL_CONTEXT_KEY = 'app_detail_context';
-
-const ShortcutRow: React.FC<{ keys: string[], description: string }> = ({ keys, description }) => (
-  <div className="flex items-center justify-between py-1.5">
-    <span className="text-sm text-slate-600">{description}</span>
-    <div className="flex items-center gap-1">
-      {keys.map((key, i) => (
-        <React.Fragment key={i}>
-          <kbd className="min-w-[24px] h-6 px-1.5 bg-slate-100 border border-slate-200 rounded text-xs font-mono font-medium text-slate-700 flex items-center justify-center shadow-sm">
-            {key}
-          </kbd>
-          {i < keys.length - 1 && <span className="text-slate-300 text-xs">+</span>}
-        </React.Fragment>
-      ))}
-    </div>
-  </div>
-);
 
 const NavButton = ({ view, currentView, onClick, icon: Icon, label, badge }: { view: ViewState, currentView: ViewState, onClick: (view: ViewState) => void, icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, label: string, badge?: number }) => (
   <button
@@ -2984,114 +2969,7 @@ const App: React.FC = () => {
       </nav>
 
       {/* Keyboard Shortcuts Help Modal */}
-      {showKeyboardHelp && (
-        <div 
-          className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-150"
-          onClick={() => setShowKeyboardHelp(false)}
-        >
-          <div 
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-150 max-h-[80vh] overflow-y-auto"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
-                <Keyboard size={24} />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-slate-800">Keyboard Shortcuts</h3>
-                <p className="text-sm text-slate-500">Navigate faster with your keyboard</p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {/* Navigation */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Navigation</h4>
-                <div className="space-y-2">
-                  <ShortcutRow keys={['1']} description="Go to Notebook" />
-                  <ShortcutRow keys={['2']} description="Go to Sentences" />
-                  <ShortcutRow keys={['3']} description="Go to Study" />
-                  <ShortcutRow keys={['⌘', 'F']} description="Focus search input" />
-                  <ShortcutRow keys={['?']} description="Show keyboard shortcuts" />
-                  <ShortcutRow keys={['Esc']} description="Close modal / Go back / Clear search" />
-                </div>
-              </div>
-
-              {/* Cards & Carousels */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Card View</h4>
-                <div className="space-y-2">
-                  <ShortcutRow keys={['←', '→']} description="Navigate between meanings" />
-                  <ShortcutRow keys={['↑', '↓']} description="Navigate between words" />
-                  <ShortcutRow keys={['S']} description="Toggle save" />
-                  <ShortcutRow keys={['P']} description="Pronounce current word" />
-                  <ShortcutRow keys={['R']} description="Mark as Remembered" />
-                  <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />
-                  <ShortcutRow keys={['H']} description="Toggle header bar" />
-                  <ShortcutRow keys={['D']} description="Delete current item" />
-                  <ShortcutRow keys={['A']} description="Archive / Unarchive" />
-                  <ShortcutRow keys={['E']} description="Speak example sentence(s)" />
-                  <ShortcutRow keys={['⌘', '1']} description="Speak 1st example sentence" />
-                  <ShortcutRow keys={['⌘', '2']} description="Speak 2nd example sentence" />
-                  <ShortcutRow keys={['Space']} description="Auto-play" />
-                </div>
-              </div>
-
-              {/* Sentences flow */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Sentences</h4>
-                <div className="space-y-2">
-                  <ShortcutRow keys={['Tap']} description="Open a sentence to study it" />
-                  <ShortcutRow keys={['↑', '↓']} description="Switch between saved sentences" />
-                  <ShortcutRow keys={['E']} description="Speak the saved sentence (natural voice)" />
-                  <ShortcutRow keys={['Space']} description="Pause / resume sentence · auto-play when idle" />
-                  <ShortcutRow keys={['Tap', 'ⁿ']} description="Footnote on a saved word → open its full card" />
-                  <ShortcutRow keys={['R']} description="Remember (stays on the sentence)" />
-                  <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />
-                  <ShortcutRow keys={['D']} description="Delete the sentence" />
-                  <ShortcutRow keys={['Esc']} description="Back to Sentences" />
-                </div>
-              </div>
-
-              {/* Word card popup (opened from a sentence footnote) */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Word card popup</h4>
-                <div className="space-y-2">
-                  <ShortcutRow keys={['R']} description="Got it (remember)" />
-                  <ShortcutRow keys={['Shift', 'R']} description="Reset memory" />
-                  <ShortcutRow keys={['D']} description="Delete word" />
-                  <ShortcutRow keys={['P']} description="Pronounce the word" />
-                  <ShortcutRow keys={['E']} description="Speak an example" />
-                  <ShortcutRow keys={['Space']} description="Play / pause" />
-                  <ShortcutRow keys={['Esc']} description="Close the card" />
-                </div>
-              </div>
-
-              {/* Trackpad */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Trackpad Gestures</h4>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between py-1.5">
-                    <span className="text-sm text-slate-600">Two-finger horizontal swipe</span>
-                    <span className="text-xs text-slate-400">Navigate cards</span>
-                  </div>
-                  <div className="flex items-center justify-between py-1.5">
-                    <span className="text-sm text-slate-600">Two-finger vertical swipe</span>
-                    <span className="text-xs text-slate-400">Navigate words</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setShowKeyboardHelp(false)}
-              className="mt-6 w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition-colors"
-            >
-              Got it
-            </button>
-          </div>
-        </div>
-      )}
+      {showKeyboardHelp && <KeyboardHelpModal onClose={() => setShowKeyboardHelp(false)} />}
       </>
       )}
     </div>
