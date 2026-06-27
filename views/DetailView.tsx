@@ -10,6 +10,7 @@ import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
 import { HighlightedSentence, stripSentenceMarkers } from '../components/HighlightedSentence';
 import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
+import { getMasteryColors } from '../components/mastery';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
@@ -44,18 +45,6 @@ const formatNextReview = (days: number): string => {
   return `in ~${months % 1 === 0 ? months.toFixed(0) : months.toFixed(1)} months`;
 };
 
-// Color classes for mastery levels
-const getMasteryColors = (color: string) => {
-  const colorMap: Record<string, { bg: string; text: string; bar: string }> = {
-    slate: { bg: 'bg-slate-100', text: 'text-slate-600', bar: 'bg-slate-400' },
-    orange: { bg: 'bg-orange-100', text: 'text-orange-600', bar: 'bg-orange-400' },
-    amber: { bg: 'bg-amber-100', text: 'text-amber-600', bar: 'bg-amber-400' },
-    blue: { bg: 'bg-blue-100', text: 'text-blue-600', bar: 'bg-blue-400' },
-    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-600', bar: 'bg-emerald-400' },
-    purple: { bg: 'bg-purple-100', text: 'text-purple-600', bar: 'bg-purple-400' },
-  };
-  return colorMap[color] || colorMap.slate;
-};
 
 interface DetailViewProps {
   groups?: ItemGroup[];

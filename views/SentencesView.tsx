@@ -3,6 +3,7 @@ import { StoredItem, isSentenceItem, SentenceData } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { MessageSquareQuote, Check, Trash2 } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
+import { barColorFor } from '../components/mastery';
 
 interface SentencesViewProps {
   items: StoredItem[];
@@ -92,13 +93,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
           const d = item.data as SentenceData;
           const isDue = ((item.srs?.nextReview ?? 0) <= now);
           const mastery = item.srs ? SRSAlgorithm.getMasteryLevel(item.srs) : null;
-          const barColor = mastery
-            ? mastery.percentage >= 70
-              ? 'bg-emerald-400'
-              : mastery.percentage >= 40
-                ? 'bg-amber-400'
-                : 'bg-red-400'
-            : 'bg-slate-300';
+          const barColor = barColorFor(mastery?.percentage);
 
           return (
             <div

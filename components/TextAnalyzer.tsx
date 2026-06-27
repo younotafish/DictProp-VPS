@@ -3,7 +3,7 @@ import { StoredItem, VocabCard } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
 import { detectVocabulary, DetectedWord, analyzeInput, generateIllustration } from '../services/api';
 import { ensureTTS } from '../services/neuralTts';
-import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { makeVocabStoredItem } from '../services/items';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -208,13 +208,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
           });
 
           if (!alreadySaved) {
-            const storedItem: StoredItem = {
-              data: vocab,
-              type: 'vocab',
-              savedAt: Date.now(),
-              srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-              ...(activeProject ? { project: activeProject } : {}),
-            };
+            const storedItem = makeVocabStoredItem(vocab, activeProject);
             onSave(storedItem);
             wordSaved++;
             savedCount++;

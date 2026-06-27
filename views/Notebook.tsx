@@ -14,7 +14,7 @@ import { JSONImport } from '../components/JSONImport';
 import { ProjectManager } from '../components/ProjectManager';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
-import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { makeVocabStoredItem } from '../services/items';
 import { speakWord, ensureTTS } from '../services/neuralTts';
 import { warn, error as logError } from '../services/logger';
 
@@ -878,13 +878,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
     if (!onSave) return;
 
-    onSave({
-      data: vocab,
-      type: 'vocab',
-      savedAt: Date.now(),
-      srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-      ...(activeProject ? { project: activeProject } : {}),
-    });
+    onSave(makeVocabStoredItem(vocab, activeProject));
   }, [onSave, activeProject]);
 
   // Check if a vocab is already saved

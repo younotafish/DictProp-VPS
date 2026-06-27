@@ -4,18 +4,9 @@ import { StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
+import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent } from '../services/neuralTts';
-
-// Mastery → tailwind classes (mirrors getMasteryColors in DetailView; kept local to avoid an export).
-const MASTERY_COLORS: Record<string, { bg: string; text: string; bar: string }> = {
-  slate: { bg: 'bg-slate-100', text: 'text-slate-600', bar: 'bg-slate-400' },
-  orange: { bg: 'bg-orange-100', text: 'text-orange-600', bar: 'bg-orange-400' },
-  amber: { bg: 'bg-amber-100', text: 'text-amber-600', bar: 'bg-amber-400' },
-  blue: { bg: 'bg-blue-100', text: 'text-blue-600', bar: 'bg-blue-400' },
-  emerald: { bg: 'bg-emerald-100', text: 'text-emerald-600', bar: 'bg-emerald-400' },
-  purple: { bg: 'bg-purple-100', text: 'text-purple-600', bar: 'bg-purple-400' },
-};
 
 const formatRelative = (ts: number): string => {
   const diff = ts - Date.now();
@@ -178,7 +169,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const mastery = currentSaved
     ? SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type))
     : null;
-  const colors = mastery ? (MASTERY_COLORS[mastery.color] || MASTERY_COLORS.slate) : MASTERY_COLORS.slate;
+  const colors = getMasteryColors(mastery?.color || 'slate');
   const totalReviews = currentSaved?.srs?.totalReviews ?? 0;
   const streak = currentSaved?.srs?.correctStreak ?? 0;
   const nextReview = currentSaved?.srs?.nextReview ?? 0;

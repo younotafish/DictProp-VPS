@@ -4,7 +4,7 @@ import { SearchResult, VocabCard, StoredItem, ComparisonResult, comparisonKey } 
 import { analyzeInput, generateIllustration, compareWords } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { ComparisonBody } from './ComparisonBody';
-import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { makeVocabStoredItem } from '../services/items';
 import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent } from '../services/neuralTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';
@@ -371,13 +371,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // Save a single vocab
   const saveOneVocab = useCallback((vocab: VocabCard) => {
     if (isVocabSaved(vocab)) return false; // already saved
-    onSave({
-      data: vocab,
-      type: 'vocab',
-      savedAt: Date.now(),
-      srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-      ...(activeProject ? { project: activeProject } : {}),
-    });
+    onSave(makeVocabStoredItem(vocab, activeProject));
     return true;
   }, [onSave, activeProject, isVocabSaved]);
 
