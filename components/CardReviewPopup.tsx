@@ -460,11 +460,11 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         </div>
 
         {/* Scrollable card body + eyes-free side-edge read zones (touch only) */}
-        <div className="flex-1 min-h-0 relative">
+        <div className="flex-1 min-h-0 relative flex flex-col">
           <div
             ref={scrollBodyRef}
             onClick={handleZoneRead}
-            className="absolute inset-0 overflow-y-auto overscroll-contain p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
             style={{ WebkitOverflowScrolling: 'touch' }}
           >
             <VocabCardDisplay
