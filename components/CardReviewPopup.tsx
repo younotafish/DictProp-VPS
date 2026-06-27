@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, RotateCcw, Trash2, CheckCircle2, Flame, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, RotateCcw, Trash2, CheckCircle2, Flame, ChevronLeft, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
 import { StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { VocabCardDisplay } from './VocabCard';
@@ -27,10 +27,17 @@ const formatRelative = (ts: number): string => {
   return 'now';
 };
 
+const senseKey = (s?: string) => (s || '').trim().toLowerCase();
+
+// One page of the popup: a saved sense (with SRS) or an AI sense not yet in the library.
+type Page =
+  | { kind: 'saved'; item: StoredItem; vocab: VocabCard; sense: string }
+  | { kind: 'unsaved'; vocab: VocabCard; sense: string };
+
 interface CardReviewPopupProps {
-  /** Every saved sense of the tapped word (≥1). The popup pages between them. */
+  /** Every saved sense of the tapped word (≥1). */
   items: StoredItem[];
-  /** Which sense to open on (defaults to the first). */
+  /** Which saved sense to open on (defaults to the first). */
   initialId?: string;
   onClose: () => void;
   onUpdateSRS: (id: string) => void;
@@ -42,24 +49,23 @@ interface CardReviewPopupProps {
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
   onLazyLoadImage?: (itemId: string) => Promise<string | null>;
+  /** Fetch the word's full set of AI senses (so we can page through saved + not-yet-saved meanings). */
+  onFetchSenses?: (word: string) => Promise<VocabCard[]>;
+  /** Save a not-yet-saved sense into the library. */
+  onSaveVocab?: (vocab: VocabCard) => void;
 }
 
 /**
- * The full review card for an already-saved word, shown in an overlay — opened by tapping a saved word
- * inside a sentence. Everything notebook card-review has: the rich card (image, defs, forms, family,
- * usage, origins, mnemonic, synonyms, speakers, search/refresh/compare/save-sentence) plus the SRS row
- * (mastery, Got it / Reset / Delete). A word with multiple saved senses pages between them (‹ i/N › or
- * ← / →); each action targets the CURRENT sense.
+ * The full review card for a saved word, shown in an overlay — opened by tapping a saved word in a
+ * sentence. Pages through ALL of the word's meanings: saved senses (with the SRS row — mastery, Got it /
+ * Reset / Delete) plus the word's other AI senses fetched on open (each with a Save button). Switch via
+ * ‹ i/N › chips, ←/→ keys, or a horizontal swipe; switching auto-pronounces the word.
  *
- * Items are read live from App state, so Got it / Reset update the bar in place and Delete drops the
- * current sense (closing only when it was the last one).
- *
- * Cross-device: bottom-sheet on phone, centered modal on tablet/desktop; the header + SRS row are a
- * sticky top bar (only the card body scrolls). While open it owns the FULL word-card keyboard set —
- * Esc (close), ← / → (prev / next sense), R / Shift+R (remember / reset), D (delete), P (pronounce),
- * E (read both examples), Cmd/Ctrl+1·2 (read 1st / 2nd example), Space (play/pause) — and traps Tab; the
- * parent disables the underlying view's shortcuts via interactionLocked. On touch tablets the left/right
- * gutters beside the centered card are eyes-free read zones (top quarter = example 1, 2nd = example 2).
+ * Cross-device: bottom-sheet on phone, centered modal on tablet/desktop; header + action row are a
+ * sticky top bar (only the card body scrolls). It owns the keyboard while open (Esc, ←/→, R/Shift+R, D,
+ * P, E, Cmd/Ctrl+1·2, Space) and traps Tab; the parent disables the underlying view via interactionLocked.
+ * On ≥sm the left/right gutters beside the card are eyes-free read zones (top quarter = example 1, 2nd =
+ * example 2), responding to tap or mouse.
  */
 export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   items,
@@ -74,31 +80,68 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   onSaveSentence,
   isSentenceSaved,
   onLazyLoadImage,
+  onFetchSenses,
+  onSaveVocab,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
-  // The sense currently shown — tracked by id so it survives the items array re-ordering/refreshing
-  // after a Got it. Falls back to the first sense if the tracked one disappears (e.g. after a delete).
-  const [currentId, setCurrentId] = useState<string>(
-    () => (initialId && items.some(i => i.data.id === initialId) ? initialId : items[0]?.data.id ?? ''),
-  );
-  const current = items.find(i => i.data.id === currentId) ?? items[0];
-  useEffect(() => {
-    if (current && current.data.id !== currentId) setCurrentId(current.data.id);
-  }, [current, currentId]);
+  const word = (items[0]?.data as VocabCard)?.word || '';
 
-  const count = items.length;
-  const idx = Math.max(0, items.findIndex(i => i.data.id === current?.data.id));
+  // Fetch the word's other AI senses on open (cached per session in App) so we can page saved + unsaved.
+  const [aiVocabs, setAiVocabs] = useState<VocabCard[]>([]);
+  const [loadingSenses, setLoadingSenses] = useState(false);
+  useEffect(() => {
+    if (!onFetchSenses || !word) return;
+    let alive = true;
+    setLoadingSenses(true);
+    onFetchSenses(word)
+      .then(vs => { if (alive) setAiVocabs(Array.isArray(vs) ? vs : []); })
+      .catch(() => { /* offline / failed → just the saved senses */ })
+      .finally(() => { if (alive) setLoadingSenses(false); });
+    return () => { alive = false; };
+  }, [word, onFetchSenses]);
+
+  // Merge saved senses (with SRS) + AI senses not already saved, deduped by sense label.
+  const pages = useMemo<Page[]>(() => {
+    const seen = new Set<string>();
+    const out: Page[] = [];
+    for (const it of items) {
+      const v = it.data as VocabCard;
+      const s = senseKey(v.sense);
+      if (!seen.has(s)) { seen.add(s); out.push({ kind: 'saved', item: it, vocab: v, sense: s }); }
+    }
+    for (const v of aiVocabs) {
+      const s = senseKey(v.sense);
+      if (!seen.has(s)) { seen.add(s); out.push({ kind: 'unsaved', vocab: v, sense: s }); }
+    }
+    return out;
+  }, [items, aiVocabs]);
+
+  // Track the shown sense by its label so it survives saving/refreshing (an unsaved page becoming saved
+  // keeps the same sense), unlike an id which changes when a sense is saved.
+  const [currentSense, setCurrentSense] = useState<string>(() => {
+    const init = initialId ? items.find(i => i.data.id === initialId) : undefined;
+    return senseKey((init?.data as VocabCard)?.sense ?? (items[0]?.data as VocabCard)?.sense);
+  });
+  const current = pages.find(p => p.sense === currentSense) ?? pages[0];
+  useEffect(() => {
+    if (current && current.sense !== currentSense) setCurrentSense(current.sense);
+  }, [current, currentSense]);
+
+  const vocab = current?.vocab ?? ({} as VocabCard);
+  const currentSaved = current?.kind === 'saved' ? current.item : null;
+
+  const count = pages.length;
+  const idx = Math.max(0, pages.findIndex(p => p.sense === current?.sense));
   const goTo = useCallback((delta: number) => {
     if (count <= 1) return;
     setConfirmDel(false);
-    const next = items[(((idx + delta) % count) + count) % count];
-    setCurrentId(next.data.id);
-    const w = (next.data as VocabCard).word;
-    if (w) speakWord(w); // auto-pronounce the word on each meaning switch (matches word-card nav)
-  }, [items, idx, count]);
+    const next = pages[(((idx + delta) % count) + count) % count];
+    setCurrentSense(next.sense);
+    if (word) speakWord(word); // auto-pronounce on each switch (matches word-card nav)
+  }, [pages, idx, count, word]);
   const goPrev = useCallback(() => goTo(-1), [goTo]);
   const goNext = useCallback(() => goTo(1), [goTo]);
 
@@ -119,38 +162,48 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) { if (dx < 0) goNext(); else goPrev(); }
   }, [count, goNext, goPrev]);
 
-  const vocab = current.data as VocabCard;
-
-  const mastery = SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(current.srs, current.data.id, current.type));
-  const colors = MASTERY_COLORS[mastery.color] || MASTERY_COLORS.slate;
-  const totalReviews = current.srs?.totalReviews ?? 0;
-  const streak = current.srs?.correctStreak ?? 0;
-  const nextReview = current.srs?.nextReview ?? 0;
+  const mastery = currentSaved
+    ? SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type))
+    : null;
+  const colors = mastery ? (MASTERY_COLORS[mastery.color] || MASTERY_COLORS.slate) : MASTERY_COLORS.slate;
+  const totalReviews = currentSaved?.srs?.totalReviews ?? 0;
+  const streak = currentSaved?.srs?.correctStreak ?? 0;
+  const nextReview = currentSaved?.srs?.nextReview ?? 0;
 
   const handleGotIt = useCallback(() => {
-    const base = SRSAlgorithm.ensure(current.srs, current.data.id, current.type);
+    if (!currentSaved) return;
+    const base = SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type);
     const preview = SRSAlgorithm.updateAfterRemember(base);
-    onUpdateSRS(current.data.id);
+    onUpdateSRS(currentSaved.data.id);
     setFlash(`Next review in ${Math.max(1, Math.round(preview.stability))}d`);
     setTimeout(() => setFlash(null), 1600);
-  }, [current, onUpdateSRS]);
+  }, [currentSaved, onUpdateSRS]);
 
   const handleReset = useCallback(() => {
-    onResetSRS(current.data.id);
+    if (!currentSaved) return;
+    onResetSRS(currentSaved.data.id);
     setFlash('Memory reset');
     setTimeout(() => setFlash(null), 1600);
-  }, [current, onResetSRS]);
+  }, [currentSaved, onResetSRS]);
 
   const handleDelete = useCallback(() => {
+    if (!currentSaved) return;
     if (!confirmDel) {
       setConfirmDel(true);
       setTimeout(() => setConfirmDel(false), 2500);
       return;
     }
-    onDelete(current.data.id);
+    onDelete(currentSaved.data.id);
     setConfirmDel(false);
-    if (items.length <= 1) onClose(); // deleted the last sense → nothing left to show
-  }, [confirmDel, current, items.length, onDelete, onClose]);
+    if (items.length <= 1) onClose(); // deleted the last SAVED sense → close (unsaved-only has nothing to review)
+  }, [confirmDel, currentSaved, items.length, onDelete, onClose]);
+
+  const handleSaveThis = useCallback(() => {
+    if (current?.kind !== 'unsaved' || !onSaveVocab) return;
+    onSaveVocab(current.vocab);
+    setFlash('Saved to your library');
+    setTimeout(() => setFlash(null), 1600);
+  }, [current, onSaveVocab]);
 
   // The current sense's example sentences (stripped, ≤2) — for the E / Cmd+1·2 readers and eyes-free zones.
   const examplesList = useMemo(
@@ -158,8 +211,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     [vocab],
   );
 
-  // Toggle natural-voice playback for one sentence (same clip → pause / resume / restart-near-end),
-  // mirroring the word card's toggleSpeak so the speaker icons stay in sync.
+  // Toggle natural-voice playback for one sentence (same clip → pause / resume / restart-near-end).
   const toggleSpeak = useCallback((raw: string) => {
     const sentence = stripSentenceMarkers(raw || '').trim();
     if (!sentence) return;
@@ -202,14 +254,11 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   }, []);
   useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
 
-  // Backdrop tap: on touch, the LEFT/RIGHT gutter beside the centered card is an eyes-free read zone —
-  // its top quarter (of the viewport) reads example 1, the second quarter reads example 2, so on iPad
-  // you don't have to hit the card in the middle. Anywhere else (and any mouse click) closes. On the
-  // phone bottom-sheet the card is full-width (no gutter), so a backdrop tap just closes.
+  // Backdrop tap/click: the LEFT/RIGHT gutter beside the card is an eyes-free read zone — top quarter →
+  // example 1, second quarter → example 2 (mouse on macOS works too). Anywhere else closes. On the phone
+  // bottom-sheet the card is full-width (no gutter), so a backdrop tap just closes.
   const onBackdrop = useCallback((e: React.MouseEvent) => {
     const rect = panelRef.current?.getBoundingClientRect();
-    // Tap/click the LEFT/RIGHT gutter beside the card: top quarter → example 1, second quarter →
-    // example 2 (mouse on macOS works too, not just touch). Anywhere else closes.
     if (rect && examplesList.length > 0 && (e.clientX < rect.left || e.clientX > rect.right)) {
       const h = window.innerHeight;
       if (e.clientY < h * 0.5) {
@@ -251,7 +300,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
 
       if (typing) return;
 
-      // ← / → page between this word's senses.
+      // ← / → page between this word's meanings.
       if (count > 1 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault();
         if (e.key === 'ArrowLeft') goPrev(); else goNext();
@@ -265,10 +314,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         else if (examplesList[0]) speakNatural(examplesList[0], { allowDownload: true });
         return;
       }
-      if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (e.shiftKey) handleReset(); else handleGotIt(); return; }
-      if (e.key === 'd' || e.key === 'D') { if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); handleDelete(); } return; }
       if (e.key === 'p' || e.key === 'P') { e.preventDefault(); if (vocab.word) speakWord(vocab.word); return; }
-      // Cmd/Ctrl+1 · +2 → read the 1st / 2nd example sentence (mirrors word-card mode).
+      // Cmd/Ctrl+1 · +2 → read the 1st / 2nd example sentence.
       if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
         e.preventDefault();
         const s = examplesList[e.key === '1' ? 0 : 1];
@@ -279,10 +326,19 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); readBothExamples(); }
         return;
       }
+      // Review keys act on a SAVED sense; on an unsaved one R/Enter saves it.
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        if (currentSaved) { if (e.shiftKey) handleReset(); else handleGotIt(); }
+        else handleSaveThis();
+        return;
+      }
+      if (e.key === 'Enter') { if (!currentSaved) { e.preventDefault(); handleSaveThis(); } return; }
+      if (e.key === 'd' || e.key === 'D') { if (currentSaved && !e.metaKey && !e.ctrlKey) { e.preventDefault(); handleDelete(); } return; }
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [vocab, onClose, handleGotIt, handleReset, handleDelete, examplesList, toggleSpeak, readBothExamples, goPrev, goNext, count]);
+  }, [vocab, currentSaved, onClose, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, toggleSpeak, readBothExamples, goPrev, goNext, count]);
 
   // Stop any popup-initiated playback when the card actually closes (not on every re-render).
   useEffect(() => () => { stopCurrent(); }, []);
@@ -303,7 +359,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         aria-modal="true"
         aria-label={`Review card: ${vocab.word}`}
       >
-        {/* Sticky top bar: title + SRS row + actions */}
+        {/* Sticky top bar: title + action row */}
         <div className="shrink-0 border-b border-slate-200 bg-white px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:pt-3 pb-2">
           {/* Title row */}
           <div className="flex items-center justify-between gap-2 mb-2">
@@ -312,6 +368,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
               {vocab.sense && <span className="text-xs text-slate-400 truncate">{vocab.sense}</span>}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
+              {loadingSenses && <Loader2 size={14} className="animate-spin text-slate-300" />}
               {count > 1 && (
                 <div className="flex items-center gap-0.5 text-slate-500 mr-1" title="Other meanings of this word (← / →)">
                   <button onClick={goPrev} aria-label="Previous meaning" className="p-1 rounded-lg hover:bg-slate-100 transition-colors"><ChevronLeft size={16} /></button>
@@ -329,37 +386,46 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
               </button>
             </div>
           </div>
-          {/* SRS row */}
-          <div className="flex items-center gap-2 text-xs">
-            <span className={`${colors.bg} ${colors.text} px-2 py-0.5 rounded-full font-semibold whitespace-nowrap`}>
-              {mastery.label} {Math.round(mastery.percentage)}%
-            </span>
-            <div className="hidden sm:block flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-              <div className={`h-full ${colors.bar} transition-all duration-300`} style={{ width: `${mastery.percentage}%` }} />
+          {/* Action row — SRS for a saved sense, or a Save button for an unsaved AI sense */}
+          {currentSaved && mastery ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className={`${colors.bg} ${colors.text} px-2 py-0.5 rounded-full font-semibold whitespace-nowrap`}>
+                {mastery.label} {Math.round(mastery.percentage)}%
+              </span>
+              <div className="hidden sm:block flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                <div className={`h-full ${colors.bar} transition-all duration-300`} style={{ width: `${mastery.percentage}%` }} />
+              </div>
+              <span className="text-slate-400 whitespace-nowrap">{totalReviews}×</span>
+              {streak > 0 && (
+                <span className="text-orange-500 flex items-center gap-0.5"><Flame size={12} />{streak}</span>
+              )}
+              <span className="text-slate-500 whitespace-nowrap">
+                {nextReview <= Date.now() ? 'due' : formatRelative(nextReview)}
+              </span>
+              <div className="ml-auto flex items-center gap-1">
+                <button onClick={handleReset} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)">
+                  <RotateCcw size={15} />
+                </button>
+                <button
+                  onClick={handleDelete}
+                  className={`flex items-center gap-1 px-2 py-1.5 rounded-lg transition-colors ${confirmDel ? 'text-white bg-rose-500 hover:bg-rose-600 font-semibold' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}
+                  title="Delete this meaning (D)"
+                >
+                  <Trash2 size={15} />{confirmDel && <span className="text-xs">Sure?</span>}
+                </button>
+                <button onClick={handleGotIt} className="flex items-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg transition-colors" title="Remember (R)">
+                  <CheckCircle2 size={14} /> Got it
+                </button>
+              </div>
             </div>
-            <span className="text-slate-400 whitespace-nowrap">{totalReviews}×</span>
-            {streak > 0 && (
-              <span className="text-orange-500 flex items-center gap-0.5"><Flame size={12} />{streak}</span>
-            )}
-            <span className="text-slate-500 whitespace-nowrap">
-              {nextReview <= Date.now() ? 'due' : formatRelative(nextReview)}
-            </span>
-            <div className="ml-auto flex items-center gap-1">
-              <button onClick={handleReset} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)">
-                <RotateCcw size={15} />
-              </button>
-              <button
-                onClick={handleDelete}
-                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg transition-colors ${confirmDel ? 'text-white bg-rose-500 hover:bg-rose-600 font-semibold' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}
-                title="Delete this meaning (D)"
-              >
-                <Trash2 size={15} />{confirmDel && <span className="text-xs">Sure?</span>}
-              </button>
-              <button onClick={handleGotIt} className="flex items-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg transition-colors" title="Remember (R)">
-                <CheckCircle2 size={14} /> Got it
+          ) : (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-400">Not in your library yet</span>
+              <button onClick={handleSaveThis} className="ml-auto flex items-center gap-1 text-xs font-bold text-white bg-indigo-500 hover:bg-indigo-600 px-3 py-1.5 rounded-lg transition-colors" title="Save this meaning (R / Enter)">
+                <Sparkles size={14} /> Save this meaning
               </button>
             </div>
-          </div>
+          )}
           {flash && (
             <div className="mt-1.5 text-center text-[11px] font-semibold text-emerald-600 animate-in fade-in duration-200">
               {flash}
@@ -370,6 +436,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         {/* Scrollable card body */}
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]" style={{ WebkitOverflowScrolling: 'touch' }}>
           <VocabCardDisplay
+            key={current?.sense ?? 'card'}
             data={vocab}
             showSave={false}
             scrollable={false}
@@ -384,9 +451,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         </div>
       </div>
 
-      {/* Eyes-free read zones in the LEFT/RIGHT gutters beside the centered card (touch + ≥sm only).
-          Visual guide only — the taps are handled on the backdrop (onBackdrop): top quarter = example 1,
-          second quarter = example 2. Stays out of the card area so middle taps still work normally. */}
+      {/* Eyes-free read zones in the LEFT/RIGHT gutters beside the centered card (≥sm only). Visual guide
+          only — the taps are handled on the backdrop (onBackdrop): top quarter = example 1, second = 2. */}
       {examplesList.length > 0 && (
         <div className="fixed inset-0 z-[101] pointer-events-none hidden sm:block" aria-hidden="true">
           <div className="absolute inset-x-0 top-0 h-[25vh]">

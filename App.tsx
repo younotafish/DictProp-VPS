@@ -568,6 +568,28 @@ const App: React.FC = () => {
     () => (cardPopup ? allActiveItems.filter(i => i.type === 'vocab' && getItemSpelling(i) === cardPopup.spelling) : []),
     [cardPopup, allActiveItems],
   );
+  // Footnote popup: fetch a word's full set of AI senses (cached per session) so the popup can page
+  // through saved + not-yet-saved meanings; and save a chosen sense (inheriting the word's project).
+  const senseCacheRef = useRef<Map<string, VocabCard[]>>(new Map());
+  const fetchSensesForWord = useCallback(async (word: string): Promise<VocabCard[]> => {
+    const key = normalizeKey(word);
+    if (!key) return [];
+    const cached = senseCacheRef.current.get(key);
+    if (cached) return cached;
+    try {
+      const r = await analyzeInput(word);
+      const vocabs = Array.isArray(r?.vocabs) ? (r.vocabs as VocabCard[]) : [];
+      senseCacheRef.current.set(key, vocabs);
+      return vocabs;
+    } catch { return []; }
+  }, []);
+  const saveVocabSense = useCallback((vocab: VocabCard) => {
+    const spelling = (vocab.word || '').toLowerCase().trim();
+    const sib = latestItemsRef.current.find(i => !i.isDeleted && i.type === 'vocab' && getItemSpelling(i) === spelling);
+    const project = sib?.project ?? activeProject ?? undefined;
+    const v: VocabCard = { ...vocab, id: vocab.id || crypto.randomUUID() };
+    handleSaveRef.current({ data: v, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(v.id, 'vocab'), ...(project ? { project } : {}) });
+  }, [activeProject]);
 
   // Persist detailContext (only group/item indices for potential future use)
   useEffect(() => {
@@ -2877,6 +2899,8 @@ const App: React.FC = () => {
               onSaveSentence={handleSaveSentence}
               isSentenceSaved={isSentenceSaved}
               onLazyLoadImage={handleLazyLoadImage}
+              onFetchSenses={fetchSensesForWord}
+              onSaveVocab={saveVocabSense}
           />
       )}
 
