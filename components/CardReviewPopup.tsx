@@ -235,13 +235,13 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:px-16 sm:py-4 animate-in fade-in duration-200"
       onClick={onBackdrop}
     >
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="bg-white w-full h-[90vh] rounded-t-2xl sm:h-auto sm:max-h-[85vh] sm:max-w-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none animate-in slide-in-from-bottom sm:zoom-in-95 duration-200"
+        className="bg-white w-full h-[90vh] rounded-t-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-4xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none animate-in slide-in-from-bottom sm:zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -331,7 +331,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
             <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
             <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
             <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
-            {zoneFlash?.zone === 0 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-[20vw] max-w-[160px] bg-indigo-400/20 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-[20vw] max-w-[160px] bg-indigo-400/20 zone-flash" /></>)}
+            {zoneFlash?.zone === 0 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-16 bg-indigo-400/20 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-16 bg-indigo-400/20 zone-flash" /></>)}
           </div>
           {examplesList.length > 1 && (
             <div className="absolute inset-x-0 top-[25vh] h-[25vh]">
@@ -339,7 +339,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
               <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
               <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
               <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
-              {zoneFlash?.zone === 1 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-[20vw] max-w-[160px] bg-emerald-400/20 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-[20vw] max-w-[160px] bg-emerald-400/20 zone-flash" /></>)}
+              {zoneFlash?.zone === 1 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-16 bg-emerald-400/20 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-16 bg-emerald-400/20 zone-flash" /></>)}
             </div>
           )}
         </div>

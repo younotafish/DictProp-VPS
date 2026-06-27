@@ -17,24 +17,21 @@ import { StoredItem } from '../types';
  * {{...}} marker existed), any literal occurrence of the full `itemWord` in a plain run is also
  * emphasized as the item.
  *
- * FOOTNOTES: when `findSaved` + `onOpenCard` are both provided, EVERY word/phrase in the sentence
- * that the user has already saved is rendered in indigo with a superscript footnote number; tapping
- * the number (or, in look-up mode, the word) opens that card's full review popup. This is independent
- * of the source word — the sentence is its own study item and every saved word it contains is indexed.
- * Words that aren't saved keep the old behaviour: [[uncommon]] ones stay green → look-up search.
+ * SAVED WORDS: when `findSaved` + `onOpenCard` are both provided, EVERY word/phrase the user has
+ * already saved is rendered in indigo with a dotted underline; tapping it (in look-up mode) opens that
+ * card's review popup. No footnote marker — the highlight itself is the affordance. This is independent
+ * of the source word — the sentence is its own study item. Unsaved [[uncommon]] words stay green →
+ * look-up search.
  */
 
 const ITEM_CLASS = 'text-indigo-700 font-semibold bg-indigo-50 rounded px-0.5';
 const LINK_CLASS =
   'text-emerald-600 font-semibold underline decoration-dotted decoration-emerald-300 cursor-pointer hover:bg-emerald-50 rounded px-0.5 transition-colors';
 // A word you've already saved (has a card). Indigo, like the studied item, but with a dotted
-// underline + footnote number to read as "you own this — tap to open". Distinct from the green
-// LINK_CLASS, which now means specifically "unsaved → look it up".
+// underline to read as "you own this — tap to open". Distinct from the green LINK_CLASS, which
+// means specifically "unsaved → look it up".
 const SAVED_CLASS =
   'text-indigo-700 font-semibold underline decoration-dotted decoration-indigo-300 cursor-pointer hover:bg-indigo-50 rounded px-0.5 transition-colors';
-// The superscript footnote number. `p-1 -m-1` gives a finger-sized hit area without shifting layout.
-const MARKER_CLASS =
-  'text-[0.7em] font-bold text-indigo-500 hover:text-indigo-700 cursor-pointer select-none p-1 -m-1';
 
 /**
  * Strip the {{studied item}} and [[uncommon term]] emphasis markers, leaving plain,
@@ -74,20 +71,6 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
   // need to footnote saved words. Look-up-only callers (e.g. word-card examples) keep the legacy path.
   const tokenize = !!onPlayFromWord || footnotesEnabled;
 
-  // Footnote numbering: each distinct saved card gets a number on first appearance, reused on repeats.
-  // Reset per render (a render builds the whole sentence in one synchronous pass).
-  const footnoteNums = new Map<string, number>();
-  let nextFootnote = 1;
-  const footnoteFor = (item: StoredItem): number => {
-    const id = item.data.id;
-    let num = footnoteNums.get(id);
-    if (num === undefined) {
-      num = nextFootnote++;
-      footnoteNums.set(id, num);
-    }
-    return num;
-  };
-
   const swallowSelection = () => !!window.getSelection()?.toString().trim();
 
   // Render one word/phrase unit. `kind` distinguishes the studied item ({{}}), an uncommon term ([[]]),
@@ -101,15 +84,14 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
     const saved = footnotesEnabled ? findSaved!(word) : null;
 
     if (saved) {
-      const num = footnoteFor(saved);
       const cls = kind === 'item' ? ITEM_CLASS : SAVED_CLASS;
       const openCard = (e: React.SyntheticEvent) => {
         e.preventDefault();
         e.stopPropagation();
         onOpenCard!(saved);
       };
-      // In play mode tapping the word body plays from it; the footnote number always opens the card.
-      // In look-up mode (no play) tapping the word body also opens the card.
+      // The highlight (indigo + dotted underline) is the affordance — no footnote marker. In play mode
+      // tapping the word body plays from it; in look-up mode it opens the card.
       const onWordClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (swallowSelection()) return;
@@ -118,29 +100,16 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
       };
       const lookupMode = !onPlayFromWord;
       return (
-        <span key={key} className="whitespace-nowrap">
-          <span
-            className={cls}
-            data-word-offset={tokenize ? off : undefined}
-            role={lookupMode ? 'button' : undefined}
-            tabIndex={lookupMode ? 0 : undefined}
-            onClick={onWordClick}
-            onKeyDown={lookupMode ? (e) => { if (e.key === 'Enter' || e.key === ' ') openCard(e); } : undefined}
-          >
-            {word}
-          </span>
-          <sup
-            className={MARKER_CLASS}
-            role="button"
-            tabIndex={0}
-            aria-label={`Open card for ${word}`}
-            title={`Open card for "${word}"`}
-            style={{ touchAction: 'manipulation' }}
-            onClick={openCard}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openCard(e); }}
-          >
-            {num}
-          </sup>
+        <span
+          key={key}
+          className={cls}
+          data-word-offset={tokenize ? off : undefined}
+          role={lookupMode ? 'button' : undefined}
+          tabIndex={lookupMode ? 0 : undefined}
+          onClick={onWordClick}
+          onKeyDown={lookupMode ? (e) => { if (e.key === 'Enter' || e.key === ' ') openCard(e); } : undefined}
+        >
+          {word}
         </span>
       );
     }
