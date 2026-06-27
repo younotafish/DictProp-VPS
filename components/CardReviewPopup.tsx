@@ -260,13 +260,12 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   }, []);
   useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
 
-  // Eyes-free read zones live on the CARD's left/right side EDGES (so they work on the full-width phone
-  // sheet, not only a centered card with gutters): a tap in the top quarter of either side reads example
-  // 1, the second quarter reads example 2. Touch-only; bows out on controls / text selection so the card
-  // stays fully interactive.
+  // PHONE (<sm, full-width sheet): eyes-free read zones on the CARD's left/right EDGES — a tap in the top
+  // quarter of either side reads example 1, the second quarter reads example 2. Touch-only; bows out on
+  // controls / text selection so the card stays interactive. (≥sm uses the empty gutters — see onBackdrop.)
   const scrollBodyRef = useRef<HTMLDivElement>(null);
   const handleZoneRead = useCallback((e: React.MouseEvent) => {
-    if (!isTouch || examplesList.length === 0) return;
+    if (!isTouch || window.innerWidth >= 640 || examplesList.length === 0) return;
     if (window.getSelection()?.toString().trim()) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return;
@@ -278,6 +277,23 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     const z = relY < rect.height * 0.25 ? 0 : 1;
     if (z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); }
   }, [isTouch, examplesList, toggleSpeak, flashZone]);
+
+  // iPad / desktop (≥sm, centered card): tapping the empty LEFT/RIGHT gutter beside the card reads —
+  // top quarter → example 1, second quarter → example 2. Anywhere else (and the phone sheet, which has
+  // no gutter) closes.
+  const onBackdrop = useCallback((e: React.MouseEvent) => {
+    if (isTouch && window.innerWidth >= 640 && examplesList.length > 0) {
+      const rect = panelRef.current?.getBoundingClientRect();
+      if (rect && (e.clientX < rect.left || e.clientX > rect.right)) {
+        const h = window.innerHeight;
+        if (e.clientY < h * 0.5) {
+          const z = e.clientY < h * 0.25 ? 0 : 1;
+          if (z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); return; }
+        }
+      }
+    }
+    onClose();
+  }, [isTouch, examplesList, toggleSpeak, flashZone, onClose]);
 
   // Focus the panel on open; restore focus on close.
   useEffect(() => {
@@ -356,7 +372,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   return (
     <div
       className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:px-16 sm:py-4 animate-in fade-in duration-200"
-      onClick={onClose}
+      onClick={onBackdrop}
     >
       <div
         ref={panelRef}
@@ -465,10 +481,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
               className="!h-auto !overflow-visible border-indigo-100 shadow-sm bg-white"
             />
           </div>
-          {/* Side-edge read-zone guide (top quarter = example 1, second = example 2). Visual only; taps
-              fall through to the scroll body's handler, which bows out on controls / text selection. */}
+          {/* PHONE side-edge read-zone guide (top quarter = example 1, second = example 2). Visual only;
+              taps fall through to the scroll body's handler. Hidden ≥sm (iPad/desktop use the gutters). */}
           {isTouch && examplesList.length > 0 && (
-            <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+            <div className="absolute inset-0 pointer-events-none sm:hidden" aria-hidden="true">
               <div className="absolute inset-x-0 top-0 h-1/4">
                 <div className="absolute left-0 inset-y-2 w-1 rounded-full bg-indigo-400/60" />
                 <div className="absolute right-0 inset-y-2 w-1 rounded-full bg-indigo-400/60" />
@@ -489,6 +505,28 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
           )}
         </div>
       </div>
+
+      {/* iPad / desktop (≥sm) gutter read-zone guide — visual only; taps are handled in onBackdrop. */}
+      {isTouch && examplesList.length > 0 && (
+        <div className="fixed inset-0 z-[101] pointer-events-none hidden sm:block" aria-hidden="true">
+          <div className="absolute inset-x-0 top-0 h-[25vh]">
+            <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
+            <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
+            {zoneFlash?.zone === 0 && (<><div key={`gl${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-16 bg-indigo-400/20 zone-flash" /><div key={`gr${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-16 bg-indigo-400/20 zone-flash" /></>)}
+          </div>
+          {examplesList.length > 1 && (
+            <div className="absolute inset-x-0 top-[25vh] h-[25vh]">
+              <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
+              <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
+              <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
+              {zoneFlash?.zone === 1 && (<><div key={`gl${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-16 bg-emerald-400/20 zone-flash" /><div key={`gr${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-16 bg-emerald-400/20 zone-flash" /></>)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
