@@ -155,12 +155,15 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const onPanelTouchEnd = useCallback((e: React.TouchEvent) => {
     const s = swipeStart.current;
     swipeStart.current = null;
-    if (!s || count <= 1) return;
+    if (!s) return;
     const t = e.changedTouches[0];
     if (!t) return;
     const dx = t.clientX - s.x, dy = t.clientY - s.y;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) { if (dx < 0) goNext(); else goPrev(); }
-  }, [count, goNext, goPrev]);
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (count > 1) { if (dx < 0) goNext(); else goPrev(); } // switch meaning (goTo also pronounces)
+      else if (word) speakWord(word);                          // single meaning → re-pronounce the word
+    }
+  }, [count, goNext, goPrev, word]);
 
   const mastery = currentSaved
     ? SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type))
@@ -204,6 +207,9 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     setFlash('Saved to your library');
     setTimeout(() => setFlash(null), 1600);
   }, [current, onSaveVocab]);
+
+  // Eyes-free read zones are for touch only — on macOS the keyboard (P / E / Cmd+1·2) covers reading.
+  const isTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
 
   // The current sense's example sentences (stripped, ≤2) — for the E / Cmd+1·2 readers and eyes-free zones.
   const examplesList = useMemo(
@@ -254,20 +260,24 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   }, []);
   useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
 
-  // Backdrop tap/click: the LEFT/RIGHT gutter beside the card is an eyes-free read zone — top quarter →
-  // example 1, second quarter → example 2 (mouse on macOS works too). Anywhere else closes. On the phone
-  // bottom-sheet the card is full-width (no gutter), so a backdrop tap just closes.
-  const onBackdrop = useCallback((e: React.MouseEvent) => {
-    const rect = panelRef.current?.getBoundingClientRect();
-    if (rect && examplesList.length > 0 && (e.clientX < rect.left || e.clientX > rect.right)) {
-      const h = window.innerHeight;
-      if (e.clientY < h * 0.5) {
-        const z = e.clientY < h * 0.25 ? 0 : 1;
-        if (z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); return; }
-      }
-    }
-    onClose();
-  }, [examplesList, toggleSpeak, flashZone, onClose]);
+  // Eyes-free read zones live on the CARD's left/right side EDGES (so they work on the full-width phone
+  // sheet, not only a centered card with gutters): a tap in the top quarter of either side reads example
+  // 1, the second quarter reads example 2. Touch-only; bows out on controls / text selection so the card
+  // stays fully interactive.
+  const scrollBodyRef = useRef<HTMLDivElement>(null);
+  const handleZoneRead = useCallback((e: React.MouseEvent) => {
+    if (!isTouch || examplesList.length === 0) return;
+    if (window.getSelection()?.toString().trim()) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return;
+    const rect = scrollBodyRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const relX = e.clientX - rect.left, relY = e.clientY - rect.top;
+    const onSide = relX < rect.width * 0.28 || relX > rect.width * 0.72;
+    if (!onSide || relY >= rect.height * 0.5) return;
+    const z = relY < rect.height * 0.25 ? 0 : 1;
+    if (z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); }
+  }, [isTouch, examplesList, toggleSpeak, flashZone]);
 
   // Focus the panel on open; restore focus on close.
   useEffect(() => {
@@ -346,7 +356,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   return (
     <div
       className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:px-16 sm:py-4 animate-in fade-in duration-200"
-      onClick={onBackdrop}
+      onClick={onClose}
     >
       <div
         ref={panelRef}
@@ -433,46 +443,52 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
           )}
         </div>
 
-        {/* Scrollable card body */}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]" style={{ WebkitOverflowScrolling: 'touch' }}>
-          <VocabCardDisplay
-            key={current?.sense ?? 'card'}
-            data={vocab}
-            showSave={false}
-            scrollable={false}
-            onSearch={onSearch}
-            onRefresh={onRefresh}
-            onCompare={onCompare}
-            onSaveSentence={onSaveSentence}
-            isSentenceSaved={isSentenceSaved}
-            onLazyLoadImage={onLazyLoadImage}
-            className="!h-auto !overflow-visible border-indigo-100 shadow-sm bg-white"
-          />
-        </div>
-      </div>
-
-      {/* Eyes-free read zones in the LEFT/RIGHT gutters beside the centered card (≥sm only). Visual guide
-          only — the taps are handled on the backdrop (onBackdrop): top quarter = example 1, second = 2. */}
-      {examplesList.length > 0 && (
-        <div className="fixed inset-0 z-[101] pointer-events-none hidden sm:block" aria-hidden="true">
-          <div className="absolute inset-x-0 top-0 h-[25vh]">
-            <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
-            <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
-            <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
-            <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
-            {zoneFlash?.zone === 0 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-16 bg-indigo-400/20 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-16 bg-indigo-400/20 zone-flash" /></>)}
+        {/* Scrollable card body + eyes-free side-edge read zones (touch only) */}
+        <div className="flex-1 min-h-0 relative">
+          <div
+            ref={scrollBodyRef}
+            onClick={handleZoneRead}
+            className="absolute inset-0 overflow-y-auto overscroll-contain p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+            style={{ WebkitOverflowScrolling: 'touch' }}
+          >
+            <VocabCardDisplay
+              key={current?.sense ?? 'card'}
+              data={vocab}
+              showSave={false}
+              scrollable={false}
+              onSearch={onSearch}
+              onRefresh={onRefresh}
+              onCompare={onCompare}
+              onSaveSentence={onSaveSentence}
+              isSentenceSaved={isSentenceSaved}
+              onLazyLoadImage={onLazyLoadImage}
+              className="!h-auto !overflow-visible border-indigo-100 shadow-sm bg-white"
+            />
           </div>
-          {examplesList.length > 1 && (
-            <div className="absolute inset-x-0 top-[25vh] h-[25vh]">
-              <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
-              <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
-              <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
-              {zoneFlash?.zone === 1 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-16 bg-emerald-400/20 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-16 bg-emerald-400/20 zone-flash" /></>)}
+          {/* Side-edge read-zone guide (top quarter = example 1, second = example 2). Visual only; taps
+              fall through to the scroll body's handler, which bows out on controls / text selection. */}
+          {isTouch && examplesList.length > 0 && (
+            <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+              <div className="absolute inset-x-0 top-0 h-1/4">
+                <div className="absolute left-0 inset-y-2 w-1 rounded-full bg-indigo-400/60" />
+                <div className="absolute right-0 inset-y-2 w-1 rounded-full bg-indigo-400/60" />
+                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
+                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
+                {zoneFlash?.zone === 0 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-[28%] bg-indigo-400/15 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-[28%] bg-indigo-400/15 zone-flash" /></>)}
+              </div>
+              {examplesList.length > 1 && (
+                <div className="absolute inset-x-0 top-1/4 h-1/4">
+                  <div className="absolute left-0 inset-y-2 w-1 rounded-full bg-emerald-400/60" />
+                  <div className="absolute right-0 inset-y-2 w-1 rounded-full bg-emerald-400/60" />
+                  <span className="absolute left-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
+                  {zoneFlash?.zone === 1 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-[28%] bg-emerald-400/15 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-[28%] bg-emerald-400/15 zone-flash" /></>)}
+                </div>
+              )}
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 };
