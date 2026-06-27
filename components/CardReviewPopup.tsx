@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, RotateCcw, Trash2, CheckCircle2, Flame } from 'lucide-react';
 import { StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { stripSentenceMarkers } from './HighlightedSentence';
-import { speakWord, speakNatural, getPlaybackState, pauseCurrent, resumeCurrent, stopCurrent } from '../services/neuralTts';
+import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent } from '../services/neuralTts';
 
 // Mastery → tailwind classes (mirrors getMasteryColors in DetailView; kept local to avoid an export).
 const MASTERY_COLORS: Record<string, { bg: string; text: string; bar: string }> = {
@@ -51,8 +51,11 @@ interface CardReviewPopupProps {
  * parent unmounts the popup when the item is deleted.
  *
  * Cross-device: bottom-sheet on phone, centered modal on tablet/desktop; the header + SRS row are a
- * sticky top bar (only the card body scrolls). While open it owns the keyboard (Esc/R/Shift+R/D/P/E/
- * Space) and traps Tab — the parent disables the underlying view's shortcuts via interactionLocked.
+ * sticky top bar (only the card body scrolls). While open it owns the FULL word-card keyboard set —
+ * Esc (close), R / Shift+R (remember / reset), D (delete), P (pronounce), E (read both examples),
+ * Cmd/Ctrl+1·2 (read 1st / 2nd example), Space (play/pause) — and traps Tab; the parent disables the
+ * underlying view's shortcuts via interactionLocked. On touch tablets the left/right gutters beside the
+ * centered card are eyes-free read zones (top quarter = example 1, second quarter = example 2).
  */
 export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   item,
@@ -102,6 +105,73 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     onClose();
   }, [confirmDel, item, onDelete, onClose]);
 
+  const isTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+  // The card's example sentences (stripped, ≤2) — for the E / Cmd+1·2 readers and the eyes-free zones.
+  const examplesList = useMemo(
+    () => (vocab.examples || []).slice(0, 2).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
+    [vocab],
+  );
+
+  // Toggle natural-voice playback for one sentence (same clip → pause / resume / restart-near-end),
+  // mirroring the word card's toggleSpeak so the speaker icons stay in sync.
+  const toggleSpeak = useCallback((raw: string) => {
+    const sentence = stripSentenceMarkers(raw || '').trim();
+    if (!sentence) return;
+    const pb = getPlaybackState();
+    if (pb.text === sentence) {
+      if (pb.status === 'loading') return;
+      if (pb.status === 'paused') { resumeCurrent(); return; }
+      if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
+    }
+    speakNatural(sentence, { allowDownload: true });
+  }, []);
+
+  // E: read both example sentences in turn; press again to pause / resume.
+  const readBothExamples = useCallback(() => {
+    if (!examplesList.length) return;
+    const pb = getPlaybackState();
+    if (pb.text && examplesList.includes(pb.text) && (pb.status === 'playing' || pb.status === 'paused')) {
+      if (pb.status === 'playing') pauseCurrent(); else resumeCurrent();
+      return;
+    }
+    let idx = 0;
+    let handle: ReturnType<typeof speakNatural> | undefined;
+    const playNext = () => {
+      if (idx >= examplesList.length) return;
+      if (handle && !handle.isActive()) return;
+      handle = speakNatural(examplesList[idx++], { allowDownload: true, onEnd: () => setTimeout(playNext, 400), onError: () => setTimeout(playNext, 400) });
+    };
+    playNext();
+  }, [examplesList]);
+
+  // Eyes-free zone tap-confirmation flash (mirrors DetailView).
+  const [zoneFlash, setZoneFlash] = useState<{ zone: number; n: number } | null>(null);
+  const zoneFlashN = useRef(0);
+  const zoneFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashZone = useCallback((zone: number) => {
+    zoneFlashN.current += 1;
+    setZoneFlash({ zone, n: zoneFlashN.current });
+    if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current);
+    zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
+  }, []);
+  useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
+
+  // Backdrop tap: on touch, the LEFT/RIGHT gutter beside the centered card is an eyes-free read zone —
+  // its top quarter (of the viewport) reads example 1, the second quarter reads example 2, so on iPad
+  // you don't have to hit the card in the middle. Anywhere else (and any mouse click) closes. On the
+  // phone bottom-sheet the card is full-width (no gutter), so a backdrop tap just closes.
+  const onBackdrop = useCallback((e: React.MouseEvent) => {
+    const rect = panelRef.current?.getBoundingClientRect();
+    if (isTouch && rect && examplesList.length > 0 && (e.clientX < rect.left || e.clientX > rect.right)) {
+      const h = window.innerHeight;
+      if (e.clientY < h * 0.5) {
+        const z = e.clientY < h * 0.25 ? 0 : 1;
+        if (z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); return; }
+      }
+    }
+    onClose();
+  }, [isTouch, examplesList, toggleSpeak, flashZone, onClose]);
+
   // Focus the panel on open; restore focus on close.
   useEffect(() => {
     const prevFocus = document.activeElement as HTMLElement | null;
@@ -138,20 +208,27 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         const st = getPlaybackState().status;
         if (st === 'playing') pauseCurrent();
         else if (st === 'paused') resumeCurrent();
-        else { const ex = (vocab.examples || [])[0]; if (ex) speakNatural(stripSentenceMarkers(ex)); }
+        else if (examplesList[0]) speakNatural(examplesList[0], { allowDownload: true });
         return;
       }
       if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (e.shiftKey) handleReset(); else handleGotIt(); return; }
       if (e.key === 'd' || e.key === 'D') { if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); handleDelete(); } return; }
       if (e.key === 'p' || e.key === 'P') { e.preventDefault(); if (vocab.word) speakWord(vocab.word); return; }
+      // Cmd/Ctrl+1 · +2 → read the 1st / 2nd example sentence (mirrors word-card mode).
+      if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
+        e.preventDefault();
+        const s = examplesList[e.key === '1' ? 0 : 1];
+        if (s) toggleSpeak(s);
+        return;
+      }
       if (e.key === 'e' || e.key === 'E') {
-        if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); const ex = (vocab.examples || [])[0]; if (ex) speakNatural(stripSentenceMarkers(ex)); }
+        if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); readBothExamples(); }
         return;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [vocab, onClose, handleGotIt, handleReset, handleDelete]);
+  }, [vocab, onClose, handleGotIt, handleReset, handleDelete, examplesList, toggleSpeak, readBothExamples]);
 
   // Stop any popup-initiated playback when the card actually closes (not on every re-render).
   useEffect(() => () => { stopCurrent(); }, []);
@@ -159,7 +236,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   return (
     <div
       className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:p-4 animate-in fade-in duration-200"
-      onClick={onClose}
+      onClick={onBackdrop}
     >
       <div
         ref={panelRef}
@@ -243,6 +320,30 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
           />
         </div>
       </div>
+
+      {/* Eyes-free read zones in the LEFT/RIGHT gutters beside the centered card (touch + ≥sm only).
+          Visual guide only — the taps are handled on the backdrop (onBackdrop): top quarter = example 1,
+          second quarter = example 2. Stays out of the card area so middle taps still work normally. */}
+      {isTouch && examplesList.length > 0 && (
+        <div className="fixed inset-0 z-[101] pointer-events-none hidden sm:block" aria-hidden="true">
+          <div className="absolute inset-x-0 top-0 h-[25vh]">
+            <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
+            <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
+            {zoneFlash?.zone === 0 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-[20vw] max-w-[160px] bg-indigo-400/20 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-[20vw] max-w-[160px] bg-indigo-400/20 zone-flash" /></>)}
+          </div>
+          {examplesList.length > 1 && (
+            <div className="absolute inset-x-0 top-[25vh] h-[25vh]">
+              <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
+              <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
+              <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
+              {zoneFlash?.zone === 1 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-[20vw] max-w-[160px] bg-emerald-400/20 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-[20vw] max-w-[160px] bg-emerald-400/20 zone-flash" /></>)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
