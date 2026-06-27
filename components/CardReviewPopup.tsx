@@ -139,11 +139,21 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     if (count <= 1) return;
     setConfirmDel(false);
     const next = pages[(((idx + delta) % count) + count) % count];
-    setCurrentSense(next.sense);
-    if (word) speakWord(word); // auto-pronounce on each switch (matches word-card nav)
-  }, [pages, idx, count, word]);
+    setCurrentSense(next.sense); // auto-pronounce happens in the effect below (post-commit), NOT here
+  }, [pages, idx, count]);
   const goPrev = useCallback(() => goTo(-1), [goTo]);
   const goNext = useCallback(() => goTo(1), [goTo]);
+
+  // Auto-pronounce the word on each meaning switch. This MUST run as an effect (after the new sense has
+  // committed), not synchronously inside goTo: switching remounts <VocabCardDisplay> via its `key`, and
+  // the unmounting <PronunciationBlock> calls speechSynthesis.cancel() in its cleanup — which cancels a
+  // speakWord() fired just before the remount (the bug: switches were silent). Running post-commit lets
+  // that cancel happen first. Mirrors DetailView's word-card auto-pronounce, also an effect. Skips open.
+  const didOpenRef = useRef(false);
+  useEffect(() => {
+    if (!didOpenRef.current) { didOpenRef.current = true; return; }
+    if (word) speakWord(word);
+  }, [currentSense, word]);
 
   // Touch: a horizontal swipe across the card pages between senses (when there are multiple). Vertical
   // drags are left to the body's scroll (we only act when the move is clearly horizontal).

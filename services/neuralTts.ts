@@ -506,10 +506,18 @@ export const setMediaSessionHandlers = (handlers: MediaSessionHandlers | null): 
   set('previoustrack', handlers.onPrev);
 };
 
-// Silent keep-alive: a separate, always-on, muted <audio> looped during autoplay so iOS never suspends
-// the page during the (up to 10s) gaps between sentences. Both are HTMLAudioElements, so iOS mixes them —
-// the keep-alive is inaudible and just holds the audio session open. Started for the whole autoplay run.
+// Silent keep-alive: holds the audio session — and with it the background gap timers — open during the
+// (up to several-second) pauses between sentences so the OS doesn't suspend the page with the screen off.
+// Two layers, because the volume-0 <audio> loop alone is enough on iPhone but NOT on iPad/macOS (those
+// treat truly-silent output as "not really playing" and nap the page, stalling the timer that schedules
+// the next sentence):
+//   1. a looping silent <audio> element (the iPhone-proven path), and
+//   2. a near-silent Web Audio oscillator — genuine non-zero PCM on the audio thread keeps the
+//      AudioContext clock running in the background, which both reinforces the session on iPad/macOS and
+//      lets afterGap() schedule the inter-sentence gap off that clock (see afterGap).
 let keepAliveEl: HTMLAudioElement | null = null;
+let keepAliveCtx: AudioContext | null = null;
+let keepAliveOsc: OscillatorNode | null = null;
 const buildSilentWavUrl = (seconds: number): string => {
   const sampleRate = 8000;
   const numSamples = sampleRate * seconds;
@@ -525,8 +533,19 @@ const buildSilentWavUrl = (seconds: number): string => {
   return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
 };
 
-/** Begin the silent keep-alive (idempotent). Call when sentence autoplay starts. */
+/** Lazily create the single shared keep-alive AudioContext (reused across autoplay runs). */
+const getKeepAliveCtx = (): AudioContext | null => {
+  try {
+    const Ctx = typeof window !== 'undefined' && ((window as any).AudioContext || (window as any).webkitAudioContext);
+    if (!Ctx) return null;
+    if (!keepAliveCtx) keepAliveCtx = new Ctx();
+    return keepAliveCtx;
+  } catch { return null; }
+};
+
+/** Begin the silent keep-alive (idempotent). Call when sentence autoplay starts (inside the gesture). */
 export const startKeepAlive = (): void => {
+  // Layer 1 — looping silent <audio> (the iPhone-proven path).
   try {
     if (!keepAliveEl) {
       keepAliveEl = new Audio(buildSilentWavUrl(2));
@@ -536,11 +555,64 @@ export const startKeepAlive = (): void => {
     }
     void keepAliveEl.play().catch(() => { /* retried on the next start */ });
   } catch { /* ignore */ }
+
+  // Layer 2 — near-silent oscillator to keep the AudioContext clock alive in the background (iPad/macOS).
+  // The play tap is a user gesture, so resume() is allowed here. The oscillator is started once and left
+  // running (an OscillatorNode can't be restarted once stopped); stopKeepAlive only suspends the context.
+  try {
+    const ctx = getKeepAliveCtx();
+    if (ctx) {
+      if (ctx.state === 'suspended') void ctx.resume().catch(() => { /* needs a gesture; this call is one */ });
+      if (!keepAliveOsc) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0.00015; // ~-76 dB: inaudible in practice, but genuine non-zero samples
+        osc.frequency.value = 440;
+        osc.connect(gain).connect(ctx.destination);
+        osc.start();
+        keepAliveOsc = osc;
+      }
+    }
+  } catch { /* ignore */ }
 };
 
 /** Stop the silent keep-alive. Call when sentence autoplay ends. */
 export const stopKeepAlive = (): void => {
   try { keepAliveEl?.pause(); } catch { /* ignore */ }
+  // Suspend (don't close) the context so it and the already-started oscillator can be resumed next run.
+  try { if (keepAliveCtx && keepAliveCtx.state === 'running') void keepAliveCtx.suspend().catch(() => { /* ignore */ }); } catch { /* ignore */ }
+};
+
+/**
+ * Run `cb` after `ms`. A setTimeout is ALWAYS set (so behaviour can never regress below the old
+ * timeout-only path); additionally, when the keep-alive AudioContext is running, an equal-length silent
+ * buffer is scheduled whose onended fires on the audio thread — which keeps firing with the screen off /
+ * tab hidden, where setTimeout is throttled or paused. Whichever fires first wins; the other is
+ * cancelled. This is what lets sentence autoplay cross the inter-sentence gap in the background on
+ * iPad/macOS (iPhone already worked via the <audio> keep-alive). Returns a canceller.
+ */
+export const afterGap = (ms: number, cb: () => void): (() => void) => {
+  let done = false;
+  let src: AudioBufferSourceNode | null = null;
+  let t: ReturnType<typeof setTimeout> | null = null;
+  const cleanup = () => {
+    if (t) { clearTimeout(t); t = null; }
+    if (src) { try { src.onended = null; src.stop(); } catch { /* ignore */ } src = null; }
+  };
+  const fire = () => { if (done) return; done = true; cleanup(); cb(); };
+  t = setTimeout(fire, ms); // always-present fallback — fires on resume if Web Audio is frozen/unavailable
+  const ctx = keepAliveCtx;
+  if (ctx && ctx.state === 'running') {
+    try {
+      const frames = Math.max(1, Math.ceil(ctx.sampleRate * (ms / 1000)));
+      src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, frames, ctx.sampleRate); // silent → onended ~`ms` later, audio-thread timed
+      src.onended = fire;
+      src.connect(ctx.destination); // silent; keeps the node scheduled
+      src.start();
+    } catch { src = null; }
+  }
+  return () => { if (done) return; done = true; cleanup(); };
 };
 
 // Device-local cache of ready-to-play object URLs (cached MiMo clips, keyed by ttsKey hash) — replays are instant.

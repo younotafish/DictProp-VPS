@@ -13,7 +13,7 @@ import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, startKeepAlive, stopKeepAlive, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, startKeepAlive, stopKeepAlive, afterGap, type SpeakHandle } from '../services/neuralTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { loadImage } from '../services/storage';
 import { log, warn } from '../services/logger';
@@ -887,7 +887,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const sentences = sentenceMode
       ? [stripSentenceMarkers(currentSentenceText)].filter(Boolean)
       : examplesOf(currentItem);
-    let gapTimer: ReturnType<typeof setTimeout> | undefined;
+    let cancelGap: (() => void) | undefined; // background-safe inter-sentence gap (afterGap) — see neuralTts
     let handle: SpeakHandle | undefined;
     let idx = 0;
     let rep = 0;
@@ -900,28 +900,28 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const REPEAT_GAP = 700; // short beat between the two reads of the same sentence
     const CARD_GAP = 600;   // short beat between cards in item mode
     const playNext = () => {
-      if (idx >= sentences.length) { gapTimer = setTimeout(advanceCard, CARD_GAP); return; }
+      if (idx >= sentences.length) { cancelGap = afterGap(CARD_GAP, advanceCard); return; }
       const s = sentences[idx];
       const afterEach = () => {
-        if (++rep < REPEATS) { gapTimer = setTimeout(playNext, REPEAT_GAP); return; } // read again
+        if (++rep < REPEATS) { cancelGap = afterGap(REPEAT_GAP, playNext); return; } // read again
         rep = 0;
         idx++;
         const more = idx < sentences.length;
         const gap = (more || sentenceModeRef.current) ? sentenceGapRef.current : CARD_GAP;
-        gapTimer = setTimeout(more ? playNext : advanceCard, gap);
+        cancelGap = afterGap(gap, more ? playNext : advanceCard);
       };
       handle = speakNatural(s, { allowDownload: true, onEnd: afterEach, onError: afterEach });
     };
 
     if (!sentences.length) {
-      gapTimer = setTimeout(advanceCard, 400); // card has no example → move on quickly
+      cancelGap = afterGap(400, advanceCard); // card has no example → move on quickly
     } else {
       playNext();
     }
 
     return () => {
       handle?.stop();
-      if (gapTimer) clearTimeout(gapTimer);
+      cancelGap?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSentenceAutoPlaying, currentGroupIndex, currentItemIndex, groups]);
