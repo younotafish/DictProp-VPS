@@ -559,13 +559,14 @@ const App: React.FC = () => {
   // `groups` — groups[i] is the resolved source card for the saved sentence sentenceItems[i].
   const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number, sentenceItems?: StoredItem[] } | null>(null);
 
-  // Footnote card popup — the saved word/phrase whose full review card is shown over the current view.
-  // Stored by id and re-resolved live from allActiveItems so Got it / Reset update the card in place.
-  const [cardPopupItemId, setCardPopupItemId] = useState<string | null>(null);
-  const openCardPopup = useCallback((it: StoredItem) => setCardPopupItemId(it.data.id), []);
-  const popupItem = useMemo(
-    () => (cardPopupItemId ? allActiveItems.find(i => i.data.id === cardPopupItemId) ?? null : null),
-    [cardPopupItemId, allActiveItems],
+  // Footnote card popup — keyed by the word's SPELLING (so deleting one sense doesn't lose the rest)
+  // plus the sense to open on. popupItems = every saved sense of that word, for in-popup paging; it's
+  // re-resolved live from allActiveItems so Got it / Reset / Delete update the card in place.
+  const [cardPopup, setCardPopup] = useState<{ spelling: string; initialId: string } | null>(null);
+  const openCardPopup = useCallback((it: StoredItem) => setCardPopup({ spelling: getItemSpelling(it), initialId: it.data.id }), []);
+  const popupItems = useMemo(
+    () => (cardPopup ? allActiveItems.filter(i => i.type === 'vocab' && getItemSpelling(i) === cardPopup.spelling) : []),
+    [cardPopup, allActiveItems],
   );
 
   // Persist detailContext (only group/item indices for potential future use)
@@ -654,7 +655,7 @@ const App: React.FC = () => {
     onNavigateToStudy: () => {
       setCurrentView('study');
     },
-    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !comparisonWords && !cardPopupItemId, // Disable when modals are open
+    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !comparisonWords && !cardPopup, // Disable when modals are open
   });
 
   // Global Escape key to close modals or go back
@@ -663,8 +664,8 @@ const App: React.FC = () => {
       if (e.key === 'Escape') {
         if (showKeyboardHelp) {
           setShowKeyboardHelp(false);
-        } else if (cardPopupItemId) {
-          setCardPopupItemId(null);
+        } else if (cardPopup) {
+          setCardPopup(null);
         } else if (confirmModal) {
           setConfirmModal(null);
         } else if (comparisonWords) {
@@ -695,7 +696,7 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [detailContext, confirmModal, showKeyboardHelp, comparisonWords, cardPopupItemId]);
+  }, [detailContext, confirmModal, showKeyboardHelp, comparisonWords, cardPopup]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -2848,7 +2849,7 @@ const App: React.FC = () => {
               onRemoveVocabFromPhrase={handleRemoveVocabFromPhrase}
               findSaved={findSavedItem}
               onOpenCard={openCardPopup}
-              interactionLocked={!!cardPopupItemId}
+              interactionLocked={!!cardPopup}
           />
         </ErrorBoundary>
       )}
@@ -2861,10 +2862,12 @@ const App: React.FC = () => {
           />
       )}
 
-      {popupItem && (
+      {popupItems.length > 0 && cardPopup && (
           <CardReviewPopup
-              item={popupItem}
-              onClose={() => setCardPopupItemId(null)}
+              key={cardPopup.spelling}
+              items={popupItems}
+              initialId={cardPopup.initialId}
+              onClose={() => setCardPopup(null)}
               onUpdateSRS={updateSRS}
               onResetSRS={resetSRS}
               onDelete={handleDelete}
@@ -2902,7 +2905,7 @@ const App: React.FC = () => {
             onCompare={handleCompare}
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
-            hasOverlay={!!detailContext || !!confirmModal || !!comparisonWords || showKeyboardHelp || !!cardPopupItemId}
+            hasOverlay={!!detailContext || !!confirmModal || !!comparisonWords || showKeyboardHelp || !!cardPopup}
             projects={projects}
             activeProject={activeProject}
             onSetActiveProject={setActiveProject}

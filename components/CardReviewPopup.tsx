@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, RotateCcw, Trash2, CheckCircle2, Flame } from 'lucide-react';
+import { X, RotateCcw, Trash2, CheckCircle2, Flame, ChevronLeft, ChevronRight } from 'lucide-react';
 import { StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { VocabCardDisplay } from './VocabCard';
@@ -28,7 +28,10 @@ const formatRelative = (ts: number): string => {
 };
 
 interface CardReviewPopupProps {
-  item: StoredItem;
+  /** Every saved sense of the tapped word (≥1). The popup pages between them. */
+  items: StoredItem[];
+  /** Which sense to open on (defaults to the first). */
+  initialId?: string;
   onClose: () => void;
   onUpdateSRS: (id: string) => void;
   onResetSRS: (id: string) => void;
@@ -42,23 +45,25 @@ interface CardReviewPopupProps {
 }
 
 /**
- * The full review card for an already-saved word, shown in an overlay — opened by tapping a
- * footnote marker on a saved word inside a sentence. Everything you can do in notebook card-review
- * mode: the rich card (image, defs, forms, family, usage, origins, mnemonic, synonyms, speakers,
- * search/refresh/compare/save-sentence) plus the SRS row (mastery, Got it / Reset / Delete).
+ * The full review card for an already-saved word, shown in an overlay — opened by tapping a saved word
+ * inside a sentence. Everything notebook card-review has: the rich card (image, defs, forms, family,
+ * usage, origins, mnemonic, synonyms, speakers, search/refresh/compare/save-sentence) plus the SRS row
+ * (mastery, Got it / Reset / Delete). A word with multiple saved senses pages between them (‹ i/N › or
+ * ← / →); each action targets the CURRENT sense.
  *
- * Reads its `item` live from App state (by id), so Got it / Reset update the bar in place; the
- * parent unmounts the popup when the item is deleted.
+ * Items are read live from App state, so Got it / Reset update the bar in place and Delete drops the
+ * current sense (closing only when it was the last one).
  *
  * Cross-device: bottom-sheet on phone, centered modal on tablet/desktop; the header + SRS row are a
  * sticky top bar (only the card body scrolls). While open it owns the FULL word-card keyboard set —
- * Esc (close), R / Shift+R (remember / reset), D (delete), P (pronounce), E (read both examples),
- * Cmd/Ctrl+1·2 (read 1st / 2nd example), Space (play/pause) — and traps Tab; the parent disables the
- * underlying view's shortcuts via interactionLocked. On touch tablets the left/right gutters beside the
- * centered card are eyes-free read zones (top quarter = example 1, second quarter = example 2).
+ * Esc (close), ← / → (prev / next sense), R / Shift+R (remember / reset), D (delete), P (pronounce),
+ * E (read both examples), Cmd/Ctrl+1·2 (read 1st / 2nd example), Space (play/pause) — and traps Tab; the
+ * parent disables the underlying view's shortcuts via interactionLocked. On touch tablets the left/right
+ * gutters beside the centered card are eyes-free read zones (top quarter = example 1, 2nd = example 2).
  */
 export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
-  item,
+  items,
+  initialId,
   onClose,
   onUpdateSRS,
   onResetSRS,
@@ -70,30 +75,51 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   isSentenceSaved,
   onLazyLoadImage,
 }) => {
-  const vocab = item.data as VocabCard;
   const panelRef = useRef<HTMLDivElement>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
-  const mastery = SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(item.srs, item.data.id, item.type));
+  // The sense currently shown — tracked by id so it survives the items array re-ordering/refreshing
+  // after a Got it. Falls back to the first sense if the tracked one disappears (e.g. after a delete).
+  const [currentId, setCurrentId] = useState<string>(
+    () => (initialId && items.some(i => i.data.id === initialId) ? initialId : items[0]?.data.id ?? ''),
+  );
+  const current = items.find(i => i.data.id === currentId) ?? items[0];
+  useEffect(() => {
+    if (current && current.data.id !== currentId) setCurrentId(current.data.id);
+  }, [current, currentId]);
+
+  const count = items.length;
+  const idx = Math.max(0, items.findIndex(i => i.data.id === current?.data.id));
+  const goTo = useCallback((delta: number) => {
+    if (count <= 1) return;
+    setConfirmDel(false);
+    setCurrentId(items[(((idx + delta) % count) + count) % count].data.id);
+  }, [items, idx, count]);
+  const goPrev = useCallback(() => goTo(-1), [goTo]);
+  const goNext = useCallback(() => goTo(1), [goTo]);
+
+  const vocab = current.data as VocabCard;
+
+  const mastery = SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(current.srs, current.data.id, current.type));
   const colors = MASTERY_COLORS[mastery.color] || MASTERY_COLORS.slate;
-  const totalReviews = item.srs?.totalReviews ?? 0;
-  const streak = item.srs?.correctStreak ?? 0;
-  const nextReview = item.srs?.nextReview ?? 0;
+  const totalReviews = current.srs?.totalReviews ?? 0;
+  const streak = current.srs?.correctStreak ?? 0;
+  const nextReview = current.srs?.nextReview ?? 0;
 
   const handleGotIt = useCallback(() => {
-    const base = SRSAlgorithm.ensure(item.srs, item.data.id, item.type);
+    const base = SRSAlgorithm.ensure(current.srs, current.data.id, current.type);
     const preview = SRSAlgorithm.updateAfterRemember(base);
-    onUpdateSRS(item.data.id);
+    onUpdateSRS(current.data.id);
     setFlash(`Next review in ${Math.max(1, Math.round(preview.stability))}d`);
     setTimeout(() => setFlash(null), 1600);
-  }, [item, onUpdateSRS]);
+  }, [current, onUpdateSRS]);
 
   const handleReset = useCallback(() => {
-    onResetSRS(item.data.id);
+    onResetSRS(current.data.id);
     setFlash('Memory reset');
     setTimeout(() => setFlash(null), 1600);
-  }, [item, onResetSRS]);
+  }, [current, onResetSRS]);
 
   const handleDelete = useCallback(() => {
     if (!confirmDel) {
@@ -101,12 +127,13 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       setTimeout(() => setConfirmDel(false), 2500);
       return;
     }
-    onDelete(item.data.id);
-    onClose();
-  }, [confirmDel, item, onDelete, onClose]);
+    onDelete(current.data.id);
+    setConfirmDel(false);
+    if (items.length <= 1) onClose(); // deleted the last sense → nothing left to show
+  }, [confirmDel, current, items.length, onDelete, onClose]);
 
   const isTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
-  // The card's example sentences (stripped, ≤2) — for the E / Cmd+1·2 readers and the eyes-free zones.
+  // The current sense's example sentences (stripped, ≤2) — for the E / Cmd+1·2 readers and eyes-free zones.
   const examplesList = useMemo(
     () => (vocab.examples || []).slice(0, 2).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
     [vocab],
@@ -134,12 +161,12 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       if (pb.status === 'playing') pauseCurrent(); else resumeCurrent();
       return;
     }
-    let idx = 0;
+    let i = 0;
     let handle: ReturnType<typeof speakNatural> | undefined;
     const playNext = () => {
-      if (idx >= examplesList.length) return;
+      if (i >= examplesList.length) return;
       if (handle && !handle.isActive()) return;
-      handle = speakNatural(examplesList[idx++], { allowDownload: true, onEnd: () => setTimeout(playNext, 400), onError: () => setTimeout(playNext, 400) });
+      handle = speakNatural(examplesList[i++], { allowDownload: true, onEnd: () => setTimeout(playNext, 400), onError: () => setTimeout(playNext, 400) });
     };
     playNext();
   }, [examplesList]);
@@ -203,6 +230,12 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
 
       if (typing) return;
 
+      // ← / → page between this word's senses.
+      if (count > 1 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        if (e.key === 'ArrowLeft') goPrev(); else goNext();
+        return;
+      }
       if (e.key === ' ') {
         e.preventDefault();
         const st = getPlaybackState().status;
@@ -228,7 +261,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [vocab, onClose, handleGotIt, handleReset, handleDelete, examplesList, toggleSpeak, readBothExamples]);
+  }, [vocab, onClose, handleGotIt, handleReset, handleDelete, examplesList, toggleSpeak, readBothExamples, goPrev, goNext, count]);
 
   // Stop any popup-initiated playback when the card actually closes (not on every re-render).
   useEffect(() => () => { stopCurrent(); }, []);
@@ -251,11 +284,18 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         <div className="shrink-0 border-b border-slate-200 bg-white px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:pt-3 pb-2">
           {/* Title row */}
           <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="min-w-0">
+            <div className="min-w-0 flex items-baseline gap-2">
               <span className="text-lg font-bold text-slate-800 truncate">{vocab.word}</span>
-              {vocab.sense && <span className="ml-2 text-xs text-slate-400">{vocab.sense}</span>}
+              {vocab.sense && <span className="text-xs text-slate-400 truncate">{vocab.sense}</span>}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
+              {count > 1 && (
+                <div className="flex items-center gap-0.5 text-slate-500 mr-1" title="Other meanings of this word (← / →)">
+                  <button onClick={goPrev} aria-label="Previous meaning" className="p-1 rounded-lg hover:bg-slate-100 transition-colors"><ChevronLeft size={16} /></button>
+                  <span className="text-[11px] font-semibold tabular-nums select-none">{idx + 1}/{count}</span>
+                  <button onClick={goNext} aria-label="Next meaning" className="p-1 rounded-lg hover:bg-slate-100 transition-colors"><ChevronRight size={16} /></button>
+                </div>
+              )}
               <SpeechStyleToggle />
               <button
                 onClick={onClose}
@@ -288,7 +328,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
               <button
                 onClick={handleDelete}
                 className={`flex items-center gap-1 px-2 py-1.5 rounded-lg transition-colors ${confirmDel ? 'text-white bg-rose-500 hover:bg-rose-600 font-semibold' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}
-                title="Delete word (D)"
+                title="Delete this meaning (D)"
               >
                 <Trash2 size={15} />{confirmDel && <span className="text-xs">Sure?</span>}
               </button>
