@@ -150,11 +150,19 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const isReplace = !!(onRefreshReplace && findSavedByWord(queryWord).length > 0);
     if (isReplace && liveVocabs.length) onRefreshReplace!(queryWord, liveVocabs);
 
-    result.vocabs?.forEach(async (vocab, index) => {
-      if (vocab.imagePrompt && !vocab.imageUrl) {
+    // Generate illustrations with a small concurrency cap — the 1-vCPU VPS chokes if a multi-meaning
+    // result requests every image at once (the old forEach fired them all in parallel).
+    const IMG_CONCURRENCY = 2;
+    const vocabList = result.vocabs || [];
+    let imgCursor = 0;
+    const imgWorker = async () => {
+      while (imgCursor < vocabList.length) {
+        const index = imgCursor++;
+        const vocab = vocabList[index];
+        if (!vocab.imagePrompt || vocab.imageUrl) continue;
         try {
           const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
-          if (!imageData) return;
+          if (!imageData) continue;
           if (liveVocabs[index]) liveVocabs[index] = { ...liveVocabs[index], imageUrl: imageData };
           setQueue(prev => prev.map(q => {
             if (q.id !== itemId || !q.results?.vocabs) return q;
@@ -165,7 +173,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           if (isReplace) onRefreshReplace!(queryWord, [...liveVocabs]); // re-save with the new image
         } catch {}
       }
-    });
+    };
+    void Promise.all(Array.from({ length: Math.min(IMG_CONCURRENCY, vocabList.length) }, imgWorker));
   }, [onRefreshReplace, findSavedByWord]);
 
   // Process queue — pick up next pending item and search it

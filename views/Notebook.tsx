@@ -549,6 +549,9 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
   const [localSearchQuery, setLocalSearchQuery] = useState('');
+  // Defer the heavy grouping/search pipeline so typing stays responsive on large libraries: the input
+  // updates immediately (localSearchQuery) while the filtered/grouped list catches up a tick behind.
+  const deferredSearchQuery = React.useDeferredValue(localSearchQuery);
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [showHeader, setShowHeader] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
@@ -664,13 +667,19 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         const wordToSpeak = result.vocabs[0].word || query.trim();
         setTimeout(() => speakWord(wordToSpeak), 100);
 
-        // Generate images asynchronously for each vocab (don't block UI)
-        result.vocabs.forEach(async (vocab, index) => {
-          if (vocab.imagePrompt && !vocab.imageUrl) {
+        // Generate images with a small concurrency cap — the 1-vCPU VPS chokes if every vocab's
+        // illustration is requested at once (the old forEach fired them all in parallel).
+        const IMG_CONCURRENCY = 2;
+        const vocabList = result.vocabs;
+        let imgCursor = 0;
+        const imgWorker = async () => {
+          while (imgCursor < vocabList.length) {
+            const index = imgCursor++;
+            const vocab = vocabList[index];
+            if (!vocab.imagePrompt || vocab.imageUrl) continue;
             try {
               const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
-              // Skip update if a newer search has started
-              if (searchGenerationIdRef.current !== currentGenId) return;
+              if (searchGenerationIdRef.current !== currentGenId) return; // a newer search started
               if (imageData) {
                 setSearchResults(prev => {
                   if (!prev || !prev.vocabs) return prev;
@@ -685,7 +694,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               warn('Image generation failed for vocab:', vocab.word, imgErr);
             }
           }
-        });
+        };
+        void Promise.all(Array.from({ length: Math.min(IMG_CONCURRENCY, vocabList.length) }, imgWorker));
       }
     } catch (err: any) {
       logError('AI Search failed:', err);
@@ -920,14 +930,14 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     // 1. Fuzzy Search
     let processedItems = items;
     
-    if (localSearchQuery.trim()) {
-      const fuseResults = fuseIndex.search(localSearchQuery).map(result => result.item);
-      
+    if (deferredSearchQuery.trim()) {
+      const fuseResults = fuseIndex.search(deferredSearchQuery).map(result => result.item);
+
       // Chinese input: Fuse.js Bitap algorithm doesn't work well with CJK characters.
       // Fall back to substring matching against chinese/translation fields.
-      const containsChinese = /[\u4e00-\u9fff]/.test(localSearchQuery);
+      const containsChinese = /[\u4e00-\u9fff]/.test(deferredSearchQuery);
       if (containsChinese) {
-        const query = localSearchQuery.trim();
+        const query = deferredSearchQuery.trim();
         const fuseIds = new Set(fuseResults.map(i => i.data.id));
         const chineseMatches = items.filter(item => {
           if (fuseIds.has(item.data.id)) return false; // Already in Fuse results
@@ -1060,7 +1070,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     // "Due for Review" backfill: when searching, show all due items
     // so user can review while waiting for AI search results
     let dueForReview: ItemGroup[] = [];
-    if (localSearchQuery.trim()) {
+    if (deferredSearchQuery.trim()) {
       const now = Date.now();
       const fuzzyIds = new Set(activeFiltered.map(i => i.data.id));
 
@@ -1091,7 +1101,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       archivedGroups: groupByTitle(archivedFiltered),
       dueForReviewGroups: dueForReview
     };
-  }, [items, sortMode, filterMode, localSearchQuery, fuseIndex]);
+  }, [items, sortMode, filterMode, deferredSearchQuery, fuseIndex]);
 
   // Flatten groups into a single list for virtualization
   type VirtualRow =
