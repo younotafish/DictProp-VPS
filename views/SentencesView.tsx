@@ -12,6 +12,9 @@ interface SentencesViewProps {
   onScroll: (e: React.UIEvent<HTMLElement>) => void;
   /** Open a sentence's source card in DetailView. Receives the on-screen sorted order + clicked index. */
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
+  /** Footnote support: look up a saved item for a term, and open its full card popup. */
+  findSaved?: (term: string) => StoredItem | null;
+  onOpenCard?: (item: StoredItem) => void;
 }
 
 export const SentencesView: React.FC<SentencesViewProps> = ({
@@ -21,6 +24,8 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   onSearch,
   onScroll,
   onOpenSentence,
+  findSaved,
+  onOpenCard,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   // Only recompute "now" when items change (when SRS state could have changed)
@@ -33,17 +38,16 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
     [activeItems, now],
   );
 
+  // Match the Notebook word-item ordering: least-memorized first (memoryStrength ASC),
+  // ties broken by most-recently added (savedAt DESC — newest on top).
   const sorted = useMemo(() =>
     [...activeItems].sort((a, b) => {
-      const isDueA = ((a.srs?.nextReview ?? 0) <= now);
-      const isDueB = ((b.srs?.nextReview ?? 0) <= now);
-      if (isDueA !== isDueB) return isDueA ? -1 : 1;
-      if (isDueA && isDueB) {
-        return (a.srs?.nextReview ?? 0) - (b.srs?.nextReview ?? 0);
-      }
+      const strengthA = a.srs?.memoryStrength ?? 0;
+      const strengthB = b.srs?.memoryStrength ?? 0;
+      if (strengthA !== strengthB) return strengthA - strengthB;
       return (b.savedAt || 0) - (a.savedAt || 0);
     }),
-    [activeItems, now],
+    [activeItems],
   );
 
   const formatDue = (ts: number) => {
@@ -89,9 +93,9 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
           const isDue = ((item.srs?.nextReview ?? 0) <= now);
           const mastery = item.srs ? SRSAlgorithm.getMasteryLevel(item.srs) : null;
           const barColor = mastery
-            ? mastery.memoryStrength >= 70
+            ? mastery.percentage >= 70
               ? 'bg-emerald-400'
-              : mastery.memoryStrength >= 40
+              : mastery.percentage >= 40
                 ? 'bg-amber-400'
                 : 'bg-red-400'
             : 'bg-slate-300';
@@ -109,7 +113,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
               <div className="pl-3">
                 <p className="text-sm xl:text-base text-slate-700 leading-relaxed mb-2">
-                  <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} />
+                  <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} findSaved={findSaved} onOpenCard={onOpenCard} />
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">

@@ -81,6 +81,11 @@ interface DetailViewProps {
   /** When provided, DetailView enters "sentence mode": aligned 1:1 with `groups`, sentenceItems[i] is
    *  the saved sentence whose source card is groups[i]. Drives the banner, SRS, TTS, autoplay & delete. */
   sentenceItems?: StoredItem[];
+  /** Footnote support in the sentence hero: look up a saved item for a term, and open its full card. */
+  findSaved?: (term: string) => StoredItem | null;
+  onOpenCard?: (item: StoredItem) => void;
+  /** True while the card popup owns input — DetailView's keyboard/nav handlers stand down. */
+  interactionLocked?: boolean;
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({
@@ -104,6 +109,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
   isSentenceSaved,
   onRemoveVocabFromPhrase,
   sentenceItems,
+  findSaved,
+  onOpenCard,
+  interactionLocked = false,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -118,7 +126,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
-  const [cardCollapsed, setCardCollapsed] = useState(true); // sentence review: word card collapsed → the sentence is the full-page focus
+  const cardCollapsed = true; // sentence review: the sentence is always the full-page focus (the source-word card was removed — open any saved word via its footnote)
   // Sentence review — what tapping a word does. true (default) = play from that word (current behaviour);
   // false = look up the dotted [[uncommon]] term via the bottom-right search, like every other view. Persisted.
   const [tapToPlay, setTapToPlay] = useState(() => {
@@ -1160,7 +1168,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onArrowDown: navDown,
     onEnter: handleEnterFromSelection,
     onSave: handleToggleSave,
-    enabled: !showActionMenu,
+    enabled: !showActionMenu && !interactionLocked,
   });
 
   // Trackpad wheel navigation
@@ -1169,7 +1177,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onScrollRight: navRight,
     containerRef: scrollContainerRef,
     threshold: 80,
-    enabled: !!(currentGroup && currentGroup.items.length >= 1),
+    enabled: !interactionLocked && !!(currentGroup && currentGroup.items.length >= 1),
   });
 
   const handleVocabSearch = (term: string) => {
@@ -1415,7 +1423,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Keyboard shortcuts
   useEffect(() => {
-    if (showActionMenu) return;
+    if (showActionMenu || interactionLocked) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip if in input
@@ -1506,7 +1514,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, toggleSentenceAutoPlay]);
+  }, [title, showActionMenu, interactionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, toggleSentenceAutoPlay]);
 
   // Eyes-free read-zone band counts — how many of the two quarter-bands actually read something
   // (so the guides only draw the bands that do something). Word view: a phrase always has band 1
@@ -1586,6 +1594,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   <HighlightedSentence
                     text={currentSentenceText}
                     itemWord={(currentSentence.data as SentenceData).sourceWord}
+                    findSaved={findSaved}
+                    onOpenCard={onOpenCard}
                     {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch })}
                   />
                 </p>
@@ -1595,17 +1605,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
               </div>
             </div>
 
-            {/* Toggle the supporting word card below */}
-            <div className="shrink-0 flex justify-center mt-1">
-              <button
-                onClick={() => setCardCollapsed((v) => !v)}
-                className="flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-indigo-600 px-2.5 py-1 rounded-lg hover:bg-slate-100 transition-colors"
-                title={cardCollapsed ? 'Show word card' : 'Hide word card'}
-              >
-                {cardCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                {cardCollapsed ? 'Word card' : 'Hide card'}
-              </button>
-            </div>
+            {/* (Source-word card removed — the sentence stands alone; open any saved word via its footnote.) */}
 
             {/* Row 3: memorization stats + actions */}
             <div className="mt-2 flex items-center gap-2 text-xs">
@@ -1644,7 +1644,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       )}
       {/* Word card — the supporting source-word detail. Hidden in sentence review when collapsed
           (so the sentence owns the page); always shown in regular card mode. */}
-      {(!sentenceMode || !cardCollapsed) && (
+      {!sentenceMode && (
       <div className="relative flex-1 min-h-0 flex flex-col">
       <div
         ref={scrollContainerRef}
