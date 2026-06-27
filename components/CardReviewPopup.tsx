@@ -99,6 +99,23 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const goPrev = useCallback(() => goTo(-1), [goTo]);
   const goNext = useCallback(() => goTo(1), [goTo]);
 
+  // Touch: a horizontal swipe across the card pages between senses (when there are multiple). Vertical
+  // drags are left to the body's scroll (we only act when the move is clearly horizontal).
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const onPanelTouchStart = useCallback((e: React.TouchEvent) => {
+    const t = e.touches[0];
+    swipeStart.current = t ? { x: t.clientX, y: t.clientY } : null;
+  }, []);
+  const onPanelTouchEnd = useCallback((e: React.TouchEvent) => {
+    const s = swipeStart.current;
+    swipeStart.current = null;
+    if (!s || count <= 1) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) { if (dx < 0) goNext(); else goPrev(); }
+  }, [count, goNext, goPrev]);
+
   const vocab = current.data as VocabCard;
 
   const mastery = SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(current.srs, current.data.id, current.type));
@@ -276,6 +293,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         tabIndex={-1}
         className="bg-white w-full h-[90vh] rounded-t-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-4xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none animate-in slide-in-from-bottom sm:zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
+        onTouchStart={onPanelTouchStart}
+        onTouchEnd={onPanelTouchEnd}
         role="dialog"
         aria-modal="true"
         aria-label={`Review card: ${vocab.word}`}
