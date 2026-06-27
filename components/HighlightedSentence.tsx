@@ -58,7 +58,7 @@ interface HighlightedSentenceProps {
   onOpenCard?: (item: StoredItem) => void;
 }
 
-export const HighlightedSentence: React.FC<HighlightedSentenceProps> = ({
+const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
   text,
   itemWord = '',
   onSearchWord,
@@ -265,3 +265,9 @@ export const HighlightedSentence: React.FC<HighlightedSentenceProps> = ({
 
   return <>{nodes}</>;
 };
+
+// Memoized: with stable props (text/itemWord + stable callbacks) an unchanged sentence skips its
+// per-token saved-word scan when a parent re-renders for unrelated reasons. Critical for the Sentences
+// list (100s of rows) and for snappy open/close of the footnote card popup — without this, toggling
+// the popup re-scans every rendered sentence against the whole library.
+export const HighlightedSentence = React.memo(HighlightedSentenceImpl);

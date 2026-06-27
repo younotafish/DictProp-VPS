@@ -509,6 +509,19 @@ const App: React.FC = () => {
   // Variant-aware lookup index (base word + each inflected form → base word), rebuilt
   // only when items change. Powers "search a variant → pop up the saved card, skip AI".
   const variantIndex = useMemo(() => buildVariantIndex(allActiveItems), [allActiveItems]);
+  // base word → its saved vocab item (most-reviewed sense), so footnote lookup is O(1) per word
+  // instead of an O(n) scan over the whole library on every rendered token. See findSavedItem.
+  const savedVocabByBase = useMemo(() => {
+    const m = new Map<string, StoredItem>();
+    for (const i of allActiveItems) {
+      if (i.type !== 'vocab') continue;
+      const base = normalizeKey((i.data as VocabCard).word || '');
+      if (!base) continue;
+      const prev = m.get(base);
+      if (!prev || (i.srs?.totalReviews ?? 0) > (prev.srs?.totalReviews ?? 0)) m.set(base, i);
+    }
+    return m;
+  }, [allActiveItems]);
   // Filter by project for notebook display (null = show all)
   const activeItems = useMemo(() => {
     if (!activeProject) return allActiveItems;
@@ -2414,12 +2427,15 @@ const App: React.FC = () => {
   const findSavedItem = useCallback((term: string): StoredItem | null => {
     const bases = matchBaseWords(term, variantIndex);
     if (bases.size === 0) return null;
-    const matches = allActiveItems.filter(i => i.type === 'vocab' && bases.has(normalizeKey((i.data as VocabCard).word || '')));
-    if (matches.length === 0) return null;
-    // Most-reviewed sense → the popup's SRS bar is the meaningful one. Vocab only (the popup is a
-    // vocab card; multi-word vocab still matches via variantKeys). Saved PHRASE items don't footnote yet.
-    return matches.reduce((best, c) => ((c.srs?.totalReviews ?? 0) > (best.srs?.totalReviews ?? 0) ? c : best));
-  }, [allActiveItems, variantIndex]);
+    // O(candidates) via the prebuilt index — NOT an O(n) scan per token (this runs per word in every
+    // rendered sentence). Vocab only; multi-word vocab still matches via variantKeys.
+    let best: StoredItem | null = null;
+    for (const b of bases) {
+      const it = savedVocabByBase.get(b);
+      if (it && (!best || (it.srs?.totalReviews ?? 0) > (best.srs?.totalReviews ?? 0))) best = it;
+    }
+    return best;
+  }, [variantIndex, savedVocabByBase]);
 
   // Cheap boolean variant check (no card collection) — for Notebook's "auto-AI if no match" gate.
   const hasSavedVariant = useCallback((q: string) => matchBaseWords(q, variantIndex).size > 0, [variantIndex]);
