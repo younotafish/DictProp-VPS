@@ -94,7 +94,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const goTo = useCallback((delta: number) => {
     if (count <= 1) return;
     setConfirmDel(false);
-    setCurrentId(items[(((idx + delta) % count) + count) % count].data.id);
+    const next = items[(((idx + delta) % count) + count) % count];
+    setCurrentId(next.data.id);
+    const w = (next.data as VocabCard).word;
+    if (w) speakWord(w); // auto-pronounce the word on each meaning switch (matches word-card nav)
   }, [items, idx, count]);
   const goPrev = useCallback(() => goTo(-1), [goTo]);
   const goNext = useCallback(() => goTo(1), [goTo]);
@@ -149,7 +152,6 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     if (items.length <= 1) onClose(); // deleted the last sense → nothing left to show
   }, [confirmDel, current, items.length, onDelete, onClose]);
 
-  const isTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
   // The current sense's example sentences (stripped, ≤2) — for the E / Cmd+1·2 readers and eyes-free zones.
   const examplesList = useMemo(
     () => (vocab.examples || []).slice(0, 2).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
@@ -206,7 +208,9 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   // phone bottom-sheet the card is full-width (no gutter), so a backdrop tap just closes.
   const onBackdrop = useCallback((e: React.MouseEvent) => {
     const rect = panelRef.current?.getBoundingClientRect();
-    if (isTouch && rect && examplesList.length > 0 && (e.clientX < rect.left || e.clientX > rect.right)) {
+    // Tap/click the LEFT/RIGHT gutter beside the card: top quarter → example 1, second quarter →
+    // example 2 (mouse on macOS works too, not just touch). Anywhere else closes.
+    if (rect && examplesList.length > 0 && (e.clientX < rect.left || e.clientX > rect.right)) {
       const h = window.innerHeight;
       if (e.clientY < h * 0.5) {
         const z = e.clientY < h * 0.25 ? 0 : 1;
@@ -214,7 +218,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       }
     }
     onClose();
-  }, [isTouch, examplesList, toggleSpeak, flashZone, onClose]);
+  }, [examplesList, toggleSpeak, flashZone, onClose]);
 
   // Focus the panel on open; restore focus on close.
   useEffect(() => {
@@ -383,7 +387,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       {/* Eyes-free read zones in the LEFT/RIGHT gutters beside the centered card (touch + ≥sm only).
           Visual guide only — the taps are handled on the backdrop (onBackdrop): top quarter = example 1,
           second quarter = example 2. Stays out of the card area so middle taps still work normally. */}
-      {isTouch && examplesList.length > 0 && (
+      {examplesList.length > 0 && (
         <div className="fixed inset-0 z-[101] pointer-events-none hidden sm:block" aria-hidden="true">
           <div className="absolute inset-x-0 top-0 h-[25vh]">
             <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
