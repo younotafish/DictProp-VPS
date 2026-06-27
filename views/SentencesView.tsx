@@ -12,8 +12,9 @@ interface SentencesViewProps {
   onScroll: (e: React.UIEvent<HTMLElement>) => void;
   /** Open a sentence's source card in DetailView. Receives the on-screen sorted order + clicked index. */
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
-  /** Footnote support: look up a saved item for a term (drives the marker; opens via onSearch). */
+  /** Footnote support: look up a saved item for a term, and open its full card popup. */
   findSaved?: (term: string) => StoredItem | null;
+  onOpenCard?: (item: StoredItem) => void;
 }
 
 export const SentencesView: React.FC<SentencesViewProps> = ({
@@ -24,6 +25,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   onScroll,
   onOpenSentence,
   findSaved,
+  onOpenCard,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   // Only recompute "now" when items change (when SRS state could have changed)
@@ -111,7 +113,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
               <div className="pl-3">
                 <p className="text-sm xl:text-base text-slate-700 leading-relaxed mb-2">
-                  <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} findSaved={findSaved} />
+                  <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} findSaved={findSaved} onOpenCard={onOpenCard} />
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">

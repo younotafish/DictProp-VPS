@@ -15,6 +15,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
 import { ConfirmModal } from './components/ConfirmModal';
 import { DuplicatesModal, DuplicateClusterView } from './components/DuplicatesModal';
+import { CardReviewPopup } from './components/CardReviewPopup';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
 import { preloadNeural } from './services/neuralTts';
@@ -558,6 +559,15 @@ const App: React.FC = () => {
   // `groups` — groups[i] is the resolved source card for the saved sentence sentenceItems[i].
   const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number, sentenceItems?: StoredItem[] } | null>(null);
 
+  // Footnote card popup — the saved word/phrase whose full review card is shown over the current view.
+  // Stored by id and re-resolved live from allActiveItems so Got it / Reset update the card in place.
+  const [cardPopupItemId, setCardPopupItemId] = useState<string | null>(null);
+  const openCardPopup = useCallback((it: StoredItem) => setCardPopupItemId(it.data.id), []);
+  const popupItem = useMemo(
+    () => (cardPopupItemId ? allActiveItems.find(i => i.data.id === cardPopupItemId) ?? null : null),
+    [cardPopupItemId, allActiveItems],
+  );
+
   // Persist detailContext (only group/item indices for potential future use)
   useEffect(() => {
     try {
@@ -644,7 +654,7 @@ const App: React.FC = () => {
     onNavigateToStudy: () => {
       setCurrentView('study');
     },
-    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !comparisonWords, // Disable when modals are open
+    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !comparisonWords && !cardPopupItemId, // Disable when modals are open
   });
 
   // Global Escape key to close modals or go back
@@ -653,6 +663,8 @@ const App: React.FC = () => {
       if (e.key === 'Escape') {
         if (showKeyboardHelp) {
           setShowKeyboardHelp(false);
+        } else if (cardPopupItemId) {
+          setCardPopupItemId(null);
         } else if (confirmModal) {
           setConfirmModal(null);
         } else if (comparisonWords) {
@@ -683,7 +695,7 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [detailContext, confirmModal, showKeyboardHelp, comparisonWords]);
+  }, [detailContext, confirmModal, showKeyboardHelp, comparisonWords, cardPopupItemId]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -2530,6 +2542,18 @@ const App: React.FC = () => {
     setDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered });
   }, [allActiveItems]);
 
+  // Reset SRS for an item (and its shared-SRS siblings by title) back to brand-new. Used by the
+  // footnote card popup's Reset button; mirrors DetailView's reset.
+  const resetSRS = useCallback((id: string) => {
+    const target = latestItemsRef.current.find(i => i.data.id === id);
+    if (!target) return;
+    const targetTitle = getItemTitle(target).toLowerCase().trim();
+    const siblings = latestItemsRef.current.filter(i => !i.isDeleted && getItemTitle(i).toLowerCase().trim() === targetTitle);
+    (siblings.length > 0 ? siblings : [target]).forEach(s =>
+      handleSaveRef.current({ ...s, srs: SRSAlgorithm.createNew(s.data.id, s.type) }),
+    );
+  }, []);
+
   // SRS update — handles shared SRS atomically (all items with same title updated together)
   // Uses refs to communicate between the setSyncState updater and the post-update save logic,
   // avoiding reliance on closure-mutated variables (which is fragile across React versions).
@@ -2823,6 +2847,8 @@ const App: React.FC = () => {
               isSentenceSaved={isSentenceSaved}
               onRemoveVocabFromPhrase={handleRemoveVocabFromPhrase}
               findSaved={findSavedItem}
+              onOpenCard={openCardPopup}
+              interactionLocked={!!cardPopupItemId}
           />
         </ErrorBoundary>
       )}
@@ -2832,6 +2858,22 @@ const App: React.FC = () => {
               words={comparisonWords}
               result={comparisons.find((c) => c.key === comparisonKey(comparisonWords))?.data}
               onClose={() => setComparisonWords(null)}
+          />
+      )}
+
+      {popupItem && (
+          <CardReviewPopup
+              item={popupItem}
+              onClose={() => setCardPopupItemId(null)}
+              onUpdateSRS={updateSRS}
+              onResetSRS={resetSRS}
+              onDelete={handleDelete}
+              onSearch={handleRecursiveSearch}
+              onRefresh={handleRefreshViaGlobal}
+              onCompare={handleCompare}
+              onSaveSentence={handleSaveSentence}
+              isSentenceSaved={isSentenceSaved}
+              onLazyLoadImage={handleLazyLoadImage}
           />
       )}
 
@@ -2860,7 +2902,7 @@ const App: React.FC = () => {
             onCompare={handleCompare}
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
-            hasOverlay={!!detailContext || !!confirmModal || !!comparisonWords || showKeyboardHelp}
+            hasOverlay={!!detailContext || !!confirmModal || !!comparisonWords || showKeyboardHelp || !!cardPopupItemId}
             projects={projects}
             activeProject={activeProject}
             onSetActiveProject={setActiveProject}
@@ -2894,6 +2936,7 @@ const App: React.FC = () => {
             onScroll={handleScroll}
             onOpenSentence={handleViewSentence}
             findSaved={findSavedItem}
+            onOpenCard={openCardPopup}
           />
         )}
 
@@ -2991,11 +3034,25 @@ const App: React.FC = () => {
                   <ShortcutRow keys={['↑', '↓']} description="Switch between saved sentences" />
                   <ShortcutRow keys={['E']} description="Speak the saved sentence (natural voice)" />
                   <ShortcutRow keys={['Space']} description="Pause / resume sentence · auto-play when idle" />
-                  <ShortcutRow keys={['Tap', 'ⁿ']} description="Footnote on a saved word → open its card in the search popup" />
+                  <ShortcutRow keys={['Tap', 'ⁿ']} description="Footnote on a saved word → open its full card" />
                   <ShortcutRow keys={['R']} description="Remember (stays on the sentence)" />
                   <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />
                   <ShortcutRow keys={['D']} description="Delete the sentence" />
                   <ShortcutRow keys={['Esc']} description="Back to Sentences" />
+                </div>
+              </div>
+
+              {/* Word card popup (opened from a sentence footnote) */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Word card popup</h4>
+                <div className="space-y-2">
+                  <ShortcutRow keys={['R']} description="Got it (remember)" />
+                  <ShortcutRow keys={['Shift', 'R']} description="Reset memory" />
+                  <ShortcutRow keys={['D']} description="Delete word" />
+                  <ShortcutRow keys={['P']} description="Pronounce the word" />
+                  <ShortcutRow keys={['E']} description="Speak an example" />
+                  <ShortcutRow keys={['Space']} description="Play / pause" />
+                  <ShortcutRow keys={['Esc']} description="Close the card" />
                 </div>
               </div>
 

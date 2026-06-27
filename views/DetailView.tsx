@@ -81,8 +81,11 @@ interface DetailViewProps {
   /** When provided, DetailView enters "sentence mode": aligned 1:1 with `groups`, sentenceItems[i] is
    *  the saved sentence whose source card is groups[i]. Drives the banner, SRS, TTS, autoplay & delete. */
   sentenceItems?: StoredItem[];
-  /** Footnote support in the sentence hero: look up a saved item for a term (drives the footnote marker). */
+  /** Footnote support in the sentence hero: look up a saved item for a term, and open its full card. */
   findSaved?: (term: string) => StoredItem | null;
+  onOpenCard?: (item: StoredItem) => void;
+  /** True while the card popup owns input — DetailView's keyboard/nav handlers stand down. */
+  interactionLocked?: boolean;
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({
@@ -107,6 +110,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onRemoveVocabFromPhrase,
   sentenceItems,
   findSaved,
+  onOpenCard,
+  interactionLocked = false,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -1163,7 +1168,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onArrowDown: navDown,
     onEnter: handleEnterFromSelection,
     onSave: handleToggleSave,
-    enabled: !showActionMenu,
+    enabled: !showActionMenu && !interactionLocked,
   });
 
   // Trackpad wheel navigation
@@ -1172,7 +1177,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onScrollRight: navRight,
     containerRef: scrollContainerRef,
     threshold: 80,
-    enabled: !!(currentGroup && currentGroup.items.length >= 1),
+    enabled: !interactionLocked && !!(currentGroup && currentGroup.items.length >= 1),
   });
 
   const handleVocabSearch = (term: string) => {
@@ -1418,7 +1423,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Keyboard shortcuts
   useEffect(() => {
-    if (showActionMenu) return;
+    if (showActionMenu || interactionLocked) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip if in input
@@ -1509,7 +1514,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, toggleSentenceAutoPlay]);
+  }, [title, showActionMenu, interactionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, toggleSentenceAutoPlay]);
 
   // Eyes-free read-zone band counts — how many of the two quarter-bands actually read something
   // (so the guides only draw the bands that do something). Word view: a phrase always has band 1
@@ -1590,8 +1595,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     text={currentSentenceText}
                     itemWord={(currentSentence.data as SentenceData).sourceWord}
                     findSaved={findSaved}
-                    onSearchWord={handleVocabSearch}
-                    {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : {})}
+                    onOpenCard={onOpenCard}
+                    {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch })}
                   />
                 </p>
                 <div className="mt-5 flex justify-center">

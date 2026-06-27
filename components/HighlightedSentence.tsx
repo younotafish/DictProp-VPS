@@ -17,12 +17,11 @@ import { StoredItem } from '../types';
  * {{...}} marker existed), any literal occurrence of the full `itemWord` in a plain run is also
  * emphasized as the item.
  *
- * FOOTNOTES: when `findSaved` + `onSearchWord` are both provided, EVERY word/phrase in the sentence
+ * FOOTNOTES: when `findSaved` + `onOpenCard` are both provided, EVERY word/phrase in the sentence
  * that the user has already saved is rendered in indigo with a superscript footnote number; tapping
- * the number (or, in look-up mode, the word) opens that card via onSearchWord — i.e. the global search
- * sheet (the bottom popup), which reuses the saved card. This is independent of the source word — the
- * sentence is its own study item and every saved word it contains is indexed. Words that aren't saved
- * keep the old behaviour: [[uncommon]] ones stay green → look-up search.
+ * the number (or, in look-up mode, the word) opens that card's full review popup. This is independent
+ * of the source word — the sentence is its own study item and every saved word it contains is indexed.
+ * Words that aren't saved keep the old behaviour: [[uncommon]] ones stay green → look-up search.
  */
 
 const ITEM_CLASS = 'text-indigo-700 font-semibold bg-indigo-50 rounded px-0.5';
@@ -53,8 +52,10 @@ interface HighlightedSentenceProps {
   /** When provided, words become click/tap-to-play + carry data-word-offset, calling this with the
    *  clicked word's character offset in the STRIPPED sentence (for word-level playback seek). */
   onPlayFromWord?: (offset: number) => void;
-  /** Look up whether a term is already saved → its StoredItem. Enables footnotes (with onSearchWord). */
+  /** Look up whether a term is already saved → its StoredItem. Enables footnotes (with onOpenCard). */
   findSaved?: (term: string) => StoredItem | null;
+  /** Open a saved item's full card (footnote number, or a saved word tapped in look-up mode). */
+  onOpenCard?: (item: StoredItem) => void;
 }
 
 const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
@@ -63,11 +64,12 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
   onSearchWord,
   onPlayFromWord,
   findSaved,
+  onOpenCard,
 }) => {
   if (!text) return null;
 
   const wordLower = itemWord.trim().toLowerCase();
-  const footnotesEnabled = !!(findSaved && onSearchWord);
+  const footnotesEnabled = !!(findSaved && onOpenCard);
   // Tokenize plain runs (split into individually-addressable words) whenever we play from words OR
   // need to footnote saved words. Look-up-only callers (e.g. word-card examples) keep the legacy path.
   const tokenize = !!onPlayFromWord || footnotesEnabled;
@@ -101,19 +103,18 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
     if (saved) {
       const num = footnoteFor(saved);
       const cls = kind === 'item' ? ITEM_CLASS : SAVED_CLASS;
-      // Open the saved card via the global search sheet (the bottom popup) — it reuses the saved card
-      // and keeps the user's shortcuts, instead of a bespoke modal. The footnote number always opens it;
-      // in look-up mode the word body opens it too; in play mode the word body plays instead.
       const openCard = (e: React.SyntheticEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        onSearchWord!(word);
+        onOpenCard!(saved);
       };
+      // In play mode tapping the word body plays from it; the footnote number always opens the card.
+      // In look-up mode (no play) tapping the word body also opens the card.
       const onWordClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (swallowSelection()) return;
         if (onPlayFromWord) onPlayFromWord(off);
-        else onSearchWord!(word);
+        else onOpenCard!(saved);
       };
       const lookupMode = !onPlayFromWord;
       return (
@@ -154,16 +155,16 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
           key={key}
           className={LINK_CLASS}
           data-word-offset={tokenize ? off : undefined}
-          role={!onPlayFromWord && onSearchWord ? 'button' : undefined}
-          tabIndex={!onPlayFromWord && onSearchWord ? 0 : undefined}
+          role={onSearchWord ? 'button' : undefined}
+          tabIndex={onSearchWord ? 0 : undefined}
           onClick={
-            onPlayFromWord
-              ? (e) => { e.stopPropagation(); if (swallowSelection()) return; onPlayFromWord(off); }
-              : onSearchWord
+            onSearchWord
               ? (e) => { e.preventDefault(); e.stopPropagation(); onSearchWord(word); }
+              : onPlayFromWord
+              ? (e) => { e.stopPropagation(); if (swallowSelection()) return; onPlayFromWord(off); }
               : undefined
           }
-          onKeyDown={!onPlayFromWord && onSearchWord ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSearchWord(word); } } : undefined}
+          onKeyDown={onSearchWord ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSearchWord(word); } } : undefined}
         >
           {word}
         </span>
