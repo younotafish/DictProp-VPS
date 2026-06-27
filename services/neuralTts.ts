@@ -81,28 +81,18 @@ type KokoroModule = typeof import('kokoro-js');
 type KokoroInstance = InstanceType<KokoroModule['KokoroTTS']>;
 
 // ---------------------------------------------------------------------------
-// Status (optional global indicator)
+// Status (internal model-load state — gates the preload retry loop)
 // ---------------------------------------------------------------------------
-export type TtsStatus = 'idle' | 'loading' | 'ready' | 'error';
+type TtsStatus = 'idle' | 'loading' | 'ready' | 'error';
 let status: TtsStatus = 'idle';
 let progress = 0; // 0..1 during the one-time download
-const listeners = new Set<(status: TtsStatus, progress: number) => void>();
 
-const emit = () => listeners.forEach((cb) => cb(status, progress));
 const setStatus = (s: TtsStatus, p?: number) => {
   status = s;
   if (p !== undefined) progress = p;
-  emit();
 };
 
-/** Subscribe to model status/progress. Fires immediately with the current value. */
-export const subscribe = (cb: (status: TtsStatus, progress: number) => void): (() => void) => {
-  listeners.add(cb);
-  cb(status, progress);
-  return () => listeners.delete(cb);
-};
-export const getStatus = (): TtsStatus => status;
-export const isModelReady = (): boolean => status === 'ready';
+const isModelReady = (): boolean => status === 'ready';
 
 // ---------------------------------------------------------------------------
 // Capability gate
@@ -623,8 +613,6 @@ const ttsTimingsCache = new Map<string, WordTiming[]>();
 // system-voice fallbacks (which have no server timings). Powers word-level seek (see seekCurrent).
 let currentTimings: WordTiming[] | null = null;
 
-/** Word timings for the clip currently loaded in the audio element, or null when none are available. */
-export const getCurrentTimings = (): WordTiming[] | null => currentTimings;
 
 /** Word timings for the CURRENT style's clip of `text` (device cache or server). Null if none exist.
  *  Both styles have timings now, so word-seek works on clear AND casual (keyed by the active style). */

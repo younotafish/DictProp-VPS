@@ -19,7 +19,6 @@ const RESTART_NEAR_END = 0.85;
 interface Props {
   /** The example sentence (may contain {{…}}/[[…]] markers — they're stripped before speaking). */
   text: string;
-  voice?: string;
   className?: string;
 }
 
@@ -33,7 +32,7 @@ interface Props {
  * private "isPlaying" state, it can't get stuck out of sync (the old "frozen on pause" bug), and a
  * click always does the right thing: pause, resume, restart-near-end, or start fresh.
  */
-export const SentenceSpeakerButton: React.FC<Props> = ({ text, voice, className = '' }) => {
+export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '' }) => {
   const plain = useMemo(() => stripSentenceMarkers(text || '').trim(), [text]);
   const [pb, setPb] = useState<PlaybackState>(getPlaybackState);
   useEffect(() => subscribePlayback(setPb), []);
@@ -52,11 +51,11 @@ export const SentenceSpeakerButton: React.FC<Props> = ({ text, voice, className 
 
   const start = useCallback(() => {
     try {
-      speakNatural(plain, { voice, allowDownload: true });
+      speakNatural(plain, { allowDownload: true });
     } catch (err) {
       logError('Sentence speech failed', err);
     }
-  }, [plain, voice]);
+  }, [plain]);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

@@ -7,7 +7,6 @@ interface PronunciationBlockProps {
   text: string; // Text to speak
   ipa?: string; // IPA or display text
   className?: string;
-  autoPlay?: boolean;
   showIcon?: boolean;
 }
 
@@ -17,7 +16,6 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   text,
   ipa,
   className = '',
-  autoPlay = false,
   showIcon = true // Always show icon by default to indicate clickable audio
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -56,11 +54,6 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
       setIsPlaying(false);
     }
   }, [text, isPlaying]);
-
-  // Auto-play effect
-  useEffect(() => {
-    if (autoPlay && text) handlePlay();
-  }, [autoPlay, text, handlePlay]);
 
   return (
     <button

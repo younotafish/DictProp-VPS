@@ -3,7 +3,6 @@ import { NotebookView } from './views/Notebook';
 import { StudyEnhanced } from './views/StudyEnhanced';
 import { SentencesView } from './views/SentencesView';
 import { DetailView } from './views/DetailView';
-import { ComparisonView } from './views/ComparisonView';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, ProjectInfo, StoredComparison, ComparisonResult, comparisonKey } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
@@ -663,9 +662,6 @@ const App: React.FC = () => {
   // Keyboard shortcuts help modal
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
 
-  // Word comparison mode — 2-3 words to compare side-by-side
-  const [comparisonWords, setComparisonWords] = useState<string[] | null>(null);
-  
   // Global keyboard navigation for tab switching (1, 2, 3 keys)
   useGlobalNavigation({
     onNavigateToNotebook: () => {
@@ -677,7 +673,7 @@ const App: React.FC = () => {
     onNavigateToStudy: () => {
       setCurrentView('study');
     },
-    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !comparisonWords && !cardPopup, // Disable when modals are open
+    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !cardPopup, // Disable when modals are open
   });
 
   // Global Escape key to close modals or go back
@@ -690,8 +686,6 @@ const App: React.FC = () => {
           setCardPopup(null);
         } else if (confirmModal) {
           setConfirmModal(null);
-        } else if (comparisonWords) {
-          setComparisonWords(null);
         } else if (detailContext) {
           setDetailContext(null);
         }
@@ -718,7 +712,7 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [detailContext, confirmModal, showKeyboardHelp, comparisonWords, cardPopup]);
+  }, [detailContext, confirmModal, showKeyboardHelp, cardPopup]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -1614,7 +1608,6 @@ const App: React.FC = () => {
 
   // Refs for batch import to avoid stale closures
   const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
-  const handleUpdateRef = useRef<(item: StoredItem) => void>(() => {});
   const runImageBackfillRef = useRef<(itemIds?: string[]) => Promise<void>>(async () => {});
 
   const handleBatchImport = useCallback(async (words: string[], project?: string) => {
@@ -2162,7 +2155,6 @@ const App: React.FC = () => {
 
   // Keep batch import refs up to date
   handleSaveRef.current = handleSave;
-  handleUpdateRef.current = handleUpdateStoredItem;
 
   /**
    * Lazy load image from server via dedicated binary endpoint.
@@ -2876,14 +2868,6 @@ const App: React.FC = () => {
         </ErrorBoundary>
       )}
 
-      {comparisonWords && (
-          <ComparisonView
-              words={comparisonWords}
-              result={comparisons.find((c) => c.key === comparisonKey(comparisonWords))?.data}
-              onClose={() => setComparisonWords(null)}
-          />
-      )}
-
       {popupItems.length > 0 && cardPopup && (
           <CardReviewPopup
               key={cardPopup.spelling}
@@ -2929,7 +2913,7 @@ const App: React.FC = () => {
             onCompare={handleCompare}
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
-            hasOverlay={!!detailContext || !!confirmModal || !!comparisonWords || showKeyboardHelp || !!cardPopup}
+            hasOverlay={!!detailContext || !!confirmModal || showKeyboardHelp || !!cardPopup}
             projects={projects}
             activeProject={activeProject}
             onSetActiveProject={setActiveProject}

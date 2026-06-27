@@ -17,9 +17,9 @@ export const WORD_COLORS = [
 export const wordColorAt = (index: number) => WORD_COLORS[(index >= 0 ? index : 0) % WORD_COLORS.length];
 
 /**
- * Renders a comparison result (summary, dimensions, examples, mistakes, verdict). Used by both the
- * full ComparisonView and the bottom-right search popup so a comparison shows in the same place as a
- * word-search result. Just the body — no header/close chrome.
+ * Renders a comparison result (summary, dimensions, examples, mistakes, verdict). Used by the
+ * bottom-right search popup so a comparison shows in the same place as a word-search result.
+ * Just the body — no header/close chrome.
  */
 export const ComparisonBody: React.FC<{ result: ComparisonResult }> = ({ result }) => {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
