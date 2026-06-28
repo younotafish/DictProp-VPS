@@ -137,13 +137,18 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
 
   // Auto-pronounce the word on each meaning switch. This MUST run as an effect (after the new sense has
   // committed), not synchronously inside goTo: switching remounts <VocabCardDisplay> via its `key`, and
-  // the unmounting <PronunciationBlock> calls speechSynthesis.cancel() in its cleanup — which cancels a
-  // speakWord() fired just before the remount (the bug: switches were silent). Running post-commit lets
-  // that cancel happen first. Mirrors DetailView's word-card auto-pronounce, also an effect. Skips open.
+  // the unmounting <PronunciationBlock> calls speechSynthesis.cancel() in its cleanup. That cancel() and a
+  // speakWord() fired right after it land in the same tick — and the Web Speech engine SILENTLY DROPS a
+  // speak() that follows too closely on a cancel() (see services/speech.ts), which is why swipe/arrow
+  // switches pronounced only intermittently. The short delay lets the cancel settle so the speak sticks
+  // every time; the cleanup clears it on a rapid re-switch so only the final sense speaks. Mirrors
+  // DetailView's word-card auto-pronounce (same 100ms). Skips the initial open.
   const didOpenRef = useRef(false);
   useEffect(() => {
     if (!didOpenRef.current) { didOpenRef.current = true; return; }
-    if (word) speakWord(word);
+    if (!word) return;
+    const t = setTimeout(() => speakWord(word), 100);
+    return () => clearTimeout(t);
   }, [currentSense, word]);
 
   // Touch: a horizontal swipe across the card pages between senses (when there are multiple). Vertical
