@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles, Scale } from 'lucide-react';
+import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles, Scale, BookmarkPlus } from 'lucide-react';
 import { SearchResult, VocabCard, StoredItem, ComparisonResult, comparisonKey } from '../types';
-import { analyzeInput, generateIllustration, compareWords } from '../services/api';
+import { analyzeInput, detectVocabulary, generateIllustration, compareWords } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { ComparisonBody } from './ComparisonBody';
 import { makeVocabStoredItem } from '../services/items';
@@ -20,6 +20,8 @@ interface QueueItem {
   comparison?: ComparisonResult | null;  // compare result
   forceAI?: boolean; // refresh: re-run the AI, bypassing the saved-card reuse
   refreshing?: boolean; // in-place refresh in flight: keep showing the old results with a spinner
+  analyzeMode?: 'batch'; // expressions auto-extracted from a sentence search: analyze as a pre-identified
+                         // unit (don't re-split multi-word idioms) and don't auto-open the popup.
 }
 
 type Mode = 'idle' | 'input' | 'viewing';
@@ -45,6 +47,48 @@ interface Props {
 
 let queueIdCounter = 0;
 
+// Mirror of the server's isWordOrPhrase (server/src/routes/ai.ts) — KEEP IN SYNC. Lets the client decide,
+// without a round-trip, whether a typed query is a single word/phrase (→ analyze directly, one card set)
+// or a full sentence (→ scan for its uncommon expressions, then analyze each separately). Conservative:
+// returns false (treat as a word/phrase) unless the input really looks like a sentence.
+const looksLikeSentence = (text: string): boolean => {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/[一-鿿]/.test(trimmed)) {
+    if (/[。！？]$/.test(trimmed)) return true;
+    return (trimmed.match(/[一-鿿]/g) || []).length >= 5;
+  }
+  const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+  if (words.length === 1) return false;
+  if (/[.!?]$/.test(trimmed)) return true;
+  if (words.length >= 6) return true;
+  const startsLikeSentence = /^(I|You|He|She|It|We|They|The|A|An|This|That|There|Here)\s/i.test(trimmed);
+  const hasAuxVerb = /\b(is|are|was|were|have|has|had|do|does|did|will|would|could|should|can|may|might)\b/i.test(trimmed);
+  return startsLikeSentence || hasAuxVerb;
+};
+
+// How many queue items analyze at once. Batch-import proves the upstream tolerates 5 concurrent analyze
+// calls; 3 keeps the popup snappy while a sentence's extracted expressions resolve in parallel.
+const QUEUE_CONCURRENCY = 3;
+
+// Global cap on concurrent illustration requests across ALL in-flight results. The 1-vCPU VPS chokes when
+// many image generations fire at once (the reason batch-import defers images to a separate phase), so even
+// though we now analyze up to QUEUE_CONCURRENCY words in parallel, their image generation is funneled
+// through these shared slots — keeping image load flat regardless of how many analyses finish together.
+const MAX_CONCURRENT_IMAGE_GENS = 2;
+let activeImageGens = 0;
+const imageGenWaiters: Array<() => void> = [];
+const acquireImageSlot = (): Promise<void> =>
+  new Promise(resolve => {
+    if (activeImageGens < MAX_CONCURRENT_IMAGE_GENS) { activeImageGens++; resolve(); }
+    else imageGenWaiters.push(resolve);
+  });
+const releaseImageSlot = (): void => {
+  const next = imageGenWaiters.shift();
+  if (next) next();        // hand the freed slot straight to the next waiter (count stays the same)
+  else activeImageGens--;
+};
+
 // Friendly, specific message for a failed analyze() call so the floating search never fails silently.
 const describeError = (query: string, err: any): string => {
   const m = err?.message || '';
@@ -58,15 +102,16 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [error, setError] = useState<{ msg: string; query?: string } | null>(null);
+  const [error, setError] = useState<{ msg: string; query?: string; analyzeMode?: 'batch' } | null>(null);
   // Viewing state: which queue item and which vocab within it
   const [viewingQueueIdx, setViewingQueueIdx] = useState(0);
   const [viewingVocabIdx, setViewingVocabIdx] = useState(0);
   // When a DB hit (already-saved word) becomes ready, auto-open its card. AI results don't set this.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const processingRef = useRef(false);
+  const inFlightRef = useRef<Set<string>>(new Set()); // queue items currently processing (concurrency gate)
   const queueRef = useRef<QueueItem[]>([]); // fresh queue for synchronous dedup/open checks
+  const [scanning, setScanning] = useState(false); // sentence → expression scan in flight (pre-enqueue)
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_THRESHOLD = 50;
   // Eyes-free zone tap-confirmation flash (see EyesFreeZones).
@@ -84,24 +129,36 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // Surface a failed search as an auto-dismissing toast. The floating search has no inline results
   // area, so without this a failed queue item just vanishes (the bug behind silent search failures).
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showError = useCallback((msg: string, query?: string) => {
-    setError({ msg, query });
+  const showError = useCallback((msg: string, query?: string, analyzeMode?: 'batch') => {
+    setError({ msg, query, analyzeMode });
     if (errorTimer.current) clearTimeout(errorTimer.current);
     errorTimer.current = setTimeout(() => setError(null), 6000);
   }, []);
   useEffect(() => () => { if (errorTimer.current) clearTimeout(errorTimer.current); }, []);
 
+  // Neutral status pill (top-center) — "scanning…/found N expressions" notices that aren't errors.
+  const [statusToast, setStatusToast] = useState<string | null>(null);
+  const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showStatus = useCallback((msg: string) => {
+    setStatusToast(msg);
+    if (statusTimer.current) clearTimeout(statusTimer.current);
+    statusTimer.current = setTimeout(() => setStatusToast(null), 3500);
+  }, []);
+  useEffect(() => () => { if (statusTimer.current) clearTimeout(statusTimer.current); }, []);
+
   // Derived state — searches AND comparisons are both queue items, so all counts include both.
   const readyItems = queue.filter(q => q.status === 'ready');
   const busyCount = queue.filter(q => q.status === 'searching' || q.status === 'pending').length;
   const readyCount = readyItems.length;
-  const hasWork = busyCount > 0 || readyCount > 0;
+  const isBusy = busyCount > 0 || scanning; // scanning = sentence→expression scan before items are enqueued
 
   // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
   // replace any existing queue entry for it so the fresh result supersedes the old/reused one.
-  const enqueue = useCallback((q: string, forceAI = false) => {
+  const enqueue = useCallback((q: string, opts?: { forceAI?: boolean; analyzeMode?: 'batch' }) => {
     const trimmed = q.trim();
     if (!trimmed) return;
+    const forceAI = !!opts?.forceAI;
+    const analyzeMode = opts?.analyzeMode;
     setQueue(prev => {
       const dup = prev.some(item => item.query.toLowerCase() === trimmed.toLowerCase() && item.status !== 'failed');
       if (dup && !forceAI) {
@@ -111,8 +168,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       const base = forceAI
         ? prev.filter(item => item.query.toLowerCase() !== trimmed.toLowerCase())
         : prev;
-      log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : ''));
-      return [...base, { id: `q-${++queueIdCounter}`, kind: 'search' as const, query: trimmed, status: 'pending', results: null, forceAI }];
+      log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : '') + (analyzeMode ? ' (' + analyzeMode + ')' : ''));
+      return [...base, { id: `q-${++queueIdCounter}`, kind: 'search' as const, query: trimmed, status: 'pending', results: null, forceAI, analyzeMode }];
     });
   }, []);
 
@@ -139,6 +196,40 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     if (cachedResult) setPendingOpenId(id); // saved comparison → open instantly in the popup
   }, []);
 
+  // Typed-search entry. A single word/short phrase analyzes directly (current behavior). A full sentence
+  // is first scanned for its uncommon expressions, and each is then queued for its OWN full analysis
+  // (batch mode), so they show up in the popup exactly like manually-searched words — to browse and save.
+  // Chinese is translated to English inside the scan; a Chinese word/short phrase still analyzes directly.
+  const submitQuery = useCallback(async (raw: string) => {
+    const q = raw.trim();
+    if (!q) return;
+    if (!looksLikeSentence(q)) {
+      enqueue(q); // word / short phrase → current direct path (one card set)
+      return;
+    }
+    setScanning(true);
+    try {
+      const { words, translation, sourceLang } = await detectVocabulary(q);
+      if (words.length === 0) {
+        showStatus('No advanced expressions found in that sentence.');
+        return;
+      }
+      const n = words.length;
+      const noun = n === 1 ? 'expression' : 'expressions';
+      showStatus(
+        sourceLang === 'zh' && translation
+          ? `“${translation}” — analyzing ${n} ${noun}…`
+          : `Found ${n} ${noun} — analyzing…`
+      );
+      for (const w of words) enqueue(w.word, { analyzeMode: 'batch' });
+    } catch (err: any) {
+      warn('🔍 Sentence scan failed "' + q + '":', err?.message);
+      showError(describeError(q, err), q);
+    } finally {
+      setScanning(false);
+    }
+  }, [enqueue, showError, showStatus]);
+
   // Post-process a fresh AI result for queue item `itemId`: prepare its audio, replace the saved card
   // if this word was already saved (refresh), and stream in illustrations (re-saving so the saved card
   // keeps its image). Shared by the queue processor and the in-place card refresh below.
@@ -150,9 +241,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const isReplace = !!(onRefreshReplace && findSavedByWord(queryWord).length > 0);
     if (isReplace && liveVocabs.length) onRefreshReplace!(queryWord, liveVocabs);
 
-    // Generate illustrations with a small concurrency cap — the 1-vCPU VPS chokes if a multi-meaning
-    // result requests every image at once (the old forEach fired them all in parallel).
-    const IMG_CONCURRENCY = 2;
+    // Generate illustrations, but funnel every request through the GLOBAL image-gen slots (see
+    // acquireImageSlot) so concurrent analyses can't flood the 1-vCPU VPS with image work all at once.
     const vocabList = result.vocabs || [];
     let imgCursor = 0;
     const imgWorker = async () => {
@@ -160,6 +250,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         const index = imgCursor++;
         const vocab = vocabList[index];
         if (!vocab.imagePrompt || vocab.imageUrl) continue;
+        await acquireImageSlot();
         try {
           const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
           if (!imageData) continue;
@@ -171,47 +262,46 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
             return { ...q, results: { ...q.results, vocabs: updated } };
           }));
           if (isReplace) onRefreshReplace!(queryWord, [...liveVocabs]); // re-save with the new image
-        } catch {}
+        } catch {} finally {
+          releaseImageSlot();
+        }
       }
     };
-    void Promise.all(Array.from({ length: Math.min(IMG_CONCURRENCY, vocabList.length) }, imgWorker));
+    // Up to 2 workers per result, but ALL results share the global image slots, so total image load stays
+    // capped no matter how many analyses finish together.
+    void Promise.all(Array.from({ length: Math.min(2, vocabList.length) }, imgWorker));
   }, [onRefreshReplace, findSavedByWord]);
 
-  // Process queue — pick up next pending item and search it
-  useEffect(() => {
-    if (processingRef.current) return;
-    const pending = queue.find(q => q.status === 'pending');
-    if (!pending) return;
-
-    processingRef.current = true;
-    const itemId = pending.id;
+  // Process a single queue item: comparison, saved-card reuse, or a fresh analyze. The id was added to
+  // inFlightRef by the driver effect before this ran; every terminal path calls done() to free the slot.
+  const processItem = useCallback((item: QueueItem) => {
+    const itemId = item.id;
+    const done = () => { inFlightRef.current.delete(itemId); };
 
     // Comparison items run compareWords (the heavy call uses curl server-side) and persist on success.
-    if (pending.kind === 'compare') {
+    if (item.kind === 'compare') {
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'searching' as const } : q));
-      log('⚖️ Queue: generating comparison "' + pending.query + '"');
-      compareWords(pending.words || []).then(result => {
+      log('⚖️ Queue: generating comparison "' + item.query + '"');
+      compareWords(item.words || []).then(result => {
         setError(null);
         setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, comparison: result } : q));
-        onCompareReady?.(pending.words || [], result); // persist (server + local) for the word pages
+        onCompareReady?.(item.words || [], result); // persist (server + local) for the word pages
       }).catch(err => {
-        warn('⚖️ Queue: compare failed "' + pending.query + '":', err?.message);
+        warn('⚖️ Queue: compare failed "' + item.query + '":', err?.message);
         setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
-        showError(describeError(pending.query, err), undefined);
-      }).finally(() => {
-        processingRef.current = false;
-      });
+        showError(describeError(item.query, err), undefined);
+      }).finally(done);
       return;
     }
 
     // Reuse the saved card to skip the API call — UNLESS this is a refresh (forceAI), which must
     // always re-run the AI (otherwise "refresh" would just show the same saved card again).
-    const savedVocabs = pending.forceAI ? [] : findSavedByWord(pending.query);
+    const savedVocabs = item.forceAI ? [] : findSavedByWord(item.query);
     if (savedVocabs.length > 0) {
-      log('🔍 Queue: "' + pending.query + '" already saved (' + savedVocabs.length + ' meanings), skipping API');
+      log('🔍 Queue: "' + item.query + '" already saved (' + savedVocabs.length + ' meanings), skipping API');
       const cachedResult: SearchResult = {
         id: 'saved-' + itemId,
-        query: pending.query,
+        query: item.query,
         translation: '',
         grammar: '',
         visualKeyword: savedVocabs[0].word,
@@ -220,28 +310,41 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         timestamp: Date.now(),
       };
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: cachedResult } : q));
-      setPendingOpenId(itemId); // instant DB hit → auto-open the saved card
-      processingRef.current = false;
+      if (!item.analyzeMode) setPendingOpenId(itemId); // direct DB hit auto-opens; sentence-expanded items just accumulate
+      done();
       return;
     }
 
     // Mark as searching
     setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'searching' as const } : q));
 
-    log('🔍 Queue: searching "' + pending.query + '"');
-    analyzeInput(pending.query).then(result => {
+    log('🔍 Queue: searching "' + item.query + '"' + (item.analyzeMode ? ' (' + item.analyzeMode + ')' : ''));
+    analyzeInput(item.query, item.analyzeMode ? { mode: item.analyzeMode } : undefined).then(result => {
       setError(null); // a fresh success clears any lingering failure toast
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: result } : q));
-      if (pending.forceAI) setPendingOpenId(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
-      finalizeResult(itemId, pending.query, result); // prepare audio, replace saved card, stream images
+      if (item.forceAI) setPendingOpenId(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
+      finalizeResult(itemId, item.query, result); // prepare audio, replace saved card, stream images
     }).catch(err => {
-      warn('🔍 Queue: failed "' + pending.query + '":', err?.message);
+      warn('🔍 Queue: failed "' + item.query + '":', err?.message);
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
-      showError(describeError(pending.query, err), pending.query);
-    }).finally(() => {
-      processingRef.current = false;
-    });
-  }, [queue, findSavedByWord, finalizeResult, showError, onCompareReady]);
+      showError(describeError(item.query, err), item.query, item.analyzeMode);
+    }).finally(done);
+  }, [findSavedByWord, finalizeResult, showError, onCompareReady]);
+
+  // Driver: keep up to QUEUE_CONCURRENCY items processing at once. Runs whenever the queue changes; each
+  // started item is gated by inFlightRef so a re-render mid-flight never starts it twice. Completions
+  // delete from inFlightRef and flip status (→ re-render), which re-runs this and fills the freed slot.
+  useEffect(() => {
+    let free = QUEUE_CONCURRENCY - inFlightRef.current.size;
+    if (free <= 0) return;
+    for (const item of queue) {
+      if (free <= 0) break;
+      if (item.status !== 'pending' || inFlightRef.current.has(item.id)) continue;
+      inFlightRef.current.add(item.id);
+      free--;
+      processItem(item);
+    }
+  }, [queue, processItem]);
 
   // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
   useEffect(() => {
@@ -262,7 +365,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       const detail = (e as CustomEvent).detail;
       const q = detail?.query;
       if (q && typeof q === 'string') {
-        enqueue(q, !!detail?.forceAI);
+        enqueue(q, { forceAI: !!detail?.forceAI });
       }
     };
     window.addEventListener('global-search', handleTrigger);
@@ -361,10 +464,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const handleSubmit = useCallback(() => {
     const q = query.trim();
     if (!q || !isOnline) return;
-    enqueue(q);
+    void submitQuery(q);
     setQuery('');
     setMode('idle'); // Go back to idle — spinner shows on floating button
-  }, [query, isOnline, enqueue]);
+  }, [query, isOnline, submitQuery]);
 
   const [saveToast, setSaveToast] = useState<string | null>(null);
 
@@ -417,6 +520,22 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       setTimeout(() => setSaveToast(null), 2000);
     }
   }, [saveOneVocab]);
+
+  // Save the raw typed sentence to the Sentences list (sentence mode). No analysis — we "just save the
+  // sentence"; the already-saved expressions inside it are indexed/highlighted automatically wherever it's
+  // shown (HighlightedSentence scans each word against the library). sourceWord is '' (no single source).
+  const handleSaveSentenceClick = useCallback(() => {
+    const q = query.trim();
+    if (!q || !onSaveSentence) return;
+    if (isSentenceSaved?.(q)) {
+      setSaveToast('Sentence already saved');
+    } else {
+      onSaveSentence(q, '', undefined);
+      setSaveToast('Sentence saved');
+    }
+    setQuery('');
+    setTimeout(() => setSaveToast(null), 2000);
+  }, [query, onSaveSentence, isSentenceSaved]);
 
   // Remove a single item from queue
   const dismissQueueItem = useCallback((id: string) => {
@@ -556,11 +675,23 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           {saveToast}
         </div>
       )}
+      {/* Status toast — neutral notices (sentence scanning / found N expressions) */}
+      {statusToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-[90vw] text-center bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-full shadow-lg animate-in fade-in zoom-in-95 duration-200">
+          {statusToast}
+        </div>
+      )}
       {/* Error toast — failures surface here instead of vanishing. Tappable: retry the failed query
           (force-refresh bypasses the saved-card reuse + dedup) and dismiss the toast. */}
       {error && (
         <button
-          onClick={() => { const q = error.query; setError(null); if (q) enqueue(q, true); }}
+          onClick={() => {
+            const q = error.query; const mode = error.analyzeMode; setError(null);
+            if (!q) return;
+            // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
+            // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
+            if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else void submitQuery(q);
+          }}
           className="fixed bottom-44 right-4 z-[56] max-w-[18rem] text-left bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg animate-in fade-in duration-200 hover:bg-red-100 transition-colors"
         >
           {error.msg}{error.query ? ' · Tap to retry' : ''}
@@ -591,9 +722,19 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               autoComplete="off"
               autoCapitalize="off"
             />
+            {query.trim() && looksLikeSentence(query) && onSaveSentence && (
+              <button
+                onClick={handleSaveSentenceClick}
+                title="Save this sentence to your Sentences list"
+                className="shrink-0 w-8 h-8 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center hover:bg-violet-200 transition-colors"
+              >
+                <BookmarkPlus size={15} />
+              </button>
+            )}
             {query.trim() && (
               <button
                 onClick={handleSubmit}
+                title="Analyze (sentence → its uncommon expressions)"
                 className="shrink-0 w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center hover:bg-indigo-600 transition-colors"
               >
                 <Send size={14} />
@@ -821,23 +962,25 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         <button
           onClick={handleFloatingClick}
           className={`fixed bottom-24 right-4 z-[55] w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
-            ${readyCount > 0
+            ${readyCount > 0 && !isBusy
               ? 'bg-indigo-500 text-white shadow-indigo-300'
-              : busyCount > 0
+              : isBusy
               ? 'bg-white/90 text-indigo-500 border border-slate-200'
               : 'bg-white/70 text-slate-500 border border-slate-200/50 opacity-60 hover:opacity-100'
             }`}
         >
-          {busyCount > 0 && (
+          {isBusy && (
             <>
               <Loader2 size={20} className="animate-spin" />
-              {/* Count badge */}
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-indigo-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white">
-                {busyCount}
-              </span>
+              {/* Count badge — analyses in flight/queued (omitted during the pre-enqueue sentence scan) */}
+              {busyCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-indigo-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white">
+                  {busyCount}
+                </span>
+              )}
             </>
           )}
-          {busyCount === 0 && readyCount > 0 && (
+          {!isBusy && readyCount > 0 && (
             <>
               <Search size={20} />
               {/* Pulse ring */}
@@ -848,7 +991,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               </span>
             </>
           )}
-          {!hasWork && (
+          {!isBusy && readyCount === 0 && (
             <Search size={20} />
           )}
         </button>

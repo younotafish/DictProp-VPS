@@ -104,6 +104,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   const [detectedWords, setDetectedWords] = useState<DetectedWord[]>([]);
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set());
   const [scanError, setScanError] = useState<string | null>(null);
+  const [translation, setTranslation] = useState(''); // English the AI scanned, shown when Chinese was pasted
 
   // Step 2: Analysis
   const [analysisCurrent, setAnalysisCurrent] = useState(0);
@@ -131,10 +132,12 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     setScanError(null);
     setDetectedWords([]);
     setSelectedWords(new Set());
+    setTranslation('');
 
     try {
-      const words = await detectVocabulary(inputText);
+      const { words, translation, sourceLang } = await detectVocabulary(inputText);
       setDetectedWords(words);
+      setTranslation(sourceLang === 'zh' ? translation : '');
       // All selected by default
       setSelectedWords(new Set(words.map(w => w.word)));
       setStep('selecting');
@@ -258,6 +261,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     setDetectedWords([]);
     setSelectedWords(new Set());
     setScanError(null);
+    setTranslation('');
   }, []);
 
   const handleBackToSelection = useCallback(() => {
@@ -270,6 +274,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     setDetectedWords([]);
     setSelectedWords(new Set());
     setScanError(null);
+    setTranslation('');
     setAnalyzedResults([]);
     setTotalVocabsSaved(0);
   }, []);
@@ -445,6 +450,13 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
         {/* ══════ STEP 2: SELECT WORDS ══════ */}
         {step === 'selecting' && (
           <div className="px-4 pt-3 pb-[calc(6rem+env(safe-area-inset-bottom))]">
+            {/* Chinese translate-first step — show the English the AI actually scanned */}
+            {translation && (
+              <div className="mb-3 px-3 py-2.5 rounded-xl bg-violet-50 border border-violet-100">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-violet-500">Translated from Chinese</span>
+                <p className="text-sm text-slate-700 mt-0.5 leading-relaxed">{translation}</p>
+              </div>
+            )}
             {/* Select All toggle */}
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">

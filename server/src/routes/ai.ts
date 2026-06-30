@@ -477,6 +477,8 @@ If the text is in Chinese, translate it to English first, then detect interestin
 
 You MUST respond with valid JSON in this exact format:
 {
+  "sourceLang": "string - 'zh' if the input text is (mostly) Chinese, otherwise 'en'",
+  "translation": "string - If the input was Chinese, the natural English translation of the WHOLE text (this is the text you detected the vocabulary from). If the input was already English, return an empty string.",
   "words": [
     {
       "word": "string - The word or expression in base/dictionary form",
@@ -487,7 +489,7 @@ You MUST respond with valid JSON in this exact format:
   ]
 }
 
-Return ONLY the word list. Do NOT provide full definitions, examples, etymology, or detailed analysis.
+Return ONLY the word list (plus sourceLang and translation). Do NOT provide full definitions, examples, etymology, or detailed analysis.
 This is a quick scan — the user will choose which words to study in depth.`;
 
 const COMPARE_WORDS_INSTRUCTION = `
@@ -648,8 +650,9 @@ aiRoutes.post('/extract-vocabulary', async (c) => {
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
   const { text } = await c.req.json();
-  if (!text || typeof text !== 'string' || text.trim().length < 10) {
-    return c.json(errorResponse('Please provide a text passage of at least 10 characters.', 400), 400);
+  // Low floor (not 10): the main search routes short sentences (e.g. "Go away!", brief Chinese) here too.
+  if (!text || typeof text !== 'string' || text.trim().length < 2) {
+    return c.json(errorResponse('Please provide some text to analyze.', 400), 400);
   }
 
   const maxChars = 5000;
@@ -665,7 +668,13 @@ aiRoutes.post('/extract-vocabulary', async (c) => {
     if (validWords.length === 0) {
       return c.json(errorResponse('Vocabulary detection failed. Please try again.', 500), 500);
     }
-    return c.json({ words: validWords });
+    return c.json({
+      words: validWords,
+      // Surface the translate-first step: when the input was Chinese, the model returns the English it
+      // actually scanned. The client shows this (Text Analyzer) and uses it in the search status toast.
+      translation: typeof rawData.translation === 'string' ? rawData.translation : '',
+      sourceLang: rawData.sourceLang === 'zh' ? 'zh' : 'en',
+    });
   } catch (error: any) {
     const msg = error.message || 'Detection failed';
     if (error.name === 'AbortError' || msg.includes('aborted')) {

@@ -226,9 +226,17 @@ export interface DetectedWord {
   reason: string;
 }
 
-export const detectVocabulary = async (text: string): Promise<DetectedWord[]> => {
-  if (!text || text.trim().length < 10) {
-    throw new Error('Please provide a longer text passage to analyze.');
+/** Result of a vocabulary scan: the detected expressions, plus the English the model actually scanned
+ *  (populated when the input was Chinese, so callers can show/use the translate-first step). */
+export interface VocabularyScan {
+  words: DetectedWord[];
+  translation: string;       // English translation of the whole input when Chinese; '' when already English
+  sourceLang: 'zh' | 'en';
+}
+
+export const detectVocabulary = async (text: string): Promise<VocabularyScan> => {
+  if (!text || text.trim().length < 2) {
+    throw new Error('Please provide some text to analyze.');
   }
 
   const res = await fetch(`${API_BASE}/api/extract-vocabulary`, {
@@ -244,12 +252,16 @@ export const detectVocabulary = async (text: string): Promise<DetectedWord[]> =>
   }
 
   const data = await res.json();
-  return (data.words || []).map((w: any) => ({
-    word: w.word.trim(),
-    context: w.context || '',
-    level: w.level || 'C1',
-    reason: w.reason || '',
-  }));
+  return {
+    words: (data.words || []).map((w: any) => ({
+      word: w.word.trim(),
+      context: w.context || '',
+      level: w.level || 'C1',
+      reason: w.reason || '',
+    })),
+    translation: typeof data.translation === 'string' ? data.translation : '',
+    sourceLang: data.sourceLang === 'zh' ? 'zh' : 'en',
+  };
 };
 
 export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {

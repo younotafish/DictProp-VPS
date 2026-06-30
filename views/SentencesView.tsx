@@ -34,22 +34,41 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
 
   const activeItems = useMemo(() => items.filter(s => !s.isArchived), [items]);
 
-  const dueCount = useMemo(
-    () => activeItems.filter(s => ((s.srs?.nextReview ?? 0) <= now)).length,
-    [activeItems, now],
-  );
+  type SentenceFilter = 'all' | 'unreviewed' | 'due' | 'memorized';
+  const [filter, setFilter] = useState<SentenceFilter>('all');
 
-  // Match the Notebook word-item ordering: least-memorized first (memoryStrength ASC),
-  // ties broken by most-recently added (savedAt DESC — newest on top).
-  const sorted = useMemo(() =>
-    [...activeItems].sort((a, b) => {
+  // Bucket each active sentence by review state — every sentence is exactly one of:
+  //   unreviewed — never tapped "Reviewed" (totalReviews 0)
+  //   due        — reviewed before and due again now (nextReview ≤ now)
+  //   memorized  — reviewed and resting; nextReview is in the future, so no action needed right now
+  const counts = useMemo(() => {
+    let unreviewed = 0, due = 0, memorized = 0;
+    for (const s of activeItems) {
+      const reviews = s.srs?.totalReviews ?? 0;
+      if (reviews === 0) unreviewed++;
+      else if ((s.srs?.nextReview ?? 0) <= now) due++;
+      else memorized++;
+    }
+    return { all: activeItems.length, unreviewed, due, memorized };
+  }, [activeItems, now]);
+
+  // Match the Notebook word-item ordering: least-memorized first (memoryStrength ASC), ties broken by
+  // most-recently added (savedAt DESC — newest on top). Filtered by the selected review state first.
+  const sorted = useMemo(() => {
+    const pass = (s: StoredItem): boolean => {
+      if (filter === 'all') return true;
+      const reviews = s.srs?.totalReviews ?? 0;
+      if (filter === 'unreviewed') return reviews === 0;
+      if (filter === 'due') return reviews > 0 && (s.srs?.nextReview ?? 0) <= now;
+      return reviews > 0 && (s.srs?.nextReview ?? 0) > now; // memorized
+    };
+    return activeItems.filter(pass).sort((a, b) => {
       const strengthA = a.srs?.memoryStrength ?? 0;
       const strengthB = b.srs?.memoryStrength ?? 0;
       if (strengthA !== strengthB) return strengthA - strengthB;
       return (b.savedAt || 0) - (a.savedAt || 0);
-    }),
-    [activeItems],
-  );
+    });
+  }, [activeItems, filter, now]);
 
   const formatDue = (ts: number) => {
     const diff = ts - Date.now();
@@ -63,27 +82,63 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   return (
     <div className="h-full overflow-y-auto" onScroll={onScroll}>
       <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-slate-100 px-4 py-3">
-        <div className="max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <MessageSquareQuote size={18} className="text-indigo-500" />
-            <h2 className="font-bold text-slate-800">Sentences</h2>
-            <span className="text-xs text-slate-400">{activeItems.length} saved</span>
+        <div className="max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageSquareQuote size={18} className="text-indigo-500" />
+              <h2 className="font-bold text-slate-800">Sentences</h2>
+              <span className="text-xs text-slate-400">{activeItems.length} saved</span>
+            </div>
+            {(counts.unreviewed + counts.due) > 0 && (
+              <span className="text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">
+                {counts.unreviewed + counts.due} to review
+              </span>
+            )}
           </div>
-          {dueCount > 0 && (
-            <span className="text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">
-              {dueCount} due
-            </span>
-          )}
+          {/* Review-state filters — default 'all' (current status) */}
+          <div className="flex items-center gap-1.5 mt-2 overflow-x-auto no-scrollbar">
+            {([
+              ['all', 'All', counts.all],
+              ['unreviewed', 'Unreviewed', counts.unreviewed],
+              ['due', 'Due', counts.due],
+              ['memorized', 'Memorized', counts.memorized],
+            ] as [SentenceFilter, string, number][]).map(([key, label, count]) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                title={
+                  key === 'unreviewed' ? 'Never reviewed yet'
+                  : key === 'due' ? 'Reviewed before and due again now'
+                  : key === 'memorized' ? 'Reviewed — not due right now'
+                  : 'All sentences'
+                }
+                className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
+                  filter === key ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {label}
+                {count > 0 && (
+                  <span className={`ml-1 ${filter === key ? 'text-indigo-100' : 'text-slate-400'}`}>{count}</span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {sorted.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
           <MessageSquareQuote size={48} className="text-slate-200 mb-4" />
-          <p className="text-slate-400 text-sm">No saved sentences yet</p>
-          <p className="text-slate-300 text-xs mt-1">
-            Save example sentences from vocabulary cards, then tap one here to study it
-          </p>
+          {activeItems.length === 0 ? (
+            <>
+              <p className="text-slate-400 text-sm">No saved sentences yet</p>
+              <p className="text-slate-300 text-xs mt-1">
+                Type a sentence in the search box and tap the bookmark to save it, or bookmark example sentences from vocabulary cards
+              </p>
+            </>
+          ) : (
+            <p className="text-slate-400 text-sm">No {filter} sentences</p>
+          )}
         </div>
       )}
 
@@ -112,7 +167,11 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-indigo-500 font-medium">{d.sourceWord}</span>
+                    {d.sourceWord ? (
+                      <span className="text-xs text-indigo-500 font-medium">{d.sourceWord}</span>
+                    ) : (
+                      <span className="text-xs text-violet-400 font-medium">Saved sentence</span>
+                    )}
                     {d.sourceSense && (
                       <span className="text-xs text-slate-400">{d.sourceSense}</span>
                     )}

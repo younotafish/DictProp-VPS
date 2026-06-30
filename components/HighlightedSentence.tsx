@@ -33,6 +33,12 @@ const LINK_CLASS =
 const SAVED_CLASS =
   'text-indigo-700 font-semibold underline decoration-dotted decoration-indigo-300 cursor-pointer hover:bg-indigo-50 rounded px-0.5 transition-colors';
 
+// Longest saved-phrase window (in words) to test when highlighting multi-word expressions in look-up mode.
+const MAX_SAVED_PHRASE_WORDS = 6;
+
+// Strip leading/trailing punctuation for a saved-phrase lookup, keeping internal apostrophes (couldn't).
+const stripEdgePunct = (s: string): string => s.replace(/^[^\w']+|[^\w']+$/g, '');
+
 /**
  * Strip the {{studied item}} and [[uncommon term]] emphasis markers, leaving plain,
  * speakable text. Used for TTS (and anywhere the raw sentence is needed without markup).
@@ -170,6 +176,22 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
     return plainCls ? <span key={key} className={plainCls}>{word}</span> : <React.Fragment key={key}>{word}</React.Fragment>;
   };
 
+  // A multi-word saved phrase (look-up mode): indigo + dotted underline; tap opens its card. Mirrors the
+  // single-word saved branch of renderUnit but spans several words as one clickable unit.
+  const renderSavedPhrase = (text: string, off: number, key: string, item: StoredItem): React.ReactNode => (
+    <span
+      key={key}
+      className={SAVED_CLASS}
+      data-word-offset={off}
+      role="button"
+      tabIndex={0}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (swallowSelection()) return; onOpenCard!(item); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onOpenCard!(item); } }}
+    >
+      {text}
+    </span>
+  );
+
   // Render a plain run between markers. With tokenize on, split into words (each addressable +
   // footnote-checked); whitespace stays raw so selection/copy is intact. With tokenize off, behave
   // exactly as before (raw text + legacy whole-word itemWord emphasis).
@@ -186,17 +208,45 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
         ),
       );
     }
+    const parts = run.split(/(\s+)/).filter(p => p !== '');
+    const offsets: number[] = [];
+    { let acc = 0; for (const p of parts) { offsets.push(acc); acc += p.length; } }
+    const isSpace = (p: string) => /^\s+$/.test(p);
+    // Look-up mode (saved-lookup, no word-level playback): greedily match the LONGEST already-saved phrase
+    // at each position so multi-word idioms / phrasal verbs highlight as one unit, not just single saved
+    // words. Play mode keeps the per-word path so word-level audio seek stays addressable.
+    const multiWord = footnotesEnabled && !onPlayFromWord;
     const nodes: React.ReactNode[] = [];
-    let local = 0;
-    run.split(/(\s+)/).forEach((part, k) => {
-      if (!part) return;
-      if (/^\s+$/.test(part)) {
-        nodes.push(<React.Fragment key={`${key}-${k}`}>{part}</React.Fragment>);
-      } else {
-        nodes.push(renderUnit(part, baseOffset + local, `${key}-${k}`, 'plain'));
+    let i = 0;
+    while (i < parts.length) {
+      const part = parts[i];
+      if (isSpace(part)) {
+        nodes.push(<React.Fragment key={`${key}-${i}`}>{part}</React.Fragment>);
+        i++;
+        continue;
       }
-      local += part.length;
-    });
+      if (multiWord) {
+        let matchedEnd = -1;
+        let matchedItem: StoredItem | null = null;
+        let wordsSeen = 0;
+        for (let j = i; j < parts.length && wordsSeen < MAX_SAVED_PHRASE_WORDS; j++) {
+          if (isSpace(parts[j])) continue;
+          wordsSeen++;
+          if (wordsSeen < 2) continue; // single word → renderUnit fallback handles it
+          const lookup = stripEdgePunct(parts.slice(i, j + 1).join(''));
+          const hit = lookup ? findSaved!(lookup) : null;
+          if (hit) { matchedEnd = j; matchedItem = hit; } // keep the longest matching window
+        }
+        if (matchedItem) {
+          const text = parts.slice(i, matchedEnd + 1).join('');
+          nodes.push(renderSavedPhrase(text, baseOffset + offsets[i], `${key}-${i}`, matchedItem));
+          i = matchedEnd + 1;
+          continue;
+        }
+      }
+      nodes.push(renderUnit(part, baseOffset + offsets[i], `${key}-${i}`, 'plain'));
+      i++;
+    }
     return nodes;
   };
 
