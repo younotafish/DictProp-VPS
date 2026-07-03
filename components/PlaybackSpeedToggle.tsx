@@ -4,8 +4,8 @@ import { getPlaybackRate, setPlaybackRate, subscribePlaybackRate, RATE_PRESETS }
 /**
  * Global voice-speed control for example-sentence playback. The rate lives in the TTS engine
  * (persisted) and every play site funnels through it, so this one pill governs sentence review, the
- * review popup, and the search popup at once (default 1.3×, up to 2×). Tap to cycle the presets
- * (1× → 1.3× → 1.5× → 1.75× → 2× → 1×). Render anywhere; all instances stay in sync via
+ * review popup, and the search popup at once (default 1.1×, up to 2×). Tap to cycle the presets
+ * (1× → 1.1× → 1.3× → 1.5× → 1.75× → 2× → 1×). Render anywhere; all instances stay in sync via
  * subscribePlaybackRate. NOTE: this is the VOICE speed — distinct from DetailView's autoplay
  * "Speed per slide" pill, which is the slideshow dwell time between cards.
  */

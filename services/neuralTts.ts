@@ -72,16 +72,16 @@ export const setTtsStyle = (s: TtsStyle): void => {
 
 // ── Playback speed: adjustable voice rate for example sentences ────────────────
 // A persisted GLOBAL playback rate for the cached-clip (<audio>) path — i.e. the example-sentence
-// voice. The plain 1.0× MiMo clip reads a touch slow for review, so the default is 1.3×; it's
+// voice. The plain 1.0× MiMo clip reads a touch slow for review, so the default is 1.1×; it's
 // adjustable up to 2×. Applied at the one shared <audio> element (see playUrl) with preservesPitch,
 // so a faster rate speeds up the speech WITHOUT raising the pitch. Like the style toggle, it's a
 // single global value routed through this engine, so one control governs word review, sentence
 // review, and the search popup at once. Word reads (speakWord → system voice) are left at their own
 // natural rate — the complaint is sentence playback.
-export const RATE_PRESETS = [1.0, 1.3, 1.5, 1.75, 2.0] as const;
+export const RATE_PRESETS = [1.0, 1.1, 1.3, 1.5, 1.75, 2.0] as const;
 const RATE_MIN = 1.0;
 const RATE_MAX = 2.0;
-const DEFAULT_RATE = 1.3;
+const DEFAULT_RATE = 1.1;
 const PLAYBACK_RATE_KEY = 'tts_rate';
 const clampRate = (r: number): number => Math.min(RATE_MAX, Math.max(RATE_MIN, r));
 let playbackRate: number = (() => {

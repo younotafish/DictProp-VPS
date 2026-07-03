@@ -2075,7 +2075,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2">
         {/* Clear ⇄ Casual speech style (global) — sits with the playback controls. */}
         <SpeechStyleToggle className="bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200" />
-        {/* Voice speed (global): default 1.3×, up to 2×. Distinct from the "Speed per slide" pill below. */}
+        {/* Voice speed (global): default 1.1×, up to 2×. Distinct from the "Speed per slide" pill below. */}
         <PlaybackSpeedToggle className="bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200" />
         <button
           onClick={cycleTimerDuration}
