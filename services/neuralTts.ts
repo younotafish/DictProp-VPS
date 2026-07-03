@@ -533,8 +533,16 @@ const getKeepAliveCtx = (): AudioContext | null => {
   } catch { return null; }
 };
 
-/** Begin the silent keep-alive (idempotent). Call when sentence autoplay starts (inside the gesture). */
-export const startKeepAlive = (): void => {
+// Reference-counted holds on the keep-alive so overlapping owners (background autoplay + an open
+// review/search popup) can't tear down each other's audio session: it's suspended only when the LAST
+// holder releases. This is also what keeps the media route "hot" across the word→sentence hop in the
+// popups — the word plays via speechSynthesis and the sentence via the <audio> element, and holding the
+// session open stops iOS from re-activating (and audibly ramping) the route when the sentence starts.
+let keepAliveHolds = 0;
+
+/** Ensure the silent keep-alive is running (idempotent). Doubles as the in-gesture unlock (resume the
+ *  AudioContext / start the silent loop), so on iOS it must be reached from a user gesture. */
+const ensureKeepAliveRunning = (): void => {
   // Layer 1 — looping silent <audio> (the iPhone-proven path).
   try {
     if (!keepAliveEl) {
@@ -548,7 +556,7 @@ export const startKeepAlive = (): void => {
 
   // Layer 2 — near-silent oscillator to keep the AudioContext clock alive in the background (iPad/macOS).
   // The play tap is a user gesture, so resume() is allowed here. The oscillator is started once and left
-  // running (an OscillatorNode can't be restarted once stopped); stopKeepAlive only suspends the context.
+  // running (an OscillatorNode can't be restarted once stopped); we only suspend the context to stop.
   try {
     const ctx = getKeepAliveCtx();
     if (ctx) {
@@ -566,11 +574,28 @@ export const startKeepAlive = (): void => {
   } catch { /* ignore */ }
 };
 
-/** Stop the silent keep-alive. Call when sentence autoplay ends. */
-export const stopKeepAlive = (): void => {
+/** Suspend the silent keep-alive (idempotent). */
+const suspendKeepAlive = (): void => {
   try { keepAliveEl?.pause(); } catch { /* ignore */ }
   // Suspend (don't close) the context so it and the already-started oscillator can be resumed next run.
   try { if (keepAliveCtx && keepAliveCtx.state === 'running') void keepAliveCtx.suspend().catch(() => { /* ignore */ }); } catch { /* ignore */ }
+};
+
+/** Prime the keep-alive inside a user gesture WITHOUT taking a hold — starts it running so a later
+ *  acquireKeepAlive() from outside a gesture (e.g. an effect after paint) can still resume the context. */
+export const primeKeepAlive = (): void => { ensureKeepAliveRunning(); };
+
+/** Take a reference-counted hold on the keep-alive (starting it if idle). Reach from a user gesture on
+ *  iOS. Balance every acquire with exactly one releaseKeepAlive(). */
+export const acquireKeepAlive = (): void => {
+  keepAliveHolds++;
+  ensureKeepAliveRunning();
+};
+
+/** Release a hold from acquireKeepAlive(); suspends the keep-alive once the last holder releases. */
+export const releaseKeepAlive = (): void => {
+  keepAliveHolds = Math.max(0, keepAliveHolds - 1);
+  if (keepAliveHolds === 0) suspendKeepAlive();
 };
 
 /**
@@ -887,14 +912,17 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         }
       }
       if (url) {
-        // Resolve per-word timings for seek (both styles have them): device cache, else fetch from
-        // server (non-blocking). On a legacy timings-less clip, kick off generation to backfill them.
+        // Resolve per-word timings BEFORE computing the start offset, so the quiet lead-in is reliably
+        // trimmed. Previously the fetch was fire-and-forget, so begin was computed with currentTimings
+        // still null (begin=0) and the soft onset played — heard as a fade-in, especially on iOS where
+        // the cached MiMo clip is the only successful play path. Device cache is instant; the server
+        // fetch only runs on the cold path, and unlockAudio() above keeps the later play() gesture-valid.
         currentTimings = ttsTimingsCache.get(key) ?? null;
         if (!currentTimings) {
-          fetchCachedTTSTimings(key).then((t) => {
-            if (t && t.length) { ttsTimingsCache.set(key, t); if (isCurrent()) currentTimings = t; }
-            else { requestTTSGeneration([{ text: plain, voice: voiceTok }]).catch(() => {}); } // backfill timings for this style
-          }).catch(() => {});
+          const t = await fetchCachedTTSTimings(key).catch(() => null);
+          if (!isCurrent()) return;
+          if (t && t.length) { ttsTimingsCache.set(key, t); currentTimings = t; }
+          else { requestTTSGeneration([{ text: plain, voice: voiceTok }]).catch(() => {}); } // backfill timings for this style
         }
         // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
         const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
@@ -916,6 +944,11 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         }
         if (clearUrl) {
           currentTimings = ttsTimingsCache.get(clearKey) ?? null;
+          if (!currentTimings) {
+            const t = await fetchCachedTTSTimings(clearKey).catch(() => null);
+            if (!isCurrent()) return;
+            if (t && t.length) { ttsTimingsCache.set(clearKey, t); currentTimings = t; }
+          }
           const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
           await playUrl(clearUrl, isCurrent, markStart, markEnd, begin);
           return;

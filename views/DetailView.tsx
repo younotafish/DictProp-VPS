@@ -14,7 +14,7 @@ import { getMasteryColors } from '../components/mastery';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
-import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, startKeepAlive, stopKeepAlive, afterGap, type SpeakHandle } from '../services/neuralTts';
+import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap, type SpeakHandle } from '../services/neuralTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { loadImage } from '../services/storage';
 import { log, warn } from '../services/logger';
@@ -127,7 +127,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
   const [, setAutoPlayNowTick] = useState(0);
   const [isSentenceAutoPlaying, setIsSentenceAutoPlaying] = useState(false);
-  const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between sentences (end → next start)
+  const [sentenceGap, setSentenceGap] = useState(3000); // ms of silence between every read (repeats + distinct sentences)
+  const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
   // Whole-session preload progress (audio clips + images), null when idle/done. See the preload effect below.
   const [preloadProgress, setPreloadProgress] = useState<{ done: number; total: number } | null>(null);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
@@ -750,11 +751,20 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, []);
 
   // ── Sentence auto-play: read each card's example sentences (both) in turn (neural voice) ──
-  const GAP_PRESETS = [1000, 2000, 3000, 5000, 10000];
+  const GAP_PRESETS = [2000, 3000, 5000, 10000];
   const cycleGap = useCallback(() => {
     setSentenceGap(prev => {
       const idx = GAP_PRESETS.indexOf(prev);
       return GAP_PRESETS[(idx + 1) % GAP_PRESETS.length];
+    });
+  }, []);
+
+  // How many times each sentence is read (total), cycled 1 → 5 → 1.
+  const REPEAT_PRESETS = [1, 2, 3, 4, 5];
+  const cycleRepeats = useCallback(() => {
+    setSentenceRepeats(prev => {
+      const idx = REPEAT_PRESETS.indexOf(prev);
+      return REPEAT_PRESETS[(idx + 1) % REPEAT_PRESETS.length];
     });
   }, []);
 
@@ -764,10 +774,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (next) setIsAutoPlaying(false);
       return next;
     });
-    // Start the silent keep-alive inside this user gesture so iOS unlocks it (the registration effect's
-    // own start() runs after paint, outside the gesture). Harmless when stopping — the effect cleanup
-    // pauses it right back.
-    startKeepAlive();
+    // Prime the silent keep-alive inside this user gesture so iOS unlocks it (the registration effect's
+    // acquire runs after paint, outside the gesture). Priming takes no hold — the media-session effect's
+    // acquire/release pair owns the lifecycle. Harmless when stopping — that effect's cleanup releases it.
+    primeKeepAlive();
   }, []);
 
   // Sentences to read for a card during auto-play: a phrase's query, or a vocab card's example
@@ -837,6 +847,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   const sentenceGapRef = useRef(sentenceGap);
   useEffect(() => { sentenceGapRef.current = sentenceGap; }, [sentenceGap]);
+  const sentenceRepeatsRef = useRef(sentenceRepeats);
+  useEffect(() => { sentenceRepeatsRef.current = sentenceRepeats; }, [sentenceRepeats]);
+
+  // Autoplay pause/resume across the inter-read GAP (not just mid-clip): the media-session /
+  // Bluetooth pause must stop autoplay even between reads. autoPlayPausedRef gates the gap
+  // scheduler; when paused mid-gap the pending continuation is stashed in resumeChainRef and
+  // replayed on resume; cancelGapRef holds the live gap canceller so pause can abort it.
+  const autoPlayPausedRef = useRef(false);
+  const resumeChainRef = useRef<(() => void) | null>(null);
+  const cancelGapRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!isSentenceAutoPlaying || !groups) return;
@@ -876,34 +896,49 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const sentences = sentenceMode
       ? [stripSentenceMarkers(currentSentenceText)].filter(Boolean)
       : examplesOf(currentItem);
-    let cancelGap: (() => void) | undefined; // background-safe inter-sentence gap (afterGap) — see neuralTts
+    let cancelGap: (() => void) | undefined; // background-safe inter-read gap (afterGap) — see neuralTts
     let handle: SpeakHandle | undefined;
     let idx = 0;
     let rep = 0;
 
-    // Deliberate action → allow the one-time model download. Each sentence is spoken twice with a
-    // short beat between the two reads; the configurable gap separates distinct sentences within a
-    // card, and moving to the NEXT card uses a short beat instead. (In sentence mode each card is a
-    // single saved sentence, so the configurable gap applies across cards there too.)
-    const REPEATS = 2;      // speak each sentence twice
-    const REPEAT_GAP = 700; // short beat between the two reads of the same sentence
-    const CARD_GAP = 600;   // short beat between cards in item mode
+    // A fresh run (autoplay start or a next/prev navigation) always plays; only an explicit pause holds it.
+    autoPlayPausedRef.current = false;
+    resumeChainRef.current = null;
+    cancelGapRef.current = null;
+
+    // Schedule the next step after `ms`. When autoplay is paused (media-session / Bluetooth), the
+    // continuation is stashed in resumeChainRef instead of arming the timer, so resume picks up exactly
+    // where it left off; the live canceller is mirrored to cancelGapRef so onPause can abort a running
+    // gap even BETWEEN reads (not just mid-clip). See the media-session effect below.
+    const schedule = (ms: number, fn: () => void) => {
+      resumeChainRef.current = fn; // remembered in case we pause during this gap
+      if (autoPlayPausedRef.current) { cancelGapRef.current = null; return; }
+      const run = () => { cancelGapRef.current = null; resumeChainRef.current = null; fn(); };
+      cancelGap = afterGap(ms, run);
+      cancelGapRef.current = cancelGap;
+    };
+
+    // Deliberate action → allow the one-time model download. Each sentence is read `sentenceRepeats`
+    // times (total); the configurable gap sits between EVERY read — both repeats of the same sentence
+    // and distinct sentences. Advancing to the NEXT card in item mode uses a short beat instead. (In
+    // sentence mode each card is a single saved sentence, so the configurable gap applies across cards.)
+    const CARD_GAP = 600; // short beat between cards in item mode
     const playNext = () => {
-      if (idx >= sentences.length) { cancelGap = afterGap(CARD_GAP, advanceCard); return; }
+      if (idx >= sentences.length) { schedule(CARD_GAP, advanceCard); return; }
       const s = sentences[idx];
       const afterEach = () => {
-        if (++rep < REPEATS) { cancelGap = afterGap(REPEAT_GAP, playNext); return; } // read again
+        if (++rep < sentenceRepeatsRef.current) { schedule(sentenceGapRef.current, playNext); return; } // read again
         rep = 0;
         idx++;
         const more = idx < sentences.length;
         const gap = (more || sentenceModeRef.current) ? sentenceGapRef.current : CARD_GAP;
-        cancelGap = afterGap(gap, more ? playNext : advanceCard);
+        schedule(gap, more ? playNext : advanceCard);
       };
       handle = speakNatural(s, { allowDownload: true, onEnd: afterEach, onError: afterEach });
     };
 
     if (!sentences.length) {
-      cancelGap = afterGap(400, advanceCard); // card has no example → move on quickly
+      schedule(400, advanceCard); // card has no example → move on quickly
     } else {
       playNext();
     }
@@ -911,6 +946,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return () => {
       handle?.stop();
       cancelGap?.();
+      cancelGapRef.current = null;
+      resumeChainRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSentenceAutoPlaying, currentGroupIndex, currentItemIndex, groups]);
@@ -1122,13 +1159,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // next/prev just bump the index (the autoplay effect re-runs and continues); they don't stop autoplay.
   useEffect(() => {
     if (!isSentenceAutoPlaying) return;
-    startKeepAlive();
+    acquireKeepAlive();
     const step = (delta: number) => {
       const len = sentenceModeRef.current ? (sentenceItemsRef.current?.length ?? 0) : (groups?.length ?? 0);
       if (!len) return;
       const cur = currentGroupIndexRef.current;
       const nextIdx = Math.max(0, Math.min(cur + delta, len - 1));
       if (nextIdx === cur) return;
+      autoPlayPausedRef.current = false;   // a next/prev while paused resumes playback at the new sentence
+      resumeChainRef.current = null;
       setIsAnimating(true);
       setCurrentGroupIndex(nextIdx);
       setCurrentItemIndex(0);
@@ -1136,15 +1175,27 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setTimeout(() => setIsAnimating(false), 300);
     };
     setMediaSessionHandlers({
-      onPlay: () => resumeCurrent(),
-      onPause: () => pauseCurrent(),
+      onPlay: () => {
+        autoPlayPausedRef.current = false;
+        if (getPlaybackState().status === 'paused') { resumeCurrent(); return; } // resume a mid-clip pause
+        const cont = resumeChainRef.current;                                     // resume a gap that was paused
+        resumeChainRef.current = null;
+        cont?.();
+      },
+      onPause: () => {
+        autoPlayPausedRef.current = true;
+        const st = getPlaybackState().status;
+        if (st === 'playing' || st === 'loading') { pauseCurrent(); return; }    // pause the current read
+        cancelGapRef.current?.();                                                // between reads → abort the pending gap
+        cancelGapRef.current = null;
+      },
       onStop: () => setIsSentenceAutoPlaying(false),
       onNext: () => step(1),
       onPrev: () => step(-1),
     });
     return () => {
       setMediaSessionHandlers(null);
-      stopKeepAlive();
+      releaseKeepAlive();
     };
   }, [isSentenceAutoPlaying, groups]);
 
@@ -2041,9 +2092,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
         )}
         {isSentenceAutoPlaying && (
           <button
+            onClick={cycleRepeats}
+            className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            title="Times each sentence is read"
+          >
+            ×{sentenceRepeats}
+          </button>
+        )}
+        {isSentenceAutoPlaying && (
+          <button
             onClick={cycleGap}
             className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-            title="Gap between sentences"
+            title="Gap between reads"
           >
             {sentenceGap / 1000}s gap
           </button>

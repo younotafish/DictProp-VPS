@@ -5,7 +5,7 @@ import { analyzeInput, detectVocabulary, generateIllustration, compareWords } fr
 import { VocabCardDisplay } from './VocabCard';
 import { ComparisonBody } from './ComparisonBody';
 import { makeVocabStoredItem } from '../services/items';
-import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent } from '../services/neuralTts';
+import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/neuralTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';
 import { log, warn } from '../services/logger';
@@ -125,6 +125,17 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
   }, []);
   useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
+
+  // Hold the audio session open for the life of the search popup (once, on the first playback gesture) so
+  // the media route stays "hot" across the word→sentence hop and iOS doesn't re-ramp (heard as a fade-in)
+  // when the sentence <audio> starts after the word played on the speechSynthesis path.
+  const keepAliveHeldRef = useRef(false);
+  const holdKeepAlive = useCallback(() => {
+    if (keepAliveHeldRef.current) return;
+    keepAliveHeldRef.current = true;
+    acquireKeepAlive();
+  }, []);
+  useEffect(() => () => { if (keepAliveHeldRef.current) releaseKeepAlive(); }, []);
 
   // Surface a failed search as an auto-dismissing toast. The floating search has no inline results
   // area, so without this a failed queue item just vanishes (the bug behind silent search failures).
@@ -426,6 +437,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
             if (pb.status === 'paused') { resumeCurrent(); return; }
             if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; } // mid-clip → pause
           }
+          holdKeepAlive();
           speakNatural(sentence, { allowDownload: true });
           return;
         }
@@ -451,7 +463,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [mode, readyItems, viewingQueueIdx, viewingVocabIdx]);
+  }, [mode, readyItems, viewingQueueIdx, viewingVocabIdx, holdKeepAlive]);
 
   // Auto-focus input
   useEffect(() => {
@@ -664,8 +676,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       if (pb.status === 'paused') { resumeCurrent(); return; }
       if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; } // mid-clip → pause
     }
+    holdKeepAlive();
     speakNatural(sentence, { allowDownload: true });
-  }, [viewingVocab, flashZone]);
+  }, [viewingVocab, flashZone, holdKeepAlive]);
 
   return (
     <>

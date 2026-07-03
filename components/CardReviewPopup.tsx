@@ -6,7 +6,7 @@ import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from './HighlightedSentence';
-import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent } from '../services/neuralTts';
+import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/neuralTts';
 
 const formatRelative = (ts: number): string => {
   const diff = ts - Date.now();
@@ -223,10 +223,22 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     [vocab],
   );
 
+  // Hold the audio session open for the life of this popup (once, on the first playback gesture) so the
+  // media route stays "hot" across the word→sentence hop and iOS doesn't re-ramp the route (heard as a
+  // fade-in) when the sentence <audio> starts after the word played on the speechSynthesis path.
+  const keepAliveHeldRef = useRef(false);
+  const holdKeepAlive = useCallback(() => {
+    if (keepAliveHeldRef.current) return;
+    keepAliveHeldRef.current = true;
+    acquireKeepAlive();
+  }, []);
+  useEffect(() => () => { if (keepAliveHeldRef.current) releaseKeepAlive(); }, []);
+
   // Toggle natural-voice playback for one sentence (same clip → pause / resume / restart-near-end).
   const toggleSpeak = useCallback((raw: string) => {
     const sentence = stripSentenceMarkers(raw || '').trim();
     if (!sentence) return;
+    holdKeepAlive();
     const pb = getPlaybackState();
     if (pb.text === sentence) {
       if (pb.status === 'loading') return;
@@ -234,11 +246,12 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
     }
     speakNatural(sentence, { allowDownload: true });
-  }, []);
+  }, [holdKeepAlive]);
 
   // E: read both example sentences in turn; press again to pause / resume.
   const readBothExamples = useCallback(() => {
     if (!examplesList.length) return;
+    holdKeepAlive();
     const pb = getPlaybackState();
     if (pb.text && examplesList.includes(pb.text) && (pb.status === 'playing' || pb.status === 'paused')) {
       if (pb.status === 'playing') pauseCurrent(); else resumeCurrent();
@@ -252,7 +265,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       handle = speakNatural(examplesList[i++], { allowDownload: true, onEnd: () => setTimeout(playNext, 400), onError: () => setTimeout(playNext, 400) });
     };
     playNext();
-  }, [examplesList]);
+  }, [examplesList, holdKeepAlive]);
 
   // Eyes-free zone tap-confirmation flash (mirrors DetailView).
   const [zoneFlash, setZoneFlash] = useState<{ zone: number; n: number } | null>(null);
@@ -343,10 +356,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         const st = getPlaybackState().status;
         if (st === 'playing') pauseCurrent();
         else if (st === 'paused') resumeCurrent();
-        else if (examplesList[0]) speakNatural(examplesList[0], { allowDownload: true });
+        else if (examplesList[0]) { holdKeepAlive(); speakNatural(examplesList[0], { allowDownload: true }); }
         return;
       }
-      if (e.key === 'p' || e.key === 'P') { e.preventDefault(); if (vocab.word) speakWord(vocab.word); return; }
+      if (e.key === 'p' || e.key === 'P') { e.preventDefault(); if (vocab.word) { holdKeepAlive(); speakWord(vocab.word); } return; }
       // Cmd/Ctrl+1 · +2 → read the 1st / 2nd example sentence.
       if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
         e.preventDefault();
@@ -370,7 +383,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [vocab, currentSaved, onClose, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, toggleSpeak, readBothExamples, goPrev, goNext, count]);
+  }, [vocab, currentSaved, onClose, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive]);
 
   // Stop any popup-initiated playback when the card actually closes (not on every re-render).
   useEffect(() => () => { stopCurrent(); }, []);
