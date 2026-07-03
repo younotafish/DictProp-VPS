@@ -6,6 +6,7 @@ import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkl
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
+import { PlaybackSpeedToggle } from '../components/PlaybackSpeedToggle';
 import { PronunciationBlock } from '../components/PronunciationBlock';
 import { VocabCardDisplay } from '../components/VocabCard';
 import { TextAnalyzer } from '../components/TextAnalyzer';
@@ -1337,6 +1338,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 bg-white rounded-2xl md:rounded-full p-1 border border-slate-100 shadow-sm min-w-0">
             {/* Global Clear ⇄ Casual speech style (also in the review control bar) */}
             <SpeechStyleToggle className="shrink-0" />
+            {/* Global voice speed for sentence playback (default 1.3×, up to 2×) */}
+            <PlaybackSpeedToggle className="shrink-0 bg-slate-100 hover:bg-slate-200" />
             {/* Text Analyzer button */}
             {isOnline && (
               <button

@@ -4,6 +4,7 @@ import { StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
+import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/neuralTts';
@@ -422,6 +423,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
                 </div>
               )}
               <SpeechStyleToggle />
+              <PlaybackSpeedToggle className="bg-slate-100 hover:bg-slate-200" />
               <button
                 onClick={onClose}
                 aria-label="Close"

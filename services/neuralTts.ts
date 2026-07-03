@@ -70,6 +70,45 @@ export const setTtsStyle = (s: TtsStyle): void => {
   styleListeners.forEach((cb) => { try { cb(s); } catch { /* ignore */ } });
 };
 
+// ── Playback speed: adjustable voice rate for example sentences ────────────────
+// A persisted GLOBAL playback rate for the cached-clip (<audio>) path — i.e. the example-sentence
+// voice. The plain 1.0× MiMo clip reads a touch slow for review, so the default is 1.3×; it's
+// adjustable up to 2×. Applied at the one shared <audio> element (see playUrl) with preservesPitch,
+// so a faster rate speeds up the speech WITHOUT raising the pitch. Like the style toggle, it's a
+// single global value routed through this engine, so one control governs word review, sentence
+// review, and the search popup at once. Word reads (speakWord → system voice) are left at their own
+// natural rate — the complaint is sentence playback.
+export const RATE_PRESETS = [1.0, 1.3, 1.5, 1.75, 2.0] as const;
+const RATE_MIN = 1.0;
+const RATE_MAX = 2.0;
+const DEFAULT_RATE = 1.3;
+const PLAYBACK_RATE_KEY = 'tts_rate';
+const clampRate = (r: number): number => Math.min(RATE_MAX, Math.max(RATE_MIN, r));
+let playbackRate: number = (() => {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(PLAYBACK_RATE_KEY) : null;
+    const n = raw ? parseFloat(raw) : NaN;
+    return isFinite(n) ? clampRate(n) : DEFAULT_RATE;
+  } catch { return DEFAULT_RATE; }
+})();
+const rateListeners = new Set<(r: number) => void>();
+
+export const getPlaybackRate = (): number => playbackRate;
+export const subscribePlaybackRate = (cb: (r: number) => void): (() => void) => {
+  rateListeners.add(cb);
+  cb(playbackRate);
+  return () => { rateListeners.delete(cb); };
+};
+export const setPlaybackRate = (r: number): void => {
+  const next = clampRate(r);
+  if (next === playbackRate) return;
+  playbackRate = next;
+  try { localStorage.setItem(PLAYBACK_RATE_KEY, String(next)); } catch { /* ignore */ }
+  // Live-update a clip that's already playing so the change is heard immediately (no restart).
+  if (audioEl) { try { audioEl.playbackRate = next; } catch { /* ignore */ } }
+  rateListeners.forEach((cb) => { try { cb(next); } catch { /* ignore */ } });
+};
+
 // Tiny valid silent WAV — played once inside a user gesture to unlock <audio> on iOS Safari,
 // so a later play() after the async synth await isn't blocked as non-user-initiated.
 const SILENT_WAV =
@@ -263,7 +302,7 @@ const synthesize = async (text: string, voice: string): Promise<string> => {
   const tts = await ensureModel();
   const audio = await tts.generate(text, { voice: voice as any });
   const url = URL.createObjectURL(audio.toBlob());
-  audioCache.set(key, url);
+  lruSetUrl(audioCache, key, url, MAX_KOKORO_URLS);
   return url;
 };
 
@@ -638,6 +677,45 @@ const ttsTimingsCache = new Map<string, WordTiming[]>();
 // system-voice fallbacks (which have no server timings). Powers word-level seek (see seekCurrent).
 let currentTimings: WordTiming[] | null = null;
 
+// ── Bounded (LRU) caches ───────────────────────────────────────────────────────
+// The caches above once grew WITHOUT BOUND: every unique clip played / prefetched / preloaded stored
+// an object-URL that was NEVER revoked, so its audio blob stayed pinned in memory for the life of the
+// page. Over a long review/autoplay session (swiping through hundreds of sentences) that steady climb
+// could exhaust a mobile tab's memory budget and crash it. These helpers cap each cache and revoke the
+// object-URL of anything evicted, so memory plateaus instead of climbing. Map iteration order is
+// insertion order, so keys().next() is the oldest; a hit re-inserts to mark it most-recently-used.
+const MAX_TTS_URLS = 200;     // cached MiMo clips (short WAV/MP3 blobs)
+const MAX_KOKORO_URLS = 100;  // in-browser Kokoro clips (desktop only)
+const MAX_TIMINGS = 300;      // per-word timing arrays (no blob → cap only, nothing to revoke)
+
+const lruTouch = <V>(map: Map<string, V>, key: string): void => {
+  const v = map.get(key);
+  if (v !== undefined && map.delete(key)) map.set(key, v);
+};
+// Insert an object-URL under an LRU cap, revoking the URL of anything evicted so its blob is freed —
+// EXCEPT the clip the <audio> element is currently using (still needed): for that one we drop only the
+// map entry, leaving the element's own reference intact (it's revoked on a later eviction once idle).
+const lruSetUrl = (map: Map<string, string>, key: string, url: string, cap: number): void => {
+  map.delete(key);
+  map.set(key, url);
+  while (map.size > cap) {
+    const oldest = map.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    const oldUrl = map.get(oldest);
+    map.delete(oldest);
+    if (oldUrl && oldUrl !== audioEl?.src) { try { URL.revokeObjectURL(oldUrl); } catch { /* ignore */ } }
+  }
+};
+const lruSetVal = <V>(map: Map<string, V>, key: string, val: V, cap: number): void => {
+  map.delete(key);
+  map.set(key, val);
+  while (map.size > cap) {
+    const oldest = map.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+};
+
 
 /** Word timings for the CURRENT style's clip of `text` (device cache or server). Null if none exist.
  *  Both styles have timings now, so word-seek works on clear AND casual (keyed by the active style). */
@@ -648,7 +726,7 @@ export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> 
   const cached = ttsTimingsCache.get(key);
   if (cached) return cached;
   const t = await fetchCachedTTSTimings(key);
-  if (t && t.length) { ttsTimingsCache.set(key, t); return t; }
+  if (t && t.length) { lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
   return null;
 };
 
@@ -670,6 +748,18 @@ export const seekCurrent = (timeSec: number): void => {
   if (playbackState.status === 'paused') setPlaybackState({ status: 'playing' });
 };
 
+// Apply the global voice speed to the shared <audio> element. preservesPitch keeps a faster rate
+// from raising the pitch (chipmunk). Set right before each play(): loading a new src can reset
+// playbackRate to defaultPlaybackRate, so we set both. Vendor-prefixed field covers older Safari.
+const applyRate = (el: HTMLAudioElement): void => {
+  try {
+    (el as any).preservesPitch = true;
+    (el as any).webkitPreservesPitch = true;
+    el.defaultPlaybackRate = playbackRate;
+    el.playbackRate = playbackRate;
+  } catch { /* ignore */ }
+};
+
 // Play an object URL through the shared, iOS-unlocked <audio> element (cached MiMo + Kokoro both use this).
 const playUrl = async (
   url: string,
@@ -685,7 +775,7 @@ const playUrl = async (
   el.onloadedmetadata = null;
   const begin = startAt && startAt > 0 ? startAt : 0;
   el.src = url;
-  if (begin <= 0) { try { el.currentTime = 0; } catch { /* ignore */ } await el.play(); return; }
+  if (begin <= 0) { try { el.currentTime = 0; } catch { /* ignore */ } applyRate(el); await el.play(); return; }
   // Start partway in (skip the lead-in / word seek). CRITICAL on iOS: a currentTime set before
   // metadata is loaded is IGNORED, and setting it *after* play() makes the clip start at 0 and then
   // audibly jump to `begin` — i.e. the quiet lead-in plays first and sounds like a fade-in. So wait
@@ -698,6 +788,7 @@ const playUrl = async (
       el.onloadedmetadata = null;
       if (!isCurrent()) { resolve(); return; } // superseded → let the newer call drive playback
       try { el.currentTime = begin; } catch { /* ignore */ }
+      applyRate(el);
       el.play().then(() => resolve(), () => resolve());
     };
     if (el.readyState >= 1 /* HAVE_METADATA */) go();
@@ -743,11 +834,11 @@ export const prefetchTTS = (texts: string[]): void => {
       const key = await ttsKey(plain, token);
       if (!ttsUrlCache.has(key)) {
         const blob = await fetchCachedTTS(key);
-        if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+        if (blob && !ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS);
       }
       if (!ttsTimingsCache.has(key)) {
         const t = await fetchCachedTTSTimings(key);
-        if (t && t.length) ttsTimingsCache.set(key, t);
+        if (t && t.length) lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS);
       }
     })().catch(() => { /* best-effort */ });
   }
@@ -770,7 +861,7 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
       const key = await ttsKey(plain, token);
       if (ttsUrlCache.has(key)) return;
       const blob = await fetchCachedTTS(key);
-      if (blob) { if (!ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob)); return; }
+      if (blob) { if (!ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS); return; }
       missing.push(plain);
     }));
     if (missing.length) {
@@ -780,7 +871,7 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
         const key = await ttsKey(plain, token);
         if (ttsUrlCache.has(key)) return;
         const blob = await fetchCachedTTS(key);
-        if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+        if (blob && !ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS);
       }));
     }
     // Warm per-word timings (both styles have them now) so tap-to-seek is ready on the first tap.
@@ -788,7 +879,7 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
       const key = await ttsKey(plain, token);
       if (ttsTimingsCache.has(key)) return;
       const t = await fetchCachedTTSTimings(key);
-      if (t && t.length) ttsTimingsCache.set(key, t);
+      if (t && t.length) lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS);
     }));
   } catch {
     /* best-effort — speakNatural still falls back at play time */
@@ -822,10 +913,10 @@ export const preloadAudio = async (
       if (ttsUrlCache.has(key)) { tick(); return; }
       const blob = await fetchCachedTTS(key);
       if (blob) {
-        if (!ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+        if (!ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS);
         if (!ttsTimingsCache.has(key)) {
           const t = await fetchCachedTTSTimings(key);
-          if (t && t.length) ttsTimingsCache.set(key, t);
+          if (t && t.length) lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS);
         }
         tick();
         return;
@@ -842,11 +933,11 @@ export const preloadAudio = async (
         const key = await ttsKey(plain, token);
         if (!ttsUrlCache.has(key)) {
           const blob = await fetchCachedTTS(key);
-          if (blob && !ttsUrlCache.has(key)) ttsUrlCache.set(key, URL.createObjectURL(blob));
+          if (blob && !ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS);
         }
         if (!ttsTimingsCache.has(key)) {
           const t = await fetchCachedTTSTimings(key);
-          if (t && t.length) ttsTimingsCache.set(key, t);
+          if (t && t.length) lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS);
         }
       } catch { /* ignore */ }
       tick();
@@ -885,7 +976,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   const markStart = () => { if (isCurrent()) setPlaybackState({ status: 'playing' }); onStart?.(); };
   const markEnd = () => { if (isCurrent()) setPlaybackState({ text: null, status: 'idle' }); onEnd?.(); };
   const markError = (e: any) => { if (isCurrent()) setPlaybackState({ text: null, status: 'idle' }); onError?.(e); };
-  const systemFallback = () => systemSpeak(plain, { rate, onStart: markStart, onEnd: markEnd, onError: markError });
+  const systemFallback = () => systemSpeak(plain, { rate: rate ?? playbackRate, onStart: markStart, onEnd: markEnd, onError: markError });
 
   // Unlock <audio> synchronously inside the gesture (iOS) and stop anything currently playing.
   unlockAudio();
@@ -908,10 +999,11 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         if (!isCurrent()) return;
         if (blob) {
           url = URL.createObjectURL(blob);
-          ttsUrlCache.set(key, url);
+          lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
         }
       }
       if (url) {
+        lruTouch(ttsUrlCache, key); // mark most-recently-used so an actively-played clip isn't evicted first
         // Resolve per-word timings BEFORE computing the start offset, so the quiet lead-in is reliably
         // trimmed. Previously the fetch was fire-and-forget, so begin was computed with currentTimings
         // still null (begin=0) and the soft onset played — heard as a fade-in, especially on iOS where
@@ -921,7 +1013,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         if (!currentTimings) {
           const t = await fetchCachedTTSTimings(key).catch(() => null);
           if (!isCurrent()) return;
-          if (t && t.length) { ttsTimingsCache.set(key, t); currentTimings = t; }
+          if (t && t.length) { lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); currentTimings = t; }
           else { requestTTSGeneration([{ text: plain, voice: voiceTok }]).catch(() => {}); } // backfill timings for this style
         }
         // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
@@ -940,14 +1032,14 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         if (!clearUrl) {
           const blob = await fetchCachedTTS(clearKey);
           if (!isCurrent()) return;
-          if (blob) { clearUrl = URL.createObjectURL(blob); ttsUrlCache.set(clearKey, clearUrl); }
+          if (blob) { clearUrl = URL.createObjectURL(blob); lruSetUrl(ttsUrlCache, clearKey, clearUrl, MAX_TTS_URLS); }
         }
         if (clearUrl) {
           currentTimings = ttsTimingsCache.get(clearKey) ?? null;
           if (!currentTimings) {
             const t = await fetchCachedTTSTimings(clearKey).catch(() => null);
             if (!isCurrent()) return;
-            if (t && t.length) { ttsTimingsCache.set(clearKey, t); currentTimings = t; }
+            if (t && t.length) { lruSetVal(ttsTimingsCache, clearKey, t, MAX_TIMINGS); currentTimings = t; }
           }
           const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
           await playUrl(clearUrl, isCurrent, markStart, markEnd, begin);
