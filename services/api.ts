@@ -402,26 +402,42 @@ export const ttsKey = async (text: string, voice: string): Promise<string> => {
   return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
-/** Fetch a cached clip by key. Returns the audio Blob, or null on miss (404) / error. */
-export const fetchCachedTTS = async (key: string): Promise<Blob | null> => {
+// A plain fetch() has NO timeout: a stalled connection (a wedged mobile keep-alive socket, or the
+// 1-vCPU VPS briefly busy) leaves the await hanging for the browser's multi-minute default — the
+// "audio takes forever to load even on good 5G" symptom. Bound every TTS fetch so a stall aborts and
+// the caller can fall back (system/Kokoro voice) instead of hanging. The timeout spans headers AND the
+// body read (we clear it only after .blob()/.json() resolves), so a mid-body stall is caught too.
+const TTS_AUDIO_TIMEOUT_MS = 8000;    // audio is what we play — be patient, but never infinite
+const TTS_TIMINGS_TIMEOUT_MS = 6000;  // timings are non-essential (lead-in trim / seek) — bg-warmed
+
+/** Fetch a cached clip by key. Returns the audio Blob, or null on miss (404) / timeout / error. */
+export const fetchCachedTTS = async (key: string, timeoutMs = TTS_AUDIO_TIMEOUT_MS): Promise<Blob | null> => {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${API_BASE}/api/tts/${key}.mp3`);
+    const res = await fetch(`${API_BASE}/api/tts/${key}.mp3`, { signal: ctrl.signal });
     if (!res.ok) return null;
     return await res.blob();
   } catch {
     return null;
+  } finally {
+    clearTimeout(t);
   }
 };
 
-/** Fetch a clip's per-word timings by key. Returns the WordTiming[] or null on miss (404) / error. */
-export const fetchCachedTTSTimings = async (key: string): Promise<WordTiming[] | null> => {
+/** Fetch a clip's per-word timings by key. Returns the WordTiming[] or null on miss / timeout / error. */
+export const fetchCachedTTSTimings = async (key: string, timeoutMs = TTS_TIMINGS_TIMEOUT_MS): Promise<WordTiming[] | null> => {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${API_BASE}/api/tts/${key}/timings`);
+    const res = await fetch(`${API_BASE}/api/tts/${key}/timings`, { signal: ctrl.signal });
     if (!res.ok) return null;
     const data = await res.json();
     return Array.isArray(data) ? data : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(t);
   }
 };
 

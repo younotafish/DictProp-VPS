@@ -955,6 +955,34 @@ const leadInSkip = (timings: WordTiming[] | null): number => {
   return first && isFinite(first) ? Math.max(0, first - LEAD_IN_PREROLL) : 0;
 };
 
+// Resolve word timings for playback WITHOUT letting a cold/slow network stall the tap. Trimming the
+// ~100ms lead-in is a nice-to-have; the audio clip is already in hand, so a slow (or wedged, un-timed-out)
+// timings round-trip must NEVER hold up playback — that is the "sentence audio takes forever to load even
+// on good 5G" bug (a second sequential fetch was awaited before every cold play). Returns warm timings
+// instantly; on a device-cache miss it waits only TIMINGS_WAIT_MS for the server, then resolves so the clip
+// plays NOW while the fetch keeps running in the background — caching whatever lands so the next play /
+// tap-to-seek has it. onGenuineMiss fires when the server truly has no timings (so we backfill), not on a timeout.
+const TIMINGS_WAIT_MS = 400;
+const resolveTimingsForPlayback = async (
+  key: string,
+  onGenuineMiss: () => void,
+): Promise<WordTiming[] | null> => {
+  const cached = ttsTimingsCache.get(key);
+  if (cached) return cached;
+  const fetchP = fetchCachedTTSTimings(key)
+    .catch(() => null)
+    .then((t) => {
+      if (t && t.length) { lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
+      onGenuineMiss(); // server has no timings yet → backfill for next time (runs even if we didn't wait)
+      return null;
+    });
+  const winner = await Promise.race([
+    fetchP,
+    new Promise<WordTiming[] | null>((r) => setTimeout(() => r(null), TIMINGS_WAIT_MS)),
+  ]);
+  return winner && winner.length ? winner : null;
+};
+
 /**
  * Speak `text` with the best available voice:
  *   1. cached MiMo clip from the server (instant, on every device) — the primary path
@@ -1004,18 +1032,14 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
       }
       if (url) {
         lruTouch(ttsUrlCache, key); // mark most-recently-used so an actively-played clip isn't evicted first
-        // Resolve per-word timings BEFORE computing the start offset, so the quiet lead-in is reliably
-        // trimmed. Previously the fetch was fire-and-forget, so begin was computed with currentTimings
-        // still null (begin=0) and the soft onset played — heard as a fade-in, especially on iOS where
-        // the cached MiMo clip is the only successful play path. Device cache is instant; the server
-        // fetch only runs on the cold path, and unlockAudio() above keeps the later play() gesture-valid.
-        currentTimings = ttsTimingsCache.get(key) ?? null;
-        if (!currentTimings) {
-          const t = await fetchCachedTTSTimings(key).catch(() => null);
-          if (!isCurrent()) return;
-          if (t && t.length) { lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); currentTimings = t; }
-          else { requestTTSGeneration([{ text: plain, voice: voiceTok }]).catch(() => {}); } // backfill timings for this style
-        }
+        // Resolve per-word timings to trim the quiet lead-in, but WITHOUT blocking the tap on the fetch:
+        // we already hold the audio, so a slow/stalled timings round-trip must not hold up playback (the
+        // "takes forever to load" bug). Warm timings are instant; a cold miss waits only a short budget,
+        // then plays now while the fetch keeps warming in the background for the next play / tap-to-seek.
+        currentTimings = await resolveTimingsForPlayback(key, () => {
+          requestTTSGeneration([{ text: plain, voice: voiceTok }]).catch(() => {}); // backfill timings for this style
+        });
+        if (!isCurrent()) return;
         // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
         const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
         await playUrl(url, isCurrent, markStart, markEnd, begin);
@@ -1035,16 +1059,13 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
           if (blob) { clearUrl = URL.createObjectURL(blob); lruSetUrl(ttsUrlCache, clearKey, clearUrl, MAX_TTS_URLS); }
         }
         if (clearUrl) {
-          currentTimings = ttsTimingsCache.get(clearKey) ?? null;
-          if (!currentTimings) {
-            const t = await fetchCachedTTSTimings(clearKey).catch(() => null);
-            if (!isCurrent()) return;
-            if (t && t.length) { lruSetVal(ttsTimingsCache, clearKey, t, MAX_TIMINGS); currentTimings = t; }
-          }
+          currentTimings = await resolveTimingsForPlayback(clearKey, () => {}); // non-blocking; no backfill on the fallback clip
+          if (!isCurrent()) return;
           const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
           await playUrl(clearUrl, isCurrent, markStart, markEnd, begin);
           return;
         }
+
         // clear also absent → fall through to the generic miss path below
       }
 
