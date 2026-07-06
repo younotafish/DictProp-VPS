@@ -52,6 +52,10 @@ interface HighlightedSentenceProps {
   itemWord?: string;
   /** When provided, [[uncommon]] segments become clickable and call this to look the term up. */
   onSearchWord?: (term: string) => void;
+  /** Look-up mode only: make EVERY unsaved word a lookup target (not just [[uncommon]] ones), so tapping
+   *  any plain word triggers onSearchWord. Saved words still open their card; [[uncommon]] still search.
+   *  Off by default so shared call sites (Sentences list, word cards) keep tapping only the highlights. */
+  searchAnyWord?: boolean;
   /** When provided, words become click/tap-to-play + carry data-word-offset, calling this with the
    *  clicked word's character offset in the STRIPPED sentence (for word-level playback seek). */
   onPlayFromWord?: (offset: number) => void;
@@ -65,6 +69,7 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
   text,
   itemWord = '',
   onSearchWord,
+  searchAnyWord = false,
   onPlayFromWord,
   findSaved,
   onOpenCard,
@@ -73,6 +78,8 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
 
   const wordLower = itemWord.trim().toLowerCase();
   const footnotesEnabled = !!(findSaved && onOpenCard);
+  // "Tap any (unsaved) word to look it up" — only in look-up mode (onSearchWord set, no play callback).
+  const lookupAnyWord = !!(searchAnyWord && onSearchWord && !onPlayFromWord);
   // Tokenize plain runs (split into individually-addressable words) whenever we play from words OR
   // need to footnote saved words. Look-up-only callers (e.g. word-card examples) keep the legacy path.
   const tokenize = !!onPlayFromWord || footnotesEnabled;
@@ -147,12 +154,20 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
     }
 
     if (kind === 'item') {
+      // The studied word: plays from it (play mode), or — if unsaved — looks it up (tap-any-word mode).
+      const itemTerm = lookupAnyWord ? stripEdgePunct(word) : '';
       return (
         <span
           key={key}
-          className={ITEM_CLASS}
+          className={ITEM_CLASS + (onPlayFromWord || itemTerm ? ' cursor-pointer' : '')}
           data-word-offset={tokenize ? off : undefined}
-          onClick={onPlayFromWord ? (e) => { e.stopPropagation(); if (swallowSelection()) return; onPlayFromWord(off); } : undefined}
+          onClick={
+            onPlayFromWord
+              ? (e) => { e.stopPropagation(); if (swallowSelection()) return; onPlayFromWord(off); }
+              : itemTerm
+              ? (e) => { e.stopPropagation(); if (swallowSelection()) return; onSearchWord!(itemTerm); }
+              : undefined
+          }
         >
           {word}
         </span>
@@ -172,6 +187,26 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
           {word}
         </span>
       );
+    }
+    // Tap-any-word look-up: every UNSAVED plain word is a search target (saved words hit the branch
+    // above; [[uncommon]] hit the uncommon branch). Kept visually plain — no persistent underline, so the
+    // sentence stays readable — with a subtle hover + pointer to signal it's tappable. Edge punctuation is
+    // stripped so "cat." searches "cat". Not a keyboard tab stop (a sentence has too many words for that);
+    // tap/click drives it, while the highlighted [[uncommon]]/saved words stay keyboard-focusable.
+    if (lookupAnyWord) {
+      const term = stripEdgePunct(word);
+      if (term) {
+        return (
+          <span
+            key={key}
+            data-word-offset={tokenize ? off : undefined}
+            className={`cursor-pointer rounded hover:bg-slate-100 transition-colors ${plainCls ?? ''}`}
+            onClick={(e) => { e.stopPropagation(); if (swallowSelection()) return; onSearchWord!(term); }}
+          >
+            {word}
+          </span>
+        );
+      }
     }
     return plainCls ? <span key={key} className={plainCls}>{word}</span> : <React.Fragment key={key}>{word}</React.Fragment>;
   };

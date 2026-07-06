@@ -1605,7 +1605,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <button
                   onClick={(e) => { e.stopPropagation(); setTapToPlay(v => { const next = !v; try { localStorage.setItem('dictprop_sentence_tap_play', next ? '1' : '0'); } catch { /* ignore */ } return next; }); }}
                   className={`flex items-center justify-center w-7 h-7 rounded-full transition-colors ${tapToPlay ? 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}
-                  title={tapToPlay ? 'Tap a word = play from it. Tap here to switch to look-up.' : 'Tap an underlined word = look it up. Tap here to switch to play-from-word.'}
+                  title={tapToPlay ? 'Tap a word = play from it. Tap here to switch to look-up.' : 'Tap any word = look it up (saved words open their card). Tap here to switch to play-from-word.'}
                 >
                   {tapToPlay ? <Volume2 size={15} /> : <SearchIcon size={15} />}
                 </button>
@@ -1630,14 +1630,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   onClick={toggleSentencePlayback}
                   title={tapToPlay
                     ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
-                    : 'Tap an underlined word to look it up · tap blank space to play/pause · double-tap blank space to remember'}
+                    : 'Tap any word to look it up (saved words open their card) · tap blank space to play/pause · double-tap blank space to remember'}
                 >
                   <HighlightedSentence
                     text={currentSentenceText}
                     itemWord={(currentSentence.data as SentenceData).sourceWord}
                     findSaved={findSaved}
                     onOpenCard={onOpenCard}
-                    {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch })}
+                    {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch, searchAnyWord: true })}
                   />
                 </p>
                 <div className="mt-5 flex justify-center">
