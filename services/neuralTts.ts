@@ -24,6 +24,7 @@
 import { speak as systemSpeak } from './speech';
 import { stripSentenceMarkers } from '../components/HighlightedSentence';
 import { ttsKey, fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, TTS_VOICE, type WordTiming } from './api';
+import { getAudioBlob, putAudioBlob, getTimings, putTimings } from './audioCache';
 import { log, warn } from './logger';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
@@ -716,6 +717,44 @@ const lruSetVal = <V>(map: Map<string, V>, key: string, val: V, cap: number): vo
   }
 };
 
+// ── Durable clip acquisition — the offline audio cache seam ──────────────────────
+// Every clip/timing lookup funnels through these two helpers, which check the caches in order of speed:
+//   in-memory Map (this session) → IndexedDB (survives launches, services/audioCache.ts) → server.
+// A server hit is written through to IndexedDB so the NEXT launch loads it from local disk instead of
+// re-downloading — the whole point of the cache (clips are content-addressed + immutable, so a stored
+// blob is valid forever). The returned object URL is inserted into the existing bounded-LRU `ttsUrlCache`
+// (which revokes evicted URLs), so in-session memory management is unchanged — IDB is purely a durable
+// layer beneath it. Both are best-effort: an unavailable IDB (private mode) just falls through to network.
+
+/** Ready-to-play object URL for clip `key` (memory → IDB → server, write-through). Null on a true miss. */
+const loadClipUrl = async (key: string): Promise<string | null> => {
+  const mem = ttsUrlCache.get(key);
+  if (mem) { lruTouch(ttsUrlCache, key); return mem; }
+  const stored = await getAudioBlob(key);
+  if (stored) {
+    const url = URL.createObjectURL(stored);
+    lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
+    return url;
+  }
+  const blob = await fetchCachedTTS(key);
+  if (!blob) return null;
+  void putAudioBlob(key, blob); // write-through (fire-and-forget; never blocks playback)
+  const url = URL.createObjectURL(blob);
+  lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
+  return url;
+};
+
+/** Per-word timings for clip `key` (memory → IDB → server, write-through). Null when none exist. */
+const loadTimingsCached = async (key: string): Promise<WordTiming[] | null> => {
+  const mem = ttsTimingsCache.get(key);
+  if (mem) return mem;
+  const stored = await getTimings(key);
+  if (stored && stored.length) { lruSetVal(ttsTimingsCache, key, stored, MAX_TIMINGS); return stored; }
+  const t = await fetchCachedTTSTimings(key);
+  if (t && t.length) { void putTimings(key, t); lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
+  return null;
+};
+
 
 /** Word timings for the CURRENT style's clip of `text` (device cache or server). Null if none exist.
  *  Both styles have timings now, so word-seek works on clear AND casual (keyed by the active style). */
@@ -723,11 +762,7 @@ export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> 
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return null;
   const key = await ttsKey(plain, styleToken());
-  const cached = ttsTimingsCache.get(key);
-  if (cached) return cached;
-  const t = await fetchCachedTTSTimings(key);
-  if (t && t.length) { lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
-  return null;
+  return loadTimingsCached(key);
 };
 
 /** Ensure word timings exist for `text` (current style): warm them if present, else kick off background
@@ -832,14 +867,8 @@ export const prefetchTTS = (texts: string[]): void => {
     if (!plain) continue;
     (async () => {
       const key = await ttsKey(plain, token);
-      if (!ttsUrlCache.has(key)) {
-        const blob = await fetchCachedTTS(key);
-        if (blob && !ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS);
-      }
-      if (!ttsTimingsCache.has(key)) {
-        const t = await fetchCachedTTSTimings(key);
-        if (t && t.length) lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS);
-      }
+      await loadClipUrl(key);       // memory → IDB → server (write-through to IDB)
+      await loadTimingsCached(key);
     })().catch(() => { /* best-effort */ });
   }
 };
@@ -855,32 +884,19 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
     const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
     if (!plains.length) return;
 
-    // Pull anything already cached (device → server) into the device cache; collect what's still missing.
+    // Pull anything already cached (memory → IDB → server) into the device cache; collect true misses.
     const missing: string[] = [];
     await Promise.all(plains.map(async (plain) => {
       const key = await ttsKey(plain, token);
-      if (ttsUrlCache.has(key)) return;
-      const blob = await fetchCachedTTS(key);
-      if (blob) { if (!ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS); return; }
-      missing.push(plain);
+      if (!(await loadClipUrl(key))) missing.push(plain);
     }));
     if (missing.length) {
-      // Generate the missing clips server-side (one batch), then fetch them into the device cache.
+      // Generate the missing clips server-side (one batch), then pull them into the device cache.
       await requestTTSGeneration(missing.map(text => ({ text, voice: token })));
-      await Promise.all(missing.map(async (plain) => {
-        const key = await ttsKey(plain, token);
-        if (ttsUrlCache.has(key)) return;
-        const blob = await fetchCachedTTS(key);
-        if (blob && !ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS);
-      }));
+      await Promise.all(missing.map(async (plain) => { await loadClipUrl(await ttsKey(plain, token)); }));
     }
     // Warm per-word timings (both styles have them now) so tap-to-seek is ready on the first tap.
-    await Promise.all(plains.map(async (plain) => {
-      const key = await ttsKey(plain, token);
-      if (ttsTimingsCache.has(key)) return;
-      const t = await fetchCachedTTSTimings(key);
-      if (t && t.length) lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS);
-    }));
+    await Promise.all(plains.map(async (plain) => { await loadTimingsCached(await ttsKey(plain, token)); }));
   } catch {
     /* best-effort — speakNatural still falls back at play time */
   }
@@ -904,41 +920,24 @@ export const preloadAudio = async (
   let done = 0;
   const tick = () => onProgress?.(++done, total);
 
-  // 1) Pull anything already cached (device → server) into the device cache + warm its timings
-  //    (both styles have timings now); collect what still needs generating.
+  // 1) Pull anything already cached (memory → IDB → server) + warm its timings; collect true misses.
   const missing: string[] = [];
   await Promise.all(plains.map(async (plain) => {
     try {
       const key = await ttsKey(plain, token);
-      if (ttsUrlCache.has(key)) { tick(); return; }
-      const blob = await fetchCachedTTS(key);
-      if (blob) {
-        if (!ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS);
-        if (!ttsTimingsCache.has(key)) {
-          const t = await fetchCachedTTSTimings(key);
-          if (t && t.length) lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS);
-        }
-        tick();
-        return;
-      }
-      missing.push(plain); // still missing → generate below
+      if (await loadClipUrl(key)) { await loadTimingsCached(key); tick(); return; }
+      missing.push(plain); // absent everywhere → generate below
     } catch { tick(); }
   }));
 
-  // 2) Generate the missing clips server-side (one batch), then fetch them into the device cache.
+  // 2) Generate the missing clips server-side (one batch), then pull them into the device cache.
   if (missing.length) {
     try { await requestTTSGeneration(missing.map(text => ({ text, voice: token }))); } catch { /* best-effort */ }
     await Promise.all(missing.map(async (plain) => {
       try {
         const key = await ttsKey(plain, token);
-        if (!ttsUrlCache.has(key)) {
-          const blob = await fetchCachedTTS(key);
-          if (blob && !ttsUrlCache.has(key)) lruSetUrl(ttsUrlCache, key, URL.createObjectURL(blob), MAX_TTS_URLS);
-        }
-        if (!ttsTimingsCache.has(key)) {
-          const t = await fetchCachedTTSTimings(key);
-          if (t && t.length) lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS);
-        }
+        await loadClipUrl(key);
+        await loadTimingsCached(key);
       } catch { /* ignore */ }
       tick();
     }));
@@ -969,15 +968,18 @@ const resolveTimingsForPlayback = async (
 ): Promise<WordTiming[] | null> => {
   const cached = ttsTimingsCache.get(key);
   if (cached) return cached;
-  const fetchP = fetchCachedTTSTimings(key)
-    .catch(() => null)
-    .then((t) => {
-      if (t && t.length) { lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
-      onGenuineMiss(); // server has no timings yet → backfill for next time (runs even if we didn't wait)
-      return null;
-    });
+  // memory missed → look up IDB (fast, local) then the server; the whole lookup is raced against a short
+  // budget so a slow NETWORK fetch never holds up playback. onGenuineMiss fires only on a true server miss.
+  const lookupP = (async (): Promise<WordTiming[] | null> => {
+    const stored = await getTimings(key);
+    if (stored && stored.length) { lruSetVal(ttsTimingsCache, key, stored, MAX_TIMINGS); return stored; }
+    const t = await fetchCachedTTSTimings(key).catch(() => null);
+    if (t && t.length) { void putTimings(key, t); lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
+    onGenuineMiss(); // server has no timings yet → backfill for next time (runs even if we didn't wait)
+    return null;
+  })();
   const winner = await Promise.race([
-    fetchP,
+    lookupP,
     new Promise<WordTiming[] | null>((r) => setTimeout(() => r(null), TIMINGS_WAIT_MS)),
   ]);
   return winner && winner.length ? winner : null;
@@ -1020,18 +1022,11 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
       const key = await ttsKey(plain, voiceTok);
       if (!isCurrent()) return; // superseded by a newer call
 
-      // 1) device-local cache, then 2) server cache (for the chosen style)
-      let url = ttsUrlCache.get(key);
-      if (!url) {
-        const blob = await fetchCachedTTS(key);
-        if (!isCurrent()) return;
-        if (blob) {
-          url = URL.createObjectURL(blob);
-          lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
-        }
-      }
+      // 1) memory cache → 2) IndexedDB (survives launches) → 3) server cache, for the chosen style.
+      const url = await loadClipUrl(key);
+      if (!isCurrent()) return;
       if (url) {
-        lruTouch(ttsUrlCache, key); // mark most-recently-used so an actively-played clip isn't evicted first
+        // loadClipUrl already inserted/touched the in-memory entry as most-recently-used.
         // Resolve per-word timings to trim the quiet lead-in, but WITHOUT blocking the tap on the fetch:
         // we already hold the audio, so a slow/stalled timings round-trip must not hold up playback (the
         // "takes forever to load" bug). Warm timings are instant; a cold miss waits only a short budget,
@@ -1052,12 +1047,8 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         requestTTSGeneration([{ text: plain, voice: CASUAL_TOKEN }]).catch(() => { /* best-effort */ });
         const clearKey = await ttsKey(plain, TTS_VOICE);
         if (!isCurrent()) return;
-        let clearUrl = ttsUrlCache.get(clearKey);
-        if (!clearUrl) {
-          const blob = await fetchCachedTTS(clearKey);
-          if (!isCurrent()) return;
-          if (blob) { clearUrl = URL.createObjectURL(blob); lruSetUrl(ttsUrlCache, clearKey, clearUrl, MAX_TTS_URLS); }
-        }
+        const clearUrl = await loadClipUrl(clearKey);
+        if (!isCurrent()) return;
         if (clearUrl) {
           currentTimings = await resolveTimingsForPlayback(clearKey, () => {}); // non-blocking; no backfill on the fallback clip
           if (!isCurrent()) return;

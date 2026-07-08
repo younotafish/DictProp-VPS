@@ -19,6 +19,7 @@ import { CardReviewPopup } from './components/CardReviewPopup';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
 import { preloadNeural } from './services/neuralTts';
+import { requestPersistentStorage } from './services/audioCache';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 
@@ -342,6 +343,10 @@ const App: React.FC = () => {
   // WebAssembly, if it's already loading/ready, or (on mobile) before the one-time download is consented to.
   useEffect(() => {
     const t = setTimeout(() => preloadNeural(), 3000);
+    // Ask the browser to make our storage durable so the on-device audio cache (IndexedDB) survives
+    // eviction — this is what lets sentence audio load from local disk on the next launch instead of
+    // re-downloading every clip from the server. Best-effort; a no-op where unsupported/denied.
+    void requestPersistentStorage();
     return () => clearTimeout(t);
   }, []);
 
