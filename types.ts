@@ -44,6 +44,7 @@ export interface SentenceData {
   text: string; // The sentence text. Markup: {{studied item}} (emphasis) and [[uncommon term]] (clickable lookup)
   sourceWord: string; // The vocab word this sentence came from
   sourceSense?: string; // The sense label of the source word
+  imageUrl?: string; // Optional user-attached image (base64 data URI in memory; 'idb:stored'/'server:has_image' marker once offloaded)
 }
 
 // SRS Data — Fixed-schedule spaced repetition

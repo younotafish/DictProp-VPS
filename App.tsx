@@ -2188,6 +2188,16 @@ const App: React.FC = () => {
     return regenerated;
   }, []);
 
+  // Attach a user-pasted/picked image to a sentence under review. Mirrors the vocab/phrase image path:
+  // offload the base64 to IDB (awaited, for instant offline display) + upload to the server, then mark
+  // the item's imageUrl and persist it. handleSave's own offload block only covers vocab/phrase, so the
+  // offload is done explicitly here and the item is saved with the marker (never raw base64 in state).
+  const handleAttachSentenceImage = useCallback(async (item: StoredItem, base64: string) => {
+    if (!item?.data?.id || !base64.startsWith('data:image/')) return;
+    await offloadAndUpload([{ id: item.data.id, base64 }]);
+    handleSaveRef.current({ ...item, data: { ...item.data, imageUrl: IMAGE_IDB_MARKER } });
+  }, []);
+
   const handleDelete = useCallback(async (id: string) => {
     log('🗑️ App: Deleting item', id);
 
@@ -2854,6 +2864,7 @@ const App: React.FC = () => {
               findSaved={findSavedItem}
               onOpenCard={openCardPopup}
               interactionLocked={!!cardPopup}
+              onAttachImage={handleAttachSentenceImage}
           />
         </ErrorBoundary>
       )}

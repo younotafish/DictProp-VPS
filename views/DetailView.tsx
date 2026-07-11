@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -46,6 +46,27 @@ const formatNextReview = (days: number): string => {
   return `in ~${months % 1 === 0 ? months.toFixed(0) : months.toFixed(1)} months`;
 };
 
+// Read a Blob/File as a base64 data URI (for pasted/picked/dropped sentence images).
+const fileToDataUri = (file: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+// Pull the first image out of a clipboard/drop DataTransferItemList, or null if there is none.
+const extractImageFromClipboard = (items: DataTransferItemList | null | undefined): File | null => {
+  if (!items) return null;
+  for (const it of Array.from(items)) {
+    if (it.kind === 'file' && it.type.startsWith('image/')) {
+      const f = it.getAsFile();
+      if (f) return f;
+    }
+  }
+  return null;
+};
+
 
 interface DetailViewProps {
   groups?: ItemGroup[];
@@ -76,6 +97,8 @@ interface DetailViewProps {
   onOpenCard?: (item: StoredItem) => void;
   /** True while the card popup owns input — DetailView's keyboard/nav handlers stand down. */
   interactionLocked?: boolean;
+  /** Sentence mode: attach a pasted/picked image to a sentence (offloads to IDB + server, marks the item). */
+  onAttachImage?: (item: StoredItem, base64: string) => Promise<void> | void;
 }
 
 export const DetailView: React.FC<DetailViewProps> = ({
@@ -102,6 +125,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   findSaved,
   onOpenCard,
   interactionLocked = false,
+  onAttachImage,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -226,6 +250,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const currentSentence = sentenceMode ? (sentenceItems![sentenceIndex] ?? null) : null;
   const currentSentenceText = currentSentence ? (currentSentence.data as SentenceData).text : '';
 
+  // User-attached image for the sentence under review. Base64 → render directly; a marker
+  // ('idb:stored'/'server:has_image') → OfflineImage lazy-loads it by id (IDB, then server).
+  const sentenceImageUrl = currentSentence ? getItemImageUrl(currentSentence) : undefined;
+  const hasSentenceImage = !!sentenceImageUrl;
+  const sentenceImageDirectSrc = sentenceImageUrl?.startsWith('data:') ? sentenceImageUrl : undefined;
+
   // Refs so the post-remember timer and key handlers read fresh sentence state without re-subscribing.
   const sentenceModeRef = useRef(sentenceMode);
   const currentSentenceRef = useRef(currentSentence);
@@ -249,6 +279,65 @@ export const DetailView: React.FC<DetailViewProps> = ({
       sentenceDueCount: list.filter(s => (s.srs?.nextReview ?? 0) <= now).length,
     };
   }, [sentenceItems]);
+
+  // ── Sentence image attach (paste / drop / pick) ──────────────────────────────
+  const [showImagePanel, setShowImagePanel] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageDragOver, setImageDragOver] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
+  // Synchronous re-entrancy guard: a single ⌘V while the panel is focused fires BOTH the window `paste`
+  // listener and the panel's onPaste. Setting this synchronously (before the first await) makes the
+  // second call in the same dispatch see `true` and bail — so we never double-upload the same image.
+  const imageUploadingRef = useRef(false);
+
+  // Convert an image file/blob to base64 and attach it to the CURRENT sentence (read via ref so a stale
+  // closure can't target the wrong one). Offload + upload happen in App via onAttachImage.
+  const attachImageFromFile = useCallback(async (file: Blob | null) => {
+    const target = currentSentenceRef.current;
+    if (!file || !target || !onAttachImage) return;
+    if (imageUploadingRef.current) return;           // already attaching (or a duplicate same-tick call)
+    if (!file.type.startsWith('image/')) { setImageError('That doesn’t look like an image.'); return; }
+    imageUploadingRef.current = true;
+    setImageError(null);
+    setImageUploading(true);
+    try {
+      const dataUri = await fileToDataUri(file);
+      await onAttachImage(target, dataUri);
+      setShowImagePanel(false);
+    } catch (e) {
+      warn('Failed to attach sentence image', e);
+      setImageError('Couldn’t attach that image. Try again.');
+    } finally {
+      imageUploadingRef.current = false;
+      setImageUploading(false);
+    }
+  }, [onAttachImage]);
+
+  // ⌘V / Ctrl+V anywhere in sentence mode attaches a pasted image to the current sentence. Uses the
+  // `paste` event (which carries clipboardData). Stands down when a text field is focused, when another
+  // overlay owns input, or when the paste has no image (so normal text paste still works everywhere).
+  useEffect(() => {
+    if (!onAttachImage) return;
+    const onPaste = (e: ClipboardEvent) => {
+      if (!sentenceModeRef.current || interactionLocked || showActionMenu) return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      const file = extractImageFromClipboard(e.clipboardData?.items);
+      if (!file) return;                              // no image → let the paste proceed normally
+      e.preventDefault();
+      setShowImagePanel(true);                        // surface the panel so the upload spinner is visible
+      void attachImageFromFile(file);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [onAttachImage, interactionLocked, showActionMenu, attachImageFromFile]);
+
+  // Focus the panel card when it opens so an in-panel ⌘V lands on its onPaste handler.
+  useEffect(() => {
+    if (!showImagePanel || imageUploading) return;
+    (document.querySelector('[data-image-panel]') as HTMLElement | null)?.focus();
+  }, [showImagePanel, imageUploading]);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
@@ -358,7 +447,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (sentenceMode) {
       // A still tap inside the expanded word card is handled by its onClick (eyes-free zone read),
       // so the sentence play/pause/remember below ignores it — avoids a touch + synthesized-click double-fire.
-      if (isStillTap && !onControl && !tapTarget?.closest('[data-sentence-hero]') && !tapTarget?.closest('[data-word-card-scroll]')) {
+      if (isStillTap && !onControl && !tapTarget?.closest('[data-sentence-hero]') && !tapTarget?.closest('[data-sentence-image]') && !tapTarget?.closest('[data-word-card-scroll]')) {
         const x = e.changedTouches[0].clientX;
         const y = e.changedTouches[0].clientY;
         const prev = lastSentenceTapRef.current;
@@ -1624,25 +1713,69 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 collapsed; compact when the card is expanded. */}
             <div className={cardCollapsed ? 'flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col' : 'py-3'}>
               <div className={cardCollapsed ? 'my-auto w-full py-4' : ''}>
-                <p
-                  data-sentence-hero
-                  className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
-                  onClick={toggleSentencePlayback}
-                  title={tapToPlay
-                    ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
-                    : 'Tap any word to look it up (saved words open their card) · tap blank space to play/pause · double-tap blank space to remember'}
-                >
-                  <HighlightedSentence
-                    text={currentSentenceText}
-                    itemWord={(currentSentence.data as SentenceData).sourceWord}
-                    findSaved={findSaved}
-                    onOpenCard={onOpenCard}
-                    {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch, searchAnyWord: true })}
-                  />
-                </p>
-                <div className="mt-5 flex justify-center">
-                  <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
-                </div>
+                {hasSentenceImage ? (
+                  /* Attached image → responsive side-by-side: image left / sentence right on md+, image
+                     stacked on top on phones. Image height-bounded so the sentence stays readable. */
+                  <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6 max-w-5xl mx-auto w-full px-1">
+                    <div data-sentence-image className="w-full md:w-2/5 md:shrink-0 flex justify-center">
+                      <div className="w-full max-w-md md:max-w-none rounded-2xl overflow-hidden bg-slate-100 shadow-sm flex items-center justify-center">
+                        <OfflineImage
+                          key={`${currentSentence.data.id}:${currentSentence.updatedAt ?? 0}`}
+                          src={sentenceImageDirectSrc}
+                          itemId={currentSentence.data.id}
+                          alt="Attached image for this sentence"
+                          onMissing={onLazyLoadImage}
+                          className="w-full h-auto max-h-[32vh] md:max-h-[52vh] object-contain fade-in"
+                          fallbackClassName="w-full aspect-[4/3]"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p
+                        data-sentence-hero
+                        className={`text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-xl sm:text-3xl' : 'text-lg sm:text-xl'}`}
+                        onClick={toggleSentencePlayback}
+                        title={tapToPlay
+                          ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
+                          : 'Tap any word to look it up (saved words open their card) · tap blank space to play/pause · double-tap blank space to remember'}
+                      >
+                        <HighlightedSentence
+                          text={currentSentenceText}
+                          itemWord={(currentSentence.data as SentenceData).sourceWord}
+                          findSaved={findSaved}
+                          onOpenCard={onOpenCard}
+                          {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch, searchAnyWord: true })}
+                        />
+                      </p>
+                      <div className="mt-5 flex justify-center md:justify-start">
+                        <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* No image → the original centered full-width hero, unchanged. */
+                  <>
+                    <p
+                      data-sentence-hero
+                      className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
+                      onClick={toggleSentencePlayback}
+                      title={tapToPlay
+                        ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
+                        : 'Tap any word to look it up (saved words open their card) · tap blank space to play/pause · double-tap blank space to remember'}
+                    >
+                      <HighlightedSentence
+                        text={currentSentenceText}
+                        itemWord={(currentSentence.data as SentenceData).sourceWord}
+                        findSaved={findSaved}
+                        onOpenCard={onOpenCard}
+                        {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch, searchAnyWord: true })}
+                      />
+                    </p>
+                    <div className="mt-5 flex justify-center">
+                      <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -2194,6 +2327,77 @@ export const DetailView: React.FC<DetailViewProps> = ({
             </button>
           </div>
         </>
+      )}
+
+      {/* Attach-image FAB (sentence mode only). Sits above the global AI-search FAB in the right rail
+          (bottom-40 clears its bottom-24; z-[57] is above the search FAB's z-[55], below the autoplay
+          cluster's z-[60]). Hidden while its own paste panel is open. */}
+      {sentenceMode && currentSentence && !showImagePanel && (
+        <button
+          onClick={() => { setImageError(null); setShowImagePanel(true); }}
+          className="fixed bottom-40 right-4 z-[57] w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-white/90 backdrop-blur-sm text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
+          title={hasSentenceImage ? 'Replace this sentence’s image' : 'Attach an image to this sentence'}
+        >
+          {hasSentenceImage ? <ImageIcon size={20} /> : <ImagePlus size={20} />}
+        </button>
+      )}
+
+      {/* Paste / drop / pick panel — mirrors the bottom-right AI-search input overlay. The card is
+          focusable + data-image-panel so an in-panel ⌘V lands on onPaste (the window listener is the
+          primary path). */}
+      {sentenceMode && currentSentence && showImagePanel && (
+        <div className="fixed bottom-28 right-4 left-4 z-[58] animate-in slide-in-from-bottom-2 duration-200">
+          <div
+            data-image-panel
+            tabIndex={-1}
+            onPaste={(e) => {
+              const f = extractImageFromClipboard(e.clipboardData?.items);
+              if (f) { e.preventDefault(); void attachImageFromFile(f); }
+            }}
+            onDragOver={(e) => { e.preventDefault(); setImageDragOver(true); }}
+            onDragLeave={() => setImageDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setImageDragOver(false);
+              void attachImageFromFile(e.dataTransfer?.files?.[0] ?? null);
+            }}
+            className={`bg-white rounded-2xl shadow-2xl border p-4 max-w-md ml-auto outline-none transition-colors ${imageDragOver ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'}`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-semibold text-slate-700">
+                {hasSentenceImage ? 'Replace image' : 'Attach image'}
+              </span>
+              <button onClick={() => setShowImagePanel(false)} className="text-slate-400 hover:text-slate-600" title="Close">
+                <X size={18} />
+              </button>
+            </div>
+
+            {imageUploading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-slate-500 text-sm">
+                <Loader2 size={16} className="animate-spin text-indigo-500" /> Uploading…
+              </div>
+            ) : (
+              <>
+                <button
+                  onClick={() => imageFileInputRef.current?.click()}
+                  className="w-full border-2 border-dashed border-slate-200 rounded-xl py-6 flex flex-col items-center gap-1 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+                >
+                  <ImagePlus size={22} />
+                  <span className="text-xs font-medium">Tap to choose a photo</span>
+                  <span className="text-[11px] text-slate-400">or paste (⌘V) / drop an image here</span>
+                </button>
+                <input
+                  ref={imageFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; void attachImageFromFile(f); }}
+                />
+              </>
+            )}
+            {imageError && <p className="mt-2 text-xs text-rose-500">{imageError}</p>}
+          </div>
+        </div>
       )}
 
     </div>
