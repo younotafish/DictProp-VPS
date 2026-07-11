@@ -24,8 +24,10 @@ echo "==> Syncing Docker files..."
 rsync -avz Dockerfile docker-compose.yml "$VPS_HOST:$VPS_DIR/"
 
 echo "==> Creating .env on VPS (if not exists)..."
+# Secret comes from the local environment — never hardcode it here (this file is committed to a public repo).
+: "${DEEPINFRA_API_KEY:?set DEEPINFRA_API_KEY in your environment before running this script}"
 ssh "$VPS_HOST" "test -f $VPS_DIR/.env || cat > $VPS_DIR/.env << 'EOF'
-DEEPINFRA_API_KEY=MSXF2RdyosANJ76ZRXVHLW3v7GLFN26c
+DEEPINFRA_API_KEY=$DEEPINFRA_API_KEY
 PORT=3000
 DATA_DIR=/app/data
 EOF"

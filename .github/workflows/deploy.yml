@@ -10,10 +10,13 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: DEEPINFRA_API_KEY
           command_timeout: 30m
           script: |
             set -e
@@ -31,6 +34,15 @@ jobs:
             docker compose ps || true
             echo "=== DMESG OOM ==="
             dmesg | grep -i "oom\|killed\|out of memory" | tail -10 || true
+            # Sync the DeepInfra key from the GH Actions secret WITHOUT clobbering other .env vars
+            # (Google OAuth creds live here too). Guarded so an empty/unset secret never blanks the key.
+            if [ -n "$DEEPINFRA_API_KEY" ]; then
+              if grep -q '^DEEPINFRA_API_KEY=' .env 2>/dev/null; then
+                sed -i "s|^DEEPINFRA_API_KEY=.*|DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY}|" .env
+              else
+                echo "DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY}" >> .env
+              fi
+            fi
             echo "=== REBUILDING ==="
             # set -e makes a failed build fail the job (no more silent false-success).
             docker compose up -d --build
