@@ -1731,7 +1731,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           onTouchEnd={onContentTouchEnd}
           onDoubleClick={handleDoubleClick}
         >
-          <div className={`max-w-3xl mx-auto w-full ${cardCollapsed ? 'flex-1 flex flex-col min-h-0' : ''}`}>
+          <div className={`mx-auto w-full ${hasSentenceImage ? 'max-w-3xl lg:max-w-6xl xl:max-w-[1400px]' : 'max-w-3xl'} ${cardCollapsed ? 'flex-1 flex flex-col min-h-0' : ''}`}>
             {/* Row 1: back + position */}
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <button
@@ -1766,9 +1766,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
               <div className={cardCollapsed ? 'my-auto w-full py-4' : ''}>
                 {hasSentenceImage ? (
                   /* Attached image → responsive side-by-side: image left / sentence right on md+, image
-                     stacked on top on phones. Image height-bounded so the sentence stays readable. */
-                  <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6 max-w-5xl mx-auto w-full px-1">
-                    <div data-sentence-image className="w-full md:w-2/5 md:shrink-0 flex justify-center">
+                     stacked on top on phones. On laptops (lg+) the column breaks out wider and the image
+                     grows to half-width / taller so it can fill ~half the screen; height-bounded elsewhere. */
+                  <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6 lg:gap-10 max-w-5xl lg:max-w-none mx-auto w-full px-1">
+                    <div data-sentence-image className="w-full md:w-2/5 lg:w-1/2 md:shrink-0 flex justify-center">
                       <div className="w-full max-w-md md:max-w-none rounded-2xl overflow-hidden bg-slate-100 shadow-sm flex items-center justify-center">
                         <OfflineImage
                           key={`${currentSentence.data.id}:${currentSentence.updatedAt ?? 0}`}
@@ -1776,7 +1777,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                           itemId={currentSentence.data.id}
                           alt="Attached image for this sentence"
                           onMissing={onLazyLoadImage}
-                          className="w-full h-auto max-h-[32vh] md:max-h-[52vh] object-contain fade-in"
+                          className="w-full h-auto max-h-[32vh] md:max-h-[52vh] lg:max-h-[70vh] object-contain fade-in"
                           fallbackClassName="w-full aspect-[4/3]"
                         />
                       </div>
