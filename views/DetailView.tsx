@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -65,6 +65,30 @@ const extractImageFromClipboard = (items: DataTransferItemList | null | undefine
     }
   }
   return null;
+};
+
+// Copy text to the clipboard. Prefers the async Clipboard API (needs HTTPS — dictprop.online is);
+// falls back to a hidden-textarea execCommand for older/unsupported contexts. Returns success.
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
 };
 
 
@@ -338,6 +362,33 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (!showImagePanel || imageUploading) return;
     (document.querySelector('[data-image-panel]') as HTMLElement | null)?.focus();
   }, [showImagePanel, imageUploading]);
+
+  // ── Copy the sentence to the clipboard (to paste into Meta AI or anywhere). ──────
+  const [sentenceCopied, setSentenceCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
+  const handleCopySentence = useCallback(async () => {
+    const s = currentSentenceRef.current;                 // read via ref → never a stale sentence
+    const text = s ? stripSentenceMarkers((s.data as SentenceData).text || '').trim() : '';
+    if (!text) return;
+    if (!(await copyTextToClipboard(text))) return;
+    setSentenceCopied(true);                               // flip icon → green check as confirmation
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setSentenceCopied(false), 1600);
+  }, []);
+
+  // Small copy button that sits beside the sentence's speaker button (same compact icon style). Rendered
+  // in exactly one hero branch at a time (the image / no-image ternary), so reusing the element is safe.
+  const copySentenceButton = (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); void handleCopySentence(); }}
+      className={`p-0.5 transition-colors ${sentenceCopied ? 'text-emerald-500' : 'text-indigo-300 hover:text-indigo-600'}`}
+      title={sentenceCopied ? 'Copied — paste it into Meta AI' : 'Copy sentence (to paste into Meta AI)'}
+    >
+      {sentenceCopied ? <Check size={14} /> : <Copy size={14} />}
+    </button>
+  );
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
@@ -1747,8 +1798,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
                           {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch, searchAnyWord: true })}
                         />
                       </p>
-                      <div className="mt-5 flex justify-center md:justify-start">
+                      <div className="mt-5 flex items-center justify-center md:justify-start gap-3">
                         <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
+                        {copySentenceButton}
                       </div>
                     </div>
                   </div>
@@ -1771,8 +1823,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch, searchAnyWord: true })}
                       />
                     </p>
-                    <div className="mt-5 flex justify-center">
+                    <div className="mt-5 flex items-center justify-center gap-3">
                       <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
+                      {copySentenceButton}
                     </div>
                   </>
                 )}
