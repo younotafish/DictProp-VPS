@@ -2651,9 +2651,17 @@ const App: React.FC = () => {
         log(`Server: Immediately syncing ${itemsToSync.length} SRS updates`);
         syncGenerationRef.current++;
         await saveItems(itemsToSync);
-        for (const syncedItem of itemsToSync) {
-          syncedItem.lastSyncedHash = getItemContentHash(syncedItem);
-        }
+        // Mark the just-synced items clean so the debounced save doesn't redundantly re-push them.
+        // The instances in itemsToSync came from a SEPARATE applySrs pass over baseItems — they are NOT
+        // the objects held by the ref/state (which came from applySrs(prevState.items)). Mutating them in
+        // place would be discarded the moment latestItemsRef re-syncs to state, leaving the item dirty and
+        // re-pushed on the next debounce. Stamp lastSyncedHash by id into both the ref and state instead.
+        const syncedIds = new Set(itemsToSync.map(it => it.data.id));
+        const markSynced = (items: StoredItem[]): StoredItem[] => items.map(it =>
+          syncedIds.has(it.data.id) ? { ...it, lastSyncedHash: getItemContentHash(it) } : it
+        );
+        latestItemsRef.current = markSynced(latestItemsRef.current);
+        setSyncState(prevState => ({ ...prevState, items: markSynced(prevState.items) }));
       } catch (e) {
         logError('Server: Failed to sync SRS updates:', e);
       }
