@@ -593,7 +593,7 @@ aiRoutes.post('/analyze', async (c) => {
   const apiKey = env.DEEPINFRA_API_KEY;
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
-  const { text, mode } = await c.req.json();
+  const { text, mode } = await c.req.json().catch(() => ({}));
   if (!text || typeof text !== 'string') {
     return c.json(errorResponse('Missing "text" field', 400), 400);
   }
@@ -650,7 +650,7 @@ aiRoutes.post('/extract-vocabulary', async (c) => {
   const apiKey = env.DEEPINFRA_API_KEY;
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
-  const { text } = await c.req.json();
+  const { text } = await c.req.json().catch(() => ({}));
   // Low floor (not 10): the main search routes short sentences (e.g. "Go away!", brief Chinese) here too.
   if (!text || typeof text !== 'string' || text.trim().length < 2) {
     return c.json(errorResponse('Please provide some text to analyze.', 400), 400);
@@ -694,7 +694,7 @@ aiRoutes.post('/compare', async (c) => {
   const apiKey = env.DEEPINFRA_API_KEY;
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
-  const { words } = await c.req.json();
+  const { words } = await c.req.json().catch(() => ({}));
   if (!words || !Array.isArray(words) || words.length < 2) {
     return c.json(errorResponse('Please provide at least 2 words to compare.', 400), 400);
   }
@@ -744,7 +744,7 @@ aiRoutes.post('/transcribe', async (c) => {
   const apiKey = env.DEEPINFRA_API_KEY;
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
-  const { audio, mimeType = 'audio/webm' } = await c.req.json();
+  const { audio, mimeType = 'audio/webm' } = await c.req.json().catch(() => ({}));
   if (!audio) {
     return c.json(errorResponse('Missing "audio" base64 data.', 400), 400);
   }
