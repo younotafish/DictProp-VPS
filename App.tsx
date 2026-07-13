@@ -2569,98 +2569,83 @@ const App: React.FC = () => {
     );
   }, []);
 
-  // SRS update — handles shared SRS atomically (all items with same title updated together)
-  // Uses refs to communicate between the setSyncState updater and the post-update save logic,
-  // avoiding reliance on closure-mutated variables (which is fragile across React versions).
-  const srsUpdateResultRef = useRef<{ itemsToSync: StoredItem[]; allItems: StoredItem[] }>({ itemsToSync: [], allItems: [] });
-
+  // SRS update — handles shared SRS atomically (all items with the same title update together).
+  //
+  // The update is computed OUTSIDE setSyncState, from latestItemsRef.current (the app's
+  // synchronously-maintained source of truth), so the immediate IndexedDB save + server push always
+  // use the freshly-computed result. The previous version computed the result INSIDE the setState
+  // updater and read it back through a ref on the next line — but React only runs that updater
+  // synchronously via its "eager state" optimization, which it SKIPS whenever a syncState update is
+  // already pending (a background sync, image streaming in, a prior review still committing…). In that
+  // case the post-setState read got STALE data: the review landed in memory (the UI showed it) but the
+  // immediate IDB/server writes missed it, so progress vanished on refresh or on another device. This
+  // structure (compute → apply to ref → apply the same pure transform inside setState) removes the race
+  // and mirrors handleMergeDuplicates above.
   const updateSRS = async (itemId: string) => {
     const now = Date.now();
 
-    // Use functional update to avoid stale closure issues
-    setSyncState(prevState => {
-      const targetItem = prevState.items.find(i => i.data.id === itemId);
-      if (!targetItem) return prevState;
+    const baseItems = latestItemsRef.current;
+    const targetItem = baseItems.find(i => i.data.id === itemId);
+    if (!targetItem) return;
 
-      // Find ALL items with the same word/query to update them together (Shared SRS)
-      const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
-
-      const idsToUpdate = new Set<string>();
-      idsToUpdate.add(itemId);
-
-      prevState.items.forEach(item => {
-          if (!item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle) {
-              idsToUpdate.add(item.data.id);
-          }
-      });
-
-      // Calculate NEW SRS state based on the MOST ADVANCED sibling's current state
-      // This prevents regressing a card when a less-advanced sibling is reviewed
-      const siblings = prevState.items.filter(item => idsToUpdate.has(item.data.id));
-      const bestSibling = siblings.reduce((best, s) => {
-        const bSrs = SRSAlgorithm.ensure(best.srs, best.data.id, best.type);
-        const sSrs = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
-        return sSrs.totalReviews > bSrs.totalReviews ? s : best;
-      });
-      const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
-      const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
-
-      log(`🧠 SRS Update: ${targetTitle} - step ${baseSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);
-
-      // Update ALL matching items with the NEW SRS state
-      const syncItems: StoredItem[] = [];
-      const newItems = prevState.items.map(item => {
-          if (idsToUpdate.has(item.data.id)) {
-              const itemSpecificSRS = { ...updatedSRS, id: item.data.id };
-              const updatedItem = { ...item, srs: itemSpecificSRS, updatedAt: now };
-              syncItems.push(updatedItem);
-              return updatedItem;
-          }
-          return item;
-      });
-
-      // Store results in ref (safe across React versions, unlike closure mutation)
-      srsUpdateResultRef.current = { itemsToSync: syncItems, allItems: newItems };
-
-      // Update ref immediately so event handlers have fresh data
-      latestItemsRef.current = newItems;
-
-      return { ...prevState, items: newItems };
+    // Find ALL items with the same title (shared SRS: same word/sentence text update together).
+    const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
+    const idsToUpdate = new Set<string>([itemId]);
+    baseItems.forEach(item => {
+      if (!item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle) {
+        idsToUpdate.add(item.data.id);
+      }
     });
 
-    // Read results from ref (guaranteed to be set by the updater above)
-    const { itemsToSync, allItems: allUpdatedItems } = srsUpdateResultRef.current;
-    
-    // CRITICAL: Save to IndexedDB IMMEDIATELY after SRS update
-    // This ensures learning progress is never lost even if user switches apps quickly
-    // This is the primary persistence layer - Firebase sync is secondary
-    if (allUpdatedItems.length > 0) {
-      // Throttle localStorage cache writes during rapid review sessions (3-second window)
-      // Uses latestItemsRef.current when flushing to get the most up-to-date items
-      srsSavePendingRef.current = true;
-      if (!srsSaveTimerRef.current) {
-        srsSaveTimerRef.current = setTimeout(() => {
-          srsSaveTimerRef.current = null;
-          srsSavePendingRef.current = false;
-          try {
-            localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(latestItemsRef.current)));
-          } catch (e) {
-            warn("Failed to update cache after SRS:", e);
-          }
-        }, 3000);
-      }
-      
-      try {
-        await userSaveData(allUpdatedItems);
-        log(`💾 Immediately saved SRS update to IndexedDB`);
-        // Record save time so event handlers can skip redundant saves
-        lastSaveTimeRef.current = Date.now();
-      } catch (e) {
-        logError('💾 Failed to save SRS update to IndexedDB:', e);
-      }
+    // NEW SRS from the MOST ADVANCED sibling (so reviewing a less-advanced sibling never regresses it).
+    const siblings = baseItems.filter(item => idsToUpdate.has(item.data.id));
+    const bestSibling = siblings.reduce((best, s) => {
+      const bSrs = SRSAlgorithm.ensure(best.srs, best.data.id, best.type);
+      const sSrs = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
+      return sSrs.totalReviews > bSrs.totalReviews ? s : best;
+    });
+    const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
+    const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
+
+    log(`🧠 SRS Update: ${targetTitle} - step ${baseSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);
+
+    // Pure transform, applied to BOTH the ref (fresh source for concurrent handlers) and — defensively —
+    // to prevState inside setSyncState, so a concurrent update can't drop the change.
+    const applySrs = (items: StoredItem[]): StoredItem[] => items.map(item =>
+      idsToUpdate.has(item.data.id)
+        ? { ...item, srs: { ...updatedSRS, id: item.data.id }, updatedAt: now }
+        : item
+    );
+
+    const newItems = applySrs(baseItems);
+    latestItemsRef.current = newItems;
+    setSyncState(prevState => ({ ...prevState, items: applySrs(prevState.items) }));
+
+    const itemsToSync = newItems.filter(item => idsToUpdate.has(item.data.id));
+
+    // CRITICAL: save to IndexedDB immediately (primary persistence — never lose progress on a quick
+    // refresh / app switch). Throttle the lightweight localStorage cache write during rapid reviews.
+    srsSavePendingRef.current = true;
+    if (!srsSaveTimerRef.current) {
+      srsSaveTimerRef.current = setTimeout(() => {
+        srsSaveTimerRef.current = null;
+        srsSavePendingRef.current = false;
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(latestItemsRef.current)));
+        } catch (e) {
+          warn("Failed to update cache after SRS:", e);
+        }
+      }, 3000);
     }
-    
-    // Sync SRS updates to server immediately
+    try {
+      await userSaveData(newItems);
+      lastSaveTimeRef.current = Date.now();
+      log(`💾 Immediately saved SRS update to IndexedDB`);
+    } catch (e) {
+      logError('💾 Failed to save SRS update to IndexedDB:', e);
+    }
+
+    // Sync the changed items to the server immediately.
     if (itemsToSync.length > 0) {
       try {
         log(`Server: Immediately syncing ${itemsToSync.length} SRS updates`);
