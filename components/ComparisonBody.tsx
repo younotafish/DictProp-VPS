@@ -47,7 +47,7 @@ export const ComparisonBody: React.FC<{ result: ComparisonResult }> = ({ result 
       )}
 
       {/* Dimensions */}
-      {result.dimensions.map((dim, di) => {
+      {(result.dimensions ?? []).map((dim, di) => {
         const isCollapsed = collapsed.has(di);
         return (
           <div key={di} className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
@@ -79,7 +79,7 @@ export const ComparisonBody: React.FC<{ result: ComparisonResult }> = ({ result 
       })}
 
       {/* Contextual examples */}
-      {result.examples.length > 0 && (
+      {(result.examples?.length ?? 0) > 0 && (
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-100"><h4 className="font-bold text-slate-800 text-sm">Contextual Examples</h4></div>
           <div className="divide-y divide-slate-100">
@@ -107,7 +107,7 @@ export const ComparisonBody: React.FC<{ result: ComparisonResult }> = ({ result 
       )}
 
       {/* Common mistakes */}
-      {result.commonMistakes.length > 0 && (
+      {(result.commonMistakes?.length ?? 0) > 0 && (
         <div className="bg-amber-50 rounded-2xl border border-amber-200 overflow-hidden">
           <div className="px-5 py-4 border-b border-amber-200/60">
             <div className="flex items-center gap-2"><AlertTriangle size={16} className="text-amber-600" /><h4 className="font-bold text-amber-800 text-sm">Common Mistakes</h4></div>
