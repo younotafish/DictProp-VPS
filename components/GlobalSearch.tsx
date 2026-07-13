@@ -162,15 +162,36 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, []);
   useEffect(() => () => { if (statusTimer.current) clearTimeout(statusTimer.current); }, []);
 
-  // Fuzzy autocomplete over SAVED SENTENCES: as you type, suggest matching saved sentences to open
-  // for review. Purely local (works offline). Enter / the send button are untouched — they still run
-  // the real AI search; suggestions are click/tap only, so Enter is never hijacked.
+  // Fuzzy autocomplete over SAVED SENTENCES: as you type, suggest matching saved sentences. Navigate
+  // them with ↑/↓ or the mouse, and open one for review with Enter (on a highlight) or a click. Plain
+  // Enter with nothing highlighted still runs the real AI search. Purely local (works offline).
   const runSentenceSearch = useSentenceSearch(sentenceItems || []);
   const deferredQuery = useDeferredValue(query);
   const suggestions = useMemo(
     () => (mode === 'input' && onOpenSentence && deferredQuery.trim() ? runSentenceSearch(deferredQuery, 6) : []),
     [mode, onOpenSentence, deferredQuery, runSentenceSearch],
   );
+  // Which suggestion is highlighted for keyboard/mouse navigation (-1 = none → plain Enter AI-searches).
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const suggestionsListRef = useRef<HTMLDivElement>(null);
+  // Keep the highlight in range as the list changes, and scroll the highlighted row into view.
+  useEffect(() => { setHighlightedIndex(i => (i >= suggestions.length ? suggestions.length - 1 : i)); }, [suggestions.length]);
+  useEffect(() => {
+    if (highlightedIndex < 0) return;
+    const el = suggestionsListRef.current?.children[highlightedIndex] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [highlightedIndex]);
+
+  // Open a matched sentence for review and FULLY dismiss the search (close + clear query + reset
+  // highlight) — jumping to a card must never leave the search box/dropdown "locked" open behind it.
+  const openSuggestion = useCallback((idx: number) => {
+    const s = suggestions[idx];
+    if (!s || !onOpenSentence) return;
+    setMode('idle');
+    setQuery('');
+    setHighlightedIndex(-1);
+    onOpenSentence(suggestions, idx);
+  }, [suggestions, onOpenSentence]);
 
   // Derived state — searches AND comparisons are both queue items, so all counts include both.
   const readyItems = queue.filter(q => q.status === 'ready');
@@ -424,6 +445,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         if (mode === 'input') {
           e.preventDefault();
           e.stopImmediatePropagation();
+          // Esc clears the typed query AND closes the box — don't leave the searched content behind.
+          setQuery('');
+          setHighlightedIndex(-1);
           setMode('idle');
         } else if (mode === 'viewing') {
           e.preventDefault();
@@ -729,20 +753,21 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       {/* Input overlay */}
       {mode === 'input' && (
         <div className="fixed bottom-20 right-4 left-4 z-[56] animate-in slide-in-from-bottom-2 duration-200">
-          {/* Saved-sentence suggestions (fuzzy). Click to open one for review; Enter/→ still AI-search. */}
+          {/* Saved-sentence suggestions (fuzzy). ↑/↓ or hover to highlight; Enter/click opens the card. */}
           {suggestions.length > 0 && (
             <div className="max-w-md ml-auto mb-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-1 duration-150">
               <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
                 Saved sentences
               </div>
-              <div className="max-h-64 overflow-y-auto overscroll-contain">
+              <div ref={suggestionsListRef} className="max-h-64 overflow-y-auto overscroll-contain">
                 {suggestions.map((s, idx) => {
                   const d = s.data as SentenceData;
                   return (
                     <button
                       key={d.id}
-                      onClick={() => { setMode('idle'); setQuery(''); onOpenSentence!(suggestions, idx); }}
-                      className="w-full text-left px-3 py-2 flex items-start gap-2 hover:bg-indigo-50 transition-colors border-b border-slate-50 last:border-0"
+                      onClick={() => openSuggestion(idx)}
+                      onMouseEnter={() => setHighlightedIndex(idx)}
+                      className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors border-b border-slate-50 last:border-0 ${idx === highlightedIndex ? 'bg-indigo-50' : 'hover:bg-indigo-50'}`}
                     >
                       <MessageSquareQuote size={14} className="text-indigo-400 shrink-0 mt-0.5" />
                       <span className="flex-1 min-w-0">
@@ -763,13 +788,35 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               ref={inputRef}
               type="text"
               value={query}
-              onChange={e => setQuery(e.target.value)}
+              onChange={e => { setQuery(e.target.value); setHighlightedIndex(-1); }}
               onKeyDown={e => {
-                if (e.key === 'Enter' && query.trim()) {
+                // ↑/↓ move the highlight through the saved-sentence suggestions.
+                if (e.key === 'ArrowDown' && suggestions.length > 0) {
                   e.preventDefault();
-                  handleSubmit();
+                  setHighlightedIndex(i => (i + 1) % suggestions.length);
+                  return;
+                }
+                if (e.key === 'ArrowUp' && suggestions.length > 0) {
+                  e.preventDefault();
+                  setHighlightedIndex(i => (i <= 0 ? suggestions.length - 1 : i - 1));
+                  return;
+                }
+                if (e.key === 'Enter') {
+                  // A highlighted suggestion → jump to that card; otherwise run the real AI search.
+                  if (highlightedIndex >= 0 && suggestions[highlightedIndex]) {
+                    e.preventDefault();
+                    openSuggestion(highlightedIndex);
+                  } else if (query.trim()) {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                  return;
                 }
                 if (e.key === 'Escape') {
+                  // Esc clears the typed query AND closes the box (not just close).
+                  e.preventDefault();
+                  setQuery('');
+                  setHighlightedIndex(-1);
                   setMode('idle');
                 }
               }}
