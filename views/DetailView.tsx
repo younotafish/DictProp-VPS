@@ -310,6 +310,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [imageDragOver, setImageDragOver] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
+  // Per-sentence image-reload counter. Bumped ONLY when an image is (re)attached, so the OfflineImage
+  // key changes on a real image change but NOT on an SRS review (which merely bumps the item's
+  // updatedAt). Keying on updatedAt made every "Remember" remount + re-fade the picture — the flash.
+  const [imageReloadTick, setImageReloadTick] = useState<Record<string, number>>({});
   // Synchronous re-entrancy guard: a single ⌘V while the panel is focused fires BOTH the window `paste`
   // listener and the panel's onPaste. Setting this synchronously (before the first await) makes the
   // second call in the same dispatch see `true` and bail — so we never double-upload the same image.
@@ -328,6 +332,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
     try {
       const dataUri = await fileToDataUri(file);
       await onAttachImage(target, dataUri);
+      // The image for this sentence just changed on disk (IDB) — force just this one to reload now.
+      setImageReloadTick(t => ({ ...t, [target.data.id]: (t[target.data.id] ?? 0) + 1 }));
       setShowImagePanel(false);
     } catch (e) {
       warn('Failed to attach sentence image', e);
@@ -1772,7 +1778,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     <div data-sentence-image className="w-full md:w-2/5 lg:w-1/2 md:shrink-0 flex justify-center">
                       <div className="w-full max-w-md md:max-w-none rounded-2xl overflow-hidden bg-slate-100 shadow-sm flex items-center justify-center">
                         <OfflineImage
-                          key={`${currentSentence.data.id}:${currentSentence.updatedAt ?? 0}`}
+                          key={`${currentSentence.data.id}:${imageReloadTick[currentSentence.data.id] ?? 0}`}
                           src={sentenceImageDirectSrc}
                           itemId={currentSentence.data.id}
                           alt="Attached image for this sentence"
