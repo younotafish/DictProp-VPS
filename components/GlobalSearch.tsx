@@ -1,12 +1,13 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles, Scale, BookmarkPlus } from 'lucide-react';
-import { SearchResult, VocabCard, StoredItem, ComparisonResult, comparisonKey } from '../types';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue } from 'react';
+import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles, Scale, BookmarkPlus, MessageSquareQuote } from 'lucide-react';
+import { SearchResult, VocabCard, StoredItem, SentenceData, ComparisonResult, comparisonKey } from '../types';
 import { analyzeInput, detectVocabulary, generateIllustration, compareWords } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { ComparisonBody } from './ComparisonBody';
 import { makeVocabStoredItem } from '../services/items';
 import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/neuralTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
+import { useSentenceSearch } from '../services/sentenceSearch';
 import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';
 import { log, warn } from '../services/logger';
 
@@ -43,6 +44,10 @@ interface Props {
   onCompareReady?: (words: string[], result: ComparisonResult) => void;
   /** Compare from within a search-result card (parity with the notebook detail card). */
   onCompare?: (words: string[]) => void;
+  /** Saved sentences to fuzzy-match as you type (autocomplete dropdown). */
+  sentenceItems?: StoredItem[];
+  /** Open a matched saved sentence for review (reuses the Sentences-tab open path). */
+  onOpenSentence?: (ordered: StoredItem[], index: number) => void;
 }
 
 let queueIdCounter = 0;
@@ -98,7 +103,7 @@ const describeError = (query: string, err: any): string => {
   return `Couldn't analyze "${query}" — please try again.`;
 };
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -156,6 +161,16 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     statusTimer.current = setTimeout(() => setStatusToast(null), 3500);
   }, []);
   useEffect(() => () => { if (statusTimer.current) clearTimeout(statusTimer.current); }, []);
+
+  // Fuzzy autocomplete over SAVED SENTENCES: as you type, suggest matching saved sentences to open
+  // for review. Purely local (works offline). Enter / the send button are untouched — they still run
+  // the real AI search; suggestions are click/tap only, so Enter is never hijacked.
+  const runSentenceSearch = useSentenceSearch(sentenceItems || []);
+  const deferredQuery = useDeferredValue(query);
+  const suggestions = useMemo(
+    () => (mode === 'input' && onOpenSentence && deferredQuery.trim() ? runSentenceSearch(deferredQuery, 6) : []),
+    [mode, onOpenSentence, deferredQuery, runSentenceSearch],
+  );
 
   // Derived state — searches AND comparisons are both queue items, so all counts include both.
   const readyItems = queue.filter(q => q.status === 'ready');
@@ -714,6 +729,34 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       {/* Input overlay */}
       {mode === 'input' && (
         <div className="fixed bottom-20 right-4 left-4 z-[56] animate-in slide-in-from-bottom-2 duration-200">
+          {/* Saved-sentence suggestions (fuzzy). Click to open one for review; Enter/→ still AI-search. */}
+          {suggestions.length > 0 && (
+            <div className="max-w-md ml-auto mb-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-1 duration-150">
+              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                Saved sentences
+              </div>
+              <div className="max-h-64 overflow-y-auto overscroll-contain">
+                {suggestions.map((s, idx) => {
+                  const d = s.data as SentenceData;
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => { setMode('idle'); setQuery(''); onOpenSentence!(suggestions, idx); }}
+                      className="w-full text-left px-3 py-2 flex items-start gap-2 hover:bg-indigo-50 transition-colors border-b border-slate-50 last:border-0"
+                    >
+                      <MessageSquareQuote size={14} className="text-indigo-400 shrink-0 mt-0.5" />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-sm text-slate-700 line-clamp-2">{stripSentenceMarkers(d.text)}</span>
+                        {d.sourceWord && (
+                          <span className="mt-0.5 inline-block text-[11px] text-indigo-500 font-medium">{d.sourceWord}</span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 flex items-center gap-2 px-4 py-3 max-w-md ml-auto">
             <Search size={18} className="text-slate-400 shrink-0" />
             <input

@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useDeferredValue } from 'react';
 import { StoredItem, isSentenceItem, SentenceData } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { MessageSquareQuote, Check, Trash2 } from 'lucide-react';
+import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
 import { barColorFor } from '../components/mastery';
+import { useSentenceSearch } from '../services/sentenceSearch';
 
 interface SentencesViewProps {
   items: StoredItem[];
@@ -37,6 +38,11 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   type SentenceFilter = 'all' | 'unreviewed' | 'due' | 'memorized';
   const [filter, setFilter] = useState<SentenceFilter>('all');
 
+  // Fuzzy search: narrows the list live as you type; Enter runs a real AI search of the typed text.
+  const [searchQuery, setSearchQuery] = useState('');
+  const deferredQuery = useDeferredValue(searchQuery);
+  const runSentenceSearch = useSentenceSearch(items);
+
   // Bucket each active sentence by review state — every sentence is exactly one of:
   //   unreviewed — never tapped "Reviewed" (totalReviews 0)
   //   due        — reviewed before and due again now (nextReview ≤ now)
@@ -55,20 +61,29 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   // Match the Notebook word-item ordering: least-memorized first (memoryStrength ASC), ties broken by
   // most-recently added (savedAt DESC — newest on top). Filtered by the selected review state first.
   const sorted = useMemo(() => {
-    const pass = (s: StoredItem): boolean => {
-      if (filter === 'all') return true;
-      const reviews = s.srs?.totalReviews ?? 0;
-      if (filter === 'unreviewed') return reviews === 0;
-      if (filter === 'due') return reviews > 0 && (s.srs?.nextReview ?? 0) <= now;
-      return reviews > 0 && (s.srs?.nextReview ?? 0) > now; // memorized
-    };
-    return activeItems.filter(pass).sort((a, b) => {
+    const q = deferredQuery.trim();
+    let base: StoredItem[];
+    if (q) {
+      // A search overrides the review-state chips so a match surfaces regardless of the active tab.
+      const matchIds = new Set(runSentenceSearch(deferredQuery).map(i => i.data.id));
+      base = activeItems.filter(s => matchIds.has(s.data.id));
+    } else {
+      const pass = (s: StoredItem): boolean => {
+        if (filter === 'all') return true;
+        const reviews = s.srs?.totalReviews ?? 0;
+        if (filter === 'unreviewed') return reviews === 0;
+        if (filter === 'due') return reviews > 0 && (s.srs?.nextReview ?? 0) <= now;
+        return reviews > 0 && (s.srs?.nextReview ?? 0) > now; // memorized
+      };
+      base = activeItems.filter(pass);
+    }
+    return base.sort((a, b) => {
       const strengthA = a.srs?.memoryStrength ?? 0;
       const strengthB = b.srs?.memoryStrength ?? 0;
       if (strengthA !== strengthB) return strengthA - strengthB;
       return (b.savedAt || 0) - (a.savedAt || 0);
     });
-  }, [activeItems, filter, now]);
+  }, [activeItems, filter, now, deferredQuery, runSentenceSearch]);
 
   const formatDue = (ts: number) => {
     const diff = ts - Date.now();
@@ -95,6 +110,33 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               </span>
             )}
           </div>
+          {/* Fuzzy search over saved sentences — narrows the list live; Enter runs a real AI search. */}
+          <div className="relative mt-2">
+            <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && searchQuery.trim()) { e.preventDefault(); onSearch(searchQuery.trim()); }
+                if (e.key === 'Escape') setSearchQuery('');
+              }}
+              placeholder="Search saved sentences…"
+              className="w-full pl-8 pr-8 py-2 text-sm rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-indigo-300 outline-none text-slate-700 placeholder:text-slate-400 transition-colors"
+              autoComplete="off"
+              autoCapitalize="off"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                title="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </div>
+
           {/* Review-state filters — default 'all' (current status) */}
           <div className="flex items-center gap-1.5 mt-2 overflow-x-auto no-scrollbar">
             {([
@@ -129,7 +171,12 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
       {sorted.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
           <MessageSquareQuote size={48} className="text-slate-200 mb-4" />
-          {activeItems.length === 0 ? (
+          {deferredQuery.trim() ? (
+            <>
+              <p className="text-slate-400 text-sm">No sentences match “{deferredQuery.trim()}”</p>
+              <p className="text-slate-300 text-xs mt-1">Press Enter to look it up with AI instead</p>
+            </>
+          ) : activeItems.length === 0 ? (
             <>
               <p className="text-slate-400 text-sm">No saved sentences yet</p>
               <p className="text-slate-300 text-xs mt-1">
