@@ -46,13 +46,18 @@ self.addEventListener('fetch', (event) => {
   if (req.mode === 'navigate') {
     event.respondWith(
       (async () => {
+        const cache = await caches.open(CACHE);
         try {
           const fresh = await fetch(req);
-          const cache = await caches.open(CACHE);
-          cache.put('/', fresh.clone()).catch(() => {});
-          return fresh;
+          // Only ever cache a genuine shell. During a redeploy the server can answer with a 502/500;
+          // caching that as '/' would poison every future offline launch, so keep the last good shell
+          // and serve it instead of the error page whenever we have one.
+          if (fresh.ok) {
+            cache.put('/', fresh.clone()).catch(() => {});
+            return fresh;
+          }
+          return (await cache.match('/')) || fresh;
         } catch {
-          const cache = await caches.open(CACHE);
           return (await cache.match('/')) || (await cache.match(req)) || Response.error();
         }
       })(),
