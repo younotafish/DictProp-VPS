@@ -102,10 +102,14 @@ authRoutes.get('/callback', async (c) => {
     picture?: string;
     iss: string;
     aud: string;
+    exp?: number;
+    email_verified?: boolean;
   };
 
   // Basic validation
-  if (payload.iss !== 'https://accounts.google.com' || payload.aud !== env.GOOGLE_CLIENT_ID) {
+  if (payload.iss !== 'https://accounts.google.com' || payload.aud !== env.GOOGLE_CLIENT_ID ||
+      !payload.exp || payload.exp * 1000 <= Date.now() || payload.email_verified !== true ||
+      typeof payload.sub !== 'string' || !payload.sub || typeof payload.email !== 'string' || !payload.email) {
     return c.json({ error: 'Invalid id_token claims' }, 400);
   }
 

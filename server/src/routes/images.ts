@@ -6,6 +6,18 @@ export const imageRoutes = new Hono();
 
 const DEEPINFRA_FLUX_URL = 'https://api.deepinfra.com/v1/inference/black-forest-labs/FLUX-1-schnell';
 const REPLICATE_FLUX_URL = 'https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions';
+const IMAGE_TIMEOUT_MS = 60_000;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+  try {
+    return await proxyFetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function getImageDimensions(aspectRatio: string): { width: number; height: number } {
   switch (aspectRatio) {
@@ -20,8 +32,9 @@ function getImageDimensions(aspectRatio: string): { width: number; height: numbe
 
 // POST /api/generate-image
 imageRoutes.post('/generate-image', async (c) => {
-  const { prompt, aspectRatio = '1:1' } = await c.req.json();
-  if (!prompt) return c.json({ error: 'Prompt is required' }, 400);
+  const { prompt, aspectRatio = '1:1' } = await c.req.json().catch(() => ({}));
+  if (typeof prompt !== 'string' || !prompt.trim()) return c.json({ error: 'Prompt is required' }, 400);
+  if (prompt.length > 2000) return c.json({ error: 'Prompt is too long' }, 400);
 
   const styledPrompt = `(Icon style), minimal vector art, flat design, ${prompt}. solid background. No text.`;
   const dimensions = getImageDimensions(aspectRatio);
@@ -31,7 +44,7 @@ imageRoutes.post('/generate-image', async (c) => {
   if (deepinfraKey) {
     try {
       console.log('Generating with DeepInfra FLUX Schnell...');
-      const response = await proxyFetch(DEEPINFRA_FLUX_URL, {
+      const response = await fetchWithTimeout(DEEPINFRA_FLUX_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${deepinfraKey}`,
@@ -75,7 +88,7 @@ imageRoutes.post('/generate-image', async (c) => {
 
   try {
     console.log('Trying Replicate FLUX Schnell (fallback)...');
-    const response = await proxyFetch(REPLICATE_FLUX_URL, {
+    const response = await fetchWithTimeout(REPLICATE_FLUX_URL, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${replicateKey}`,
@@ -105,12 +118,18 @@ imageRoutes.post('/generate-image', async (c) => {
 
     if (prediction.status === 'succeeded' && prediction.output?.length > 0) {
       const imageUrl = prediction.output[0];
-      const imageResponse = await proxyFetch(imageUrl);
+      const imageResponse = await fetchWithTimeout(imageUrl);
       if (!imageResponse.ok) throw new Error('Failed to fetch generated image');
 
+      const declaredLength = Number(imageResponse.headers.get('content-length') || '0');
+      if (declaredLength > MAX_IMAGE_BYTES) throw new Error('Generated image is too large');
       const arrayBuffer = await imageResponse.arrayBuffer();
+      if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) throw new Error('Generated image is too large');
       const base64 = Buffer.from(arrayBuffer).toString('base64');
-      const mimeType = imageResponse.headers.get('content-type') || 'image/webp';
+      const mimeType = (imageResponse.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+      if (!/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType)) {
+        throw new Error('Generated response was not an image');
+      }
       return c.json({ imageData: `data:${mimeType};base64,${base64}` });
     }
 

@@ -527,6 +527,7 @@ export const getItemContentHash = (item: StoredItem): string => {
     srs: item.srs,
     isDeleted: item.isDeleted,
     isArchived: item.isArchived,
+    project: item.project,
   };
 
   const hash = hashString(JSON.stringify(contentToHash));

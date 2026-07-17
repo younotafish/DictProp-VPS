@@ -169,14 +169,19 @@ function validateVocabCard(vocab: any): boolean {
     if (typeof vocab[f] !== 'string') return false;
   }
   for (const f of ['forms', 'synonyms', 'antonyms', 'confusables', 'examples']) {
-    if (!Array.isArray(vocab[f])) return false;
+    if (!Array.isArray(vocab[f]) || !vocab[f].every((value: unknown) => typeof value === 'string')) return false;
   }
+  if (vocab.wordFamily !== undefined && (
+    !Array.isArray(vocab.wordFamily) ||
+    !vocab.wordFamily.every((entry: any) => entry && typeof entry.word === 'string' &&
+      typeof entry.pos === 'string' && typeof entry.chinese === 'string')
+  )) return false;
   return true;
 }
 
 function validateWordModeResponse(data: any): boolean {
   if (!data || !Array.isArray(data.vocabs) || data.vocabs.length === 0) return false;
-  return validateVocabCard(data.vocabs[0]);
+  return data.vocabs.every(validateVocabCard);
 }
 
 function validateSentenceModeResponse(data: any): boolean {
@@ -185,7 +190,7 @@ function validateSentenceModeResponse(data: any): boolean {
     if (typeof data[f] !== 'string') return false;
   }
   if (!Array.isArray(data.vocabs)) return false;
-  if (data.vocabs.length > 0 && !validateVocabCard(data.vocabs[0])) return false;
+  if (!data.vocabs.every(validateVocabCard)) return false;
   return true;
 }
 
@@ -597,6 +602,9 @@ aiRoutes.post('/analyze', async (c) => {
   if (!text || typeof text !== 'string') {
     return c.json(errorResponse('Missing "text" field', 400), 400);
   }
+  if (text.trim().length > 5000) {
+    return c.json(errorResponse('Text is too long (maximum 5000 characters).', 400), 400);
+  }
 
   const isBatch = mode === 'batch';
   const originalQuery = containsChinese(text) ? text : undefined;
@@ -695,11 +703,11 @@ aiRoutes.post('/compare', async (c) => {
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
   const { words } = await c.req.json().catch(() => ({}));
-  if (!words || !Array.isArray(words) || words.length < 2) {
+  if (!words || !Array.isArray(words) || words.length < 2 || words.length > 3) {
     return c.json(errorResponse('Please provide at least 2 words to compare.', 400), 400);
   }
 
-  const cleanWords = words.map((w: any) => (typeof w === 'string' ? w.trim() : '')).filter((w: string) => w.length > 0);
+  const cleanWords = words.map((w: any) => (typeof w === 'string' ? w.trim() : '')).filter((w: string) => w.length > 0 && w.length <= 100);
   if (cleanWords.length < 2) {
     return c.json(errorResponse('Please provide at least 2 valid words.', 400), 400);
   }

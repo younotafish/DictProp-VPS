@@ -92,12 +92,16 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // to fit within Safari's 5MB limit. If those stripped items enter the merge
       // (e.g., after iOS clears IDB under storage pressure), we must detect and
       // preserve the version that has full content.
-      const localDataFields = localItem.data as any;
-      const remoteDataFields = remoteItem.data as any;
-      const localHasContent = !!(localDataFields.definition || localDataFields.history || localDataFields.grammar ||
-                                (Array.isArray(localDataFields.examples) && localDataFields.examples.length > 0));
-      const remoteHasContent = !!(remoteDataFields.definition || remoteDataFields.history || remoteDataFields.grammar ||
-                                (Array.isArray(remoteDataFields.examples) && remoteDataFields.examples.length > 0));
+      const hasFullContent = (item: StoredItem): boolean => {
+        const data = item.data as any;
+        if (item.type === 'sentence') return typeof data.text === 'string' && data.text.trim().length > 0;
+        if (item.type === 'phrase') {
+          return typeof data.grammar === 'string' || Array.isArray(data.vocabs);
+        }
+        return typeof data.definition === 'string' || Array.isArray(data.examples);
+      };
+      const localHasContent = hasFullContent(localItem);
+      const remoteHasContent = hasFullContent(remoteItem);
 
       if (localTime > remoteTime) {
           // Only use local data if it has full content, OR remote also lacks content
@@ -158,11 +162,22 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
           finalData.imageUrl = remoteData.imageUrl;
       }
       
-      // Phrase Vocabs Images - same logic: LOCAL WINS
+      // Phrase vocab arrays can be reordered when content is refreshed. Reconcile
+      // images by stable vocab id, never by array position.
       if (mergedItem.type === 'phrase' && Array.isArray(finalData.vocabs)) {
-          finalData.vocabs.forEach((vocab: any, index: number) => {
-               const localVocab = Array.isArray(localData.vocabs) ? localData.vocabs[index] : null;
-               const remoteVocab = Array.isArray(remoteData.vocabs) ? remoteData.vocabs[index] : null;
+          const localVocabs = new Map(
+            (Array.isArray(localData.vocabs) ? localData.vocabs : [])
+              .filter((v: any) => v?.id)
+              .map((v: any) => [v.id, v]),
+          );
+          const remoteVocabs = new Map(
+            (Array.isArray(remoteData.vocabs) ? remoteData.vocabs : [])
+              .filter((v: any) => v?.id)
+              .map((v: any) => [v.id, v]),
+          );
+          finalData.vocabs.forEach((vocab: any) => {
+               const localVocab: any = localVocabs.get(vocab?.id);
+               const remoteVocab: any = remoteVocabs.get(vocab?.id);
                
                // Local image always wins
                if (localVocab?.imageUrl) {

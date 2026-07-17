@@ -1948,17 +1948,28 @@ const App: React.FC = () => {
       }
       log('⭐ handleSave: saving', incomingTitle, 'type:', item.type, 'id:', item.data.id);
 
+      // Resolve title-based duplicates before offloading images. The saved item's
+      // stable id is also the image key, so uploading under a transient AI id would
+      // orphan the new image when the content is merged into an existing card.
+      const incomingSense = isVocabItem(item) ? (item.data.sense || '') : '';
+      const canonicalExisting = latestItemsRef.current.find(existing => {
+        if (existing.data.id === item.data.id) return true;
+        if (existing.type !== item.type || getItemSpelling(existing) !== incomingTitle) return false;
+        return !isVocabItem(item) || (isVocabItem(existing) && (existing.data.sense || '') === incomingSense);
+      });
+      const canonicalItemId = canonicalExisting?.data.id || item.data.id;
+
       // Offload any base64 images to IDB before putting into state
       const imagesToSave: Array<{ id: string; base64: string }> = [];
       let data = item.data;
       if (isVocabItem(item) && (data as VocabCard).imageUrl?.startsWith('data:image/')) {
-        imagesToSave.push({ id: data.id, base64: (data as VocabCard).imageUrl! });
+        imagesToSave.push({ id: canonicalItemId, base64: (data as VocabCard).imageUrl! });
         data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
       }
       if (isPhraseItem(item)) {
         const sr = data as SearchResult;
         if (sr.imageUrl?.startsWith('data:image/')) {
-          imagesToSave.push({ id: sr.id, base64: sr.imageUrl });
+          imagesToSave.push({ id: canonicalItemId, base64: sr.imageUrl });
           data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
         }
         if (sr.vocabs?.length) {
@@ -1996,6 +2007,7 @@ const App: React.FC = () => {
             const incomingSense = isVocabItem(item) ? (item.data.sense || '') : '';
             
             existingIndex = prevState.items.findIndex(i => {
+              if (i.type !== item.type) return false;
               const titleMatch = getItemSpelling(i) === incomingTitle;
               if (!titleMatch) return false;
               
@@ -2042,10 +2054,12 @@ const App: React.FC = () => {
           const newItems = [...prevState.items];
           newItems[existingIndex] = mergedItem;
           
-          return {
+          const nextState = {
             ...prevState,
             items: newItems
           };
+          latestItemsRef.current = newItems;
+          return nextState;
         } else {
           // New item
           
@@ -2071,10 +2085,13 @@ const App: React.FC = () => {
             updatedAt: now
           };
           
-          return {
+          const newItems = [finalItem, ...prevState.items];
+          const nextState = {
             ...prevState,
-            items: [finalItem, ...prevState.items]
+            items: newItems
           };
+          latestItemsRef.current = newItems;
+          return nextState;
         }
       });
     } catch (err) {

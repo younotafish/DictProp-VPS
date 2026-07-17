@@ -37,7 +37,8 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
     const arrayBuffer = await response.arrayBuffer();
     if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) return undefined;
     const base64 = Buffer.from(arrayBuffer).toString('base64');
-    const mimeType = response.headers.get('content-type') || 'image/png';
+    const mimeType = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+    if (!/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType)) return undefined;
     return `data:${mimeType};base64,${base64}`;
   } catch {
     return undefined;
@@ -98,7 +99,9 @@ itemsRoutes.get('/items/:id/image', (c) => {
   return new Response(binary, {
     headers: {
       'Content-Type': match[1],
-      'Cache-Control': 'public, max-age=86400, immutable',
+      // This is authenticated, user-owned content and the image may be regenerated
+      // at the same URL. Never allow a shared cache or immutable stale response.
+      'Cache-Control': 'private, max-age=300, must-revalidate',
     },
   });
 });
@@ -111,7 +114,8 @@ itemsRoutes.post('/items/images', async (c) => {
     return c.json({ error: 'Expected { ids: string[] }' }, 400);
   }
   // Cap at 20 per request to limit response size
-  const capped = ids.slice(0, 20);
+  const capped = Array.from(new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 200))).slice(0, 20);
+  if (capped.length === 0) return c.json({ error: 'Expected valid image ids' }, 400);
   const images = getItemImagesBatch(capped, userId);
   return c.json(images);
 });
@@ -138,7 +142,8 @@ itemsRoutes.put('/items/images', async (c) => {
   const images: Array<{ id: string; data: string }> = [];
   for (const [id, val] of Object.entries(body)) {
     if (images.length >= MAX_ENTRIES) break;
-    if (typeof val === 'string' && val.startsWith('data:image/') && val.length <= MAX_LEN) {
+    if (id.length > 0 && id.length <= 200 && typeof val === 'string' &&
+        /^data:image\/(?:avif|gif|jpeg|png|webp);base64,/.test(val) && val.length <= MAX_LEN) {
       images.push({ id, data: val });
     }
   }
