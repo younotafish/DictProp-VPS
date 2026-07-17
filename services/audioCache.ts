@@ -17,9 +17,9 @@
  *   • meta    : key -> { size, at }  (byte size + last-used ms), with a `by_at` index for LRU
  *   • timings : key -> WordTiming[]  (per-word alignment; ~0.4 KB, evicted alongside its audio)
  *
- * Budget: target ~1.5 GB, adaptively capped at ~70% of what navigator.storage.estimate() reports, so a
- * fuller/smaller device automatically uses less and we never push toward a hard failure. At ~25 KB/clip
- * that is ~60k clips — far beyond the current corpus, so in practice almost nothing re-downloads.
+ * Budget: target 512 MB, reduced dynamically to leave at least 20% of the origin quota free after
+ * accounting for non-audio storage (especially the item/image databases). At ~25 KB/clip the ceiling
+ * still holds roughly 20k clips, well beyond the current corpus.
  *
  * Everything degrades gracefully: if IndexedDB is unavailable (e.g. iOS Safari private mode) every call
  * no-ops (reads return null, writes are dropped) and callers fall straight through to the network — i.e.
@@ -37,8 +37,8 @@ const BY_AT = 'by_at';
 
 // Target ceiling before LRU eviction kicks in, and the fraction of the browser-reported quota we allow
 // ourselves at most (so audio never crowds out the rest of the origin's storage on a tight device).
-const TARGET_BUDGET_BYTES = 1.5 * 1024 * 1024 * 1024; // 1.5 GB
-const QUOTA_FRACTION = 0.7;
+const TARGET_BUDGET_BYTES = 512 * 1024 * 1024;
+const MAX_ORIGIN_FRACTION = 0.8;
 
 interface MetaRecord { size: number; at: number }
 
@@ -177,11 +177,15 @@ const scheduleEviction = (): void => {
   else setTimeout(run, 3000);
 };
 
-const computeBudget = async (): Promise<number> => {
+const computeBudget = async (currentAudioBytes: number): Promise<number> => {
   try {
     if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
-      const { quota } = await navigator.storage.estimate();
-      if (quota && isFinite(quota)) return Math.min(TARGET_BUDGET_BYTES, Math.floor(quota * QUOTA_FRACTION));
+      const { quota, usage } = await navigator.storage.estimate();
+      if (quota && isFinite(quota)) {
+        const nonAudioUsage = Math.max(0, (usage || 0) - currentAudioBytes);
+        const roomAfterOtherData = Math.max(0, quota * MAX_ORIGIN_FRACTION - nonAudioUsage);
+        return Math.min(TARGET_BUDGET_BYTES, Math.floor(roomAfterOtherData));
+      }
     }
   } catch { /* ignore — use the static target */ }
   return TARGET_BUDGET_BYTES;
@@ -203,7 +207,8 @@ const totalBytes = (db: IDBDatabase): Promise<number> =>
 const evictToBudget = async (): Promise<void> => {
   try {
     const db = await getDB();
-    const [budget, total] = await Promise.all([computeBudget(), totalBytes(db)]);
+    const total = await totalBytes(db);
+    const budget = await computeBudget(total);
     if (total > budget) await deleteOldest(db, total - budget);
   } catch (e) {
     warn('🔊 Audio cache: eviction failed', e);

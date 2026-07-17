@@ -3,7 +3,8 @@ import { log, warn, error as logError } from './logger';
 
 const DB_NAME = 'PopDictDB';
 const STORE_NAME = 'library';
-const DB_VERSION = 2; // Keep at 2 for compatibility
+const ITEM_UPDATES_STORE = 'item_updates';
+const DB_VERSION = 3;
 
 // Base key - will be suffixed with userId
 const BASE_DATA_KEY = 'items';
@@ -14,6 +15,7 @@ const getStorageKey = (userId: string = 'vps') => `${BASE_DATA_KEY}_${userId}`;
 // Fallback storage for iOS Safari private mode
 let inMemoryStorage: Record<string, StoredItem[]> = {};
 let indexedDBAvailable: boolean | null = null;
+let dbPromise: Promise<IDBDatabase> | null = null;
 
 const checkIndexedDBAvailability = async (): Promise<boolean> => {
   if (indexedDBAvailable !== null) return indexedDBAvailable;
@@ -45,7 +47,8 @@ const checkIndexedDBAvailability = async (): Promise<boolean> => {
 };
 
 const getDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
         reject(new Error("IndexedDB not supported"));
         return;
@@ -55,7 +58,15 @@ const getDB = (): Promise<IDBDatabase> => {
       warn("IndexedDB open failed, will use in-memory fallback");
       reject(request.error);
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onblocked = () => reject(new Error('IndexedDB upgrade blocked by another tab'));
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
       
@@ -68,11 +79,20 @@ const getDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains('images')) {
         db.createObjectStore('images');
       }
+
+      // Small write-ahead journal for review updates. A memorization tap writes
+      // only the affected items here; the next full snapshot save compacts it.
+      if (!db.objectStoreNames.contains(ITEM_UPDATES_STORE)) {
+        const updates = db.createObjectStore(ITEM_UPDATES_STORE, { keyPath: 'key' });
+        updates.createIndex('userId', 'userId');
+      }
     };
   });
+  dbPromise.catch(() => { dbPromise = null; });
+  return dbPromise;
 };
 
-export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> => {
+const loadSnapshot = async (userId: string = 'vps'): Promise<StoredItem[]> => {
   const idbAvailable = await checkIndexedDBAvailability();
   const storageKey = getStorageKey(userId);
   
@@ -161,6 +181,59 @@ export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> =>
   }
 };
 
+const loadItemUpdates = async (userId: string): Promise<StoredItem[]> => {
+  if (!(await checkIndexedDBAvailability())) return [];
+  try {
+    const db = await getDB();
+    return await new Promise<StoredItem[]>((resolve, reject) => {
+      const tx = db.transaction(ITEM_UPDATES_STORE, 'readonly');
+      const request = tx.objectStore(ITEM_UPDATES_STORE).index('userId').getAll(userId);
+      request.onsuccess = () => resolve(
+        (request.result as Array<{ item?: StoredItem }>).map(record => record.item).filter(Boolean) as StoredItem[],
+      );
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    warn('Failed to load pending item updates', error);
+    return [];
+  }
+};
+
+export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> => {
+  const [snapshot, updates] = await Promise.all([loadSnapshot(userId), loadItemUpdates(userId)]);
+  if (updates.length === 0) return snapshot;
+
+  const byId = new Map(snapshot.map(item => [item.data.id, item]));
+  for (const item of updates) byId.set(item.data.id, item);
+  return Array.from(byId.values());
+};
+
+/** Persist a small set of changed items immediately without rewriting the full library snapshot. */
+export const saveItemUpdates = async (
+  items: StoredItem[],
+  userId: string = 'vps',
+): Promise<void> => {
+  if (items.length === 0) return;
+  if (!(await checkIndexedDBAvailability())) {
+    const byId = new Map((inMemoryStorage[userId] || []).map(item => [item.data.id, item]));
+    for (const item of items) byId.set(item.data.id, item);
+    inMemoryStorage[userId] = Array.from(byId.values());
+    return;
+  }
+
+  const db = await getDB();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(ITEM_UPDATES_STORE, 'readwrite');
+    const store = tx.objectStore(ITEM_UPDATES_STORE);
+    for (const item of items) {
+      store.put({ key: `${userId}:${item.data.id}`, userId, item });
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+};
+
 export const saveData = async (items: StoredItem[], userId: string = 'vps'): Promise<void> => {
   const idbAvailable = await checkIndexedDBAvailability();
   const storageKey = getStorageKey(userId);
@@ -180,13 +253,23 @@ export const saveData = async (items: StoredItem[], userId: string = 'vps'): Pro
   try {
     const db = await getDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const tx = db.transaction([STORE_NAME, ITEM_UPDATES_STORE], 'readwrite');
       const store = tx.objectStore(STORE_NAME);
-      const request = store.put(items, storageKey);
-      request.onsuccess = () => {
-          resolve();
+      store.put(items, storageKey);
+
+      // The full snapshot now contains every journaled update, so clear this
+      // user's entries in the same atomic transaction.
+      const updates = tx.objectStore(ITEM_UPDATES_STORE).index('userId').openKeyCursor(userId);
+      updates.onsuccess = () => {
+        const cursor = updates.result;
+        if (cursor) {
+          tx.objectStore(ITEM_UPDATES_STORE).delete(cursor.primaryKey);
+          cursor.continue();
+        }
       };
-      request.onerror = () => reject(request.error);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
     });
   } catch (error) {
     logError("IDB Save Error", error);

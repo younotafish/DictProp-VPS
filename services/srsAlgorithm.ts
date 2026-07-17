@@ -16,6 +16,24 @@ const SCHEDULE = [1, 2, 3, 5, 7, 12, 20, 25, 47, 84, 143, 180];
 
 export class SRSAlgorithm {
   /**
+   * Select the authoritative item when shared-SRS siblings have drifted.
+   * A recent overdue review may legitimately lower totalReviews, so recency
+   * must win before progress depth.
+   */
+  static selectCanonical<T extends { srs?: SRSData }>(items: readonly T[]): T {
+    if (items.length === 0) throw new Error('Cannot select SRS from an empty collection');
+    return items.reduce((best, candidate) => {
+      const bestReview = best.srs?.lastReviewDate || 0;
+      const candidateReview = candidate.srs?.lastReviewDate || 0;
+      if (candidateReview !== bestReview) return candidateReview > bestReview ? candidate : best;
+
+      const bestCount = best.srs?.totalReviews || 0;
+      const candidateCount = candidate.srs?.totalReviews || 0;
+      return candidateCount > bestCount ? candidate : best;
+    });
+  }
+
+  /**
    * Migrate old SRS data format to new format.
    * Strips legacy fields and infers schedule step from totalReviews/stability.
    */

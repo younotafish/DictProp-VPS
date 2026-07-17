@@ -3,7 +3,8 @@
  * In production, all logs are silenced to keep the console clean.
  */
 
-const isDev = import.meta.env.DEV;
+const isDev = import.meta.env?.DEV ??
+  (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production');
 
 /**
  * Log informational messages (development only)

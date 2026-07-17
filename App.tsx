@@ -6,7 +6,7 @@ import { DetailView } from './views/DetailView';
 import { KeyboardHelpModal } from './components/KeyboardHelpModal';
 import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, ProjectInfo, StoredComparison, ComparisonResult, comparisonKey } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
-import { loadData, saveData, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
+import { loadData, saveData, saveItemUpdates, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi } from './services/api';
 import { stripSentenceMarkers } from './components/HighlightedSentence';
@@ -53,6 +53,13 @@ const createLightweightCache = (items: StoredItem[]): any[] =>
         })),
         timestamp: item.data.timestamp,
       };
+    } else if (isSentenceItem(item)) {
+      entry.data = {
+        id: item.data.id,
+        text: item.data.text,
+        sourceWord: item.data.sourceWord,
+        sourceSense: item.data.sourceSense,
+      };
     } else {
       const vocab = item.data as VocabCard;
       entry.data = {
@@ -79,21 +86,7 @@ function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
   const updates = new Map<string, SRSData>();
   groups.forEach(siblings => {
     if (siblings.length <= 1) return;
-    // Pick the most ADVANCED sibling as canonical (highest totalReviews).
-    // Tiebreaker: most recent lastReviewDate. Prefer active (non-archived) siblings.
-    // This prevents un-reviewed items (which have lastReviewDate set to creation time)
-    // from becoming canonical and regressing reviewed siblings to "due" status.
-    const activeSiblings = siblings.filter(s => !s.isArchived);
-    const candidatePool = activeSiblings.length > 0 ? activeSiblings : siblings;
-    const canonical = candidatePool.reduce((best, s) => {
-      const bReviews = best.srs?.totalReviews || 0;
-      const sReviews = s.srs?.totalReviews || 0;
-      if (sReviews !== bReviews) return sReviews > bReviews ? s : best;
-      // Tiebreaker: most recent lastReviewDate
-      const bDate = best.srs?.lastReviewDate || 0;
-      const sDate = s.srs?.lastReviewDate || 0;
-      return sDate > bDate ? s : best;
-    });
+    const canonical = SRSAlgorithm.selectCanonical(siblings);
     const canonicalSRS = SRSAlgorithm.ensure(canonical.srs, canonical.data.id, canonical.type);
     for (const s of siblings) {
       if (s.data.id === canonical.data.id) continue;
@@ -406,6 +399,36 @@ const App: React.FC = () => {
   // Incremented on every immediate push (SRS/delete/archive) so the debounced save
   // can detect a concurrent push happened during its async rehydration window.
   const syncGenerationRef = useRef(0);
+
+  const currentUserIdRef = useRef(authState.user?.id || 'vps');
+  currentUserIdRef.current = authState.user?.id || 'vps';
+
+  const markItemsSynced = (ids: Set<string>) => {
+    const mark = (items: StoredItem[]): StoredItem[] => items.map(item =>
+      ids.has(item.data.id) ? { ...item, lastSyncedHash: getItemContentHash(item) } : item
+    );
+    latestItemsRef.current = mark(latestItemsRef.current);
+    setSyncState(prevState => ({ ...prevState, items: mark(prevState.items) }));
+  };
+
+  // Durable local delta first, then immediate server sync. On network failure the
+  // item stays dirty and the normal debounce retries it later.
+  const persistChangedItems = async (items: StoredItem[], label: string): Promise<void> => {
+    if (items.length === 0) return;
+    try {
+      await saveItemUpdates(items, currentUserIdRef.current);
+    } catch (error) {
+      logError(`${label}: failed to journal local update`, error);
+    }
+
+    try {
+      syncGenerationRef.current++;
+      await saveItems(items);
+      markItemsSynced(new Set(items.map(item => item.data.id)));
+    } catch (error) {
+      logError(`${label}: immediate server sync failed`, error);
+    }
+  };
 
   // Throttle localStorage writes during rapid SRS updates (e.g. reviewing 20+ cards)
   const srsSavePendingRef = useRef(false);
@@ -1276,7 +1299,14 @@ const App: React.FC = () => {
         srs: item.srs,
         isDeleted: item.isDeleted || undefined,
         isArchived: item.isArchived || undefined,
-        data: { id: item.data.id, ...(item.type === 'phrase' ? { query: (item.data as any).query } : { word: (item.data as any).word, sense: (item.data as any).sense }) },
+        data: {
+          id: item.data.id,
+          ...(isPhraseItem(item)
+            ? { query: item.data.query }
+            : isSentenceItem(item)
+              ? { text: item.data.text, sourceWord: item.data.sourceWord, sourceSense: item.data.sourceSense }
+              : { word: getItemTitle(item), sense: getItemSense(item) }),
+        },
       }));
 
     // Binary search for max items that fit
@@ -2242,15 +2272,9 @@ const App: React.FC = () => {
     removeSentenceFromDetailContext(id);
 
     // Immediately sync deletion to server (don't wait for 5s debounce)
-    try {
-      if (itemWithDelete) {
-        log('🗑️ App: Immediately syncing deletion to server');
-        syncGenerationRef.current++;
-        await saveItems([itemWithDelete]);
-        itemWithDelete.lastSyncedHash = getItemContentHash(itemWithDelete);
-      }
-    } catch (e) {
-      logError('🗑️ App: Failed to sync deletion to server:', e);
+    if (itemWithDelete) {
+      log('🗑️ App: Immediately persisting deletion');
+      await persistChangedItems([itemWithDelete], 'Delete');
     }
   }, []);
 
@@ -2282,16 +2306,10 @@ const App: React.FC = () => {
     removeItemFromDetailContext(id);
 
     // Immediately sync archive to server
-    try {
-      const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
-      if (itemToSync) {
-        const itemWithArchive = { ...itemToSync, isArchived: true, updatedAt: now };
-        syncGenerationRef.current++;
-        await saveItems([itemWithArchive]);
-        itemWithArchive.lastSyncedHash = getItemContentHash(itemWithArchive);
-      }
-    } catch (e) {
-      logError('📦 App: Failed to sync archive to server:', e);
+    const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
+    if (itemToSync) {
+      const itemWithArchive = { ...itemToSync, isArchived: true, updatedAt: now };
+      await persistChangedItems([itemWithArchive], 'Archive');
     }
   }, []);
 
@@ -2332,13 +2350,7 @@ const App: React.FC = () => {
     });
 
     // Sync to server
-    try {
-      syncGenerationRef.current++;
-      await saveItems([updatedItem]);
-      updatedItem.lastSyncedHash = getItemContentHash(updatedItem);
-    } catch (e) {
-      logError('🗑️ App: Failed to sync vocab removal to server:', e);
-    }
+    await persistChangedItems([updatedItem], 'Remove vocab');
   }, []);
 
   const handleUnarchive = useCallback(async (id: string) => {
@@ -2365,16 +2377,10 @@ const App: React.FC = () => {
     });
     
     // Immediately sync unarchive to server
-    try {
-      const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
-      if (itemToSync) {
-        const itemWithUnarchive = { ...itemToSync, isArchived: false, updatedAt: now };
-        syncGenerationRef.current++;
-        await saveItems([itemWithUnarchive]);
-        itemWithUnarchive.lastSyncedHash = getItemContentHash(itemWithUnarchive);
-      }
-    } catch (e) {
-      logError('📦 App: Failed to sync unarchive to server:', e);
+    const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
+    if (itemToSync) {
+      const itemWithUnarchive = { ...itemToSync, isArchived: false, updatedAt: now };
+      await persistChangedItems([itemWithUnarchive], 'Unarchive');
     }
   }, []);
 
@@ -2597,13 +2603,10 @@ const App: React.FC = () => {
       }
     });
 
-    // NEW SRS from the MOST ADVANCED sibling (so reviewing a less-advanced sibling never regresses it).
+    // Use the most recently reviewed sibling. A legitimate overdue penalty can
+    // lower totalReviews, so highest-step selection would resurrect stale progress.
     const siblings = baseItems.filter(item => idsToUpdate.has(item.data.id));
-    const bestSibling = siblings.reduce((best, s) => {
-      const bSrs = SRSAlgorithm.ensure(best.srs, best.data.id, best.type);
-      const sSrs = SRSAlgorithm.ensure(s.srs, s.data.id, s.type);
-      return sSrs.totalReviews > bSrs.totalReviews ? s : best;
-    });
+    const bestSibling = SRSAlgorithm.selectCanonical(siblings);
     const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
     const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
 
@@ -2638,9 +2641,9 @@ const App: React.FC = () => {
       }, 3000);
     }
     try {
-      await userSaveData(newItems);
+      await saveItemUpdates(itemsToSync, authState.user?.id || 'vps');
       lastSaveTimeRef.current = Date.now();
-      log(`💾 Immediately saved SRS update to IndexedDB`);
+      log(`💾 Immediately journaled ${itemsToSync.length} SRS update(s) to IndexedDB`);
     } catch (e) {
       logError('💾 Failed to save SRS update to IndexedDB:', e);
     }

@@ -127,9 +127,11 @@ const stmts = {
       is_deleted = @is_deleted,
       is_archived = @is_archived,
       project = @project
+    WHERE items.user_id IS NULL OR items.user_id = @user_id
   `),
   softDelete: db.prepare(`UPDATE items SET is_deleted = 1, updated_at = ? WHERE id = ? AND user_id = ?`),
   getByIdScoped: db.prepare(`SELECT * FROM items WHERE id = ? AND user_id = ?`),
+  getById: db.prepare(`SELECT * FROM items WHERE id = ?`),
   assignOrphanItems: db.prepare(`UPDATE items SET user_id = ? WHERE user_id IS NULL`),
   getImageData: db.prepare(`SELECT data FROM items WHERE id = ? AND user_id = ?`),
   findVocabInPhrase: db.prepare(`SELECT data FROM items WHERE type = 'phrase' AND user_id = ? AND data LIKE ? LIMIT 1`),
@@ -178,6 +180,7 @@ const imageStmts = {
       user_id = @user_id,
       data = @data,
       updated_at = @updated_at
+    WHERE item_images.user_id IS NULL OR item_images.user_id = @user_id
   `),
   get: db.prepare(`SELECT data FROM item_images WHERE id = ? AND user_id = ?`),
   manifest: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
@@ -420,6 +423,31 @@ export function upsertItem(item: any, userId: string) {
   if (!data || !data.id) throw new Error('Item missing data.id');
 
   const now = Date.now();
+  const existing = stmts.getById.get(data.id) as ItemRow | undefined;
+  if (existing?.user_id && existing.user_id !== userId) {
+    throw new Error('Item id belongs to another user');
+  }
+
+  const incomingUpdatedAt = item.updatedAt || now;
+  const existingUpdatedAt = existing?.updated_at || 0;
+
+  // Content and learning progress have different conflict clocks. An edit can
+  // have newer content while carrying SRS loaded before another device reviewed
+  // the card, so always select SRS independently by its review timestamp.
+  let selectedSrs = item.srs;
+  if (existing) {
+    const existingSrs = JSON.parse(existing.srs);
+    const incomingReview = item.srs?.lastReviewDate || 0;
+    const existingReview = existingSrs?.lastReviewDate || 0;
+    const incomingReviews = item.srs?.totalReviews || 0;
+    const existingReviews = existingSrs?.totalReviews || 0;
+    if (
+      existingReview > incomingReview ||
+      (existingReview === incomingReview && existingReviews > incomingReviews)
+    ) {
+      selectedSrs = existingSrs;
+    }
+  }
 
   // Capture any incoming base64 into item_images, then strip imageUrl from the data we
   // store — base64 and markers ('idb:stored'/'server:has_image') never live in items.data.
@@ -448,17 +476,19 @@ export function upsertItem(item: any, userId: string) {
     });
   }
 
+  // Ignore stale content while still accepting a newer review selected above.
+  const staleContent = !!existing && incomingUpdatedAt < existingUpdatedAt;
   stmts.upsert.run({
     id: data.id,
-    type: item.type,
-    data: JSON.stringify(finalData),
-    srs: JSON.stringify(item.srs),
-    saved_at: item.savedAt || now,
-    updated_at: item.updatedAt || now,
-    is_deleted: item.isDeleted ? 1 : 0,
-    is_archived: item.isArchived ? 1 : 0,
+    type: staleContent ? existing.type : item.type,
+    data: staleContent ? existing.data : JSON.stringify(finalData),
+    srs: JSON.stringify(selectedSrs),
+    saved_at: staleContent ? existing.saved_at : (item.savedAt || now),
+    updated_at: Math.max(existingUpdatedAt, incomingUpdatedAt),
+    is_deleted: staleContent ? existing.is_deleted : (item.isDeleted ? 1 : 0),
+    is_archived: staleContent ? existing.is_archived : (item.isArchived ? 1 : 0),
     user_id: userId,
-    project: item.project || null,
+    project: staleContent ? existing.project : (item.project || null),
   });
 }
 
@@ -558,8 +588,8 @@ export const upsertItemImages = db.transaction((images: Array<{ id: string; data
   let count = 0;
   for (const img of images) {
     if (img && img.id && typeof img.data === 'string' && img.data.startsWith('data:image/')) {
-      imageStmts.upsert.run({ id: img.id, user_id: userId, data: img.data, updated_at: now });
-      count++;
+      const result = imageStmts.upsert.run({ id: img.id, user_id: userId, data: img.data, updated_at: now });
+      count += result.changes;
     }
   }
   return count;

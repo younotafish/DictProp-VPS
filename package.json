@@ -16,7 +16,8 @@
     "build:all": "npm run build && npm run build:server",
     "typecheck": "tsc --noEmit",
     "typecheck:server": "cd server && npm run typecheck",
-    "check": "npm run typecheck && npm run typecheck:server && npm run build:all",
+    "test:server": "cd server && npm test",
+    "check": "npm run typecheck && npm run typecheck:server && npm run test:server && npm run build:all",
     "deploy": "./deploy.sh"
   },
   "dependencies": {

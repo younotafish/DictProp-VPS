@@ -1515,11 +1515,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     if (siblings.length > 0) {
       // Compute preview SRS to show next review date in the animation
-      const bestSibling = siblings.reduce((best, s) => {
-        const bReviews = best.srs?.totalReviews || 0;
-        const sReviews = s.srs?.totalReviews || 0;
-        return sReviews > bReviews ? s : best;
-      });
+      const bestSibling = SRSAlgorithm.selectCanonical(siblings);
       const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
       const previewSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
       const penalty = SRSAlgorithm.getOverduePenalty(baseSRS);
