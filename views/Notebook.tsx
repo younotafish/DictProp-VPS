@@ -1660,31 +1660,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         </div>
       )}
 
-      {/* Image Backfill Progress Banner */}
-      {imageBackfillProgress?.isRunning && (
-        <div className="sticky top-[72px] z-[9] bg-pink-500 text-white px-4 py-3 shadow-md">
-          <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Loader2 className="animate-spin" size={18} />
-              <div>
-                <p className="font-medium text-sm">Generating images...</p>
-                <p className="text-xs text-pink-200">
-                  {imageBackfillProgress.current}/{imageBackfillProgress.total} done
-                  {imageBackfillProgress.succeeded > 0 && ` · ${imageBackfillProgress.succeeded} ok`}
-                  {imageBackfillProgress.failed > 0 && ` · ${imageBackfillProgress.failed} failed`}
-                </p>
-              </div>
-            </div>
-            <div className="w-24 h-2 bg-pink-400 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-white transition-all duration-300"
-                style={{ width: `${imageBackfillProgress.total > 0 ? (imageBackfillProgress.current / imageBackfillProgress.total) * 100 : 0}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* AI Search Results */}
       {searchError && (
         <div className="px-4 py-3 mx-3 mt-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm flex items-center justify-between gap-3">

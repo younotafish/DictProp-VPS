@@ -152,3 +152,35 @@ test('runtime middleware exposes readiness/request ids and rejects cross-site mu
     error: 'Bulk image responses are disabled; use the image endpoints',
   });
 });
+
+test('image backfill validates scope and reports an empty job', async () => {
+  let response = await app.request('/api/image-backfill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{bad-json',
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'Invalid image backfill request' });
+
+  response = await app.request('/api/image-backfill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemIds: [''] }),
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'Invalid item ids' });
+
+  response = await app.request('/api/image-backfill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project: 'empty-project' }),
+  });
+  assert.equal(response.status, 200);
+  const status = await response.json() as any;
+  assert.deepEqual(
+    { running: status.running, total: status.total, done: status.done, generated: status.generated, failed: status.failed },
+    { running: false, total: 0, done: 0, generated: 0, failed: 0 },
+  );
+  assert.ok(status.startedAt > 0);
+  assert.equal(status.finishedAt, status.startedAt);
+});

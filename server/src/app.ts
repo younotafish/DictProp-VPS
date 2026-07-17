@@ -100,6 +100,7 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/compare', smallJsonLimit);
   app.use('/api/extract-vocabulary', smallJsonLimit);
   app.use('/api/generate-image', smallJsonLimit);
+  app.use('/api/image-backfill', smallJsonLimit);
   app.use('/api/projects', smallJsonLimit);
   app.use('/api/projects/*', smallJsonLimit);
   app.use('/api/comparisons', smallJsonLimit);
@@ -132,8 +133,9 @@ export function createApp(options: AppOptions = {}) {
     app.use(path, textAiRateLimit);
     app.use(path, textAiConcurrency);
   }
-  app.use('/api/generate-image', createRateLimit(15, 5 * 60 * 1000));
-  app.use('/api/generate-image', createConcurrencyLimit(1));
+  // The image-generation module owns a single FIFO queue, so concurrent sense images wait instead
+  // of receiving a 503. This limit controls abuse without breaking a few multi-sense searches.
+  app.use('/api/generate-image', createRateLimit(60, 5 * 60 * 1000));
   app.use('/api/transcribe', createRateLimit(30, 5 * 60 * 1000));
   app.use('/api/transcribe', createConcurrencyLimit(2));
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));

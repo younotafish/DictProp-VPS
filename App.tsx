@@ -3,7 +3,7 @@ import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpel
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type RevisionCursor } from './services/api';
+import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, startImageBackfill, getImageBackfillStatus, cancelImageBackfill, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type ImageBackfillScope, type ImageBackfillStatus, type RevisionCursor } from './services/api';
 import { stripSentenceMarkers } from './components/HighlightedSentence';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -690,7 +690,7 @@ const App: React.FC = () => {
   const [imageBackfillProgress, setImageBackfillProgress] = useState<{
     current: number; total: number; succeeded: number; failed: number; isRunning: boolean;
   } | null>(null);
-  const imageBackfillAbortRef = useRef(false);
+  const imageBackfillMonitorRef = useRef<Promise<void> | null>(null);
 
   // Confirm modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -1767,7 +1767,10 @@ const App: React.FC = () => {
 
   // Refs for batch import to avoid stale closures
   const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
-  const runImageBackfillRef = useRef<(itemIds?: string[]) => Promise<void>>(async () => {});
+  const runImageBackfillRef = useRef<(
+    scope?: ImageBackfillScope,
+    options?: { silent?: boolean },
+  ) => Promise<void>>(async () => {});
 
   const handleBatchImport = useCallback(async (words: string[], project?: string) => {
     if (words.length === 0) return;
@@ -1908,104 +1911,103 @@ const App: React.FC = () => {
     // Phase 2: backfill images AND pre-generate sentence audio for the items we just imported. Both
     // run in the background (after the text analysis is done) so the new words play instantly later.
     if (importedItemIds.length > 0) {
-      runImageBackfillRef.current(importedItemIds).catch(e => warn('Post-batch image backfill failed:', e));
+      // The image job reads its targets from SQLite. Persist these new cards before starting it so a
+      // just-finished import cannot race the normal debounced server save and produce an empty sweep.
+      void (async () => {
+        const imported = latestItemsRef.current.filter(item => importedItemIds.includes(item.data.id));
+        await persistChangedItems(imported, 'Batch import');
+        await runImageBackfillRef.current({ itemIds: importedItemIds }, { silent: true });
+      })().catch(e => warn('Post-batch image backfill failed:', e));
       runSpeechGenerationRef.current(importedItemIds, { silent: true }).catch(e => warn('Post-batch speech generation failed:', e));
     }
   }, []);
 
   // ── Image backfill ────────────────────────────────────────────────────────
-  // Generates missing images for vocab cards that have an imagePrompt but no
-  // imageUrl. Used both for explicit user action ("Generate missing images"
-  // button) and for the post-batch-import sweep.
+  // The server owns this job so closing/reloading the app does not stop it. It also serializes all image
+  // generation, including live search images, which prevents the old 2-client-workers-vs-1-server-slot
+  // collision. The client only polls progress and reconciles the finished image manifest.
+  const showImageBackfillResult = useCallback((status: ImageBackfillStatus) => {
+    const remaining = Math.max(0, status.total - status.done);
+    const reason = status.stoppedReason === 'quota_exceeded'
+      ? 'The image provider quota was exhausted. Run it again after the quota resets.'
+      : status.stoppedReason === 'not_configured'
+        ? 'No image generation provider is configured on the server.'
+        : status.stoppedReason === 'cancelled'
+          ? 'Generation stopped after the current image.'
+          : status.stoppedReason === 'provider_error'
+            ? 'The image provider stopped responding.'
+            : '';
+    const incomplete = status.failed > 0 || remaining > 0 || !!status.stoppedReason;
+    setConfirmModal({
+      isOpen: true,
+      title: incomplete ? 'Image Generation Incomplete' : 'Images Generated',
+      message: `${status.generated} generated${status.failed ? ` · ${status.failed} failed` : ''}${remaining ? ` · ${remaining} remaining` : ''}${reason ? `\n${reason}` : ''}${status.lastError && !reason ? `\n${status.lastError}` : ''}`,
+      confirmText: 'OK',
+      variant: incomplete ? 'warning' : 'success',
+      onConfirm: () => setConfirmModal(null),
+      showCancel: false,
+    });
+  }, []);
 
-  const IMAGE_BACKFILL_CONCURRENCY = 2;
-
-  const runImageBackfill = useCallback(async (itemIds?: string[]) => {
-    const all = latestItemsRef.current;
-    const candidates = itemIds
-      ? all.filter(i => itemIds.includes(i.data.id))
-      : all.filter(i => !i.isDeleted && !i.isArchived);
-
-    type Target = { itemId: string; vocabId: string; prompt: string };
-    const targets: Target[] = [];
-    for (const item of candidates) {
-      if (item.isDeleted) continue;
-      if (isVocabItem(item)) {
-        const v = item.data;
-        if (v.imagePrompt && !v.imageUrl) {
-          targets.push({ itemId: v.id, vocabId: v.id, prompt: v.imagePrompt });
+  const monitorImageBackfill = useCallback((initial: ImageBackfillStatus): Promise<void> => {
+    if (imageBackfillMonitorRef.current) return imageBackfillMonitorRef.current;
+    const monitor = (async () => {
+      let status = initial;
+      setImageBackfillProgress({
+        current: status.done, total: status.total, succeeded: status.generated,
+        failed: status.failed, isRunning: status.running,
+      });
+      while (status.running) {
+        await new Promise(resolve => setTimeout(resolve, 2_000));
+        try {
+          status = await getImageBackfillStatus();
+        } catch (error) {
+          warn('Image backfill status check failed; retrying', error);
+          continue;
         }
-      } else if (isPhraseItem(item)) {
-        for (const v of item.data.vocabs || []) {
-          if (v.imagePrompt && !v.imageUrl) {
-            targets.push({ itemId: item.data.id, vocabId: v.id, prompt: v.imagePrompt });
-          }
-        }
+        setImageBackfillProgress({
+          current: status.done, total: status.total, succeeded: status.generated,
+          failed: status.failed, isRunning: status.running,
+        });
       }
-    }
-    if (targets.length === 0) {
       setImageBackfillProgress(null);
+      await handleForceSync();
+      showImageBackfillResult(status);
+    })().finally(() => {
+      imageBackfillMonitorRef.current = null;
+    });
+    imageBackfillMonitorRef.current = monitor;
+    return monitor;
+  }, [handleForceSync, showImageBackfillResult]);
+
+  const runImageBackfill = useCallback(async (
+    scope: ImageBackfillScope = {},
+    options?: { silent?: boolean },
+  ) => {
+    let status: ImageBackfillStatus;
+    try {
+      status = await startImageBackfill(scope);
+    } catch (error) {
+      warn('Image backfill could not start', error);
+      if (!options?.silent) {
+        setConfirmModal({
+          isOpen: true, title: "Couldn't Start", message: 'Failed to reach the server to start image generation.',
+          confirmText: 'OK', variant: 'warning', onConfirm: () => setConfirmModal(null), showCancel: false,
+        });
+      }
       return;
     }
-
-    setImageBackfillProgress({ current: 0, total: targets.length, succeeded: 0, failed: 0, isRunning: true });
-    imageBackfillAbortRef.current = false;
-
-    let completed = 0;
-    let succeeded = 0;
-    let failed = 0;
-    let idx = 0;
-
-    const processOne = async () => {
-      while (idx < targets.length && !imageBackfillAbortRef.current) {
-        const target = targets[idx++];
-        try {
-          const imageData = await generateIllustration(target.prompt, '16:9');
-          if (imageData) {
-            const item = latestItemsRef.current.find(i =>
-              (isVocabItem(i) && i.data.id === target.itemId) ||
-              (isPhraseItem(i) && i.data.id === target.itemId)
-            );
-            if (item) {
-              let updated: StoredItem = item;
-              if (isVocabItem(item) && item.data.id === target.vocabId) {
-                updated = { ...item, data: { ...item.data, imageUrl: imageData } };
-              } else if (isPhraseItem(item)) {
-                updated = {
-                  ...item,
-                  data: {
-                    ...item.data,
-                    vocabs: item.data.vocabs.map(v =>
-                      v.id === target.vocabId ? { ...v, imageUrl: imageData } : v
-                    ),
-                  },
-                };
-              }
-              handleSaveRef.current(updated);
-              succeeded++;
-            } else {
-              failed++;
-            }
-          } else {
-            failed++;
-          }
-        } catch (e) {
-          warn('Image backfill failed for', target.vocabId, e);
-          failed++;
-        }
-        completed++;
-        setImageBackfillProgress({ current: completed, total: targets.length, succeeded, failed, isRunning: true });
-        await new Promise(r => setTimeout(r, 300));
-      }
-    };
-
-    const workers = Array.from(
-      { length: Math.min(IMAGE_BACKFILL_CONCURRENCY, targets.length) },
-      () => processOne()
-    );
-    await Promise.all(workers);
-    setImageBackfillProgress(null);
-  }, []);
+    if (options?.silent) return;
+    if (status.total === 0) {
+      setImageBackfillProgress(null);
+      setConfirmModal({
+        isOpen: true, title: 'No Missing Images', message: 'Every matching item already has an image.',
+        confirmText: 'OK', variant: 'info', onConfirm: () => setConfirmModal(null), showCancel: false,
+      });
+      return;
+    }
+    await monitorImageBackfill(status);
+  }, [monitorImageBackfill]);
 
   // Wire up the ref so handleBatchImport (declared earlier with empty deps) can call it
   runImageBackfillRef.current = runImageBackfill;
@@ -2048,29 +2050,32 @@ const App: React.FC = () => {
     const scopeLabel = activeProject
       ? `project "${projects.find(p => p.id === activeProject)?.name ?? '?'}"`
       : 'your notebook';
-    const estSeconds = Math.ceil((missing * 5) / IMAGE_BACKFILL_CONCURRENCY);
+    const estSeconds = missing * 2;
     const estMin = Math.ceil(estSeconds / 60);
 
     setConfirmModal({
       isOpen: true,
       title: 'Generate Missing Images',
-      message: `${missing} item${missing === 1 ? '' : 's'} in ${scopeLabel} are missing images. This will use ~${missing} image API call${missing === 1 ? '' : 's'} and take ~${estMin} min. Continue?`,
+      message: `${missing} item${missing === 1 ? '' : 's'} in ${scopeLabel} are missing images. This will use ~${missing} image API call${missing === 1 ? '' : 's'} and take ~${estMin} min. The server will continue if you close the app.`,
       confirmText: 'Generate',
       variant: 'info',
       onConfirm: () => {
         setConfirmModal(null);
-        const itemIds = items
-          .filter(i => {
-            if (isVocabItem(i)) return i.data.imagePrompt && !i.data.imageUrl;
-            if (isPhraseItem(i)) return (i.data.vocabs || []).some(v => v.imagePrompt && !v.imageUrl);
-            return false;
-          })
-          .map(i => i.data.id);
-        runImageBackfill(itemIds).catch(e => warn('Image backfill failed:', e));
+        void runImageBackfill(activeProject ? { project: activeProject } : {});
       },
       showCancel: true,
     });
   }, [activeProject, projects, runImageBackfill]);
+
+  // Reattach to a server job after a reload or reopening the app.
+  useEffect(() => {
+    if (!isLoaded || !authState.user) return;
+    let cancelled = false;
+    getImageBackfillStatus().then(status => {
+      if (!cancelled && status.running) void monitorImageBackfill(status);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isLoaded, authState.user?.id, monitorImageBackfill]);
 
   const handleSave = (item: StoredItem) => {
     try {
@@ -2936,7 +2941,30 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Global, always-visible TTS sweep progress — shows on every tab/view while generating. */}
+      {/* Global background-job progress — remains visible across tabs/views. */}
+      {imageBackfillProgress?.isRunning && (
+        <div className="fixed bottom-32 left-1/2 -translate-x-1/2 z-[80] max-w-[calc(100vw-2rem)] bg-emerald-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <Loader2 size={16} className="animate-spin shrink-0" />
+          <span className="text-sm font-medium whitespace-nowrap min-w-0">
+            Generating images · {imageBackfillProgress.current}/{imageBackfillProgress.total}
+            {imageBackfillProgress.succeeded > 0 && <span className="hidden sm:inline"> · {imageBackfillProgress.succeeded} saved</span>}
+          </span>
+          <div className="hidden sm:block w-16 h-1.5 bg-emerald-400/60 rounded-full overflow-hidden shrink-0">
+            <div
+              className="h-full bg-white transition-all duration-300"
+              style={{ width: `${imageBackfillProgress.total > 0 ? (imageBackfillProgress.current / imageBackfillProgress.total) * 100 : 0}%` }}
+            />
+          </div>
+          <button
+            onClick={() => { void cancelImageBackfill(); }}
+            className="ml-1 shrink-0 text-emerald-200 hover:text-white"
+            title="Stop after current image"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
       {ttsGenProgress?.isRunning && (
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[80] bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
           <Loader2 size={16} className="animate-spin shrink-0" />

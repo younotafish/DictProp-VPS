@@ -1,37 +1,17 @@
 import { Hono } from 'hono';
-import { env } from '../env.js';
-import { proxyFetch } from '../proxy-fetch.js';
-import { detectImageMimeType } from '../image-format.js';
+import { getAllItems, upsertItemImageBinary } from '../db.js';
+import { createImageBackfillManager } from '../image-backfill.js';
+import { generateImageQueued, ImageGenerationError, type ImageAspectRatio } from '../image-generation.js';
+import type { AuthVariables } from '../middleware/auth.js';
 
-export const imageRoutes = new Hono();
+export const imageRoutes = new Hono<{ Variables: AuthVariables }>();
 
-const DEEPINFRA_FLUX_URL = 'https://api.deepinfra.com/v1/inference/black-forest-labs/FLUX-1-schnell';
-const REPLICATE_FLUX_URL = 'https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions';
-const IMAGE_TIMEOUT_MS = 60_000;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const imageBackfill = createImageBackfillManager({
+  loadItems: userId => getAllItems(true, userId),
+  generateImage: generateImageQueued,
+  saveImage: (userId, imageId, image) => upsertItemImageBinary(imageId, image.data, image.mimeType, userId),
+});
 
-async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
-  try {
-    return await proxyFetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function getImageDimensions(aspectRatio: string): { width: number; height: number } {
-  switch (aspectRatio) {
-    case '16:9': return { width: 1024, height: 576 };
-    case '9:16': return { width: 576, height: 1024 };
-    case '4:3': return { width: 896, height: 672 };
-    case '3:4': return { width: 672, height: 896 };
-    case '1:1':
-    default: return { width: 768, height: 768 };
-  }
-}
-
-// POST /api/generate-image
 imageRoutes.post('/generate-image', async (c) => {
   const { prompt, aspectRatio = '1:1' } = await c.req.json().catch(() => ({}));
   if (typeof prompt !== 'string' || !prompt.trim()) return c.json({ error: 'Prompt is required' }, 400);
@@ -40,114 +20,50 @@ imageRoutes.post('/generate-image', async (c) => {
     return c.json({ error: 'Unsupported aspect ratio' }, 400);
   }
 
-  const styledPrompt = `(Icon style), minimal vector art, flat design, ${prompt}. solid background. No text.`;
-  const dimensions = getImageDimensions(aspectRatio);
-
-  // Try DeepInfra FLUX Schnell (primary)
-  const deepinfraKey = env.DEEPINFRA_API_KEY;
-  if (deepinfraKey) {
-    try {
-      console.log('Generating with DeepInfra FLUX Schnell...');
-      const response = await fetchWithTimeout(DEEPINFRA_FLUX_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${deepinfraKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: styledPrompt,
-          width: dimensions.width,
-          height: dimensions.height,
-          num_inference_steps: 4,
-        }),
-      });
-
-      if (response.ok) {
-        const data: any = await response.json();
-        if (data.images && data.images.length > 0) {
-          const base64Image = data.images[0];
-          if (typeof base64Image !== 'string') throw new Error('Generated response did not contain image data');
-          const encoded = base64Image.includes(',') ? base64Image.slice(base64Image.indexOf(',') + 1) : base64Image;
-          const binary = Buffer.from(encoded, 'base64');
-          if (binary.length === 0 || binary.length > MAX_IMAGE_BYTES) throw new Error('Generated image is too large');
-          const mimeType = detectImageMimeType(binary);
-          if (!mimeType) throw new Error('Generated response was not a supported image');
-          return new Response(binary, { headers: { 'Content-Type': mimeType, 'Cache-Control': 'no-store' } });
-        }
-      } else {
-        const status = response.status;
-        console.warn('DeepInfra FLUX failed:', status);
-        if (status === 429 || status === 402) {
-          // Fall through to Replicate
-          console.warn('DeepInfra quota exceeded, trying Replicate...');
-        }
-      }
-    } catch (err: any) {
-      console.warn('DeepInfra FLUX error:', err.message);
-    }
-  }
-
-  // Fallback to Replicate FLUX Schnell
-  const replicateKey = env.REPLICATE_API_TOKEN;
-  if (!replicateKey) {
-    return c.json({ imageData: undefined, error: 'NO_API_KEY' });
-  }
-
   try {
-    console.log('Trying Replicate FLUX Schnell (fallback)...');
-    const response = await fetchWithTimeout(REPLICATE_FLUX_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${replicateKey}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'wait',
-      },
-      body: JSON.stringify({
-        input: {
-          prompt: styledPrompt,
-          aspect_ratio: aspectRatio,
-          output_format: 'webp',
-          output_quality: 50,
-          num_outputs: 1,
-        },
-      }),
+    let image: Awaited<ReturnType<typeof generateImageQueued>>;
+    try {
+      image = await generateImageQueued(prompt.trim(), aspectRatio as ImageAspectRatio);
+    } catch (error) {
+      if (!(error instanceof ImageGenerationError) || !error.retryable) throw error;
+      await new Promise(resolve => setTimeout(resolve, 750));
+      image = await generateImageQueued(prompt.trim(), aspectRatio as ImageAspectRatio);
+    }
+    return new Response(image.data, {
+      headers: { 'Content-Type': image.mimeType, 'Cache-Control': 'no-store' },
     });
-
-    if (!response.ok) {
-      const status = response.status;
-      if (status === 429 || status === 402) {
-        return c.json({ imageData: undefined, error: 'QUOTA_EXCEEDED' });
-      }
-      return c.json({ error: `Replicate API error: ${status}` }, 500);
+  } catch (error) {
+    if (error instanceof ImageGenerationError &&
+        (error.code === 'NO_API_KEY' || error.code === 'QUOTA_EXCEEDED')) {
+      return c.json({ imageData: undefined, error: error.code });
     }
-
-    const prediction: any = await response.json();
-
-    if (prediction.status === 'succeeded' && prediction.output?.length > 0) {
-      const imageUrl = prediction.output[0];
-      const imageResponse = await fetchWithTimeout(imageUrl);
-      if (!imageResponse.ok) throw new Error('Failed to fetch generated image');
-
-      const declaredLength = Number(imageResponse.headers.get('content-length') || '0');
-      if (declaredLength > MAX_IMAGE_BYTES) throw new Error('Generated image is too large');
-      const arrayBuffer = await imageResponse.arrayBuffer();
-      if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) throw new Error('Generated image is too large');
-      const mimeType = detectImageMimeType(new Uint8Array(arrayBuffer));
-      if (!mimeType) throw new Error('Generated response was not a supported image');
-      return new Response(arrayBuffer, { headers: { 'Content-Type': mimeType, 'Cache-Control': 'no-store' } });
-    }
-
-    if (prediction.status === 'failed') {
-      return c.json({ error: prediction.error || 'Image generation failed' }, 500);
-    }
-
-    return c.json({ imageData: undefined });
-  } catch (error: any) {
-    const msg = error.message || '';
-    if (msg.includes('429') || msg.includes('402') || msg.includes('quota') || msg.includes('billing')) {
-      return c.json({ imageData: undefined, error: 'QUOTA_EXCEEDED' });
-    }
-    console.warn('Image generation failed:', msg);
-    return c.json({ error: msg }, 500);
+    console.warn('Image generation failed:', error instanceof Error ? error.message : error);
+    return c.json({ error: 'Image generation failed' }, 502);
   }
 });
+
+imageRoutes.post('/image-backfill', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return c.json({ error: 'Invalid image backfill request' }, 400);
+  }
+  const project = body?.project;
+  const itemIds = body?.itemIds;
+  if (project !== undefined && (typeof project !== 'string' || project.length === 0 || project.length > 200)) {
+    return c.json({ error: 'Invalid project' }, 400);
+  }
+  if (itemIds !== undefined && (!Array.isArray(itemIds) || itemIds.length > 5_000 ||
+      itemIds.some((id: unknown) => typeof id !== 'string' || id.length === 0 || id.length > 200))) {
+    return c.json({ error: 'Invalid item ids' }, 400);
+  }
+
+  const status = imageBackfill.start(c.get('user').id, {
+    ...(project !== undefined ? { project } : {}),
+    ...(itemIds !== undefined ? { itemIds: Array.from(new Set(itemIds as string[])) } : {}),
+  });
+  return c.json(status, status.running ? 202 : 200);
+});
+
+imageRoutes.get('/image-backfill', (c) => c.json(imageBackfill.getStatus(c.get('user').id)));
+
+imageRoutes.delete('/image-backfill', (c) => c.json(imageBackfill.cancel(c.get('user').id)));
