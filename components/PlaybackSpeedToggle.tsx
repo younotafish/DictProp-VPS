@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getPlaybackRate, setPlaybackRate, subscribePlaybackRate, RATE_PRESETS } from '../services/neuralTts';
+import { getPlaybackRate, setPlaybackRate, subscribePlaybackRate, RATE_PRESETS } from '../services/ttsSettings';
 
 /**
  * Global voice-speed control for example-sentence playback. The rate lives in the TTS engine

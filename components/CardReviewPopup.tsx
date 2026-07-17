@@ -7,7 +7,7 @@ import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from './HighlightedSentence';
-import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/neuralTts';
+import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 
 const formatRelative = (ts: number): string => {
   const diff = ts - Date.now();

@@ -6,7 +6,7 @@ import test from 'node:test';
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-db-test-'));
 
-const { getItemById, upsertItem, upsertItemImages } = await import('../src/db.js');
+const { getItemById, upsertItem, upsertItemImages, addReviewEvent, getReviewEvents, upsertItemImageBinary, db } = await import('../src/db.js');
 
 const makeItem = (
   id: string,
@@ -76,7 +76,31 @@ test('item ids cannot overwrite another user', () => {
 });
 
 test('image ids cannot overwrite another user', () => {
-  const image = 'data:image/png;base64,aGVsbG8=';
+  const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
   assert.equal(upsertItemImages([{ id: 'owned-image', data: image }], 'user-a'), 1);
   assert.equal(upsertItemImages([{ id: 'owned-image', data: image }], 'user-b'), 0);
+  assert.equal(upsertItemImages([{ id: 'duplicate-image', data: image }], 'user-a'), 1);
+  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, 1);
+  assert.equal(upsertItemImageBinary('fake-image', Buffer.from('not an image'), 'image/png', 'user-a'), false);
+});
+
+test('server revisions reject stale content independently of device clocks', () => {
+  const id = 'revision-item';
+  const revision = upsertItem(makeItem(id, 'current', 2_000, 0, 0), 'user-a').revision;
+  const stale = { ...makeItem(id, 'stale but future clock', 99_999, 0, 0), serverRevision: revision - 1 };
+  assert.deepEqual(upsertItem(stale, 'user-a'), { revision, conflicted: true });
+  const stored = getItemById(id, 'user-a');
+  assert.equal(stored.data.definition, 'current');
+  assert.equal(stored.updatedAt, 2_000);
+});
+
+test('review events are idempotent and user scoped', () => {
+  const event = {
+    id: 'review-1', itemId: 'revision-item', itemType: 'vocab' as const,
+    reviewedAt: 5_000, previousStep: 0, nextStep: 1,
+  };
+  addReviewEvent(event, 'user-a');
+  addReviewEvent(event, 'user-a');
+  assert.deepEqual(getReviewEvents('user-a', 0), [event]);
+  assert.deepEqual(getReviewEvents('user-b', 0), []);
 });

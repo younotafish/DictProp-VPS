@@ -75,6 +75,16 @@ export interface StoredItem {
   isArchived?: boolean; // Archive flag - keeps item but excludes from study
   project?: string; // Project ID — undefined means uncategorized/default
   lastSyncedHash?: string; // Local-only: hash of content as last synced to Firestore
+  serverRevision?: number; // Server-issued monotonic content revision for conflict ordering
+}
+
+export interface ReviewEvent {
+  id: string;
+  itemId: string;
+  itemType: 'vocab' | 'phrase' | 'sentence';
+  reviewedAt: number;
+  previousStep: number;
+  nextStep: number;
 }
 
 // Project — a named collection of items

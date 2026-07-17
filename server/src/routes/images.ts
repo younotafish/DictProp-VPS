@@ -62,10 +62,10 @@ imageRoutes.post('/generate-image', async (c) => {
         const data: any = await response.json();
         if (data.images && data.images.length > 0) {
           const base64Image = data.images[0];
-          const imageData = base64Image.startsWith('data:')
-            ? base64Image
-            : `data:image/png;base64,${base64Image}`;
-          return c.json({ imageData });
+          const encoded = base64Image.includes(',') ? base64Image.slice(base64Image.indexOf(',') + 1) : base64Image;
+          const binary = Buffer.from(encoded, 'base64');
+          if (binary.length === 0 || binary.length > MAX_IMAGE_BYTES) throw new Error('Generated image is too large');
+          return new Response(binary, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' } });
         }
       } else {
         const status = response.status;
@@ -125,12 +125,11 @@ imageRoutes.post('/generate-image', async (c) => {
       if (declaredLength > MAX_IMAGE_BYTES) throw new Error('Generated image is too large');
       const arrayBuffer = await imageResponse.arrayBuffer();
       if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) throw new Error('Generated image is too large');
-      const base64 = Buffer.from(arrayBuffer).toString('base64');
       const mimeType = (imageResponse.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
       if (!/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType)) {
         throw new Error('Generated response was not an image');
       }
-      return c.json({ imageData: `data:${mimeType};base64,${base64}` });
+      return new Response(arrayBuffer, { headers: { 'Content-Type': mimeType, 'Cache-Control': 'no-store' } });
     }
 
     if (prediction.status === 'failed') {

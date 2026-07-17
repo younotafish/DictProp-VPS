@@ -26,6 +26,9 @@ import { stripSentenceMarkers } from '../components/HighlightedSentence';
 import { ttsKey, fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, TTS_VOICE, type WordTiming } from './api';
 import { getAudioBlob, putAudioBlob, getTimings, putTimings } from './audioCache';
 import { log, warn } from './logger';
+import { getTtsStyle, getTtsStyleToken, getPlaybackRate, subscribePlaybackRate, subscribeTtsStyle } from './ttsSettings';
+export { getTtsStyle, setTtsStyle, subscribeTtsStyle, getPlaybackRate, setPlaybackRate, subscribePlaybackRate, RATE_PRESETS } from './ttsSettings';
+export type { TtsStyle } from './ttsSettings';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
@@ -49,27 +52,7 @@ export const DEFAULT_VOICE = 'af_heart'; // Kokoro fallback voice — American f
 // so the one toggle governs word review, sentence review, and the global-search popup at once. The
 // style maps to the cache "voice" token: clear -> TTS_VOICE (e.g. 'Mia'); casual -> 'casual' (MUST
 // match the server's CASUAL_STYLE). Casual clips are audio-only — no word timings / lead-in skip.
-export type TtsStyle = 'clear' | 'casual';
-const CASUAL_TOKEN = 'casual';
-const TTS_STYLE_KEY = 'tts_style';
-let ttsStyle: TtsStyle =
-  (typeof localStorage !== 'undefined' && localStorage.getItem(TTS_STYLE_KEY) === 'casual') ? 'casual' : 'clear';
-const styleListeners = new Set<(s: TtsStyle) => void>();
-const styleToken = (): string => (ttsStyle === 'casual' ? CASUAL_TOKEN : TTS_VOICE);
-
-export const getTtsStyle = (): TtsStyle => ttsStyle;
-export const subscribeTtsStyle = (cb: (s: TtsStyle) => void): (() => void) => {
-  styleListeners.add(cb);
-  cb(ttsStyle);
-  return () => { styleListeners.delete(cb); };
-};
-export const setTtsStyle = (s: TtsStyle): void => {
-  if (s === ttsStyle) return;
-  ttsStyle = s;
-  try { localStorage.setItem(TTS_STYLE_KEY, s); } catch { /* ignore */ }
-  stopCurrent(); // stop the in-flight clip so the next play uses the newly-chosen track
-  styleListeners.forEach((cb) => { try { cb(s); } catch { /* ignore */ } });
-};
+const styleToken = getTtsStyleToken;
 
 // ── Playback speed: adjustable voice rate for example sentences ────────────────
 // A persisted GLOBAL playback rate for the cached-clip (<audio>) path — i.e. the example-sentence
@@ -79,36 +62,6 @@ export const setTtsStyle = (s: TtsStyle): void => {
 // single global value routed through this engine, so one control governs word review, sentence
 // review, and the search popup at once. Word reads (speakWord → system voice) are left at their own
 // natural rate — the complaint is sentence playback.
-export const RATE_PRESETS = [1.0, 1.1, 1.3, 1.5, 1.75, 2.0] as const;
-const RATE_MIN = 1.0;
-const RATE_MAX = 2.0;
-const DEFAULT_RATE = 1.1;
-const PLAYBACK_RATE_KEY = 'tts_rate';
-const clampRate = (r: number): number => Math.min(RATE_MAX, Math.max(RATE_MIN, r));
-let playbackRate: number = (() => {
-  try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(PLAYBACK_RATE_KEY) : null;
-    const n = raw ? parseFloat(raw) : NaN;
-    return isFinite(n) ? clampRate(n) : DEFAULT_RATE;
-  } catch { return DEFAULT_RATE; }
-})();
-const rateListeners = new Set<(r: number) => void>();
-
-export const getPlaybackRate = (): number => playbackRate;
-export const subscribePlaybackRate = (cb: (r: number) => void): (() => void) => {
-  rateListeners.add(cb);
-  cb(playbackRate);
-  return () => { rateListeners.delete(cb); };
-};
-export const setPlaybackRate = (r: number): void => {
-  const next = clampRate(r);
-  if (next === playbackRate) return;
-  playbackRate = next;
-  try { localStorage.setItem(PLAYBACK_RATE_KEY, String(next)); } catch { /* ignore */ }
-  // Live-update a clip that's already playing so the change is heard immediately (no restart).
-  if (audioEl) { try { audioEl.playbackRate = next; } catch { /* ignore */ } }
-  rateListeners.forEach((cb) => { try { cb(next); } catch { /* ignore */ } });
-};
 
 // Tiny valid silent WAV — played once inside a user gesture to unlock <audio> on iOS Safari,
 // so a later play() after the async synth await isn't blocked as non-user-initiated.
@@ -482,6 +435,20 @@ export const stopCurrent = (): void => {
   setPlaybackState({ text: null, status: 'idle' });
 };
 
+subscribePlaybackRate(rate => {
+  if (audioEl) {
+    audioEl.defaultPlaybackRate = rate;
+    audioEl.playbackRate = rate;
+  }
+});
+let activeStyle = getTtsStyle();
+subscribeTtsStyle(style => {
+  if (style !== activeStyle) {
+    activeStyle = style;
+    stopCurrent();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Media Session — lock-screen controls + background audio for sentence autoplay
 // ---------------------------------------------------------------------------
@@ -790,8 +757,8 @@ const applyRate = (el: HTMLAudioElement): void => {
   try {
     (el as any).preservesPitch = true;
     (el as any).webkitPreservesPitch = true;
-    el.defaultPlaybackRate = playbackRate;
-    el.playbackRate = playbackRate;
+    el.defaultPlaybackRate = getPlaybackRate();
+    el.playbackRate = getPlaybackRate();
   } catch { /* ignore */ }
 };
 
@@ -1006,7 +973,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   const markStart = () => { if (isCurrent()) setPlaybackState({ status: 'playing' }); onStart?.(); };
   const markEnd = () => { if (isCurrent()) setPlaybackState({ text: null, status: 'idle' }); onEnd?.(); };
   const markError = (e: any) => { if (isCurrent()) setPlaybackState({ text: null, status: 'idle' }); onError?.(e); };
-  const systemFallback = () => systemSpeak(plain, { rate: rate ?? playbackRate, onStart: markStart, onEnd: markEnd, onError: markError });
+  const systemFallback = () => systemSpeak(plain, { rate: rate ?? getPlaybackRate(), onStart: markStart, onEnd: markEnd, onError: markError });
 
   // Unlock <audio> synchronously inside the gesture (iOS) and stop anything currently playing.
   unlockAudio();
@@ -1014,8 +981,8 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   setPlaybackState({ text: plain, status: 'loading' });
 
   // Capture the style for THIS call so a mid-play toggle can't switch tracks underneath it.
-  const casual = ttsStyle === 'casual';
-  const voiceTok = casual ? CASUAL_TOKEN : TTS_VOICE;
+  const casual = getTtsStyle() === 'casual';
+  const voiceTok = casual ? getTtsStyleToken() : TTS_VOICE;
 
   (async () => {
     try {
@@ -1044,7 +1011,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
       // Casual MISS → queue its generation, but don't make the user wait: fall back to the
       // (essentially always-cached) CLEAR clip right now so the sentence still plays immediately.
       if (casual) {
-        requestTTSGeneration([{ text: plain, voice: CASUAL_TOKEN }]).catch(() => { /* best-effort */ });
+        requestTTSGeneration([{ text: plain, voice: getTtsStyleToken() }]).catch(() => { /* best-effort */ });
         const clearKey = await ttsKey(plain, TTS_VOICE);
         if (!isCurrent()) return;
         const clearUrl = await loadClipUrl(clearKey);

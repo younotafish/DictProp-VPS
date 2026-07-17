@@ -291,15 +291,29 @@ const IMAGES_STORE = 'images';
 const imageCache = new Map<string, string>();
 const IMAGE_CACHE_MAX = 50;
 
+const dataUriToBlob = async (dataUri: string): Promise<Blob> => fetch(dataUri).then(response => response.blob());
+const blobToDataUri = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(blob);
+});
+
 const evictImageCache = () => {
   if (imageCache.size <= IMAGE_CACHE_MAX) return;
   // Delete oldest entry (first key)
   const firstKey = imageCache.keys().next().value;
-  if (firstKey) imageCache.delete(firstKey);
+  if (firstKey) {
+    const value = imageCache.get(firstKey);
+    if (value?.startsWith('blob:')) URL.revokeObjectURL(value);
+    imageCache.delete(firstKey);
+  }
 };
 
 export const saveImage = async (itemId: string, base64: string): Promise<void> => {
-  imageCache.set(itemId, base64);
+  const blob = await dataUriToBlob(base64);
+  const cachedUrl = URL.createObjectURL(blob);
+  imageCache.set(itemId, cachedUrl);
   evictImageCache();
 
   const idbAvailable = await checkIndexedDBAvailability();
@@ -310,7 +324,7 @@ export const saveImage = async (itemId: string, base64: string): Promise<void> =
     return new Promise((resolve, reject) => {
       const tx = db.transaction(IMAGES_STORE, 'readwrite');
       const store = tx.objectStore(IMAGES_STORE);
-      store.put(base64, itemId);
+      store.put(blob, itemId);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -321,15 +335,20 @@ export const saveImage = async (itemId: string, base64: string): Promise<void> =
 
 export const saveImagesBatch = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
   if (images.length === 0) return;
+  const encoded = await Promise.all(images.map(async image => ({ ...image, blob: await dataUriToBlob(image.base64) })));
 
   // Populate cache
-  for (const img of images) {
-    imageCache.set(img.id, img.base64);
+  for (const img of encoded) {
+    imageCache.set(img.id, URL.createObjectURL(img.blob));
   }
   // Trim cache to limit
   while (imageCache.size > IMAGE_CACHE_MAX) {
     const firstKey = imageCache.keys().next().value;
-    if (firstKey) imageCache.delete(firstKey);
+    if (firstKey) {
+      const value = imageCache.get(firstKey);
+      if (value?.startsWith('blob:')) URL.revokeObjectURL(value);
+      imageCache.delete(firstKey);
+    }
   }
 
   const idbAvailable = await checkIndexedDBAvailability();
@@ -340,8 +359,8 @@ export const saveImagesBatch = async (images: Array<{ id: string; base64: string
     return new Promise((resolve, reject) => {
       const tx = db.transaction(IMAGES_STORE, 'readwrite');
       const store = tx.objectStore(IMAGES_STORE);
-      for (const img of images) {
-        store.put(img.base64, img.id);
+      for (const img of encoded) {
+        store.put(img.blob, img.id);
       }
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
@@ -371,12 +390,15 @@ export const loadImage = async (itemId: string): Promise<string | null> => {
       const store = tx.objectStore(IMAGES_STORE);
       const request = store.get(itemId);
       request.onsuccess = () => {
-        const result = request.result as string | undefined;
+        const result = request.result as string | Blob | undefined;
         if (result) {
-          imageCache.set(itemId, result);
+          const url = result instanceof Blob ? URL.createObjectURL(result) : result;
+          imageCache.set(itemId, url);
           evictImageCache();
+          resolve(url);
+          return;
         }
-        resolve(result || null);
+        resolve(null);
       };
       request.onerror = () => reject(request.error);
     });
@@ -468,7 +490,14 @@ export const loadImagesByIds = async (ids: string[]): Promise<Map<string, string
       for (const id of ids) {
         const req = store.get(id);
         req.onsuccess = () => {
-          if (typeof req.result === 'string') result.set(id, req.result);
+          const value = req.result;
+          if (typeof value === 'string') result.set(id, value);
+          if (value instanceof Blob) {
+            blobToDataUri(value).then(dataUri => result.set(id, dataUri)).finally(() => {
+              if (--pending === 0) resolve();
+            });
+            return;
+          }
           if (--pending === 0) resolve();
         };
         req.onerror = () => { if (--pending === 0) resolve(); };

@@ -5,6 +5,7 @@ import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
 import { barColorFor } from '../components/mastery';
 import { useSentenceSearch } from '../services/sentenceSearch';
+import { Virtuoso } from 'react-virtuoso';
 
 interface SentencesViewProps {
   items: StoredItem[];
@@ -95,8 +96,8 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   };
 
   return (
-    <div className="h-full overflow-y-auto" onScroll={onScroll}>
-      <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-slate-100 px-4 py-3">
+    <div className="h-full min-h-0 flex flex-col">
+      <div className="z-10 shrink-0 bg-white/95 backdrop-blur-sm border-b border-slate-100 px-4 py-3">
         <div className="max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -189,8 +190,13 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
         </div>
       )}
 
-      <div className="px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] grid gap-2 w-full max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto mt-2">
-        {sorted.map((item, index) => {
+      {sorted.length > 0 && <Virtuoso
+        className="flex-1 min-h-0"
+        data={sorted}
+        overscan={400}
+        onScroll={onScroll as any}
+        components={{ Footer: () => <div className="h-[calc(5rem+env(safe-area-inset-bottom))]" /> }}
+        itemContent={(index, item) => {
           if (!isSentenceItem(item)) return null;
           const d = item.data as SentenceData;
           const isDue = ((item.srs?.nextReview ?? 0) <= now);
@@ -198,6 +204,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
           const barColor = barColorFor(mastery?.percentage);
 
           return (
+            <div className="px-3 pt-2 w-full max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto">
             <div
               key={d.id}
               onClick={() => onOpenSentence(sorted, index)}
@@ -264,10 +271,10 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                   </div>
                 </div>
               </div>
-            </div>
+            </div></div>
           );
-        })}
-      </div>
+        }}
+      />}
     </div>
   );
 };

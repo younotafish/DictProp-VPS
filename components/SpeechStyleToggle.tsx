@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/neuralTts';
+import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
 
 /**
  * Global Clear ⇄ Casual speech-style switch. The choice lives in the TTS engine (persisted), and

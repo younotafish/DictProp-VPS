@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
-import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, getProjects, createProject, renameProject, deleteProject } from '../db.js';
+import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, getProjects, createProject, renameProject, deleteProject, addReviewEvent, getReviewEvents, upsertItemImageBinary } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -152,6 +152,26 @@ itemsRoutes.put('/items/images', async (c) => {
   return c.json({ ok: true, saved });
 });
 
+// Binary image upload. New clients use this to avoid base64/JSON expansion;
+// the batch JSON endpoint remains temporarily for older deployed clients.
+itemsRoutes.put('/items/:id/image', async (c) => {
+  const userId = c.get('user').id;
+  const mimeType = (c.req.header('content-type') || '').split(';', 1)[0].toLowerCase();
+  if (!/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType)) {
+    return c.json({ error: 'Unsupported image type' }, 415);
+  }
+  const declaredLength = Number(c.req.header('content-length') || '0');
+  if (declaredLength > MAX_IMAGE_BYTES) return c.json({ error: 'Image is too large' }, 413);
+  const bytes = Buffer.from(await c.req.arrayBuffer());
+  if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
+    return c.json({ error: 'Invalid image size' }, 413);
+  }
+  if (!upsertItemImageBinary(c.req.param('id'), bytes, mimeType, userId)) {
+    return c.json({ error: 'Image could not be stored' }, 400);
+  }
+  return c.json({ ok: true });
+});
+
 // GET /api/items/:id — return a single item
 itemsRoutes.get('/items/:id', (c) => {
   const userId = c.get('user').id;
@@ -169,8 +189,8 @@ itemsRoutes.put('/items/:id', async (c) => {
   }
   // Ensure URL param matches body
   body.data.id = c.req.param('id');
-  upsertItem(body, userId);
-  return c.json({ ok: true });
+  const result = upsertItem(body, userId);
+  return c.json({ ok: true, ...result });
 });
 
 // PUT /api/items — batch upsert (array of items)
@@ -180,8 +200,11 @@ itemsRoutes.put('/items', async (c) => {
   if (!Array.isArray(body)) {
     return c.json({ error: 'Expected array of items' }, 400);
   }
-  upsertMany(body, userId);
-  return c.json({ ok: true, count: body.length });
+  const result = upsertMany(body, userId);
+  const canonical = result.conflicts
+    .map(id => getItemById(id, userId, false))
+    .filter(Boolean);
+  return c.json({ ok: true, count: body.length, ...result, canonical });
 });
 
 // DELETE /api/items/:id — soft delete
@@ -271,6 +294,27 @@ itemsRoutes.post('/import', async (c) => {
     skipped: body.length - items.length,
     imagesFetched,
   });
+});
+
+// Append-only review history. The event id makes retries idempotent.
+itemsRoutes.get('/reviews', (c) => {
+  const userId = c.get('user').id;
+  const since = Number(c.req.query('since') || Date.now() - 366 * 24 * 60 * 60 * 1000);
+  if (!Number.isFinite(since) || since < 0) return c.json({ error: 'Invalid since parameter' }, 400);
+  return c.json(getReviewEvents(userId, since));
+});
+
+itemsRoutes.post('/reviews', async (c) => {
+  const userId = c.get('user').id;
+  const event = await c.req.json().catch(() => null);
+  if (!event || typeof event.id !== 'string' || typeof event.itemId !== 'string' ||
+      !['vocab', 'phrase', 'sentence'].includes(event.itemType) ||
+      !Number.isFinite(event.reviewedAt) || !Number.isInteger(event.previousStep) ||
+      !Number.isInteger(event.nextStep)) {
+    return c.json({ error: 'Invalid review event' }, 400);
+  }
+  addReviewEvent(event, userId);
+  return c.json({ ok: true }, 201);
 });
 
 // ─── Project routes ───

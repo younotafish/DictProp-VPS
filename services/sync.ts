@@ -25,7 +25,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
     // Ensure remote item has SRS data
     if (!remoteItem.srs) remoteItem = { ...remoteItem, srs: SRSAlgorithm.createNew(remoteItem.data.id, remoteItem.type) };
 
-    const localItem = map.get(remoteItem.data.id);
+      const localItem = map.get(remoteItem.data.id);
 
     if (!localItem) {
       // New item from cloud - use as-is
@@ -35,12 +35,17 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       
       // 0. Respect Deletions (ENHANCED - deletion always wins unless there's a much newer update)
       const DELETION_GRACE_PERIOD = 5000; // 5 seconds grace period for deletions
+      const localRevision = localItem.serverRevision ?? 0;
+      const remoteRevision = remoteItem.serverRevision ?? 0;
+      const revisionsDecide = localRevision !== remoteRevision;
+      const localWinsRevision = localRevision > remoteRevision;
       
       if (remoteItem.isDeleted && !localItem.isDeleted) {
            const remoteTime = remoteItem.updatedAt || 0;
            const localTime = localItem.updatedAt || 0;
            // Deletion wins if remote is newer OR within grace period
-           if (remoteTime >= localTime - DELETION_GRACE_PERIOD) {
+           if ((!revisionsDecide && remoteTime >= localTime - DELETION_GRACE_PERIOD) ||
+               (revisionsDecide && !localWinsRevision)) {
                map.set(remoteItem.data.id, remoteItem);
                return;
            }
@@ -53,7 +58,8 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
            const remoteTime = remoteItem.updatedAt || 0;
            const localTime = localItem.updatedAt || 0;
            // Deletion wins if local is newer OR within grace period
-           if (localTime >= remoteTime - DELETION_GRACE_PERIOD) {
+           if ((!revisionsDecide && localTime >= remoteTime - DELETION_GRACE_PERIOD) ||
+               (revisionsDecide && localWinsRevision)) {
                // Keep local deletion
                map.set(localItem.data.id, localItem);
                return;
@@ -66,7 +72,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       if (localItem.isDeleted && remoteItem.isDeleted) {
            const remoteTime = remoteItem.updatedAt || 0;
            const localTime = localItem.updatedAt || 0;
-           if (remoteTime > localTime) {
+           if (revisionsDecide ? !localWinsRevision : remoteTime > localTime) {
                map.set(remoteItem.data.id, remoteItem);
            } else {
                map.set(localItem.data.id, localItem);
@@ -103,7 +109,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const localHasContent = hasFullContent(localItem);
       const remoteHasContent = hasFullContent(remoteItem);
 
-      if (localTime > remoteTime) {
+      if (revisionsDecide ? localWinsRevision : localTime > remoteTime) {
           // Only use local data if it has full content, OR remote also lacks content
           if (localHasContent || !remoteHasContent) {
               mergedItem.data = clone(localItem.data);
@@ -114,6 +120,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
           // Local is newer — take its project assignment
           mergedItem.project = localItem.project;
           mergedItem.isArchived = localItem.isArchived;
+          mergedItem.serverRevision = localItem.serverRevision;
       }
 
       // B. SRS MERGE (Learning Progress)

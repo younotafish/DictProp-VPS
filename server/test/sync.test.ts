@@ -73,3 +73,13 @@ test('newer complete sentence content is not mistaken for a lightweight cache en
   const merged = mergeDatasets([local], [remote])[0];
   assert.equal((merged.data as any).text, 'new sentence');
 });
+
+test('server revision outranks a skewed device timestamp', () => {
+  const local = { ...phrase([], 9_999_999), serverRevision: 4 };
+  const remote = { ...phrase([], 1), serverRevision: 5 };
+  (local.data as any).translation = 'stale local edit';
+  (remote.data as any).translation = 'server revision wins';
+  const merged = mergeDatasets([local], [remote])[0];
+  assert.equal((merged.data as any).translation, 'server revision wins');
+  assert.equal(merged.serverRevision, 5);
+});

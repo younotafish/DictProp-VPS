@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'fs';
 import { resolve } from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { env } from './env.js';
 
 // Ensure data directory exists
@@ -48,6 +48,23 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+  CREATE TABLE IF NOT EXISTS sync_meta (
+    key TEXT PRIMARY KEY,
+    value INTEGER NOT NULL
+  );
+  INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('item_revision', 0);
+
+  CREATE TABLE IF NOT EXISTS review_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    item_type TEXT NOT NULL CHECK(item_type IN ('vocab', 'phrase', 'sentence')),
+    reviewed_at INTEGER NOT NULL,
+    previous_step INTEGER NOT NULL,
+    next_step INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_review_events_user_time ON review_events(user_id, reviewed_at);
 `);
 
 // Migration: add user_id column to items if missing
@@ -55,6 +72,9 @@ const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string }
 if (!columns.some(c => c.name === 'user_id')) {
   db.exec(`ALTER TABLE items ADD COLUMN user_id TEXT`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user_id ON items(user_id)`);
+}
+if (!columns.some(c => c.name === 'revision')) {
+  db.exec(`ALTER TABLE items ADD COLUMN revision INTEGER NOT NULL DEFAULT 0`);
 }
 
 // Migration: add project column to items if missing
@@ -87,6 +107,15 @@ try {
     updated_at INTEGER
   )`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_user_id ON item_images(user_id)`);
+  const imageColumns = db.prepare(`PRAGMA table_info(item_images)`).all() as { name: string }[];
+  if (!imageColumns.some(c => c.name === 'mime_type')) db.exec(`ALTER TABLE item_images ADD COLUMN mime_type TEXT`);
+  if (!imageColumns.some(c => c.name === 'content_hash')) db.exec(`ALTER TABLE item_images ADD COLUMN content_hash TEXT`);
+  db.exec(`CREATE TABLE IF NOT EXISTS image_blobs (
+    content_hash TEXT PRIMARY KEY,
+    data BLOB NOT NULL,
+    byte_length INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
 } catch (e) {
   console.warn('item_images table creation:', e);
 }
@@ -112,12 +141,11 @@ try {
 
 const stmts = {
   getAll: db.prepare(`SELECT * FROM items WHERE user_id = ?`),
-  getAllChunk: db.prepare(`SELECT * FROM items WHERE user_id = ? LIMIT ? OFFSET ?`),
-  getCount: db.prepare(`SELECT COUNT(*) as count FROM items WHERE user_id = ?`),
+  getAllChunk: db.prepare(`SELECT rowid AS _rowid, * FROM items WHERE user_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`),
   getSince: db.prepare(`SELECT * FROM items WHERE user_id = ? AND (updated_at > ? OR (updated_at IS NULL AND saved_at > ?))`),
   upsert: db.prepare(`
-    INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, project)
-    VALUES (@id, @type, @data, @srs, @saved_at, @updated_at, @is_deleted, @is_archived, @user_id, @project)
+    INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, project, revision)
+    VALUES (@id, @type, @data, @srs, @saved_at, @updated_at, @is_deleted, @is_archived, @user_id, @project, @revision)
     ON CONFLICT(id) DO UPDATE SET
       type = @type,
       data = @data,
@@ -126,10 +154,11 @@ const stmts = {
       updated_at = @updated_at,
       is_deleted = @is_deleted,
       is_archived = @is_archived,
-      project = @project
+      project = @project,
+      revision = @revision
     WHERE items.user_id IS NULL OR items.user_id = @user_id
   `),
-  softDelete: db.prepare(`UPDATE items SET is_deleted = 1, updated_at = ? WHERE id = ? AND user_id = ?`),
+  softDelete: db.prepare(`UPDATE items SET is_deleted = 1, updated_at = ?, revision = ? WHERE id = ? AND user_id = ?`),
   getByIdScoped: db.prepare(`SELECT * FROM items WHERE id = ? AND user_id = ?`),
   getById: db.prepare(`SELECT * FROM items WHERE id = ?`),
   assignOrphanItems: db.prepare(`UPDATE items SET user_id = ? WHERE user_id IS NULL`),
@@ -173,20 +202,74 @@ export function upsertComparison(userId: string, key: string, words: string[], d
 // ─── Image (item_images) prepared statements ───
 
 const imageStmts = {
+  upsertBlob: db.prepare(`INSERT OR IGNORE INTO image_blobs (content_hash, data, byte_length, created_at)
+    VALUES (@content_hash, @data, @byte_length, @created_at)`),
   upsert: db.prepare(`
-    INSERT INTO item_images (id, user_id, data, updated_at)
-    VALUES (@id, @user_id, @data, @updated_at)
+    INSERT INTO item_images (id, user_id, data, updated_at, mime_type, content_hash)
+    VALUES (@id, @user_id, @data, @updated_at, @mime_type, @content_hash)
     ON CONFLICT(id) DO UPDATE SET
       user_id = @user_id,
       data = @data,
-      updated_at = @updated_at
+      updated_at = @updated_at,
+      mime_type = @mime_type,
+      content_hash = @content_hash
     WHERE item_images.user_id IS NULL OR item_images.user_id = @user_id
   `),
-  get: db.prepare(`SELECT data FROM item_images WHERE id = ? AND user_id = ?`),
+  get: db.prepare(`SELECT COALESCE(b.data, i.data) AS data, i.mime_type
+    FROM item_images i LEFT JOIN image_blobs b ON b.content_hash = i.content_hash
+    WHERE i.id = ? AND i.user_id = ?`),
   manifest: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
   allIdsForUser: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
+  owner: db.prepare(`SELECT user_id FROM item_images WHERE id = ?`),
   assignOrphan: db.prepare(`UPDATE item_images SET user_id = ? WHERE user_id IS NULL`),
 };
+
+function parseImageDataUri(dataUri: string): { data: Buffer; mimeType: string } | null {
+  const match = dataUri.match(/^data:(image\/(?:avif|gif|jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) return null;
+  return { mimeType: match[1], data: Buffer.from(match[2], 'base64') };
+}
+
+function hasImageSignature(data: Buffer, mimeType: string): boolean {
+  if (mimeType === 'image/png') return data.length >= 8 && data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'));
+  if (mimeType === 'image/jpeg') return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  if (mimeType === 'image/gif') return data.length >= 6 && /^GIF8[79]a$/.test(data.subarray(0, 6).toString('ascii'));
+  if (mimeType === 'image/webp') return data.length >= 12 && data.subarray(0, 4).toString('ascii') === 'RIFF' && data.subarray(8, 12).toString('ascii') === 'WEBP';
+  if (mimeType === 'image/avif') return data.length >= 12 && data.subarray(4, 8).toString('ascii') === 'ftyp' && data.subarray(8, 12).toString('ascii').startsWith('avi');
+  return false;
+}
+
+function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeType: string, updatedAt: number): boolean {
+  if (data.length === 0 || !/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType) ||
+      !hasImageSignature(data, mimeType)) return false;
+  const owner = imageStmts.owner.get(id) as { user_id: string | null } | undefined;
+  if (owner?.user_id && owner.user_id !== userId) return false;
+  const contentHash = createHash('sha256').update(data).digest('hex');
+  imageStmts.upsertBlob.run({
+    content_hash: contentHash, data, byte_length: data.length, created_at: updatedAt,
+  });
+  const reference = imageStmts.upsert.run({
+    id, user_id: userId, data: Buffer.alloc(0), updated_at: updatedAt,
+    mime_type: mimeType, content_hash: contentHash,
+  });
+  return reference.changes > 0;
+}
+
+function storeImage(id: string, userId: string | null, dataUri: string, updatedAt: number): boolean {
+  const parsed = parseImageDataUri(dataUri);
+  return parsed ? storeImageBuffer(id, userId, parsed.data, parsed.mimeType, updatedAt) : false;
+}
+
+export function upsertItemImageBinary(id: string, data: Buffer, mimeType: string, userId: string): boolean {
+  return storeImageBuffer(id, userId, data, mimeType, Date.now());
+}
+
+function storedImageToDataUri(row: { data: Buffer | string; mime_type?: string | null } | undefined): string | null {
+  if (!row?.data) return null;
+  if (typeof row.data === 'string') return row.data.startsWith('data:image/') ? row.data : null;
+  const mime = row.mime_type || 'image/webp';
+  return `data:${mime};base64,${row.data.toString('base64')}`;
+}
 
 /**
  * Incremental, crash-resumable migration: pull base64 images out of items.data into
@@ -234,7 +317,7 @@ export async function migrateInlineImages() {
       if (images.length === 0) continue; // LIKE matched a stray substring — leave row as-is
       // Insert images FIRST, then rewrite the (now image-free) row.
       for (const img of images) {
-        imageStmts.upsert.run({ id: img.id, user_id: row.user_id, data: img.data, updated_at: now });
+        storeImage(img.id, row.user_id, img.data, now);
       }
       updateData.run(JSON.stringify(data), row.rid);
       imagesInBatch += images.length;
@@ -259,6 +342,26 @@ export async function migrateInlineImages() {
   if (totalImages > 0) {
     console.log(`[migrate] item_images: extracted ${totalImages} inline image(s) from ${totalRows} row(s)`);
   }
+
+  // Convert legacy base64 rows to shared binary blobs in small resumable batches.
+  // Existing rows remain readable throughout; content_hash is the completion marker.
+  const legacyBatch = db.prepare(`SELECT rowid AS rid, id, user_id, data FROM item_images
+    WHERE rowid > ? AND content_hash IS NULL ORDER BY rowid LIMIT 10`);
+  let imageMark = 0;
+  let converted = 0;
+  for (;;) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const rows = legacyBatch.all(imageMark) as Array<{
+      rid: number; id: string; user_id: string | null; data: string | Buffer;
+    }>;
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      if (typeof row.data === 'string' && storeImage(row.id, row.user_id, row.data, Date.now())) converted++;
+    }
+    imageMark = rows[rows.length - 1].rid;
+    try { db.pragma('wal_checkpoint(PASSIVE)'); } catch { /* best effort */ }
+  }
+  if (converted > 0) console.log(`[migrate] item_images: converted ${converted} legacy image(s) to deduplicated blobs`);
 }
 
 // ─── User / Session prepared statements ───
@@ -296,6 +399,7 @@ interface ItemRow {
   is_archived: number;
   user_id: string | null;
   project: string | null;
+  revision: number;
 }
 
 export interface UserRow {
@@ -337,6 +441,7 @@ function rowToItem(row: ItemRow, stripImages = false, imageIds?: Set<string>) {
     isDeleted: row.is_deleted === 1 ? true : undefined,
     isArchived: row.is_archived === 1 ? true : undefined,
     project: row.project ?? undefined,
+    serverRevision: row.revision || undefined,
   };
 }
 
@@ -350,9 +455,11 @@ function getImageIdSet(userId: string): Set<string> {
 
 /** Inject base64 from item_images back into already-parsed items (the ?images=true path). */
 function rehydrateImages(items: any[], userId: string) {
-  const rows = db.prepare(`SELECT id, data FROM item_images WHERE user_id = ?`).all(userId) as Array<{ id: string; data: string }>;
+  const rows = db.prepare(`SELECT i.id, COALESCE(b.data, i.data) AS data, i.mime_type
+    FROM item_images i LEFT JOIN image_blobs b ON b.content_hash = i.content_hash WHERE i.user_id = ?`)
+    .all(userId) as Array<{ id: string; data: Buffer | string; mime_type: string | null }>;
   if (rows.length === 0) return;
-  const map = new Map(rows.map(r => [r.id, r.data]));
+  const map = new Map(rows.map(r => [r.id, storedImageToDataUri(r)]));
   for (const item of items) {
     const d = item.data as any;
     const top = map.get(d.id);
@@ -377,14 +484,15 @@ export function getAllItems(stripImages = false, userId: string) {
   // One cheap id-only query tells us which items/vocabs to mark as having an image.
   const imageIds = getImageIdSet(userId);
   const CHUNK = 200;
-  const { count } = stmts.getCount.get(userId) as { count: number };
   const items: any[] = [];
-  for (let offset = 0; offset < count; offset += CHUNK) {
-    const rows = stmts.getAllChunk.all(userId, CHUNK, offset) as ItemRow[];
+  let lastRowId = 0;
+  for (;;) {
+    const rows = stmts.getAllChunk.all(userId, lastRowId, CHUNK) as Array<ItemRow & { _rowid: number }>;
+    if (rows.length === 0) break;
     for (const row of rows) {
       items.push(rowToItem(row, true, imageIds));
     }
-    // rows array goes out of scope here, allowing GC to reclaim the raw data
+    lastRowId = rows[rows.length - 1]._rowid;
   }
   return items;
 }
@@ -418,7 +526,11 @@ export function getItemsSince(since: number, stripImages = false, userId: string
   return items;
 }
 
-export function upsertItem(item: any, userId: string) {
+const nextRevision = db.prepare(`UPDATE sync_meta SET value = value + 1 WHERE key = 'item_revision' RETURNING value`);
+
+export interface UpsertResult { revision: number; conflicted: boolean }
+
+export function upsertItem(item: any, userId: string): UpsertResult {
   const data = item.data;
   if (!data || !data.id) throw new Error('Item missing data.id');
 
@@ -430,11 +542,14 @@ export function upsertItem(item: any, userId: string) {
 
   const incomingUpdatedAt = item.updatedAt || now;
   const existingUpdatedAt = existing?.updated_at || 0;
+  const existingRevision = existing?.revision || 0;
+  const incomingRevision = typeof item.serverRevision === 'number' ? item.serverRevision : undefined;
 
   // Content and learning progress have different conflict clocks. An edit can
   // have newer content while carrying SRS loaded before another device reviewed
   // the card, so always select SRS independently by its review timestamp.
   let selectedSrs = item.srs;
+  let srsChanged = false;
   if (existing) {
     const existingSrs = JSON.parse(existing.srs);
     const incomingReview = item.srs?.lastReviewDate || 0;
@@ -446,6 +561,9 @@ export function upsertItem(item: any, userId: string) {
       (existingReview === incomingReview && existingReviews > incomingReviews)
     ) {
       selectedSrs = existingSrs;
+    } else if (incomingReview > existingReview ||
+               (incomingReview === existingReview && incomingReviews > existingReviews)) {
+      srsChanged = true;
     }
   }
 
@@ -456,7 +574,7 @@ export function upsertItem(item: any, userId: string) {
   // index-based image-preservation, which could clobber real images with markers.
   const captureImage = (id: string | undefined, url: unknown) => {
     if (id && typeof url === 'string' && url.startsWith('data:image/')) {
-      imageStmts.upsert.run({ id, user_id: userId, data: url, updated_at: now });
+      storeImage(id, userId, url, now);
     }
   };
 
@@ -477,34 +595,79 @@ export function upsertItem(item: any, userId: string) {
   }
 
   // Ignore stale content while still accepting a newer review selected above.
-  const staleContent = !!existing && incomingUpdatedAt < existingUpdatedAt;
+  const staleContent = !!existing && (incomingRevision !== undefined
+    ? incomingRevision < existingRevision
+    : incomingUpdatedAt < existingUpdatedAt);
+  const revision = staleContent && !srsChanged
+    ? existingRevision
+    : ((nextRevision.get() as { value: number }).value);
   stmts.upsert.run({
     id: data.id,
     type: staleContent ? existing.type : item.type,
     data: staleContent ? existing.data : JSON.stringify(finalData),
     srs: JSON.stringify(selectedSrs),
     saved_at: staleContent ? existing.saved_at : (item.savedAt || now),
-    updated_at: Math.max(existingUpdatedAt, incomingUpdatedAt),
+    updated_at: staleContent && !srsChanged ? existingUpdatedAt : Math.max(existingUpdatedAt, incomingUpdatedAt),
     is_deleted: staleContent ? existing.is_deleted : (item.isDeleted ? 1 : 0),
     is_archived: staleContent ? existing.is_archived : (item.isArchived ? 1 : 0),
     user_id: userId,
     project: staleContent ? existing.project : (item.project || null),
+    revision,
+  });
+  return { revision, conflicted: staleContent };
+}
+
+export const upsertMany = db.transaction((items: any[], userId: string): { revisions: Record<string, number>; conflicts: string[] } => {
+  const revisions: Record<string, number> = {};
+  const conflicts: string[] = [];
+  for (const item of items) {
+    const result = upsertItem(item, userId);
+    if (result.conflicted) conflicts.push(item.data.id);
+    else revisions[item.data.id] = result.revision;
+  }
+  return { revisions, conflicts };
+});
+
+export interface ReviewEventRow {
+  id: string;
+  itemId: string;
+  itemType: 'vocab' | 'phrase' | 'sentence';
+  reviewedAt: number;
+  previousStep: number;
+  nextStep: number;
+}
+
+const reviewStmts = {
+  insert: db.prepare(`INSERT OR IGNORE INTO review_events
+    (id, user_id, item_id, item_type, reviewed_at, previous_step, next_step)
+    VALUES (@id, @user_id, @item_id, @item_type, @reviewed_at, @previous_step, @next_step)`),
+  recent: db.prepare(`SELECT id, item_id, item_type, reviewed_at, previous_step, next_step
+    FROM review_events WHERE user_id = ? AND reviewed_at >= ? ORDER BY reviewed_at`),
+};
+
+export function addReviewEvent(event: ReviewEventRow, userId: string): void {
+  reviewStmts.insert.run({
+    id: event.id, user_id: userId, item_id: event.itemId, item_type: event.itemType,
+    reviewed_at: event.reviewedAt, previous_step: event.previousStep, next_step: event.nextStep,
   });
 }
 
-export const upsertMany = db.transaction((items: any[], userId: string) => {
-  for (const item of items) {
-    upsertItem(item, userId);
-  }
-});
-
-export function softDeleteItem(id: string, userId: string) {
-  stmts.softDelete.run(Date.now(), id, userId);
+export function getReviewEvents(userId: string, since: number): ReviewEventRow[] {
+  return (reviewStmts.recent.all(userId, since) as any[]).map(row => ({
+    id: row.id, itemId: row.item_id, itemType: row.item_type, reviewedAt: row.reviewed_at,
+    previousStep: row.previous_step, nextStep: row.next_step,
+  }));
 }
 
-export function getItemById(id: string, userId: string) {
+export function softDeleteItem(id: string, userId: string) {
+  const revision = (nextRevision.get() as { value: number }).value;
+  stmts.softDelete.run(Date.now(), revision, id, userId);
+}
+
+export function getItemById(id: string, userId: string, includeImages = true) {
   const row = stmts.getByIdScoped.get(id, userId) as ItemRow | undefined;
   if (!row) return null;
+  if (!includeImages) return rowToItem(row, true, getImageIdSet(userId));
   const item = rowToItem(row);
   // Re-inject base64 from item_images for this single item.
   const d = item.data as any;
@@ -547,8 +710,9 @@ function getInlineItemImage(id: string, userId: string): string | null {
  * Fallback: inline base64 in items.data (only until the migration finishes).
  */
 export function getItemImage(id: string, userId: string): string | null {
-  const imgRow = imageStmts.get.get(id, userId) as { data: string } | undefined;
-  if (imgRow?.data) return imgRow.data;
+  const imgRow = imageStmts.get.get(id, userId) as { data: Buffer | string; mime_type: string | null } | undefined;
+  const stored = storedImageToDataUri(imgRow);
+  if (stored) return stored;
   return getInlineItemImage(id, userId);
 }
 
@@ -563,9 +727,14 @@ export function getItemImagesBatch(ids: string[], userId: string): Record<string
   // Fast path: one IN query against item_images.
   const placeholders = ids.map(() => '?').join(',');
   const rows = db
-    .prepare(`SELECT id, data FROM item_images WHERE user_id = ? AND id IN (${placeholders})`)
-    .all(userId, ...ids) as Array<{ id: string; data: string }>;
-  for (const r of rows) if (r.data) result[r.id] = r.data;
+    .prepare(`SELECT i.id, COALESCE(b.data, i.data) AS data, i.mime_type FROM item_images i
+      LEFT JOIN image_blobs b ON b.content_hash = i.content_hash
+      WHERE i.user_id = ? AND i.id IN (${placeholders})`)
+    .all(userId, ...ids) as Array<{ id: string; data: Buffer | string; mime_type: string | null }>;
+  for (const r of rows) {
+    const dataUri = storedImageToDataUri(r);
+    if (dataUri) result[r.id] = dataUri;
+  }
 
   // Transitional fallback for any ids not yet migrated.
   for (const id of ids) {
@@ -588,8 +757,7 @@ export const upsertItemImages = db.transaction((images: Array<{ id: string; data
   let count = 0;
   for (const img of images) {
     if (img && img.id && typeof img.data === 'string' && img.data.startsWith('data:image/')) {
-      const result = imageStmts.upsert.run({ id: img.id, user_id: userId, data: img.data, updated_at: now });
-      count += result.changes;
+      if (storeImage(img.id, userId, img.data, now)) count++;
     }
   }
   return count;
@@ -672,7 +840,7 @@ let projectStmts = {
   create: db.prepare(`INSERT INTO projects (id, name, user_id, created_at) VALUES (@id, @name, @user_id, @created_at)`),
   rename: db.prepare(`UPDATE projects SET name = ? WHERE id = ? AND user_id = ?`),
   delete: db.prepare(`DELETE FROM projects WHERE id = ? AND user_id = ?`),
-  clearItemsProject: db.prepare(`UPDATE items SET project = NULL, updated_at = ? WHERE project = ? AND user_id = ?`),
+  clearItemsProject: db.prepare(`UPDATE items SET project = NULL, updated_at = ?, revision = ? WHERE project = ? AND user_id = ?`),
 };
 
 export interface ProjectRow {
@@ -719,7 +887,8 @@ export function renameProject(id: string, name: string, userId: string) {
 
 export const deleteProject = db.transaction((id: string, userId: string) => {
   // Clear project from all items that belonged to it
-  projectStmts.clearItemsProject.run(Date.now(), id, userId);
+  const revision = (nextRevision.get() as { value: number }).value;
+  projectStmts.clearItemsProject.run(Date.now(), revision, id, userId);
   projectStmts.delete.run(id, userId);
 });
 

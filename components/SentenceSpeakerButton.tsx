@@ -9,7 +9,7 @@ import {
   resumeCurrent,
   stopCurrent,
   type PlaybackState,
-} from '../services/neuralTts';
+} from '../services/lazyTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { error as logError } from '../services/logger';
 
@@ -26,7 +26,7 @@ interface Props {
  * Small icon button that reads an example sentence aloud in the natural neural voice
  * (Kokoro/MiMo, on-device) — falling back to the system voice on unsupported devices.
  *
- * It is a PURE SUBSCRIBER to the shared playback state (services/neuralTts), keyed by the sentence
+ * It is a PURE SUBSCRIBER to the shared playback state (services/lazyTts), keyed by the sentence
  * text. So the icon always reflects what's actually playing — whether playback was started by THIS
  * button, another speaker, the E / Cmd+1·2 keyboard readers, or swipe-to-speak. Because it holds no
  * private "isPlaying" state, it can't get stuck out of sync (the old "frozen on pause" bug), and a

@@ -1,4 +1,4 @@
-import { StoredItem, SearchResult, ComparisonResult, ProjectInfo, StoredComparison } from '../types';
+import { StoredItem, SearchResult, ComparisonResult, ProjectInfo, StoredComparison, ReviewEvent } from '../types';
 import { log, warn, error as logError } from './logger';
 import { jsonRequest, requestJson, requestVoid } from './http';
 
@@ -22,8 +22,37 @@ export const loadAllItems = async (): Promise<StoredItem[]> => {
 };
 
 export const saveItems = async (items: StoredItem[]): Promise<void> => {
-  return requestVoid(`${API_BASE}/api/items`, jsonRequest('PUT', items), 'Save items');
+  const result = await requestJson<{
+    revisions?: Record<string, number>;
+    conflicts?: string[];
+    canonical?: StoredItem[];
+  }>(
+    `${API_BASE}/api/items`, jsonRequest('PUT', items), 'Save items',
+  );
+  if (result.revisions) {
+    for (const item of items) {
+      const revision = result.revisions[item.data.id];
+      if (typeof revision === 'number') item.serverRevision = revision;
+    }
+  }
+  if (result.canonical?.length) {
+    const byId = new Map(result.canonical.map(item => [item.data.id, item]));
+    for (const item of items) {
+      const canonical = byId.get(item.data.id);
+      if (canonical) {
+        const localHash = item.lastSyncedHash;
+        Object.assign(item, canonical, { lastSyncedHash: localHash });
+        hashCache.delete(item);
+      }
+    }
+  }
 };
+
+export const loadReviewEvents = async (since: number): Promise<ReviewEvent[]> =>
+  requestJson(`${API_BASE}/api/reviews?since=${since}`, undefined, 'Load review history');
+
+export const saveReviewEvent = async (event: ReviewEvent): Promise<void> =>
+  requestVoid(`${API_BASE}/api/reviews`, jsonRequest('POST', event), 'Save review event');
 
 /**
  * Fetch a single item's image as a base64 data URI via the binary image endpoint.
@@ -44,17 +73,19 @@ export const loadItemImage = async (itemId: string): Promise<string | null> => {
  */
 export const loadItemImagesBatch = async (ids: string[]): Promise<Record<string, string>> => {
   if (ids.length === 0) return {};
-  try {
-    const res = await fetch(`${API_BASE}/api/items/images`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    });
-    if (!res.ok) return {};
-    return res.json();
-  } catch {
-    return {};
-  }
+  const result: Record<string, string> = {};
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < ids.length) {
+      const id = ids[cursor++];
+      try {
+        const image = await loadItemImage(id);
+        if (image) result[id] = image;
+      } catch { /* a later prefetch can retry transient failures */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker));
+  return result;
 };
 
 /**
@@ -77,11 +108,16 @@ export const getServerImageManifest = async (): Promise<Set<string>> => {
 export const uploadImages = async (
   images: Record<string, string>
 ): Promise<{ ok: boolean; saved: number }> => {
-  return requestJson(
-    `${API_BASE}/api/items/images`,
-    jsonRequest('PUT', images),
-    'Upload images',
-  );
+  let saved = 0;
+  for (const [id, dataUri] of Object.entries(images)) {
+    const blob = await fetch(dataUri).then(response => response.blob());
+    const response = await fetch(`${API_BASE}/api/items/${encodeURIComponent(id)}/image`, {
+      method: 'PUT', headers: { 'Content-Type': blob.type }, body: blob,
+    });
+    if (!response.ok) throw new Error(`Upload image failed (${response.status})`);
+    saved++;
+  }
+  return { ok: true, saved };
 };
 
 /** Convert a Blob to a base64 data URI string. */
@@ -356,14 +392,11 @@ export const generateIllustration = async (
       warn('Image generation failed:', res.status);
       return undefined;
     }
-
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.startsWith('image/')) return blobToBase64(await res.blob());
     const data = await res.json();
-    if (data.error === 'QUOTA_EXCEEDED') {
-      warn('Image generation skipped: Quota exceeded.');
-      return undefined;
-    }
-
-    return data.imageData;
+    if (data.error === 'QUOTA_EXCEEDED') warn('Image generation skipped: Quota exceeded.');
+    return undefined;
   } catch (error: any) {
     warn('Image generation failed', error);
     return undefined;

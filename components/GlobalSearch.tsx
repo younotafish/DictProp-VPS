@@ -5,7 +5,7 @@ import { analyzeInput, detectVocabulary, generateIllustration, compareWords } fr
 import { VocabCardDisplay } from './VocabCard';
 import { ComparisonBody } from './ComparisonBody';
 import { makeVocabStoredItem } from '../services/items';
-import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/neuralTts';
+import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { useSentenceSearch } from '../services/sentenceSearch';
 import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';

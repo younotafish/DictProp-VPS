@@ -16,7 +16,7 @@ import { ProjectManager } from '../components/ProjectManager';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
-import { speakWord, ensureTTS } from '../services/neuralTts';
+import { speakWord, ensureTTS } from '../services/lazyTts';
 import { warn, error as logError } from '../services/logger';
 
 interface NotebookItemProps {

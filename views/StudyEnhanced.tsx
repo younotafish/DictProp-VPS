@@ -14,7 +14,7 @@
  */
 
 import React, { useEffect, useMemo, useRef } from 'react';
-import { StoredItem, getItemTitle } from '../types';
+import { StoredItem, getItemTitle, ReviewEvent } from '../types';
 import { 
   Trophy, 
   TrendingUp, 
@@ -28,11 +28,13 @@ import {
 
 interface StudyEnhancedProps {
   items: StoredItem[];
+  reviewEvents: ReviewEvent[];
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
 export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({ 
   items, 
+  reviewEvents,
   onScroll,
 }) => {
   // Scroll container ref for position restoration
@@ -74,15 +76,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const struggling = items.filter(i => (i.srs?.memoryStrength ?? 0) >= 10 && (i.srs?.memoryStrength ?? 0) < 30).length;
     const newItems = items.filter(i => (i.srs?.memoryStrength ?? 0) < 10).length;
 
-    // Collect review dates from items for streak + chart calculation
-    // Each item's lastReviewDate tells us the most recent day it was reviewed
-    const reviewDateSet = new Set<string>();
-    for (const item of items) {
-      if (item.srs?.lastReviewDate && (item.srs?.totalReviews ?? 0) > 0) {
-        const dateStr = new Date(item.srs.lastReviewDate).toISOString().split('T')[0];
-        reviewDateSet.add(dateStr);
-      }
-    }
+    const dateKey = (timestamp: number): string => {
+      const d = new Date(timestamp);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const reviewDateSet = new Set(reviewEvents.map(event => dateKey(event.reviewedAt)));
 
     // Calculate consecutive day streak from item-level review dates
     let streak = 0;
@@ -90,7 +88,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     for (let i = 0; i < 365; i++) {
       const checkDate = new Date(todayDate);
       checkDate.setDate(checkDate.getDate() - i);
-      const checkDateStr = checkDate.toISOString().split('T')[0];
+      const checkDateStr = dateKey(checkDate.getTime());
       
       if (reviewDateSet.has(checkDateStr)) {
         streak++;
@@ -112,11 +110,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     weekAgo.setDate(weekAgo.getDate() - 7);
     const weekAgoTimestamp = weekAgo.getTime();
 
-    // Count items reviewed in the last 7 days
-    const itemsReviewedThisWeek = items.filter(
-      i => (i.srs?.lastReviewDate ?? 0) >= weekAgoTimestamp && (i.srs?.totalReviews ?? 0) > 0
-    );
-    const weeklyReviews = itemsReviewedThisWeek.length;
+    const weeklyEvents = reviewEvents.filter(event => event.reviewedAt >= weekAgoTimestamp);
+    const weeklyReviews = weeklyEvents.length;
+    const reviewedIds = new Set(weeklyEvents.map(event => event.itemId));
+    const itemsReviewedThisWeek = items.filter(item => reviewedIds.has(item.data.id));
 
     // Average memory strength of items reviewed this week (proxy for accuracy)
     const weeklyAvgStrength = itemsReviewedThisWeek.length > 0
@@ -124,7 +121,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       : 0;
 
     // Total lifetime reviews across all items
-    const totalLifetimeReviews = items.reduce((sum, i) => sum + (i.srs?.totalReviews ?? 0), 0);
+    const legacyReviewFloor = items.reduce((sum, i) => sum + (i.srs?.totalReviews ?? 0), 0);
+    const totalLifetimeReviews = Math.max(reviewEvents.length, legacyReviewFloor);
 
     // Card-level metrics
     const longestStreak = items.length > 0
@@ -140,13 +138,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
-      // Count items whose lastReviewDate falls on this day
-      const dayReviews = items.filter(item => {
-        if (!item.srs?.lastReviewDate || (item.srs?.totalReviews ?? 0) === 0) return false;
-        const reviewDateStr = new Date(item.srs.lastReviewDate).toISOString().split('T')[0];
-        return reviewDateStr === dateStr;
-      }).length;
+      const dateStr = dateKey(d.getTime());
+      const dayReviews = reviewEvents.filter(event => dateKey(event.reviewedAt) === dateStr).length;
       last7Days.push({
         date: dateStr,
         reviews: dayReviews,
@@ -171,7 +164,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       mostReviewed,
       last7Days
     };
-  }, [items]);
+  }, [items, reviewEvents]);
 
   if (items.length === 0) {
     return (

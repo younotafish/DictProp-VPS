@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { StoredItem, VocabCard } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
 import { detectVocabulary, DetectedWord, analyzeInput, generateIllustration } from '../services/api';
-import { ensureTTS } from '../services/neuralTts';
+import { ensureTTS } from '../services/lazyTts';
 import { makeVocabStoredItem } from '../services/items';
 
 // ─── Types ──────────────────────────────────────────────────────────────────

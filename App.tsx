@@ -1,10 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { NotebookView } from './views/Notebook';
-import { StudyEnhanced } from './views/StudyEnhanced';
-import { SentencesView } from './views/SentencesView';
-import { DetailView } from './views/DetailView';
 import { KeyboardHelpModal } from './components/KeyboardHelpModal';
-import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, ProjectInfo, StoredComparison, ComparisonResult, comparisonKey } from './types';
+import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, ProjectInfo, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
@@ -18,14 +15,19 @@ import { DuplicatesModal, DuplicateClusterView } from './components/DuplicatesMo
 import { CardReviewPopup } from './components/CardReviewPopup';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
-import { preloadNeural } from './services/neuralTts';
 import { requestPersistentStorage } from './services/audioCache';
+import { optimizeImageDataUri } from './services/imageProcessing';
+import { offloadAndUpload } from './services/imagePipeline';
+import { useReviewHistory } from './hooks/useReviewHistory';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 
 // Project to land on by default each session (matched by name, case-insensitive).
 // Falls back to "All Projects" if no project with this name exists. Change here to retarget.
 const DEFAULT_PROJECT_NAME = 'everyone ESL';
+const StudyEnhanced = lazy(() => import('./views/StudyEnhanced').then(module => ({ default: module.StudyEnhanced })));
+const SentencesView = lazy(() => import('./views/SentencesView').then(module => ({ default: module.SentencesView })));
+const DetailView = lazy(() => import('./views/DetailView').then(module => ({ default: module.DetailView })));
 
 // Create lightweight cache for localStorage (target: <1MB for 3000+ items)
 // Only includes fields needed for list display + SRS scheduling
@@ -37,6 +39,7 @@ const createLightweightCache = (items: StoredItem[]): any[] =>
       srs: item.srs,
       savedAt: item.savedAt,
       updatedAt: item.updatedAt,
+      serverRevision: item.serverRevision,
     };
     if (item.isDeleted) entry.isDeleted = true;
     if (item.isArchived) entry.isArchived = true;
@@ -199,38 +202,6 @@ const IMAGE_IDB_MARKER = 'idb:stored';
 const isImageMarker = (url: string | undefined): boolean =>
   !!url && !url.startsWith('data:image/') && (url === IMAGE_IDB_MARKER || url === 'server:has_image');
 
-/** Push offloaded base64 images to the server (item_images) in small chunks, with a light retry. */
-async function uploadImagesToServer(images: Array<{ id: string; base64: string }>): Promise<void> {
-  const CHUNK = 8;
-  for (let i = 0; i < images.length; i += CHUNK) {
-    const chunk = images.slice(i, i + CHUNK);
-    const map: Record<string, string> = {};
-    for (const img of chunk) map[img.id] = img.base64;
-    let ok = false;
-    for (let attempt = 0; attempt < 2 && !ok; attempt++) {
-      try {
-        await uploadImages(map);
-        ok = true;
-      } catch (e) {
-        if (attempt === 1) warn('Image upload chunk failed (Restore action will backstop):', e);
-        else await new Promise(r => setTimeout(r, 800));
-      }
-    }
-  }
-}
-
-/**
- * Offload base64 images to BOTH local IDB and the server. Local save is awaited (needed
- * for offline display); the server upload runs in the background so "saved locally" and
- * "uploaded to server" stay coupled — this is the sole path that gets new images to the
- * server now that item PUTs no longer carry base64.
- */
-async function offloadAndUpload(images: Array<{ id: string; base64: string }>): Promise<void> {
-  if (images.length === 0) return;
-  await saveImagesBatch(images);
-  void uploadImagesToServer(images);
-}
-
 /**
  * Strip base64 imageUrl fields from items and store them in IDB images store.
  * Also normalizes server markers ('server:has_image') to the client marker ('idb:stored').
@@ -331,16 +302,8 @@ const App: React.FC = () => {
     });
   }, []);
 
-  // Warm up the on-device natural voice (Kokoro) in the background a few seconds after load, so
-  // sentence TTS/autoplay is ready without waiting for a first click. preloadNeural() no-ops without
-  // WebAssembly, if it's already loading/ready, or (on mobile) before the one-time download is consented to.
   useEffect(() => {
-    const t = setTimeout(() => preloadNeural(), 3000);
-    // Ask the browser to make our storage durable so the on-device audio cache (IndexedDB) survives
-    // eviction — this is what lets sentence audio load from local disk on the next launch instead of
-    // re-downloading every clip from the server. Best-effort; a no-op where unsupported/denied.
     void requestPersistentStorage();
-    return () => clearTimeout(t);
   }, []);
 
   const [currentView, setCurrentView] = useState<ViewState>(() => {
@@ -404,9 +367,14 @@ const App: React.FC = () => {
   currentUserIdRef.current = authState.user?.id || 'vps';
 
   const markItemsSynced = (ids: Set<string>) => {
-    const mark = (items: StoredItem[]): StoredItem[] => items.map(item =>
-      ids.has(item.data.id) ? { ...item, lastSyncedHash: getItemContentHash(item) } : item
-    );
+    const revisions = new Map(latestItemsRef.current
+      .filter(item => ids.has(item.data.id))
+      .map(item => [item.data.id, item.serverRevision]));
+    const mark = (items: StoredItem[]): StoredItem[] => items.map(item => ids.has(item.data.id) ? {
+      ...item,
+      serverRevision: revisions.get(item.data.id) ?? item.serverRevision,
+      lastSyncedHash: getItemContentHash(item),
+    } : item);
     latestItemsRef.current = mark(latestItemsRef.current);
     setSyncState(prevState => ({ ...prevState, items: mark(prevState.items) }));
   };
@@ -480,6 +448,7 @@ const App: React.FC = () => {
   const [comparisons, setComparisons] = useState<StoredComparison[]>([]);
   const comparisonsRef = useRef<StoredComparison[]>([]);
   useEffect(() => { comparisonsRef.current = comparisons; }, [comparisons]);
+  const { reviewEvents, recordReview } = useReviewHistory(authState.user?.id);
   const comparisonsCacheKey = authState.user ? `vps_comparisons_cache_${authState.user.id}` : 'vps_comparisons_cache';
 
   const persistComparisons = useCallback((list: StoredComparison[]) => {
@@ -2230,9 +2199,10 @@ const App: React.FC = () => {
     log(`🖼️ Image lost for ${itemId} — regenerating from prompt`);
     const regenerated = await generateIllustration(prompt, '16:9');
     if (!regenerated) return null;
-    try { await saveImage(itemId, regenerated); } catch { /* best-effort */ }
-    try { await uploadImages({ [itemId]: regenerated }); } catch (e) { warn('Failed to persist regenerated image:', e); }
-    return regenerated;
+    const optimized = await optimizeImageDataUri(regenerated);
+    try { await saveImage(itemId, optimized); } catch { /* best-effort */ }
+    try { await uploadImages({ [itemId]: optimized }); } catch (e) { warn('Failed to persist regenerated image:', e); }
+    return optimized;
   }, []);
 
   // Attach a user-pasted/picked image to a sentence under review. Mirrors the vocab/phrase image path:
@@ -2626,6 +2596,11 @@ const App: React.FC = () => {
     const bestSibling = SRSAlgorithm.selectCanonical(siblings);
     const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
     const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
+    const reviewEvent: ReviewEvent = {
+      id: crypto.randomUUID(), itemId, itemType: targetItem.type, reviewedAt: now,
+      previousStep: baseSRS.totalReviews, nextStep: updatedSRS.totalReviews,
+    };
+    recordReview(reviewEvent);
 
     log(`🧠 SRS Update: ${targetTitle} - step ${baseSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);
 
@@ -2903,6 +2878,7 @@ const App: React.FC = () => {
       )}
 
       <main className="flex-1 relative w-full min-h-0 overflow-hidden">
+        <Suspense fallback={<div className="h-full grid place-items-center"><Loader2 className="animate-spin text-indigo-500" /></div>}>
         {currentView === 'notebook' && (
           <NotebookView
             items={activeItems}
@@ -2948,6 +2924,7 @@ const App: React.FC = () => {
         {currentView === 'study' && (
           <StudyEnhanced
             items={studyItems}
+            reviewEvents={reviewEvents}
             onScroll={handleScroll}
           />
         )}
@@ -2965,6 +2942,7 @@ const App: React.FC = () => {
           />
         )}
 
+        </Suspense>
       </main>
 
       <GlobalSearch
