@@ -1,5 +1,6 @@
 import { StoredItem, SearchResult, ComparisonResult, ProjectInfo, StoredComparison } from '../types';
 import { log, warn, error as logError } from './logger';
+import { jsonRequest, requestJson, requestVoid } from './http';
 
 // Same origin — Hono serves both API and static files
 const API_BASE = '';
@@ -17,18 +18,11 @@ const generateId = (): string => {
 // ============================================================================
 
 export const loadAllItems = async (): Promise<StoredItem[]> => {
-  const res = await fetch(`${API_BASE}/api/items`);
-  if (!res.ok) throw new Error(`Failed to load items: ${res.status}`);
-  return res.json();
+  return requestJson<StoredItem[]>(`${API_BASE}/api/items`, undefined, 'Load items');
 };
 
 export const saveItems = async (items: StoredItem[]): Promise<void> => {
-  const res = await fetch(`${API_BASE}/api/items`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(items),
-  });
-  if (!res.ok) throw new Error(`Failed to save items: ${res.status}`);
+  return requestVoid(`${API_BASE}/api/items`, jsonRequest('PUT', items), 'Save items');
 };
 
 /**
@@ -68,9 +62,11 @@ export const loadItemImagesBatch = async (ids: string[]): Promise<Record<string,
  * Used by the recovery action to compute which local images are missing on the server.
  */
 export const getServerImageManifest = async (): Promise<Set<string>> => {
-  const res = await fetch(`${API_BASE}/api/items/images/manifest`);
-  if (!res.ok) throw new Error(`Failed to load image manifest: ${res.status}`);
-  const ids = await res.json();
+  const ids = await requestJson<unknown>(
+    `${API_BASE}/api/items/images/manifest`,
+    undefined,
+    'Load image manifest',
+  );
   return new Set(Array.isArray(ids) ? ids : []);
 };
 
@@ -81,13 +77,11 @@ export const getServerImageManifest = async (): Promise<Set<string>> => {
 export const uploadImages = async (
   images: Record<string, string>
 ): Promise<{ ok: boolean; saved: number }> => {
-  const res = await fetch(`${API_BASE}/api/items/images`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(images),
-  });
-  if (!res.ok) throw new Error(`Failed to upload images: ${res.status}`);
-  return res.json();
+  return requestJson(
+    `${API_BASE}/api/items/images`,
+    jsonRequest('PUT', images),
+    'Upload images',
+  );
 };
 
 /** Convert a Blob to a base64 data URI string. */
@@ -104,38 +98,31 @@ const blobToBase64 = (blob: Blob): Promise<string> =>
 // ============================================================================
 
 export const loadProjects = async (): Promise<ProjectInfo[]> => {
-  const res = await fetch(`${API_BASE}/api/projects`);
-  if (!res.ok) throw new Error(`Failed to load projects: ${res.status}`);
-  return res.json();
+  return requestJson<ProjectInfo[]>(`${API_BASE}/api/projects`, undefined, 'Load projects');
 };
 
 export const createProjectApi = async (name: string): Promise<ProjectInfo> => {
-  const res = await fetch(`${API_BASE}/api/projects`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Failed to create project: ${res.status} ${text}`);
-  }
-  return res.json();
+  return requestJson<ProjectInfo>(
+    `${API_BASE}/api/projects`,
+    jsonRequest('POST', { name }),
+    'Create project',
+  );
 };
 
 export const renameProjectApi = async (id: string, name: string): Promise<void> => {
-  const res = await fetch(`${API_BASE}/api/projects/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) throw new Error(`Failed to rename project: ${res.status}`);
+  return requestVoid(
+    `${API_BASE}/api/projects/${id}`,
+    jsonRequest('PUT', { name }),
+    'Rename project',
+  );
 };
 
 export const deleteProjectApi = async (id: string): Promise<void> => {
-  const res = await fetch(`${API_BASE}/api/projects/${id}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw new Error(`Failed to delete project: ${res.status}`);
+  return requestVoid(
+    `${API_BASE}/api/projects/${id}`,
+    { method: 'DELETE' },
+    'Delete project',
+  );
 };
 
 // ============================================================================
@@ -337,18 +324,19 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
 // ============================================================================
 
 export const loadComparisons = async (): Promise<StoredComparison[]> => {
-  const res = await fetch(`${API_BASE}/api/comparisons`);
-  if (!res.ok) throw new Error(`Failed to load comparisons: ${res.status}`);
-  return res.json();
+  return requestJson<StoredComparison[]>(
+    `${API_BASE}/api/comparisons`,
+    undefined,
+    'Load comparisons',
+  );
 };
 
 export const saveComparisonApi = async (comparison: StoredComparison): Promise<void> => {
-  const res = await fetch(`${API_BASE}/api/comparisons`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(comparison),
-  });
-  if (!res.ok) throw new Error(`Failed to save comparison: ${res.status}`);
+  return requestVoid(
+    `${API_BASE}/api/comparisons`,
+    jsonRequest('PUT', comparison),
+    'Save comparison',
+  );
 };
 
 export const generateIllustration = async (
@@ -445,29 +433,31 @@ export const fetchCachedTTSTimings = async (key: string, timeoutMs = TTS_TIMINGS
 export const requestTTSGeneration = async (
   items: Array<{ text: string; voice?: string }>
 ): Promise<{ generated: number; skipped: number; failed: number }> => {
-  const res = await fetch(`${API_BASE}/api/tts/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items }),
-  });
-  if (!res.ok) throw new Error(`TTS generate failed: ${res.status}`);
-  return res.json();
+  return requestJson(
+    `${API_BASE}/api/tts/generate`,
+    jsonRequest('POST', { items }),
+    'Generate TTS',
+  );
 };
 
 export interface TtsBackfillStatus { running: boolean; total: number; done: number; generated: number; failed: number }
 
 /** Start the server-side background backfill (audio + word timings for every sentence). Idempotent. */
 export const startTtsBackfill = async (): Promise<TtsBackfillStatus> => {
-  const res = await fetch(`${API_BASE}/api/tts/backfill`, { method: 'POST' });
-  if (!res.ok) throw new Error(`backfill start failed: ${res.status}`);
-  return res.json();
+  return requestJson<TtsBackfillStatus>(
+    `${API_BASE}/api/tts/backfill`,
+    { method: 'POST' },
+    'Start TTS backfill',
+  );
 };
 
 /** Poll the server-side backfill progress. */
 export const getTtsBackfillStatus = async (): Promise<TtsBackfillStatus> => {
-  const res = await fetch(`${API_BASE}/api/tts/backfill`);
-  if (!res.ok) throw new Error(`backfill status failed: ${res.status}`);
-  return res.json();
+  return requestJson<TtsBackfillStatus>(
+    `${API_BASE}/api/tts/backfill`,
+    undefined,
+    'Load TTS backfill status',
+  );
 };
 
 /** Of the given keys, which are already cached on the server (so the bulk sweep can skip them). */

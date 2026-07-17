@@ -2,6 +2,8 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { bodyLimit } from 'hono/body-limit';
+import { secureHeaders } from 'hono/secure-headers';
 // compress removed — Caddy handles gzip at the proxy level
 import { logger } from 'hono/logger';
 import { resolve, dirname } from 'path';
@@ -28,9 +30,36 @@ app.onError((err, c) => {
 
 // Middleware
 app.use('*', logger());
+app.use('*', secureHeaders({
+  // The app embeds third-party media and loads browser model workers, so these
+  // isolation headers must remain opt-in until those resources are audited.
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
+}));
 app.use('*', cors({
-  origin: ['https://dictprop.online', 'http://localhost:3000', 'http://localhost:3001'],
+  origin: [
+    'https://dictprop.online',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    'http://127.0.0.1:3002',
+  ],
   credentials: true,
+}));
+
+const jsonBodyLimit = bodyLimit({
+  maxSize: 512 * 1024,
+  onError: (c) => c.json({ error: 'Request body too large' }, 413),
+});
+app.use('/api/analyze', jsonBodyLimit);
+app.use('/api/compare', jsonBodyLimit);
+app.use('/api/extract-vocabulary', jsonBodyLimit);
+app.use('/api/generate-image', jsonBodyLimit);
+app.use('/api/transcribe', bodyLimit({
+  maxSize: 25 * 1024 * 1024,
+  onError: (c) => c.json({ error: 'Audio upload too large' }, 413),
 }));
 
 // Auth routes (public — before auth middleware)
@@ -66,12 +95,30 @@ process.on('unhandledRejection', (err) => {
 
 console.log(`DictProp server starting on port ${env.PORT}...`);
 
-serve({
+const server = serve({
   fetch: app.fetch,
   port: env.PORT,
 });
 
 console.log(`Server running at http://localhost:${env.PORT}`);
+
+let shuttingDown = false;
+function shutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received, closing HTTP server...`);
+  server.close((error) => {
+    if (error) {
+      console.error('Failed to close HTTP server:', error);
+      process.exitCode = 1;
+    }
+    process.exit();
+  });
+  setTimeout(() => process.exit(1), 10_000).unref();
+}
+
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
 
 // Migrate inline base64 images → item_images in the BACKGROUND, after the port is open.
 // Runs in event-loop-yielding chunks so health/reads stay responsive; resumes each boot

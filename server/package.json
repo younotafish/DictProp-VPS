@@ -3,9 +3,14 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run build",
     "start": "node dist/index.js"
   },
   "dependencies": {
