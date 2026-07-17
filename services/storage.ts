@@ -1,4 +1,5 @@
 import { StoredItem } from '../types';
+import { dataUriToBlob } from './dataUri';
 import { log, warn, error as logError } from './logger';
 
 const DB_NAME = 'PopDictDB';
@@ -337,7 +338,6 @@ const IMAGES_STORE = 'images';
 const imageCache = new Map<string, string>();
 const IMAGE_CACHE_MAX = 50;
 
-const dataUriToBlob = async (dataUri: string): Promise<Blob> => fetch(dataUri).then(response => response.blob());
 const blobToDataUri = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(String(reader.result));
@@ -357,7 +357,7 @@ const evictImageCache = () => {
 };
 
 export const saveImage = async (itemId: string, base64: string): Promise<void> => {
-  const blob = await dataUriToBlob(base64);
+  const blob = dataUriToBlob(base64);
   const cachedUrl = URL.createObjectURL(blob);
   imageCache.set(itemId, cachedUrl);
   evictImageCache();
@@ -381,7 +381,7 @@ export const saveImage = async (itemId: string, base64: string): Promise<void> =
 
 export const saveImagesBatch = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
   if (images.length === 0) return;
-  const encoded = await Promise.all(images.map(async image => ({ ...image, blob: await dataUriToBlob(image.base64) })));
+  const encoded = images.map(image => ({ ...image, blob: dataUriToBlob(image.base64) }));
 
   // Populate cache
   for (const img of encoded) {

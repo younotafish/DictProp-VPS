@@ -1,4 +1,5 @@
 import { StoredItem, SearchResult, ComparisonResult, ProjectInfo, StoredComparison, ReviewEvent } from '../types';
+import { dataUriToBlob } from './dataUri';
 import { log, warn, error as logError } from './logger';
 import { HttpError, jsonRequest, requestJson, requestVoid, responseToHttpError } from './http';
 import { publishServerMutation } from './syncSignals';
@@ -171,7 +172,7 @@ export const uploadImages = async (
 ): Promise<{ ok: boolean; saved: number }> => {
   let saved = 0;
   for (const [id, dataUri] of Object.entries(images)) {
-    const blob = await fetch(dataUri).then(response => response.blob());
+    const blob = dataUriToBlob(dataUri);
     const response = await fetch(`${API_BASE}/api/items/${encodeURIComponent(id)}/image`, {
       method: 'PUT', headers: { 'Content-Type': blob.type }, body: blob,
     });
