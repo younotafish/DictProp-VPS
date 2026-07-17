@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { spawn } from 'child_process';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
 
@@ -92,7 +91,9 @@ async function callDeepSeek(apiKey: string, systemPrompt: string, userPrompt: st
       const isRetryable =
         msg.includes('DeepSeek API error: 5') ||
         msg.includes('DeepSeek API error: 429') ||
-        msg.includes('fetch failed');
+        msg.includes('fetch failed') ||
+        msg.includes('returned empty response') ||
+        msg.includes('Failed to parse JSON');
 
       if (attempt < maxRetries && isRetryable) {
         console.warn(`DeepSeek attempt ${attempt + 1} failed (${msg}), retrying...`);
@@ -118,45 +119,32 @@ function parseModelJson(content: string): any {
   }
 }
 
-// POST a chat request to DeepInfra via curl. undici's ProxyAgent STALLS on large request bodies behind
-// the corporate proxy (same reason tts.ts shells out for whisper), and the compare prompt is large — so
-// curl is the reliable transport (it also goes direct on the VPS, honoring HTTPS_PROXY automatically),
-// with a generous timeout since the comparison output is big. Returns the parsed JSON object.
-function callDeepSeekViaCurl(apiKey: string, systemPrompt: string, userPrompt: string, timeoutSec = 180): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
+// Comparison prompts are large. proxyFetch owns the proxy-compatible large-body transport.
+async function callDeepSeekComparison(apiKey: string, systemPrompt: string, userPrompt: string, timeoutSec = 180): Promise<any> {
+  const response = await fetchWithTimeout(
+    DEEPINFRA_CHAT_URL,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
       model: DEEPSEEK_MODEL,
       messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
       response_format: { type: 'json_object' },
       temperature: DEFAULT_TEMPERATURE,
-    });
-    const args = [
-      '-s', '--max-time', String(timeoutSec), '-X', 'POST',
-      '-H', `Authorization: Bearer ${apiKey}`,
-      '-H', 'Content-Type: application/json',
-      '--data-binary', '@-', DEEPINFRA_CHAT_URL,
-    ];
-    const cp = spawn('curl', args);
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    cp.stdout.on('data', (d) => out.push(d));
-    cp.stderr.on('data', (d) => err.push(d));
-    cp.on('error', (e) => reject(e));
-    cp.on('close', (code) => {
-      if (code !== 0) return reject(new Error(`curl exit ${code}: ${Buffer.concat(err).toString().slice(0, 200)}`));
-      try {
-        const data: any = JSON.parse(Buffer.concat(out).toString('utf8'));
-        if (data?.error) return reject(new Error(`DeepSeek API error: ${JSON.stringify(data.error).slice(0, 200)}`));
-        const content = data?.choices?.[0]?.message?.content;
-        if (!content) return reject(new Error('DeepSeek returned empty response'));
-        resolve(parseModelJson(content));
-      } catch (e) {
-        reject(e instanceof Error ? e : new Error('Failed to parse DeepSeek curl response'));
-      }
-    });
-    cp.stdin.on('error', () => {});
-    try { cp.stdin.write(body); cp.stdin.end(); } catch (e) { reject(e as Error); }
-  });
+      }),
+    },
+    timeoutSec * 1000,
+  );
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok || data?.error) {
+    throw new Error(`DeepSeek API error: ${response.status}`);
+  }
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('DeepSeek returned empty response');
+  return parseModelJson(content);
 }
 
 // ============================================================================
@@ -599,7 +587,7 @@ aiRoutes.post('/analyze', async (c) => {
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
   const { text, mode } = await c.req.json().catch(() => ({}));
-  if (!text || typeof text !== 'string') {
+  if (typeof text !== 'string' || text.trim().length === 0) {
     return c.json(errorResponse('Missing "text" field', 400), 400);
   }
   if (text.trim().length > 5000) {
@@ -610,7 +598,7 @@ aiRoutes.post('/analyze', async (c) => {
   const originalQuery = containsChinese(text) ? text : undefined;
   // In batch mode, always treat input as a word/phrase (it's a pre-identified vocabulary item)
   const isWord = isBatch || isWordOrPhrase(text);
-  console.log(`Input "${text}" detected as: ${isWord ? 'WORD/PHRASE' : 'SENTENCE'}${isBatch ? ' (batch)' : ''}${originalQuery ? ' (Chinese)' : ''}`);
+  console.log(`Analyze request: ${text.length} chars, ${isWord ? 'word/phrase' : 'sentence'}${isBatch ? ', batch' : ''}${originalQuery ? ', Chinese' : ''}`);
 
   const userPrompt = isWord
     ? (isBatch
@@ -620,10 +608,15 @@ aiRoutes.post('/analyze', async (c) => {
 
   try {
     const systemPrompt = isWord ? (isBatch ? BATCH_WORD_MODE_INSTRUCTION : WORD_MODE_INSTRUCTION) : SENTENCE_MODE_INSTRUCTION;
-    const rawData = await callDeepSeek(apiKey, systemPrompt, userPrompt);
-
-    const isValid = isWord ? validateWordModeResponse(rawData) : validateSentenceModeResponse(rawData);
-    if (!isValid) return c.json(errorResponse('Analysis response validation failed', 500), 500);
+    let rawData: any;
+    let isValid = false;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      rawData = await callDeepSeek(apiKey, systemPrompt, userPrompt);
+      isValid = isWord ? validateWordModeResponse(rawData) : validateSentenceModeResponse(rawData);
+      if (isValid) break;
+      if (attempt === 0) console.warn('Analysis response failed schema validation; retrying once');
+    }
+    if (!isValid) return c.json(errorResponse('Analysis response validation failed', 502), 502);
 
     const resolvedQuery = rawData.query || text;
 
@@ -649,7 +642,7 @@ aiRoutes.post('/analyze', async (c) => {
       return c.json(errorResponse('QUOTA_EXCEEDED', 429), 429);
     }
     console.error('Analysis failed:', msg);
-    return c.json(errorResponse(msg, 500), 500);
+    return c.json(errorResponse('Analysis failed. Please try again.', 500), 500);
   }
 });
 
@@ -693,7 +686,7 @@ aiRoutes.post('/extract-vocabulary', async (c) => {
       return c.json(errorResponse('QUOTA_EXCEEDED', 429), 429);
     }
     console.error('Vocabulary detection failed:', msg);
-    return c.json(errorResponse(msg, 500), 500);
+    return c.json(errorResponse('Vocabulary detection failed. Please try again.', 500), 500);
   }
 });
 
@@ -715,9 +708,8 @@ aiRoutes.post('/compare', async (c) => {
   const userPrompt = `Compare these words: ${cleanWords.join(', ')}`;
 
   try {
-    // Use the curl transport (undici stalls on the big body). Comparisons run in the background queue
-    // and aren't time-sensitive, so give a very large budget (10 min) — better to wait than time out.
-    const rawData = await callDeepSeekViaCurl(apiKey, COMPARE_WORDS_INSTRUCTION, userPrompt, 600);
+    // Comparisons run in the background queue and get a larger time budget than searches.
+    const rawData = await callDeepSeekComparison(apiKey, COMPARE_WORDS_INSTRUCTION, userPrompt, 600);
     if (!rawData || !Array.isArray(rawData.dimensions) || rawData.dimensions.length === 0) {
       return c.json(errorResponse('Comparison failed. Please try again.', 500), 500);
     }
@@ -743,7 +735,7 @@ aiRoutes.post('/compare', async (c) => {
       return c.json(errorResponse('QUOTA_EXCEEDED', 429), 429);
     }
     console.error('Comparison failed:', msg);
-    return c.json(errorResponse(msg, 500), 500);
+    return c.json(errorResponse('Comparison failed. Please try again.', 500), 500);
   }
 });
 
@@ -753,8 +745,12 @@ aiRoutes.post('/transcribe', async (c) => {
   if (!apiKey) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
 
   const { audio, mimeType = 'audio/webm' } = await c.req.json().catch(() => ({}));
-  if (!audio) {
+  if (typeof audio !== 'string' || audio.length === 0 || audio.length > 24 * 1024 * 1024 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(audio)) {
     return c.json(errorResponse('Missing "audio" base64 data.', 400), 400);
+  }
+  if (typeof mimeType !== 'string' || !/^audio\/(?:mp4|mpeg|ogg|wav|webm)(?:;|$)/i.test(mimeType)) {
+    return c.json(errorResponse('Unsupported audio type.', 415), 415);
   }
 
   try {
@@ -785,6 +781,6 @@ aiRoutes.post('/transcribe', async (c) => {
     return c.json({ text: data.text?.trim() || '' });
   } catch (error: any) {
     console.error('Transcription failed:', error.message);
-    return c.json(errorResponse(error.message || 'Transcription failed', 500), 500);
+    return c.json(errorResponse('Transcription failed. Please try again.', 500), 500);
   }
 });

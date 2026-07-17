@@ -4,7 +4,8 @@ import { log, warn, error as logError } from './logger';
 const DB_NAME = 'PopDictDB';
 const STORE_NAME = 'library';
 const ITEM_UPDATES_STORE = 'item_updates';
-const DB_VERSION = 3;
+const ITEM_RECORDS_STORE = 'items_v2';
+const DB_VERSION = 4;
 
 // Base key - will be suffixed with userId
 const BASE_DATA_KEY = 'items';
@@ -16,6 +17,9 @@ const getStorageKey = (userId: string = 'vps') => `${BASE_DATA_KEY}_${userId}`;
 let inMemoryStorage: Record<string, StoredItem[]> = {};
 let indexedDBAvailable: boolean | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
+const persistedFingerprints = new Map<string, Map<string, string>>();
+
+const itemFingerprint = (item: StoredItem): string => JSON.stringify(item);
 
 const checkIndexedDBAvailability = async (): Promise<boolean> => {
   if (indexedDBAvailable !== null) return indexedDBAvailable;
@@ -80,11 +84,17 @@ const getDB = (): Promise<IDBDatabase> => {
         db.createObjectStore('images');
       }
 
-      // Small write-ahead journal for review updates. A memorization tap writes
-      // only the affected items here; the next full snapshot save compacts it.
+      // Bounded compatibility journal. One record per item lets a v3 rollback read
+      // changes made after v4 without rewriting the legacy full-array snapshot.
       if (!db.objectStoreNames.contains(ITEM_UPDATES_STORE)) {
         const updates = db.createObjectStore(ITEM_UPDATES_STORE, { keyPath: 'key' });
         updates.createIndex('userId', 'userId');
+      }
+
+      // Primary v4 storage: one IndexedDB record per library item.
+      if (!db.objectStoreNames.contains(ITEM_RECORDS_STORE)) {
+        const items = db.createObjectStore(ITEM_RECORDS_STORE, { keyPath: 'key' });
+        items.createIndex('userId', 'userId');
       }
     };
   });
@@ -199,13 +209,73 @@ const loadItemUpdates = async (userId: string): Promise<StoredItem[]> => {
   }
 };
 
-export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> => {
-  const [snapshot, updates] = await Promise.all([loadSnapshot(userId), loadItemUpdates(userId)]);
-  if (updates.length === 0) return snapshot;
+const loadItemRecords = async (userId: string): Promise<StoredItem[]> => {
+  if (!(await checkIndexedDBAvailability())) return [];
+  try {
+    const db = await getDB();
+    return await new Promise<StoredItem[]>((resolve, reject) => {
+      const tx = db.transaction(ITEM_RECORDS_STORE, 'readonly');
+      const request = tx.objectStore(ITEM_RECORDS_STORE).index('userId').getAll(userId);
+      request.onsuccess = () => resolve(
+        (request.result as Array<{ item?: StoredItem }>).map(record => record.item).filter(Boolean) as StoredItem[],
+      );
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    warn('Failed to load per-item records', error);
+    return [];
+  }
+};
 
+const writeItemRecords = async (
+  items: readonly StoredItem[],
+  userId: string,
+  includeCompatibilityJournal: boolean,
+): Promise<void> => {
+  if (items.length === 0) return;
+  const db = await getDB();
+  const stores = includeCompatibilityJournal
+    ? [ITEM_RECORDS_STORE, ITEM_UPDATES_STORE]
+    : [ITEM_RECORDS_STORE];
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(stores, 'readwrite');
+    const records = tx.objectStore(ITEM_RECORDS_STORE);
+    const updates = includeCompatibilityJournal ? tx.objectStore(ITEM_UPDATES_STORE) : null;
+    for (const item of items) {
+      const record = { key: `${userId}:${item.data.id}`, userId, item };
+      records.put(record);
+      updates?.put(record);
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+};
+
+export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> => {
+  const [snapshot, records, updates] = await Promise.all([
+    loadSnapshot(userId),
+    loadItemRecords(userId),
+    loadItemUpdates(userId),
+  ]);
   const byId = new Map(snapshot.map(item => [item.data.id, item]));
+  for (const item of records) byId.set(item.data.id, item);
   for (const item of updates) byId.set(item.data.id, item);
-  return Array.from(byId.values());
+  const merged = Array.from(byId.values());
+
+  // Lazy, idempotent v3 -> v4 migration. A failed migration is retried on the next save/load.
+  const recordFingerprints = new Map(records.map(item => [item.data.id, itemFingerprint(item)]));
+  const missingOrChanged = merged.filter(item => recordFingerprints.get(item.data.id) !== itemFingerprint(item));
+  if (missingOrChanged.length > 0 && await checkIndexedDBAvailability()) {
+    try {
+      await writeItemRecords(missingOrChanged, userId, false);
+      for (const item of missingOrChanged) recordFingerprints.set(item.data.id, itemFingerprint(item));
+    } catch (error) {
+      warn('Per-item storage migration will retry', error);
+    }
+  }
+  persistedFingerprints.set(userId, recordFingerprints);
+  return merged;
 };
 
 /** Persist a small set of changed items immediately without rewriting the full library snapshot. */
@@ -220,24 +290,14 @@ export const saveItemUpdates = async (
     inMemoryStorage[userId] = Array.from(byId.values());
     return;
   }
-
-  const db = await getDB();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(ITEM_UPDATES_STORE, 'readwrite');
-    const store = tx.objectStore(ITEM_UPDATES_STORE);
-    for (const item of items) {
-      store.put({ key: `${userId}:${item.data.id}`, userId, item });
-    }
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
+  await writeItemRecords(items, userId, true);
+  const fingerprints = persistedFingerprints.get(userId) || new Map<string, string>();
+  for (const item of items) fingerprints.set(item.data.id, itemFingerprint(item));
+  persistedFingerprints.set(userId, fingerprints);
 };
 
 export const saveData = async (items: StoredItem[], userId: string = 'vps'): Promise<void> => {
   const idbAvailable = await checkIndexedDBAvailability();
-  const storageKey = getStorageKey(userId);
-  
   if (!idbAvailable) {
     warn("IndexedDB not available, saving to in-memory storage");
     inMemoryStorage[userId] = items;
@@ -251,26 +311,12 @@ export const saveData = async (items: StoredItem[], userId: string = 'vps'): Pro
   }
   
   try {
-    const db = await getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction([STORE_NAME, ITEM_UPDATES_STORE], 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      store.put(items, storageKey);
-
-      // The full snapshot now contains every journaled update, so clear this
-      // user's entries in the same atomic transaction.
-      const updates = tx.objectStore(ITEM_UPDATES_STORE).index('userId').openKeyCursor(userId);
-      updates.onsuccess = () => {
-        const cursor = updates.result;
-        if (cursor) {
-          tx.objectStore(ITEM_UPDATES_STORE).delete(cursor.primaryKey);
-          cursor.continue();
-        }
-      };
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
+    const fingerprints = persistedFingerprints.get(userId) || new Map<string, string>();
+    const changed = items.filter(item => fingerprints.get(item.data.id) !== itemFingerprint(item));
+    if (changed.length === 0) return;
+    await writeItemRecords(changed, userId, true);
+    for (const item of changed) fingerprints.set(item.data.id, itemFingerprint(item));
+    persistedFingerprints.set(userId, fingerprints);
   } catch (error) {
     logError("IDB Save Error", error);
     // Fall back to in-memory storage

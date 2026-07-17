@@ -1,44 +1,66 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
-import { getAllItems, getItemsSince, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, getProjects, createProject, renameProject, deleteProject, addReviewEvent, getReviewEvents, upsertItemImageBinary } from '../db.js';
+import { getAllItems, getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, getProjects, createProject, renameProject, deleteProject, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
+import { detectImageMimeType } from '../image-format.js';
+import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
+import { resolvePublicHttpUrl } from '../safe-url.js';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 const IMAGE_FETCH_TIMEOUT_MS = 30_000;
+const REVIEW_RATINGS = ['again', 'hard', 'good', 'easy'];
+const REVIEW_TASKS = ['meaning', 'production', 'cloze', 'listening', 'quick'];
 
-/** Reject internal/loopback hosts to prevent SSRF via the import endpoint. */
-function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === 'localhost' || h === '0.0.0.0' || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  if (/^127\./.test(h)) return true;
-  if (/^10\./.test(h)) return true;
-  if (/^192\.168\./.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(h)) return true;
-  if (/^169\.254\./.test(h)) return true; // link-local + cloud metadata
-  if (h === '::1' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true;
-  return false;
+function hasValidReviewMetadata(event: any): boolean {
+  return (event.rating === undefined || REVIEW_RATINGS.includes(event.rating)) &&
+    (event.taskType === undefined || REVIEW_TASKS.includes(event.taskType)) &&
+    (event.durationMs === undefined || (Number.isInteger(event.durationMs) && event.durationMs >= 0 && event.durationMs <= 86_400_000)) &&
+    (event.sessionId === undefined || (typeof event.sessionId === 'string' && event.sessionId.length <= 200));
+}
+
+async function readLimitedBody(response: Response, maxBytes: number): Promise<Buffer | null> {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), length);
 }
 
 /** Fetch an image URL and return as base64 data URI, or undefined on failure. */
 async function fetchImageAsBase64(url: string): Promise<string | undefined> {
-  let parsed: URL;
-  try { parsed = new URL(url); } catch { return undefined; }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
-  if (isPrivateHost(parsed.hostname)) return undefined;
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
   try {
-    const response = await proxyFetch(url, { signal: controller.signal });
-    if (!response.ok) return undefined;
+    let current = url;
+    let response: Response | null = null;
+    for (let redirects = 0; redirects <= 3; redirects++) {
+      const parsed = await resolvePublicHttpUrl(current);
+      response = await proxyFetch(parsed.toString(), { signal: controller.signal, redirect: 'manual' });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      const location = response.headers.get('location');
+      await response.body?.cancel();
+      if (!location || redirects === 3) return undefined;
+      current = new URL(location, parsed).toString();
+    }
+    if (!response?.ok) return undefined;
     const declaredLength = Number(response.headers.get('content-length') || '0');
     if (declaredLength > MAX_IMAGE_BYTES) return undefined;
-    const arrayBuffer = await response.arrayBuffer();
-    if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) return undefined;
-    const base64 = Buffer.from(arrayBuffer).toString('base64');
-    const mimeType = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
-    if (!/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType)) return undefined;
+    const bytes = await readLimitedBody(response, MAX_IMAGE_BYTES);
+    if (!bytes) return undefined;
+    const mimeType = detectImageMimeType(bytes);
+    if (!mimeType) return undefined;
+    const base64 = bytes.toString('base64');
     return `data:${mimeType};base64,${base64}`;
   } catch {
     return undefined;
@@ -49,7 +71,7 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
 
 /** Wrap a plain VocabCard object into a full StoredItem. */
 function wrapVocabCard(card: any, project?: string): any {
-  const id = card.id || randomUUID();
+  const id = typeof card.id === 'string' && card.id.length > 0 && card.id.length <= 200 ? card.id : randomUUID();
   const now = Date.now();
   return {
     type: 'vocab',
@@ -72,18 +94,30 @@ function wrapVocabCard(card: any, project?: string): any {
 
 export const itemsRoutes = new Hono<{ Variables: AuthVariables }>();
 
-// GET /api/items — return all items, or delta since ?since=timestamp
-// ?images=true to include base64 images (default: stripped for fast load)
+// GET /api/items — return stripped items or revision deltas. Images are always fetched separately.
 itemsRoutes.get('/items', (c) => {
   const userId = c.get('user').id;
-  const includeImages = c.req.query('images') === 'true';
+  if (c.req.query('images') === 'true') {
+    return c.json({ error: 'Bulk image responses are disabled; use the image endpoints' }, 400);
+  }
+  const afterRevision = c.req.query('afterRevision');
+  if (afterRevision !== undefined) {
+    const revision = Number(afterRevision);
+    const afterId = c.req.query('afterId') || '';
+    const limit = Number(c.req.query('limit') || 200);
+    if (!Number.isSafeInteger(revision) || revision < 0 || afterId.length > 200 ||
+        !Number.isSafeInteger(limit) || limit < 1) {
+      return c.json({ error: 'Invalid revision cursor' }, 400);
+    }
+    return c.json(getItemsAfterRevision({ revision, id: afterId }, limit, true, userId));
+  }
   const since = c.req.query('since');
   if (since) {
     const ts = parseInt(since, 10);
     if (isNaN(ts)) return c.json({ error: 'Invalid since parameter' }, 400);
-    return c.json(getItemsSince(ts, !includeImages, userId));
+    return c.json(getItemsSince(ts, true, userId));
   }
-  return c.json(getAllItems(!includeImages, userId));
+  return c.json(getAllItems(true, userId));
 });
 
 // GET /api/items/:id/image — return raw binary image with caching headers
@@ -183,34 +217,51 @@ itemsRoutes.get('/items/:id', (c) => {
 // PUT /api/items/:id — upsert a single item
 itemsRoutes.put('/items/:id', async (c) => {
   const userId = c.get('user').id;
-  const body = await c.req.json();
-  if (!body.data || !body.data.id) {
-    return c.json({ error: 'Item missing data.id' }, 400);
-  }
+  const body = await c.req.json().catch(() => null);
+  const validationError = validateStoredItem(body);
+  if (validationError) return c.json({ error: validationError }, 400);
+  const id = c.req.param('id');
+  if (!id || id.length > 200) return c.json({ error: 'Invalid item id' }, 400);
   // Ensure URL param matches body
-  body.data.id = c.req.param('id');
-  const result = upsertItem(body, userId);
-  return c.json({ ok: true, ...result });
+  body.data.id = id;
+  body.srs.id = id;
+  try {
+    const result = upsertItem(body, userId);
+    return c.json({ ok: true, ...result });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('belongs to another user')) {
+      return c.json({ error: error.message }, 409);
+    }
+    throw error;
+  }
 });
 
 // PUT /api/items — batch upsert (array of items)
 itemsRoutes.put('/items', async (c) => {
   const userId = c.get('user').id;
-  const body = await c.req.json();
-  if (!Array.isArray(body)) {
-    return c.json({ error: 'Expected array of items' }, 400);
+  const body = await c.req.json().catch(() => null);
+  const validationError = validateStoredItemBatch(body, 500);
+  if (validationError) return c.json({ error: validationError }, 400);
+  try {
+    const result = upsertMany(body, userId);
+    const canonical = result.conflicts
+      .map(id => getItemById(id, userId, false))
+      .filter(Boolean);
+    return c.json({ ok: true, count: body.length, ...result, canonical });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('belongs to another user')) {
+      return c.json({ error: error.message }, 409);
+    }
+    throw error;
   }
-  const result = upsertMany(body, userId);
-  const canonical = result.conflicts
-    .map(id => getItemById(id, userId, false))
-    .filter(Boolean);
-  return c.json({ ok: true, count: body.length, ...result, canonical });
 });
 
 // DELETE /api/items/:id — soft delete
 itemsRoutes.delete('/items/:id', (c) => {
   const userId = c.get('user').id;
-  softDeleteItem(c.req.param('id'), userId);
+  const id = c.req.param('id');
+  if (!id || id.length > 200) return c.json({ error: 'Invalid item id' }, 400);
+  softDeleteItem(id, userId);
   return c.json({ ok: true });
 });
 
@@ -223,17 +274,19 @@ itemsRoutes.delete('/items/:id', (c) => {
 itemsRoutes.post('/import', async (c) => {
   const userId = c.get('user').id;
   const project = c.req.query('project') || undefined;
-  const body = await c.req.json();
+  if (project && project.length > 200) return c.json({ error: 'Invalid project id' }, 400);
+  const body = await c.req.json().catch(() => null);
   if (!Array.isArray(body)) {
     return c.json({ error: 'Expected array of items' }, 400);
   }
+  if (body.length > 5_000) return c.json({ error: 'Import is limited to 5000 items' }, 400);
 
   // Normalize: detect simplified VocabCard format and wrap
   const items: any[] = body.map((item: any) => {
     if (item && item.data && item.type) return item; // already StoredItem
-    if (item && item.word) return wrapVocabCard(item, project); // plain VocabCard
+    if (item && typeof item.word === 'string' && item.word.trim()) return wrapVocabCard(item, project); // plain VocabCard
     return null;
-  }).filter(Boolean);
+  }).filter((item): item is any => !!item && validateStoredItem(item) === null);
 
   // Apply project override to full-format items too
   if (project) {
@@ -248,10 +301,12 @@ itemsRoutes.post('/import', async (c) => {
 
   // Fetch HTTP image URLs → base64 (concurrently, max 5 at a time)
   let imagesFetched = 0;
-  const imageItems = items.filter((i: any) => {
+  const remoteImageItems = items.filter((i: any) => {
     const url = i.data?.imageUrl;
     return url && typeof url === 'string' && url.startsWith('http');
   });
+  const imageItems = remoteImageItems.slice(0, 100);
+  for (const item of remoteImageItems.slice(100)) delete item.data.imageUrl;
 
   // Process in batches of 5
   for (let i = 0; i < imageItems.length; i += 5) {
@@ -271,10 +326,16 @@ itemsRoutes.post('/import', async (c) => {
   }
 
   // Also handle imageUrl on nested vocabs (for phrase/SearchResult items)
+  let nestedImagesAttempted = imageItems.length;
   for (const item of items) {
     if (Array.isArray(item.data?.vocabs)) {
       for (const vocab of item.data.vocabs) {
         if (vocab.imageUrl && typeof vocab.imageUrl === 'string' && vocab.imageUrl.startsWith('http')) {
+          if (nestedImagesAttempted >= 100) {
+            delete vocab.imageUrl;
+            continue;
+          }
+          nestedImagesAttempted++;
           const base64 = await fetchImageAsBase64(vocab.imageUrl);
           if (base64) {
             vocab.imageUrl = base64;
@@ -310,11 +371,58 @@ itemsRoutes.post('/reviews', async (c) => {
   if (!event || typeof event.id !== 'string' || typeof event.itemId !== 'string' ||
       !['vocab', 'phrase', 'sentence'].includes(event.itemType) ||
       !Number.isFinite(event.reviewedAt) || !Number.isInteger(event.previousStep) ||
-      !Number.isInteger(event.nextStep)) {
+      !Number.isInteger(event.nextStep) || !hasValidReviewMetadata(event)) {
     return c.json({ error: 'Invalid review event' }, 400);
   }
   addReviewEvent(event, userId);
   return c.json({ ok: true }, 201);
+});
+
+// Atomically append an idempotent review event and advance the latest server schedule.
+// Older clients may keep using POST /reviews + PUT /items during the compatibility window.
+itemsRoutes.post('/reviews/apply', async (c) => {
+  const userId = c.get('user').id;
+  const body = await c.req.json().catch(() => null);
+  const event = body?.event;
+  const itemIds = body?.itemIds;
+  if (!event || typeof event.id !== 'string' || event.id.length === 0 || event.id.length > 200 ||
+      typeof event.itemId !== 'string' || event.itemId.length === 0 || event.itemId.length > 200 ||
+      !['vocab', 'phrase', 'sentence'].includes(event.itemType) ||
+      !Number.isFinite(event.reviewedAt) || event.reviewedAt < 0 ||
+      !Number.isInteger(event.previousStep) || event.previousStep < 0 ||
+      !Number.isInteger(event.nextStep) || event.nextStep < 0 ||
+      !hasValidReviewMetadata(event) ||
+      !Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 100 ||
+      !itemIds.every((id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 200)) {
+    return c.json({ error: 'Invalid review mutation' }, 400);
+  }
+  try {
+    const result = applyReviewEvent(event, itemIds, userId);
+    if (!result) return c.json({ error: 'Review item not found' }, 404);
+    return c.json(result, result.applied ? 201 : 200);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Review could not be applied';
+    if (message.includes('belongs to another user')) return c.json({ error: message }, 409);
+    throw error;
+  }
+});
+
+itemsRoutes.post('/reviews/:id/undo', (c) => {
+  const userId = c.get('user').id;
+  const eventId = c.req.param('id');
+  if (!eventId || eventId.length > 200) return c.json({ error: 'Invalid review event id' }, 400);
+  try {
+    const result = undoReviewEvent(eventId, userId);
+    if (!result) return c.json({ error: 'Review event not found' }, 404);
+    return c.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Review could not be undone';
+    if (message.includes('belongs to another user') || message.includes('cannot be undone') ||
+        message.includes('no longer the latest')) {
+      return c.json({ error: message }, 409);
+    }
+    throw error;
+  }
 });
 
 // ─── Project routes ───
@@ -329,41 +437,33 @@ itemsRoutes.get('/projects', (c) => {
 });
 
 itemsRoutes.post('/projects', async (c) => {
-  console.log('[projects] POST /projects - start');
-  try {
-    const userId = c.get('user').id;
-    console.log('[projects] userId:', userId);
-    const body = await c.req.json();
-    console.log('[projects] body:', JSON.stringify(body));
-    const name = body?.name;
-    if (!name || typeof name !== 'string' || !name.trim()) {
-      return c.json({ error: 'Project name is required' }, 400);
-    }
-    const id = randomUUID();
-    console.log('[projects] creating project:', id, name.trim());
-    createProject(id, name.trim(), userId);
-    console.log('[projects] project created successfully');
-    const result = { id, name: name.trim(), createdAt: Date.now() };
-    console.log('[projects] returning:', JSON.stringify(result));
-    return c.json(result);
-  } catch (e: any) {
-    console.error('[projects] POST /projects error:', e);
-    return c.json({ error: e.message || 'Internal error' }, 500);
+  const userId = c.get('user').id;
+  const body = await c.req.json().catch(() => null);
+  const name = body?.name;
+  if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
+    return c.json({ error: 'Project name must be 1-100 characters' }, 400);
   }
+  const id = randomUUID();
+  createProject(id, name.trim(), userId);
+  return c.json({ id, name: name.trim(), createdAt: Date.now() });
 });
 
 itemsRoutes.put('/projects/:id', async (c) => {
   const userId = c.get('user').id;
-  const { name } = await c.req.json();
-  if (!name || typeof name !== 'string' || !name.trim()) {
-    return c.json({ error: 'Project name is required' }, 400);
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => null);
+  const name = body?.name;
+  if (!id || id.length > 200 || typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
+    return c.json({ error: 'Valid project id and 1-100 character name are required' }, 400);
   }
-  renameProject(c.req.param('id'), name.trim(), userId);
+  renameProject(id, name.trim(), userId);
   return c.json({ ok: true });
 });
 
 itemsRoutes.delete('/projects/:id', (c) => {
   const userId = c.get('user').id;
-  deleteProject(c.req.param('id'), userId);
+  const id = c.req.param('id');
+  if (!id || id.length > 200) return c.json({ error: 'Invalid project id' }, 400);
+  deleteProject(id, userId);
   return c.json({ ok: true });
 });

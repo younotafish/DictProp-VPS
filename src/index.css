@@ -3,7 +3,17 @@
 /* iOS Safari Optimizations */
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+button,
+[role="button"] {
   -webkit-touch-callout: none;
+  user-select: none;
+}
+
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
 }
 
 body {
@@ -68,4 +78,15 @@ input, textarea, select {
 /* iOS Safari: Smooth momentum scrolling */
 .overflow-y-auto, .overflow-x-auto {
   -webkit-overflow-scrolling: touch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

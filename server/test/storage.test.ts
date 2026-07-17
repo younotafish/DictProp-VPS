@@ -37,7 +37,7 @@ const item = (id: string, reviews: number) => ({
   updatedAt: reviews,
 });
 
-test('item update journal overlays and compacts into the full snapshot', async () => {
+test('per-item records and the compatibility journal preserve immediate updates', async () => {
   const userId = 'journal-user';
   await saveData([item('one', 1), item('two', 1)], userId);
   await saveItemUpdates([item('one', 2)], userId);
@@ -47,6 +47,44 @@ test('item update journal overlays and compacts into the full snapshot', async (
   assert.equal(overlaid.find(value => value.data.id === 'two')?.srs.totalReviews, 1);
 
   await saveData(overlaid, userId);
-  const compacted = await loadData(userId);
-  assert.deepEqual(compacted, overlaid);
+  const savedAgain = await loadData(userId);
+  assert.deepEqual(savedAgain, overlaid);
+});
+
+test('unchanged full-state saves do not rewrite per-item records', async () => {
+  const userId = 'record-user';
+  const items = [item('stable', 1), item('changed', 1)];
+  await saveData(items, userId);
+
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('PopDictDB', 4);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('items_v2', 'readwrite');
+    const store = tx.objectStore('items_v2');
+    const request = store.get(`${userId}:stable`);
+    request.onsuccess = () => store.put({ ...request.result, sentinel: 'keep' });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  await saveData(items, userId);
+  const record = await new Promise<any>((resolve, reject) => {
+    const tx = db.transaction('items_v2', 'readonly');
+    const request = tx.objectStore('items_v2').get(`${userId}:stable`);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const journal = await new Promise<any>((resolve, reject) => {
+    const tx = db.transaction('item_updates', 'readonly');
+    const request = tx.objectStore('item_updates').get(`${userId}:stable`);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+
+  assert.equal(record.sentinel, 'keep');
+  assert.equal(journal.item.data.id, 'stable');
 });

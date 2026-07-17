@@ -20,7 +20,7 @@ const GoogleIcon = () => (
 );
 
 // Avatar with offline fallback
-const UserAvatar: React.FC<{ photoURL?: string; displayName?: string }> = ({ photoURL, displayName }) => {
+const UserAvatar: React.FC<{ photoURL?: string | null; displayName?: string | null }> = ({ photoURL, displayName }) => {
   const [imgError, setImgError] = useState(false);
   
   // Show icon fallback if no photo URL or image failed to load

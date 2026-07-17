@@ -25,8 +25,9 @@ DictProp is an AI-powered vocabulary learning web app for English learners. User
 - **GitHub is the bridge**: push code → GitHub Actions deploys to VPS automatically
 - NEVER attempt `ssh`, `scp`, or `rsync` to the VPS — it will always fail with EPERM
 
-### No automated test suite
-- There is no test runner in this repo — verify changes with the build plus curl-based smoke tests (see Local Verification below)
+### Automated verification
+- `npm run check` runs strict client/server type checks, Node tests, both builds, the bundle budget, and service-worker syntax validation
+- Keep curl-based production-server smoke tests for route/header behavior (see Local Verification below)
 - Browser-driven testing isn't viable here anyway: Chromium headless shell segfaults (SIGSEGV) on this macOS machine
 
 ## Deploy Flow (Fully Automated)
@@ -88,6 +89,7 @@ curl -X POST http://localhost:3001/api/analyze ...       # AI search works
 # Frontend
 npm run dev              # Vite dev server (port 3000)
 npm run build            # Production build to dist/
+npm run check            # Full release gate
 
 # Server (run from server/ directory)
 npm run dev              # Hono dev server with hot reload (port 3001)
@@ -103,7 +105,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 
 ### IMPORTANT: Type-checking
 - Server: `cd server && npx tsc --noEmit`
-- Frontend: `npm run build` (Vite handles its own TS compilation). A raw root `npx tsc` surfaces a few long-standing, non-blocking type errors, so prefer the build for verification.
+- Frontend: `npm run typecheck` (strict) plus `npm run build`
 
 ## Project Structure
 
@@ -113,14 +115,16 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 ├── services/
 │   ├── api.ts                 # REST + AI client for the Hono backend
 │   ├── auth.ts                # Client auth helpers (calls /api/auth/*)
-│   ├── storage.ts             # IndexedDB local storage (key: 'items_vps')
+│   ├── storage.ts             # Per-item IndexedDB v4 storage + compatibility journal
 │   ├── sync.ts                # mergeDatasets() for local↔server conflict resolution
-│   ├── srsAlgorithm.ts        # Fixed-schedule SRS (12 steps)
+│   ├── srsAlgorithm.ts        # Deterministic FSRS v6 + lazy legacy migration
+│   ├── reviewQueue.ts         # Durable idempotent review outbox
 │   ├── speech.ts              # Browser speech synthesis
 │   └── logger.ts              # Console logging (silenced in production)
 ├── server/
 │   ├── src/
-│   │   ├── index.ts           # Hono app + static file serving
+│   │   ├── index.ts           # Process startup and graceful shutdown
+│   │   ├── app.ts             # Injectable Hono app, middleware, routes, static serving
 │   │   ├── db.ts              # SQLite schema + CRUD (better-sqlite3)
 │   │   ├── env.ts             # Environment variables (.env from project root)
 │   │   ├── proxy-fetch.ts     # MUST use for ALL outbound HTTP (proxy-aware)
@@ -151,11 +155,12 @@ Type guards: `isVocabItem()`, `isPhraseItem()`, `isSentenceItem()`
 
 ## SQLite & Images
 
-Images are stored as **base64 data URIs** inline in `data.imageUrl` (can be hundreds of KB each). The full database with images is ~150MB for ~3700 items.
+Images are stored as binary blobs in the server `image_blobs`/`item_images` tables and in a separate browser IndexedDB store. Item JSON carries only image markers.
 
-- `GET /api/items` — strips images by default for fast loading (~3MB response)
-- `GET /api/items?images=true` — includes images (~150MB response, slow)
+- `GET /api/items` — always strips images for fast loading (~3MB response)
+- `GET /api/items?images=true` — rejected; bulk image responses are disabled
 - `GET /api/items/:id` — single item with images
+- `GET /api/items/:id/image` — binary image endpoint used by lazy loading
 - `POST /api/import` — bulk import endpoint (used for Firebase migration)
 
 ### IMPORTANT: Response size awareness
@@ -164,8 +169,10 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 ## Sync Behavior
 
 - On app load: `GET /api/items` (no images) → merge with local IndexedDB → display
-- On save (5s debounce): `PUT /api/items` → push dirty items to server
-- SRS updates, deletions, archives: immediate push (bypass debounce)
+- On save (5s debounce): bounded `PUT /api/items` batches push dirty items
+- Visible clients pull paginated server-revision deltas every 8 seconds and on focus/reconnect/tab signals
+- Reviews use a local outbox plus atomic `POST /api/reviews/apply`; retries are idempotent
+- Deletions and archives still push immediately
 - Per-item dirty tracking via `lastSyncedHash` content hashing
 
 ## Critical Patterns
@@ -174,7 +181,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 `App.tsx` uses `latestItemsRef` (ref updated via `useEffect`) so event handlers get current data. Always use `latestItemsRef.current` in event handlers, not closure-captured `syncState.items`.
 
 ### Storage Keys (per-origin)
-- IndexedDB: `PopDictDB` → `library` store → key `items_vps`
+- IndexedDB: `PopDictDB` v4 → `items_v2` per-item records; `item_updates` is the rollback-compatible journal
 - localStorage cache: `vps_items_cache`
 - **Each domain/origin has separate browser storage** — data on `localhost:3000` is separate from `dictprop.online` and `107.152.47.101:3000`
 
@@ -196,5 +203,6 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
   - `REPLICATE_API_TOKEN` — optional fallback for image generation
   - `PORT` — server port (default: 3001 local, 3000 in Docker)
   - `DATA_DIR` — SQLite database directory (default: ./data)
+  - `PUBLIC_ORIGIN` — optional canonical OAuth origin (production safely defaults to `https://dictprop.online`)
 - VPS `.env` is at `/opt/dictprop-vps/.env` (not managed by git)
 - GitHub Actions secret `VPS_SSH_KEY` — VPS SSH private key for automated deploys

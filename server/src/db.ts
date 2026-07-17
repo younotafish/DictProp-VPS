@@ -3,6 +3,8 @@ import { mkdirSync } from 'fs';
 import { resolve } from 'path';
 import { randomUUID, createHash } from 'crypto';
 import { env } from './env.js';
+import { hasImageSignature } from './image-format.js';
+import { advanceReviewSrs } from './srs.js';
 
 // Ensure data directory exists
 mkdirSync(env.DATA_DIR, { recursive: true });
@@ -76,6 +78,34 @@ if (!columns.some(c => c.name === 'user_id')) {
 if (!columns.some(c => c.name === 'revision')) {
   db.exec(`ALTER TABLE items ADD COLUMN revision INTEGER NOT NULL DEFAULT 0`);
 }
+db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user_revision ON items(user_id, revision, id)`);
+
+const reviewColumns = db.prepare(`PRAGMA table_info(review_events)`).all() as { name: string }[];
+if (!reviewColumns.some(column => column.name === 'rating')) {
+  db.exec(`ALTER TABLE review_events ADD COLUMN rating TEXT NOT NULL DEFAULT 'good'`);
+}
+if (!reviewColumns.some(column => column.name === 'task_type')) {
+  db.exec(`ALTER TABLE review_events ADD COLUMN task_type TEXT`);
+}
+if (!reviewColumns.some(column => column.name === 'duration_ms')) {
+  db.exec(`ALTER TABLE review_events ADD COLUMN duration_ms INTEGER`);
+}
+if (!reviewColumns.some(column => column.name === 'session_id')) {
+  db.exec(`ALTER TABLE review_events ADD COLUMN session_id TEXT`);
+}
+if (!reviewColumns.some(column => column.name === 'undone_at')) {
+  db.exec(`ALTER TABLE review_events ADD COLUMN undone_at INTEGER`);
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS review_event_items (
+    event_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    previous_srs TEXT NOT NULL,
+    applied_srs TEXT NOT NULL,
+    PRIMARY KEY (event_id, item_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_review_event_items_event ON review_event_items(event_id);
+`);
 
 // Migration: add project column to items if missing
 try {
@@ -143,6 +173,9 @@ const stmts = {
   getAll: db.prepare(`SELECT * FROM items WHERE user_id = ?`),
   getAllChunk: db.prepare(`SELECT rowid AS _rowid, * FROM items WHERE user_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`),
   getSince: db.prepare(`SELECT * FROM items WHERE user_id = ? AND (updated_at > ? OR (updated_at IS NULL AND saved_at > ?))`),
+  getAfterRevision: db.prepare(`SELECT * FROM items
+    WHERE user_id = ? AND (revision > ? OR (revision = ? AND id > ?))
+    ORDER BY revision, id LIMIT ?`),
   upsert: db.prepare(`
     INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, project, revision)
     VALUES (@id, @type, @data, @srs, @saved_at, @updated_at, @is_deleted, @is_archived, @user_id, @project, @revision)
@@ -164,6 +197,7 @@ const stmts = {
   assignOrphanItems: db.prepare(`UPDATE items SET user_id = ? WHERE user_id IS NULL`),
   getImageData: db.prepare(`SELECT data FROM items WHERE id = ? AND user_id = ?`),
   findVocabInPhrase: db.prepare(`SELECT data FROM items WHERE type = 'phrase' AND user_id = ? AND data LIKE ? LIMIT 1`),
+  updateSrs: db.prepare(`UPDATE items SET srs = ?, updated_at = ?, revision = ? WHERE id = ? AND user_id = ?`),
 };
 
 // ─── Comparison prepared statements + accessors ───
@@ -228,15 +262,6 @@ function parseImageDataUri(dataUri: string): { data: Buffer; mimeType: string } 
   const match = dataUri.match(/^data:(image\/(?:avif|gif|jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
   if (!match) return null;
   return { mimeType: match[1], data: Buffer.from(match[2], 'base64') };
-}
-
-function hasImageSignature(data: Buffer, mimeType: string): boolean {
-  if (mimeType === 'image/png') return data.length >= 8 && data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'));
-  if (mimeType === 'image/jpeg') return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
-  if (mimeType === 'image/gif') return data.length >= 6 && /^GIF8[79]a$/.test(data.subarray(0, 6).toString('ascii'));
-  if (mimeType === 'image/webp') return data.length >= 12 && data.subarray(0, 4).toString('ascii') === 'RIFF' && data.subarray(8, 12).toString('ascii') === 'WEBP';
-  if (mimeType === 'image/avif') return data.length >= 12 && data.subarray(4, 8).toString('ascii') === 'ftyp' && data.subarray(8, 12).toString('ascii').startsWith('avi');
-  return false;
 }
 
 function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeType: string, updatedAt: number): boolean {
@@ -384,6 +409,7 @@ const sessionStmts = {
     WHERE s.token = ? AND s.expires_at > ?
   `),
   delete: db.prepare(`DELETE FROM sessions WHERE token = ?`),
+  migrateToken: db.prepare(`UPDATE OR IGNORE sessions SET token = ? WHERE token = ?`),
   deleteExpired: db.prepare(`DELETE FROM sessions WHERE expires_at < ?`),
 };
 
@@ -526,6 +552,38 @@ export function getItemsSince(since: number, stripImages = false, userId: string
   return items;
 }
 
+export interface RevisionCursor {
+  revision: number;
+  id: string;
+}
+
+export function getItemsAfterRevision(
+  cursor: RevisionCursor,
+  limit: number,
+  stripImages: boolean,
+  userId: string,
+): { items: any[]; cursor: RevisionCursor; hasMore: boolean } {
+  const cappedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+  const rows = stmts.getAfterRevision.all(
+    userId,
+    cursor.revision,
+    cursor.revision,
+    cursor.id,
+    cappedLimit + 1,
+  ) as ItemRow[];
+  const hasMore = rows.length > cappedLimit;
+  const page = hasMore ? rows.slice(0, cappedLimit) : rows;
+  const imageIds = stripImages ? getImageIdSet(userId) : undefined;
+  const items = page.map(row => rowToItem(row, stripImages, imageIds));
+  if (!stripImages) rehydrateImages(items, userId);
+  const last = page[page.length - 1];
+  return {
+    items,
+    cursor: last ? { revision: last.revision, id: last.id } : cursor,
+    hasMore,
+  };
+}
+
 const nextRevision = db.prepare(`UPDATE sync_meta SET value = value + 1 WHERE key = 'item_revision' RETURNING value`);
 
 export interface UpsertResult { revision: number; conflicted: boolean }
@@ -635,20 +693,32 @@ export interface ReviewEventRow {
   reviewedAt: number;
   previousStep: number;
   nextStep: number;
+  rating?: 'again' | 'hard' | 'good' | 'easy';
+  taskType?: 'meaning' | 'production' | 'cloze' | 'listening' | 'quick';
+  durationMs?: number;
+  sessionId?: string;
 }
 
 const reviewStmts = {
   insert: db.prepare(`INSERT OR IGNORE INTO review_events
-    (id, user_id, item_id, item_type, reviewed_at, previous_step, next_step)
-    VALUES (@id, @user_id, @item_id, @item_type, @reviewed_at, @previous_step, @next_step)`),
-  recent: db.prepare(`SELECT id, item_id, item_type, reviewed_at, previous_step, next_step
-    FROM review_events WHERE user_id = ? AND reviewed_at >= ? ORDER BY reviewed_at`),
+    (id, user_id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id)
+    VALUES (@id, @user_id, @item_id, @item_type, @reviewed_at, @previous_step, @next_step, @rating, @task_type, @duration_ms, @session_id)`),
+  recent: db.prepare(`SELECT id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id
+    FROM review_events WHERE user_id = ? AND reviewed_at >= ? AND undone_at IS NULL ORDER BY reviewed_at`),
+  byId: db.prepare(`SELECT id, user_id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id, undone_at
+    FROM review_events WHERE id = ?`),
+  insertItemSnapshot: db.prepare(`INSERT INTO review_event_items (event_id, item_id, previous_srs, applied_srs)
+    VALUES (?, ?, ?, ?)`),
+  snapshotsByEvent: db.prepare(`SELECT item_id, previous_srs, applied_srs FROM review_event_items WHERE event_id = ? ORDER BY item_id`),
+  markUndone: db.prepare(`UPDATE review_events SET undone_at = ? WHERE id = ? AND user_id = ? AND undone_at IS NULL`),
 };
 
 export function addReviewEvent(event: ReviewEventRow, userId: string): void {
   reviewStmts.insert.run({
     id: event.id, user_id: userId, item_id: event.itemId, item_type: event.itemType,
     reviewed_at: event.reviewedAt, previous_step: event.previousStep, next_step: event.nextStep,
+    rating: event.rating || 'good', task_type: event.taskType || null,
+    duration_ms: event.durationMs ?? null, session_id: event.sessionId || null,
   });
 }
 
@@ -656,7 +726,161 @@ export function getReviewEvents(userId: string, since: number): ReviewEventRow[]
   return (reviewStmts.recent.all(userId, since) as any[]).map(row => ({
     id: row.id, itemId: row.item_id, itemType: row.item_type, reviewedAt: row.reviewed_at,
     previousStep: row.previous_step, nextStep: row.next_step,
+    rating: row.rating || 'good',
+    ...(row.task_type ? { taskType: row.task_type } : {}),
+    ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
+    ...(row.session_id ? { sessionId: row.session_id } : {}),
   }));
+}
+
+export interface AppliedReviewResult {
+  applied: boolean;
+  event: ReviewEventRow;
+  items: any[];
+}
+
+const applyReviewTransaction = db.transaction((
+  incoming: ReviewEventRow,
+  itemIds: string[],
+  userId: string,
+): { applied: boolean; event: ReviewEventRow; itemIds: string[] } | null => {
+  const previous = reviewStmts.byId.get(incoming.id) as any;
+  if (previous) {
+    if (previous.user_id !== userId) throw new Error('Review event id belongs to another user');
+    const storedIds = (reviewStmts.snapshotsByEvent.all(incoming.id) as Array<{ item_id: string }>).map(row => row.item_id);
+    return {
+      applied: false,
+      event: {
+        id: previous.id,
+        itemId: previous.item_id,
+        itemType: previous.item_type,
+        reviewedAt: previous.reviewed_at,
+        previousStep: previous.previous_step,
+        nextStep: previous.next_step,
+        rating: previous.rating || 'good',
+        taskType: previous.task_type || undefined,
+        durationMs: previous.duration_ms ?? undefined,
+        sessionId: previous.session_id || undefined,
+      },
+      itemIds: storedIds.length > 0 ? storedIds : itemIds,
+    };
+  }
+
+  const rows = itemIds
+    .map(id => stmts.getByIdScoped.get(id, userId) as ItemRow | undefined)
+    .filter((row): row is ItemRow => !!row && row.is_deleted !== 1);
+  const target = rows.find(row => row.id === incoming.itemId);
+  if (!target) return null;
+
+  const canonical = rows.reduce((best, row) => {
+    const bestSrs = JSON.parse(best.srs);
+    const rowSrs = JSON.parse(row.srs);
+    const bestReview = Number(bestSrs.lastReviewDate) || 0;
+    const rowReview = Number(rowSrs.lastReviewDate) || 0;
+    if (rowReview !== bestReview) return rowReview > bestReview ? row : best;
+    return (Number(rowSrs.totalReviews) || 0) > (Number(bestSrs.totalReviews) || 0) ? row : best;
+  }, target);
+  const baseSrs = JSON.parse(canonical.srs);
+  const serverNow = Date.now();
+  const reviewedAt = Math.max(
+    Number(baseSrs.lastReviewDate) || 0,
+    Math.min(incoming.reviewedAt, serverNow + 5 * 60 * 1000),
+  );
+  const rating = incoming.rating || 'good';
+  const nextSrs = advanceReviewSrs(baseSrs, reviewedAt, rating);
+  const event: ReviewEventRow = {
+    id: incoming.id,
+    itemId: target.id,
+    itemType: target.type as ReviewEventRow['itemType'],
+    reviewedAt,
+    previousStep: Number(baseSrs.totalReviews) || 0,
+    nextStep: Number(nextSrs.totalReviews) || 0,
+    rating,
+    taskType: incoming.taskType,
+    durationMs: incoming.durationMs,
+    sessionId: incoming.sessionId,
+  };
+  const inserted = reviewStmts.insert.run({
+    id: event.id,
+    user_id: userId,
+    item_id: event.itemId,
+    item_type: event.itemType,
+    reviewed_at: event.reviewedAt,
+    previous_step: event.previousStep,
+    next_step: event.nextStep,
+    rating: event.rating,
+    task_type: event.taskType || null,
+    duration_ms: event.durationMs ?? null,
+    session_id: event.sessionId || null,
+  });
+  if (inserted.changes !== 1) throw new Error('Review event could not be stored');
+
+  for (const row of rows) {
+    const revision = (nextRevision.get() as { value: number }).value;
+    const siblingSrs = { ...nextSrs, id: row.id, type: row.type };
+    const appliedSrs = JSON.stringify(siblingSrs);
+    reviewStmts.insertItemSnapshot.run(event.id, row.id, row.srs, appliedSrs);
+    stmts.updateSrs.run(appliedSrs, serverNow, revision, row.id, userId);
+  }
+  return { applied: true, event, itemIds: rows.map(row => row.id) };
+});
+
+export function applyReviewEvent(event: ReviewEventRow, itemIds: string[], userId: string): AppliedReviewResult | null {
+  const uniqueIds = Array.from(new Set([event.itemId, ...itemIds])).slice(0, 100);
+  const result = applyReviewTransaction(event, uniqueIds, userId);
+  if (!result) return null;
+  return {
+    applied: result.applied,
+    event: result.event,
+    items: result.itemIds.map(id => getItemById(id, userId, false)).filter(Boolean),
+  };
+}
+
+export interface UndoneReviewResult {
+  undone: boolean;
+  eventId: string;
+  items: any[];
+}
+
+const undoReviewTransaction = db.transaction((eventId: string, userId: string): { undone: boolean; itemIds: string[] } | null => {
+  const event = reviewStmts.byId.get(eventId) as any;
+  if (!event) return null;
+  if (event.user_id !== userId) throw new Error('Review event id belongs to another user');
+
+  const snapshots = reviewStmts.snapshotsByEvent.all(eventId) as Array<{
+    item_id: string;
+    previous_srs: string;
+    applied_srs: string;
+  }>;
+  if (snapshots.length === 0) throw new Error('Review event cannot be undone');
+  const itemIds = snapshots.map(snapshot => snapshot.item_id);
+  if (event.undone_at !== null) return { undone: false, itemIds };
+
+  for (const snapshot of snapshots) {
+    const row = stmts.getByIdScoped.get(snapshot.item_id, userId) as ItemRow | undefined;
+    if (!row || row.is_deleted === 1 || row.srs !== snapshot.applied_srs) {
+      throw new Error('Review is no longer the latest change for this item');
+    }
+  }
+
+  const now = Date.now();
+  for (const snapshot of snapshots) {
+    const revision = (nextRevision.get() as { value: number }).value;
+    stmts.updateSrs.run(snapshot.previous_srs, now, revision, snapshot.item_id, userId);
+  }
+  const marked = reviewStmts.markUndone.run(now, eventId, userId);
+  if (marked.changes !== 1) throw new Error('Review undo could not be stored');
+  return { undone: true, itemIds };
+});
+
+export function undoReviewEvent(eventId: string, userId: string): UndoneReviewResult | null {
+  const result = undoReviewTransaction(eventId, userId);
+  if (!result) return null;
+  return {
+    undone: result.undone,
+    eventId,
+    items: result.itemIds.map(id => getItemById(id, userId, false)).filter(Boolean),
+  };
 }
 
 export function softDeleteItem(id: string, userId: string) {
@@ -809,12 +1033,13 @@ export function listAllUsers(): UserRow[] {
 // ─── Session CRUD ───
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const sessionTokenHash = (token: string): string => createHash('sha256').update(token).digest('hex');
 
 export function createSession(userId: string): { token: string; expiresAt: number } {
   const token = randomUUID();
   const now = Date.now();
   const expiresAt = now + THIRTY_DAYS_MS;
-  sessionStmts.create.run({ token, user_id: userId, created_at: now, expires_at: expiresAt });
+  sessionStmts.create.run({ token: sessionTokenHash(token), user_id: userId, created_at: now, expires_at: expiresAt });
   return { token, expiresAt };
 }
 
@@ -826,10 +1051,18 @@ export function getSessionUser(token: string): UserRow | null {
     sessionStmts.deleteExpired.run(now);
     lastSessionCleanup = now;
   }
-  return (sessionStmts.getUser.get(token, now) as UserRow) || null;
+  const hashed = sessionTokenHash(token);
+  const current = sessionStmts.getUser.get(hashed, now) as UserRow | undefined;
+  if (current) return current;
+
+  // Compatibility for sessions created before hashes were introduced. Migrate on first use.
+  const legacy = sessionStmts.getUser.get(token, now) as UserRow | undefined;
+  if (legacy) sessionStmts.migrateToken.run(hashed, token);
+  return legacy || null;
 }
 
 export function deleteSession(token: string) {
+  sessionStmts.delete.run(sessionTokenHash(token));
   sessionStmts.delete.run(token);
 }
 
@@ -891,5 +1124,13 @@ export const deleteProject = db.transaction((id: string, userId: string) => {
   projectStmts.clearItemsProject.run(Date.now(), revision, id, userId);
   projectStmts.delete.run(id, userId);
 });
+
+export function isDatabaseReady(): boolean {
+  try {
+    return (db.prepare('SELECT 1 AS ok').get() as { ok?: number } | undefined)?.ok === 1;
+  } catch {
+    return false;
+  }
+}
 
 export { db };

@@ -1,5 +1,5 @@
 /**
- * Study Dashboard View — Learning Analytics
+ * Study and learning analytics.
  * 
  * Features:
  * - Real-time learning analytics derived from item-level SRS data
@@ -8,13 +8,11 @@
  * - 7-day activity chart (derived from item lastReviewDate)
  * - Achievement tracking
  * 
- * Note: Study sessions (flashcard review) have been deprecated.
- * SRS updates now happen through the DetailView (double-click or R key).
- * All stats are derived from item-level SRS fields (lastReviewDate, totalReviews).
+ * Review sessions use the same item-level FSRS state and authoritative event stream as quick review.
  */
 
-import React, { useEffect, useMemo, useRef } from 'react';
-import { StoredItem, getItemTitle, ReviewEvent } from '../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { StoredItem, getItemSpelling, getItemTitle, ReviewEvent, type ReviewRating, type ReviewTaskType } from '../types';
 import { 
   Trophy, 
   TrendingUp, 
@@ -24,22 +22,196 @@ import {
   Zap,
   Target,
   Clock,
+  Eye,
+  Volume2,
+  Undo2,
+  X,
 } from 'lucide-react';
+import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { speakNatural } from '../services/lazyTts';
+import { buildReviewQueue, createClozePrompt, formatReviewInterval, getStudyContent, selectReviewTask, stripStudyMarkers } from '../services/studySession';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
   reviewEvents: ReviewEvent[];
+  onReview: (
+    itemId: string,
+    rating: ReviewRating,
+    context: { taskType: ReviewTaskType; durationMs: number; sessionId: string; eventId: string },
+  ) => Promise<boolean>;
+  onUndoReview: (eventId: string) => Promise<void>;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
+
+interface StudySession {
+  id: string;
+  itemIds: string[];
+  index: number;
+  revealed: boolean;
+  typedAnswer: string;
+  promptStartedAt: number;
+  ratings: Record<ReviewRating, number>;
+}
+
+interface LastGrade {
+  eventId: string;
+  sessionId: string;
+  itemId: string;
+  itemIndex: number;
+  rating: ReviewRating;
+  taskType: ReviewTaskType;
+  durationMs: number;
+  typedAnswer: string;
+  status: 'syncing' | 'ready' | 'waiting' | 'undoing';
+}
+
+const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
+const keyboardRatings: Partial<Record<string, ReviewRating>> = {
+  '1': 'again',
+  '2': 'hard',
+  '3': 'good',
+  '4': 'easy',
+};
 
 export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({ 
   items, 
   reviewEvents,
+  onReview,
+  onUndoReview,
   onScroll,
 }) => {
   // Scroll container ref for position restoration
   const dashboardScrollRef = React.useRef<HTMLDivElement>(null);
   const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [session, setSession] = useState<StudySession | null>(null);
+  const [lastGrade, setLastGrade] = useState<LastGrade | null>(null);
+  const [undoError, setUndoError] = useState('');
+
+  const reviewQueue = useMemo(() => {
+    return buildReviewQueue(items);
+  }, [items]);
+
+  const currentItem = session && session.index < session.itemIds.length
+    ? items.find(item => item.data.id === session.itemIds[session.index]) || null
+    : null;
+  const sessionComplete = !!session && session.index >= session.itemIds.length;
+
+  const startSession = () => {
+    if (reviewQueue.length === 0) return;
+    setLastGrade(null);
+    setUndoError('');
+    setSession({
+      id: crypto.randomUUID(),
+      itemIds: reviewQueue.map(item => item.data.id),
+      index: 0,
+      revealed: false,
+      typedAnswer: '',
+      promptStartedAt: Date.now(),
+      ratings: emptyRatings(),
+    });
+  };
+
+  const gradeCurrent = (rating: ReviewRating) => {
+    if (!session || !currentItem || !session.revealed) return;
+    const taskType = selectReviewTask(currentItem);
+    const eventId = crypto.randomUUID();
+    const grade: LastGrade = {
+      eventId,
+      sessionId: session.id,
+      itemId: currentItem.data.id,
+      itemIndex: session.index,
+      rating,
+      taskType,
+      durationMs: Math.max(0, Date.now() - session.promptStartedAt),
+      typedAnswer: session.typedAnswer,
+      status: 'syncing',
+    };
+    setLastGrade(grade);
+    setUndoError('');
+    void onReview(currentItem.data.id, rating, {
+      taskType,
+      durationMs: grade.durationMs,
+      sessionId: session.id,
+      eventId,
+    }).then(synced => {
+      setLastGrade(current => current?.eventId === eventId
+        ? { ...current, status: synced ? 'ready' : 'waiting' }
+        : current);
+    }).catch(() => {
+      setLastGrade(current => current?.eventId === eventId ? { ...current, status: 'waiting' } : current);
+    });
+    setSession(current => current ? {
+      ...current,
+      index: current.index + 1,
+      revealed: false,
+      typedAnswer: '',
+      promptStartedAt: Date.now(),
+      ratings: { ...current.ratings, [rating]: current.ratings[rating] + 1 },
+    } : null);
+  };
+
+  const undoLastGrade = async () => {
+    const grade = lastGrade;
+    if (!grade || !session || grade.sessionId !== session.id || grade.status === 'undoing') return;
+    setLastGrade(current => current?.eventId === grade.eventId ? { ...current, status: 'undoing' } : current);
+    setUndoError('');
+    try {
+      await onUndoReview(grade.eventId);
+      setSession(current => current ? {
+        ...current,
+        index: grade.itemIndex,
+        revealed: true,
+        typedAnswer: grade.typedAnswer,
+        promptStartedAt: Date.now(),
+        ratings: {
+          ...current.ratings,
+          [grade.rating]: Math.max(0, current.ratings[grade.rating] - 1),
+        },
+      } : null);
+      setLastGrade(null);
+    } catch (error) {
+      setLastGrade(current => current?.eventId === grade.eventId ? { ...current, status: 'waiting' } : current);
+      setUndoError(error instanceof Error ? error.message : 'The review could not be undone.');
+    }
+  };
+
+  const closeSession = () => {
+    setLastGrade(null);
+    setUndoError('');
+    setSession(null);
+  };
+
+  useEffect(() => {
+    if (!session) return;
+    const handleSessionKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSession();
+        return;
+      }
+      if (isTyping) return;
+      if (event.key.toLowerCase() === 'u' && lastGrade && lastGrade.status !== 'undoing') {
+        event.preventDefault();
+        void undoLastGrade();
+        return;
+      }
+      if (!session.revealed && (event.key === ' ' || event.key === 'Enter')) {
+        event.preventDefault();
+        setSession(current => current ? { ...current, revealed: true } : null);
+        return;
+      }
+      if (!session.revealed) return;
+      const rating = keyboardRatings[event.key];
+      if (rating) {
+        event.preventDefault();
+        gradeCurrent(rating);
+      }
+    };
+    window.addEventListener('keydown', handleSessionKey);
+    return () => window.removeEventListener('keydown', handleSessionKey);
+  }, [session, currentItem, lastGrade]);
 
   // Cleanup scroll save timer
   useEffect(() => () => { if (scrollSaveTimerRef.current) clearTimeout(scrollSaveTimerRef.current); }, []);
@@ -58,11 +230,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // Calculate comprehensive statistics — derived entirely from item-level SRS data
   const stats = useMemo(() => {
     const now = Date.now();
-    // Deduplicate due count by spelling — one word = one due item regardless of sense count
+    // The session buries same-spelling senses, so the dashboard count follows the same rule.
     const dueSpellings = new Set<string>();
     items.forEach(i => {
       if ((i.srs?.nextReview ?? 0) <= now) {
-        const spelling = (i.type === 'phrase' ? (i.data as any).query : (i.data as any).word || '').toLowerCase().trim();
+        const spelling = getItemSpelling(i);
         if (spelling) dueSpellings.add(spelling);
       }
     });
@@ -112,12 +284,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
     const weeklyEvents = reviewEvents.filter(event => event.reviewedAt >= weekAgoTimestamp);
     const weeklyReviews = weeklyEvents.length;
-    const reviewedIds = new Set(weeklyEvents.map(event => event.itemId));
-    const itemsReviewedThisWeek = items.filter(item => reviewedIds.has(item.data.id));
-
-    // Average memory strength of items reviewed this week (proxy for accuracy)
-    const weeklyAvgStrength = itemsReviewedThisWeek.length > 0
-      ? itemsReviewedThisWeek.reduce((sum, i) => sum + (i.srs?.memoryStrength ?? 0), 0) / itemsReviewedThisWeek.length
+    const weeklyRecallRate = weeklyEvents.length > 0
+      ? Math.round((weeklyEvents.filter(event => event.rating !== 'again').length / weeklyEvents.length) * 100)
       : 0;
 
     // Total lifetime reviews across all items
@@ -158,7 +326,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       avgStrength: Math.round(avgStrength),
       streak,
       weeklyReviews,
-      weeklyAvgStrength: Math.round(weeklyAvgStrength),
+      weeklyRecallRate,
       totalLifetimeReviews,
       longestStreak,
       mostReviewed,
@@ -174,6 +342,138 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         </div>
         <h3 className="text-xl font-bold text-slate-700 mb-2">Your Study Space</h3>
         <p className="max-w-xs">Add vocabulary and phrases to your notebook to begin your learning journey with smart spaced repetition.</p>
+      </div>
+    );
+  }
+
+  if (session) {
+    if (sessionComplete || !currentItem) {
+      const remembered = session.ratings.hard + session.ratings.good + session.ratings.easy;
+      return (
+        <div className="h-full overflow-y-auto bg-slate-50 p-5 pb-24">
+          <div className="max-w-xl mx-auto pt-10">
+            <div className="flex items-center justify-between mb-8">
+              <h2 className="text-2xl font-bold text-slate-800">Session complete</h2>
+              <button onClick={closeSession} className="w-11 h-11 grid place-items-center rounded-full text-slate-500 hover:bg-slate-200" aria-label="Close session summary"><X size={20} /></button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 border-y border-slate-200 py-5 mb-6">
+              {(['again', 'hard', 'good', 'easy'] as ReviewRating[]).map(rating => (
+                <div key={rating} className="text-center">
+                  <div className="text-2xl font-bold text-slate-800">{session.ratings[rating]}</div>
+                  <div className="text-xs capitalize text-slate-500">{rating}</div>
+                </div>
+              ))}
+            </div>
+            <p className="text-sm text-slate-600 mb-6">Recalled {remembered} of {session.itemIds.length} prompts.</p>
+            {lastGrade && (
+              <button onClick={() => void undoLastGrade()} disabled={lastGrade.status === 'undoing'} className="mb-3 w-full h-12 border border-slate-300 text-slate-700 font-semibold rounded-lg hover:bg-slate-100 disabled:opacity-60 inline-flex items-center justify-center gap-2" aria-keyshortcuts="U">
+                <Undo2 size={18} /> {lastGrade.status === 'undoing' ? 'Undoing...' : 'Undo last rating'}
+              </button>
+            )}
+            {undoError && <p className="mb-3 text-sm text-rose-700" role="alert">{undoError}</p>}
+            <button onClick={closeSession} className="w-full h-12 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800">Return to study</button>
+          </div>
+        </div>
+      );
+    }
+
+    const task = selectReviewTask(currentItem);
+    const content = getStudyContent(currentItem);
+    const example = stripStudyMarkers(content.example);
+    const previews = SRSAlgorithm.previewRatings(currentItem.srs);
+    const prompt = task === 'meaning'
+      ? content.word
+      : task === 'production'
+        ? (content.chinese || content.definition)
+        : task === 'cloze'
+          ? createClozePrompt(content.example, content.word)
+          : '';
+    return (
+      <div className="h-full overflow-y-auto bg-slate-50 p-4 pb-24">
+        <div className="max-w-2xl mx-auto min-h-full flex flex-col">
+          <header className="h-14 flex items-center justify-between border-b border-slate-200">
+            <span className="text-sm font-semibold text-slate-600">{session.index + 1} / {session.itemIds.length}</span>
+            <span className="text-xs font-medium uppercase text-slate-400">{task}</span>
+            <div className="flex items-center gap-1">
+              {lastGrade && (
+                <button onClick={() => void undoLastGrade()} disabled={lastGrade.status === 'undoing'} className="w-11 h-11 grid place-items-center rounded-full text-slate-500 hover:bg-slate-200 disabled:opacity-50" aria-label="Undo last rating" aria-keyshortcuts="U" title="Undo last rating">
+                  <Undo2 size={19} />
+                </button>
+              )}
+              <button onClick={closeSession} className="w-11 h-11 grid place-items-center rounded-full text-slate-500 hover:bg-slate-200" aria-label="End study session"><X size={20} /></button>
+            </div>
+          </header>
+
+          {undoError && <p className="mt-3 text-sm text-rose-700" role="alert">{undoError}</p>}
+
+          <section className="flex-1 flex flex-col justify-center py-10 text-center">
+            {task === 'listening' ? (
+              <button
+                onClick={() => speakNatural(example, { allowDownload: true })}
+                className="mx-auto w-16 h-16 rounded-full bg-slate-900 text-white grid place-items-center hover:bg-slate-800"
+                aria-label="Play listening prompt"
+              >
+                <Volume2 size={26} />
+              </button>
+            ) : (
+              <div className={task === 'meaning' ? 'text-4xl font-bold text-slate-900' : 'text-xl leading-relaxed text-slate-800'}>{prompt}</div>
+            )}
+
+            {task === 'production' && !session.revealed && (
+              <input
+                autoFocus
+                value={session.typedAnswer}
+                onChange={event => setSession(current => current ? { ...current, typedAnswer: event.target.value } : null)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    setSession(current => current ? { ...current, revealed: true } : null);
+                  }
+                }}
+                className="mt-8 mx-auto w-full max-w-md h-12 px-4 rounded-lg border border-slate-300 bg-white text-center text-lg text-slate-900 focus:border-slate-600 focus:outline-none"
+                aria-label="Type the recalled word"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            )}
+
+            {session.revealed ? (
+              <div className="mt-10 pt-8 border-t border-slate-200 text-left" aria-live="polite">
+                <div className="text-3xl font-bold text-slate-900 mb-2">{content.word}</div>
+                {task === 'production' && session.typedAnswer && (
+                  <div className="text-sm text-slate-500 mb-3">Your answer: <span className="font-medium text-slate-700">{session.typedAnswer}</span></div>
+                )}
+                {content.chinese && <div className="text-lg text-slate-700 mb-2">{content.chinese}</div>}
+                {content.definition && <div className="text-sm leading-relaxed text-slate-600 mb-4">{content.definition}</div>}
+                {example && <div className="text-sm leading-relaxed text-slate-500 border-l-2 border-slate-300 pl-3">{example}</div>}
+              </div>
+            ) : (
+              <button
+                onClick={() => setSession(current => current ? { ...current, revealed: true } : null)}
+                className="mt-12 mx-auto h-12 px-6 inline-flex items-center gap-2 bg-white border border-slate-300 rounded-lg font-semibold text-slate-700 hover:bg-slate-100"
+                aria-keyshortcuts="Space Enter"
+              >
+                <Eye size={18} /> Reveal answer
+              </button>
+            )}
+          </section>
+
+          {session.revealed && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-slate-200 pt-4">
+              {(['again', 'hard', 'good', 'easy'] as ReviewRating[]).map(rating => (
+                <button
+                  key={rating}
+                  onClick={() => gradeCurrent(rating)}
+                  aria-keyshortcuts={String((['again', 'hard', 'good', 'easy'] as ReviewRating[]).indexOf(rating) + 1)}
+                  className={`h-14 rounded-lg border font-semibold capitalize ${rating === 'again' ? 'border-rose-300 text-rose-700 bg-rose-50' : rating === 'hard' ? 'border-amber-300 text-amber-700 bg-amber-50' : rating === 'good' ? 'border-emerald-300 text-emerald-700 bg-emerald-50' : 'border-blue-300 text-blue-700 bg-blue-50'}`}
+                >
+                  <span className="block">{rating}</span>
+                  <span className="block text-[11px] font-normal opacity-75">{formatReviewInterval(previews[rating].interval)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -204,26 +504,33 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         onScroll?.(e);
       }}
     >
-      <h2 className="text-3xl font-bold text-slate-800 mb-1">Today&apos;s Study</h2>
-      <p className="text-slate-500 mb-8">Adaptive recall with spaced repetition</p>
+      <h2 className="text-3xl font-bold text-slate-800 mb-6">Today&apos;s Study</h2>
 
-      {/* Summary Card */}
-      <div className="bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-600 rounded-3xl p-6 shadow-xl mb-6 relative overflow-hidden text-white">
-        <div className="relative z-10">
-          <div className="flex items-baseline gap-2 mb-2">
-            <span className="text-5xl font-extrabold tracking-tighter">{stats.due}</span>
-            <span className="text-violet-200 font-medium text-lg">due now</span>
+      <section className="border-y border-slate-200 py-5 mb-6 flex flex-wrap items-center justify-between gap-5">
+        <div className="flex items-center gap-8">
+          <div>
+            <div className="text-2xl font-bold text-slate-900">{reviewQueue.length}</div>
+            <div className="text-sm text-slate-500">Ready</div>
           </div>
-          <div className="text-sm text-violet-100 font-medium">
-            <span>Avg retention: {stats.avgStrength}%</span>
+          <div>
+            <div className="text-2xl font-bold text-slate-900">{stats.due}</div>
+            <div className="text-sm text-slate-500">Due</div>
+          </div>
+          <div>
+            <div className="text-2xl font-bold text-slate-900">{stats.avgStrength}%</div>
+            <div className="text-sm text-slate-500">Avg strength</div>
           </div>
         </div>
-        <div className="absolute -right-8 -top-8 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl"></div>
-        <div className="absolute -left-8 -bottom-8 w-40 h-40 bg-purple-400 opacity-20 rounded-full blur-2xl"></div>
-      </div>
+        <button
+          onClick={startSession}
+          disabled={reviewQueue.length === 0}
+          className="h-12 px-5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed"
+        >
+          {reviewQueue.length > 0 ? 'Start review' : 'Nothing due'}
+        </button>
+      </section>
 
-      {/* Weekly stats summary - Now with real Firebase data */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-4">
+      <section className="py-5 border-b border-slate-200 mb-2">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <BarChart3 size={16} className="text-indigo-500" />
@@ -237,8 +544,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             <p className="text-xs text-slate-500">Reviews</p>
           </div>
           <div>
-            <p className="text-xl font-bold text-emerald-600">{stats.weeklyAvgStrength}%</p>
-            <p className="text-xs text-slate-500">Avg Strength</p>
+            <p className="text-xl font-bold text-emerald-700">{stats.weeklyRecallRate}%</p>
+            <p className="text-xs text-slate-500">Recalled</p>
           </div>
           <div className="flex flex-col items-center">
             <div className="flex items-center gap-1">
@@ -248,11 +555,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             <p className="text-xs text-slate-500">Day Streak</p>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* Mastery Breakdown */}
       {stats.total > 0 && (
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-4">
+        <section className="py-5 border-b border-slate-200 mb-2">
           <div className="flex items-center gap-2 mb-4">
             <Target size={16} className="text-indigo-500" />
             <span className="text-sm font-bold text-slate-700">Mastery Breakdown</span>
@@ -285,11 +592,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {/* 7-Day Activity Chart */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-4">
+      <section className="py-5 border-b border-slate-200 mb-2">
         <div className="flex items-center gap-2 mb-4">
           <TrendingUp size={16} className="text-indigo-500" />
           <span className="text-sm font-bold text-slate-700">7-Day Activity</span>
@@ -330,18 +637,18 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             Avg: {Math.round(stats.last7Days.reduce((sum, d) => sum + d.reviews, 0) / 7)}/day
           </span>
         </div>
-      </div>
+      </section>
 
       {/* Card-Level Metrics */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-4">
+      <section className="py-5 border-b border-slate-200 mb-2">
         <div className="flex items-center gap-2 mb-4">
           <Trophy size={16} className="text-amber-500" />
           <span className="text-sm font-bold text-slate-700">Achievements</span>
         </div>
         
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 divide-x divide-slate-200 border-y border-slate-200">
           {/* Longest Streak */}
-          <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-3">
+          <div className="py-4 pr-4">
             <div className="flex items-center gap-2 mb-1">
               <Zap size={14} className="text-amber-500" />
               <span className="text-xs font-medium text-slate-600">Best Streak</span>
@@ -351,7 +658,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           </div>
           
           {/* Total Reviews */}
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-3">
+          <div className="py-4 pl-4">
             <div className="flex items-center gap-2 mb-1">
               <Clock size={14} className="text-blue-500" />
               <span className="text-xs font-medium text-slate-600">Total Reviews</span>
@@ -379,7 +686,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
             </div>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 };

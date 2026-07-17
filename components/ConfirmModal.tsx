@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { X, AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import { Button } from './Button';
+import { Modal } from './Modal';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -78,14 +79,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   const { Icon } = style;
 
   return (
-    <div 
-      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200"
-      onClick={onCancel}
-    >
-      <div 
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200"
-        onClick={e => e.stopPropagation()}
-      >
+    <Modal onClose={onCancel} maxWidth="max-w-sm" ariaLabel={title}>
         <div className={`p-4 ${style.bg} ${style.border} border-b flex justify-between items-center`}>
           <h3 className="font-bold text-slate-800 flex items-center gap-2">
             <div className={`w-8 h-8 ${style.iconBg} ${style.iconColor} rounded-full flex items-center justify-center`}>
@@ -95,6 +89,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           </h3>
           <button 
             onClick={onCancel} 
+            aria-label="Close confirmation"
             className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-white/50 transition-colors"
           >
             <X size={20} />
@@ -121,7 +116,6 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             </Button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

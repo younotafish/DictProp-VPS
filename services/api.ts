@@ -1,6 +1,7 @@
 import { StoredItem, SearchResult, ComparisonResult, ProjectInfo, StoredComparison, ReviewEvent } from '../types';
 import { log, warn, error as logError } from './logger';
-import { jsonRequest, requestJson, requestVoid } from './http';
+import { HttpError, jsonRequest, requestJson, requestVoid, responseToHttpError } from './http';
+import { publishServerMutation } from './syncSignals';
 
 // Same origin — Hono serves both API and static files
 const API_BASE = '';
@@ -21,31 +22,56 @@ export const loadAllItems = async (): Promise<StoredItem[]> => {
   return requestJson<StoredItem[]>(`${API_BASE}/api/items`, undefined, 'Load items');
 };
 
+export interface RevisionCursor {
+  revision: number;
+  id: string;
+}
+
+export interface ItemChanges {
+  items: StoredItem[];
+  cursor: RevisionCursor;
+  hasMore: boolean;
+}
+
+export const loadItemChanges = async (cursor: RevisionCursor, limit = 200): Promise<ItemChanges> => {
+  const params = new URLSearchParams({
+    afterRevision: String(cursor.revision),
+    afterId: cursor.id,
+    limit: String(limit),
+  });
+  return requestJson<ItemChanges>(`${API_BASE}/api/items?${params}`, undefined, 'Load item changes');
+};
+
 export const saveItems = async (items: StoredItem[]): Promise<void> => {
-  const result = await requestJson<{
-    revisions?: Record<string, number>;
-    conflicts?: string[];
-    canonical?: StoredItem[];
-  }>(
-    `${API_BASE}/api/items`, jsonRequest('PUT', items), 'Save items',
-  );
-  if (result.revisions) {
-    for (const item of items) {
-      const revision = result.revisions[item.data.id];
-      if (typeof revision === 'number') item.serverRevision = revision;
+  const batchSize = 200;
+  for (let start = 0; start < items.length; start += batchSize) {
+    const batch = items.slice(start, start + batchSize);
+    const result = await requestJson<{
+      revisions?: Record<string, number>;
+      conflicts?: string[];
+      canonical?: StoredItem[];
+    }>(
+      `${API_BASE}/api/items`, jsonRequest('PUT', batch), 'Save items',
+    );
+    if (result.revisions) {
+      for (const item of batch) {
+        const revision = result.revisions[item.data.id];
+        if (typeof revision === 'number') item.serverRevision = revision;
+      }
     }
-  }
-  if (result.canonical?.length) {
-    const byId = new Map(result.canonical.map(item => [item.data.id, item]));
-    for (const item of items) {
-      const canonical = byId.get(item.data.id);
-      if (canonical) {
-        const localHash = item.lastSyncedHash;
-        Object.assign(item, canonical, { lastSyncedHash: localHash });
-        hashCache.delete(item);
+    if (result.canonical?.length) {
+      const byId = new Map(result.canonical.map(item => [item.data.id, item]));
+      for (const item of batch) {
+        const canonical = byId.get(item.data.id);
+        if (canonical) {
+          const localHash = item.lastSyncedHash;
+          Object.assign(item, canonical, { lastSyncedHash: localHash });
+          hashCache.delete(item);
+        }
       }
     }
   }
+  publishServerMutation();
 };
 
 export const loadReviewEvents = async (since: number): Promise<ReviewEvent[]> =>
@@ -53,6 +79,41 @@ export const loadReviewEvents = async (since: number): Promise<ReviewEvent[]> =>
 
 export const saveReviewEvent = async (event: ReviewEvent): Promise<void> =>
   requestVoid(`${API_BASE}/api/reviews`, jsonRequest('POST', event), 'Save review event');
+
+export interface AppliedReviewResponse {
+  applied: boolean;
+  event: ReviewEvent;
+  items: StoredItem[];
+}
+
+export const applyReviewMutation = async (
+  event: ReviewEvent,
+  itemIds: string[],
+): Promise<AppliedReviewResponse> => {
+  const result = await requestJson<AppliedReviewResponse>(
+    `${API_BASE}/api/reviews/apply`,
+    jsonRequest('POST', { event, itemIds }),
+    'Apply review',
+  );
+  publishServerMutation();
+  return result;
+};
+
+export interface UndoReviewResponse {
+  undone: boolean;
+  eventId: string;
+  items: StoredItem[];
+}
+
+export const undoReviewMutation = async (eventId: string): Promise<UndoReviewResponse> => {
+  const result = await requestJson<UndoReviewResponse>(
+    `${API_BASE}/api/reviews/${encodeURIComponent(eventId)}/undo`,
+    { method: 'POST' },
+    'Undo review',
+  );
+  publishServerMutation();
+  return result;
+};
 
 /**
  * Fetch a single item's image as a base64 data URI via the binary image endpoint.
@@ -201,9 +262,9 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      if (res.status === 429) throw new Error('QUOTA_EXCEEDED');
-      throw new Error(errText || `Analysis failed: ${res.status}`);
+      const error = await responseToHttpError(res, 'Analysis');
+      if (error.status === 429) throw new Error('QUOTA_EXCEEDED');
+      throw error;
     }
 
     const data = await res.json();
@@ -230,6 +291,7 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
   } catch (error: any) {
     const msg = error.message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
+    if (error instanceof HttpError) throw error;
 
     logError('Analysis failed', error);
     // The server already waits a full window and retries transient upstream errors internally, so a
@@ -269,9 +331,9 @@ export const detectVocabulary = async (text: string): Promise<VocabularyScan> =>
   });
 
   if (!res.ok) {
-    if (res.status === 429) throw new Error('QUOTA_EXCEEDED');
-    const errText = await res.text();
-    throw new Error(errText || 'Vocabulary detection failed.');
+    const error = await responseToHttpError(res, 'Vocabulary detection');
+    if (error.status === 429) throw new Error('QUOTA_EXCEEDED');
+    throw error;
   }
 
   const data = await res.json();
@@ -324,9 +386,9 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
     });
 
     if (!res.ok) {
-      if (res.status === 429) throw new Error('QUOTA_EXCEEDED');
-      const errText = await res.text();
-      throw new Error(errText || 'Comparison failed.');
+      const error = await responseToHttpError(res, 'Comparison');
+      if (error.status === 429) throw new Error('QUOTA_EXCEEDED');
+      throw error;
     }
 
     const data = await res.json();
@@ -345,6 +407,7 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
   } catch (error: any) {
     const msg = error.message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
+    if (error instanceof HttpError) throw error;
 
     logError('Word comparison failed', error);
     // See analyzeInput: the server owns the timeout + transient-retry, so don't double the wait here.

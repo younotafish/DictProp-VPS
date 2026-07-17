@@ -9,6 +9,8 @@ export class HttpError extends Error {
   }
 }
 
+export const AUTH_REQUIRED_EVENT = 'dictprop:auth-required';
+
 async function readErrorBody(response: Response): Promise<string> {
   const text = await response.text().catch(() => '');
   if (!text) return '';
@@ -22,11 +24,24 @@ async function readErrorBody(response: Response): Promise<string> {
   }
 }
 
-async function assertOk(response: Response, label: string): Promise<void> {
-  if (response.ok) return;
+function notifyAuthRequired(error: HttpError): void {
+  if (error.status !== 401 || typeof window === 'undefined' || typeof CustomEvent === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, {
+    detail: { status: error.status, message: error.responseBody },
+  }));
+}
+
+export async function responseToHttpError(response: Response, label = 'Request'): Promise<HttpError> {
   const body = await readErrorBody(response);
   const detail = body ? `: ${body}` : '';
-  throw new HttpError(`${label} failed (${response.status})${detail}`, response.status, body);
+  const error = new HttpError(`${label} failed (${response.status})${detail}`, response.status, body);
+  notifyAuthRequired(error);
+  return error;
+}
+
+export async function assertResponseOk(response: Response, label: string): Promise<void> {
+  if (response.ok) return;
+  throw await responseToHttpError(response, label);
 }
 
 export function jsonRequest(method: string, body: unknown): RequestInit {
@@ -43,7 +58,7 @@ export async function requestJson<T>(
   label = 'Request',
 ): Promise<T> {
   const response = await fetch(url, init);
-  await assertOk(response, label);
+  await assertResponseOk(response, label);
   return response.json() as Promise<T>;
 }
 
@@ -53,5 +68,5 @@ export async function requestVoid(
   label = 'Request',
 ): Promise<void> {
   const response = await fetch(url, init);
-  await assertOk(response, label);
+  await assertResponseOk(response, label);
 }

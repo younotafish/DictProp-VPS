@@ -47,7 +47,7 @@ export interface SentenceData {
   imageUrl?: string; // Optional user-attached image (base64 data URI in memory; 'idb:stored'/'server:has_image' marker once offloaded)
 }
 
-// SRS Data — Fixed-schedule spaced repetition
+// SRS Data — FSRS v6 with optional fields for lazily migrated legacy rows
 export interface SRSData {
   id: string; // References SearchResult.id or VocabCard.id
   type: 'vocab' | 'phrase' | 'sentence';
@@ -57,11 +57,19 @@ export interface SRSData {
   // Display-only mastery score derived from stability
   memoryStrength: number; // 0-100, derived from stability via log mapping
   lastReviewDate: number; // Timestamp of last review
-  totalReviews: number; // Total number of successful "remember" taps (= schedule step)
-  correctStreak: number; // Current streak of consecutive remembers
+  totalReviews: number; // Total scheduler repetitions, including Again ratings
+  correctStreak: number; // Consecutive non-Again ratings
   
   // Core scheduling parameter
-  stability: number; // Current interval in days (= SCHEDULE[step])
+  stability: number; // FSRS memory stability in days
+
+  // FSRS v6 state. Optional for legacy fixed-schedule rows and populated lazily on review.
+  scheduler?: 'fsrs-v6';
+  difficulty?: number;
+  lapses?: number;
+  fsrsState?: number;
+  learningSteps?: number;
+  scheduledDays?: number;
 }
 
 // Combined type for storage
@@ -74,9 +82,12 @@ export interface StoredItem {
   isDeleted?: boolean; // Soft delete flag for sync
   isArchived?: boolean; // Archive flag - keeps item but excludes from study
   project?: string; // Project ID — undefined means uncategorized/default
-  lastSyncedHash?: string; // Local-only: hash of content as last synced to Firestore
+  lastSyncedHash?: string; // Local-only hash of the content last accepted by the server
   serverRevision?: number; // Server-issued monotonic content revision for conflict ordering
 }
+
+export type ReviewRating = 'again' | 'hard' | 'good' | 'easy';
+export type ReviewTaskType = 'meaning' | 'production' | 'cloze' | 'listening' | 'quick';
 
 export interface ReviewEvent {
   id: string;
@@ -85,6 +96,10 @@ export interface ReviewEvent {
   reviewedAt: number;
   previousStep: number;
   nextStep: number;
+  rating?: ReviewRating;
+  taskType?: ReviewTaskType;
+  durationMs?: number;
+  sessionId?: string;
 }
 
 // Project — a named collection of items
@@ -104,7 +119,7 @@ export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
 export type ViewState = 'notebook' | 'study' | 'sentences';
 
-// Simplified sync state (operation-based sync was removed due to Firestore limits)
+// In-memory library state; durable mutation journals live in the storage/sync services.
 export interface SyncState {
   items: StoredItem[];
 }
@@ -210,7 +225,7 @@ export interface StoredComparison {
 export const comparisonKey = (words: string[]): string =>
   Array.from(new Set(words.map((w) => w.toLowerCase().trim()).filter(Boolean))).sort().join('|');
 
-// Simplified Firebase User type for props
+// Authenticated application user exposed to UI components
 export interface AppUser {
   uid: string;
   displayName?: string | null;

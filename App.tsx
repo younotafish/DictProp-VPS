@@ -1,30 +1,32 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { NotebookView } from './views/Notebook';
-import { KeyboardHelpModal } from './components/KeyboardHelpModal';
-import { StoredItem, ViewState, SyncStatus, SyncState, SRSData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, ProjectInfo, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent } from './types';
+import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, ProjectInfo, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi } from './services/api';
+import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type RevisionCursor } from './services/api';
 import { stripSentenceMarkers } from './components/HighlightedSentence';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { GlobalSearch } from './components/GlobalSearch';
-import { ConfirmModal } from './components/ConfirmModal';
-import { DuplicatesModal, DuplicateClusterView } from './components/DuplicatesModal';
-import { CardReviewPopup } from './components/CardReviewPopup';
+import type { DuplicateClusterView } from './components/DuplicatesModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
-import { requestPersistentStorage } from './services/audioCache';
-import { optimizeImageDataUri } from './services/imageProcessing';
-import { offloadAndUpload } from './services/imagePipeline';
+import { mergeGeneratedVocabIntoStoredItem } from './services/items';
+import { AUTH_REQUIRED_EVENT } from './services/http';
+import { enqueuePendingReviewMutation, excludePendingReviewItems, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation, type PendingReviewMutation } from './services/reviewQueue';
 import { useReviewHistory } from './hooks/useReviewHistory';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
+import { subscribeToServerMutations } from './services/syncSignals';
 
 // Project to land on by default each session (matched by name, case-insensitive).
 // Falls back to "All Projects" if no project with this name exists. Change here to retarget.
 const DEFAULT_PROJECT_NAME = 'everyone ESL';
+const NotebookView = lazy(() => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
+const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(module => ({ default: module.GlobalSearch })));
+const ConfirmModal = lazy(() => import('./components/ConfirmModal').then(module => ({ default: module.ConfirmModal })));
+const DuplicatesModal = lazy(() => import('./components/DuplicatesModal').then(module => ({ default: module.DuplicatesModal })));
+const CardReviewPopup = lazy(() => import('./components/CardReviewPopup').then(module => ({ default: module.CardReviewPopup })));
+const KeyboardHelpModal = lazy(() => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
 const StudyEnhanced = lazy(() => import('./views/StudyEnhanced').then(module => ({ default: module.StudyEnhanced })));
 const SentencesView = lazy(() => import('./views/SentencesView').then(module => ({ default: module.SentencesView })));
 const DetailView = lazy(() => import('./views/DetailView').then(module => ({ default: module.DetailView })));
@@ -73,48 +75,27 @@ const createLightweightCache = (items: StoredItem[]): any[] =>
     return entry;
   });
 
-// Normalize shared SRS: ensure all items with the same spelling share one SRS score.
-// When siblings have drifted (sync, legacy data), picks the most recently reviewed sibling
-// as canonical and applies its SRS to all others. Returns original array if nothing changed.
-function normalizeSharedSRS(items: StoredItem[]): StoredItem[] {
-  const groups = new Map<string, StoredItem[]>();
-  items.forEach(item => {
-    if (item.isDeleted) return;
-    const spelling = getItemSpelling(item);
-    if (!spelling) return;
-    if (!groups.has(spelling)) groups.set(spelling, []);
-    groups.get(spelling)!.push(item);
-  });
+const offloadImages = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
+  const { offloadAndUpload } = await import('./services/imagePipeline');
+  await offloadAndUpload(images);
+};
 
-  const updates = new Map<string, SRSData>();
-  groups.forEach(siblings => {
-    if (siblings.length <= 1) return;
-    const canonical = SRSAlgorithm.selectCanonical(siblings);
-    const canonicalSRS = SRSAlgorithm.ensure(canonical.srs, canonical.data.id, canonical.type);
-    for (const s of siblings) {
-      if (s.data.id === canonical.data.id) continue;
-      const sReviews = s.srs?.totalReviews || 0;
-      const sDate = s.srs?.lastReviewDate || 0;
-      // Detect drift using raw values (not ensure/migrate which can inject Date.now())
-      if (sReviews !== canonicalSRS.totalReviews || sDate !== canonicalSRS.lastReviewDate) {
-        updates.set(s.data.id, { ...canonicalSRS, id: s.data.id });
-      }
+function latestRevisionCursor(items: readonly StoredItem[]): RevisionCursor {
+  return items.reduce<RevisionCursor>((cursor, item) => {
+    const revision = item.serverRevision || 0;
+    if (revision > cursor.revision || (revision === cursor.revision && item.data.id > cursor.id)) {
+      return { revision, id: item.data.id };
     }
-  });
-
-  if (updates.size === 0) return items;
-  return items.map(item => {
-    const newSRS = updates.get(item.data.id);
-    return newSRS ? { ...item, srs: newSRS } : item;
-  });
+    return cursor;
+  }, { revision: 0, id: '' });
 }
 
 // Merge variant-duplicate clusters (Phase 2 of the dedup tool). For each merge, every
 // live vocab card whose word is a variant in the cluster is relabeled to the canonical
 // headword and given the UNION of all members' forms (plus the original variant spellings,
 // so future searches still resolve). Cards that collide on the same sense after relabel are
-// deduped — the richer / more-reviewed one survives, the rest are soft-deleted. Shared SRS is
-// reconciled at the end. Pure & deterministic; returns a new array (unchanged refs preserved).
+// deduped — the richer / more-reviewed one survives and the rest are soft-deleted. Pure and
+// deterministic; returns a new array while preserving unchanged references.
 function applyMerges(
   items: StoredItem[],
   merges: Array<{ baseWords: string[]; canonical: string }>
@@ -192,7 +173,7 @@ function applyMerges(
     }
   }
 
-  return normalizeSharedSRS(result);
+  return result;
 }
 
 // Sentinel value replacing base64 in React state — tells OfflineImage to load from IDB
@@ -264,7 +245,7 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
 
   if (imagesToSave.length > 0) {
     log(`🖼️ Offloading ${imagesToSave.length} images to IDB + server`);
-    await offloadAndUpload(imagesToSave);
+    await offloadImages(imagesToSave);
   }
 
   return stripped;
@@ -303,7 +284,17 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    void requestPersistentStorage();
+    const handleAuthRequired = () => {
+      void checkAuth().then(({ user, pending }) => {
+        setAuthState({ user, pending, loading: false });
+      });
+    };
+    window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
+  }, []);
+
+  useEffect(() => {
+    void import('./services/audioCache').then(({ requestPersistentStorage }) => requestPersistentStorage());
   }, []);
 
   const [currentView, setCurrentView] = useState<ViewState>(() => {
@@ -328,6 +319,8 @@ const App: React.FC = () => {
   const [syncState, setSyncState] = useState<SyncState>(() => {
     return { items: [] };
   });
+  const latestItemsRef = useRef<StoredItem[]>(syncState.items);
+  const serverCursorRef = useRef<RevisionCursor>({ revision: 0, id: '' });
   
   // Restore from localStorage cache once auth is resolved
   useEffect(() => {
@@ -338,8 +331,9 @@ const App: React.FC = () => {
         const items = JSON.parse(cached);
         if (Array.isArray(items) && items.length > 0) {
           log(`⚡ Instant restore: ${items.length} items from cache`);
+          latestItemsRef.current = items;
+          serverCursorRef.current = latestRevisionCursor(items);
           setSyncState({ items });
-          setIsLoaded(true);
         }
       }
     } catch (e) {
@@ -352,16 +346,13 @@ const App: React.FC = () => {
     return saveData(items, authState.user?.id || 'vps');
   }, [authState.user?.id]);
 
-  // Ref to track the latest items - avoids stale closure issues in event handlers
-  // This is updated synchronously whenever syncState changes
-  const latestItemsRef = useRef<StoredItem[]>(syncState.items);
-  
   // Track when we last saved to avoid redundant saves from event handlers
   const lastSaveTimeRef = useRef<number>(0);
 
   // Incremented on every immediate push (SRS/delete/archive) so the debounced save
   // can detect a concurrent push happened during its async rehydration window.
   const syncGenerationRef = useRef(0);
+  const initialServerSyncDoneRef = useRef(false);
 
   const currentUserIdRef = useRef(authState.user?.id || 'vps');
   currentUserIdRef.current = authState.user?.id || 'vps';
@@ -390,9 +381,11 @@ const App: React.FC = () => {
     }
 
     try {
+      const serverItems = excludePendingReviewItems(items, currentUserIdRef.current);
+      if (serverItems.length === 0) return;
       syncGenerationRef.current++;
-      await saveItems(items);
-      markItemsSynced(new Set(items.map(item => item.data.id)));
+      await saveItems(serverItems);
+      markItemsSynced(new Set(serverItems.map(item => item.data.id)));
     } catch (error) {
       logError(`${label}: immediate server sync failed`, error);
     }
@@ -448,7 +441,77 @@ const App: React.FC = () => {
   const [comparisons, setComparisons] = useState<StoredComparison[]>([]);
   const comparisonsRef = useRef<StoredComparison[]>([]);
   useEffect(() => { comparisonsRef.current = comparisons; }, [comparisons]);
-  const { reviewEvents, recordReview } = useReviewHistory(authState.user?.id);
+  const { reviewEvents, recordReview, removeReview } = useReviewHistory(authState.user?.id);
+  const reviewFlushPromiseRef = useRef<Promise<void> | null>(null);
+
+  const reconcileAppliedReview = useCallback(async (serverItems: StoredItem[]) => {
+    if (serverItems.length === 0) return;
+    const byId = new Map(serverItems.map(item => [item.data.id, item]));
+    const apply = (items: StoredItem[]): StoredItem[] => items.map(local => {
+      const serverItem = byId.get(local.data.id);
+      if (!serverItem) return local;
+      const reconciled: StoredItem = {
+        ...local,
+        srs: serverItem.srs,
+        serverRevision: serverItem.serverRevision,
+        updatedAt: Math.max(local.updatedAt || 0, serverItem.updatedAt || 0),
+      };
+      if (getItemContentHash(reconciled) === getItemContentHash(serverItem)) {
+        reconciled.lastSyncedHash = getItemContentHash(reconciled);
+      }
+      return reconciled;
+    });
+
+    const nextItems = apply(latestItemsRef.current);
+    latestItemsRef.current = nextItems;
+    serverCursorRef.current = latestRevisionCursor([...nextItems, ...serverItems]);
+    setSyncState(prevState => ({ ...prevState, items: apply(prevState.items) }));
+    await saveItemUpdates(
+      nextItems.filter(item => byId.has(item.data.id)),
+      currentUserIdRef.current,
+    );
+  }, []);
+
+  const flushPendingReviews = useCallback(async () => {
+    const userId = authState.user?.id;
+    if (!userId || !navigator.onLine) return;
+    if (reviewFlushPromiseRef.current) return reviewFlushPromiseRef.current;
+    const runFlush = async () => {
+      try {
+        for (;;) {
+          const mutation = readPendingReviewMutations(userId)[0];
+          if (!mutation) break;
+          const response = await applyReviewMutation(mutation.event, mutation.itemIds);
+          await reconcileAppliedReview(response.items);
+          removePendingReviewMutation(userId, mutation.event.id);
+        }
+      } catch (error) {
+        warn('Pending review sync will retry:', error);
+      }
+    };
+    const flush = navigator.locks
+      ? navigator.locks.request(`dictprop-review-flush:${userId}`, runFlush)
+      : runFlush();
+    reviewFlushPromiseRef.current = flush;
+    try {
+      await flush;
+    } finally {
+      if (reviewFlushPromiseRef.current === flush) reviewFlushPromiseRef.current = null;
+    }
+  }, [authState.user?.id, reconcileAppliedReview]);
+
+  const undoSRSReview = useCallback(async (eventId: string): Promise<void> => {
+    const userId = authState.user?.id;
+    if (!userId) throw new Error('Sign in again before undoing this review.');
+    await flushPendingReviews();
+    if (readPendingReviewMutations(userId).some(mutation => mutation.event.id === eventId)) {
+      throw new Error(navigator.onLine ? 'This review is still syncing. Try undo again.' : 'Reconnect to undo this review.');
+    }
+    const response = await undoReviewMutation(eventId);
+    await reconcileAppliedReview(response.items);
+    removeReview(eventId);
+  }, [authState.user?.id, flushPendingReviews, reconcileAppliedReview, removeReview]);
+
   const comparisonsCacheKey = authState.user ? `vps_comparisons_cache_${authState.user.id}` : 'vps_comparisons_cache';
 
   const persistComparisons = useCallback((list: StoredComparison[]) => {
@@ -718,16 +781,16 @@ const App: React.FC = () => {
     setSyncStatus('syncing');
 
     try {
+      await flushPendingReviews();
       // Reload projects
       loadProjects().then(p => persistProjects(p)).catch(e => warn("Failed to load projects:", e));
 
       // 1. Pull latest items from server
       const remoteItems = await loadAllItems();
+      serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
 
       // 2. Merge with latest state, strip images, then set state
-      let mergedItems = normalizeSharedSRS(cleanupOldDeletedItems(
-        mergeDatasets(latestItemsRef.current, remoteItems)
-      ));
+      let mergedItems = cleanupOldDeletedItems(mergeDatasets(latestItemsRef.current, remoteItems));
       mergedItems = await stripAndStoreImages(mergedItems);
       latestItemsRef.current = mergedItems;
       setSyncState({ items: mergedItems });
@@ -747,11 +810,12 @@ const App: React.FC = () => {
           changedItems.push(item);
         }
       }
-      if (changedItems.length > 0) {
-        log(`Server: Force sync uploading ${changedItems.length} changed items`);
+      const forceSyncItems = excludePendingReviewItems(changedItems, currentUserIdRef.current);
+      if (forceSyncItems.length > 0) {
+        log(`Server: Force sync uploading ${forceSyncItems.length} changed items`);
         // Images are uploaded separately via the image endpoint; item PUTs carry no base64.
-        await saveItems(changedItems);
-        for (const item of changedItems) {
+        await saveItems(forceSyncItems);
+        for (const item of forceSyncItems) {
           item.lastSyncedHash = getItemContentHash(item);
         }
       }
@@ -764,7 +828,7 @@ const App: React.FC = () => {
     } finally {
       forceSyncInProgressRef.current = false;
     }
-  }, []);
+  }, [flushPendingReviews]);
 
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
@@ -847,10 +911,11 @@ const App: React.FC = () => {
                       changedItems.push(item);
                     }
                   }
-                  if (changedItems.length > 0) {
-                    log(`Server: Pushing ${changedItems.length} changed items on background...`);
-                    saveItems(changedItems).then(() => {
-                      for (const item of changedItems) {
+                  const backgroundItems = excludePendingReviewItems(changedItems, currentUserIdRef.current);
+                  if (backgroundItems.length > 0) {
+                    log(`Server: Pushing ${backgroundItems.length} changed items on background...`);
+                    saveItems(backgroundItems).then(() => {
+                      for (const item of backgroundItems) {
                         item.lastSyncedHash = getItemContentHash(item);
                       }
                     }).catch(e => {
@@ -905,22 +970,17 @@ const App: React.FC = () => {
             
             // IndexedDB is the source of truth (has full item data)
             // localStorage cache is now lightweight (titles + SRS only) for instant UI
-            const cachedItems = syncState.items;
+            const cachedItems = latestItemsRef.current;
             let processedItems: StoredItem[];
             let needsSaveToIDB = false;
 
             if (itemsFromIDB.length > 0) {
-                // Use IndexedDB data (full content)
-                // Check for items in cache that aren't in IDB (added but not yet saved to IDB)
-                const idbIds = new Set(itemsFromIDB.map(i => i.data.id));
-                const cacheOnlyItems = cachedItems.filter(i => !idbIds.has(i.data.id));
-                if (cacheOnlyItems.length > 0) {
-                    log(`📦 Found ${cacheOnlyItems.length} items in cache not in IndexedDB, adding them`);
-                    processedItems = [...itemsFromIDB, ...cacheOnlyItems];
-                    needsSaveToIDB = true;
-                } else {
-                    processedItems = itemsFromIDB;
-                }
+                // The cache can contain a review written just before a reload while IndexedDB owns
+                // full content. Merge both: cache learning timestamps win, IDB definitions remain.
+                processedItems = cachedItems.length > 0
+                    ? mergeDatasets(cachedItems, itemsFromIDB)
+                    : itemsFromIDB;
+                needsSaveToIDB = cachedItems.length > 0;
                 log(`📦 Loaded ${processedItems.length} items from IndexedDB`);
             } else if (cachedItems.length > 0) {
                 // IndexedDB empty, fall back to cache (lightweight, but better than nothing)
@@ -957,8 +1017,9 @@ const App: React.FC = () => {
                 hasChanges = true;
             }
 
-            // 3. Normalize shared SRS (ensure same-spelling siblings share one score)
-            processedItems = normalizeSharedSRS(processedItems);
+            // 3. A review mutation is written synchronously before the async IndexedDB journal. Reapply
+            // those tiny patches here so an immediate refresh cannot roll progress back.
+            processedItems = overlayPendingReviews(processedItems, readPendingReviewMutations(userId));
 
             // 3.5. Strip images from items → IDB (keep ~143MB out of React state)
             processedItems = await stripAndStoreImages(processedItems);
@@ -970,6 +1031,7 @@ const App: React.FC = () => {
 
             // Also update the ref
             latestItemsRef.current = processedItems;
+            serverCursorRef.current = latestRevisionCursor(processedItems);
             
             // 4. Save merged result back to IndexedDB if we merged or made changes
             // This ensures IndexedDB is up-to-date with any fresher data from cache
@@ -1044,11 +1106,35 @@ const App: React.FC = () => {
     });
   };
 
-  // Background pre-fetch images for items that have server markers but no IDB image yet
-  const prefetchImages = useCallback(async (items: StoredItem[]) => {
+  // Cache a bounded set of study-relevant images by default. A full offline pack is explicit.
+  const prefetchImages = useCallback(async (items: StoredItem[], mode: 'priority' | 'all' = 'priority') => {
+    if (mode === 'priority') {
+      const connection = (navigator as Navigator & {
+        connection?: { saveData?: boolean; effectiveType?: string };
+      }).connection;
+      if (connection?.saveData || connection?.effectiveType === 'slow-2g' || connection?.effectiveType === '2g') return;
+      const estimate = await navigator.storage?.estimate?.().catch(() => null);
+      if (estimate?.quota && estimate.usage && estimate.usage / estimate.quota > 0.85) return;
+    }
+
+    const candidates = mode === 'all'
+      ? items
+      : (() => {
+          const now = Date.now();
+          const dueSoon = items
+            .filter(item => !item.isDeleted && !item.isArchived && (item.srs?.nextReview || 0) <= now + 24 * 60 * 60 * 1000)
+            .sort((a, b) => (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0))
+            .slice(0, 60);
+          const recent = items
+            .filter(item => !item.isDeleted && !item.isArchived)
+            .sort((a, b) => b.savedAt - a.savedAt)
+            .slice(0, 20);
+          return Array.from(new Map([...dueSoon, ...recent].map(item => [item.data.id, item])).values());
+        })();
+
     // Collect all item/vocab IDs that have image markers
     const idsWithImages: string[] = [];
-    for (const item of items) {
+    for (const item of candidates) {
       if (item.isDeleted || item.isArchived) continue;
       const data = item.data as any;
       if (isImageMarker(data.imageUrl)) idsWithImages.push(data.id);
@@ -1080,7 +1166,7 @@ const App: React.FC = () => {
     }
     missing.sort((a, b) => (srsMap.get(a) || Infinity) - (srsMap.get(b) || Infinity));
 
-    log(`🖼️ Pre-fetching ${missing.length} images in background...`);
+    log(`🖼️ Caching ${missing.length} ${mode === 'all' ? 'offline' : 'priority'} images...`);
     prefetchAbortRef.current = false;
     setImagePrefetchProgress({ done: 0, total: missing.length });
 
@@ -1107,6 +1193,10 @@ const App: React.FC = () => {
     // Clear progress after a short delay
     setTimeout(() => setImagePrefetchProgress(null), 3000);
   }, []);
+
+  const handleDownloadOfflineImages = useCallback(() => {
+    void prefetchImages(latestItemsRef.current, 'all');
+  }, [prefetchImages]);
 
   // Recovery: re-upload images that exist in THIS device's IndexedDB but are missing on
   // the server (e.g. images corrupted by the old marker-clobber bug). Run from a device
@@ -1162,15 +1252,16 @@ const App: React.FC = () => {
   useEffect(() => {
     const syncFromServer = async () => {
       try {
+        await flushPendingReviews();
         // Load projects alongside items
         loadProjects().then(p => persistProjects(p)).catch(e => warn("Failed to load projects:", e));
 
         const remoteItems = await loadAllItems();
+        serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
         if (remoteItems.length === 0) return;
 
         let mergedItems = mergeDatasets(latestItemsRef.current, remoteItems);
         mergedItems = cleanupOldDeletedItems(mergedItems);
-        mergedItems = normalizeSharedSRS(mergedItems);
 
         // Strip images before putting into React state
         mergedItems = await stripAndStoreImages(mergedItems);
@@ -1194,11 +1285,12 @@ const App: React.FC = () => {
         });
 
         // Push items that differ from server
-        if (catchUpItems.length > 0) {
-          log(`Server: ${catchUpItems.length} items differ, uploading...`);
+        const initialCatchUpItems = excludePendingReviewItems(catchUpItems, currentUserIdRef.current);
+        if (initialCatchUpItems.length > 0) {
+          log(`Server: ${initialCatchUpItems.length} items differ, uploading...`);
           // Images sync separately via the image endpoint; item PUTs carry no base64.
-          saveItems(catchUpItems).then(() => {
-            for (const item of catchUpItems) {
+          saveItems(initialCatchUpItems).then(() => {
+            for (const item of initialCatchUpItems) {
               item.lastSyncedHash = getItemContentHash(item);
             }
           }).catch(e => logError("Catch-up sync failed:", e));
@@ -1210,6 +1302,8 @@ const App: React.FC = () => {
         prefetchImages(mergedItems);
       } catch (error) {
         logError("Initial server sync failed:", error);
+      } finally {
+        initialServerSyncDoneRef.current = true;
       }
     };
 
@@ -1217,7 +1311,72 @@ const App: React.FC = () => {
     if (isLoaded) {
       syncFromServer();
     }
-  }, [isLoaded]);
+  }, [isLoaded, flushPendingReviews]);
+
+  const deltaPullInProgressRef = useRef(false);
+  const pullServerChanges = useCallback(async () => {
+    if (!authState.user || !initialServerSyncDoneRef.current || deltaPullInProgressRef.current ||
+        !navigator.onLine || document.visibilityState !== 'visible') return;
+    deltaPullInProgressRef.current = true;
+    try {
+      await flushPendingReviews();
+      let cursor = serverCursorRef.current;
+      const remoteItems: StoredItem[] = [];
+      for (;;) {
+        const page = await loadItemChanges(cursor);
+        remoteItems.push(...page.items);
+        const advanced = page.cursor.revision > cursor.revision ||
+          (page.cursor.revision === cursor.revision && page.cursor.id > cursor.id);
+        cursor = page.cursor;
+        if (!page.hasMore || !advanced) break;
+      }
+      serverCursorRef.current = cursor;
+      if (remoteItems.length === 0) return;
+
+      const remoteById = new Map(remoteItems.map(item => [item.data.id, item]));
+      const mergeChanges = (base: StoredItem[]): StoredItem[] => {
+        const merged = mergeDatasets(base, remoteItems);
+        return merged.map(item => {
+          const remote = remoteById.get(item.data.id);
+          if (!remote || getItemContentHash(item) !== getItemContentHash(remote)) return item;
+          return { ...item, lastSyncedHash: getItemContentHash(item) };
+        });
+      };
+      const nextItems = mergeChanges(latestItemsRef.current);
+      latestItemsRef.current = nextItems;
+      setSyncState(prevState => ({ ...prevState, items: mergeChanges(prevState.items) }));
+      await saveItemUpdates(
+        nextItems.filter(item => remoteById.has(item.data.id)),
+        authState.user.id,
+      );
+      log(`Server: pulled ${remoteItems.length} changed item(s)`);
+    } catch (error) {
+      warn('Background sync will retry:', error);
+    } finally {
+      deltaPullInProgressRef.current = false;
+    }
+  }, [authState.user?.id, flushPendingReviews]);
+
+  useEffect(() => {
+    if (!isLoaded || !authState.user) return;
+    const tick = () => { void pullServerChanges(); };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    const timer = window.setInterval(tick, 8_000);
+    const unsubscribe = subscribeToServerMutations(tick);
+    window.addEventListener('online', tick);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', handleVisibility);
+    tick();
+    return () => {
+      window.clearInterval(timer);
+      unsubscribe();
+      window.removeEventListener('online', tick);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [isLoaded, authState.user?.id, pullServerChanges]);
 
   // Cache items to localStorage for instant restoration on iOS PWA reload
   // Strip images to stay within 5MB localStorage limit
@@ -1349,7 +1508,15 @@ const App: React.FC = () => {
 
       try {
         // Images sync separately via the image endpoint; item PUTs carry no base64.
-        const itemsToSync = itemsWithHashes.map(i => i.item);
+        const itemsToSync = excludePendingReviewItems(
+          itemsWithHashes.map(i => i.item),
+          currentUserIdRef.current,
+        );
+        const syncedIds = new Set(itemsToSync.map(item => item.data.id));
+        if (itemsToSync.length === 0) {
+          setSyncStatus('idle');
+          return;
+        }
 
         // If an immediate sync (SRS/delete/archive) happened, our data is stale —
         // skip this push. Next debounce cycle will pick up.
@@ -1362,7 +1529,7 @@ const App: React.FC = () => {
         await saveItems(itemsToSync);
 
         for (const { item, hash } of itemsWithHashes) {
-          item.lastSyncedHash = hash;
+          if (syncedIds.has(item.data.id)) item.lastSyncedHash = hash;
         }
 
         lastSaveTimeRef.current = Date.now();
@@ -1567,7 +1734,7 @@ const App: React.FC = () => {
   }, [allActiveItems]);
 
   // Apply the user-confirmed merges: relabel to canonical, union forms, dedupe senses,
-  // reconcile shared SRS, and push the changed items immediately (like delete/SRS paths).
+  // and push the changed items immediately (like delete/SRS paths).
   const handleMergeDuplicates = useCallback(async (merges: Array<{ baseWords: string[]; canonical: string }>) => {
     setDuplicateClusters(null);
     if (!merges || merges.length === 0) return;
@@ -1577,7 +1744,10 @@ const App: React.FC = () => {
     latestItemsRef.current = newItems;
     setSyncState(prev => ({ ...prev, items: applyMerges(prev.items, merges) }));
 
-    const changed = newItems.filter(it => before.get(it.data.id) !== getItemContentHash(it));
+    const changed = excludePendingReviewItems(
+      newItems.filter(it => before.get(it.data.id) !== getItemContentHash(it)),
+      currentUserIdRef.current,
+    );
     log(`🔀 Merge: ${changed.length} item(s) changed across ${merges.length} cluster(s)`);
 
     try {
@@ -1954,7 +2124,7 @@ const App: React.FC = () => {
           if (vc) data = { ...data, vocabs: nv } as SearchResult;
         }
       }
-      if (imagesToSave.length > 0) offloadAndUpload(imagesToSave);
+      if (imagesToSave.length > 0) void offloadImages(imagesToSave);
 
       const now = Date.now();
       const itemToSave = {
@@ -2032,21 +2202,9 @@ const App: React.FC = () => {
         } else {
           // New item
           
-          // SHARED SRS LOGIC: Check if there are any OTHER items with the same word
-          // If so, inherit their SRS state
-          let srsToUse = itemToSave.srs;
-          
-          const siblingItem = prevState.items.find(i => 
-             !i.isDeleted && 
-             String(getItemTitle(i) || '').toLowerCase().trim() === incomingTitle
-          );
-          
-          if (siblingItem) {
-              // Inherit SRS from sibling, but ensure ID matches the NEW item
-              srsToUse = { ...siblingItem.srs, id: itemToSave.data.id };
-          }
-
-          const normalizedSRS = SRSAlgorithm.ensure(srsToUse, itemToSave.data.id, itemToSave.type);
+          // Each meaning owns its own FSRS card. A newly saved sense must not inherit another
+          // sense's difficulty, lapses, or due date just because the spelling matches.
+          const normalizedSRS = SRSAlgorithm.ensure(itemToSave.srs, itemToSave.data.id, itemToSave.type);
           const finalItem = { 
             ...itemToSave, 
             srs: normalizedSRS,
@@ -2086,7 +2244,7 @@ const App: React.FC = () => {
         }
       }
     }
-    if (incomingImages.length > 0) offloadAndUpload(incomingImages);
+    if (incomingImages.length > 0) void offloadImages(incomingImages);
 
     // Use functional update to avoid stale closure issues
     setSyncState(prevState => {
@@ -2199,6 +2357,7 @@ const App: React.FC = () => {
     log(`🖼️ Image lost for ${itemId} — regenerating from prompt`);
     const regenerated = await generateIllustration(prompt, '16:9');
     if (!regenerated) return null;
+    const { optimizeImageDataUri } = await import('./services/imageProcessing');
     const optimized = await optimizeImageDataUri(regenerated);
     try { await saveImage(itemId, optimized); } catch { /* best-effort */ }
     try { await uploadImages({ [itemId]: optimized }); } catch (e) { warn('Failed to persist regenerated image:', e); }
@@ -2211,7 +2370,7 @@ const App: React.FC = () => {
   // offload is done explicitly here and the item is saved with the marker (never raw base64 in state).
   const handleAttachSentenceImage = useCallback(async (item: StoredItem, base64: string) => {
     if (!item?.data?.id || !base64.startsWith('data:image/')) return;
-    await offloadAndUpload([{ id: item.data.id, base64 }]);
+    await offloadImages([{ id: item.data.id, base64 }]);
     handleSaveRef.current({ ...item, data: { ...item.data, imageUrl: IMAGE_IDB_MARKER } });
   }, []);
 
@@ -2289,7 +2448,7 @@ const App: React.FC = () => {
       return prevState;
     });
 
-    // Update carousel immediately (before Firebase sync) so card disappears instantly
+    // Update the carousel immediately, before the server sync finishes.
     removeItemFromDetailContext(id);
 
     // Immediately sync archive to server
@@ -2485,6 +2644,11 @@ const App: React.FC = () => {
     });
   }, [handleDelete]);
 
+  const handleGeneratedImage = useCallback((vocab: VocabCard) => {
+    const updated = mergeGeneratedVocabIntoStoredItem(latestItemsRef.current, vocab);
+    if (updated) handleSaveRef.current(updated);
+  }, []);
+
   // Search handler - triggers GlobalSearch popup (bottom-right search icon)
   const handleRecursiveSearch = useCallback((text: string) => {
       window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text } }));
@@ -2550,19 +2714,14 @@ const App: React.FC = () => {
     setDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered });
   }, [allActiveItems]);
 
-  // Reset SRS for an item (and its shared-SRS siblings by title) back to brand-new. Used by the
-  // footnote card popup's Reset button; mirrors DetailView's reset.
+  // Reset only this sense/item. Different meanings now keep independent FSRS schedules.
   const resetSRS = useCallback((id: string) => {
     const target = latestItemsRef.current.find(i => i.data.id === id);
     if (!target) return;
-    const targetTitle = getItemTitle(target).toLowerCase().trim();
-    const siblings = latestItemsRef.current.filter(i => !i.isDeleted && getItemTitle(i).toLowerCase().trim() === targetTitle);
-    (siblings.length > 0 ? siblings : [target]).forEach(s =>
-      handleSaveRef.current({ ...s, srs: SRSAlgorithm.createNew(s.data.id, s.type) }),
-    );
+    handleSaveRef.current({ ...target, srs: SRSAlgorithm.createNew(target.data.id, target.type) });
   }, []);
 
-  // SRS update — handles shared SRS atomically (all items with the same title update together).
+  // SRS update for one sense/item. The server applies the same FSRS transition atomically.
   //
   // The update is computed OUTSIDE setSyncState, from latestItemsRef.current (the app's
   // synchronously-maintained source of truth), so the immediate IndexedDB save + server push always
@@ -2574,35 +2733,31 @@ const App: React.FC = () => {
   // immediate IDB/server writes missed it, so progress vanished on refresh or on another device. This
   // structure (compute → apply to ref → apply the same pure transform inside setState) removes the race
   // and mirrors handleMergeDuplicates above.
-  const updateSRS = async (itemId: string) => {
+  const updateSRS = async (
+    itemId: string,
+    rating: ReviewRating = 'good',
+    context?: { taskType?: ReviewTaskType; durationMs?: number; sessionId?: string; eventId?: string },
+  ): Promise<boolean> => {
     const now = Date.now();
 
     const baseItems = latestItemsRef.current;
     const targetItem = baseItems.find(i => i.data.id === itemId);
-    if (!targetItem) return;
+    if (!targetItem) return false;
 
-    // Find ALL items with the same title (shared SRS: same word/sentence text update together).
     const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
     const idsToUpdate = new Set<string>([itemId]);
-    baseItems.forEach(item => {
-      if (!item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle) {
-        idsToUpdate.add(item.data.id);
-      }
-    });
-
-    // Use the most recently reviewed sibling. A legitimate overdue penalty can
-    // lower totalReviews, so highest-step selection would resurrect stale progress.
-    const siblings = baseItems.filter(item => idsToUpdate.has(item.data.id));
-    const bestSibling = SRSAlgorithm.selectCanonical(siblings);
-    const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
-    const updatedSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
+    const baseSRS = SRSAlgorithm.ensure(targetItem.srs, targetItem.data.id, targetItem.type);
+    const updatedSRS = SRSAlgorithm.updateAfterRating(baseSRS, rating, now);
     const reviewEvent: ReviewEvent = {
-      id: crypto.randomUUID(), itemId, itemType: targetItem.type, reviewedAt: now,
+      id: context?.eventId || crypto.randomUUID(), itemId, itemType: targetItem.type, reviewedAt: now,
       previousStep: baseSRS.totalReviews, nextStep: updatedSRS.totalReviews,
+      rating,
+      taskType: context?.taskType || 'quick',
+      durationMs: context?.durationMs,
+      sessionId: context?.sessionId,
     };
-    recordReview(reviewEvent);
 
-    log(`🧠 SRS Update: ${targetTitle} - step ${baseSRS.totalReviews}→${updatedSRS.totalReviews}, stability=${updatedSRS.stability}d, next review in ${Math.round(updatedSRS.interval / 1440)}d`);
+    log(`🧠 FSRS Update: ${targetTitle} - ${rating}, stability=${updatedSRS.stability.toFixed(1)}d, next review in ${updatedSRS.interval}m`);
 
     // Pure transform, applied to BOTH the ref (fresh source for concurrent handlers) and — defensively —
     // to prevState inside setSyncState, so a concurrent update can't drop the change.
@@ -2613,10 +2768,20 @@ const App: React.FC = () => {
     );
 
     const newItems = applySrs(baseItems);
+    const itemsToSync = newItems.filter(item => idsToUpdate.has(item.data.id));
+    const reviewMutation: PendingReviewMutation = {
+      event: reviewEvent,
+      itemIds: [...idsToUpdate],
+      optimisticSrs: Object.fromEntries(itemsToSync.map(item => [item.data.id, item.srs])),
+    };
+
+    // The small localStorage outbox is synchronous and lands before React or IndexedDB work. Its
+    // idempotent event id is the crash/reload boundary for offline and rapid reviews.
+    enqueuePendingReviewMutation(authState.user?.id || 'vps', reviewMutation);
+    recordReview(reviewEvent, { persist: false });
+    syncGenerationRef.current++;
     latestItemsRef.current = newItems;
     setSyncState(prevState => ({ ...prevState, items: applySrs(prevState.items) }));
-
-    const itemsToSync = newItems.filter(item => idsToUpdate.has(item.data.id));
 
     // CRITICAL: save to IndexedDB immediately (primary persistence — never lose progress on a quick
     // refresh / app switch). Throttle the lightweight localStorage cache write during rapid reviews.
@@ -2640,27 +2805,9 @@ const App: React.FC = () => {
       logError('💾 Failed to save SRS update to IndexedDB:', e);
     }
 
-    // Sync the changed items to the server immediately.
-    if (itemsToSync.length > 0) {
-      try {
-        log(`Server: Immediately syncing ${itemsToSync.length} SRS updates`);
-        syncGenerationRef.current++;
-        await saveItems(itemsToSync);
-        // Mark the just-synced items clean so the debounced save doesn't redundantly re-push them.
-        // The instances in itemsToSync came from a SEPARATE applySrs pass over baseItems — they are NOT
-        // the objects held by the ref/state (which came from applySrs(prevState.items)). Mutating them in
-        // place would be discarded the moment latestItemsRef re-syncs to state, leaving the item dirty and
-        // re-pushed on the next debounce. Stamp lastSyncedHash by id into both the ref and state instead.
-        const syncedIds = new Set(itemsToSync.map(it => it.data.id));
-        const markSynced = (items: StoredItem[]): StoredItem[] => items.map(it =>
-          syncedIds.has(it.data.id) ? { ...it, lastSyncedHash: getItemContentHash(it) } : it
-        );
-        latestItemsRef.current = markSynced(latestItemsRef.current);
-        setSyncState(prevState => ({ ...prevState, items: markSynced(prevState.items) }));
-      } catch (e) {
-        logError('Server: Failed to sync SRS updates:', e);
-      }
-    }
+    await flushPendingReviews();
+    const userId = authState.user?.id || 'vps';
+    return !readPendingReviewMutations(userId).some(mutation => mutation.event.id === reviewEvent.id);
   };
 
   // Handle scroll to hide/show nav bar — uses direct DOM mutation to avoid re-rendering App
@@ -2766,6 +2913,7 @@ const App: React.FC = () => {
         </div>
       )}
 
+      <Suspense fallback={null}>
       {confirmModal && (
         <ConfirmModal
           isOpen={confirmModal.isOpen}
@@ -2876,6 +3024,7 @@ const App: React.FC = () => {
               onSaveVocab={saveVocabSense}
           />
       )}
+      </Suspense>
 
       <main className="flex-1 relative w-full min-h-0 overflow-hidden">
         <Suspense fallback={<div className="h-full grid place-items-center"><Loader2 className="animate-spin text-indigo-500" /></div>}>
@@ -2918,6 +3067,7 @@ const App: React.FC = () => {
             ttsGenProgress={ttsGenProgress}
             onRestoreImagesToServer={handleRestoreImagesToServer}
             imageRestoreRunning={imageRestoreProgress !== null}
+            onDownloadOfflineImages={handleDownloadOfflineImages}
           />
         )}
 
@@ -2925,6 +3075,8 @@ const App: React.FC = () => {
           <StudyEnhanced
             items={studyItems}
             reviewEvents={reviewEvents}
+            onReview={updateSRS}
+            onUndoReview={undoSRSReview}
             onScroll={handleScroll}
           />
         )}
@@ -2945,6 +3097,7 @@ const App: React.FC = () => {
         </Suspense>
       </main>
 
+      <Suspense fallback={null}>
       <GlobalSearch
         onSave={handleSave}
         isVocabSaved={isVocabSaved}
@@ -2954,6 +3107,7 @@ const App: React.FC = () => {
         activeProject={activeProject || undefined}
         onLazyLoadImage={handleLazyLoadImage}
         onRefreshReplace={handleRefreshReplace}
+        onGeneratedImage={handleGeneratedImage}
         onSaveSentence={handleSaveSentence}
         isSentenceSaved={isSentenceSaved}
         onCompareReady={handleCompareReady}
@@ -2961,6 +3115,7 @@ const App: React.FC = () => {
         sentenceItems={sentenceItems}
         onOpenSentence={handleViewSentence}
       />
+      </Suspense>
 
       <nav ref={navRef} className="fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 translate-y-0">
         <NavButton view="notebook" currentView={currentView} onClick={setCurrentView} icon={Book} label="Notebook" />
@@ -2978,7 +3133,9 @@ const App: React.FC = () => {
       </nav>
 
       {/* Keyboard Shortcuts Help Modal */}
-      {showKeyboardHelp && <KeyboardHelpModal onClose={() => setShowKeyboardHelp(false)} />}
+      <Suspense fallback={null}>
+        {showKeyboardHelp && <KeyboardHelpModal onClose={() => setShowKeyboardHelp(false)} />}
+      </Suspense>
       </>
       )}
     </div>

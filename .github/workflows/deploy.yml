@@ -5,7 +5,30 @@ on:
     branches: [main]
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+      - name: Install server dependencies
+        run: npm ci
+        working-directory: server
+      - name: Verify release
+        run: npm run check
+
   deploy:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH
@@ -21,12 +44,35 @@ jobs:
           script: |
             set -e
             cd /opt/dictprop-vps
-            git pull origin main
+            # A failed prior release may have left the checkout detached at its rollback commit.
+            git switch main
+            PREVIOUS_SHA="$(git rev-parse HEAD)"
+            git pull --ff-only origin main
             # Ensure swap exists for low-memory VPS
             if [ ! -f /swapfile ]; then
               (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile) || true
             fi
             swapon /swapfile 2>/dev/null || true
+            # Take a transactionally consistent online SQLite backup before the new container can run
+            # schema migrations. Keep seven deploy snapshots on the persistent host volume.
+            if [ -f data/dictprop.db ]; then
+              mkdir -p data/backups
+              BACKUP_NAME="dictprop-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.sha }}.db"
+              if [ -n "$(docker compose ps -q app 2>/dev/null)" ]; then
+                docker compose exec -T -e BACKUP_PATH="/app/data/backups/$BACKUP_NAME" app node -e '
+                  const Database = require("/app/server/node_modules/better-sqlite3");
+                  const db = new Database("/app/data/dictprop.db", { readonly: true });
+                  db.backup(process.env.BACKUP_PATH)
+                    .then(() => db.close())
+                    .catch((error) => { console.error(error); process.exit(1); });
+                '
+              else
+                python3 -c 'import sqlite3, sys; source = sqlite3.connect(sys.argv[1]); target = sqlite3.connect(sys.argv[2]); source.backup(target); target.close(); source.close()' \
+                  data/dictprop.db "data/backups/$BACKUP_NAME"
+              fi
+              find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
+                | sort -nr | tail -n +8 | cut -d' ' -f2- | xargs -r rm -f
+            fi
             # Diagnostics before rebuild — never fail the deploy on these
             echo "=== CONTAINER LOGS BEFORE REBUILD ==="
             docker compose logs --tail=200 || true
@@ -49,6 +95,24 @@ jobs:
             # Prune dangling images only — keep build cache so npm ci stays warm between deploys.
             docker image prune -f || true
             echo "Deploy complete"
-            sleep 15
-            # Fail the deploy if the new container isn't healthy.
-            curl -sf http://localhost:3000/api/health || { echo "Health check failed"; exit 1; }
+            wait_for_health() {
+              for attempt in $(seq 1 12); do
+                if curl -sf http://localhost:3000/api/health >/dev/null; then
+                  return 0
+                fi
+                sleep 5
+              done
+              return 1
+            }
+            if ! wait_for_health; then
+              echo "New release failed health checks; rebuilding previous commit $PREVIOUS_SHA"
+              docker compose logs --tail=200 || true
+              git checkout --detach "$PREVIOUS_SHA"
+              docker compose up -d --build
+              if wait_for_health; then
+                echo "Rollback to $PREVIOUS_SHA is healthy"
+              else
+                echo "Rollback also failed health checks"
+              fi
+              exit 1
+            fi

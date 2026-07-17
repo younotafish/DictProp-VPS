@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, ProjectInfo } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus, UploadCloud, GitMerge, Volume2 } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FolderOpen, Settings, FileJson, ImagePlus, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
@@ -534,6 +534,7 @@ interface NotebookProps {
   ttsGenProgress?: { current: number; total: number; isRunning: boolean } | null;
   onRestoreImagesToServer?: () => void;
   imageRestoreRunning?: boolean;
+  onDownloadOfflineImages?: () => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
@@ -545,7 +546,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onBatchImport, batchImportProgress, onJSONImported,
     onGenerateMissingImages, imageBackfillProgress,
     onGenerateAllSpeech, ttsGenProgress,
-    onRestoreImagesToServer, imageRestoreRunning
+    onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages
 }) => {
   const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
   const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
@@ -569,6 +570,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
   const [showJSONImport, setShowJSONImport] = useState(false);
+  const [showMaintenanceMenu, setShowMaintenanceMenu] = useState(false);
+  const maintenanceMenuRef = useRef<HTMLDivElement>(null);
 
   // Project state
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
@@ -586,6 +589,26 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showProjectDropdown]);
+
+  useEffect(() => {
+    if (!showMaintenanceMenu) return;
+    const handleClick = (event: MouseEvent) => {
+      if (maintenanceMenuRef.current && !maintenanceMenuRef.current.contains(event.target as Node)) {
+        setShowMaintenanceMenu(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setShowMaintenanceMenu(false);
+      maintenanceMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [showMaintenanceMenu]);
 
   // Compare mode state
   const [compareMode, setCompareMode] = useState(false);
@@ -1335,73 +1358,78 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
             <p className="text-xs text-slate-500 font-medium truncate">{groupedItems.length} saved · {reviewedToday} reviewed today · {dueCount} due</p>
           </div>
-          <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 bg-white rounded-2xl md:rounded-full p-1 border border-slate-100 shadow-sm min-w-0">
-            {/* Global Clear ⇄ Casual speech style (also in the review control bar) */}
-            <SpeechStyleToggle className="shrink-0" />
-            {/* Global voice speed for sentence playback (default 1.1×, up to 2×) */}
-            <PlaybackSpeedToggle className="shrink-0 bg-slate-100 hover:bg-slate-200" />
-            {/* Text Analyzer button */}
+          <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 min-w-0">
             {isOnline && (
-              <button
-                onClick={() => setShowTextAnalyzer(true)}
-                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
-                title="Text Analyzer — Extract vocabulary from pasted text"
-              >
-                <ScanText size={16} />
-              </button>
-            )}
-            {/* Batch Import button */}
-            {isOnline && (
-              <button
-                onClick={() => setShowBatchImport(true)}
-                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-                title="Batch Import — Paste a word list to analyze and save in bulk"
-              >
-                <ListPlus size={16} />
-              </button>
-            )}
-            {/* JSON Import button */}
-            {isOnline && onJSONImported && (
-              <button
-                onClick={() => setShowJSONImport(true)}
-                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-emerald-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
-                title="Import JSON — Paste pre-built vocab cards from an external AI"
-              >
-                <FileJson size={16} />
-              </button>
-            )}
-            {/* Generate Missing Images */}
-            {isOnline && onGenerateMissingImages && (
-              <button
-                onClick={onGenerateMissingImages}
-                disabled={imageBackfillProgress?.isRunning}
-                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${imageBackfillProgress?.isRunning ? 'cursor-not-allowed opacity-50 text-pink-400' : 'text-pink-400 hover:text-pink-600 hover:bg-pink-50'}`}
-                title={activeProject ? 'Generate missing images for this project' : 'Generate missing images for all items'}
-              >
-                {imageBackfillProgress?.isRunning ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}
-              </button>
-            )}
-            {/* Generate & cache MiMo speech for all example sentences so every device plays them instantly */}
-            {isOnline && onGenerateAllSpeech && (
-              <button
-                onClick={onGenerateAllSpeech}
-                disabled={ttsGenProgress?.isRunning}
-                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${ttsGenProgress?.isRunning ? 'cursor-not-allowed opacity-50 text-indigo-400' : 'text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
-                title="Generate & cache speech for all example sentences"
-              >
-                {ttsGenProgress?.isRunning ? <Loader2 size={16} className="animate-spin" /> : <Volume2 size={16} />}
-              </button>
-            )}
-            {/* Restore images to server (heals images missing on the server from this device's cache) */}
-            {isOnline && onRestoreImagesToServer && (
-              <button
-                onClick={onRestoreImagesToServer}
-                disabled={imageRestoreRunning}
-                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${imageRestoreRunning ? 'cursor-not-allowed opacity-50 text-emerald-400' : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
-                title="Restore images to server (re-upload images this device has cached but the server is missing)"
-              >
-                {imageRestoreRunning ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
-              </button>
+              <div className="relative shrink-0" ref={maintenanceMenuRef}>
+                <button
+                  onClick={() => setShowMaintenanceMenu(open => !open)}
+                  className="w-11 h-11 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+                  aria-label="Notebook tools"
+                  aria-haspopup="menu"
+                  aria-expanded={showMaintenanceMenu}
+                  title="Notebook tools"
+                >
+                  <MoreHorizontal size={20} />
+                </button>
+                {showMaintenanceMenu && (
+                  <div role="menu" className="absolute right-0 top-full mt-1 w-64 max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                    <div className="min-h-11 px-3 py-2 flex items-center justify-between gap-3 border-b border-slate-100">
+                      <span className="text-sm text-slate-600">Speech playback</span>
+                      <div className="flex items-center gap-1">
+                        <SpeechStyleToggle className="shrink-0" />
+                        <PlaybackSpeedToggle className="shrink-0 bg-slate-100 hover:bg-slate-200" />
+                      </div>
+                    </div>
+                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowTextAnalyzer(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
+                      <ScanText size={17} /> Analyze text
+                    </button>
+                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowBatchImport(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
+                      <ListPlus size={17} /> Batch import
+                    </button>
+                    {onJSONImported && (
+                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowJSONImport(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
+                        <FileJson size={17} /> Import JSON
+                      </button>
+                    )}
+                    {onDownloadOfflineImages && (
+                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onDownloadOfflineImages(); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
+                        <Download size={17} /> Download image pack
+                      </button>
+                    )}
+                    {onForceSync && (
+                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onForceSync(); }} disabled={syncStatus === 'syncing'} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                        {syncStatus === 'syncing' ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />} Sync now
+                      </button>
+                    )}
+                    <div className="h-px bg-slate-100 my-1" />
+                    {onGenerateMissingImages && (
+                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onGenerateMissingImages(); }} disabled={imageBackfillProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                        {imageBackfillProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <ImagePlus size={17} />} Generate missing images
+                      </button>
+                    )}
+                    {onGenerateAllSpeech && (
+                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onGenerateAllSpeech(); }} disabled={ttsGenProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                        {ttsGenProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <Volume2 size={17} />} Generate speech cache
+                      </button>
+                    )}
+                    {onRestoreImagesToServer && (
+                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onRestoreImagesToServer(); }} disabled={imageRestoreRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                        {imageRestoreRunning ? <Loader2 size={17} className="animate-spin" /> : <UploadCloud size={17} />} Restore server images
+                      </button>
+                    )}
+                    {onBulkRefresh && (
+                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onBulkRefresh(); }} disabled={bulkRefreshProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                        {bulkRefreshProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <RotateCcw size={17} />} Refresh analyses
+                      </button>
+                    )}
+                    {onFindDuplicates && (
+                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onFindDuplicates(); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
+                        <GitMerge size={17} /> Merge duplicates
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
             {/* Compare mode toggle */}
             {onCompare && isOnline && (
@@ -1410,7 +1438,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                   setCompareMode(prev => !prev);
                   setSelectedForCompare([]);
                 }}
-                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full transition-colors ${
+                className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full transition-colors ${
                   compareMode 
                     ? 'text-indigo-600 bg-indigo-100' 
                     : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
@@ -1426,7 +1454,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 if (prev === 'vocab') return 'phrase';
                 return 'all';
               })}
-              className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-50 transition-colors ${filterMode !== 'all' ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400'}`}
+              className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors ${filterMode !== 'all' ? 'text-indigo-600 bg-indigo-50' : 'text-slate-500'}`}
               title={`Filter: ${filterMode === 'all' ? 'All Items' : filterMode === 'vocab' ? 'Vocabulary Only' : 'Phrases Only'}`}
             >
               {filterMode === 'all' && <Filter size={16} />}
@@ -1435,7 +1463,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             </button>
             <button
               onClick={() => setSortMode(prev => prev === 'familiarity' ? 'alphabetical' : 'familiarity')}
-              className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-50 text-slate-400 hover:text-indigo-600 transition-colors"
+              className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 hover:text-indigo-600 transition-colors"
               title={sortMode === 'familiarity' ? 'Sort: Review Priority' : 'Sort: A-Z'}
             >
               {sortMode === 'familiarity' ? <Sparkles size={16} /> : <ArrowDownAZ size={16} />}
@@ -1445,7 +1473,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               <div className="relative shrink-0" ref={projectDropdownRef}>
                 <button
                   onClick={() => projects.length > 0 ? setShowProjectDropdown(prev => !prev) : setShowProjectManager(true)}
-                  className={`h-8 shrink-0 flex items-center gap-1 rounded-full px-2 transition-colors ${
+                  className={`h-11 shrink-0 flex items-center gap-1 rounded-full px-3 transition-colors ${
                     activeProject
                       ? 'text-indigo-600 bg-indigo-50'
                       : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
@@ -1460,7 +1488,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                   )}
                 </button>
                 {showProjectDropdown && (
-                  <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50 animate-in fade-in zoom-in-95 duration-150">
                     <button
                       onClick={() => { onSetActiveProject(null); setShowProjectDropdown(false); }}
                       className={`w-full text-left px-3 py-2 text-sm transition-colors ${
@@ -1493,49 +1521,11 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 )}
               </div>
             )}
-            <div className="hidden md:block h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
-            {/* Refresh All Button */}
-            {onBulkRefresh && isOnline && (
-              <button 
-                onClick={onBulkRefresh} 
-                disabled={bulkRefreshProgress?.isRunning}
-                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full ${bulkRefreshProgress?.isRunning ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-violet-50'}`}
-                title="Refresh All Items (re-search with latest AI)"
-              >
-                {bulkRefreshProgress?.isRunning ? (
-                  <Loader2 className="animate-spin text-violet-500" size={14} />
-                ) : (
-                  <RotateCcw className="text-violet-400 hover:text-violet-600 transition-colors" size={14} />
-                )}
-              </button>
-            )}
-            {/* Find & Merge Duplicates */}
-            {onFindDuplicates && (
-              <button
-                onClick={onFindDuplicates}
-                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full cursor-pointer hover:bg-indigo-50"
-                title="Find & merge duplicate words (variants saved separately)"
-              >
-                <GitMerge className="text-indigo-400 hover:text-indigo-600 transition-colors" size={14} />
-              </button>
-            )}
-            {!isOnline ? (
-              <div className="flex items-center gap-1 text-amber-500 px-1 shrink-0" title="Offline">
+            <div className="hidden md:block h-4 w-px bg-slate-200 mx-1 shrink-0"></div>
+            {!isOnline && (
+              <div className="w-11 h-11 flex items-center justify-center text-amber-500 shrink-0" title="Offline">
                 <WifiOff size={14} />
               </div>
-            ) : (
-              <button 
-                onClick={onForceSync} 
-                disabled={syncStatus === 'syncing'}
-                className={`w-8 h-8 shrink-0 flex items-center justify-center rounded-full ${syncStatus === 'syncing' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-50'}`}
-                title="Force Sync"
-              >
-                {syncStatus === 'syncing' ? (
-                  <Loader2 className="animate-spin text-indigo-500" size={14} />
-                ) : (
-                  <RefreshCw className="text-slate-400 hover:text-indigo-500 transition-colors" size={14} />
-                )}
-              </button>
             )}
             {user && (
               <>

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { X, GitMerge, AlertTriangle, ArrowRight } from 'lucide-react';
 import { StoredItem, VocabCard } from '../types';
 import { Button } from './Button';
+import { Modal } from './Modal';
 
 // One cluster of variant-duplicate words (e.g. base words ["run","running"]) plus the
 // actual saved cards involved and a suggested canonical headword.
@@ -49,14 +50,7 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
-        onClick={e => e.stopPropagation()}
-      >
+    <Modal onClose={onClose} maxWidth="max-w-lg" panelClassName="max-h-[85vh] flex flex-col" ariaLabel="Merge duplicates">
         {/* Header */}
         <div className="p-4 bg-indigo-50 border-b border-indigo-100 flex justify-between items-center shrink-0">
           <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -70,6 +64,7 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
           </h3>
           <button
             onClick={onClose}
+            aria-label="Close duplicate merge"
             className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-white/50 transition-colors"
           >
             <X size={20} />
@@ -180,7 +175,6 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
             {includedCount > 0 ? `Merge ${includedCount}` : 'Merge'}
           </Button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

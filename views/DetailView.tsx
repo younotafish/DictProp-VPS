@@ -238,7 +238,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   }, [currentGroupIndex]);
 
-  // Lazy load image from Firebase if missing locally
+  // Lazy-load the image from the server if it is missing locally.
   useEffect(() => {
     if (!currentItem || !onLazyLoadImage) return;
     
@@ -250,7 +250,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const hasImage = imageUrl && (imageUrl.startsWith('data:image/') || imageUrl === 'idb:stored' || imageUrl === 'server:has_image');
 
     if (isSaved && !hasImage) {
-      // Trigger lazy load from Firebase
+      // Trigger the server-backed lazy load.
       onLazyLoadImage(itemId);
     }
   }, [currentItem?.data.id, onLazyLoadImage]);
@@ -1443,36 +1443,36 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setShowActionMenu(false);
       return;
     }
-    // Reset SRS progress
+    // Reset only the current sense. Cards with the same spelling learn independently.
     if (!data.id) return;
-    
-    log('🔄 DetailView: Resetting SRS for item:', data.id, title);
-    
-    const targetTitle = (title || '').toLowerCase().trim();
-    // Find all siblings to reset them together (Shared SRS)
-    const siblings = savedItemsRef.current.filter(item =>
-      !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle
-    );
 
-    if (siblings.length > 0) {
-      siblings.forEach(sibling => {
-         const newSRS = SRSAlgorithm.createNew(sibling.data.id, sibling.type);
-         onSave({
-           ...sibling,
-           srs: newSRS,
-         });
+    log('🔄 DetailView: Resetting SRS for item:', data.id, title);
+
+    const targetTitle = (title || '').toLowerCase().trim();
+    const targetSense = type === 'vocab' ? (data as VocabCard).sense || '' : '';
+    const target = savedItemsRef.current.find(item => item.data.id === data.id) ??
+      savedItemsRef.current.find(item =>
+        !item.isDeleted &&
+        item.type === type &&
+        getItemTitle(item).toLowerCase().trim() === targetTitle &&
+        (type !== 'vocab' || getItemSense(item) === targetSense)
+      );
+
+    if (target) {
+      onSave({
+        ...target,
+        srs: SRSAlgorithm.createNew(target.data.id, target.type),
       });
     } else {
-       // Fallback for current item if not found in saved list (e.g. slight delay in sync)
-       const newSRS = SRSAlgorithm.createNew(data.id, type);
-       onSave({
-         data: data,
-         type: type,
-         savedAt: Date.now(),
-         srs: newSRS
-       });
+      // The save list can lag briefly after opening a freshly generated result.
+      onSave({
+        data,
+        type,
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.createNew(data.id, type),
+      });
     }
-    
+
     setShowActionMenu(false);
   }, [data, title, type, onSave]);
 
@@ -1508,15 +1508,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
     log('🧠 DetailView: Marking as remembered via shortcut/gesture');
 
     const targetTitle = (title || '').toLowerCase().trim();
-    // Find all siblings to update them together (Shared SRS)
-    const siblings = savedItemsRef.current.filter(item =>
-      !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle
-    );
+    const saved = savedItemsRef.current.find(item => item.data.id === data.id) ??
+      savedItemsRef.current.find(item =>
+        !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle &&
+        getItemSense(item) === (type === 'vocab' ? (data as VocabCard).sense || '' : '')
+      );
 
-    if (siblings.length > 0) {
+    if (saved) {
       // Compute preview SRS to show next review date in the animation
-      const bestSibling = SRSAlgorithm.selectCanonical(siblings);
-      const baseSRS = SRSAlgorithm.ensure(bestSibling.srs, bestSibling.data.id, bestSibling.type);
+      const baseSRS = SRSAlgorithm.ensure(saved.srs, saved.data.id, saved.type);
       const previewSRS = SRSAlgorithm.updateAfterRemember(baseSRS);
       const penalty = SRSAlgorithm.getOverduePenalty(baseSRS);
       const daysOverdue = Math.max(0, Math.round((Date.now() - baseSRS.nextReview) / 86400000));
@@ -1531,21 +1531,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
         intervalWithout,
       });
 
-      // Use the dedicated onUpdateSRS if available (preferred - handles shared SRS atomically)
       if (onUpdateSRS) {
-        // Update using the first sibling's ID - onUpdateSRS handles all siblings with same title
-        log('🧠 DetailView: Using onUpdateSRS for atomic shared SRS update');
-        onUpdateSRS(siblings[0].data.id);
+        log('🧠 DetailView: applying FSRS review to this sense');
+        onUpdateSRS(saved.data.id);
       } else {
-        // Fallback: Compute SRS update once, apply to all siblings
         log('🧠 DetailView: Using onSave fallback for SRS update');
-        const updatedSRS = previewSRS;
-        siblings.forEach(sibling => {
-          onSave({
-            ...sibling,
-            srs: { ...updatedSRS, id: sibling.data.id }
-          });
-        });
+        onSave({ ...saved, srs: { ...previewSRS, id: saved.data.id } });
       }
     } else {
       // Create new item and immediately mark as remembered

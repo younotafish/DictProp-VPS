@@ -2,6 +2,8 @@
 
 **An AI-powered vocabulary learning app that helps you truly remember words, not just look them up.**
 
+> **VPS fork note:** The current runtime uses Hono, SQLite, Google OAuth sessions, revision sync, and FSRS v6. Later Firebase setup/deployment sections in this long-form document describe the original app and are retained only as historical product context. Use `README.md` and `CLAUDE.md` for current operations.
+
 ---
 
 ## The Problem
@@ -270,10 +272,10 @@ Every word in synonyms, antonyms, confusables, word forms, and word family is ta
 "Bank" the financial institution and "bank" the riverbed are completely different concepts. If you only save "bank" once, which meaning did you learn?
 
 **DictProp's Solution:**
-Multiple meanings are saved as a **grouped unit** sharing:
-- **Shared SRS progress** — all meanings of "bank" share the same memory strength
-- **Unified review schedule** — when "bank" is due, all meanings reviewed together
-- **Sense-specific content** — each meaning has its own definition, examples, etc.
+Multiple meanings are grouped visually while learning independently:
+- **Sense-specific FSRS progress** — finance and river meanings keep separate schedules
+- **Sibling burying** — only one meaning of the same spelling appears in a study session
+- **Sense-specific content** — each meaning has its own definition, examples, and rating history
 
 **Grouped Display in Notebook:**
 Words with the same spelling but different meanings are **automatically grouped together** in a carousel format:
@@ -301,26 +303,26 @@ Words with the same spelling but different meanings are **automatically grouped 
 **Key Points:**
 - **One card visible at a time** — clean, uncluttered view
 - **Grouped by spelling** — "bank" meanings stay together
-- **Shared SRS progress** — all meanings share the same memory strength and review schedule
+- **Independent SRS progress** — each meaning keeps its own memory strength and review schedule
 - **Individual actions** — long press any meaning to refresh/delete just that one
 
 **Example:**
 You saved 3 meanings of "bank":
 - Navigate carousel: bank (finance) ↔ bank (river) ↔ bank (aviation)
-- **All meanings share the same SRS** — when "bank" is due, review all meanings together
-- Master all meanings of "bank" as a unit
+- Each meaning becomes due according to its own recall history
+- Same-spelling siblings are buried until a later session to reduce interference
 - Delete just "bank (aviation)" without affecting the others
 
 **Consistent Grouping Across App:**
 | View | Grouping Behavior |
 |------|-------------------|
 | **Notebook** | Same-word meanings grouped in carousel |
-| **Study Session** | Same-word meanings reviewed together, shared SRS |
+| **Study Session** | Same-word siblings buried; each sense scheduled independently |
 | **Detail View** | Navigate between meanings with swipe |
 | **Search Results** | All meanings shown in horizontal carousel |
 
-**Shared SRS Benefit:**
-All meanings of a word share one memory strength — when you review "bank", you're reinforcing knowledge of ALL its meanings together.
+**Independent SRS Benefit:**
+A strong finance sense no longer hides a weak river sense, and a failed rating changes only the meaning that was actually tested.
 
 ---
 
@@ -616,35 +618,28 @@ This means the schedule is self-correcting — forgotten words get shorter inter
 
 ### How Reviews Work
 
-**Positive-Signal-Only Design:**
-- Only one event: **"Remember"** (user taps green bar, double-clicks card, or presses `R`)
-- Skipping produces no data — the card stays due
-- No quality scores, no speed bonuses, no difficulty parameter
+**Rating Design:**
+- Study sessions use **Again**, **Hard**, **Good**, and **Easy**
+- The quick **Remember** action remains available and maps to `Good`
+- Ratings, task type, response duration, lapses, and session ID are stored in review events
 
-**What happens on "Remember":**
-1. Calculate overdue penalty (if any)
-2. Penalize current step, then advance by 1
-3. Look up new interval from the schedule
-4. Update stability, memory strength, and next review date
-5. Reset correct streak if penalty was applied
+**What happens on a rating:**
+1. The client journals an idempotent review mutation before asynchronous work
+2. The server applies the FSRS v6 transition and review event in one transaction
+3. The authoritative stability, difficulty, lapses, and next review return to the client
+4. `Again` resets the correct streak; other ratings advance it
 
 **Where Reviews Happen:**
 - In Detail View: double-click the card background, or press `R`
+- In Study: reveal the answer, then choose one of four ratings
 - Success animation ("Remembered!") confirms the action
-- All items sharing the same word title are updated together (Shared SRS)
-### Retention Probability
-
-The app can calculate current retention probability:
-```
-R = 0.9^(days_since_review / stability)
-```
-When elapsed time equals stability, retention is 90%. This is used for display purposes (e.g., deciding if an item is "due").
+- Only the reviewed sense/item is updated
 
 ---
 
 ### Study Dashboard
 
-The Study tab shows a dashboard with learning analytics derived from item-level SRS data. There is no separate study session — SRS reviews happen through the Detail View (double-click a card, or press `R`).
+The Study tab combines learning analytics with an adaptive due/new review session.
 
 #### Dashboard Layout
 
@@ -674,7 +669,7 @@ The Study tab shows a dashboard with learning analytics derived from item-level 
 
 **Weekly Stats:**
 - Reviews: number of items reviewed in the last 7 days
-- Avg Strength: average memory strength of items reviewed this week
+- Recalled: percentage of event ratings other than `Again`
 - Day Streak: consecutive days with at least one review
 
 **7-Day Activity Chart:**
@@ -687,28 +682,26 @@ The Study tab shows a dashboard with learning analytics derived from item-level 
 - Most Practiced: top 3 items by total review count
 
 **How Reviews Work:**
-- Open any due item in Detail View (tap in Notebook, or double-click)
-- Press `R` or tap the "Remember" button to mark as recalled
-- SRS algorithm updates the item's memory strength, interval, and next review date
-- Dashboard stats update automatically from item-level data
+- Start a session containing up to 40 due cards and 10 new cards
+- Mature cards rotate through meaning, typed production, cloze, and listening prompts
+- Reveal the answer and rate it with `Again`, `Hard`, `Good`, or `Easy`
+- The last rating can be undone while it remains the latest review for that item
 
 ---
 
 ### Review Scheduling
 
 **When words appear for review:**
-- Based on fixed-schedule SRS algorithm
+- Based on deterministic FSRS v6 scheduling (90% requested retention)
 - Due items shown in the Notebook (sorted to top when using "familiarity" sort)
 - Due count displayed on the Study dashboard
-- Reviews happen in Detail View: open a due item and press `R` or double-click to mark as recalled
+- Reviews happen in Study or through the quick `Good` action in Detail View
 
 ---
 
 ### Handling Multiple Meanings in Study
 
-**Grouped Carousel in Study Flow:**
-
-Just like in the Notebook, words with multiple meanings are **grouped together** during study sessions:
+Words with multiple meanings remain grouped in the Notebook, but study sessions test one sense at a time.
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -722,16 +715,10 @@ Just like in the Notebook, words with multiple meanings are **grouped together**
 ```
 
 **How It Works:**
-- Dot indicators (● ○ ○) show multiple meanings exist
-- Swipe left/right to browse between meanings
-- All meanings share one SRS score
-- Single review updates all meanings of that word
-
-**Why Shared SRS?**
-- Learning "bank" means learning ALL its meanings
-- When you encounter "bank" in real life, you need to know all senses
-- One unified review ensures comprehensive understanding
-- Simpler mental model — "I know bank" vs tracking 4 separate items
+- The queue chooses the most overdue same-spelling sense
+- Other senses with that spelling are buried for the current session
+- A rating updates only the prompted sense
+- Later sessions surface sibling senses according to their independent FSRS due dates
 
 ---
 
@@ -744,11 +731,11 @@ Just like in the Notebook, words with multiple meanings are **grouped together**
 1. **Local (IndexedDB)**
    - Primary storage, always available
    - Works completely offline
-   - Stores all vocabulary cards, images, SRS data
+   - Stores cards as per-item records plus a compatibility journal; images use a separate blob store
 
-2. **Cloud (Firebase Firestore)**
+2. **Server (Hono + SQLite)**
    - Backup and sync layer
-   - Requires sign-in
+   - User-scoped access through Google OAuth sessions
    - Enables cross-device access
 
 ---
@@ -765,7 +752,7 @@ Just like in the Notebook, words with multiple meanings are **grouped together**
 3. On success:
    - Local data uploaded to cloud
    - Remote data (if any) merged with local
-   - Real-time listener established
+   - Revision cursor initialized for incremental sync
 
 **Subsequent Sign-Ins:**
 - Automatic on app open (if previously signed in)
@@ -774,17 +761,17 @@ Just like in the Notebook, words with multiple meanings are **grouped together**
 
 ---
 
-### Real-Time Sync
+### Incremental Sync
 
 **How It Works:**
-- Firestore real-time listeners
-- Any change on one device → pushed to cloud → received by other devices
-- Typically 3-7 seconds end-to-end
+- Dirty items are sent in bounded batches and assigned monotonic server revisions
+- Visible clients poll paginated revision deltas; focus, reconnect, and same-origin tab signals pull immediately
+- Review events use a durable outbox and atomic idempotent endpoint
 
 **Example Scenario:**
 1. Phone: Save "serendipity"
-2. Cloud: Receives update, stores it
-3. Tablet: Real-time listener fires
+2. SQLite: Receives update and assigns a revision
+3. Tablet: Revision poll returns the changed item
 4. Tablet: "serendipity" appears in notebook
 
 **What Syncs:**
@@ -805,9 +792,9 @@ Just like in the Notebook, words with multiple meanings are **grouped together**
 
 **Conflict Resolution:**
 When the same item is edited on two devices:
-- **Winner: Most recent edit** (by timestamp)
-- SRS data: Takes the most progressed state
-- Deletions: Propagate across devices
+- Server revisions reject stale content independently of skewed device clocks
+- Review events advance the latest authoritative SRS state exactly once
+- Deletions propagate as revisioned soft-delete records
 
 **Soft Delete:**
 - Deleted items marked as `isDeleted: true`
@@ -2241,8 +2228,8 @@ Mnemonic: Picture a speedometer needle moving from 0 to 100
 | **Stability** | How long a memory lasts before significant decay |
 | **Mastery Level** | User-friendly label (New → Grandmaster) based on memory strength |
 | **Due Item** | Word scheduled for review (memory has decayed to target level) |
-| **Quality Score** | Not used — the app uses a positive-signal-only fixed-schedule SRS |
-| **Task Type** | Not applicable — reviews use a single "Remember" action via Detail View |
+| **Rating** | Again, Hard, Good, or Easy feedback used by FSRS v6 |
+| **Task Type** | Meaning recall, typed production, cloze, listening, or quick review |
 | **Interval** | Time until next scheduled review |
 
 ## Technical Terms (Simplified)
@@ -2250,7 +2237,7 @@ Mnemonic: Picture a speedometer needle moving from 0 to 100
 | Term | Definition |
 |------|------------|
 | **IndexedDB** | Browser database that stores your data locally |
-| **Firebase** | Google's cloud service that syncs your data |
+| **SQLite** | Server database for user-scoped cards, revisions, review events, and images |
 | **PWA** | Progressive Web App — website that works like a native app |
 | **OAuth** | Secure sign-in method (used for Google Sign-In) |
 | **TTS** | Text-to-Speech — converts text to audio pronunciation |

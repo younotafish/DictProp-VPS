@@ -27,7 +27,7 @@ interface KeyboardNavigationOptions {
   enabled?: boolean;
   // Focus trap for modals
   trapFocus?: boolean;
-  containerRef?: RefObject<HTMLElement>;
+  containerRef?: RefObject<HTMLElement | null>;
 }
 
 export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
@@ -223,7 +223,7 @@ export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
 interface WheelNavigationOptions {
   onScrollLeft?: () => void;
   onScrollRight?: () => void;
-  containerRef: RefObject<HTMLElement>;
+  containerRef: RefObject<HTMLElement | null>;
   threshold?: number;
   enabled?: boolean;
 }
@@ -275,6 +275,5 @@ export const useWheelNavigation = (options: WheelNavigationOptions) => {
     };
   }, [enabled, onScrollLeft, onScrollRight, containerRef, threshold]);
 };
-
 
 

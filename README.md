@@ -1,156 +1,84 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# DictProp VPS
 
-# DictProp - Advanced AI Vocabulary Learning App
+DictProp is a self-hosted vocabulary learning PWA for English learners. It generates word and phrase analysis with DeepInfra, stores the library in SQLite, and schedules reviews with FSRS v6.
 
-An intelligent vocabulary learning application powered by AI and advanced spaced repetition algorithms.
+Production: [dictprop.online](https://dictprop.online)
 
-View your app in AI Studio: https://ai.studio/apps/drive/1xgIRAWPloe5gPdslYRnvsePJGf8tCfYT
+## Features
 
-## ✨ Key Features
+- AI definitions, examples, etymology, mnemonics, comparisons, and illustrations
+- Independent scheduling for each saved sense with FSRS v6
+- Due/new study sessions with meaning, production, cloze, and listening prompts
+- `Again`, `Hard`, `Good`, and `Easy` grading with authoritative undo
+- Offline-first IndexedDB storage and revision-based cross-device synchronization
+- Durable, idempotent review outbox for reloads, retries, and concurrent devices
+- Google OAuth, user-scoped SQLite data, and binary image storage
+- Installable PWA with a generated core-module offline cache
 
-- 🤖 **AI-Powered Analysis** - Get comprehensive word and phrase explanations with examples, etymology, and mnemonics using DeepSeek-V3 AI
-- 🧠 **Advanced SRS System** - SuperMemo/Shanbay-inspired memory strength algorithm that adapts to your learning
-- 🎯 **Multi-Task Learning** - Five task types: Recognition, Recall, Typing, Listening, and Sentence usage
-- 📊 **Learning Analytics** - Track your progress with detailed mastery insights and memory strength metrics
-- ☁️ **Cross-Device Sync** - Seamless cloud backup and real-time sync across all your devices
-- 📱 **Mobile-First Design** - Beautiful, responsive PWA optimized for mobile learning
+## Stack
 
-## 🚀 Run Locally
+- React 19, TypeScript, Vite, Tailwind CSS
+- Hono on Node.js 22
+- SQLite via `better-sqlite3`
+- `ts-fsrs` for deterministic FSRS v6 scheduling
+- DeepInfra for text, image, speech, and transcription services
+- Docker Compose behind Caddy in production
 
-**Prerequisites:** Node.js
+## Local Development
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+Requirements: Node.js 22 and npm 10.
 
-2. Set up Firebase Cloud Functions with `DEEPINFRA_API_KEY` secret (see functions/ directory)
+```bash
+npm ci
+cd server && npm ci && cd ..
+```
 
-3. Run the app:
-   ```bash
-   npm run dev
-   ```
+Create `.env` at the repository root:
 
-## ☁️ Deploy to Firebase Hosting
+```dotenv
+DEEPINFRA_API_KEY=...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+DEV_AUTH_BYPASS=1
+PORT=3001
+DATA_DIR=./data
+```
 
-The repo ships with `firebase.json` + `.firebaserc` targeting the `dictpropstore` Firebase project and serving the built Vite output from `dist/` with SPA rewrites.
+Run the backend and frontend in separate terminals:
 
-1. Install the CLI & authenticate (one-time):
-   ```bash
-   npm install -g firebase-tools
-   firebase login
-   ```
+```bash
+npm run dev:server
+npm run dev
+```
 
-2. **IMPORTANT**: Authorize your domain in Firebase Console (required for authentication):
-   - Go to [Firebase Console](https://console.firebase.google.com/)
-   - Select your project (`dictpropstore`)
-   - Navigate to **Authentication** → **Settings** → **Authorized domains**
-   - Click "Add domain" and add:
-     - `dictpropstore.web.app` (default Firebase hosting)
-     - `dictpropstore.firebaseapp.com` (Firebase hosting)
-     - Any custom domains you're using
-   - **Note:** This is especially critical for iOS/mobile browsers!
-   - See [IOS_AUTH_FIX.md](./IOS_AUTH_FIX.md) for detailed troubleshooting
-   
-3. Build the static bundle:
-   ```bash
-   npm run build
-   ```
+Open `http://localhost:3000`. Vite proxies `/api` to the server on port 3001.
 
-4. Deploy to Firebase Hosting:
-   ```bash
-   npm run deploy
-   ```
+## Verification
 
-You can override the project by editing `.firebaserc` or passing `--project <id>` to the deploy script if you need to target a different Firebase environment.
+```bash
+npm run check
+```
 
-## 📚 Advanced SRS System
+The release check runs strict client/server type checks, route/database/storage tests, both production builds, service-worker syntax validation, and the 100 kB gzip initial-JavaScript budget.
 
-The app features a sophisticated spaced repetition system with:
+## Data And Sync
 
-- **Memory Strength Model** (0-100 hidden metric)
-- **Dynamic Review Intervals** based on forgetting curves
-- **Task Difficulty Weighting** (harder tasks = stronger memory)
-- **Automatic Time Decay** simulation
-- **Firebase-Synced Learning History**
+- Library items use per-item IndexedDB records; the bounded compatibility journal supports rollback to the prior storage reader.
+- Content changes use server revisions and paginated delta polling. BroadcastChannel signals make other tabs pull immediately.
+- Reviews are appended and applied in one SQLite transaction. Event IDs make retries idempotent.
+- Images are never returned with the full item dataset. They use separate binary endpoints and load on demand.
+- The automatic image cache is limited to due-soon and recent cards. A full image pack is an explicit Notebook tool.
 
-See [ADVANCED_SRS_GUIDE.md](./ADVANCED_SRS_GUIDE.md) for complete documentation.
+## Deployment
 
-## 🔄 Simple & Reliable Cloud Sync
+Pushes to `main` run the GitHub Actions verification job before deployment. The VPS job creates an online SQLite backup, rebuilds the Docker service, checks readiness, and rebuilds the previous commit if the new release fails health checks.
 
-The app features a **simple, optimized sync system** that just works:
+```bash
+git push vps main
+```
 
-### ✨ Key Features
-- **Automatic Sync** - All data syncs to Firebase automatically
-- **Real-Time Updates** - Changes appear on other devices within seconds
-- **Smart Merging** - Preserves learning progress and recent edits
-- **Offline Support** - Everything works offline, syncs when reconnected
-- **Image Optimization** - Images stay local to avoid Firebase size limits
+Do not push this fork to the Firebase repository. The production remote is named `vps`.
 
-### 🧪 Technical Details
-See [SYNC_FIX_SUMMARY.md](./SYNC_FIX_SUMMARY.md) for technical details.
+## Network Constraint
 
-## 🎓 Study Modes
-
-1. **Recognition** ⭐ - Multiple choice meaning selection (easiest)
-2. **Recall** ⭐⭐ - Self-graded memory recall without hints
-3. **Listening** ⭐⭐⭐ - Audio-only recognition and transcription
-4. **Typing** ⭐⭐⭐⭐ - Produce the exact word from its meaning
-5. **Sentence** ⭐⭐⭐⭐⭐ - Create sentences using the word in context (hardest)
-
-The system intelligently recommends task types based on your current mastery level.
-
-## 🔧 Setup Guides
-
-- [Firebase Setup](./FIREBASE_SETUP.md) - Configure cloud sync
-- [Image Sync Setup](./IMAGE_SYNC_SETUP.md) - Enable image storage
-- [Cost Optimization](./FIREBASE_COST_OPTIMIZATION.md) - Reduce Firebase costs
-
-## 📈 Learning Analytics
-
-Track your progress with:
-- Memory strength distribution
-- Study streaks and consistency
-- Performance by task type
-- Strongest/weakest words
-- Daily activity heatmaps
-
-## 🔄 Automatic Migration
-
-Existing data from the old SRS system will be **automatically migrated** on first load:
-- Old intervals → converted to stability metrics
-- Historical performance → used to estimate memory strength
-- All progress preserved and enhanced
-
-## 🔄 Cross-Device Sync
-
-Your vocabulary data syncs seamlessly across all your devices:
-
-### How It Works
-1. **Initial Sync**: Sign in on any device → all your saved words load automatically
-2. **Real-Time Updates**: Save a word → appears on other devices within 5-7 seconds
-3. **Smart Merging**: Preserves your learning progress and most recent edits
-4. **Offline First**: Everything works offline, syncs when you're back online
-
-### Testing Sync
-To verify sync is working:
-1. Open the app on two devices (or two browser windows)
-2. Sign in with the same Google account on both
-3. Save a word on Device A
-4. Watch it appear on Device B within a few seconds
-5. Check console (F12) for "✅ Items synced to Firebase!"
-
-## 🛠️ Tech Stack
-
-- **React + TypeScript**
-- **Vite** for fast development
-- **Firebase** (Auth, Firestore, Functions)
-- **DeepSeek-V3 AI** via DeepInfra for definitions
-- **Tailwind CSS** for styling
-- **IndexedDB** for local storage
-
-## 📝 License
-
-MIT License - feel free to use and modify!
+All outbound server HTTP must go through `server/src/proxy-fetch.ts`. It uses the configured corporate proxy locally and native fetch on the VPS; large proxied JSON bodies use its internal curl transport.

@@ -17,7 +17,9 @@
     "typecheck": "tsc --noEmit",
     "typecheck:server": "cd server && npm run typecheck",
     "test:server": "cd server && npm test",
-    "check": "npm run typecheck && npm run typecheck:server && npm run test:server && npm run build:all",
+    "check:bundle": "node scripts/check-bundle-budget.mjs",
+    "check:sw": "node --check public/sw.js",
+    "check": "npm run typecheck && npm run typecheck:server && npm run test:server && npm run build:all && npm run check:bundle && npm run check:sw",
     "deploy": "./deploy.sh"
   },
   "dependencies": {
@@ -27,11 +29,14 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
-    "react-virtuoso": "^4.18.3"
+    "react-virtuoso": "^4.18.3",
+    "ts-fsrs": "^5.4.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.17",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.22",
     "canvas": "^3.2.0",

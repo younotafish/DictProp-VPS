@@ -145,35 +145,31 @@ async function synthMiMo(text: string, voice: string): Promise<Buffer> {
 // word's text may be wrong, but its start time is still correct (the client aligns by sequence).
 type WordTiming = { start: number; end: number; text: string };
 
-// POST a JSON body via curl — undici's ProxyAgent stalls on a large request body behind the corporate
-// proxy, whereas curl handles it (and goes direct on the VPS, where there's no proxy). curl honors the
-// HTTPS_PROXY env automatically. Returns the response text, or '' on any failure. (Matches the existing
-// pattern of shelling out to ffmpeg.)
-function curlPostJson(url: string, body: string): Promise<string> {
-  return new Promise((resolve) => {
-    const args = [
-      '-s', '--max-time', String(Math.floor(GEN_TIMEOUT_MS / 1000)),
-      '-X', 'POST',
-      '-H', `Authorization: Bearer ${env.DEEPINFRA_API_KEY}`,
-      '-H', 'Content-Type: application/json',
-      '--data-binary', '@-', url,
-    ];
-    const cp = spawn('curl', args);
-    const out: Buffer[] = [];
-    let settled = false;
-    const done = (s: string) => { if (!settled) { settled = true; resolve(s); } };
-    cp.stdout.on('data', (d) => out.push(d));
-    cp.on('error', () => done('')); // curl not installed
-    cp.on('close', (code) => done(code === 0 ? Buffer.concat(out).toString('utf8') : ''));
-    cp.stdin.on('error', () => {});
-    try { cp.stdin.write(body); cp.stdin.end(); } catch { /* error event handles it */ }
-  });
+async function postLargeJson(url: string, body: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEN_TIMEOUT_MS);
+  try {
+    const response = await proxyFetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.DEEPINFRA_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+      signal: controller.signal,
+    });
+    return response.ok ? await response.text() : '';
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function alignTimings(audio: Buffer): Promise<WordTiming[]> {
   if (!env.DEEPINFRA_API_KEY) return [];
   const dataUrl = `data:${sniffContentType(audio)};base64,` + audio.toString('base64');
-  const raw = await curlPostJson(WHISPER_URL, JSON.stringify({ audio: dataUrl, chunk_level: 'word', language: 'en' }));
+  const raw = await postLargeJson(WHISPER_URL, JSON.stringify({ audio: dataUrl, chunk_level: 'word', language: 'en' }));
   if (!raw) return [];
   try {
     const data: any = JSON.parse(raw);
@@ -233,7 +229,7 @@ async function reduceToCasual(sentence: string): Promise<string> {
     temperature: 0.3,
     max_tokens: 200,
   });
-  const raw = await curlPostJson(CHAT_URL, body);
+  const raw = await postLargeJson(CHAT_URL, body);
   if (!raw) return sentence;
   try {
     const data: any = JSON.parse(raw);
@@ -258,7 +254,7 @@ async function reduceCasualBatch(sentences: string[]): Promise<string[]> {
     response_format: { type: 'json_object' },
     max_tokens: 4000,
   });
-  const raw = await curlPostJson(CHAT_URL, body);
+  const raw = await postLargeJson(CHAT_URL, body);
   try {
     const data: any = JSON.parse(raw);
     let content: any = data?.choices?.[0]?.message?.content ?? '';

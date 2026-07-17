@@ -154,7 +154,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // PRIORITY: Local images ALWAYS win over remote
       // This is critical because:
       // 1. Base64 images work offline (URLs don't)
-      // 2. Remote images might be stripped due to Firestore 1MB document limit
+      // 2. Remote list responses intentionally strip images; preserve a local image when present.
       // 3. Local IndexedDB has no size limit and stores full images
       const finalData = mergedItem.data as any;
       const localData = localItem.data as any;

@@ -13,6 +13,7 @@ export type AuthUser = {
 
 export type AuthVariables = {
   user: AuthUser;
+  requestId: string;
 };
 
 // Synthetic user used ONLY when DEV_AUTH_BYPASS=1 (local development). Never enabled in prod.

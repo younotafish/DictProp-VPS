@@ -10,6 +10,7 @@ import { stripSentenceMarkers } from './HighlightedSentence';
 import { useSentenceSearch } from '../services/sentenceSearch';
 import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';
 import { log, warn } from '../services/logger';
+import { consumeSearchRetry, describeSearchError, isAuthenticationError, rememberSearchRetry } from '../services/searchRecovery';
 
 interface QueueItem {
   id: string;
@@ -37,6 +38,8 @@ interface Props {
   onLazyLoadImage?: (itemId: string) => Promise<string | null>;
   /** Replace an already-saved word's card(s) with a freshly re-run AI result (refresh). Keeps SRS. */
   onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
+  /** Persist an illustration that completed after the user saved this particular sense. */
+  onGeneratedImage?: (vocab: VocabCard) => void;
   /** Save an example sentence for review (shows the bookmark beside each USAGE megaphone). */
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
@@ -94,16 +97,7 @@ const releaseImageSlot = (): void => {
   else activeImageGens--;
 };
 
-// Friendly, specific message for a failed analyze() call so the floating search never fails silently.
-const describeError = (query: string, err: any): string => {
-  const m = err?.message || '';
-  if (m === 'QUOTA_EXCEEDED') return 'Daily AI limit reached — please try again later.';
-  if (m.includes('timed out') || m.includes('504') || err?.name === 'AbortError')
-    return `"${query}" timed out — the AI service is busy.`;
-  return `Couldn't analyze "${query}" — please try again.`;
-};
-
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onGeneratedImage, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -115,6 +109,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const inFlightRef = useRef<Set<string>>(new Set()); // queue items currently processing (concurrency gate)
+  const savedVocabIdsRef = useRef<Set<string>>(new Set()); // saves that happened while image generation was in flight
   const queueRef = useRef<QueueItem[]>([]); // fresh queue for synchronous dedup/open checks
   const [scanning, setScanning] = useState(false); // sentence → expression scan in flight (pre-enqueue)
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -148,7 +143,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const showError = useCallback((msg: string, query?: string, analyzeMode?: 'batch') => {
     setError({ msg, query, analyzeMode });
     if (errorTimer.current) clearTimeout(errorTimer.current);
-    errorTimer.current = setTimeout(() => setError(null), 6000);
+    // Search failures remain actionable until retried. Informational failures can still expire.
+    errorTimer.current = query ? null : setTimeout(() => setError(null), 6000);
   }, []);
   useEffect(() => () => { if (errorTimer.current) clearTimeout(errorTimer.current); }, []);
 
@@ -220,6 +216,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     });
   }, []);
 
+  // OAuth redirects preserve sessionStorage. Resume the exact failed query once the user signs in again.
+  useEffect(() => {
+    const retry = consumeSearchRetry();
+    if (retry) enqueue(retry.query, { forceAI: true, analyzeMode: retry.analyzeMode });
+  }, [enqueue]);
+
   // Keep a fresh snapshot of the queue for synchronous dedup/open decisions in enqueueCompare.
   useEffect(() => { queueRef.current = queue; }, [queue]);
 
@@ -271,7 +273,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       for (const w of words) enqueue(w.word, { analyzeMode: 'batch' });
     } catch (err: any) {
       warn('🔍 Sentence scan failed "' + q + '":', err?.message);
-      showError(describeError(q, err), q);
+      if (isAuthenticationError(err)) rememberSearchRetry({ query: q });
+      showError(describeSearchError(q, err), q);
     } finally {
       setScanning(false);
     }
@@ -309,6 +312,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
             return { ...q, results: { ...q.results, vocabs: updated } };
           }));
           if (isReplace) onRefreshReplace!(queryWord, [...liveVocabs]); // re-save with the new image
+          else if (savedVocabIdsRef.current.has(vocab.id)) onGeneratedImage?.(liveVocabs[index]);
         } catch {} finally {
           releaseImageSlot();
         }
@@ -317,7 +321,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     // Up to 2 workers per result, but ALL results share the global image slots, so total image load stays
     // capped no matter how many analyses finish together.
     void Promise.all(Array.from({ length: Math.min(2, vocabList.length) }, imgWorker));
-  }, [onRefreshReplace, findSavedByWord]);
+  }, [onRefreshReplace, onGeneratedImage, findSavedByWord]);
 
   // Process a single queue item: comparison, saved-card reuse, or a fresh analyze. The id was added to
   // inFlightRef by the driver effect before this ran; every terminal path calls done() to free the slot.
@@ -336,7 +340,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       }).catch(err => {
         warn('⚖️ Queue: compare failed "' + item.query + '":', err?.message);
         setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
-        showError(describeError(item.query, err), undefined);
+        showError(describeSearchError(item.query, err), undefined);
       }).finally(done);
       return;
     }
@@ -374,7 +378,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }).catch(err => {
       warn('🔍 Queue: failed "' + item.query + '":', err?.message);
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
-      showError(describeError(item.query, err), item.query, item.analyzeMode);
+      if (isAuthenticationError(err)) rememberSearchRetry({ query: item.query, analyzeMode: item.analyzeMode });
+      showError(describeSearchError(item.query, err), item.query, item.analyzeMode);
     }).finally(done);
   }, [findSavedByWord, finalizeResult, showError, onCompareReady]);
 
@@ -525,6 +530,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // Save a single vocab
   const saveOneVocab = useCallback((vocab: VocabCard) => {
     if (isVocabSaved(vocab)) return false; // already saved
+    savedVocabIdsRef.current.add(vocab.id);
     onSave(makeVocabStoredItem(vocab, activeProject));
     return true;
   }, [onSave, activeProject, isVocabSaved]);
@@ -686,7 +692,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }).catch(err => {
       warn('🔍 Refresh failed "' + trimmed + '":', err?.message);
       setQueue(prev => prev.map(q => q.id === id ? { ...q, refreshing: false } : q));
-      showError(describeError(trimmed, err), trimmed);
+      if (isAuthenticationError(err)) rememberSearchRetry({ query: trimmed });
+      showError(describeSearchError(trimmed, err), trimmed);
     });
   }, [mode, readyItems, viewingQueueIdx, finalizeResult, showError]);
 
@@ -723,13 +730,13 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     <>
       {/* Save toast */}
       {saveToast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-full shadow-lg animate-in fade-in zoom-in-95 duration-200">
+        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-full shadow-lg animate-in fade-in zoom-in-95 duration-200">
           {saveToast}
         </div>
       )}
       {/* Status toast — neutral notices (sentence scanning / found N expressions) */}
       {statusToast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-[90vw] text-center bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-full shadow-lg animate-in fade-in zoom-in-95 duration-200">
+        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-[90vw] text-center bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-full shadow-lg animate-in fade-in zoom-in-95 duration-200">
           {statusToast}
         </div>
       )}
@@ -737,6 +744,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           (force-refresh bypasses the saved-card reuse + dedup) and dismiss the toast. */}
       {error && (
         <button
+          aria-live="assertive"
           onClick={() => {
             const q = error.query; const mode = error.analyzeMode; setError(null);
             if (!q) return;
@@ -920,7 +928,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                     const meaningCount = viewingResult?.vocabs?.length ?? 0;
                     return (
                       <button
-                        onClick={() => handleSaveWord(viewingResult)}
+                        onClick={() => handleSaveWord(viewingResult ?? null)}
                         className={`h-8 px-3 rounded-full flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
                           allSaved
                             ? 'bg-indigo-100 text-indigo-600 border border-indigo-200'
@@ -955,7 +963,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       : <div className="text-center text-slate-400 py-12 text-sm">Comparison unavailable.</div>}
                   </div>
                 </div>
-              ) : (
+              ) : viewingVocab ? (
               <>
               <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
                 <div className="relative max-w-screen-md mx-auto">
@@ -1018,6 +1026,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                 flash={zoneFlash}
               />
               </>
+              ) : (
+                <div className="flex-1 grid place-items-center text-sm text-slate-400">
+                  No vocabulary card was returned.
+                </div>
               )}
               </div>
 

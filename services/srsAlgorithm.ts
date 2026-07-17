@@ -1,38 +1,36 @@
 /**
- * Fixed-Schedule SRS Algorithm — Positive-Signal-Only
+ * FSRS v6 scheduling with lazy migration from the legacy fixed schedule.
  *
  * Design:
- * - Only one event: "remember" (user taps green bar)
- * - Skip produces no data — card stays due
- * - Interval follows a fixed schedule: each "remember" advances one step
- * - Overdue items regress steps (implicit decay)
+ * - Again / Hard / Good / Easy are deterministic (fuzz disabled)
+ * - Existing fixed-schedule rows become FSRS rows on their next review
+ * - The legacy "remember" action maps to Good
  * - memoryStrength is display-only, derived from stability
  */
 
-import { SRSData } from '../types';
+import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
+import { SRSData, type ReviewRating } from '../types';
 
 // Fixed review schedule (days). Each "remember" tap advances one step.
 const SCHEDULE = [1, 2, 3, 5, 7, 12, 20, 25, 47, 84, 143, 180];
+const DAY_MS = 86_400_000;
+const scheduler = fsrs({
+  request_retention: 0.9,
+  maximum_interval: 3650,
+  enable_fuzz: false,
+  enable_short_term: true,
+  learning_steps: ['10m'],
+  relearning_steps: ['10m'],
+});
+
+const ratingMap: Record<ReviewRating, Grade> = {
+  again: Rating.Again,
+  hard: Rating.Hard,
+  good: Rating.Good,
+  easy: Rating.Easy,
+};
 
 export class SRSAlgorithm {
-  /**
-   * Select the authoritative item when shared-SRS siblings have drifted.
-   * A recent overdue review may legitimately lower totalReviews, so recency
-   * must win before progress depth.
-   */
-  static selectCanonical<T extends { srs?: SRSData }>(items: readonly T[]): T {
-    if (items.length === 0) throw new Error('Cannot select SRS from an empty collection');
-    return items.reduce((best, candidate) => {
-      const bestReview = best.srs?.lastReviewDate || 0;
-      const candidateReview = candidate.srs?.lastReviewDate || 0;
-      if (candidateReview !== bestReview) return candidateReview > bestReview ? candidate : best;
-
-      const bestCount = best.srs?.totalReviews || 0;
-      const candidateCount = candidate.srs?.totalReviews || 0;
-      return candidateCount > bestCount ? candidate : best;
-    });
-  }
-
   /**
    * Migrate old SRS data format to new format.
    * Strips legacy fields and infers schedule step from totalReviews/stability.
@@ -67,16 +65,83 @@ export class SRSAlgorithm {
    * Initialize new SRS data for an item.
    */
   static createNew(id: string, type: 'vocab' | 'phrase' | 'sentence'): SRSData {
+    const now = Date.now();
     return {
       id,
       type,
-      nextReview: Date.now(), // Due immediately for first review
+      nextReview: now, // Due immediately for first review
       interval: 0,
       memoryStrength: 0,
       lastReviewDate: 0, // 0 = never reviewed
       totalReviews: 0,
       correctStreak: 0,
       stability: 0.5, // Initial stability (half a day)
+      scheduler: 'fsrs-v6',
+      difficulty: 0,
+      lapses: 0,
+      fsrsState: State.New,
+      learningSteps: 0,
+      scheduledDays: 0,
+    };
+  }
+
+  private static toFsrsCard(srs: SRSData, now: number): CardInput {
+    if ((srs.totalReviews || 0) === 0) {
+      const empty = createEmptyCard(new Date(srs.nextReview || now));
+      return { ...empty, due: new Date(srs.nextReview || now) };
+    }
+    const lastReview = srs.lastReviewDate || Math.max(0, now - Math.max(1, srs.interval) * 60_000);
+    return {
+      due: new Date(srs.nextReview || now),
+      stability: Math.max(0.1, Number(srs.stability) || 0.5),
+      difficulty: Math.min(10, Math.max(1, Number(srs.difficulty) || 5)),
+      elapsed_days: Math.max(0, Math.round((now - lastReview) / DAY_MS)),
+      scheduled_days: Math.max(0, srs.scheduledDays ?? Math.round((srs.interval || 0) / 1440)),
+      learning_steps: Math.max(0, srs.learningSteps || 0),
+      reps: Math.max(1, srs.totalReviews || 0),
+      lapses: Math.max(0, srs.lapses || 0),
+      state: srs.fsrsState ?? State.Review,
+      last_review: new Date(lastReview),
+    };
+  }
+
+  private static fromFsrsCard(
+    previous: SRSData,
+    card: Card,
+    rating: ReviewRating,
+    reviewedAt: number,
+  ): SRSData {
+    const interval = Math.max(1, Math.round((card.due.getTime() - reviewedAt) / 60_000));
+    return {
+      ...previous,
+      nextReview: card.due.getTime(),
+      interval,
+      memoryStrength: this.stabilityToDisplayStrength(card.stability),
+      lastReviewDate: reviewedAt,
+      totalReviews: card.reps,
+      correctStreak: rating === 'again' ? 0 : (previous.correctStreak || 0) + 1,
+      stability: card.stability,
+      scheduler: 'fsrs-v6',
+      difficulty: card.difficulty,
+      lapses: card.lapses,
+      fsrsState: card.state,
+      learningSteps: card.learning_steps,
+      scheduledDays: card.scheduled_days,
+    };
+  }
+
+  static updateAfterRating(srs: SRSData, rating: ReviewRating, now = Date.now()): SRSData {
+    const card = this.toFsrsCard(srs, now);
+    const result = scheduler.next(card, new Date(now), ratingMap[rating]);
+    return this.fromFsrsCard(srs, result.card, rating, now);
+  }
+
+  static previewRatings(srs: SRSData, now = Date.now()): Record<ReviewRating, SRSData> {
+    return {
+      again: this.updateAfterRating(srs, 'again', now),
+      hard: this.updateAfterRating(srs, 'hard', now),
+      good: this.updateAfterRating(srs, 'good', now),
+      easy: this.updateAfterRating(srs, 'easy', now),
     };
   }
 
@@ -85,8 +150,8 @@ export class SRSAlgorithm {
    * Penalty is proportional to how late the review is relative to the expected interval.
    * Being 8 days late on a 25-day interval (32%) is very different from 8 days late on a 1-day interval.
    */
-  static getOverduePenalty(srs: SRSData): number {
-    const now = Date.now();
+  static getOverduePenalty(srs: SRSData, now = Date.now()): number {
+    if (srs.scheduler === 'fsrs-v6') return 0;
     const daysOverdue = Math.max(0, (now - srs.nextReview) / (1000 * 60 * 60 * 24));
 
     // Grace period: no penalty if less than 14 days overdue in absolute terms
@@ -106,32 +171,8 @@ export class SRSAlgorithm {
    * Update SRS data after the user taps "remember".
    * Advances one step in the schedule, minus any overdue penalty.
    */
-  static updateAfterRemember(srs: SRSData): SRSData {
-    const now = Date.now();
-    const penalty = this.getOverduePenalty(srs);
-
-    // Current step = totalReviews, apply penalty, then advance by 1
-    const penalizedStep = Math.max(0, srs.totalReviews - penalty);
-    const nextStep = Math.min(penalizedStep + 1, SCHEDULE.length);
-
-    // Look up interval from schedule (0-indexed, step 1 = SCHEDULE[0])
-    const scheduleIndex = Math.min(nextStep - 1, SCHEDULE.length - 1);
-    const intervalDays = nextStep > 0 ? SCHEDULE[Math.max(0, scheduleIndex)] : SCHEDULE[0];
-
-    const intervalMinutes = Math.round(intervalDays * 24 * 60);
-    const newStability = intervalDays;
-    const displayStrength = this.stabilityToDisplayStrength(newStability);
-
-    return {
-      ...srs,
-      memoryStrength: displayStrength,
-      lastReviewDate: now,
-      totalReviews: nextStep,
-      correctStreak: penalty > 0 ? 0 : srs.correctStreak + 1,
-      stability: newStability,
-      interval: intervalMinutes,
-      nextReview: now + intervalMinutes * 60 * 1000,
-    };
+  static updateAfterRemember(srs: SRSData, now = Date.now()): SRSData {
+    return this.updateAfterRating(srs, 'good', now);
   }
 
   /**

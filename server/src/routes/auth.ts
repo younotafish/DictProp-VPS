@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import { DEV_AUTH_USER } from '../middleware/auth.js';
+import { verifyGoogleIdToken } from '../google-auth.js';
 import {
   findUserByGoogleId,
   createUserAndClaimItems,
@@ -17,9 +18,17 @@ import {
 export const authRoutes = new Hono();
 
 function getRedirectUri(c: any): string {
+  if (env.PUBLIC_ORIGIN) return `${env.PUBLIC_ORIGIN}/api/auth/callback`;
   const proto = c.req.header('x-forwarded-proto') || 'http';
   const host = c.req.header('x-forwarded-host') || c.req.header('host') || 'localhost:3001';
-  return `${proto}://${host}/api/auth/callback`;
+  const normalizedHost = host.split(',')[0].trim().toLowerCase();
+  if (proto === 'https' && normalizedHost === 'dictprop.online') {
+    return 'https://dictprop.online/api/auth/callback';
+  }
+  if (proto === 'http' && /^(?:localhost|127\.0\.0\.1):(?:3000|3001|3002)$/.test(normalizedHost)) {
+    return `http://${normalizedHost}/api/auth/callback`;
+  }
+  return 'https://dictprop.online/api/auth/callback';
 }
 
 function isSecure(c: any): boolean {
@@ -69,17 +78,25 @@ authRoutes.get('/callback', async (c) => {
   const redirectUri = getRedirectUri(c);
 
   // Exchange code for tokens — MUST use proxyFetch (system firewall blocks native fetch)
-  const tokenRes = await proxyFetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      code,
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: redirectUri,
-      grant_type: 'authorization_code',
-    }).toString(),
-  });
+  const tokenController = new AbortController();
+  const tokenTimeout = setTimeout(() => tokenController.abort(), 30_000);
+  let tokenRes: Response;
+  try {
+    tokenRes = await proxyFetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: env.GOOGLE_CLIENT_ID,
+        client_secret: env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }).toString(),
+      signal: tokenController.signal,
+    });
+  } finally {
+    clearTimeout(tokenTimeout);
+  }
 
   if (!tokenRes.ok) {
     const err = await tokenRes.text();
@@ -92,24 +109,11 @@ authRoutes.get('/callback', async (c) => {
     return c.json({ error: 'No id_token in response' }, 500);
   }
 
-  // Decode id_token payload (we trust it since we got it directly from Google over HTTPS)
-  const payload = JSON.parse(
-    Buffer.from(tokens.id_token.split('.')[1], 'base64url').toString()
-  ) as {
-    sub: string;
-    email: string;
-    name?: string;
-    picture?: string;
-    iss: string;
-    aud: string;
-    exp?: number;
-    email_verified?: boolean;
-  };
-
-  // Basic validation
-  if (payload.iss !== 'https://accounts.google.com' || payload.aud !== env.GOOGLE_CLIENT_ID ||
-      !payload.exp || payload.exp * 1000 <= Date.now() || payload.email_verified !== true ||
-      typeof payload.sub !== 'string' || !payload.sub || typeof payload.email !== 'string' || !payload.email) {
+  let payload;
+  try {
+    payload = await verifyGoogleIdToken(tokens.id_token, env.GOOGLE_CLIENT_ID);
+  } catch (error) {
+    console.warn('Google id_token verification failed:', error instanceof Error ? error.message : error);
     return c.json({ error: 'Invalid id_token claims' }, 400);
   }
 

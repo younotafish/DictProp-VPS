@@ -4,7 +4,7 @@ type Engine = typeof import('./neuralTts');
 let engine: Engine | null = null;
 let enginePromise: Promise<Engine> | null = null;
 const playbackListeners = new Set<(state: PlaybackState) => void>();
-let playbackState: PlaybackState = { status: 'idle', text: '' };
+let playbackState: PlaybackState = { status: 'idle', text: null };
 
 function loadEngine(): Promise<Engine> {
   if (engine) return Promise.resolve(engine);
@@ -33,7 +33,7 @@ export interface SpeakOptions {
   onStart?: () => void; onEnd?: () => void; onError?: (event: any) => void;
 }
 export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused';
-export interface PlaybackState { status: PlaybackStatus; text: string }
+export interface PlaybackState { status: PlaybackStatus; text: string | null }
 export interface MediaSessionHandlers {
   onPlay?: () => void; onPause?: () => void; onStop?: () => void;
   onNext?: () => void; onPrev?: () => void;

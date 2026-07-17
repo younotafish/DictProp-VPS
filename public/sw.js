@@ -13,13 +13,64 @@
 // NOTE: because the old no-cache SW is already installed on devices, the app must be opened ONCE while
 // online after this ships so the new SW installs and warms the cache; offline launches work after that.
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = `dictprop-${VERSION}`;
+const OPTIONAL_MEDIA = /\/(?:neuralTts|transformers\.web|kokoro|ort-wasm)[^/]*\.(?:js|wasm)$/;
+const MAX_PRECACHE_ASSETS = 80;
+
+const assetUrls = (text) => {
+  const urls = new Set();
+  for (const match of text.matchAll(/(?:^|["'(/])(assets\/[A-Za-z0-9_.-]+\.(?:js|css))/g)) {
+    const url = `/${match[1]}`;
+    if (!OPTIONAL_MEDIA.test(url)) urls.add(url);
+  }
+  for (const match of text.matchAll(/["'(]\.\/([A-Za-z0-9_.-]+\.(?:js|css))/g)) {
+    const url = `/assets/${match[1]}`;
+    if (!OPTIONAL_MEDIA.test(url)) urls.add(url);
+  }
+  return [...urls];
+};
+
+async function precacheShell() {
+  const cache = await caches.open(CACHE);
+  const shell = await fetch('/', { cache: 'no-cache' });
+  if (!shell.ok) throw new Error(`Shell precache failed: ${shell.status}`);
+  const html = await shell.clone().text();
+  await cache.put('/', shell);
+
+  const queued = [
+    ...assetUrls(html),
+    '/manifest.json',
+    '/favicon-32x32.png',
+    '/apple-touch-icon.png',
+    '/pwa-192x192.png',
+  ];
+  const seen = new Set();
+  while (queued.length > 0 && seen.size < MAX_PRECACHE_ASSETS) {
+    const url = queued.shift();
+    if (!url || seen.has(url) || OPTIONAL_MEDIA.test(url)) continue;
+    seen.add(url);
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Asset precache failed: ${url} (${response.status})`);
+    if (url.endsWith('.js')) {
+      const source = await response.clone().text();
+      for (const dependency of assetUrls(source)) {
+        if (!seen.has(dependency)) queued.push(dependency);
+      }
+    }
+    await cache.put(url, response);
+  }
+  if (queued.length > 0) throw new Error('Core asset graph exceeded the precache limit');
+}
 
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
-  // Warm the navigation shell so the first offline launch after install works.
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.add('/').catch(() => {})));
+  // Do not replace a worker underneath a running build. The update activates after existing
+  // clients close, when its matching hashed asset graph is ready.
+  event.waitUntil(precacheShell());
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
