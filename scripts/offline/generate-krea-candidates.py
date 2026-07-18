@@ -9,8 +9,8 @@ from mflux.models.common.config import ModelConfig
 from mflux.models.krea2.variants.txt2img.krea2 import Krea2
 
 
-def seed_for(image_id: str, candidate: int) -> int:
-    digest = hashlib.sha256(f"{image_id}:{candidate}".encode()).digest()
+def seed_for(image_id: str, candidate: int, seed_round: int) -> int:
+    digest = hashlib.sha256(f"{image_id}:{seed_round}:{candidate}".encode()).digest()
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
 
@@ -18,16 +18,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate local Krea 2 candidates for offline DictProp images")
     parser.add_argument("targets")
     parser.add_argument("output_directory")
-    parser.add_argument("--candidates", type=int, default=3)
-    parser.add_argument("--width", type=int, default=1280)
-    parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--candidates", type=int, default=1)
+    parser.add_argument("--width", type=int, default=1024)
+    parser.add_argument("--height", type=int, default=576)
     parser.add_argument("--quantize", type=int, choices=(4, 8), default=None)
+    parser.add_argument("--seed-round", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     args = parser.parse_args()
 
     payload = json.loads(Path(args.targets).read_text())
     targets = payload.get("targets")
     if not isinstance(targets, list) or not targets:
         raise ValueError("Target manifest is invalid or empty")
+    if args.shard_count < 1 or args.shard_index < 0 or args.shard_index >= args.shard_count:
+        raise ValueError("Invalid shard index/count")
+    targets = [target for index, target in enumerate(targets) if index % args.shard_count == args.shard_index]
+    if not targets:
+        print("No targets assigned to this shard", flush=True)
+        return
 
     output = Path(args.output_directory)
     output.mkdir(parents=True, exist_ok=True)
@@ -50,7 +59,7 @@ def main() -> None:
                 continue
             try:
                 image = model.generate_image(
-                    seed=seed_for(target["imageId"], candidate),
+                    seed=seed_for(target["imageId"], candidate, args.seed_round),
                     prompt=target["prompt"].strip() + quality_suffix,
                     num_inference_steps=8,
                     height=args.height,

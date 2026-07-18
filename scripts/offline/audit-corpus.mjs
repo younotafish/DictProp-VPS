@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 const [inputArg, outputArg, workArg] = process.argv.slice(2);
@@ -33,21 +33,21 @@ const auditSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['itemId', 'audit', 'imagePrompt', 'cards', 'sentence'],
+        required: ['itemIndex', 'audit', 'imagePrompt', 'cards', 'sentence'],
         properties: {
-          itemId: { type: 'string' },
+          itemIndex: { type: 'integer', minimum: 0 },
           audit: { $ref: '#/$defs/audit' },
-          imagePrompt: { type: 'string' },
+          imagePrompt: { type: 'string', maxLength: 1_200 },
           cards: {
             type: 'array',
             items: {
               type: 'object',
               additionalProperties: false,
-              required: ['cardId', 'audit', 'imagePrompt', 'examples'],
+              required: ['cardIndex', 'audit', 'imagePrompt', 'examples'],
               properties: {
-                cardId: { type: 'string' },
+                cardIndex: { type: 'integer', minimum: 0 },
                 audit: { $ref: '#/$defs/audit' },
-                imagePrompt: { type: 'string' },
+                imagePrompt: { type: 'string', maxLength: 1_200 },
                 examples: {
                   type: 'array',
                   items: {
@@ -57,8 +57,8 @@ const auditSchema = {
                     properties: {
                       index: { type: 'integer', minimum: 0 },
                       action: { type: 'string', enum: ['keep', 'rewrite', 'remove'] },
-                      replacement: { type: 'string' },
-                      reason: { type: 'string' },
+                      replacement: { type: 'string', maxLength: 1_000 },
+                      reason: { type: 'string', maxLength: 300 },
                     },
                   },
                 },
@@ -71,8 +71,8 @@ const auditSchema = {
             required: ['action', 'replacement', 'reason'],
             properties: {
               action: { type: 'string', enum: ['not_applicable', 'keep', 'rewrite'] },
-              replacement: { type: 'string' },
-              reason: { type: 'string' },
+              replacement: { type: 'string', maxLength: 2_000 },
+              reason: { type: 'string', maxLength: 300 },
             },
           },
         },
@@ -86,7 +86,7 @@ const auditSchema = {
       required: ['status', 'reason', 'confidence'],
       properties: {
         status: { type: 'string', enum: statuses },
-        reason: { type: 'string' },
+        reason: { type: 'string', maxLength: 500 },
         confidence: { type: 'string', enum: confidences },
       },
     },
@@ -114,34 +114,31 @@ For a phrase item, audit the top-level query and every nested vocabulary card. F
 
 For each non-sentence item and card, write a production-ready imagePrompt for one realistic 16:9 photograph that directly depicts the exact contextual meaning. Apply this test: a learner who sees the image beside the target should be able to infer why this exact sense applies, not merely recognize its general topic. Put the diagnostic action, contrast, spatial relation, emotion, or consequence in the foreground. Keep the cast and scene simple enough to read instantly. For abstract senses, use one natural everyday situation that demonstrates the meaning without decorative symbolism. For figurative language, depict the intended modern meaning rather than a misleading literal etymology. Specify camera distance, composition, and natural lighting. Explicitly prohibit animation, illustration, 3D rendering, collage, split screens, visible text, captions, logos, and watermarks. A sentence item must use an empty imagePrompt because it is enriched separately.
 
-Return one result for every supplied item, in the same order. Be conservative but decisive, and return only schema-valid JSON.`;
+Copy each itemIndex and cardIndex exactly. Keep audit reasons under 45 words, example-decision reasons under 20 words, and image prompts under 110 words. Return one result for every supplied item. Be conservative but decisive, and return only schema-valid JSON.`;
 
 function compactRecord(record) {
   const data = record.data || {};
   if (record.type === 'vocab') {
     return {
-      itemId: record.id,
       type: record.type,
       item: { word: data.word, sense: data.sense, chinese: data.chinese, definition: data.definition, register: data.register },
       cards: [{
-        cardId: data.id, word: data.word, sense: data.sense, chinese: data.chinese,
+        cardIndex: 0, word: data.word, sense: data.sense, chinese: data.chinese,
         definition: data.definition, register: data.register, examples: data.examples || [],
       }],
     };
   }
   if (record.type === 'phrase') {
     return {
-      itemId: record.id,
       type: record.type,
       item: { query: data.query, translation: data.translation, grammar: data.grammar, originalQuery: data.originalQuery },
-      cards: (data.vocabs || []).map(card => ({
-        cardId: card.id, word: card.word, sense: card.sense, chinese: card.chinese,
+      cards: (data.vocabs || []).map((card, cardIndex) => ({
+        cardIndex, word: card.word, sense: card.sense, chinese: card.chinese,
         definition: card.definition, register: card.register, examples: card.examples || [],
       })),
     };
   }
   return {
-    itemId: record.id,
     type: record.type,
     item: { text: data.text, sourceWord: data.sourceWord, sourceSense: data.sourceSense },
     cards: [],
@@ -155,7 +152,7 @@ function makeBatches(items) {
   for (const item of items) {
     const compact = compactRecord(item);
     const size = JSON.stringify(compact).length;
-    if (batch.length > 0 && (batch.length >= 6 || chars + size > 45_000)) {
+    if (batch.length > 0 && (batch.length >= 20 || chars + size > 60_000)) {
       batches.push(batch);
       batch = [];
       chars = 0;
@@ -164,6 +161,9 @@ function makeBatches(items) {
     chars += size;
   }
   if (batch.length > 0) batches.push(batch);
+  for (const entries of batches) {
+    entries.forEach((entry, itemIndex) => { entry.compact.itemIndex = itemIndex; });
+  }
   return batches;
 }
 
@@ -178,9 +178,11 @@ function validateResult(batch, parsed) {
   if (!parsed || !Array.isArray(parsed.results) || parsed.results.length !== batch.length) {
     throw new Error('Model returned the wrong result count');
   }
-  return batch.map(({ source, compact }, index) => {
-    const result = parsed.results[index];
-    if (result.itemId !== source.id) throw new Error(`Result order/id mismatch for ${source.id}`);
+  const resultByIndex = new Map(parsed.results.map(result => [result.itemIndex, result]));
+  if (resultByIndex.size !== batch.length) throw new Error('Model returned duplicate item indexes');
+  return batch.map(({ source, compact }, itemIndex) => {
+    const result = resultByIndex.get(itemIndex);
+    if (!result) throw new Error(`Model omitted item index ${itemIndex} (${source.id})`);
     validateAudit(result.audit, source.id);
     if (source.type === 'sentence' ? result.imagePrompt !== '' : !result.imagePrompt.trim()) {
       throw new Error(`${source.id}: invalid item image prompt`);
@@ -189,21 +191,25 @@ function validateResult(batch, parsed) {
     if (!Array.isArray(result.cards) || result.cards.length !== expectedCards.length) {
       throw new Error(`${source.id}: model returned the wrong card count`);
     }
+    const cardByIndex = new Map(result.cards.map(card => [card.cardIndex, card]));
+    if (cardByIndex.size !== expectedCards.length) throw new Error(`${source.id}: duplicate card indexes`);
+    const orderedCards = [];
     for (let cardIndex = 0; cardIndex < expectedCards.length; cardIndex++) {
       const expected = expectedCards[cardIndex];
-      const actual = result.cards[cardIndex];
-      if (actual.cardId !== expected.cardId) throw new Error(`${source.id}: card id/order mismatch`);
-      validateAudit(actual.audit, `${source.id}/${expected.cardId}`);
+      const actual = cardByIndex.get(cardIndex);
+      if (!actual) throw new Error(`${source.id}: model omitted card index ${cardIndex}`);
+      orderedCards.push(actual);
+      validateAudit(actual.audit, `${source.id}/card-${cardIndex}`);
       if (typeof actual.imagePrompt !== 'string' || !actual.imagePrompt.trim()) {
-        throw new Error(`${source.id}/${expected.cardId}: invalid card image prompt`);
+        throw new Error(`${source.id}/card-${cardIndex}: invalid card image prompt`);
       }
       if (!Array.isArray(actual.examples) || actual.examples.length !== expected.examples.length) {
-        throw new Error(`${source.id}/${expected.cardId}: wrong example decision count`);
+        throw new Error(`${source.id}/card-${cardIndex}: wrong example decision count`);
       }
       actual.examples.forEach((decision, exampleIndex) => {
-        if (decision.index !== exampleIndex) throw new Error(`${source.id}/${expected.cardId}: example index mismatch`);
+        if (decision.index !== exampleIndex) throw new Error(`${source.id}/card-${cardIndex}: example index mismatch`);
         if (decision.action === 'rewrite' && !decision.replacement.trim()) {
-          throw new Error(`${source.id}/${expected.cardId}: empty example rewrite`);
+          throw new Error(`${source.id}/card-${cardIndex}: empty example rewrite`);
         }
       });
     }
@@ -215,21 +221,48 @@ function validateResult(batch, parsed) {
     } else if (result.sentence.action !== 'not_applicable') {
       throw new Error(`${source.id}: unexpected sentence decision`);
     }
-    return result;
+    return { ...result, cards: orderedCards };
   });
 }
 
-function runBatch(batch, index) {
+function runCodex(args, prompt) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('/usr/local/bin/codex', args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
+    const timeout = setTimeout(() => child.kill('SIGTERM'), 45 * 60 * 1000);
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      clearTimeout(timeout);
+      if (code === 0) resolvePromise();
+      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
+    });
+    child.stdin.end(prompt);
+  });
+}
+
+async function runBatch(batch, index) {
   const fingerprint = createHash('sha256').update(JSON.stringify(batch.map(entry => entry.compact))).digest('hex').slice(0, 16);
   const resultPath = join(workDir, `batch-${String(index + 1).padStart(4, '0')}-${fingerprint}.json`);
-  if (!existsSync(resultPath)) {
-    const prompt = `${instruction}\n\nAUDIT THESE RECORDS:\n${JSON.stringify(batch.map(entry => entry.compact))}`;
-    execFileSync('/usr/local/bin/codex', [
-      'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-      '-m', MODEL, '-c', 'model_reasoning_effort="high"', '--output-schema', schemaPath, '-o', resultPath, '-'
-    ], { input: prompt, stdio: ['pipe', 'inherit', 'inherit'], timeout: 45 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 });
+  let correction = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (!existsSync(resultPath)) {
+        const prompt = `${instruction}${correction}\n\nAUDIT THESE RECORDS:\n${JSON.stringify(batch.map(entry => entry.compact))}`;
+        await runCodex([
+          'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
+          '-m', MODEL, '--output-schema', schemaPath, '-o', resultPath, '-'
+        ], prompt);
+      }
+      return validateResult(batch, JSON.parse(readFileSync(resultPath, 'utf8')));
+    } catch (error) {
+      if (attempt === 2) throw error;
+      correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Correct every identity, card, and example index; do not omit any requested decision.`;
+      if (existsSync(resultPath)) unlinkSync(resultPath);
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000 * (attempt + 1)));
+    }
   }
-  return validateResult(batch, JSON.parse(readFileSync(resultPath, 'utf8')));
+  throw new Error(`Batch ${index + 1} exhausted retries`);
 }
 
 function storedAudit(audit, auditedAt, originalText) {
@@ -259,10 +292,22 @@ function archiveFor(audit) {
 const auditedAt = Date.now();
 const entries = [];
 const batches = makeBatches(source.items);
+const batchResults = new Array(batches.length);
+let nextBatch = 0;
+const concurrency = Math.max(1, Math.min(24, Number(process.env.CODEX_CONCURRENCY || 12)));
+async function auditWorker() {
+  for (;;) {
+    const batchIndex = nextBatch++;
+    if (batchIndex >= batches.length) return;
+    process.stderr.write(`Auditing batch ${batchIndex + 1}/${batches.length}\n`);
+    batchResults[batchIndex] = await runBatch(batches[batchIndex], batchIndex);
+  }
+}
+await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => auditWorker()));
+
 for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-  process.stderr.write(`Auditing batch ${batchIndex + 1}/${batches.length}\n`);
   const batch = batches[batchIndex];
-  const results = runBatch(batch, batchIndex);
+  const results = batchResults[batchIndex];
   for (let index = 0; index < batch.length; index++) {
     const sourceRecord = batch[index].source;
     const result = results[index];
@@ -294,7 +339,7 @@ for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       sourceHash: sourceRecord.sourceHash,
       data,
       wasArchived: sourceRecord.wasArchived === true,
-      archiveForUsage: archiveFor(result.audit),
+      archiveForUsage: archiveFor(data.usageAudit),
     });
   }
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -79,13 +79,13 @@ const instruction = `You are an expert American English lexicographer and an exa
 For each sentence, return these analysis fields in this exact conceptual order:
 1. translation: a precise, natural Simplified Chinese translation of the entire text that preserves tense, modality, tone, register, implied relationships, and idiomatic force rather than translating word by word.
 2. americanEnglish: status must be american, shared, or not_american. In English, explain whether the wording is distinctly American, shared across major varieties, or non-American, citing concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. If it is not normal American English, give the natural present-day American equivalent.
-3. terms: every genuinely uncommon word, idiom, phrasal verb, or fixed phrase. For each term include its context-specific Chinese translation; rhotic General American IPA with stress marks and slashes; core contextual meaning and literal/earlier meaning when figurative; sense-matched English synonyms and antonyms; two natural modern American examples that make the meaning inferable and do not quote the source; and a concise, accurate historical evolution note. Prefer the longest phrase and never duplicate components. Do not pad with ordinary A1-B2 words. Explicitly disambiguate a likely learner confusion when the context selects one sense over another.
+3. terms: every genuinely uncommon word, idiom, phrasal verb, or fixed phrase. For each term include its context-specific Chinese translation; true rhotic General American IPA with stress marks and surrounding slashes; core contextual meaning and literal/earlier meaning when figurative; sense-matched English synonyms and antonyms; two natural modern American examples that make the meaning inferable and do not quote the source; and a concise, accurate historical evolution note. Prefer the longest phrase and never duplicate components. Do not pad with ordinary A1-B2 words. Explicitly disambiguate a likely learner confusion when the context selects one sense over another. Keep fields cleanly separated: originalMeaning must contain only meaning and semantic clarification, never examples or historical chronology; usage examples belong only in examples; etymology and dated development belong only in historicalEvolution.
 4. imagePrompt: a production-ready prompt for one realistic photorealistic 16:9 photograph depicting the COMPLETE sentence as one coherent concrete scene. Apply this test: the scene should let a learner infer the sentence's intended meaning, not merely its topic. Put the defining action, relationship, contrast, cause, or consequence in the foreground and include every detail needed to distinguish the intended reading. Keep the cast and composition simple enough to parse instantly. For an idiom, depict its intended contextual meaning, not a misleading literal origin. Specify camera distance, composition, and natural lighting. Require authentic anatomy, skin, materials, and contemporary details. Explicitly prohibit illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, and visible text.
 
 Everything must be English except translation and each term's chinese field. Synonyms/antonyms must match the contextual sense. If no natural antonym exists, return an empty array. State uncertainty rather than inventing etymology. Return every input id once, in input order, and output only schema-valid JSON.`;
 
 const batches = [];
-for (let index = 0; index < source.sentences.length; index += 4) batches.push(source.sentences.slice(index, index + 4));
+for (let index = 0; index < source.sentences.length; index += 12) batches.push(source.sentences.slice(index, index + 12));
 
 function validString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -107,16 +107,32 @@ function validateAnalysis(analysis, id) {
   }
 }
 
-function runBatch(batch, index) {
+function runCodex(args, prompt) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('/usr/local/bin/codex', args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
+    const timeout = setTimeout(() => child.kill('SIGTERM'), 45 * 60 * 1000);
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      clearTimeout(timeout);
+      if (code === 0) resolvePromise();
+      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
+    });
+    child.stdin.end(prompt);
+  });
+}
+
+async function runBatch(batch, index) {
   const compact = batch.map(({ id, text, sourceWord, sourceSense }) => ({ id, text, sourceWord, sourceSense }));
   const fingerprint = createHash('sha256').update(JSON.stringify(compact)).digest('hex').slice(0, 16);
   const resultPath = join(workDir, `batch-${String(index + 1).padStart(4, '0')}-${fingerprint}.json`);
   if (!existsSync(resultPath)) {
     const prompt = `${instruction}\n\nANALYZE THESE SENTENCES:\n${JSON.stringify(compact)}`;
-    execFileSync('/usr/local/bin/codex', [
-      'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-      '-m', MODEL, '-c', 'model_reasoning_effort="high"', '--output-schema', schemaPath, '-o', resultPath, '-'
-    ], { input: prompt, stdio: ['pipe', 'inherit', 'inherit'], timeout: 45 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 });
+    await runCodex([
+      'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
+      '-m', MODEL, '--output-schema', schemaPath, '-o', resultPath, '-'
+    ], prompt);
   }
   const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
   if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) throw new Error('Wrong analysis result count');
@@ -129,9 +145,21 @@ function runBatch(batch, index) {
 
 const generatedAt = Date.now();
 const entries = [];
+const batchResults = new Array(batches.length);
+let nextBatch = 0;
+const concurrency = Math.max(1, Math.min(8, Number(process.env.CODEX_CONCURRENCY || 4)));
+async function analysisWorker() {
+  for (;;) {
+    const index = nextBatch++;
+    if (index >= batches.length) return;
+    process.stderr.write(`Analyzing sentence batch ${index + 1}/${batches.length}\n`);
+    batchResults[index] = await runBatch(batches[index], index);
+  }
+}
+await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => analysisWorker()));
+
 for (let index = 0; index < batches.length; index++) {
-  process.stderr.write(`Analyzing sentence batch ${index + 1}/${batches.length}\n`);
-  const results = runBatch(batches[index], index);
+  const results = batchResults[index];
   for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
     const sourceRecord = batches[index][resultIndex];
     entries.push({

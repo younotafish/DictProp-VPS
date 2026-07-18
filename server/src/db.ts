@@ -254,7 +254,11 @@ const imageStmts = {
     WHERE i.id = ? AND i.user_id = ?`),
   manifest: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
   allIdsForUser: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
-  owner: db.prepare(`SELECT user_id FROM item_images WHERE id = ?`),
+  owner: db.prepare(`SELECT user_id, content_hash FROM item_images WHERE id = ?`),
+  deleteUnreferencedBlob: db.prepare(`DELETE FROM image_blobs
+    WHERE content_hash = ? AND NOT EXISTS (
+      SELECT 1 FROM item_images WHERE item_images.content_hash = image_blobs.content_hash
+    )`),
   assignOrphan: db.prepare(`UPDATE item_images SET user_id = ? WHERE user_id IS NULL`),
 };
 
@@ -267,7 +271,7 @@ function parseImageDataUri(dataUri: string): { data: Buffer; mimeType: string } 
 function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeType: string, updatedAt: number): boolean {
   if (data.length === 0 || !/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType) ||
       !hasImageSignature(data, mimeType)) return false;
-  const owner = imageStmts.owner.get(id) as { user_id: string | null } | undefined;
+  const owner = imageStmts.owner.get(id) as { user_id: string | null; content_hash: string | null } | undefined;
   if (owner?.user_id && owner.user_id !== userId) return false;
   const contentHash = createHash('sha256').update(data).digest('hex');
   imageStmts.upsertBlob.run({
@@ -277,6 +281,9 @@ function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeT
     id, user_id: userId, data: Buffer.alloc(0), updated_at: updatedAt,
     mime_type: mimeType, content_hash: contentHash,
   });
+  if (reference.changes > 0 && owner?.content_hash && owner.content_hash !== contentHash) {
+    imageStmts.deleteUnreferencedBlob.run(owner.content_hash);
+  }
   return reference.changes > 0;
 }
 

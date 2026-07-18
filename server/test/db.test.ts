@@ -83,6 +83,11 @@ test('image ids cannot overwrite another user', () => {
   assert.equal(upsertItemImages([{ id: 'owned-image', data: image }], 'user-b'), 0);
   assert.equal(upsertItemImages([{ id: 'duplicate-image', data: image }], 'user-a'), 1);
   assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, 1);
+  const replacement = Buffer.concat([Buffer.from(image.split(',')[1], 'base64'), Buffer.from([0])]);
+  assert.equal(upsertItemImageBinary('owned-image', replacement, 'image/png', 'user-a'), true);
+  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, 2);
+  assert.equal(upsertItemImageBinary('duplicate-image', replacement, 'image/png', 'user-a'), true);
+  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, 1);
   assert.equal(upsertItemImageBinary('fake-image', Buffer.from('not an image'), 'image/png', 'user-a'), false);
 });
 

@@ -85,6 +85,7 @@ Rules:
 - Synonyms and antonyms must match the sense used in this text, not unrelated dictionary senses.
 - Historical claims must be conservative. State uncertainty rather than inventing an etymology.
 - Examples must not quote or merely paraphrase the source sentence.
+- Keep fields cleanly separated: originalMeaning contains meaning and semantic clarification only; examples contains usage examples only; historicalEvolution contains origin and chronology only.
 `;
 
 export function sentenceAnalysisUserPrompt(text: string): string {
