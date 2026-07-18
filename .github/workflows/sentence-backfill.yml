@@ -10,6 +10,8 @@ on:
         options:
           - export
           - import
+          - corpus-export
+          - corpus-import
       release_tag:
         description: Temporary release tag containing sentence-backfill.enc (import only)
         required: false
@@ -106,4 +108,96 @@ jobs:
             set -e
             docker compose exec -T app rm -rf /tmp/sentence-backfill
             rm -rf /tmp/dictprop-sentence-bridge
+            exit "$STATUS"
+
+  corpus-export:
+    if: inputs.operation == 'corpus-export'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    steps:
+      - name: Export encrypted corpus
+        uses: appleboy/ssh-action@v1
+        env:
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: SENTENCE_BRIDGE_KEY
+          command_timeout: 15m
+          script: |
+            set -e
+            test -n "$SENTENCE_BRIDGE_KEY"
+            cd /opt/dictprop-vps
+            echo CORPUS_EXPORT_BEGIN
+            docker compose exec -T app node server/dist/scripts/export-corpus-audit.js \
+              | gzip -9 \
+              | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:SENTENCE_BRIDGE_KEY \
+              | base64 -w 76
+            echo
+            echo CORPUS_EXPORT_END
+
+  corpus-import:
+    if: inputs.operation == 'corpus-import'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Validate import input
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: test -n "$RELEASE_TAG"
+
+      - name: Download encrypted bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          mkdir -p bridge
+          gh release download "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern corpus-audit.enc \
+            --dir bridge
+
+      - name: Upload encrypted bundle
+        uses: appleboy/scp-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: bridge/corpus-audit.enc
+          target: /tmp/dictprop-corpus-bridge
+          strip_components: 1
+
+      - name: Import encrypted corpus audit
+        uses: appleboy/ssh-action@v1
+        env:
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: SENTENCE_BRIDGE_KEY
+          command_timeout: 30m
+          script: |
+            set -e
+            test -n "$SENTENCE_BRIDGE_KEY"
+            cd /opt/dictprop-vps
+            docker compose exec -T app sh -c 'rm -rf /tmp/corpus-audit && mkdir -p /tmp/corpus-audit'
+            openssl enc -d -aes-256-cbc -pbkdf2 \
+              -pass env:SENTENCE_BRIDGE_KEY \
+              -in /tmp/dictprop-corpus-bridge/corpus-audit.enc \
+              | docker compose exec -T app tar -xz -C /tmp/corpus-audit
+            set +e
+            docker compose exec -T app node server/dist/scripts/import-corpus-audit.js \
+              /tmp/corpus-audit/manifest.json
+            STATUS=$?
+            set -e
+            docker compose exec -T app rm -rf /tmp/corpus-audit
+            rm -rf /tmp/dictprop-corpus-bridge
             exit "$STATUS"

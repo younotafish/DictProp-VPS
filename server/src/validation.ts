@@ -1,4 +1,5 @@
 import { isSentenceAnalysis } from './sentence-analysis.js';
+import { isUsageAudit } from './usage-audit.js';
 
 const ITEM_TYPES = new Set(['vocab', 'phrase', 'sentence']);
 const MAX_ID_LENGTH = 200;
@@ -53,6 +54,17 @@ export function validateStoredItem(value: unknown): string | null {
   if (value.type === 'sentence' && value.data.analysisGeneratedAt !== undefined &&
       !isFiniteNonNegative(value.data.analysisGeneratedAt)) {
     return 'sentence analysisGeneratedAt is invalid';
+  }
+  if (value.data.usageAudit !== undefined && !isUsageAudit(value.data.usageAudit)) {
+    return 'item usageAudit is invalid';
+  }
+  if (value.type === 'phrase') {
+    for (let index = 0; index < value.data.vocabs.length; index++) {
+      const vocab = value.data.vocabs[index];
+      if (vocab?.usageAudit !== undefined && !isUsageAudit(vocab.usageAudit)) {
+        return `phrase vocab ${index} usageAudit is invalid`;
+      }
+    }
   }
   return null;
 }

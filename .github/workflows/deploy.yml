@@ -63,6 +63,7 @@ jobs:
             du -sh data data/backups 2>/dev/null || true
             docker image prune -f || true
             # Remove abandoned/old backup copies before deciding whether the Docker cache must go.
+            SKIP_DATABASE_BACKUP=0
             if [ -f data/dictprop.db ]; then
               mkdir -p data/backups
               find data/backups -type f -name '*.partial' -delete
@@ -77,8 +78,17 @@ jobs:
             ' "$LATEST_BACKUP"; then
                 echo "Removing incomplete backup: $LATEST_BACKUP"
                 rm -f "$LATEST_BACKUP"
+                LATEST_BACKUP=""
               fi
-              # Keep one existing snapshot while writing the next; two complete copies remain afterward.
+              if [ -n "$LATEST_BACKUP" ]; then
+                BACKUP_AGE_SECONDS="$(( $(date +%s) - $(stat -c %Y "$LATEST_BACKUP") ))"
+                if [ "$BACKUP_AGE_SECONDS" -lt 43200 ]; then
+                  echo "Reusing verified backup from ${BACKUP_AGE_SECONDS}s ago"
+                  SKIP_DATABASE_BACKUP=1
+                fi
+              fi
+              # Keep only the newest verified snapshot. A new backup temporarily needs a second copy,
+              # but the older one remains available if that copy fails and is pruned only after success.
               find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
                 | sort -nr | tail -n +2 | cut -d' ' -f2- | xargs -r rm -f
             fi
@@ -86,7 +96,9 @@ jobs:
             # If space is tight, a full BuildKit prune is preferable to another SQLITE_FULL failure.
             AVAILABLE_KB="$(df -Pk . | awk 'NR == 2 { print $4 }')"
             DATABASE_KB="$(du -k data/dictprop.db 2>/dev/null | awk '{ print $1 }')"
-            REQUIRED_KB="$(( ${DATABASE_KB:-0} + 2 * 1024 * 1024 ))"
+            BACKUP_HEADROOM_KB="${DATABASE_KB:-0}"
+            if [ "$SKIP_DATABASE_BACKUP" -eq 1 ]; then BACKUP_HEADROOM_KB=0; fi
+            REQUIRED_KB="$(( BACKUP_HEADROOM_KB + 2 * 1024 * 1024 ))"
             if [ "${AVAILABLE_KB:-0}" -lt "$REQUIRED_KB" ]; then
               echo "Low disk headroom; pruning the full Docker build cache"
               docker builder prune -af || true
@@ -95,7 +107,7 @@ jobs:
             fi
             # Take a transactionally consistent online SQLite backup before the new container can run
             # schema migrations. Retention and cache cleanup above leave room for the atomic copy.
-            if [ -f data/dictprop.db ]; then
+            if [ -f data/dictprop.db ] && [ "$SKIP_DATABASE_BACKUP" -eq 0 ]; then
               echo "=== DISK BEFORE BACKUP ==="
               df -h . || true
               BACKUP_NAME="dictprop-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.sha }}.db"
@@ -113,9 +125,9 @@ jobs:
                   data/dictprop.db "data/backups/$BACKUP_TEMP"
               fi
               mv "data/backups/$BACKUP_TEMP" "data/backups/$BACKUP_NAME"
-              # Two complete deploy snapshots preserve rollback coverage without monopolizing the disk.
+              # The new verified copy supersedes the older snapshot.
               find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
-                | sort -nr | tail -n +3 | cut -d' ' -f2- | xargs -r rm -f
+                | sort -nr | tail -n +2 | cut -d' ' -f2- | xargs -r rm -f
             fi
             # Diagnostics before rebuild — never fail the deploy on these
             echo "=== CONTAINER LOGS BEFORE REBUILD ==="

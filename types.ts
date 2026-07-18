@@ -5,6 +5,23 @@ export interface WordFamilyEntry {
   chinese: string;
 }
 
+export type UsageStatus =
+  | 'modern_american'
+  | 'current_general'
+  | 'british_only'
+  | 'rare_or_dated'
+  | 'narrow_specialized';
+
+/** Offline audit of whether a specific sense is worth studying for modern American English. */
+export interface UsageAudit {
+  status: UsageStatus;
+  reason: string;
+  confidence: 'high' | 'medium' | 'low';
+  auditedAt: number;
+  /** Retains the pre-audit wording when an example or saved sentence was replaced. */
+  originalText?: string;
+}
+
 export interface VocabCard {
   id: string; // Unique ID
   word: string;
@@ -23,6 +40,7 @@ export interface VocabCard {
   mnemonic: string;
   imagePrompt?: string; // To generate specific imagery
   imageUrl?: string; // Generated Base64 image
+  usageAudit?: UsageAudit;
 }
 
 export interface SearchResult {
@@ -36,6 +54,7 @@ export interface SearchResult {
   timestamp: number;
   imageUrl?: string; // Base64 data uri
   originalQuery?: string; // Original Chinese input if translated
+  usageAudit?: UsageAudit;
 }
 
 export type AmericanEnglishStatus = 'american' | 'shared' | 'not_american';
@@ -71,6 +90,7 @@ export interface SentenceData {
   imageUrl?: string; // Optional user-attached image (base64 data URI in memory; 'idb:stored'/'server:has_image' marker once offloaded)
   analysis?: SentenceAnalysis;
   analysisGeneratedAt?: number;
+  usageAudit?: UsageAudit;
 }
 
 // SRS Data — FSRS v6 with optional fields for lazily migrated legacy rows

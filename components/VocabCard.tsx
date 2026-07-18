@@ -1,5 +1,5 @@
 import React, { memo, useState, useCallback } from 'react';
-import { VocabCard as VocabType, WordFamilyEntry } from '../types';
+import { VocabCard as VocabType, WordFamilyEntry, type UsageAudit } from '../types';
 import { Sparkles, BookOpen, History, Lightbulb, Maximize2, RefreshCw, Shapes, Network, Scale, Check, X, BookmarkPlus, BookmarkCheck, ExternalLink } from 'lucide-react';
 import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
@@ -67,6 +67,14 @@ interface Props {
   isSentenceSaved?: (text: string) => boolean;
   onLazyLoadImage?: (itemId: string) => Promise<string | null>;
 }
+
+const usagePresentation: Record<UsageAudit['status'], { label: string; className: string }> = {
+  modern_american: { label: 'Modern American', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  current_general: { label: 'Current general English', className: 'bg-sky-50 text-sky-700 border-sky-200' },
+  british_only: { label: 'British only', className: 'bg-amber-50 text-amber-800 border-amber-200' },
+  rare_or_dated: { label: 'Rare or dated', className: 'bg-rose-50 text-rose-700 border-rose-200' },
+  narrow_specialized: { label: 'Specialized', className: 'bg-slate-100 text-slate-700 border-slate-300' },
+};
 
 // Memoize to prevent re-renders when other cards in the list update
 export const VocabCardDisplay: React.FC<Props> = memo(({
@@ -193,6 +201,14 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             <span className="inline-block mt-1 px-2 py-0.5 bg-violet-100 text-violet-700 text-xs font-medium rounded-full">
               {data.sense}
             </span>
+          )}
+          {data.usageAudit && (
+            <div className="mt-1.5 max-w-xl">
+              <span className={`inline-flex rounded border px-2 py-0.5 text-xs font-semibold ${usagePresentation[data.usageAudit.status].className}`}>
+                {usagePresentation[data.usageAudit.status].label}
+              </span>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{data.usageAudit.reason}</p>
+            </div>
           )}
           {showPronunciation && (
           <div className="flex items-center gap-2 mt-1 text-slate-500">
