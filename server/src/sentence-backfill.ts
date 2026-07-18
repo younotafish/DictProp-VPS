@@ -16,6 +16,7 @@ export interface SentenceBackfillEntry {
   analysis: SentenceAnalysis;
   generatedAt: number;
   imageFile?: string;
+  replaceImage?: boolean;
 }
 
 export interface SentenceBackfillBundle {
@@ -52,6 +53,12 @@ export function validateSentenceBackfillBundle(value: unknown): string | null {
     if (entry.imageFile !== undefined &&
         (typeof entry.imageFile !== 'string' || !SAFE_IMAGE_PATH.test(entry.imageFile))) {
       return `entry ${index} imageFile is invalid`;
+    }
+    if (entry.replaceImage !== undefined && typeof entry.replaceImage !== 'boolean') {
+      return `entry ${index} replaceImage is invalid`;
+    }
+    if (entry.replaceImage === true && entry.imageFile === undefined) {
+      return `entry ${index} cannot replace an image without imageFile`;
     }
   }
   return null;

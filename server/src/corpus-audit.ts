@@ -16,6 +16,7 @@ export interface CorpusAuditEntry {
   type: CorpusItemType;
   sourceHash: string;
   data: Record<string, unknown>;
+  wasArchived: boolean;
   archiveForUsage: boolean;
 }
 
@@ -80,6 +81,7 @@ export function validateCorpusAuditBundle(value: unknown): string | null {
       return `entry ${index} sourceHash is invalid`;
     }
     if (!isRecord(entry.data) || entry.data.id !== entry.id) return `entry ${index} data identity is invalid`;
+    if (typeof entry.wasArchived !== 'boolean') return `entry ${index} wasArchived is invalid`;
     if (!hasCompleteAudit(entry.type as CorpusItemType, entry.data)) {
       return `entry ${index} does not contain a complete usage audit`;
     }

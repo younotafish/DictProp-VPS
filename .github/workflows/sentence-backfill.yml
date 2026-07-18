@@ -12,6 +12,7 @@ on:
           - import
           - corpus-export
           - corpus-import
+          - image-import
       release_tag:
         description: Temporary release tag containing sentence-backfill.enc (import only)
         required: false
@@ -200,4 +201,67 @@ jobs:
             set -e
             docker compose exec -T app rm -rf /tmp/corpus-audit
             rm -rf /tmp/dictprop-corpus-bridge
+            exit "$STATUS"
+
+  image-import:
+    if: inputs.operation == 'image-import'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Validate import input
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: test -n "$RELEASE_TAG"
+
+      - name: Download encrypted bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          mkdir -p bridge
+          gh release download "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern offline-images.enc \
+            --dir bridge
+
+      - name: Upload encrypted bundle
+        uses: appleboy/scp-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: bridge/offline-images.enc
+          target: /tmp/dictprop-image-bridge
+          strip_components: 1
+
+      - name: Import locally generated images
+        uses: appleboy/ssh-action@v1
+        env:
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: SENTENCE_BRIDGE_KEY
+          command_timeout: 30m
+          script: |
+            set -e
+            test -n "$SENTENCE_BRIDGE_KEY"
+            cd /opt/dictprop-vps
+            docker compose exec -T app sh -c 'rm -rf /tmp/offline-images && mkdir -p /tmp/offline-images'
+            openssl enc -d -aes-256-cbc -pbkdf2 \
+              -pass env:SENTENCE_BRIDGE_KEY \
+              -in /tmp/dictprop-image-bridge/offline-images.enc \
+              | docker compose exec -T app tar -xz -C /tmp/offline-images
+            set +e
+            docker compose exec -T app node server/dist/scripts/import-offline-images.js \
+              /tmp/offline-images/manifest.json
+            STATUS=$?
+            set -e
+            docker compose exec -T app rm -rf /tmp/offline-images
+            rm -rf /tmp/dictprop-image-bridge
             exit "$STATUS"

@@ -56,10 +56,10 @@ object and no markdown, commentary, or extra keys.
 
 The JSON keys MUST appear in this exact order:
 {
-  "translation": "A precise, natural Simplified Chinese translation of the entire text",
+  "translation": "A precise, natural Simplified Chinese translation preserving tense, tone, register, and idiomatic force",
   "americanEnglish": {
     "status": "american | shared | not_american",
-    "explanation": "In English, say whether the wording is distinctly American, shared across major English varieties, or non-American, and identify the concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it."
+    "explanation": "In English, say whether the wording is distinctly American, shared across major English varieties, or non-American, and identify the concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. For non-American wording, give the natural present-day American equivalent."
   },
   "terms": [
     {
@@ -73,7 +73,7 @@ The JSON keys MUST appear in this exact order:
       "historicalEvolution": "In English, a concise, accurate note on origin and semantic development"
     }
   ],
-  "imagePrompt": "A production-ready prompt for one realistic, photorealistic 16:9 image that depicts the complete sentence as a concrete scene. Specify people, setting, action, composition, and natural lighting where relevant. No illustration, animation, collage, split screen, typography, captions, logos, watermarks, or visible text."
+  "imagePrompt": "A production-ready prompt for one realistic, photorealistic 16:9 image whose central action or relationship makes the complete contextual meaning inferable at a glance. Include every distinguishing detail, keep the scene easy to parse, and depict an idiom's intended meaning rather than a misleading literal origin. Specify people, setting, camera distance, composition, and natural lighting. No illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, or visible text."
 }
 
 Rules:

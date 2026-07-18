@@ -2372,7 +2372,7 @@ const App: React.FC = () => {
       if (isVocabItem(it)) {
         if (it.data.id === itemId) { prompt = it.data.imagePrompt; break; }
       } else if (isPhraseItem(it)) {
-        if (it.data.id === itemId) { prompt = it.data.visualKeyword || it.data.query; break; }
+        if (it.data.id === itemId) { prompt = it.data.imagePrompt || it.data.visualKeyword || it.data.query; break; }
         const v = it.data.vocabs?.find((vv) => vv.id === itemId);
         if (v) { prompt = v.imagePrompt; break; }
       }

@@ -33,6 +33,7 @@ const result = {
   total: bundle.entries.length,
   analysesUpdated: 0,
   imagesAdded: 0,
+  imagesReplaced: 0,
   imagesPreserved: 0,
   skipped: 0,
   errors: [] as Array<{ id: string; error: string }>,
@@ -67,7 +68,8 @@ for (const entry of bundle.entries) {
     result.analysesUpdated++;
 
     if (!entry.imageFile) continue;
-    if (imageIds.has(entry.id)) {
+    const imageExists = imageIds.has(entry.id);
+    if (imageExists && entry.replaceImage !== true) {
       result.imagesPreserved++;
       continue;
     }
@@ -79,7 +81,8 @@ for (const entry of bundle.entries) {
     if (!mimeType) throw new Error('image format is invalid');
     if (!upsertItemImageBinary(entry.id, image, mimeType, owner.id)) throw new Error('image could not be stored');
     imageIds.add(entry.id);
-    result.imagesAdded++;
+    if (imageExists) result.imagesReplaced++;
+    else result.imagesAdded++;
   } catch (error) {
     result.errors.push({ id: entry.id, error: error instanceof Error ? error.message : String(error) });
   }

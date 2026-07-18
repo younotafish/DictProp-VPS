@@ -53,6 +53,7 @@ export interface SearchResult {
   vocabs: VocabCard[];
   timestamp: number;
   imageUrl?: string; // Base64 data uri
+  imagePrompt?: string; // Photorealistic prompt for the complete phrase
   originalQuery?: string; // Original Chinese input if translated
   usageAudit?: UsageAudit;
 }

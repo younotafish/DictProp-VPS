@@ -11,7 +11,7 @@ const bundle = {
   version: 1,
   generatedAt: 1,
   model: 'gpt-5.6-sol',
-  entries: [{ id: 'word-1', type: 'vocab', sourceHash: corpusSourceHash(data), data, archiveForUsage: false }],
+  entries: [{ id: 'word-1', type: 'vocab', sourceHash: corpusSourceHash(data), data, wasArchived: false, archiveForUsage: false }],
 };
 
 test('corpus hashes ignore image storage markers', () => {

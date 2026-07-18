@@ -35,4 +35,8 @@ test('sentence backfill bundle validates identities, hashes, analysis, and safe 
     ...bundle,
     entries: [{ ...bundle.entries[0], imageFile: '../dictprop.db' }],
   }) || '', /imageFile/);
+  assert.match(validateSentenceBackfillBundle({
+    ...bundle,
+    entries: [{ ...bundle.entries[0], imageFile: undefined, replaceImage: true }],
+  }) || '', /without imageFile/);
 });

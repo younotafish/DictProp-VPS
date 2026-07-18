@@ -45,7 +45,7 @@ Classify each sense or phrase as exactly one of:
 - rare_or_dated: obsolete, archaic, literary-only, or so infrequent that an ESL learner should not spend review time on it.
 - narrow_specialized: confined mainly to a small profession, technical field, region, or subculture and not useful for general American English.
 
-Do not penalize a sense merely because it is formal, advanced, or shared with British English. When evidence is uncertain, use low confidence and keep it. Give a concise, concrete reason that distinguishes the exact sense.
+Do not penalize a sense merely because it is formal, advanced, or shared with British English. Base the decision on the exact definition, part of speech, collocation, and register. When evidence is uncertain, use low confidence and keep it. Give a concise reason explaining where an American learner would realistically encounter the sense and name the normal American equivalent for British-only wording when one exists.
 
 Audit every example independently. Keep natural present-day American examples. Rewrite examples that are British, dated, unnatural, misleading, ungrammatical, or do not clearly demonstrate this exact sense. Remove an example only when no natural replacement can preserve the sense. Replacements must sound like something an American speaker would naturally say and must preserve the corpus markup: {{studied target}} and [[uncommon lookup term]]. Do not add markup around ordinary words.
 

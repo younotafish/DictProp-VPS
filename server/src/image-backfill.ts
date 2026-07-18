@@ -67,6 +67,10 @@ export function collectImageBackfillTargets(items: any[], scope: ImageBackfillSc
     }
 
     if (item.type === 'phrase' && Array.isArray(item.data.vocabs)) {
+      const phrasePrompt = typeof item.data.imagePrompt === 'string' ? item.data.imagePrompt.trim() : '';
+      if (item.data.id && phrasePrompt && !item.data.imageUrl && !targets.has(item.data.id)) {
+        targets.set(item.data.id, { imageId: item.data.id, prompt: phrasePrompt });
+      }
       for (const vocab of item.data.vocabs) {
         const prompt = typeof vocab?.imagePrompt === 'string' ? vocab.imagePrompt.trim() : '';
         if (vocab?.id && prompt && !vocab.imageUrl && !targets.has(vocab.id)) {

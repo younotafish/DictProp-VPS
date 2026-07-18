@@ -33,19 +33,21 @@ const auditSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['itemId', 'audit', 'cards', 'sentence'],
+        required: ['itemId', 'audit', 'imagePrompt', 'cards', 'sentence'],
         properties: {
           itemId: { type: 'string' },
           audit: { $ref: '#/$defs/audit' },
+          imagePrompt: { type: 'string' },
           cards: {
             type: 'array',
             items: {
               type: 'object',
               additionalProperties: false,
-              required: ['cardId', 'audit', 'examples'],
+              required: ['cardId', 'audit', 'imagePrompt', 'examples'],
               properties: {
                 cardId: { type: 'string' },
                 audit: { $ref: '#/$defs/audit' },
+                imagePrompt: { type: 'string' },
                 examples: {
                   type: 'array',
                   items: {
@@ -104,11 +106,13 @@ Classify every item and every card as exactly one of:
 - rare_or_dated: obsolete, archaic, literary-only, or so infrequent that an ESL learner should not spend review time on it.
 - narrow_specialized: confined mainly to a small profession, technical field, region, or subculture and not useful for general American English.
 
-Do not label something low-value merely because it is formal, advanced, or also used in Britain. A common technical word known by ordinary educated Americans is not automatically narrow_specialized. When genuinely uncertain, use low confidence; low-confidence exclusions will be kept.
+Do not label something low-value merely because it is formal, advanced, or also used in Britain. A common technical word known by ordinary educated Americans is not automatically narrow_specialized. Base frequency judgments on the exact definition, part of speech, collocation, and register shown. The reason must tell the learner where they would realistically encounter this sense and, for British-only wording, name the normal modern American equivalent when one exists. When genuinely uncertain, use low confidence; low-confidence exclusions will be kept.
 
-Audit EVERY supplied example by its numeric index. Keep natural present-day American examples. Rewrite examples that are British, dated, unnatural, misleading, ungrammatical, or fail to demonstrate the exact definition. Remove only duplicates or examples for which no honest replacement can demonstrate this exact sense. A rewrite must sound like something an American would naturally say, preserve the intended exact sense, and retain {{studied target}} and [[uncommon lookup term]] markup. Do not wrap ordinary words in new markup.
+Audit EVERY supplied example by its numeric index. Keep natural present-day American examples. Rewrite examples that are British, dated, unnatural, misleading, ungrammatical, or fail to demonstrate the exact definition. Remove only duplicates or examples for which no honest replacement can demonstrate this exact sense. A rewrite must sound like something an American would naturally say, make the target meaning inferable from context, preserve the intended exact sense and grammatical form, and retain {{studied target}} and [[uncommon lookup term]] markup. Do not wrap ordinary words in new markup.
 
 For a phrase item, audit the top-level query and every nested vocabulary card. For a saved sentence, use sentence.action=keep or rewrite; preserve sourceWord/sourceSense and the intended exact meaning. Use sentence.action=not_applicable for non-sentence items. For non-sentence items, return cards for every supplied card; for sentence items, cards must be empty.
+
+For each non-sentence item and card, write a production-ready imagePrompt for one realistic 16:9 photograph that directly depicts the exact contextual meaning. Apply this test: a learner who sees the image beside the target should be able to infer why this exact sense applies, not merely recognize its general topic. Put the diagnostic action, contrast, spatial relation, emotion, or consequence in the foreground. Keep the cast and scene simple enough to read instantly. For abstract senses, use one natural everyday situation that demonstrates the meaning without decorative symbolism. For figurative language, depict the intended modern meaning rather than a misleading literal etymology. Specify camera distance, composition, and natural lighting. Explicitly prohibit animation, illustration, 3D rendering, collage, split screens, visible text, captions, logos, and watermarks. A sentence item must use an empty imagePrompt because it is enriched separately.
 
 Return one result for every supplied item, in the same order. Be conservative but decisive, and return only schema-valid JSON.`;
 
@@ -178,6 +182,9 @@ function validateResult(batch, parsed) {
     const result = parsed.results[index];
     if (result.itemId !== source.id) throw new Error(`Result order/id mismatch for ${source.id}`);
     validateAudit(result.audit, source.id);
+    if (source.type === 'sentence' ? result.imagePrompt !== '' : !result.imagePrompt.trim()) {
+      throw new Error(`${source.id}: invalid item image prompt`);
+    }
     const expectedCards = compact.cards;
     if (!Array.isArray(result.cards) || result.cards.length !== expectedCards.length) {
       throw new Error(`${source.id}: model returned the wrong card count`);
@@ -187,6 +194,9 @@ function validateResult(batch, parsed) {
       const actual = result.cards[cardIndex];
       if (actual.cardId !== expected.cardId) throw new Error(`${source.id}: card id/order mismatch`);
       validateAudit(actual.audit, `${source.id}/${expected.cardId}`);
+      if (typeof actual.imagePrompt !== 'string' || !actual.imagePrompt.trim()) {
+        throw new Error(`${source.id}/${expected.cardId}: invalid card image prompt`);
+      }
       if (!Array.isArray(actual.examples) || actual.examples.length !== expected.examples.length) {
         throw new Error(`${source.id}/${expected.cardId}: wrong example decision count`);
       }
@@ -265,11 +275,14 @@ for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
     );
     if (sourceRecord.type === 'vocab') {
       data.usageAudit = storedAudit(result.cards[0].audit, auditedAt);
+      data.imagePrompt = result.cards[0].imagePrompt.trim();
       data.examples = applyExamples(data.examples || [], result.cards[0].examples);
     } else if (sourceRecord.type === 'phrase') {
+      data.imagePrompt = result.imagePrompt.trim();
       data.vocabs = data.vocabs.map((card, cardIndex) => ({
         ...card,
         usageAudit: storedAudit(result.cards[cardIndex].audit, auditedAt),
+        imagePrompt: result.cards[cardIndex].imagePrompt.trim(),
         examples: applyExamples(card.examples || [], result.cards[cardIndex].examples),
       }));
     } else if (result.sentence.action === 'rewrite') {
@@ -280,6 +293,7 @@ for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       type: sourceRecord.type,
       sourceHash: sourceRecord.sourceHash,
       data,
+      wasArchived: sourceRecord.wasArchived === true,
       archiveForUsage: archiveFor(result.audit),
     });
   }
