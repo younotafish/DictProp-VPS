@@ -36,7 +36,7 @@ function eligible(auditRecord) {
 }
 
 function filenameFor(id) {
-  return `${createHash('sha256').update(id).digest('hex').slice(0, 32)}.jpg`;
+  return `${createHash('sha256').update(id).digest('hex').slice(0, 32)}.webp`;
 }
 
 const imageEntries = [];

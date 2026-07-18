@@ -5,13 +5,28 @@ import hashlib
 import json
 from pathlib import Path
 
+from PIL import Image
 from mflux.models.common.config import ModelConfig
 from mflux.models.krea2.variants.txt2img.krea2 import Krea2
+from mflux.utils.exceptions import StopImageGenerationException
 
 
 def seed_for(image_id: str, candidate: int, seed_round: int) -> int:
     digest = hashlib.sha256(f"{image_id}:{seed_round}:{candidate}".encode()).digest()
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+
+def is_complete_image(path: Path, width: int, height: int) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    try:
+        with Image.open(path) as image:
+            if image.size != (width, height):
+                return False
+            image.verify()
+        return True
+    except Exception:
+        return False
 
 
 def main() -> None:
@@ -51,12 +66,17 @@ def main() -> None:
     )
 
     for target_index, target in enumerate(targets, start=1):
-        stem = Path(target["filename"]).stem
+        target_path = Path(target["filename"])
+        stem = target_path.stem
+        suffix = target_path.suffix.lower()
+        if suffix not in (".jpg", ".jpeg", ".webp"):
+            raise ValueError(f"Unsupported target image format: {target_path.suffix}")
         print(f"[{target_index}/{len(targets)}] {target['imageId']}", flush=True)
         for candidate in range(args.candidates):
-            path = output / f"{stem}-{candidate + 1}.jpg"
-            if path.exists() and path.stat().st_size > 0:
+            path = output / f"{stem}-{candidate + 1}{suffix}"
+            if is_complete_image(path, args.width, args.height):
                 continue
+            path.unlink(missing_ok=True)
             try:
                 image = model.generate_image(
                     seed=seed_for(target["imageId"], candidate, args.seed_round),
@@ -70,8 +90,19 @@ def main() -> None:
                     image_path=None,
                     image_strength=None,
                 )
-                image.image.save(path, format="JPEG", quality=94, subsampling=0, optimize=True)
+                temporary_path = output / f".{path.name}.tmp"
+                if suffix == ".webp":
+                    image.image.save(temporary_path, format="WEBP", quality=90, method=6)
+                else:
+                    image.image.save(temporary_path, format="JPEG", quality=90, subsampling=2, optimize=True)
+                temporary_path.replace(path)
+            except StopImageGenerationException:
+                temporary_path = output / f".{path.name}.tmp"
+                temporary_path.unlink(missing_ok=True)
+                raise
             except Exception as error:  # Continue so a long batch remains resumable.
+                temporary_path = output / f".{path.name}.tmp"
+                temporary_path.unlink(missing_ok=True)
                 failures.append({"imageId": target["imageId"], "candidate": candidate + 1, "error": str(error)})
                 print(f"FAILED {target['imageId']} candidate {candidate + 1}: {error}", flush=True)
 

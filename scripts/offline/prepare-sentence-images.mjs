@@ -24,7 +24,7 @@ const targets = [];
 const entries = analysis.entries.map(entry => {
   const source = sources.get(entry.id);
   if (!source || source.textHash !== entry.textHash) throw new Error(`Sentence source mismatch: ${entry.id}`);
-  const filename = `${createHash('sha256').update(entry.id).digest('hex').slice(0, 32)}.jpg`;
+  const filename = `${createHash('sha256').update(entry.id).digest('hex').slice(0, 32)}.webp`;
   targets.push({
     imageId: entry.id,
     filename,

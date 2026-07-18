@@ -11,6 +11,7 @@ if (!inputArg || !outputArg) {
 }
 
 const MODEL = 'gpt-5.6-sol';
+const independentReview = process.env.AUDIT_REVIEW_PASS === '1';
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'audit-work'));
@@ -115,6 +116,9 @@ For a phrase item, audit the top-level query and every nested vocabulary card. F
 For each non-sentence item and card, write a production-ready imagePrompt for one realistic 16:9 photograph that directly depicts the exact contextual meaning. Apply this test: a learner who sees the image beside the target should be able to infer why this exact sense applies, not merely recognize its general topic. Put the diagnostic action, contrast, spatial relation, emotion, or consequence in the foreground. Keep the cast and scene simple enough to read instantly. For abstract senses, use one natural everyday situation that demonstrates the meaning without decorative symbolism. For figurative language, depict the intended modern meaning rather than a misleading literal etymology. Specify camera distance, composition, and natural lighting. Explicitly prohibit animation, illustration, 3D rendering, collage, split screens, visible text, captions, logos, and watermarks. A sentence item must use an empty imagePrompt because it is enriched separately.
 
 Copy each itemIndex and cardIndex exactly. Keep audit reasons under 45 words, example-decision reasons under 20 words, and image prompts under 110 words. Return one result for every supplied item. Be conservative but decisive, and return only schema-valid JSON.`;
+const reviewInstruction = independentReview
+  ? `\n\nThis is an independent verification pass. Re-evaluate every exact sense, sentence, and example from first principles. Do not assume an earlier auditor's decision, and do not make cosmetic rewrites when the original is already natural, accurate modern American English.`
+  : '';
 
 function compactRecord(record) {
   const data = record.data || {};
@@ -229,11 +233,16 @@ function runCodex(args, prompt) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn('/usr/local/bin/codex', args, { stdio: ['pipe', 'ignore', 'pipe'] });
     let stderr = '';
+    let hardKillTimeout;
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
-    const timeout = setTimeout(() => child.kill('SIGTERM'), 45 * 60 * 1000);
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      hardKillTimeout = setTimeout(() => child.kill('SIGKILL'), 10_000);
+    }, 12 * 60 * 1000);
     child.on('error', reject);
     child.on('exit', (code, signal) => {
       clearTimeout(timeout);
+      clearTimeout(hardKillTimeout);
       if (code === 0) resolvePromise();
       else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
     });
@@ -241,14 +250,18 @@ function runCodex(args, prompt) {
   });
 }
 
-async function runBatch(batch, index) {
+function resultPathFor(batch, index) {
   const fingerprint = createHash('sha256').update(JSON.stringify(batch.map(entry => entry.compact))).digest('hex').slice(0, 16);
-  const resultPath = join(workDir, `batch-${String(index + 1).padStart(4, '0')}-${fingerprint}.json`);
+  return join(workDir, `batch-${String(index + 1).padStart(4, '0')}-${fingerprint}.json`);
+}
+
+async function runBatch(batch, index) {
+  const resultPath = resultPathFor(batch, index);
   let correction = '';
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
-        const prompt = `${instruction}${correction}\n\nAUDIT THESE RECORDS:\n${JSON.stringify(batch.map(entry => entry.compact))}`;
+        const prompt = `${instruction}${reviewInstruction}${correction}\n\nAUDIT THESE RECORDS:\n${JSON.stringify(batch.map(entry => entry.compact))}`;
         await runCodex([
           'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
           '-m', MODEL, '--output-schema', schemaPath, '-o', resultPath, '-'
@@ -295,6 +308,7 @@ const batches = makeBatches(source.items);
 const batchResults = new Array(batches.length);
 let nextBatch = 0;
 const concurrency = Math.max(1, Math.min(24, Number(process.env.CODEX_CONCURRENCY || 12)));
+const assembleOnly = process.env.AUDIT_ASSEMBLE_ONLY === '1';
 async function auditWorker() {
   for (;;) {
     const batchIndex = nextBatch++;
@@ -303,11 +317,27 @@ async function auditWorker() {
     batchResults[batchIndex] = await runBatch(batches[batchIndex], batchIndex);
   }
 }
-await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => auditWorker()));
+if (assembleOnly) {
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const resultPath = resultPathFor(batches[batchIndex], batchIndex);
+    if (!existsSync(resultPath)) continue;
+    try {
+      batchResults[batchIndex] = validateResult(
+        batches[batchIndex],
+        JSON.parse(readFileSync(resultPath, 'utf8')),
+      );
+    } catch (error) {
+      process.stderr.write(`Skipping invalid completed batch ${batchIndex + 1}: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+} else {
+  await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => auditWorker()));
+}
 
 for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
   const batch = batches[batchIndex];
   const results = batchResults[batchIndex];
+  if (!results) continue;
   for (let index = 0; index < batch.length; index++) {
     const sourceRecord = batch[index].source;
     const result = results[index];
@@ -344,7 +374,9 @@ for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
   }
 }
 
-const manifest = { version: 1, generatedAt: auditedAt, model: MODEL, entries };
+if (entries.length === 0) throw new Error('No completed audit entries were available');
+const modelLabel = independentReview ? `${MODEL} (independent verification)` : MODEL;
+const manifest = { version: 1, generatedAt: auditedAt, model: assembleOnly ? `${modelLabel} (partial checkpoint)` : modelLabel, entries };
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 process.stderr.write(`Wrote ${entries.length} audited item(s) to ${outputPath}\n`);

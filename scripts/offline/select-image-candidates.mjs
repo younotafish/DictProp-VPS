@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const [targetsArg, candidatesArg, imagesArg, workArg] = process.argv.slice(2);
@@ -35,11 +35,16 @@ function runCodex(args, prompt) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn('/usr/local/bin/codex', args, { stdio: ['pipe', 'ignore', 'pipe'] });
     let stderr = '';
+    let hardKillTimeout;
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
-    const timeout = setTimeout(() => child.kill('SIGTERM'), 30 * 60 * 1000);
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      hardKillTimeout = setTimeout(() => child.kill('SIGKILL'), 10_000);
+    }, 15 * 60 * 1000);
     child.on('error', reject);
     child.on('exit', (code, signal) => {
       clearTimeout(timeout);
+      clearTimeout(hardKillTimeout);
       if (code === 0) resolvePromise();
       else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
     });
@@ -50,23 +55,37 @@ function runCodex(args, prompt) {
 async function selectTarget(target, index) {
   const finalPath = join(imageDir, target.filename);
   if (existsSync(finalPath)) return { accepted: true, skipped: true };
-  const stem = target.filename.replace(/\.[^.]+$/, '');
-  const candidates = [1, 2, 3].map(number => join(candidateDir, `${stem}-${number}.jpg`));
+  const extension = target.filename.match(/\.[^.]+$/)?.[0];
+  if (!extension) throw new Error(`Missing image extension for ${target.imageId}`);
+  const stem = target.filename.slice(0, -extension.length);
+  const candidates = [1, 2, 3].map(number => join(candidateDir, `${stem}-${number}${extension}`));
   if (candidates.some(path => !existsSync(path))) throw new Error(`Missing candidates for ${target.imageId}`);
   const decisionPath = join(workDir, `${stem}.json`);
-  if (!existsSync(decisionPath)) {
-    const prompt = `Act as a strict visual editor for an American English learning app. The three attached images were generated for this learning target:\n${JSON.stringify(target.learningTarget)}\n\nGeneration brief:\n${target.prompt}\n\nChoose the image that most directly and unambiguously communicates the EXACT contextual meaning. Semantic correctness outweighs beauty. Then judge realism, coherent anatomy/objects, plausible action and relationships, lack of unintended text/logos, and useful 16:9 composition. Reject generic stock imagery, literal depictions of an idiom when the sentence uses its figurative meaning, decorative symbolism, animation, illustration, or scenes that omit a defining detail. Set acceptable=false only if all three would actively misteach the meaning. Candidate numbers correspond to attachment order. Return only schema-valid JSON.`;
-    const args = [
-      'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-      '-m', MODEL,
-      ...candidates.flatMap(path => ['-i', path]),
-      '--output-schema', schemaPath, '-o', decisionPath, '-',
-    ];
-    await runCodex(args, prompt);
-  }
-  const decision = JSON.parse(readFileSync(decisionPath, 'utf8'));
-  if (![1, 2, 3].includes(decision.winner) || typeof decision.acceptable !== 'boolean') {
-    throw new Error(`Invalid image decision for ${target.imageId}`);
+  let decision;
+  let correction = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (!existsSync(decisionPath)) {
+        const prompt = `Act as a strict visual editor for an American English learning app. The three attached images were generated for this learning target:\n${JSON.stringify(target.learningTarget)}\n\nGeneration brief:\n${target.prompt}\n\nChoose the image that most directly and unambiguously communicates the EXACT contextual meaning. Semantic correctness outweighs beauty. Then judge realism, coherent anatomy/objects, plausible action and relationships, lack of unintended text/logos, and useful 16:9 composition. Reject generic stock imagery, literal depictions of an idiom when the sentence uses its figurative meaning, decorative symbolism, animation, illustration, or scenes that omit a defining detail. Set acceptable=false only if all three would actively misteach the meaning. Candidate numbers correspond to attachment order. Return only schema-valid JSON.${correction}`;
+        const args = [
+          'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
+          '-m', MODEL,
+          ...candidates.flatMap(path => ['-i', path]),
+          '--output-schema', schemaPath, '-o', decisionPath, '-',
+        ];
+        await runCodex(args, prompt);
+      }
+      decision = JSON.parse(readFileSync(decisionPath, 'utf8'));
+      if (![1, 2, 3].includes(decision.winner) || typeof decision.acceptable !== 'boolean') {
+        throw new Error(`Invalid image decision for ${target.imageId}`);
+      }
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      correction = ` Your previous response failed validation: ${error instanceof Error ? error.message : String(error)}.`;
+      if (existsSync(decisionPath)) unlinkSync(decisionPath);
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000 * (attempt + 1)));
+    }
   }
   if (!decision.acceptable) {
     process.stderr.write(`REJECTED ${target.imageId}: ${decision.reason}\n`);
@@ -89,4 +108,8 @@ async function worker() {
 }
 await Promise.all(Array.from({ length: Math.min(concurrency, payload.targets.length) }, () => worker()));
 const rejected = results.filter(result => result && !result.accepted);
-if (rejected.length > 0) throw new Error(`${rejected.length} image target(s) have no acceptable candidate`);
+writeFileSync(join(workDir, 'rejected-targets.json'), `${JSON.stringify({
+  ...payload,
+  targets: rejected.map(result => ({ ...result.target, rejectionReason: result.reason })),
+}, null, 2)}\n`, { mode: 0o600 });
+process.stderr.write(`Selected an acceptable image for ${results.length - rejected.length}/${results.length} target(s); ${rejected.length} need another generation round\n`);
