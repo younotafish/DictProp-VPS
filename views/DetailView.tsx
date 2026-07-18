@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -10,6 +10,7 @@ import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../components/PlaybackSpeedToggle';
 import { HighlightedSentence, stripSentenceMarkers } from '../components/HighlightedSentence';
 import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
+import { SentenceAnalysisView } from '../components/SentenceAnalysisView';
 import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
 import { getMasteryColors } from '../components/mastery';
 import ReactMarkdown from 'react-markdown';
@@ -177,6 +178,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
+  const [sentencePage, setSentencePage] = useState<'sentence' | 'analysis'>('sentence');
   const cardCollapsed = true; // sentence review: the sentence is always the full-page focus (the source-word card was removed — open any saved word via its footnote)
   // Sentence review — what tapping a word does. true (default) = play from that word (current behaviour);
   // false = look up the dotted [[uncommon]] term via the bottom-right search, like every other view. Persisted.
@@ -249,6 +251,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   useEffect(() => {
     if (prevGroupIndexRef.current !== currentGroupIndex) {
       prevGroupIndexRef.current = currentGroupIndex;
+      setSentencePage('sentence');
       setCurrentItemIndex(0);
     }
   }, [currentGroupIndex]);
@@ -576,6 +579,21 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // (same as the item-review double-click). The sentence text keeps its own onClick handler, so we act
     // on the blank area only; ↑/↓ swipes still switch sentences. ──
     if (sentenceMode) {
+      if (isHorizontalSwipe) {
+        stopCurrent();
+        if (sentencePage === 'analysis') setSentencePage('sentence');
+        else if (diffX < 0) setSentencePage('analysis');
+        else onClose();
+        touchStartX.current = null;
+        touchStartY.current = null;
+        return;
+      }
+      // The analysis page owns vertical scrolling and uses horizontal swipes only for returning.
+      if (sentencePage === 'analysis') {
+        touchStartX.current = null;
+        touchStartY.current = null;
+        return;
+      }
       // A still tap inside the expanded word card is handled by its onClick (eyes-free zone read),
       // so the sentence play/pause/remember below ignores it — avoids a touch + synthesized-click double-fire.
       if (isStillTap && !onControl && !tapTarget?.closest('[data-sentence-hero]') && !tapTarget?.closest('[data-sentence-image]') && !tapTarget?.closest('[data-word-card-scroll]')) {
@@ -1447,7 +1465,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Keyboard navigation
   useKeyboardNavigation({
-    onEscape: onClose,
+    onEscape: sentencePage === 'analysis' ? () => setSentencePage('sentence') : onClose,
     onArrowLeft: navLeft,
     onArrowRight: navRight,
     onArrowUp: navUp,
@@ -1857,6 +1875,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <ArrowLeft size={18} /> Sentences
               </button>
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setSentencePage('analysis'); }}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-700"
+                  title="Sentence analysis"
+                  aria-label="Open sentence analysis"
+                >
+                  <BookOpenText size={15} />
+                </button>
                 {!isMobile && (
                   <button
                     onClick={(e) => { e.stopPropagation(); setTapToPlay(v => { const next = !v; try { localStorage.setItem('dictprop_sentence_tap_play', next ? '1' : '0'); } catch { /* ignore */ } return next; }); }}
@@ -1994,6 +2021,20 @@ export const DetailView: React.FC<DetailViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+      {sentenceMode && currentSentence && sentencePage === 'analysis' && (
+        <SentenceAnalysisView
+          sentence={currentSentence.data as SentenceData}
+          position={sentenceIndex + 1}
+          total={sentenceItems?.length ?? 0}
+          imageSrc={sentenceImageDirectSrc}
+          imageVersion={imageReloadTick[currentSentence.data.id] ?? 0}
+          onBack={() => setSentencePage('sentence')}
+          onSearch={(term) => { setSentencePage('sentence'); handleVocabSearch(term); }}
+          onMissingImage={onLazyLoadImage}
+          onTouchStart={onContentTouchStart}
+          onTouchEnd={onContentTouchEnd}
+        />
       )}
       {/* Word card — the supporting source-word detail. Hidden in sentence review when collapsed
           (so the sentence owns the page); always shown in regular card mode. */}

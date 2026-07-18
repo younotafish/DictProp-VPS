@@ -1,3 +1,5 @@
+import { isSentenceAnalysis } from './sentence-analysis.js';
+
 const ITEM_TYPES = new Set(['vocab', 'phrase', 'sentence']);
 const MAX_ID_LENGTH = 200;
 
@@ -44,6 +46,13 @@ export function validateStoredItem(value: unknown): string | null {
     typeof value.data.text !== 'string' || value.data.text.length === 0 || typeof value.data.sourceWord !== 'string'
   )) {
     return 'sentence text and sourceWord are required';
+  }
+  if (value.type === 'sentence' && value.data.analysis !== undefined && !isSentenceAnalysis(value.data.analysis)) {
+    return 'sentence analysis is invalid';
+  }
+  if (value.type === 'sentence' && value.data.analysisGeneratedAt !== undefined &&
+      !isFiniteNonNegative(value.data.analysisGeneratedAt)) {
+    return 'sentence analysisGeneratedAt is invalid';
   }
   return null;
 }

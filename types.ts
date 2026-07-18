@@ -38,6 +38,30 @@ export interface SearchResult {
   originalQuery?: string; // Original Chinese input if translated
 }
 
+export type AmericanEnglishStatus = 'american' | 'shared' | 'not_american';
+
+export interface SentenceAnalysisTerm {
+  term: string;
+  chinese: string;
+  ipa: string;
+  originalMeaning: string;
+  synonyms: string[];
+  antonyms: string[];
+  examples: string[];
+  historicalEvolution: string;
+}
+
+export interface SentenceAnalysis {
+  translation: string;
+  americanEnglish: {
+    status: AmericanEnglishStatus;
+    explanation: string;
+  };
+  terms: SentenceAnalysisTerm[];
+  /** Photorealistic, text-free landscape prompt depicting the complete sentence. */
+  imagePrompt: string;
+}
+
 // Sentence — saved example sentence from a vocabulary card
 export interface SentenceData {
   id: string;
@@ -45,6 +69,8 @@ export interface SentenceData {
   sourceWord: string; // The vocab word this sentence came from
   sourceSense?: string; // The sense label of the source word
   imageUrl?: string; // Optional user-attached image (base64 data URI in memory; 'idb:stored'/'server:has_image' marker once offloaded)
+  analysis?: SentenceAnalysis;
+  analysisGeneratedAt?: number;
 }
 
 // SRS Data — FSRS v6 with optional fields for lazily migrated legacy rows
