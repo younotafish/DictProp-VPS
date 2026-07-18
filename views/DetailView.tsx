@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -55,14 +55,17 @@ const fileToDataUri = (file: Blob): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-// Pull the first image out of a clipboard/drop DataTransferItemList, or null if there is none.
-const extractImageFromClipboard = (items: DataTransferItemList | null | undefined): File | null => {
-  if (!items) return null;
-  for (const it of Array.from(items)) {
+// Pull the first image out of a clipboard/drop transfer. Safari may expose pasted photos through
+// either `items` or `files`, depending on the iOS/iPadOS version and source app.
+const extractImageFromTransfer = (transfer: DataTransfer | null | undefined): File | null => {
+  for (const it of Array.from(transfer?.items ?? [])) {
     if (it.kind === 'file' && it.type.startsWith('image/')) {
       const f = it.getAsFile();
       if (f) return f;
     }
+  }
+  for (const file of Array.from(transfer?.files ?? [])) {
+    if (file.type.startsWith('image/')) return file;
   }
   return null;
 };
@@ -353,7 +356,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (!sentenceModeRef.current || interactionLocked || showActionMenu) return;
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
-      const file = extractImageFromClipboard(e.clipboardData?.items);
+      const file = extractImageFromTransfer(e.clipboardData);
       if (!file) return;                              // no image → let the paste proceed normally
       e.preventDefault();
       setShowImagePanel(true);                        // surface the panel so the upload spinner is visible
@@ -2398,7 +2401,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             data-image-panel
             tabIndex={-1}
             onPaste={(e) => {
-              const f = extractImageFromClipboard(e.clipboardData?.items);
+              const f = extractImageFromTransfer(e.clipboardData);
               if (f) { e.preventDefault(); void attachImageFromFile(f); }
             }}
             onDragOver={(e) => { e.preventDefault(); setImageDragOver(true); }}
@@ -2406,7 +2409,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             onDrop={(e) => {
               e.preventDefault();
               setImageDragOver(false);
-              void attachImageFromFile(e.dataTransfer?.files?.[0] ?? null);
+              void attachImageFromFile(extractImageFromTransfer(e.dataTransfer));
             }}
             className={`bg-white rounded-2xl shadow-2xl border p-4 max-w-md ml-auto outline-none transition-colors ${imageDragOver ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'}`}
           >
@@ -2425,14 +2428,39 @@ export const DetailView: React.FC<DetailViewProps> = ({
               </div>
             ) : (
               <>
-                <button
-                  onClick={() => imageFileInputRef.current?.click()}
-                  className="w-full border-2 border-dashed border-slate-200 rounded-xl py-6 flex flex-col items-center gap-1 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
-                >
-                  <ImagePlus size={22} />
-                  <span className="text-xs font-medium">Tap to choose a photo</span>
-                  <span className="text-[11px] text-slate-400">or paste (⌘V) / drop an image here</span>
-                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => imageFileInputRef.current?.click()}
+                    className="min-h-20 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+                  >
+                    <ImagePlus size={22} />
+                    <span className="text-xs font-medium">Choose photo</span>
+                  </button>
+                  <div className="relative min-h-20 overflow-hidden border-2 border-dashed border-slate-200 rounded-xl text-slate-500 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-colors">
+                    <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1">
+                      <ClipboardPaste size={22} />
+                      <span className="text-xs font-medium">Paste image</span>
+                      <span className="text-[11px] text-slate-400">Long press</span>
+                    </div>
+                    <div
+                      contentEditable
+                      suppressContentEditableWarning
+                      role="textbox"
+                      aria-label="Paste an image"
+                      inputMode="none"
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.currentTarget.replaceChildren();
+                        const file = extractImageFromTransfer(e.clipboardData);
+                        if (file) void attachImageFromFile(file);
+                        else setImageError('The clipboard does not contain an image.');
+                      }}
+                      onInput={(e) => e.currentTarget.replaceChildren()}
+                      className="relative z-10 min-h-20 w-full cursor-text select-text text-transparent caret-transparent outline-none"
+                    />
+                  </div>
+                </div>
                 <input
                   ref={imageFileInputRef}
                   type="file"
