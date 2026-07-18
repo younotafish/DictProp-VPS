@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { Hono } from 'hono';
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-routes-test-'));
 process.env.DEV_AUTH_BYPASS = '1';
@@ -151,6 +152,31 @@ test('runtime middleware exposes readiness/request ids and rejects cross-site mu
   assert.deepEqual(await response.json(), {
     error: 'Bulk image responses are disabled; use the image endpoints',
   });
+});
+
+test('text AI routes do not reject concurrent request bursts locally', async () => {
+  const fakeAiRoutes = new Hono();
+  let active = 0;
+  let peakActive = 0;
+  fakeAiRoutes.post('/analyze', async c => {
+    active++;
+    peakActive = Math.max(peakActive, active);
+    await new Promise(resolve => setTimeout(resolve, 25));
+    active--;
+    return c.json({ ok: true });
+  });
+
+  const aiApp = createApp({ logging: false, serveStaticFiles: false, aiRouter: fakeAiRoutes });
+  const responses = await Promise.all(Array.from({ length: 31 }, (_, index) =>
+    aiApp.request('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: `word-${index}` }),
+    })
+  ));
+
+  assert.deepEqual(new Set(responses.map(response => response.status)), new Set([200]));
+  assert.equal(peakActive, 31);
 });
 
 test('image backfill validates scope and reports an empty job', async () => {

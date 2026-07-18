@@ -75,14 +75,10 @@ const looksLikeSentence = (text: string): boolean => {
   return startsLikeSentence || hasAuxVerb;
 };
 
-// How many queue items analyze at once. Batch-import proves the upstream tolerates 5 concurrent analyze
-// calls; 3 keeps the popup snappy while a sentence's extracted expressions resolve in parallel.
-const QUEUE_CONCURRENCY = 3;
-
 // Global cap on concurrent illustration requests across ALL in-flight results. The 1-vCPU VPS chokes when
 // many image generations fire at once (the reason batch-import defers images to a separate phase), so even
-// though we now analyze up to QUEUE_CONCURRENCY words in parallel, their image generation is funneled
-// through these shared slots — keeping image load flat regardless of how many analyses finish together.
+// though all pending text analyses start immediately, their image generation is funneled through these
+// shared slots — keeping image load flat regardless of how many analyses finish together.
 const MAX_CONCURRENT_IMAGE_GENS = 2;
 let activeImageGens = 0;
 const imageGenWaiters: Array<() => void> = [];
@@ -108,7 +104,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // When a DB hit (already-saved word) becomes ready, auto-open its card. AI results don't set this.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const inFlightRef = useRef<Set<string>>(new Set()); // queue items currently processing (concurrency gate)
+  const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
   const savedVocabIdsRef = useRef<Set<string>>(new Set()); // saves that happened while image generation was in flight
   const queueRef = useRef<QueueItem[]>([]); // fresh queue for synchronous dedup/open checks
   const [scanning, setScanning] = useState(false); // sentence → expression scan in flight (pre-enqueue)
@@ -324,10 +320,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [onRefreshReplace, onGeneratedImage, findSavedByWord]);
 
   // Process a single queue item: comparison, saved-card reuse, or a fresh analyze. The id was added to
-  // inFlightRef by the driver effect before this ran; every terminal path calls done() to free the slot.
+  // processingIdsRef by the driver effect before this ran; every terminal path calls done().
   const processItem = useCallback((item: QueueItem) => {
     const itemId = item.id;
-    const done = () => { inFlightRef.current.delete(itemId); };
+    const done = () => { processingIdsRef.current.delete(itemId); };
 
     // Comparison items run compareWords (the heavy call uses curl server-side) and persist on success.
     if (item.kind === 'compare') {
@@ -383,17 +379,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }).finally(done);
   }, [findSavedByWord, finalizeResult, showError, onCompareReady]);
 
-  // Driver: keep up to QUEUE_CONCURRENCY items processing at once. Runs whenever the queue changes; each
-  // started item is gated by inFlightRef so a re-render mid-flight never starts it twice. Completions
-  // delete from inFlightRef and flip status (→ re-render), which re-runs this and fills the freed slot.
+  // Driver: start every pending text-model job immediately. DeepInfra owns provider capacity; locally we
+  // only de-duplicate starts so a re-render while a request is in flight cannot submit the same item twice.
   useEffect(() => {
-    let free = QUEUE_CONCURRENCY - inFlightRef.current.size;
-    if (free <= 0) return;
     for (const item of queue) {
-      if (free <= 0) break;
-      if (item.status !== 'pending' || inFlightRef.current.has(item.id)) continue;
-      inFlightRef.current.add(item.id);
-      free--;
+      if (item.status !== 'pending' || processingIdsRef.current.has(item.id)) continue;
+      processingIdsRef.current.add(item.id);
       processItem(item);
     }
   }, [queue, processItem]);

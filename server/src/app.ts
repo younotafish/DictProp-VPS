@@ -21,6 +21,7 @@ import { ttsRoutes } from './routes/tts.js';
 export interface AppOptions {
   logging?: boolean;
   serveStaticFiles?: boolean;
+  aiRouter?: Hono;
 }
 
 const ALLOWED_ORIGINS = [
@@ -127,12 +128,8 @@ export function createApp(options: AppOptions = {}) {
 
   app.route('/api/auth', authRoutes);
   app.use('/api/*', requireAuth);
-  const textAiRateLimit = createRateLimit(30, 5 * 60 * 1000);
-  const textAiConcurrency = createConcurrencyLimit(2);
-  for (const path of ['/api/analyze', '/api/extract-vocabulary', '/api/compare']) {
-    app.use(path, textAiRateLimit);
-    app.use(path, textAiConcurrency);
-  }
+  // Text-model requests are remote I/O and DeepInfra owns their capacity limits. Rejecting them
+  // locally made the third concurrent Global Search fail before it ever reached the provider.
   // The image-generation module owns a single FIFO queue, so concurrent sense images wait instead
   // of receiving a 503. This limit controls abuse without breaking a few multi-sense searches.
   app.use('/api/generate-image', createRateLimit(60, 5 * 60 * 1000));
@@ -141,7 +138,7 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
   app.use('/api/import', createConcurrencyLimit(1));
   app.route('/api', itemsRoutes);
-  app.route('/api', aiRoutes);
+  app.route('/api', options.aiRouter ?? aiRoutes);
   app.route('/api', imageRoutes);
   app.route('/api', ttsRoutes);
   app.route('/api', comparisonsRoutes);
