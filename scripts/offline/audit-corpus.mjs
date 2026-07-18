@@ -12,6 +12,8 @@ if (!inputArg || !outputArg) {
 
 const MODEL = 'gpt-5.6-sol';
 const independentReview = process.env.AUDIT_REVIEW_PASS === '1';
+const activeChildren = new Set();
+let aborting = false;
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'audit-work'));
@@ -232,6 +234,7 @@ function validateResult(batch, parsed) {
 function runCodex(args, prompt) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn('/usr/local/bin/codex', args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    activeChildren.add(child);
     let stderr = '';
     let hardKillTimeout;
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
@@ -239,8 +242,12 @@ function runCodex(args, prompt) {
       child.kill('SIGTERM');
       hardKillTimeout = setTimeout(() => child.kill('SIGKILL'), 10_000);
     }, 12 * 60 * 1000);
-    child.on('error', reject);
+    child.on('error', error => {
+      activeChildren.delete(child);
+      reject(error);
+    });
     child.on('exit', (code, signal) => {
+      activeChildren.delete(child);
       clearTimeout(timeout);
       clearTimeout(hardKillTimeout);
       if (code === 0) resolvePromise();
@@ -269,7 +276,7 @@ async function runBatch(batch, index) {
       }
       return validateResult(batch, JSON.parse(readFileSync(resultPath, 'utf8')));
     } catch (error) {
-      if (attempt === 2) throw error;
+      if (aborting || attempt === 2) throw error;
       correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Correct every identity, card, and example index; do not omit any requested decision.`;
       if (existsSync(resultPath)) unlinkSync(resultPath);
       await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000 * (attempt + 1)));
@@ -317,6 +324,14 @@ async function auditWorker() {
     batchResults[batchIndex] = await runBatch(batches[batchIndex], batchIndex);
   }
 }
+
+async function terminateActiveChildren() {
+  aborting = true;
+  for (const child of activeChildren) child.kill('SIGTERM');
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000));
+  for (const child of activeChildren) child.kill('SIGKILL');
+}
+
 if (assembleOnly) {
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
     const resultPath = resultPathFor(batches[batchIndex], batchIndex);
@@ -331,7 +346,12 @@ if (assembleOnly) {
     }
   }
 } else {
-  await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => auditWorker()));
+  try {
+    await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => auditWorker()));
+  } catch (error) {
+    await terminateActiveChildren();
+    throw error;
+  }
 }
 
 for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
