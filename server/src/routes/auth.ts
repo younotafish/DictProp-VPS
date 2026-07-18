@@ -8,12 +8,14 @@ import { verifyGoogleIdToken } from '../google-auth.js';
 import {
   findUserByGoogleId,
   createUserAndClaimItems,
+  getUserCount,
   createSession,
   getSessionUser,
   deleteSession,
   approveUser,
   listAllUsers,
 } from '../db.js';
+import { isOwnerUser, ownerLoginDecision } from '../owner-access.js';
 
 export const authRoutes = new Hono();
 
@@ -117,9 +119,14 @@ authRoutes.get('/callback', async (c) => {
     return c.json({ error: 'Invalid id_token claims' }, 400);
   }
 
-  // Find or create user
+  // This is a private single-owner deployment. Existing data belongs to the first admin account;
+  // unknown Google identities are rejected before they can create a user or session.
   let userRow = findUserByGoogleId(payload.sub);
-  if (!userRow) {
+  const access = ownerLoginDecision(userRow, payload.email, getUserCount(), env.OWNER_GOOGLE_EMAIL);
+  if (access === 'deny') {
+    return c.json({ error: 'This DictProp instance is private.' }, 403);
+  }
+  if (access === 'bootstrap') {
     userRow = createUserAndClaimItems({
       googleId: payload.sub,
       email: payload.email,
@@ -127,6 +134,7 @@ authRoutes.get('/callback', async (c) => {
       photoUrl: payload.picture || null,
     });
   }
+  if (!userRow) return c.json({ error: 'This DictProp instance is private.' }, 403);
 
   // Create session
   const session = createSession(userRow.id);
@@ -158,6 +166,11 @@ authRoutes.get('/me', (c) => {
   if (!userRow) {
     return c.json({ error: 'Session expired' }, 401);
   }
+  if (!isOwnerUser(userRow, env.OWNER_GOOGLE_EMAIL)) {
+    deleteSession(token);
+    deleteCookie(c, 'session', { path: '/' });
+    return c.json({ error: 'owner_only' }, 403);
+  }
 
   return c.json({
     user: {
@@ -187,7 +200,7 @@ authRoutes.post('/approve/:userId', (c) => {
   if (!token) return c.json({ error: 'Not authenticated' }, 401);
 
   const callerRow = getSessionUser(token);
-  if (!callerRow || !callerRow.is_admin) {
+  if (!callerRow || !isOwnerUser(callerRow, env.OWNER_GOOGLE_EMAIL)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
 
@@ -201,7 +214,7 @@ authRoutes.get('/users', (c) => {
   if (!token) return c.json({ error: 'Not authenticated' }, 401);
 
   const callerRow = getSessionUser(token);
-  if (!callerRow || !callerRow.is_admin) {
+  if (!callerRow || !isOwnerUser(callerRow, env.OWNER_GOOGLE_EMAIL)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
 

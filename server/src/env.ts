@@ -22,6 +22,7 @@ export const env = {
   DATA_DIR: process.env.DATA_DIR || resolve(__dirname, '../../data'),
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
+  OWNER_GOOGLE_EMAIL: process.env.OWNER_GOOGLE_EMAIL || '',
   PUBLIC_ORIGIN: (process.env.PUBLIC_ORIGIN || '').replace(/\/$/, ''),
   // Local dev only: when '1', skip Google auth and use a synthetic admin user. Never set in prod.
   DEV_AUTH_BYPASS: process.env.DEV_AUTH_BYPASS === '1',

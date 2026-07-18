@@ -204,5 +204,6 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
   - `PORT` — server port (default: 3001 local, 3000 in Docker)
   - `DATA_DIR` — SQLite database directory (default: ./data)
   - `PUBLIC_ORIGIN` — optional canonical OAuth origin (production safely defaults to `https://dictprop.online`)
+  - `OWNER_GOOGLE_EMAIL` — owner allowlist for bootstrapping a fresh database; existing deployments also require the first admin account
 - VPS `.env` is at `/opt/dictprop-vps/.env` (not managed by git)
 - GitHub Actions secret `VPS_SSH_KEY` — VPS SSH private key for automated deploys

@@ -2,6 +2,7 @@ import { Context, Next } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { getSessionUser, UserRow } from '../db.js';
 import { env } from '../env.js';
+import { isOwnerUser } from '../owner-access.js';
 
 export type AuthUser = {
   id: string;
@@ -57,6 +58,10 @@ export async function requireAuth(c: Context, next: Next) {
   const userRow = getSessionUser(token);
   if (!userRow) {
     return c.json({ error: 'Session expired' }, 401);
+  }
+
+  if (!isOwnerUser(userRow, env.OWNER_GOOGLE_EMAIL)) {
+    return c.json({ error: 'owner_only' }, 403);
   }
 
   if (!userRow.is_approved) {

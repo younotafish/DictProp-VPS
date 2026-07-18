@@ -56,7 +56,7 @@ function clearCachedAuth(): void {
 export async function checkAuth(): Promise<{ user: AuthUser | null; pending: boolean; offline?: boolean }> {
   try {
     const res = await fetch('/api/auth/me');
-    if (res.status === 401) {
+    if (res.status === 401 || res.status === 403) {
       clearCachedAuth(); // genuinely signed out
       return { user: null, pending: false };
     }
