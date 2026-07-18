@@ -80,9 +80,9 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
   const footnotesEnabled = !!(findSaved && onOpenCard);
   // "Tap any (unsaved) word to look it up" — only in look-up mode (onSearchWord set, no play callback).
   const lookupAnyWord = !!(searchAnyWord && onSearchWord && !onPlayFromWord);
-  // Tokenize plain runs (split into individually-addressable words) whenever we play from words OR
-  // need to footnote saved words. Look-up-only callers (e.g. word-card examples) keep the legacy path.
-  const tokenize = !!onPlayFromWord || footnotesEnabled;
+  // Tokenize plain runs whenever words need individual playback, saved-card lookup, or tap-any lookup.
+  // Shared display-only callers keep the legacy unsplit path.
+  const tokenize = !!onPlayFromWord || footnotesEnabled || lookupAnyWord;
 
   const swallowSelection = () => !!window.getSelection()?.toString().trim();
 

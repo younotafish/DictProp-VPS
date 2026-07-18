@@ -29,7 +29,8 @@ const CardReviewPopup = lazy(() => import('./components/CardReviewPopup').then(m
 const KeyboardHelpModal = lazy(() => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
 const StudyEnhanced = lazy(() => import('./views/StudyEnhanced').then(module => ({ default: module.StudyEnhanced })));
 const SentencesView = lazy(() => import('./views/SentencesView').then(module => ({ default: module.SentencesView })));
-const DetailView = lazy(() => import('./views/DetailView').then(module => ({ default: module.DetailView })));
+const loadDetailView = () => import('./views/DetailView').then(module => ({ default: module.DetailView }));
+const DetailView = lazy(loadDetailView);
 
 // Create lightweight cache for localStorage (target: <1MB for 3000+ items)
 // Only includes fields needed for list display + SRS scheduling
@@ -306,6 +307,16 @@ const App: React.FC = () => {
     return saved as ViewState;
   });
 
+  // Sentence detail is a substantial lazy chunk. Start fetching it as soon as the list is visible so
+  // tapping a sentence never pays the network/module-parse cost before the full-screen view can mount.
+  useEffect(() => {
+    if (currentView === 'sentences') void loadDetailView().catch(() => {});
+  }, [currentView]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadDetailView().catch(() => {}); }, 2_000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   // Persist current view
   useEffect(() => {
     localStorage.setItem('app_current_view', currentView);
@@ -575,6 +586,10 @@ const App: React.FC = () => {
   const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
   // Sentence items
   const sentenceItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type === 'sentence'), [savedItems]);
+  const sentenceItemsById = useMemo(
+    () => new Map(sentenceItems.map(item => [item.data.id, item])),
+    [sentenceItems],
+  );
   const sentenceDueCount = useMemo(() => {
     const now = Date.now();
     return sentenceItems.filter(s => !s.isArchived && ((s.srs?.nextReview ?? 0) <= now)).length;
@@ -602,6 +617,10 @@ const App: React.FC = () => {
   // `sentenceItems` (when present) puts DetailView in "sentence mode": it is aligned 1:1 with
   // `groups` — groups[i] is the resolved source card for the saved sentence sentenceItems[i].
   const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number, sentenceItems?: StoredItem[] } | null>(null);
+  const liveDetailSentenceItems = useMemo(
+    () => detailContext?.sentenceItems?.map(snapshot => sentenceItemsById.get(snapshot.data.id) ?? snapshot),
+    [detailContext?.sentenceItems, sentenceItemsById],
+  );
 
   // Footnote card popup — keyed by the word's SPELLING (so deleting one sense doesn't lose the rest)
   // plus the sense to open on. popupItems = every saved sense of that word, for in-popup paging; it's
@@ -2687,10 +2706,18 @@ const App: React.FC = () => {
   // sentence as its sole example) when the source word no longer exists.
   const handleViewSentence = useCallback((ordered: StoredItem[], index: number) => {
     if (ordered.length === 0) return;
+    const vocabBySpelling = new Map<string, StoredItem[]>();
+    for (const item of allActiveItems) {
+      if (item.type !== 'vocab') continue;
+      const spelling = getItemSpelling(item);
+      const matches = vocabBySpelling.get(spelling);
+      if (matches) matches.push(item);
+      else vocabBySpelling.set(spelling, [item]);
+    }
     const groups: ItemGroup[] = ordered.map(s => {
       const d = s.data as SentenceData;
       const w = (d.sourceWord || '').toLowerCase().trim();
-      const matches = allActiveItems.filter(i => i.type === 'vocab' && getItemSpelling(i) === w);
+      const matches = vocabBySpelling.get(w) ?? [];
       const exact = d.sourceSense ? matches.find(i => getItemSense(i) === d.sourceSense) : undefined;
       let resolved: StoredItem | undefined = exact || matches[0];
       if (!resolved) {
@@ -2994,6 +3021,7 @@ const App: React.FC = () => {
       )}
 
       {detailContext && (
+        <Suspense fallback={<div className="fixed inset-0 z-[54] grid place-items-center bg-white"><Loader2 className="animate-spin text-indigo-500" /></div>}>
         <ErrorBoundary
           onReset={() => setDetailContext(null)}
           fallbackMessage="Something went wrong displaying this card. Your data is safe — returning to notebook."
@@ -3002,14 +3030,7 @@ const App: React.FC = () => {
               groups={detailContext.groups}
               initialGroupIndex={detailContext.groupIndex}
               initialItemIndex={detailContext.itemIndex}
-              sentenceItems={detailContext.sentenceItems?.map(s => {
-                // Refresh each snapshot sentence with its LIVE saved copy (fresh SRS) so remembering
-                // actually shows/records progress. detailContext.sentenceItems is frozen at open time and
-                // never sees updateSRS bumps; sentences also aren't in activeItems (no project), so the
-                // live source is the project-independent `sentenceItems` memo. Order preserved; a
-                // since-deleted sentence falls back to its snapshot (deletion is handled separately).
-                return sentenceItems.find(li => li.data.id === s.data.id) ?? s;
-              })}
+              sentenceItems={liveDetailSentenceItems}
               onClose={() => setDetailContext(null)}
               onSave={handleSave}
               onDelete={handleDelete}
@@ -3031,6 +3052,7 @@ const App: React.FC = () => {
               onAttachImage={handleAttachSentenceImage}
           />
         </ErrorBoundary>
+        </Suspense>
       )}
 
       {popupItems.length > 0 && cardPopup && (

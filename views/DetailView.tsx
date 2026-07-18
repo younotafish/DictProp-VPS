@@ -70,6 +70,16 @@ const extractImageFromTransfer = (transfer: DataTransfer | null | undefined): Fi
   return null;
 };
 
+const readImageFromSystemClipboard = async (): Promise<Blob | null> => {
+  if (!navigator.clipboard?.read) return null;
+  const clipboardItems = await navigator.clipboard.read();
+  for (const item of clipboardItems) {
+    const imageType = item.types.find(type => type.startsWith('image/'));
+    if (imageType) return item.getType(imageType);
+  }
+  return null;
+};
+
 // Copy text to the clipboard. Prefers the async Clipboard API (needs HTTPS — dictprop.online is);
 // falls back to a hidden-textarea execCommand for older/unsupported contexts. Returns success.
 const copyTextToClipboard = async (text: string): Promise<boolean> => {
@@ -175,14 +185,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
   });
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
   const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
-  const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(10);
+  const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(20);
   const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
   const [, setAutoPlayNowTick] = useState(0);
   const [isSentenceAutoPlaying, setIsSentenceAutoPlaying] = useState(false);
-  const [sentenceGap, setSentenceGap] = useState(3000); // ms of silence between every read (repeats + distinct sentences)
+  const [showSentenceAutoPlayPanel, setShowSentenceAutoPlayPanel] = useState(false);
+  const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between every read (repeats + distinct sentences)
   const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
   // Whole-session preload progress (audio clips + images), null when idle/done. See the preload effect below.
   const [preloadProgress, setPreloadProgress] = useState<{ done: number; total: number } | null>(null);
+  const sessionPreloadStartedRef = useRef(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [rememberInfo, setRememberInfo] = useState<{
     intervalDays: number;
@@ -313,6 +325,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [imageDragOver, setImageDragOver] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const imageFabTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Per-sentence image-reload counter. Bumped ONLY when an image is (re)attached, so the OfflineImage
   // key changes on a real image change but NOT on an SRS review (which merely bumps the item's
   // updatedAt). Keying on updatedAt made every "Remember" remount + re-fade the picture — the flash.
@@ -346,6 +359,43 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setImageUploading(false);
     }
   }, [onAttachImage]);
+
+  const pasteImageFromSystemClipboard = useCallback(async () => {
+    setImageError(null);
+    setShowImagePanel(true);
+    if (!navigator.clipboard?.read) {
+      setImageError('Direct clipboard access is unavailable. Long-press Paste image instead.');
+      return;
+    }
+    try {
+      const image = await readImageFromSystemClipboard();
+      if (!image) {
+        setImageError('The clipboard does not contain an image.');
+        return;
+      }
+      await attachImageFromFile(image);
+    } catch {
+      setImageError('Clipboard access was blocked. Long-press Paste image instead.');
+    }
+  }, [attachImageFromFile]);
+
+  const handleImageFabTap = useCallback(() => {
+    if (imageFabTapTimerRef.current) {
+      clearTimeout(imageFabTapTimerRef.current);
+      imageFabTapTimerRef.current = null;
+      void pasteImageFromSystemClipboard();
+      return;
+    }
+    imageFabTapTimerRef.current = setTimeout(() => {
+      imageFabTapTimerRef.current = null;
+      setImageError(null);
+      setShowImagePanel(true);
+    }, 400);
+  }, [pasteImageFromSystemClipboard]);
+
+  useEffect(() => () => {
+    if (imageFabTapTimerRef.current) clearTimeout(imageFabTapTimerRef.current);
+  }, []);
 
   // ⌘V / Ctrl+V anywhere in sentence mode attaches a pasted image to the current sentence. Uses the
   // `paste` event (which carries clipboardData). Stands down when a text field is focused, when another
@@ -414,6 +464,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  // A two-finger word chord owns both touch endings; blank-space sentence gestures must ignore them.
+  const mobileWordChordActiveRef = useRef(false);
+  const suppressMobileWordClickUntilRef = useRef(0);
+  useEffect(() => {
+    const finishMobileWordChord = (e: TouchEvent) => {
+      if (!mobileWordChordActiveRef.current || e.touches.length > 0) return;
+      mobileWordChordActiveRef.current = false;
+      suppressMobileWordClickUntilRef.current = Date.now() + 500;
+    };
+    window.addEventListener('touchend', finishMobileWordChord, { passive: true });
+    window.addEventListener('touchcancel', finishMobileWordChord, { passive: true });
+    return () => {
+      window.removeEventListener('touchend', finishMobileWordChord);
+      window.removeEventListener('touchcancel', finishMobileWordChord);
+    };
+  }, []);
   // Sentence-mode eyes-free taps: last tap (time + position) so a quick second tap reads as a double-tap.
   const lastSentenceTapRef = useRef<{ t: number; x: number; y: number } | null>(null);
   // Guard so a remember can't fire twice from one gesture (touch double-tap + a synthesized dblclick).
@@ -448,6 +514,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
   
   const onContentTouchEnd = (e: React.TouchEvent) => {
+    if (mobileWordChordActiveRef.current) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
     if (touchStartX.current === null || touchStartY.current === null || isAnimating) return;
     
     // Check if user is selecting text - don't interfere with text selection on iOS
@@ -930,6 +1001,19 @@ export const DetailView: React.FC<DetailViewProps> = ({
     primeKeepAlive();
   }, []);
 
+  const handleSentenceAutoPlayFab = useCallback(() => {
+    if (!isSentenceAutoPlaying) {
+      toggleSentenceAutoPlay();
+      setShowSentenceAutoPlayPanel(true);
+      return;
+    }
+    setShowSentenceAutoPlayPanel(open => !open);
+  }, [isSentenceAutoPlaying, toggleSentenceAutoPlay]);
+
+  useEffect(() => {
+    if (!isSentenceAutoPlaying) setShowSentenceAutoPlayPanel(false);
+  }, [isSentenceAutoPlaying]);
+
   // Sentences to read for a card during auto-play: a phrase's query, or a vocab card's example
   // sentences (both — capped at 2 to match the E / Cmd+1·2 readers). Stripped, empties dropped.
   const examplesOf = (item: StoredItem | null): string[] => {
@@ -942,10 +1026,17 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return (Array.isArray(ex) ? ex.slice(0, 2) : []).map(stripSentenceMarkers).filter(Boolean);
   };
 
-  // Preload the WHOLE session up front (once, on open) so a poor/unstable network can't interrupt
+  // Once auto-play is requested, preload the WHOLE session so a poor/unstable network can't interrupt
   // review: warm every example/saved sentence's audio + timings, and pull every card's image into IDB.
   // Best-effort and cancellable; per-item failures still advance the progress so it always completes.
   useEffect(() => {
+    if (!isSentenceAutoPlaying) {
+      setPreloadProgress(null);
+      sessionPreloadStartedRef.current = false;
+      return;
+    }
+    if (sessionPreloadStartedRef.current) return;
+    sessionPreloadStartedRef.current = true;
     let cancelled = false;
 
     // Audio: saved sentences in sentence mode, else every card's example sentences across the session.
@@ -991,9 +1082,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // A quick stop may cancel the workers before the session is warm. Allow the next start to resume.
+      sessionPreloadStartedRef.current = false;
+    };
+    // Deliberately begins only when auto-play is requested; normal sentence opening stays render-first.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isSentenceAutoPlaying]);
 
   const sentenceGapRef = useRef(sentenceGap);
   useEffect(() => { sentenceGapRef.current = sentenceGap; }, [sentenceGap]);
@@ -1374,6 +1470,29 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onSearch(term);
   };
 
+  // Mobile sentence words have fixed gestures: one finger uses the normal lookup action rendered by
+  // HighlightedSentence; holding a finger anywhere and touching a word with another plays from its offset.
+  const handleMobileWordTouchStart = (e: React.TouchEvent<HTMLElement>) => {
+    if (!isMobile || e.touches.length < 2) return;
+    const target = e.target instanceof Element ? e.target : null;
+    const word = target?.closest('[data-word-offset]') as HTMLElement | null;
+    if (!word || !e.currentTarget.contains(word)) return;
+    const offset = Number(word.dataset.wordOffset);
+    if (!Number.isFinite(offset)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    mobileWordChordActiveRef.current = true;
+    suppressMobileWordClickUntilRef.current = Date.now() + 800;
+    lastSentenceTapRef.current = null;
+    void playFromWordOffset(offset);
+  };
+
+  const suppressMobileChordClick = (e: React.MouseEvent<HTMLElement>) => {
+    if (!mobileWordChordActiveRef.current && Date.now() >= suppressMobileWordClickUntilRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   const handleSaveVocab = (vocab: VocabCard) => {
     const vocabSpelling = (vocab.word || '').toLowerCase().trim();
     const items = savedItemsRef.current;
@@ -1738,13 +1857,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <ArrowLeft size={18} /> Sentences
               </button>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={(e) => { e.stopPropagation(); setTapToPlay(v => { const next = !v; try { localStorage.setItem('dictprop_sentence_tap_play', next ? '1' : '0'); } catch { /* ignore */ } return next; }); }}
-                  className={`flex items-center justify-center w-7 h-7 rounded-full transition-colors ${tapToPlay ? 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}
-                  title={tapToPlay ? 'Tap a word = play from it. Tap here to switch to look-up.' : 'Tap any word = look it up (saved words open their card). Tap here to switch to play-from-word.'}
-                >
-                  {tapToPlay ? <Volume2 size={15} /> : <SearchIcon size={15} />}
-                </button>
+                {!isMobile && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setTapToPlay(v => { const next = !v; try { localStorage.setItem('dictprop_sentence_tap_play', next ? '1' : '0'); } catch { /* ignore */ } return next; }); }}
+                    className={`flex items-center justify-center w-7 h-7 rounded-full transition-colors ${tapToPlay ? 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}
+                    title={tapToPlay ? 'Tap a word = play from it. Tap here to switch to look-up.' : 'Tap any word = look it up (saved words open their card). Tap here to switch to play-from-word.'}
+                  >
+                    {tapToPlay ? <Volume2 size={15} /> : <SearchIcon size={15} />}
+                  </button>
+                )}
                 <span className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
                   <MessageSquareQuote size={12} /> {sentenceIndex + 1} / {sentenceItems?.length ?? 0}
                 </span>
@@ -1782,8 +1903,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
                       <p
                         data-sentence-hero
                         className={`text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-xl sm:text-3xl' : 'text-lg sm:text-xl'}`}
+                        onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
+                        onClickCapture={isMobile ? suppressMobileChordClick : undefined}
                         onClick={toggleSentencePlayback}
-                        title={tapToPlay
+                        title={isMobile
+                          ? 'Tap a word to look it up'
+                          : tapToPlay
                           ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
                           : 'Tap any word to look it up (saved words open their card) · tap blank space to play/pause · double-tap blank space to remember'}
                       >
@@ -1792,7 +1917,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                           itemWord={(currentSentence.data as SentenceData).sourceWord}
                           findSaved={findSaved}
                           onOpenCard={onOpenCard}
-                          {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch, searchAnyWord: true })}
+                          {...(isMobile || !tapToPlay ? { onSearchWord: handleVocabSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
                         />
                       </p>
                       <div className="mt-5 flex items-center justify-center md:justify-start gap-3">
@@ -1807,8 +1932,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     <p
                       data-sentence-hero
                       className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
+                      onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
+                      onClickCapture={isMobile ? suppressMobileChordClick : undefined}
                       onClick={toggleSentencePlayback}
-                      title={tapToPlay
+                      title={isMobile
+                        ? 'Tap a word to look it up'
+                        : tapToPlay
                         ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
                         : 'Tap any word to look it up (saved words open their card) · tap blank space to play/pause · double-tap blank space to remember'}
                     >
@@ -1817,7 +1946,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         itemWord={(currentSentence.data as SentenceData).sourceWord}
                         findSaved={findSaved}
                         onOpenCard={onOpenCard}
-                        {...(tapToPlay ? { onPlayFromWord: playFromWordOffset } : { onSearchWord: handleVocabSearch, searchAnyWord: true })}
+                        {...(isMobile || !tapToPlay ? { onSearchWord: handleVocabSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
                       />
                     </p>
                     <div className="mt-5 flex items-center justify-center gap-3">
@@ -2254,7 +2383,58 @@ export const DetailView: React.FC<DetailViewProps> = ({
         </div>
       )}
 
-      {/* Auto-play control */}
+      {/* Auto-play control. Sentence mode collapses every setting behind one right-rail FAB. */}
+      {sentenceMode ? (
+        <div className="fixed bottom-6 right-4 z-[60]">
+          {showSentenceAutoPlayPanel && (
+            <div role="dialog" aria-label="Sentence auto-play settings" className="absolute bottom-0 right-14 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-700">Auto-play</span>
+                <button type="button" onClick={() => setShowSentenceAutoPlayPanel(false)} className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-600" title="Close settings">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <SpeechStyleToggle />
+                <PlaybackSpeedToggle className="bg-slate-100" />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <button type="button" onClick={cycleTimerDuration} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Auto-play duration">
+                  <span className="block text-[10px] font-medium text-slate-400">Duration</span>
+                  {timerDisplay}
+                </button>
+                <button type="button" onClick={cycleRepeats} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Times each sentence is read">
+                  <span className="block text-[10px] font-medium text-slate-400">Repeats</span>
+                  ×{sentenceRepeats}
+                </button>
+                <button type="button" onClick={cycleGap} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Gap between reads">
+                  <span className="block text-[10px] font-medium text-slate-400">Interval</span>
+                  {sentenceGap / 1000}s
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => { toggleSentenceAutoPlay(); setShowSentenceAutoPlayPanel(false); }}
+                className="mt-3 w-full rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-100"
+              >
+                Stop auto-play
+              </button>
+            </div>
+          )}
+          <button
+            onClick={handleSentenceAutoPlayFab}
+            className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
+              isSentenceAutoPlaying
+                ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+                : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
+            }`}
+            title={isSentenceAutoPlaying ? 'Auto-play settings' : 'Start sentence auto-play'}
+            aria-label={isSentenceAutoPlaying ? 'Open sentence auto-play settings' : 'Start sentence auto-play'}
+          >
+            <AudioLines size={20} />
+          </button>
+        </div>
+      ) : (
       <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2">
         {/* Clear ⇄ Casual speech style (global) — sits with the playback controls. */}
         <SpeechStyleToggle className="bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200" />
@@ -2319,6 +2499,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         </button>
         )}
       </div>
+      )}
 
       {/* Success Animation Overlay */}
       {showSuccessAnim && (
@@ -2384,9 +2565,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
           cluster's z-[60]). Hidden while its own paste panel is open. */}
       {sentenceMode && currentSentence && !showImagePanel && (
         <button
-          onClick={() => { setImageError(null); setShowImagePanel(true); }}
-          className="fixed bottom-40 right-4 z-[57] w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-white/90 backdrop-blur-sm text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
-          title={hasSentenceImage ? 'Replace this sentence’s image' : 'Attach an image to this sentence'}
+          onClick={handleImageFabTap}
+          className="fixed bottom-40 right-4 z-[57] w-12 h-12 touch-manipulation rounded-full flex items-center justify-center shadow-lg bg-white/90 backdrop-blur-sm text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
+          aria-label={hasSentenceImage ? 'Replace image; double-tap to paste' : 'Attach image; double-tap to paste'}
+          title={hasSentenceImage ? 'Replace image; double-tap to paste' : 'Attach image; double-tap to paste'}
         >
           {hasSentenceImage ? <ImageIcon size={20} /> : <ImagePlus size={20} />}
         </button>
