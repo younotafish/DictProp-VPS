@@ -53,17 +53,18 @@ jobs:
               (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile) || true
             fi
             swapon /swapfile 2>/dev/null || true
-            # Recover disk before writing another full database copy. Keep recent build cache, but
-            # discard old cache and dangling images that cannot be used by the running container.
+            # Recover disk before writing another full database copy. The VPS has a small root disk;
+            # retaining every recent BuildKit layer can leave SQLite with no room for its backup.
             echo "=== DISK BEFORE CLEANUP ==="
             df -h . || true
+            du -sh data data/backups 2>/dev/null || true
             docker image prune -f || true
-            docker builder prune -f --filter 'until=168h' || true
+            docker builder prune -af || true
             # Take a transactionally consistent online SQLite backup before the new container can run
             # schema migrations. Prune BEFORE copying so retention cannot fill the disk mid-backup.
             if [ -f data/dictprop.db ]; then
               mkdir -p data/backups
-              rm -f data/backups/*.partial
+              find data/backups -type f -name '*.partial' -delete
               LATEST_BACKUP="$(find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
                 | sort -nr | head -n 1 | cut -d' ' -f2-)"
               if [ -n "$LATEST_BACKUP" ] && ! python3 -c '
@@ -76,9 +77,11 @@ jobs:
                 echo "Removing incomplete backup: $LATEST_BACKUP"
                 rm -f "$LATEST_BACKUP"
               fi
-              # Keep at most three existing snapshots so a fourth full copy always has headroom.
+              # Keep one existing snapshot while writing the next; two complete copies remain afterward.
               find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
-                | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm -f
+                | sort -nr | tail -n +2 | cut -d' ' -f2- | xargs -r rm -f
+              echo "=== DISK BEFORE BACKUP ==="
+              df -h . || true
               BACKUP_NAME="dictprop-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.sha }}.db"
               BACKUP_TEMP="$BACKUP_NAME.partial"
               if [ -n "$(docker compose ps -q app 2>/dev/null)" ]; then
@@ -94,9 +97,9 @@ jobs:
                   data/dictprop.db "data/backups/$BACKUP_TEMP"
               fi
               mv "data/backups/$BACKUP_TEMP" "data/backups/$BACKUP_NAME"
-              # Four complete deploy snapshots are enough for rollback without monopolizing the VPS disk.
+              # Two complete deploy snapshots preserve rollback coverage without monopolizing the disk.
               find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
-                | sort -nr | tail -n +5 | cut -d' ' -f2- | xargs -r rm -f
+                | sort -nr | tail -n +3 | cut -d' ' -f2- | xargs -r rm -f
             fi
             # Diagnostics before rebuild — never fail the deploy on these
             echo "=== CONTAINER LOGS BEFORE REBUILD ==="
