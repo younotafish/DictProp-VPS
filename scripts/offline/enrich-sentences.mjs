@@ -173,7 +173,7 @@ const generatedAt = Date.now();
 const entries = [];
 const batchResults = new Array(batches.length);
 let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(20, Number(process.env.CODEX_CONCURRENCY || 12)));
+const concurrency = Math.max(1, Math.min(64, Number(process.env.CODEX_CONCURRENCY || 20)));
 async function analysisWorker() {
   for (;;) {
     const index = nextBatch++;

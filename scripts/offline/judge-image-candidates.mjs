@@ -124,7 +124,7 @@ async function judgeBatch(batch, batchIndex) {
 
 const results = new Array(batches.length);
 let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(16, Number(process.env.CODEX_CONCURRENCY || 8)));
+const concurrency = Math.max(1, Math.min(64, Number(process.env.CODEX_CONCURRENCY || 20)));
 async function worker() {
   for (;;) {
     const index = nextBatch++;

@@ -314,7 +314,7 @@ const entries = [];
 const batches = makeBatches(source.items);
 const batchResults = new Array(batches.length);
 let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(24, Number(process.env.CODEX_CONCURRENCY || 12)));
+const concurrency = Math.max(1, Math.min(64, Number(process.env.CODEX_CONCURRENCY || 20)));
 const assembleOnly = process.env.AUDIT_ASSEMBLE_ONLY === '1';
 async function auditWorker() {
   for (;;) {

@@ -105,7 +105,7 @@ async function selectTarget(target, index) {
 
 const results = new Array(payload.targets.length);
 let nextTarget = 0;
-const concurrency = Math.max(1, Math.min(20, Number(process.env.CODEX_CONCURRENCY || 10)));
+const concurrency = Math.max(1, Math.min(64, Number(process.env.CODEX_CONCURRENCY || 20)));
 async function worker() {
   for (;;) {
     const index = nextTarget++;
