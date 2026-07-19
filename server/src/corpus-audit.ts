@@ -46,6 +46,16 @@ export function corpusSourceHash(data: unknown): string {
   return createHash('sha256').update(JSON.stringify(withoutImageFields(data))).digest('hex');
 }
 
+export function corpusAuditDataState(
+  currentData: unknown,
+  entry: Pick<CorpusAuditEntry, 'sourceHash' | 'data'>,
+): 'source' | 'target' | 'changed' {
+  const currentHash = corpusSourceHash(currentData);
+  if (currentHash === corpusSourceHash(entry.data)) return 'target';
+  if (currentHash === entry.sourceHash) return 'source';
+  return 'changed';
+}
+
 function hasCompleteAudit(type: CorpusItemType, data: Record<string, any>): boolean {
   if (!isUsageAudit(data.usageAudit)) return false;
   if (type !== 'phrase') return true;
