@@ -37,9 +37,41 @@ const DUPLICATE_GROUPS = [
   ['338d98fd-7222-4b07-b58d-321557216552', '331ea78a-4472-4c05-9d7d-3f5ef74b2ff9'],
 ] as const;
 
-// This is the one new/new sentence pair. Its first id is the copy carried through the
-// independent corpus audit, so keep that identity even when both rows have identical content/SRS.
-const PREFERRED_SURVIVOR_IDS = new Set(['338d98fd-7222-4b07-b58d-321557216552']);
+// These pairs used superficially different legacy labels, so the exact-string audit could not
+// consolidate them. GPT-5.6 independently reviewed both definitions and every example in each
+// pair and classified all of them as the same lemma and exact meaning. The first id in each pair
+// is the adjudicated survivor; examples and learning history are still merged below.
+const SEMANTIC_DUPLICATE_GROUPS = [
+  ['6e7c13ab-f74f-49c5-90ac-bf28ec220c0b', '5b30ebf0-ebc8-4b9e-b039-480fbf97428a'],
+  ['62f55785-4c98-4246-87a6-4dcd734033fb', '7eefb850-1d00-442f-86eb-8781c71e7695'],
+  ['9d8877f8-ca7a-48e2-9fe2-f28489c85bb2', '223e680b-b30c-45c7-bb2d-2eb0b3f9456c'],
+  ['1ff7b78f-ed81-413d-9e9a-0cfeca6f374f', '65bb7777-afe7-442c-b702-985df912f029'],
+  ['3dff0387-862e-4bbe-8304-f5d8f348e5d8', '189a23a2-e035-408b-aabe-4b6f2d2612dd'],
+  ['54860d97-3eff-4223-bc47-c7c504b66be1', '710cf119-6d09-4af9-b925-84b62966518a'],
+  ['182135dd-e456-4459-8876-4b03160006a4', 'b3327659-21c1-4cef-a4f5-3f2f8c18bf6f'],
+  ['148d5104-efb3-4353-9d59-3e830e188f39', '352e2be8-149e-421e-9395-95c79b1e5469'],
+  ['12901cd7-8218-4c8b-acaf-a05ad493efbe', '7da770b1-0097-4600-bf78-2c3d2dbe52cb'],
+  ['0deda947-f9a6-4ba8-9316-248687acf278', 'fe436250-3dee-4319-a6a8-e362110b3aa3'],
+  ['c1a93ed2-4131-4c93-9d1c-2483c27b9ce1', 'be0c9f22-cb64-4b22-aaf2-8d1791353921'],
+  ['930fdd75-46e7-4584-9f3c-59f4502a97aa', 'dc885f58-8179-4f3d-8d3c-1c4c65627815'],
+  ['65b9381d-204f-414f-b7cc-1d79161fe90c', 'af973afe-e379-43a3-b91a-55056de36f73'],
+  ['0f091d0b-d2fb-46ee-931a-e9065cc1ee8b', '61511471-7d10-4539-8e09-34400b1e0fbf'],
+  ['e47caaaa-9945-4fcc-ae6b-0209f73efd98', '89742cd3-11b5-4375-9585-6fa70458c0bb'],
+  ['b2bd93fc-1388-4025-8b92-5c408b346fd2', '8b9c0132-2c61-469b-b0fb-f490a87695a4'],
+  ['ec3e87ea-d383-4590-8801-672c50fce93d', '0eef9ba1-9c20-43e0-8d6e-00cf47a55c96'],
+  ['f7d7b498-7353-4ad5-9165-29262447423f', '060c2661-2c07-403a-9d21-c28d549dbca4'],
+  ['0ce6446d-d438-48f2-b4ab-df8d01df9511', '49b2c515-1cf6-4f81-b09d-a19acbaeb885'],
+  ['8874b2c6-2bbd-4a1c-99f8-c2e983c2c839', '524bc83a-63ff-4305-b51d-3b90e97a03c0'],
+  ['d47f3576-8340-49a7-80d7-b4f67329ef62', 'ee189dd2-2913-4987-bc54-eb0a2e02c216'],
+  ['0fca1f40-75c6-4c19-a3b4-04359eb258a8', '7ce8746c-8e82-4766-bc61-944f65481a34'],
+] as const;
+
+// Keep the independently selected identity for the one new/new sentence pair and for every
+// semantic vocabulary pair, even when another row happens to contain more legacy text.
+const PREFERRED_SURVIVOR_IDS = new Set([
+  '338d98fd-7222-4b07-b58d-321557216552',
+  ...SEMANTIC_DUPLICATE_GROUPS.map(([survivorId]) => survivorId),
+]);
 
 const items = getAllItems(true, owner.id) as any[];
 const byId = new Map(items.map(item => [item.data.id, item]));
@@ -78,12 +110,17 @@ function compareTuple(left: number[], right: number[]): number {
   return 0;
 }
 
-function assertSameIdentity(group: any[]): void {
+function assertSameIdentity(group: any[], allowSenseMismatch: boolean): void {
   const first = group[0];
   if (group.some(item => item.type !== first.type)) throw new Error('Duplicate repair group changed item type');
   if (first.type === 'vocab') {
-    const key = `${normalize(first.data.word)}\u0000${normalize(first.data.sense)}`;
-    if (group.some(item => `${normalize(item.data.word)}\u0000${normalize(item.data.sense)}` !== key)) {
+    const key = allowSenseMismatch
+      ? normalize(first.data.word)
+      : `${normalize(first.data.word)}\u0000${normalize(first.data.sense)}`;
+    const identityOf = (item: any) => allowSenseMismatch
+      ? normalize(item.data.word)
+      : `${normalize(item.data.word)}\u0000${normalize(item.data.sense)}`;
+    if (group.some(item => identityOf(item) !== key)) {
       throw new Error(`Vocab duplicate group changed identity: ${group.map(item => item.data.id).join(',')}`);
     }
     return;
@@ -94,10 +131,14 @@ function assertSameIdentity(group: any[]): void {
   }
 }
 
-const duplicatePlans = DUPLICATE_GROUPS.flatMap(ids => {
+const duplicateGroups = [
+  ...DUPLICATE_GROUPS.map(ids => ({ ids, semantic: false })),
+  ...SEMANTIC_DUPLICATE_GROUPS.map(ids => ({ ids, semantic: true })),
+];
+const duplicatePlans = duplicateGroups.flatMap(({ ids, semantic }) => {
   const live = ids.map(id => byId.get(id)).filter(item => item && !item.isDeleted);
   if (live.length < 2) return [];
-  assertSameIdentity(live);
+  assertSameIdentity(live, semantic);
   const content = [...live].sort((left, right) =>
     Number(PREFERRED_SURVIVOR_IDS.has(right.data.id)) - Number(PREFERRED_SURVIVOR_IDS.has(left.data.id)) ||
     contentScore(right) - contentScore(left) ||
@@ -113,6 +154,7 @@ const duplicatePlans = DUPLICATE_GROUPS.flatMap(ids => {
     survivor: content,
     learning,
     losers: live.filter(item => item.data.id !== content.data.id),
+    semantic,
   }];
 });
 
@@ -152,6 +194,33 @@ function normalizedSrs(item: any, source = item.srs || {}): any {
   };
 }
 
+function mergedExamplesFor(plan: (typeof duplicatePlans)[number]): string[] {
+  const examples: string[] = [];
+  const seen = new Set<string>();
+  for (const item of [plan.survivor, ...plan.losers]) {
+    for (const example of Array.isArray(item.data?.examples) ? item.data.examples : []) {
+      if (typeof example !== 'string' || !example.trim()) continue;
+      const key = normalize(example);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      examples.push(example);
+    }
+  }
+  return examples;
+}
+
+const sentenceRelinksBySurvivor = new Map<string, any[]>();
+for (const plan of duplicatePlans) {
+  if (!plan.semantic || plan.survivor.type !== 'vocab') continue;
+  const loserKeys = new Set(plan.losers.map((loser: any) =>
+    `${normalize(loser.data.word)}\u0000${normalize(loser.data.sense)}`));
+  const survivorKey = `${normalize(plan.survivor.data.word)}\u0000${normalize(plan.survivor.data.sense)}`;
+  loserKeys.delete(survivorKey);
+  const linked = items.filter(item => item.type === 'sentence' && !item.isDeleted && loserKeys.has(
+    `${normalize(item.data.sourceWord)}\u0000${normalize(item.data.sourceSense)}`));
+  sentenceRelinksBySurvivor.set(plan.survivor.data.id, linked);
+}
+
 const transferImage = db.prepare(`
   INSERT INTO item_images (id, user_id, data, updated_at, mime_type, content_hash)
   SELECT ?, user_id, data, ?, mime_type, content_hash FROM item_images
@@ -164,8 +233,12 @@ const applyRepair = db.transaction(() => {
   const now = Date.now();
   for (const plan of duplicatePlans) {
     const survivor = plan.survivor;
+    const mergedData = survivor.type === 'vocab'
+      ? { ...survivor.data, examples: mergedExamplesFor(plan) }
+      : survivor.data;
     const merged = {
       ...survivor,
+      data: mergedData,
       srs: normalizedSrs(survivor, plan.learning.srs),
       savedAt: Math.min(...[survivor, ...plan.losers].map(item => finite(item.savedAt, now))),
       updatedAt: Math.max(now, finite(survivor.updatedAt) + 1),
@@ -176,6 +249,21 @@ const applyRepair = db.transaction(() => {
     }
     const result = upsertItem(merged, owner.id);
     if (result.conflicted) throw new Error(`Duplicate survivor changed during repair: ${survivor.data.id}`);
+    for (const sentence of sentenceRelinksBySurvivor.get(survivor.data.id) || []) {
+      const sentenceResult = upsertItem({
+        ...sentence,
+        data: {
+          ...sentence.data,
+          sourceWord: survivor.data.word,
+          sourceSense: survivor.data.sense,
+        },
+        srs: normalizedSrs(sentence),
+        updatedAt: Math.max(now, finite(sentence.updatedAt) + 1),
+      }, owner.id);
+      if (sentenceResult.conflicted) {
+        throw new Error(`Linked sentence changed during duplicate repair: ${sentence.data.id}`);
+      }
+    }
     for (const loser of plan.losers) softDeleteItem(loser.data.id, owner.id);
   }
 
@@ -205,10 +293,13 @@ process.stdout.write(`${JSON.stringify({
   mode: apply ? 'applied' : 'dry-run',
   duplicateGroupCount: duplicatePlans.length,
   duplicateLoserCount: loserIds.size,
+  semanticDuplicateGroupCount: duplicatePlans.filter(plan => plan.semantic).length,
+  relinkedSentenceCount: [...sentenceRelinksBySurvivor.values()].reduce((sum, linked) => sum + linked.length, 0),
   duplicateGroups: duplicatePlans.map(plan => ({
     survivorId: plan.survivor.data.id,
     learningSourceId: plan.learning.data.id,
     loserIds: plan.losers.map((item: any) => item.data.id),
+    semantic: plan.semantic,
   })),
   invalidSrsCount: invalidSrsItems.filter(item => !consolidatedIds.has(item.data.id)).length,
   invalidSrsIds: invalidSrsItems.filter(item => !consolidatedIds.has(item.data.id)).map(item => item.data.id),
