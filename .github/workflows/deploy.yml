@@ -84,13 +84,12 @@ jobs:
               (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile) || true
             fi
             swapon /swapfile 2>/dev/null || true
-            # Recover disk before writing another full database copy. The VPS has a small root disk;
-            # retaining every recent BuildKit layer can leave SQLite with no room for its backup.
+            # Recover backup space before writing another full database copy. Container images are
+            # built remotely now, so deploys must not garbage-collect BuildKit while the app is live.
             echo "=== DISK BEFORE CLEANUP ==="
             df -h . || true
             du -sh data data/backups 2>/dev/null || true
-            docker image prune -f || true
-            # Remove abandoned/old backup copies before deciding whether the Docker cache must go.
+            # Remove abandoned/old backup copies before deciding whether a fresh snapshot is needed.
             SKIP_DATABASE_BACKUP=0
             if [ -f data/dictprop.db ]; then
               mkdir -p data/backups
@@ -127,19 +126,6 @@ jobs:
               find data/backups -type f -name 'dictprop-*.db.verified' | while read -r marker; do
                 [ -f "${marker%.verified}" ] || rm -f "$marker"
               done
-            fi
-            # Preserve the fresh npm/build layers when there is room for another database snapshot.
-            # If space is tight, a full BuildKit prune is preferable to another SQLITE_FULL failure.
-            AVAILABLE_KB="$(df -Pk . | awk 'NR == 2 { print $4 }')"
-            DATABASE_KB="$(du -k data/dictprop.db 2>/dev/null | awk '{ print $1 }')"
-            BACKUP_HEADROOM_KB="${DATABASE_KB:-0}"
-            if [ "$SKIP_DATABASE_BACKUP" -eq 1 ]; then BACKUP_HEADROOM_KB=0; fi
-            REQUIRED_KB="$(( BACKUP_HEADROOM_KB + 2 * 1024 * 1024 ))"
-            if [ "${AVAILABLE_KB:-0}" -lt "$REQUIRED_KB" ]; then
-              echo "Low disk headroom; pruning the full Docker build cache"
-              docker builder prune -af || true
-            else
-              docker builder prune -f --filter 'until=168h' || true
             fi
             # Take a transactionally consistent online SQLite backup before the new container can run
             # schema migrations. Retention and cache cleanup above leave room for the atomic copy.
@@ -218,6 +204,5 @@ jobs:
               exit 1
             fi
             docker image rm "$ROLLBACK_IMAGE" 2>/dev/null || true
-            docker image prune -f || true
             docker logout ghcr.io || true
             echo "Deploy complete"
