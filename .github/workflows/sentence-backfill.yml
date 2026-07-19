@@ -82,7 +82,7 @@ jobs:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 15m
+          command_timeout: 60m
           capture_stdout: true
           script: |
             set -e
