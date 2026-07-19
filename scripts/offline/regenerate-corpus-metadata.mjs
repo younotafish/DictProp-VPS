@@ -320,7 +320,7 @@ for (const record of records) {
         },
         protectedExamples,
         phraseContext: '',
-        otherSavedSenses: siblingEvidenceFor(record.id, record.data),
+        ...(reviewPass ? { otherSavedSenses: siblingEvidenceFor(record.id, record.data) } : {}),
         legacyMetadata: legacyCard(record.data),
       },
     });
@@ -366,7 +366,7 @@ for (const record of records) {
           },
           protectedExamples,
           phraseContext: record.data.query,
-          otherSavedSenses: siblingEvidenceFor(record.id, card),
+          ...(reviewPass ? { otherSavedSenses: siblingEvidenceFor(record.id, card) } : {}),
           legacyMetadata: legacyCard(card),
         },
       });
