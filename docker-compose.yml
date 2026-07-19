@@ -11,4 +11,5 @@ services:
     environment:
       - PORT=3000
       - DATA_DIR=/app/data
+    stop_grace_period: 3s
     restart: unless-stopped

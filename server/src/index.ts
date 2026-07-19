@@ -1,7 +1,6 @@
 import { serve } from '@hono/node-server';
 import { env } from './env.js';
 import { migrateInlineImages, migrateLegacyProjects } from './db.js';
-import { runBackfill } from './routes/tts.js';
 import { createApp } from './app.js';
 
 const app = createApp();
@@ -56,9 +55,5 @@ setTimeout(() => {
   })();
 }, 500);
 
-// Backfill TTS audio + word timings for every saved sentence in the BACKGROUND, server-side, so the
-// client never needs to stay open. Idempotent + resumable (skips clips that are already complete).
-// Delayed so boot + the image migration settle first; low concurrency keeps the 1-vCPU box responsive.
-setTimeout(() => {
-  runBackfill().catch((e) => console.error('[tts] startup backfill failed:', e?.message));
-}, 20_000);
+// Full-corpus TTS backfill remains available through POST /api/tts/backfill. Do not start it on boot:
+// model calls, alignment, and ffmpeg work can monopolize the 1-vCPU VPS immediately after a deploy.
