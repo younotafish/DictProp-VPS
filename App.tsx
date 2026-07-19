@@ -26,7 +26,24 @@ const DuplicatesModal = lazy(() => import('./components/DuplicatesModal').then(m
 const CardReviewPopup = lazy(() => import('./components/CardReviewPopup').then(module => ({ default: module.CardReviewPopup })));
 const KeyboardHelpModal = lazy(() => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
 const StudyEnhanced = lazy(() => import('./views/StudyEnhanced').then(module => ({ default: module.StudyEnhanced })));
-const SentencesView = lazy(() => import('./views/SentencesView').then(module => ({ default: module.SentencesView })));
+const SENTENCE_CHUNK_RELOAD_KEY = 'sentence_chunk_reload_attempted';
+const loadSentencesView = async () => {
+  try {
+    const module = await import('./views/SentencesView');
+    try { sessionStorage.removeItem(SENTENCE_CHUNK_RELOAD_KEY); } catch { /* private browsing */ }
+    return { default: module.SentencesView };
+  } catch (error) {
+    try {
+      if (!sessionStorage.getItem(SENTENCE_CHUNK_RELOAD_KEY)) {
+        sessionStorage.setItem(SENTENCE_CHUNK_RELOAD_KEY, '1');
+        window.location.reload();
+        return await new Promise<never>(() => {});
+      }
+    } catch { /* session storage can be unavailable in private browsing */ }
+    throw error;
+  }
+};
+const SentencesView = lazy(loadSentencesView);
 const loadDetailView = () => import('./views/DetailView').then(module => ({ default: module.DetailView }));
 const DetailView = lazy(loadDetailView);
 
@@ -293,6 +310,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     void import('./services/audioCache').then(({ requestPersistentStorage }) => requestPersistentStorage());
+  }, []);
+
+  // Sentence mode is a primary tab. Warm its small lazy chunk immediately, and reload once if a
+  // long-lived PWA tab still references an asset hash removed by a newer deployment.
+  useEffect(() => {
+    void loadSentencesView().catch(() => {});
   }, []);
 
   const [currentView, setCurrentView] = useState<ViewState>(() => {
