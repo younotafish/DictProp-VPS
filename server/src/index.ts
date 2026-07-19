@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server';
 import { env } from './env.js';
-import { migrateInlineImages } from './db.js';
+import { migrateInlineImages, migrateLegacyProjects } from './db.js';
 import { runBackfill } from './routes/tts.js';
 import { createApp } from './app.js';
 
@@ -41,13 +41,19 @@ process.once('unhandledRejection', error => {
   shutdown('Unhandled rejection', 1);
 });
 
-// Migrate inline base64 images → item_images in the BACKGROUND, after the port is open.
-// Runs in event-loop-yielding chunks so health/reads stay responsive; resumes each boot
-// until no inline images remain. A short delay lets the listener bind first.
+// Run large SQLite migrations in the BACKGROUND, after the port is open. Both are resumable and
+// yield between small transactions so health/reads stay responsive on the one-CPU VPS.
 setTimeout(() => {
-  migrateInlineImages()
-    .then(() => console.log('[migrate] item_images pass complete'))
-    .catch((e) => console.error('[migrate] item_images failed (will retry next boot):', e));
+  void (async () => {
+    try {
+      await migrateLegacyProjects();
+      console.log('[migrate] legacy project pass complete');
+      await migrateInlineImages();
+      console.log('[migrate] item_images pass complete');
+    } catch (e) {
+      console.error('[migrate] background migration failed (will retry next boot):', e);
+    }
+  })();
 }, 500);
 
 // Backfill TTS audio + word timings for every saved sentence in the BACKGROUND, server-side, so the

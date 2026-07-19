@@ -48,8 +48,8 @@ jobs:
             set -e
             cd /opt/dictprop-vps
             # A failed prior release may have left the checkout detached at its rollback commit.
-            git switch main
             PREVIOUS_SHA="$(git rev-parse HEAD)"
+            git switch main
             git pull --ff-only origin main
             # Ensure swap exists for low-memory VPS
             if [ ! -f /swapfile ]; then
