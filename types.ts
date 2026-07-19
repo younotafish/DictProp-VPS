@@ -73,6 +73,8 @@ export interface SentenceAnalysisTerm {
 
 export interface SentenceAnalysis {
   translation: string;
+  /** Readable General American IPA for the complete sentence in natural connected speech. */
+  naturalSpeechIpa?: string;
   americanEnglish: {
     status: AmericanEnglishStatus;
     explanation: string;

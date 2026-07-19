@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, BookOpenText, Globe2, History, Languages, Search } from 'lucide-react';
+import { ArrowLeft, AudioLines, BookOpenText, Globe2, History, Languages, Search } from 'lucide-react';
 import { SentenceData } from '../types';
 import { stripSentenceMarkers } from './HighlightedSentence';
 
@@ -77,6 +77,18 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
               </div>
             ) : (
               <>
+                {analysis.naturalSpeechIpa && (
+                  <section className="mt-5 border-t border-slate-200 pt-5">
+                    <div className="mb-2 flex items-center gap-2 text-slate-500">
+                      <AudioLines size={17} className="text-cyan-600" />
+                      <h2 className="text-xs font-bold uppercase text-slate-500">Natural speech IPA</h2>
+                    </div>
+                    <p className="max-w-4xl break-words font-mono text-base leading-relaxed text-slate-800 sm:text-lg">
+                      {analysis.naturalSpeechIpa}
+                    </p>
+                  </section>
+                )}
+
                 <section className="mt-7 border-t border-slate-200 pt-6">
                   <div className="mb-2 flex items-center gap-2 text-slate-500">
                     <Languages size={17} className="text-rose-500" />

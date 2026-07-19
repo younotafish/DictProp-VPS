@@ -4,6 +4,7 @@ import { validateSentenceBackfillBundle } from '../src/sentence-backfill.js';
 
 const analysis = {
   translation: '他终于坦白了。',
+  naturalSpeechIpa: '/hi ˈfaɪnəli keɪm kliːn/',
   americanEnglish: { status: 'shared', explanation: 'This wording is shared across major varieties.' },
   terms: [],
   imagePrompt: 'A photorealistic wide image of a candid conversation in a kitchen, no visible text.',

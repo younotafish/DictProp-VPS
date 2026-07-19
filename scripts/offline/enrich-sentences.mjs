@@ -41,9 +41,10 @@ const termSchema = {
 const analysisSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['translation', 'americanEnglish', 'terms', 'imagePrompt'],
+  required: ['translation', 'naturalSpeechIpa', 'americanEnglish', 'terms', 'imagePrompt'],
   properties: {
     translation: { type: 'string', maxLength: 12_000 },
+    naturalSpeechIpa: { type: 'string', minLength: 3, maxLength: 2_000 },
     americanEnglish: {
       type: 'object',
       additionalProperties: false,
@@ -80,9 +81,10 @@ const instruction = `You are an expert American English lexicographer and an exa
 
 For each sentence, return these analysis fields in this exact conceptual order:
 1. translation: a precise, natural Simplified Chinese translation of the entire text that preserves tense, modality, tone, register, implied relationships, and idiomatic force rather than translating word by word.
-2. americanEnglish: status must be american, shared, or not_american. In English, explain whether the wording is distinctly American, shared across major varieties, or non-American, citing concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. If it is not normal American English, give the natural present-day American equivalent.
-3. terms: every genuinely uncommon word, idiom, phrasal verb, or fixed phrase. For each term include its context-specific Chinese translation; true rhotic General American IPA with stress marks and surrounding slashes; core contextual meaning and literal/earlier meaning when figurative; sense-matched English synonyms and antonyms; two natural modern American examples that make the meaning inferable and do not quote the source; and a concise, accurate historical evolution note. Prefer the longest phrase and never duplicate components. Do not pad with ordinary A1-B2 words. Explicitly disambiguate a likely learner confusion when the context selects one sense over another. Keep fields cleanly separated: originalMeaning must contain only meaning and semantic clarification, never examples or historical chronology; usage examples belong only in examples; etymology and dated development belong only in historicalEvolution.
-4. imagePrompt: a production-ready prompt for one realistic photorealistic 16:9 photograph depicting the COMPLETE sentence as one coherent concrete scene. Apply this test: the scene should let a learner infer the sentence's intended meaning, not merely its topic. Put the defining action, relationship, contrast, cause, or consequence in the foreground and include every detail needed to distinguish the intended reading. Keep the cast and composition simple enough to parse instantly. For an idiom, depict its intended contextual meaning, not a misleading literal origin. Specify camera distance, composition, and natural lighting. Require authentic anatomy, skin, materials, and contemporary details. Explicitly prohibit illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, and visible text.
+2. naturalSpeechIpa: readable IPA for the COMPLETE sentence in mainstream rhotic General American English at a fluent, naturally fast conversational pace. Use ordinary connected-speech weak forms, reductions, linking, assimilation, and flapping where native speakers normally use them. Do not produce slow isolated dictionary forms, exaggerated deletion, eye-dialect respelling, or a narrow regional accent. Preserve every meaning-bearing word and enclose the single complete transcription in slashes.
+3. americanEnglish: status must be american, shared, or not_american. In English, explain whether the wording is distinctly American, shared across major varieties, or non-American, citing concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. If it is not normal American English, give the natural present-day American equivalent.
+4. terms: every genuinely uncommon word, idiom, phrasal verb, or fixed phrase. For each term include its context-specific Chinese translation; true rhotic General American IPA with stress marks and surrounding slashes; core contextual meaning and literal/earlier meaning when figurative; sense-matched English synonyms and antonyms; two natural modern American examples that make the meaning inferable and do not quote the source; and a concise, accurate historical evolution note. Prefer the longest phrase and never duplicate components. Do not pad with ordinary A1-B2 words. Explicitly disambiguate a likely learner confusion when the context selects one sense over another. Keep fields cleanly separated: originalMeaning must contain only meaning and semantic clarification, never examples or historical chronology; usage examples belong only in examples; etymology and dated development belong only in historicalEvolution.
+5. imagePrompt: a production-ready prompt for one realistic photorealistic 16:9 photograph depicting the COMPLETE sentence as one coherent concrete scene. Apply this test: the scene should let a learner infer the sentence's intended meaning, not merely its topic. Put the defining action, relationship, contrast, cause, or consequence in the foreground and include every detail needed to distinguish the intended reading. Keep the cast and composition simple enough to parse instantly. For an idiom, depict its intended contextual meaning, not a misleading literal origin. Specify camera distance, composition, and natural lighting. Require authentic anatomy, skin, materials, and contemporary details. Explicitly prohibit illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, and visible text.
 
 Everything must be English except translation and each term's chinese field. Synonyms/antonyms must match the contextual sense. If no natural antonym exists, return an empty array. State uncertainty rather than inventing etymology. Copy every itemIndex exactly, return every input once, and output only schema-valid JSON.`;
 
@@ -94,7 +96,8 @@ function validString(value) {
 }
 
 function validateAnalysis(analysis, id) {
-  if (!analysis || !validString(analysis.translation) || !validString(analysis.imagePrompt) ||
+  if (!analysis || !validString(analysis.translation) || !validString(analysis.naturalSpeechIpa) ||
+      !/^\/[^/]+\/$/.test(analysis.naturalSpeechIpa.trim()) || !validString(analysis.imagePrompt) ||
       !analysis.americanEnglish || !['american', 'shared', 'not_american'].includes(analysis.americanEnglish.status) ||
       !validString(analysis.americanEnglish.explanation) || !Array.isArray(analysis.terms) || analysis.terms.length > 20) {
     throw new Error(`${id}: invalid sentence analysis`);

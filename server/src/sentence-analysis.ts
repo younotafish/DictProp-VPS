@@ -13,6 +13,7 @@ export interface SentenceAnalysisTerm {
 
 export interface SentenceAnalysis {
   translation: string;
+  naturalSpeechIpa?: string;
   americanEnglish: {
     status: AmericanEnglishStatus;
     explanation: string;
@@ -37,6 +38,7 @@ export function isSentenceAnalysis(value: unknown): value is SentenceAnalysis {
   const analysis = value as Record<string, any>;
   const american = analysis.americanEnglish;
   if (!isString(analysis.translation) || !isString(analysis.imagePrompt, 4_000)) return false;
+  if (analysis.naturalSpeechIpa !== undefined && !isString(analysis.naturalSpeechIpa, 2_000)) return false;
   if (!american || typeof american !== 'object' || Array.isArray(american) ||
       !STATUSES.has(american.status) || !isString(american.explanation, 4_000)) return false;
   if (!Array.isArray(analysis.terms) || analysis.terms.length > MAX_TERMS) return false;
@@ -57,6 +59,7 @@ object and no markdown, commentary, or extra keys.
 The JSON keys MUST appear in this exact order:
 {
   "translation": "A precise, natural Simplified Chinese translation preserving tense, tone, register, and idiomatic force",
+  "naturalSpeechIpa": "Readable rhotic General American IPA for the complete sentence as spoken fluently at a naturally fast conversational pace, with ordinary weak forms, reductions, linking, assimilation, and flapping where they normally occur; enclose the complete transcription in slashes",
   "americanEnglish": {
     "status": "american | shared | not_american",
     "explanation": "In English, say whether the wording is distinctly American, shared across major English varieties, or non-American, and identify the concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. For non-American wording, give the natural present-day American equivalent."
@@ -78,6 +81,7 @@ The JSON keys MUST appear in this exact order:
 
 Rules:
 - Everything must be English except translation and each term's chinese field.
+- naturalSpeechIpa must transcribe the complete sentence, not isolated dictionary forms. Model mainstream natural connected speech, not exaggerated casual deletion or a regional accent. Preserve every meaning-bearing word, use IPA symbols rather than respelling, and return one slash-delimited transcription.
 - Include every genuinely uncommon or non-obvious expression, including the studied expression when appropriate.
 - Prefer the longest meaningful phrase over duplicating its component words. Preserve source order and do not duplicate terms.
 - Do not pad the list with ordinary A1-B2 words. Return an empty terms array when the text has no uncommon expression.
