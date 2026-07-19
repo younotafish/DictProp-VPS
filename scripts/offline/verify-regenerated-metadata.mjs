@@ -162,6 +162,13 @@ for (const sourceItem of source.items) {
     }
     const protectedList = protectedExamplesFor(sourceCard, savedTextSet, linkedSentences);
     const targetExamples = new Set(targetCard.examples || []);
+    if (protectedList.length > 0) {
+      protectedExamples += (sourceCard.examples || []).length;
+      if (JSON.stringify(targetCard.examples || []) !== JSON.stringify(sourceCard.examples || [])) {
+        fail(context, 'meaning linked to a saved sentence did not preserve its complete example list exactly');
+      }
+      return;
+    }
     const protectedSet = new Set(protectedList);
     for (const example of protectedList) {
       protectedExamples++;

@@ -310,7 +310,9 @@ for (const record of records) {
       card: record.data,
       oldSense: record.data.sense || '',
       protectedExamples,
-      newExampleCount: protectedExamples.length === 0 ? 3 : protectedExamples.length === 1 ? 2 : 1,
+      // A linked saved sentence locks this meaning's entire legacy example list. Other metadata
+      // can be regenerated, but changing sibling examples can break sentence-derived learning data.
+      newExampleCount: protectedExamples.length === 0 ? 3 : 0,
       compact: {
         word: record.data.word,
         exactSenseEvidence: {
@@ -356,7 +358,7 @@ for (const record of records) {
         card,
         oldSense: card.sense || '',
         protectedExamples,
-        newExampleCount: protectedExamples.length === 0 ? 3 : protectedExamples.length === 1 ? 2 : 1,
+        newExampleCount: protectedExamples.length === 0 ? 3 : 0,
         compact: {
           word: card.word,
           exactSenseEvidence: {
@@ -400,7 +402,7 @@ Requirements:
 - imagePrompt: under 110 words for one realistic photorealistic 16:9 scene that makes the exact sense inferable at a glance. Foreground the diagnostic action, relation, contrast, or consequence. No illustration, animation, 3D render, metaphor unless the sense is figurative, collage, split screen, visible text, captions, logos, or watermark.
 - ${commonUsageInstruction}
 
-Examples are generated separately from protectedExamples. Return exactly newExampleCount NEW examples and never repeat or rewrite a protected example. Each new example must sound natural in present-day American English, make the exact sense inferable from context, and contain exactly one {{studied target}} marker around the target or its natural inflection. Wrap only genuinely useful C1/C2-level lookup expressions in [[double brackets]], at most four per example. Do not mark ordinary words. These markers drive clickable saved-card lookup or AI search, so they must be balanced and semantically meaningful.
+Examples are generated separately from protectedExamples. Return exactly newExampleCount NEW examples and never repeat or rewrite a protected example. A zero count means the meaning is linked to saved sentence data, so return an empty newExamples array; its complete existing example list will be preserved byte-for-byte. Each new example must sound natural in present-day American English, make the exact sense inferable from context, and contain exactly one {{studied target}} marker around the target or its natural inflection. Wrap only genuinely useful C1/C2-level lookup expressions in [[double brackets]], at most four per example. Do not mark ordinary words. These markers drive clickable saved-card lookup or AI search, so they must be balanced and semantically meaningful.
 
 Copy every taskIndex exactly and return only schema-valid JSON.`;
 
@@ -634,6 +636,9 @@ for (let index = 0; index < cardTasks.length; index++) {
 const phraseResultByParent = new Map(phraseTasks.map((task, index) => [task.parentId, phraseResults[index]]));
 
 function regeneratedCard(task, result) {
+  const examples = task.protectedExamples.length > 0
+    ? clone(Array.isArray(task.card.examples) ? task.card.examples : [])
+    : result.newExamples;
   return {
     ...clone(task.card),
     sense: result.sense,
@@ -645,7 +650,7 @@ function regeneratedCard(task, result) {
     synonyms: result.synonyms,
     antonyms: result.antonyms,
     confusables: result.confusables,
-    examples: [...task.protectedExamples, ...result.newExamples],
+    examples,
     history: result.history,
     register: result.register,
     mnemonic: result.mnemonic,

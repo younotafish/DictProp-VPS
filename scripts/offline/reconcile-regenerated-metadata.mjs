@@ -115,8 +115,12 @@ if (unresolved.length > 0) {
     const target = clone(targetCard);
     copyImageMarker(target, latestCard);
     const protectedExamples = protectedExamplesFor(latestCard);
+    if (protectedExamples.length > 0) {
+      target.examples = clone(Array.isArray(latestCard.examples) ? latestCard.examples : []);
+      return target;
+    }
     const seen = new Set();
-    target.examples = [...protectedExamples, ...(target.examples || [])].filter(example => {
+    target.examples = (target.examples || []).filter(example => {
       const key = normalizedSentence(example);
       if (!key || seen.has(key)) return false;
       seen.add(key);
@@ -149,6 +153,7 @@ if (unresolved.length > 0) {
 
   let sentenceSenseLinksUpdated = 0;
   let protectedExamplesRestored = 0;
+  let lockedExampleListsRestored = 0;
   const entries = latest.items.map(item => {
     let data;
     if (item.type === 'sentence') {
@@ -167,14 +172,18 @@ if (unresolved.length > 0) {
       data = lexicalData.get(item.id);
       if (!data) throw new Error(`Missing reconciled lexical data: ${item.id}`);
       if (item.type === 'vocab') {
-        protectedExamplesRestored += protectedExamplesFor(item.data)
-          .filter(example => data.examples.includes(example)).length;
+        const protectedExamples = protectedExamplesFor(item.data);
+        protectedExamplesRestored += protectedExamples.filter(example => data.examples.includes(example)).length;
+        if (protectedExamples.length > 0) lockedExampleListsRestored++;
       } else {
         const latestCards = new Map((item.data.vocabs || []).map(card => [card.id, card]));
         for (const card of data.vocabs || []) {
           const current = latestCards.get(card.id);
-          if (current) protectedExamplesRestored += protectedExamplesFor(current)
-            .filter(example => card.examples.includes(example)).length;
+          if (current) {
+            const protectedExamples = protectedExamplesFor(current);
+            protectedExamplesRestored += protectedExamples.filter(example => card.examples.includes(example)).length;
+            if (protectedExamples.length > 0) lockedExampleListsRestored++;
+          }
         }
       }
     }
@@ -204,5 +213,6 @@ if (unresolved.length > 0) {
     deltaContextRecords: deltaRecords.length,
     sentenceSenseLinksUpdated,
     protectedExamplesRestored,
+    lockedExampleListsRestored,
   }, null, 2)}\n`);
 }

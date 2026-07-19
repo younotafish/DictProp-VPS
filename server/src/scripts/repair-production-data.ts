@@ -64,14 +64,12 @@ const SEMANTIC_DUPLICATE_GROUPS = [
   ['8874b2c6-2bbd-4a1c-99f8-c2e983c2c839', '524bc83a-63ff-4305-b51d-3b90e97a03c0'],
   ['d47f3576-8340-49a7-80d7-b4f67329ef62', 'ee189dd2-2913-4987-bc54-eb0a2e02c216'],
   ['0fca1f40-75c6-4c19-a3b4-04359eb258a8', '7ce8746c-8e82-4766-bc61-944f65481a34'],
+  ['7d480237-65f1-4390-a31b-2d22fbb9f5d3', 'f7d7b498-7353-4ad5-9165-29262447423f'],
 ] as const;
 
-// Keep the independently selected identity for the one new/new sentence pair and for every
-// semantic vocabulary pair, even when another row happens to contain more legacy text.
-const PREFERRED_SURVIVOR_IDS = new Set([
-  '338d98fd-7222-4b07-b58d-321557216552',
-  ...SEMANTIC_DUPLICATE_GROUPS.map(([survivorId]) => survivorId),
-]);
+// Keep the independently selected identity for this one new/new sentence pair even when another
+// row happens to contain more legacy text. Semantic groups use their first id directly below.
+const PREFERRED_SURVIVOR_IDS = new Set(['338d98fd-7222-4b07-b58d-321557216552']);
 
 const items = getAllItems(true, owner.id) as any[];
 const byId = new Map(items.map(item => [item.data.id, item]));
@@ -132,15 +130,23 @@ function assertSameIdentity(group: any[], allowSenseMismatch: boolean): void {
 }
 
 const duplicateGroups = [
-  ...DUPLICATE_GROUPS.map(ids => ({ ids, semantic: false })),
-  ...SEMANTIC_DUPLICATE_GROUPS.map(ids => ({ ids, semantic: true })),
+  ...DUPLICATE_GROUPS.map(ids => ({
+    ids,
+    semantic: false,
+    preferredSurvivorId: ids.find(id => PREFERRED_SURVIVOR_IDS.has(id)),
+  })),
+  ...SEMANTIC_DUPLICATE_GROUPS.map(ids => ({
+    ids,
+    semantic: true,
+    preferredSurvivorId: ids[0],
+  })),
 ];
-const duplicatePlans = duplicateGroups.flatMap(({ ids, semantic }) => {
+const duplicatePlans = duplicateGroups.flatMap(({ ids, semantic, preferredSurvivorId }) => {
   const live = ids.map(id => byId.get(id)).filter(item => item && !item.isDeleted);
   if (live.length < 2) return [];
   assertSameIdentity(live, semantic);
   const content = [...live].sort((left, right) =>
-    Number(PREFERRED_SURVIVOR_IDS.has(right.data.id)) - Number(PREFERRED_SURVIVOR_IDS.has(left.data.id)) ||
+    Number(right.data.id === preferredSurvivorId) - Number(left.data.id === preferredSurvivorId) ||
     contentScore(right) - contentScore(left) ||
     compareTuple(learningScore(right), learningScore(left)) ||
     finite(left.savedAt) - finite(right.savedAt) ||
