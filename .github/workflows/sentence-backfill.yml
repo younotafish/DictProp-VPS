@@ -159,6 +159,8 @@ jobs:
           strip_components: 1
 
       - name: Import encrypted sentence enrichment
+        id: sentence_import
+        continue-on-error: true
         uses: appleboy/ssh-action@v1
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
@@ -168,6 +170,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           envs: SENTENCE_BRIDGE_KEY
           command_timeout: 60m
+          capture_stdout: true
           script: |
             set -e
             test -n "$SENTENCE_BRIDGE_KEY"
@@ -185,6 +188,19 @@ jobs:
             docker compose exec -T app rm -rf /tmp/sentence-backfill
             rm -rf /tmp/dictprop-sentence-bridge
             exit "$STATUS"
+
+      - name: Report sentence import result
+        if: always()
+        env:
+          REMOTE_STDOUT: ${{ steps.sentence_import.outputs.stdout }}
+          REMOTE_STDERR: ${{ steps.sentence_import.outputs.stderr }}
+        run: |
+          printf '%s\n' "$REMOTE_STDOUT"
+          printf '%s\n' "$REMOTE_STDERR" >&2
+
+      - name: Enforce sentence import success
+        if: steps.sentence_import.outcome != 'success'
+        run: exit 1
 
   corpus-export:
     if: inputs.operation == 'corpus-export'
