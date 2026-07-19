@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, AudioLines, BookOpenText, Globe2, History, Languages, Search } from 'lucide-react';
+import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { SentenceData } from '../types';
 import { stripSentenceMarkers } from './HighlightedSentence';
 
@@ -13,17 +13,15 @@ interface SentenceAnalysisViewProps {
   onTouchEnd: React.TouchEventHandler<HTMLDivElement>;
 }
 
-const STATUS_LABEL = {
-  american: 'Distinctly American',
-  shared: 'Shared English',
-  not_american: 'Not American',
-} as const;
-
-const STATUS_CLASS = {
-  american: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  shared: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  not_american: 'bg-amber-50 text-amber-700 border-amber-200',
-} as const;
+const STATUS_PRESENTATION: Record<'american' | 'shared' | 'not_american', {
+  label: string;
+  className: string;
+  icon: LucideIcon;
+}> = {
+  american: { label: 'Distinctly American', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: BadgeCheck },
+  shared: { label: 'Natural shared English', className: 'border-sky-200 bg-sky-50 text-sky-700', icon: Globe2 },
+  not_american: { label: 'Not natural American English', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: TriangleAlert },
+};
 
 export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   sentence,
@@ -36,6 +34,8 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
 }) => {
   const analysis = sentence.analysis;
   const plainSentence = stripSentenceMarkers(sentence.text || '').trim();
+  const americanEnglishPresentation = analysis ? STATUS_PRESENTATION[analysis.americanEnglish.status] : null;
+  const AmericanEnglishIcon = americanEnglishPresentation?.icon;
 
   return (
     <div
@@ -68,7 +68,9 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
       >
         <div className="mx-auto w-full max-w-5xl">
           <main className="px-4 pb-[calc(3rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 lg:px-8">
-            <p className="text-base leading-relaxed text-slate-500 sm:text-lg">{plainSentence}</p>
+            <h1 className="max-w-4xl text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl lg:text-4xl">
+              {plainSentence}
+            </h1>
 
             {!analysis ? (
               <div className="mt-10 border-y border-slate-200 py-10 text-center">
@@ -94,18 +96,24 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                     <Languages size={17} className="text-rose-500" />
                     <h2 className="text-xs font-bold uppercase text-slate-500">Chinese translation</h2>
                   </div>
-                  <p lang="zh-CN" className="text-xl font-semibold leading-relaxed text-slate-900 sm:text-2xl">
+                  <p lang="zh-CN" className="max-w-4xl text-base font-normal leading-relaxed text-slate-700 sm:text-lg">
                     {analysis.translation}
                   </p>
                 </section>
 
                 <section className="mt-7 border-t border-slate-200 pt-6">
-                  <div className="mb-3 flex flex-wrap items-center gap-2">
-                    <Globe2 size={17} className="text-indigo-500" />
+                  <div className="mb-3 flex items-center gap-3">
+                    {americanEnglishPresentation && AmericanEnglishIcon && (
+                      <span
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${americanEnglishPresentation.className}`}
+                        role="img"
+                        aria-label={americanEnglishPresentation.label}
+                        title={americanEnglishPresentation.label}
+                      >
+                        <AmericanEnglishIcon size={22} strokeWidth={2.3} />
+                      </span>
+                    )}
                     <h2 className="text-xs font-bold uppercase text-slate-500">American English</h2>
-                    <span className={`rounded-md border px-2 py-1 text-xs font-semibold ${STATUS_CLASS[analysis.americanEnglish.status]}`}>
-                      {STATUS_LABEL[analysis.americanEnglish.status]}
-                    </span>
                   </div>
                   <p className="max-w-3xl text-base leading-relaxed text-slate-700">
                     {analysis.americanEnglish.explanation}
