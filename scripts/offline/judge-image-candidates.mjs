@@ -18,12 +18,17 @@ const MODEL = 'gpt-5.6-sol';
 const activeChildren = new Set();
 let aborting = false;
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
-if (!Array.isArray(payload.targets) || payload.targets.length === 0) throw new Error('Target manifest is invalid or empty');
+if (!Array.isArray(payload.targets)) throw new Error('Target manifest is invalid');
 const candidateDir = resolve(candidatesArg);
 const imageDir = resolve(imagesArg);
 const workDir = resolve(workArg);
 mkdirSync(imageDir, { recursive: true });
 mkdirSync(workDir, { recursive: true });
+if (payload.targets.length === 0) {
+  writeFileSync(join(workDir, 'rejected-targets.json'), `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  process.stderr.write('No image candidates remain to judge\n');
+  process.exit(0);
+}
 
 const schema = {
   type: 'object',

@@ -44,8 +44,11 @@ def main() -> None:
 
     payload = json.loads(Path(args.targets).read_text())
     targets = payload.get("targets")
-    if not isinstance(targets, list) or not targets:
-        raise ValueError("Target manifest is invalid or empty")
+    if not isinstance(targets, list):
+        raise ValueError("Target manifest is invalid")
+    if not targets:
+        print("No image targets remain", flush=True)
+        return
     if args.shard_count < 1 or args.shard_index < 0 or args.shard_index >= args.shard_count:
         raise ValueError("Invalid shard index/count")
     targets = [target for index, target in enumerate(targets) if index % args.shard_count == args.shard_index]
