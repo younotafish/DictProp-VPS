@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
 import { corpusSourceHash } from '../corpus-audit.js';
-import { getItemById, listAllUsers, upsertItemImageBinary } from '../db.js';
+import { getAllItems, listAllUsers, upsertItemImageBinary } from '../db.js';
 import { env } from '../env.js';
 import { detectImageMimeType } from '../image-format.js';
 import { validateOfflineImageBundle, type OfflineImageBundle } from '../offline-image-import.js';
@@ -19,11 +19,12 @@ const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMA
 if (!owner) throw new Error('Owner account not found');
 
 const bundleRoot = dirname(resolvedManifest);
+const parentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
 const result = { total: bundle.entries.length, replaced: 0, skipped: 0, errors: [] as Array<{ id: string; error: string }> };
 
 for (const entry of bundle.entries) {
   try {
-    const parent = getItemById(entry.parentId, owner.id, false) as any;
+    const parent = parentById.get(entry.parentId) as any;
     if (!parent || parent.isDeleted) throw new Error('parent item is missing or deleted');
     if (corpusSourceHash(parent.data) !== entry.parentHash) throw new Error('parent content changed after generation');
     const validImageIds = new Set([

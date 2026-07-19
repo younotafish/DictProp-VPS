@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
 import {
   getImageManifest,
-  getItemById,
+  getAllItems,
   listAllUsers,
   upsertItem,
   upsertItemImageBinary,
@@ -29,6 +29,7 @@ if (!owner) throw new Error('Owner account not found');
 
 const bundleRoot = dirname(resolvedManifest);
 const imageIds = new Set(getImageManifest(owner.id));
+const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
 const result = {
   total: bundle.entries.length,
   analysesUpdated: 0,
@@ -41,7 +42,7 @@ const result = {
 
 for (const entry of bundle.entries) {
   try {
-    const item = getItemById(entry.id, owner.id, false) as any;
+    const item = currentById.get(entry.id) as any;
     if (!item || item.type !== 'sentence' || item.isDeleted) {
       result.skipped++;
       result.errors.push({ id: entry.id, error: 'sentence is missing or deleted' });

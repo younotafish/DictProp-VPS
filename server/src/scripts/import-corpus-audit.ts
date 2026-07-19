@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { corpusAuditDataState, validateCorpusAuditBundle, type CorpusAuditBundle } from '../corpus-audit.js';
-import { getItemById, listAllUsers, upsertMany } from '../db.js';
+import { getAllItems, listAllUsers, upsertMany } from '../db.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
 import { validateStoredItem } from '../validation.js';
@@ -26,10 +26,11 @@ const result = {
 };
 const pending: any[] = [];
 const archivedById = new Set<string>();
+const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
 
 for (const entry of bundle.entries) {
   try {
-    const current = getItemById(entry.id, owner.id, false) as any;
+    const current = currentById.get(entry.id) as any;
     if (!current || current.isDeleted) throw new Error('item is missing or deleted');
     if (current.type !== entry.type) throw new Error('item type changed after export');
     const dataState = corpusAuditDataState(current.data, entry);
