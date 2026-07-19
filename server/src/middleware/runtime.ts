@@ -32,7 +32,7 @@ export function createConcurrencyLimit(maxConcurrent: number): MiddlewareHandler
   return async (c, next) => {
     if (active >= maxConcurrent) {
       c.header('Retry-After', '5');
-      return c.json({ error: 'The AI service is busy. Try again shortly.' }, 503);
+      return c.json({ error: 'Another data import is already running. Try again shortly.' }, 503);
     }
     active++;
     try {

@@ -17,14 +17,14 @@ async function waitForCompletion(getStatus: () => ImageBackfillStatus): Promise<
   throw new Error('Image backfill did not complete');
 }
 
-test('collectImageBackfillTargets respects ownership scope and existing images', () => {
+test('collectImageBackfillTargets uses the unified library and respects item scope and existing images', () => {
   const items = [
-    { type: 'vocab', project: 'alpha', data: { id: 'one', imagePrompt: 'one prompt' } },
-    { type: 'vocab', project: 'alpha', data: { id: 'done', imagePrompt: 'done prompt', imageUrl: 'server:has_image' } },
-    { type: 'vocab', project: 'beta', data: { id: 'two', imagePrompt: 'two prompt' } },
-    { type: 'vocab', project: 'alpha', isArchived: true, data: { id: 'archived', imagePrompt: 'skip' } },
+    { type: 'vocab', data: { id: 'one', imagePrompt: 'one prompt' } },
+    { type: 'vocab', data: { id: 'done', imagePrompt: 'done prompt', imageUrl: 'server:has_image' } },
+    { type: 'vocab', data: { id: 'two', imagePrompt: 'two prompt' } },
+    { type: 'vocab', isArchived: true, data: { id: 'archived', imagePrompt: 'skip' } },
     {
-      type: 'phrase', project: 'alpha', data: {
+      type: 'phrase', data: {
         id: 'phrase',
         vocabs: [
           { id: 'nested', imagePrompt: 'nested prompt' },
@@ -34,8 +34,9 @@ test('collectImageBackfillTargets respects ownership scope and existing images',
     },
   ];
 
-  assert.deepEqual(collectImageBackfillTargets(items, { project: 'alpha' }), [
+  assert.deepEqual(collectImageBackfillTargets(items), [
     { imageId: 'one', prompt: 'one prompt' },
+    { imageId: 'two', prompt: 'two prompt' },
     { imageId: 'nested', prompt: 'nested prompt' },
   ]);
   assert.deepEqual(collectImageBackfillTargets(items, { itemIds: ['two'] }), [

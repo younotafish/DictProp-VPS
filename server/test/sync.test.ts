@@ -49,10 +49,10 @@ test('phrase image merge follows vocab ids after reordering', () => {
   assert.equal(merged.vocabs[1].imageUrl, 'idb:alpha');
 });
 
-test('project assignment participates in dirty tracking', () => {
+test('legacy project metadata no longer affects content identity', () => {
   const item = phrase([], 1);
   const moved = { ...item, project: 'project-b' };
-  assert.notEqual(getItemContentHash(item), getItemContentHash(moved));
+  assert.equal(getItemContentHash(item), getItemContentHash(moved));
 });
 
 test('newer complete sentence content is not mistaken for a lightweight cache entry', () => {

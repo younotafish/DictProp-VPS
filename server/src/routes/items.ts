@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
-import { getAllItems, getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, getProjects, createProject, renameProject, deleteProject, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary } from '../db.js';
+import { getAllItems, getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
@@ -70,7 +70,7 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
 }
 
 /** Wrap a plain VocabCard object into a full StoredItem. */
-function wrapVocabCard(card: any, project?: string): any {
+function wrapVocabCard(card: any): any {
   const id = typeof card.id === 'string' && card.id.length > 0 && card.id.length <= 200 ? card.id : randomUUID();
   const now = Date.now();
   return {
@@ -88,7 +88,6 @@ function wrapVocabCard(card: any, project?: string): any {
       stability: 0,
     },
     savedAt: now,
-    ...(project ? { project } : {}),
   };
 }
 
@@ -270,11 +269,8 @@ itemsRoutes.delete('/items/:id', (c) => {
 //   1. StoredItem[] (full format with data/type/srs wrappers)
 //   2. VocabCard[] (simplified — just word/chinese/definition/etc, auto-wrapped)
 // If imageUrl is an HTTP URL, fetches and converts to base64.
-// Optional query: ?project=<id> to assign all items to a project.
 itemsRoutes.post('/import', async (c) => {
   const userId = c.get('user').id;
-  const project = c.req.query('project') || undefined;
-  if (project && project.length > 200) return c.json({ error: 'Invalid project id' }, 400);
   const body = await c.req.json().catch(() => null);
   if (!Array.isArray(body)) {
     return c.json({ error: 'Expected array of items' }, 400);
@@ -284,16 +280,9 @@ itemsRoutes.post('/import', async (c) => {
   // Normalize: detect simplified VocabCard format and wrap
   const items: any[] = body.map((item: any) => {
     if (item && item.data && item.type) return item; // already StoredItem
-    if (item && typeof item.word === 'string' && item.word.trim()) return wrapVocabCard(item, project); // plain VocabCard
+    if (item && typeof item.word === 'string' && item.word.trim()) return wrapVocabCard(item); // plain VocabCard
     return null;
   }).filter((item): item is any => !!item && validateStoredItem(item) === null);
-
-  // Apply project override to full-format items too
-  if (project) {
-    for (const item of items) {
-      if (!item.project) item.project = project;
-    }
-  }
 
   if (items.length === 0) {
     return c.json({ error: 'No valid items found' }, 400);
@@ -423,47 +412,4 @@ itemsRoutes.post('/reviews/:id/undo', (c) => {
     }
     throw error;
   }
-});
-
-// ─── Project routes ───
-
-itemsRoutes.get('/projects', (c) => {
-  const userId = c.get('user').id;
-  return c.json(getProjects(userId).map(p => ({
-    id: p.id,
-    name: p.name,
-    createdAt: p.created_at,
-  })));
-});
-
-itemsRoutes.post('/projects', async (c) => {
-  const userId = c.get('user').id;
-  const body = await c.req.json().catch(() => null);
-  const name = body?.name;
-  if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
-    return c.json({ error: 'Project name must be 1-100 characters' }, 400);
-  }
-  const id = randomUUID();
-  createProject(id, name.trim(), userId);
-  return c.json({ id, name: name.trim(), createdAt: Date.now() });
-});
-
-itemsRoutes.put('/projects/:id', async (c) => {
-  const userId = c.get('user').id;
-  const id = c.req.param('id');
-  const body = await c.req.json().catch(() => null);
-  const name = body?.name;
-  if (!id || id.length > 200 || typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
-    return c.json({ error: 'Valid project id and 1-100 character name are required' }, 400);
-  }
-  renameProject(id, name.trim(), userId);
-  return c.json({ ok: true });
-});
-
-itemsRoutes.delete('/projects/:id', (c) => {
-  const userId = c.get('user').id;
-  const id = c.req.param('id');
-  if (!id || id.length > 200) return c.json({ error: 'Invalid project id' }, 400);
-  deleteProject(id, userId);
-  return c.json({ ok: true });
 });

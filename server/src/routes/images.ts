@@ -1,14 +1,14 @@
 import { Hono } from 'hono';
 import { getAllItems, upsertItemImageBinary } from '../db.js';
 import { createImageBackfillManager } from '../image-backfill.js';
-import { generateImageQueued, ImageGenerationError, type ImageAspectRatio } from '../image-generation.js';
+import { generateImage, ImageGenerationError, type ImageAspectRatio } from '../image-generation.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 export const imageRoutes = new Hono<{ Variables: AuthVariables }>();
 
 const imageBackfill = createImageBackfillManager({
   loadItems: userId => getAllItems(true, userId),
-  generateImage: generateImageQueued,
+  generateImage,
   saveImage: (userId, imageId, image) => upsertItemImageBinary(imageId, image.data, image.mimeType, userId),
 });
 
@@ -21,13 +21,13 @@ imageRoutes.post('/generate-image', async (c) => {
   }
 
   try {
-    let image: Awaited<ReturnType<typeof generateImageQueued>>;
+    let image: Awaited<ReturnType<typeof generateImage>>;
     try {
-      image = await generateImageQueued(prompt.trim(), aspectRatio as ImageAspectRatio);
+      image = await generateImage(prompt.trim(), aspectRatio as ImageAspectRatio);
     } catch (error) {
       if (!(error instanceof ImageGenerationError) || !error.retryable) throw error;
       await new Promise(resolve => setTimeout(resolve, 750));
-      image = await generateImageQueued(prompt.trim(), aspectRatio as ImageAspectRatio);
+      image = await generateImage(prompt.trim(), aspectRatio as ImageAspectRatio);
     }
     return new Response(image.data, {
       headers: { 'Content-Type': image.mimeType, 'Cache-Control': 'no-store' },
@@ -47,18 +47,13 @@ imageRoutes.post('/image-backfill', async (c) => {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return c.json({ error: 'Invalid image backfill request' }, 400);
   }
-  const project = body?.project;
   const itemIds = body?.itemIds;
-  if (project !== undefined && (typeof project !== 'string' || project.length === 0 || project.length > 200)) {
-    return c.json({ error: 'Invalid project' }, 400);
-  }
   if (itemIds !== undefined && (!Array.isArray(itemIds) || itemIds.length > 5_000 ||
       itemIds.some((id: unknown) => typeof id !== 'string' || id.length === 0 || id.length > 200))) {
     return c.json({ error: 'Invalid item ids' }, 400);
   }
 
   const status = imageBackfill.start(c.get('user').id, {
-    ...(project !== undefined ? { project } : {}),
     ...(itemIds !== undefined ? { itemIds: Array.from(new Set(itemIds as string[])) } : {}),
   });
   return c.json(status, status.running ? 202 : 200);

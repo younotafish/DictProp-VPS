@@ -141,7 +141,7 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
           tabIndex={onSearchWord ? 0 : undefined}
           onClick={
             onSearchWord
-              ? (e) => { e.preventDefault(); e.stopPropagation(); onSearchWord(word); }
+              ? (e) => { e.stopPropagation(); if (swallowSelection()) return; e.preventDefault(); onSearchWord(word); }
               : onPlayFromWord
               ? (e) => { e.stopPropagation(); if (swallowSelection()) return; onPlayFromWord(off); }
               : undefined
@@ -220,7 +220,7 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
       data-word-offset={off}
       role="button"
       tabIndex={0}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (swallowSelection()) return; onOpenCard!(item); }}
+      onClick={(e) => { e.stopPropagation(); if (swallowSelection()) return; e.preventDefault(); onOpenCard!(item); }}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onOpenCard!(item); } }}
     >
       {text}
@@ -317,7 +317,9 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
     strippedOffset += run.length;
   }
 
-  return <>{nodes}</>;
+  // The wrapper scopes an iOS selection override. Highlighted spans use role="button" for keyboard
+  // access, but the app-wide button rule must not disable long-press selection inside a sentence.
+  return <span className="sentence-selectable">{nodes}</span>;
 };
 
 // Memoized: with stable props (text/itemWord + stable callbacks) an unchanged sentence skips its

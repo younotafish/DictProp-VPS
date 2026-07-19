@@ -128,7 +128,7 @@ export interface StoredItem {
   updatedAt?: number;
   isDeleted?: boolean; // Soft delete flag for sync
   isArchived?: boolean; // Archive flag - keeps item but excludes from study
-  project?: string; // Project ID — undefined means uncategorized/default
+  project?: string; // Legacy-only migration field; current clients and server strip it.
   lastSyncedHash?: string; // Local-only hash of the content last accepted by the server
   serverRevision?: number; // Server-issued monotonic content revision for conflict ordering
 }
@@ -147,13 +147,6 @@ export interface ReviewEvent {
   taskType?: ReviewTaskType;
   durationMs?: number;
   sessionId?: string;
-}
-
-// Project — a named collection of items
-export interface ProjectInfo {
-  id: string;
-  name: string;
-  createdAt: number;
 }
 
 // Group type for items with same spelling - Shared across views

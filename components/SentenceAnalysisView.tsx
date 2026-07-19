@@ -1,18 +1,14 @@
 import React from 'react';
 import { ArrowLeft, BookOpenText, Globe2, History, Languages, Search } from 'lucide-react';
 import { SentenceData } from '../types';
-import { OfflineImage } from './OfflineImage';
 import { stripSentenceMarkers } from './HighlightedSentence';
 
 interface SentenceAnalysisViewProps {
   sentence: SentenceData;
   position: number;
   total: number;
-  imageSrc?: string;
-  imageVersion: number;
   onBack: () => void;
   onSearch: (term: string) => void;
-  onMissingImage?: (itemId: string) => Promise<string | null>;
   onTouchStart: React.TouchEventHandler<HTMLDivElement>;
   onTouchEnd: React.TouchEventHandler<HTMLDivElement>;
 }
@@ -33,11 +29,8 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   sentence,
   position,
   total,
-  imageSrc,
-  imageVersion,
   onBack,
   onSearch,
-  onMissingImage,
   onTouchStart,
   onTouchEnd,
 }) => {
@@ -74,18 +67,6 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
         style={{ touchAction: 'pan-y pinch-zoom' }}
       >
         <div className="mx-auto w-full max-w-5xl">
-          <div className="aspect-video max-h-[52vh] min-h-48 w-full overflow-hidden bg-slate-100">
-            <OfflineImage
-              key={`${sentence.id}:${imageVersion}`}
-              src={imageSrc}
-              itemId={sentence.id}
-              alt={`Visual depiction of: ${plainSentence}`}
-              onMissing={onMissingImage}
-              className="h-full w-full object-cover"
-              fallbackClassName="h-full w-full"
-            />
-          </div>
-
           <main className="px-4 pb-[calc(3rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 lg:px-8">
             <p className="text-base leading-relaxed text-slate-500 sm:text-lg">{plainSentence}</p>
 

@@ -121,6 +121,9 @@ try {
 try {
   db.exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
+  // Projects were retired in favor of one unified library. Preserve every item while removing only
+  // its obsolete grouping metadata; repeat on startup so an old cached client cannot restore it.
+  db.exec(`UPDATE items SET project = NULL WHERE project IS NOT NULL; DELETE FROM projects`);
 } catch (e) {
   console.warn('Projects table creation:', e);
 }
@@ -473,7 +476,6 @@ function rowToItem(row: ItemRow, stripImages = false, imageIds?: Set<string>) {
     updatedAt: row.updated_at ?? undefined,
     isDeleted: row.is_deleted === 1 ? true : undefined,
     isArchived: row.is_archived === 1 ? true : undefined,
-    project: row.project ?? undefined,
     serverRevision: row.revision || undefined,
   };
 }
@@ -676,7 +678,7 @@ export function upsertItem(item: any, userId: string): UpsertResult {
     is_deleted: staleContent ? existing.is_deleted : (item.isDeleted ? 1 : 0),
     is_archived: staleContent ? existing.is_archived : (item.isArchived ? 1 : 0),
     user_id: userId,
-    project: staleContent ? existing.project : (item.project || null),
+    project: null,
     revision,
   });
   return { revision, conflicted: staleContent };
@@ -1072,65 +1074,6 @@ export function deleteSession(token: string) {
   sessionStmts.delete.run(sessionTokenHash(token));
   sessionStmts.delete.run(token);
 }
-
-// ─── Project CRUD ───
-
-let projectStmts = {
-  getAll: db.prepare(`SELECT * FROM projects WHERE user_id = ? ORDER BY created_at`),
-  create: db.prepare(`INSERT INTO projects (id, name, user_id, created_at) VALUES (@id, @name, @user_id, @created_at)`),
-  rename: db.prepare(`UPDATE projects SET name = ? WHERE id = ? AND user_id = ?`),
-  delete: db.prepare(`DELETE FROM projects WHERE id = ? AND user_id = ?`),
-  clearItemsProject: db.prepare(`UPDATE items SET project = NULL, updated_at = ?, revision = ? WHERE project = ? AND user_id = ?`),
-};
-
-export interface ProjectRow {
-  id: string;
-  name: string;
-  user_id: string;
-  created_at: number;
-}
-
-export function getProjects(userId: string): ProjectRow[] {
-  try {
-    return projectStmts.getAll.all(userId) as ProjectRow[];
-  } catch (e: any) {
-    if (e.message?.includes('no such table')) {
-      db.exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL)`);
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
-      projectStmts.getAll = db.prepare(`SELECT * FROM projects WHERE user_id = ? ORDER BY created_at`);
-      return projectStmts.getAll.all(userId) as ProjectRow[];
-    }
-    throw e;
-  }
-}
-
-export function createProject(id: string, name: string, userId: string) {
-  try {
-    projectStmts.create.run({ id, name, user_id: userId, created_at: Date.now() });
-  } catch (e: any) {
-    // Table might not exist — create it and retry
-    if (e.message?.includes('no such table')) {
-      db.exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL)`);
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
-      // Re-prepare the statement since table was just created
-      projectStmts.create = db.prepare(`INSERT INTO projects (id, name, user_id, created_at) VALUES (@id, @name, @user_id, @created_at)`);
-      projectStmts.create.run({ id, name, user_id: userId, created_at: Date.now() });
-    } else {
-      throw e;
-    }
-  }
-}
-
-export function renameProject(id: string, name: string, userId: string) {
-  projectStmts.rename.run(name, id, userId);
-}
-
-export const deleteProject = db.transaction((id: string, userId: string) => {
-  // Clear project from all items that belonged to it
-  const revision = (nextRevision.get() as { value: number }).value;
-  projectStmts.clearItemsProject.run(Date.now(), revision, id, userId);
-  projectStmts.delete.run(id, userId);
-});
 
 export function isDatabaseReady(): boolean {
   try {

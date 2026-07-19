@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, ProjectInfo, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
+import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
 import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, loadProjects, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, startImageBackfill, getImageBackfillStatus, cancelImageBackfill, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type ImageBackfillScope, type ImageBackfillStatus, type RevisionCursor } from './services/api';
+import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, startImageBackfill, getImageBackfillStatus, cancelImageBackfill, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type ImageBackfillScope, type ImageBackfillStatus, type RevisionCursor } from './services/api';
 import { stripSentenceMarkers } from './components/HighlightedSentence';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -17,10 +17,8 @@ import { useReviewHistory } from './hooks/useReviewHistory';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 import { subscribeToServerMutations } from './services/syncSignals';
+import { getUsagePriority, sortStoredSensesByUsage, sortVocabCardsByUsage } from './services/usageAudit';
 
-// Project to land on by default each session (matched by name, case-insensitive).
-// Falls back to "All Projects" if no project with this name exists. Change here to retarget.
-const DEFAULT_PROJECT_NAME = 'everyone ESL';
 const NotebookView = lazy(() => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
 const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(module => ({ default: module.GlobalSearch })));
 const ConfirmModal = lazy(() => import('./components/ConfirmModal').then(module => ({ default: module.ConfirmModal })));
@@ -46,7 +44,6 @@ const createLightweightCache = (items: StoredItem[]): any[] =>
     };
     if (item.isDeleted) entry.isDeleted = true;
     if (item.isArchived) entry.isArchived = true;
-    if (item.project) entry.project = item.project;
 
     if (isPhraseItem(item)) {
       entry.data = {
@@ -412,40 +409,6 @@ const App: React.FC = () => {
     latestItemsRef.current = syncState.items;
   }, [syncState.items]);
 
-  // Projects
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [activeProject, setActiveProject] = useState<string | null>(null); // null = show all
-  const didInitDefaultProjectRef = useRef(false); // ensures the default-project landing runs once per session
-
-  const projectsCacheKey = authState.user ? `vps_projects_cache_${authState.user.id}` : 'vps_projects_cache';
-
-  // setProjects + write-through to localStorage so the next page load can render
-  // them instantly instead of waiting on the network round-trip.
-  const persistProjects = useCallback((p: ProjectInfo[]) => {
-    setProjects(p);
-    try {
-      localStorage.setItem(projectsCacheKey, JSON.stringify(p));
-    } catch (e) {
-      warn("Failed to cache projects to localStorage", e);
-    }
-  }, [projectsCacheKey]);
-
-  // Restore projects from localStorage cache once auth is resolved
-  useEffect(() => {
-    if (authState.loading || !authState.user) return;
-    try {
-      const cached = localStorage.getItem(projectsCacheKey);
-      if (cached) {
-        const cachedProjects = JSON.parse(cached);
-        if (Array.isArray(cachedProjects) && cachedProjects.length > 0) {
-          setProjects(cachedProjects);
-        }
-      }
-    } catch (e) {
-      warn("Failed to restore projects from cache", e);
-    }
-  }, [authState.loading, authState.user?.id, projectsCacheKey]);
-
   // ── Word comparisons (persisted server + local, keyed by the word-set) ──────
   // The GENERATION queue lives in GlobalSearch (the bottom-right search queue) so comparisons behave
   // exactly like word searches. App just owns the persisted store + the save/lookup callbacks.
@@ -548,23 +511,13 @@ const App: React.FC = () => {
   }, [persistComparisons]);
 
 
-  // Land on the default project (DEFAULT_PROJECT_NAME) once projects are known. Runs once per
-  // session, so switching projects mid-session sticks; a fresh load returns to the default.
-  useEffect(() => {
-    if (didInitDefaultProjectRef.current) return;
-    if (authState.loading || !authState.user || projects.length === 0) return;
-    const def = projects.find(p => (p.name || '').trim().toLowerCase() === DEFAULT_PROJECT_NAME.toLowerCase());
-    if (def) setActiveProject(def.id);
-    didInitDefaultProjectRef.current = true;
-  }, [authState.loading, authState.user?.id, projects]);
-
   // Derived state - memoized filtered items
   const savedItems = syncState.items;
   const allActiveItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
   // Variant-aware lookup index (base word + each inflected form → base word), rebuilt
   // only when items change. Powers "search a variant → pop up the saved card, skip AI".
   const variantIndex = useMemo(() => buildVariantIndex(allActiveItems), [allActiveItems]);
-  // base word → its saved vocab item (most-reviewed sense), so footnote lookup is O(1) per word
+  // base word → its most useful saved vocab item, so footnote lookup is O(1) per word
   // instead of an O(n) scan over the whole library on every rendered token. See findSavedItem.
   const savedVocabByBase = useMemo(() => {
     const m = new Map<string, StoredItem>();
@@ -573,16 +526,19 @@ const App: React.FC = () => {
       const base = normalizeKey((i.data as VocabCard).word || '');
       if (!base) continue;
       const prev = m.get(base);
-      if (!prev || (i.srs?.totalReviews ?? 0) > (prev.srs?.totalReviews ?? 0)) m.set(base, i);
+      const candidatePriority = getUsagePriority((i.data as VocabCard).usageAudit?.status);
+      const previousPriority = prev
+        ? getUsagePriority((prev.data as VocabCard).usageAudit?.status)
+        : Number.POSITIVE_INFINITY;
+      if (!prev || candidatePriority < previousPriority ||
+          (candidatePriority === previousPriority && (i.srs?.totalReviews ?? 0) > (prev.srs?.totalReviews ?? 0))) {
+        m.set(base, i);
+      }
     }
     return m;
   }, [allActiveItems]);
-  // Filter by project for notebook display (null = show all)
-  const activeItems = useMemo(() => {
-    if (!activeProject) return allActiveItems;
-    return allActiveItems.filter(i => i.project === activeProject);
-  }, [allActiveItems, activeProject]);
-  // Items available for study — always all projects (excludes archived and sentences)
+  const activeItems = allActiveItems;
+  // Items available for study (excludes archived and sentences)
   const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
   // Sentence items
   const sentenceItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type === 'sentence'), [savedItems]);
@@ -628,11 +584,13 @@ const App: React.FC = () => {
   const [cardPopup, setCardPopup] = useState<{ spelling: string; initialId: string } | null>(null);
   const openCardPopup = useCallback((it: StoredItem) => setCardPopup({ spelling: getItemSpelling(it), initialId: it.data.id }), []);
   const popupItems = useMemo(
-    () => (cardPopup ? allActiveItems.filter(i => i.type === 'vocab' && getItemSpelling(i) === cardPopup.spelling) : []),
+    () => (cardPopup
+      ? sortStoredSensesByUsage(allActiveItems.filter(i => i.type === 'vocab' && getItemSpelling(i) === cardPopup.spelling))
+      : []),
     [cardPopup, allActiveItems],
   );
   // Footnote popup: fetch a word's full set of AI senses (cached per session) so the popup can page
-  // through saved + not-yet-saved meanings; and save a chosen sense (inheriting the word's project).
+  // through saved + not-yet-saved meanings; and save a chosen sense.
   const senseCacheRef = useRef<Map<string, VocabCard[]>>(new Map());
   const fetchSensesForWord = useCallback(async (word: string): Promise<VocabCard[]> => {
     const key = normalizeKey(word);
@@ -647,12 +605,9 @@ const App: React.FC = () => {
     } catch { return []; }
   }, []);
   const saveVocabSense = useCallback((vocab: VocabCard) => {
-    const spelling = (vocab.word || '').toLowerCase().trim();
-    const sib = latestItemsRef.current.find(i => !i.isDeleted && i.type === 'vocab' && getItemSpelling(i) === spelling);
-    const project = sib?.project ?? activeProject ?? undefined;
     const v: VocabCard = { ...vocab, id: vocab.id || crypto.randomUUID() };
-    handleSaveRef.current({ data: v, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(v.id, 'vocab'), ...(project ? { project } : {}) });
-  }, [activeProject]);
+    handleSaveRef.current({ data: v, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(v.id, 'vocab') });
+  }, []);
 
   // Persist detailContext (only group/item indices for potential future use)
   useEffect(() => {
@@ -801,9 +756,6 @@ const App: React.FC = () => {
 
     try {
       await flushPendingReviews();
-      // Reload projects
-      loadProjects().then(p => persistProjects(p)).catch(e => warn("Failed to load projects:", e));
-
       // 1. Pull latest items from server
       const remoteItems = await loadAllItems();
       serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
@@ -1036,14 +988,23 @@ const App: React.FC = () => {
                 hasChanges = true;
             }
 
-            // 3. A review mutation is written synchronously before the async IndexedDB journal. Reapply
+            // 3. Merge every legacy project into the one notebook without touching card content or SRS.
+            if (processedItems.some(item => item.project !== undefined)) {
+                processedItems = processedItems.map(item => {
+                    const { project: _legacyProject, ...withoutProject } = item;
+                    return withoutProject;
+                });
+                hasChanges = true;
+            }
+
+            // 4. A review mutation is written synchronously before the async IndexedDB journal. Reapply
             // those tiny patches here so an immediate refresh cannot roll progress back.
             processedItems = overlayPendingReviews(processedItems, readPendingReviewMutations(userId));
 
-            // 3.5. Strip images from items → IDB (keep ~143MB out of React state)
+            // 5. Strip images from items → IDB (keep ~143MB out of React state)
             processedItems = await stripAndStoreImages(processedItems);
 
-            // 4. Initialize sync state with merged data
+            // 6. Initialize sync state with merged data
             setSyncState({
                 items: processedItems
             });
@@ -1052,7 +1013,7 @@ const App: React.FC = () => {
             latestItemsRef.current = processedItems;
             serverCursorRef.current = latestRevisionCursor(processedItems);
             
-            // 4. Save merged result back to IndexedDB if we merged or made changes
+            // 7. Save merged result back to IndexedDB if we merged or made changes
             // This ensures IndexedDB is up-to-date with any fresher data from cache
             if (hasChanges || needsSaveToIDB) {
                 await saveData(processedItems, userId);
@@ -1272,9 +1233,6 @@ const App: React.FC = () => {
     const syncFromServer = async () => {
       try {
         await flushPendingReviews();
-        // Load projects alongside items
-        loadProjects().then(p => persistProjects(p)).catch(e => warn("Failed to load projects:", e));
-
         const remoteItems = await loadAllItems();
         serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
         if (remoteItems.length === 0) return;
@@ -1723,7 +1681,7 @@ const App: React.FC = () => {
 
   // ── Find & merge variant duplicates (Phase 2 dedup tool) ──────────────────
   // Detection is read-only: cluster base words that are variants of one another
-  // (run/running/ran), then open the review modal. Scans across ALL projects.
+  // (run/running/ran), then open the review modal. Scans the whole notebook.
   const handleFindDuplicates = useCallback(() => {
     const clusters = findDuplicateClusters(allActiveItems);
     const detailed: DuplicateClusterView[] = clusters
@@ -1791,7 +1749,7 @@ const App: React.FC = () => {
     options?: { silent?: boolean },
   ) => Promise<void>>(async () => {});
 
-  const handleBatchImport = useCallback(async (words: string[], project?: string) => {
+  const handleBatchImport = useCallback(async (words: string[]) => {
     if (words.length === 0) return;
 
     // Deduplicate against existing items
@@ -1865,7 +1823,6 @@ const App: React.FC = () => {
                   type: 'vocab',
                   savedAt: Date.now(),
                   srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-                  ...(project ? { project } : {}),
                 };
                 handleSaveRef.current(storedItem);
                 saved++;
@@ -1920,7 +1877,7 @@ const App: React.FC = () => {
       onConfirm: () => {
         setConfirmModal(null);
         if (failedWords.length > 0) {
-          handleBatchImport(failedWords, project);
+          handleBatchImport(failedWords);
         }
       },
       showCancel: failedWords.length > 0,
@@ -2031,12 +1988,10 @@ const App: React.FC = () => {
   // Wire up the ref so handleBatchImport (declared earlier with empty deps) can call it
   runImageBackfillRef.current = runImageBackfill;
 
-  // User-initiated backfill: count missing items, confirm, then run. Scope is
-  // current view (active project if filtered, else all items).
+  // User-initiated backfill: count missing items across the unified notebook, confirm, then run.
   const handleGenerateMissingImages = useCallback(() => {
     const items = latestItemsRef.current.filter(i => {
       if (i.isDeleted || i.isArchived) return false;
-      if (activeProject) return i.project === activeProject;
       return true;
     });
 
@@ -2055,9 +2010,7 @@ const App: React.FC = () => {
       setConfirmModal({
         isOpen: true,
         title: 'No Missing Images',
-        message: activeProject
-          ? 'Every item in this project already has an image.'
-          : 'Every item already has an image.',
+        message: 'Every item already has an image.',
         confirmText: 'OK',
         variant: 'info',
         onConfirm: () => setConfirmModal(null),
@@ -2066,25 +2019,22 @@ const App: React.FC = () => {
       return;
     }
 
-    const scopeLabel = activeProject
-      ? `project "${projects.find(p => p.id === activeProject)?.name ?? '?'}"`
-      : 'your notebook';
     const estSeconds = missing * 2;
     const estMin = Math.ceil(estSeconds / 60);
 
     setConfirmModal({
       isOpen: true,
       title: 'Generate Missing Images',
-      message: `${missing} item${missing === 1 ? '' : 's'} in ${scopeLabel} are missing images. This will use ~${missing} image API call${missing === 1 ? '' : 's'} and take ~${estMin} min. The server will continue if you close the app.`,
+      message: `${missing} item${missing === 1 ? '' : 's'} in your notebook are missing images. This will use ~${missing} image API call${missing === 1 ? '' : 's'} and take ~${estMin} min. The server will continue if you close the app.`,
       confirmText: 'Generate',
       variant: 'info',
       onConfirm: () => {
         setConfirmModal(null);
-        void runImageBackfill(activeProject ? { project: activeProject } : {});
+        void runImageBackfill({});
       },
       showCancel: true,
     });
-  }, [activeProject, projects, runImageBackfill]);
+  }, [runImageBackfill]);
 
   // Reattach to a server job after a reload or reopening the app.
   useEffect(() => {
@@ -2599,22 +2549,21 @@ const App: React.FC = () => {
     });
   }, [activeItems]);
 
-  // Global lookup across ALL projects (not just the active one) so searching a saved word
+  // Global lookup across the whole notebook so searching a saved word
   // — OR any inflected variant of it (running→run, cats→cat, happier→happy) — pops up the
   // existing card instead of re-running an AI search. Variant matching is via variantIndex
-  // (forms + conservative lemmatiser; see services/wordMatch). isVocabSaved stays exact and
-  // active-project scoped so the popup's Save button can still re-file it into the current project.
+  // (forms + conservative lemmatiser; see services/wordMatch). isVocabSaved stays exact.
   const findSavedByWord = useCallback((word: string): VocabCard[] => {
     const bases = matchBaseWords(word, variantIndex);
     if (bases.size === 0) return [];
-    return allActiveItems
+    return sortVocabCardsByUsage(allActiveItems
       .filter(i => i.type === 'vocab' && bases.has(normalizeKey((i.data as VocabCard).word || '')))
-      .map(i => i.data as VocabCard);
+      .map(i => i.data as VocabCard));
   }, [allActiveItems, variantIndex]);
 
   // Footnote lookup: the saved item (vocab or phrase) a sentence term maps to, or null. Variant-aware
   // for vocab (running→run etc.) via variantIndex; exact normalized match for phrases. Picks the
-  // most-reviewed vocab sense so the popup's SRS bar is the meaningful one. Searches ALL projects.
+  // most useful modern-American sense, using review count only as a tie-breaker.
   const findSavedItem = useCallback((term: string): StoredItem | null => {
     const bases = matchBaseWords(term, variantIndex);
     if (bases.size === 0) return null;
@@ -2645,11 +2594,10 @@ const App: React.FC = () => {
     oldItems.forEach(o => {
       if (!newSenses.has((o.data as VocabCard).sense || '')) handleDelete(o.data.id); // meaning dropped by refresh
     });
-    const projectOf = oldItems[0]?.project; // new meanings inherit the word's project
     vocabs.forEach(vocab => {
       const match = oldItems.find(o => ((o.data as VocabCard).sense || '') === (vocab.sense || ''));
       if (match) {
-        // Update IN PLACE: keep the saved item's id/srs/savedAt/project, swap in the fresh content.
+        // Update IN PLACE: keep the saved item's id/SRS/savedAt, swap in the fresh content.
         // A refresh replaces the card BEFORE its new image has been generated, then re-saves once the
         // image streams in. Carry the existing image forward when the fresh vocab has none yet, so the
         // word is never left imageless — if the user navigates away (or the image gen fails) mid-refresh
@@ -2662,7 +2610,6 @@ const App: React.FC = () => {
           type: 'vocab',
           savedAt: Date.now(),
           srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-          ...(projectOf ? { project: projectOf } : {}),
         });
       }
     });
@@ -2702,7 +2649,7 @@ const App: React.FC = () => {
   // Open a saved sentence's source card in DetailView (sentence mode). `ordered` is the on-screen
   // (due-first) order from SentencesView, so swipe/arrow order matches the list exactly. Each sentence
   // maps to one group whose single item is its resolved source vocab card — matched by word + sense
-  // across ALL projects (allActiveItems), falling back to a synthetic minimal card (showing the
+  // across the whole notebook (allActiveItems), falling back to a synthetic minimal card (showing the
   // sentence as its sole example) when the source word no longer exists.
   const handleViewSentence = useCallback((ordered: StoredItem[], index: number) => {
     if (ordered.length === 0) return;
@@ -3103,11 +3050,6 @@ const App: React.FC = () => {
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
             hasOverlay={!!detailContext || !!confirmModal || showKeyboardHelp || !!cardPopup}
-            projects={projects}
-            activeProject={activeProject}
-            onSetActiveProject={setActiveProject}
-            onProjectsChanged={(p) => persistProjects(p)}
-            allItems={allActiveItems}
             onBatchImport={handleBatchImport}
             onJSONImported={handleForceSync}
             batchImportProgress={batchImportProgress}
@@ -3154,7 +3096,6 @@ const App: React.FC = () => {
         findSavedByWord={findSavedByWord}
         onSearch={handleRecursiveSearch}
         isOnline={isOnline}
-        activeProject={activeProject || undefined}
         onLazyLoadImage={handleLazyLoadImage}
         onRefreshReplace={handleRefreshReplace}
         onGeneratedImage={handleGeneratedImage}

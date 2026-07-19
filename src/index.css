@@ -11,6 +11,15 @@ button,
   user-select: none;
 }
 
+/* Sentence highlights remain selectable on iOS even though saved terms are keyboard-accessible buttons. */
+.sentence-selectable,
+.sentence-selectable [role="button"],
+.sentence-selectable [data-word-offset] {
+  -webkit-touch-callout: default !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
 :where(button, a, input, textarea, select, [tabindex]):focus-visible {
   outline: 2px solid #4f46e5;
   outline-offset: 2px;

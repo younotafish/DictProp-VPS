@@ -1,24 +1,18 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { ProjectInfo } from '../types';
 import { X, ClipboardPaste, Trash2, ListPlus, Sparkles } from 'lucide-react';
 
 interface BatchImportProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (words: string[], project?: string) => void;
-  projects?: ProjectInfo[];
-  activeProject?: string;
+  onSubmit: (words: string[]) => void;
 }
 
 export const BatchImport: React.FC<BatchImportProps> = ({
   isOpen,
   onClose,
   onSubmit,
-  projects = [],
-  activeProject,
 }) => {
   const [inputText, setInputText] = useState('');
-  const [selectedProject, setSelectedProject] = useState<string | undefined>(activeProject);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Focus textarea on open
@@ -27,13 +21,6 @@ export const BatchImport: React.FC<BatchImportProps> = ({
       setTimeout(() => textareaRef.current?.focus(), 200);
     }
   }, [isOpen]);
-
-  // Reset on open
-  useEffect(() => {
-    if (isOpen) {
-      setSelectedProject(activeProject);
-    }
-  }, [isOpen, activeProject]);
 
   const parseWords = useCallback((text: string): string[] => {
     return text
@@ -47,10 +34,10 @@ export const BatchImport: React.FC<BatchImportProps> = ({
   const handleSubmit = useCallback(() => {
     const words = parseWords(inputText);
     if (words.length === 0) return;
-    onSubmit(words, selectedProject);
+    onSubmit(words);
     setInputText('');
     onClose();
-  }, [inputText, parseWords, selectedProject, onSubmit, onClose]);
+  }, [inputText, parseWords, onSubmit, onClose]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -115,21 +102,6 @@ run the gamut"
               </button>
             )}
           </div>
-        </div>
-
-        {/* Project picker */}
-        <div className="mt-3 flex items-center gap-2">
-          <span className="text-xs text-slate-500 shrink-0">Import to:</span>
-          <select
-            value={selectedProject || ''}
-            onChange={e => setSelectedProject(e.target.value || undefined)}
-            className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-          >
-            <option value="">No project (uncategorized)</option>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
         </div>
 
         {/* Submit Button */}

@@ -49,11 +49,11 @@ export function describeSearchError(query: string, error: unknown): string {
     if (error.status === 429) {
       return error.responseBody.includes('QUOTA_EXCEEDED')
         ? 'The AI provider quota is exhausted. Please try again later.'
-        : 'AI requests are arriving too quickly. Try again shortly.';
+        : 'The AI provider rate-limited this request. Try again shortly.';
     }
-    if (error.status === 502 || error.status === 503 || error.status === 504) {
-      return `"${query}" could not be analyzed because the AI service is busy.`;
-    }
+    if (error.status === 502) return `The model returned no usable definition for "${query}". Tap to retry.`;
+    if (error.status === 503) return `The AI provider is temporarily unavailable for "${query}". Tap to retry.`;
+    if (error.status === 504) return `The model did not finish "${query}" before the timeout. Tap to retry.`;
     if (error.status >= 400 && error.status < 500 && error.responseBody) {
       return `Could not analyze "${query}": ${error.responseBody}`;
     }
@@ -62,7 +62,7 @@ export function describeSearchError(query: string, error: unknown): string {
   const message = error instanceof Error ? error.message : '';
   if (message === 'QUOTA_EXCEEDED') return 'The AI provider quota is exhausted. Please try again later.';
   if (message.includes('timed out') || message.includes('504') || (error instanceof Error && error.name === 'AbortError')) {
-    return `"${query}" timed out because the AI service is busy.`;
+    return `The model did not finish "${query}" before the timeout. Tap to retry.`;
   }
   return `Could not analyze "${query}".`;
 }

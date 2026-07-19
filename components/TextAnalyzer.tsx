@@ -83,7 +83,6 @@ interface TextAnalyzerProps {
   onUpdateStoredItem?: (item: StoredItem) => void;
   savedItems: StoredItem[];
   isOnline: boolean;
-  activeProject?: string | null;
 }
 
 export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
@@ -93,7 +92,6 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   onUpdateStoredItem,
   savedItems,
   isOnline,
-  activeProject,
 }) => {
   // ── State ───────────────────────────────────────────────────────────────
   const [step, setStep] = useState<AnalyzerStep>('input');
@@ -211,7 +209,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
           });
 
           if (!alreadySaved) {
-            const storedItem = makeVocabStoredItem(vocab, activeProject);
+            const storedItem = makeVocabStoredItem(vocab);
             onSave(storedItem);
             wordSaved++;
             savedCount++;
@@ -252,7 +250,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     }
 
     setStep('done');
-  }, [detectedWords, selectedWords, savedItems, onSave, onUpdateStoredItem, activeProject]);
+  }, [detectedWords, selectedWords, savedItems, onSave, onUpdateStoredItem]);
 
   // ── Navigation ─────────────────────────────────────────────────────────
 

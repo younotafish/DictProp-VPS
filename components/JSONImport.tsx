@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { ProjectInfo } from '../types';
 import { X, ClipboardPaste, Trash2, FileJson, Upload, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { importJSON } from '../services/api';
 
@@ -7,19 +6,14 @@ interface JSONImportProps {
   isOpen: boolean;
   onClose: () => void;
   onImported: () => void; // called after successful import to trigger sync
-  projects?: ProjectInfo[];
-  activeProject?: string;
 }
 
 export const JSONImport: React.FC<JSONImportProps> = ({
   isOpen,
   onClose,
   onImported,
-  projects = [],
-  activeProject,
 }) => {
   const [inputText, setInputText] = useState('');
-  const [selectedProject, setSelectedProject] = useState<string | undefined>(activeProject);
   const [status, setStatus] = useState<'idle' | 'importing' | 'done' | 'error'>('idle');
   const [result, setResult] = useState<string>('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -32,11 +26,10 @@ export const JSONImport: React.FC<JSONImportProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setSelectedProject(activeProject);
       setStatus('idle');
       setResult('');
     }
-  }, [isOpen, activeProject]);
+  }, [isOpen]);
 
   const parseItems = useCallback((text: string): { items: any[] | null; error: string | null } => {
     try {
@@ -74,7 +67,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
     setResult('');
 
     try {
-      const res = await importJSON(items, selectedProject);
+      const res = await importJSON(items);
       setStatus('done');
       const parts = [`${res.imported} cards imported`];
       if (res.imagesFetched > 0) parts.push(`${res.imagesFetched} images fetched`);
@@ -85,7 +78,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
       setStatus('error');
       setResult(e.message || 'Import failed');
     }
-  }, [inputText, selectedProject, parseItems, onImported]);
+  }, [inputText, parseItems, onImported]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -164,21 +157,6 @@ export const JSONImport: React.FC<JSONImportProps> = ({
               </button>
             )}
           </div>
-        </div>
-
-        {/* Project picker */}
-        <div className="mt-3 flex items-center gap-2">
-          <span className="text-xs text-slate-500 shrink-0">Import to:</span>
-          <select
-            value={selectedProject || ''}
-            onChange={e => setSelectedProject(e.target.value || undefined)}
-            className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-          >
-            <option value="">No project (uncategorized)</option>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
         </div>
 
         {/* Status message */}

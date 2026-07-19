@@ -2027,11 +2027,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
           sentence={currentSentence.data as SentenceData}
           position={sentenceIndex + 1}
           total={sentenceItems?.length ?? 0}
-          imageSrc={sentenceImageDirectSrc}
-          imageVersion={imageReloadTick[currentSentence.data.id] ?? 0}
           onBack={() => setSentencePage('sentence')}
           onSearch={(term) => { setSentencePage('sentence'); handleVocabSearch(term); }}
-          onMissingImage={onLazyLoadImage}
           onTouchStart={onContentTouchStart}
           onTouchEnd={onContentTouchEnd}
         />

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
+import { isValidUsageAudit, normalizeAnalysisResponse } from '../ai-response.js';
 
 export const aiRoutes = new Hono();
 
@@ -18,6 +19,7 @@ const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions
 const DEEPINFRA_WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo';
 const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
 const DEFAULT_TEMPERATURE = 0.7;
+const MAX_ANALYSIS_SCHEMA_ATTEMPTS = 4;
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
@@ -164,6 +166,7 @@ function validateVocabCard(vocab: any): boolean {
     !vocab.wordFamily.every((entry: any) => entry && typeof entry.word === 'string' &&
       typeof entry.pos === 'string' && typeof entry.chinese === 'string')
   )) return false;
+  if (!isValidUsageAudit(vocab.usageAudit)) return false;
   return true;
 }
 
@@ -213,7 +216,12 @@ Each vocab object MUST have these fields:
   "history": "string - Etymology and semantic evolution: Where the word comes from AND how/why it evolved to its current meaning. Explain the journey from original meaning to modern usage (2-3 sentences)",
   "register": "string - Frequency/register note (formal, slang, etc.)",
   "mnemonic": "string - A simple memory aid for THIS specific meaning",
-  "imagePrompt": "string - A prompt to generate an illustrative image for THIS specific meaning"
+  "imagePrompt": "string - A prompt to generate an illustrative image for THIS specific meaning",
+  "usageAudit": {
+    "status": "EXACTLY one of: modern_american, current_general, british_only, rare_or_dated, narrow_specialized",
+    "reason": "string - Concise evidence-based note about THIS exact sense's usefulness in modern American English. For british_only, name the normal American equivalent when one exists",
+    "confidence": "EXACTLY one of: high, medium, low"
+  }
 }`;
 
 const WORD_MODE_JSON_SCHEMA = `
@@ -271,29 +279,33 @@ If the input is an inflected form, you MUST normalize it to the base/lemma form 
 The 'word' field in your response should contain the BASE FORM that a learner would look up in a dictionary.
 Include the original input form in the 'forms' array.
 
-CRITICAL - WHICH MEANINGS TO INCLUDE:
-Create SEPARATE vocab cards ONLY for the meanings that are COMMON and CURRENT — the senses
-an educated native speaker actually meets in everyday books, news, and conversation.
+CRITICAL - WHICH MEANINGS TO INCLUDE AND HOW TO ORDER THEM:
+Create a SEPARATE vocab card for every distinct, established dictionary meaning of the headword,
+including British-only, rare/dated, and genuinely specialized meanings. This makes the result
+future-proof: never silently omit an established sense merely because it is low priority.
 - Different parts of speech = different cards (noun vs verb vs adjective)
-- Different everyday contexts = different cards (literal vs figurative)
+- Different literal vs figurative meanings = different cards
+- Merge tiny dictionary sub-senses that have essentially the same definition and usage; do not
+  manufacture distinctions just to make the list longer
+- Omit only proper-name uses, obvious one-off contextual metaphors, and senses that are not
+  independently established lexical meanings
 
-DO NOT create a card for a sense that is:
-- Archaic, obsolete, historical, or purely literary/poetic (e.g. the old subjunctive "be")
-- Narrow domain jargon a layperson wouldn't know — the chemistry / anatomy / geology /
-  aerospace / law / finance / computing sense of a word — UNLESS that technical sense IS the
-  word's main everyday meaning
-- So rare, regional, or specialized that even a well-read high-school student wouldn't know it
-When unsure, LEAVE IT OUT. One or two solid mainstream senses beats padding the card with
-meanings no learner will ever meet. Also do NOT split a single meaning into two near-identical
-cards — if two senses would share essentially the same definition, keep only one.
-(Do still analyze the exact word the user typed — this rule trims EXTRA senses; it never
-refuses the headword itself.)
+Every card MUST classify its EXACT sense with usageAudit:
+- modern_american: current and especially characteristic of everyday American English
+- current_general: current, useful English that is normal and readily understood in the US
+- british_only: current chiefly in British English but not normal American usage
+- rare_or_dated: rare, dated, archaic, obsolete, historical, or chiefly literary today
+- narrow_specialized: current but mainly limited to a technical/professional domain
+
+ORDER the cards by usefulness to a modern American-English learner: the most frequent everyday
+modern_american/current_general sense first, then other current senses, then narrow_specialized,
+british_only, and rare_or_dated senses. Within each group put the more frequent sense first.
 
 Example: "bank" should produce these everyday cards:
 1. bank (noun: finance) - "A financial institution..."
 2. bank (noun: geography) - "The side of a river..."
 3. bank (verb: to rely) - "To depend on something..."
-(Skip narrow or archaic senses — e.g. heraldry, obsolete uses, or hyper-technical jargon.)
+(Put narrow or archaic senses after these mainstream senses and label them accurately.)
 
 Each card MUST have:
 - The SAME 'word' field (the BASE/DICTIONARY form, not the original inflected input)
@@ -316,7 +328,7 @@ Each card MUST have:
     { "word": "creator", "pos": "noun", "chinese": "创造者" }
     { "word": "creativity", "pos": "noun", "chinese": "创造力" }
 
-Focus on the meanings a learner will actually encounter. It is better to omit a rare, archaic, or jargon sense than to include it — skip the long tail.
+The usageAudit is mandatory and applies to the specific sense, not merely to the headword.
 
 ${WORD_MODE_JSON_SCHEMA}`;
 
@@ -345,13 +357,15 @@ If the input is an inflected form, normalize to the base/lemma form:
 The 'word' field should contain the BASE FORM.
 
 CRITICAL - WHICH MEANINGS TO INCLUDE:
-Create SEPARATE vocab cards only for the COMMON, CURRENT meanings of the word/phrase AS A WHOLE.
+Create SEPARATE vocab cards for every distinct, established meaning of the word/phrase AS A WHOLE.
 - Different parts of speech = different cards
 - Literal vs figurative = different cards
-SKIP senses that are archaic/obsolete, narrow domain jargon, or so rare that even a well-read
-high-school student wouldn't know them — UNLESS such a sense is the item's main everyday
-meaning. Don't split one meaning into near-identical cards. When unsure, leave the obscure
-sense out.
+Include and accurately label British-only, rare/dated, and specialized senses; put them after
+current American/general senses. Don't split one meaning into near-identical cards.
+
+Every card MUST have usageAudit for its exact sense. Use only modern_american, current_general,
+british_only, rare_or_dated, or narrow_specialized, and order the cards from most useful/common
+for a modern American-English learner to least useful.
 
 Each card MUST have:
 - The SAME 'word' field (the complete phrase or base word, NOT individual components)
@@ -404,12 +418,12 @@ Extract phrasal verbs, idioms, and multi-word expressions as COMPLETE phrases (n
 - "couldn't help but" should be extracted as "couldn't help but"
 - "even though" can be extracted if it adds learning value
 
-CRITICAL - INCLUDE THE COMMON MEANINGS (most important rule):
-Once a word/phrase is selected for extraction, include its COMMON, CURRENT meanings as
-SEPARATE vocab cards — not only the one used in the sentence context.
-But DO NOT add a sense that is archaic/obsolete, narrow domain jargon, or so rare that even a
-well-read high-school student wouldn't know it. Don't split one meaning into near-identical
-cards. When unsure, leave the obscure sense out.
+CRITICAL - INCLUDE AND AUDIT EVERY ESTABLISHED MEANING (most important rule):
+Once a word/phrase is selected for extraction, include every distinct established meaning as a
+SEPARATE vocab card — not only the one used in the sentence context. Include British-only,
+rare/dated, and specialized senses, classify each exact sense with the mandatory usageAudit,
+and put the most common/useful modern American meanings first. Don't split one meaning into
+near-identical cards.
 
 Example: If extracting "zest" from a cooking sentence:
 - Card 1: zest (noun: culinary) - "The outer peel of citrus fruit..."
@@ -418,7 +432,7 @@ Both senses are everyday, so include both.
 
 Example: If extracting "bank" from any sentence:
 - Create cards for its everyday meanings: financial institution, river bank, to rely on.
-- Skip the narrow/technical senses (e.g. tilting an aircraft) unless that is the sense used.
+- Include narrow/technical senses (e.g. tilting an aircraft) after the everyday senses and label them narrow_specialized.
 
 Each card MUST include ALL fields with the SAME depth as Word Mode:
 - word, sense, chinese, ipa, definition, forms, synonyms, antonyms, confusables, examples, history, register, mnemonic, imagePrompt
@@ -610,11 +624,18 @@ aiRoutes.post('/analyze', async (c) => {
     const systemPrompt = isWord ? (isBatch ? BATCH_WORD_MODE_INSTRUCTION : WORD_MODE_INSTRUCTION) : SENTENCE_MODE_INSTRUCTION;
     let rawData: any;
     let isValid = false;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      rawData = await callDeepSeek(apiKey, systemPrompt, userPrompt);
+    for (let attempt = 0; attempt < MAX_ANALYSIS_SCHEMA_ATTEMPTS; attempt++) {
+      const modelData = await callDeepSeek(apiKey, systemPrompt, userPrompt);
+      const normalized = normalizeAnalysisResponse(modelData, { fallbackQuery: text.trim() });
+      rawData = normalized.data;
+      if (normalized.droppedCards > 0) {
+        console.warn(`Analysis normalization dropped ${normalized.droppedCards}/${normalized.inputCards} unusable vocab cards`);
+      }
       isValid = isWord ? validateWordModeResponse(rawData) : validateSentenceModeResponse(rawData);
       if (isValid) break;
-      if (attempt === 0) console.warn('Analysis response failed schema validation; retrying once');
+      if (attempt < MAX_ANALYSIS_SCHEMA_ATTEMPTS - 1) {
+        console.warn(`Analysis response contained no usable cards; retrying (${attempt + 1}/${MAX_ANALYSIS_SCHEMA_ATTEMPTS})`);
+      }
     }
     if (!isValid) return c.json(errorResponse('Analysis response validation failed', 502), 502);
 

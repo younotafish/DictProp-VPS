@@ -34,7 +34,6 @@ interface Props {
   findSavedByWord: (word: string) => VocabCard[];
   onSearch: (text: string) => void;
   isOnline: boolean;
-  activeProject?: string;
   onLazyLoadImage?: (itemId: string) => Promise<string | null>;
   /** Replace an already-saved word's card(s) with a freshly re-run AI result (refresh). Keeps SRS. */
   onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
@@ -75,25 +74,7 @@ const looksLikeSentence = (text: string): boolean => {
   return startsLikeSentence || hasAuxVerb;
 };
 
-// Global cap on concurrent illustration requests across ALL in-flight results. The 1-vCPU VPS chokes when
-// many image generations fire at once (the reason batch-import defers images to a separate phase), so even
-// though all pending text analyses start immediately, their image generation is funneled through these
-// shared slots — keeping image load flat regardless of how many analyses finish together.
-const MAX_CONCURRENT_IMAGE_GENS = 2;
-let activeImageGens = 0;
-const imageGenWaiters: Array<() => void> = [];
-const acquireImageSlot = (): Promise<void> =>
-  new Promise(resolve => {
-    if (activeImageGens < MAX_CONCURRENT_IMAGE_GENS) { activeImageGens++; resolve(); }
-    else imageGenWaiters.push(resolve);
-  });
-const releaseImageSlot = (): void => {
-  const next = imageGenWaiters.shift();
-  if (next) next();        // hand the freed slot straight to the next waiter (count stays the same)
-  else activeImageGens--;
-};
-
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, activeProject, onLazyLoadImage, onRefreshReplace, onGeneratedImage, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onGeneratedImage, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -287,36 +268,26 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const isReplace = !!(onRefreshReplace && findSavedByWord(queryWord).length > 0);
     if (isReplace && liveVocabs.length) onRefreshReplace!(queryWord, liveVocabs);
 
-    // Generate illustrations, but funnel every request through the GLOBAL image-gen slots (see
-    // acquireImageSlot) so concurrent analyses can't flood the 1-vCPU VPS with image work all at once.
+    // Start every illustration independently. The provider owns its capacity and reports real quota
+    // failures; interactive searches should never sit behind an artificial browser-side queue.
     const vocabList = result.vocabs || [];
-    let imgCursor = 0;
-    const imgWorker = async () => {
-      while (imgCursor < vocabList.length) {
-        const index = imgCursor++;
-        const vocab = vocabList[index];
-        if (!vocab.imagePrompt || vocab.imageUrl) continue;
-        await acquireImageSlot();
-        try {
-          const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
-          if (!imageData) continue;
-          if (liveVocabs[index]) liveVocabs[index] = { ...liveVocabs[index], imageUrl: imageData };
-          setQueue(prev => prev.map(q => {
-            if (q.id !== itemId || !q.results?.vocabs) return q;
-            const updated = [...q.results.vocabs];
-            if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
-            return { ...q, results: { ...q.results, vocabs: updated } };
-          }));
-          if (isReplace) onRefreshReplace!(queryWord, [...liveVocabs]); // re-save with the new image
-          else if (savedVocabIdsRef.current.has(vocab.id)) onGeneratedImage?.(liveVocabs[index]);
-        } catch {} finally {
-          releaseImageSlot();
-        }
-      }
+    const generateForVocab = async (vocab: VocabCard, index: number) => {
+      if (!vocab.imagePrompt || vocab.imageUrl) return;
+      try {
+        const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
+        if (!imageData) return;
+        if (liveVocabs[index]) liveVocabs[index] = { ...liveVocabs[index], imageUrl: imageData };
+        setQueue(prev => prev.map(q => {
+          if (q.id !== itemId || !q.results?.vocabs) return q;
+          const updated = [...q.results.vocabs];
+          if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
+          return { ...q, results: { ...q.results, vocabs: updated } };
+        }));
+        if (isReplace) onRefreshReplace!(queryWord, [...liveVocabs]);
+        else if (savedVocabIdsRef.current.has(vocab.id)) onGeneratedImage?.(liveVocabs[index]);
+      } catch { /* the text result remains usable when an illustration provider fails */ }
     };
-    // Up to 2 workers per result, but ALL results share the global image slots, so total image load stays
-    // capped no matter how many analyses finish together.
-    void Promise.all(Array.from({ length: Math.min(2, vocabList.length) }, imgWorker));
+    void Promise.all(vocabList.map(generateForVocab));
   }, [onRefreshReplace, onGeneratedImage, findSavedByWord]);
 
   // Process a single queue item: comparison, saved-card reuse, or a fresh analyze. The id was added to
@@ -522,9 +493,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const saveOneVocab = useCallback((vocab: VocabCard) => {
     if (isVocabSaved(vocab)) return false; // already saved
     savedVocabIdsRef.current.add(vocab.id);
-    onSave(makeVocabStoredItem(vocab, activeProject));
+    onSave(makeVocabStoredItem(vocab));
     return true;
-  }, [onSave, activeProject, isVocabSaved]);
+  }, [onSave, isVocabSaved]);
 
   // Save ALL meanings of a specific queue item's results
   const handleSaveWord = useCallback((result: SearchResult | null) => {

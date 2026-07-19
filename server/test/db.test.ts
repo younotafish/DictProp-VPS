@@ -77,6 +77,16 @@ test('item ids cannot overwrite another user', () => {
   assert.equal(getItemById(id, 'user-b'), null);
 });
 
+test('legacy project tags cannot split the unified library again', () => {
+  const item = { ...makeItem('legacy-project-item', 'unified', 1_000, 0, 0), project: 'old-project' };
+  upsertItem(item, 'project-user');
+  const stored = getItemById('legacy-project-item', 'project-user');
+  assert.ok(stored);
+  assert.equal((stored as any).project, undefined);
+  const row = db.prepare('SELECT project FROM items WHERE id = ?').get('legacy-project-item') as { project: string | null };
+  assert.equal(row.project, null);
+});
+
 test('image ids cannot overwrite another user', () => {
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
   assert.equal(upsertItemImages([{ id: 'owned-image', data: image }], 'user-a'), 1);

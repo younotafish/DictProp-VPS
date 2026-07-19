@@ -62,7 +62,7 @@ function decodeGeneratedImage(value: unknown): GeneratedImage {
   return { data, mimeType };
 }
 
-async function generateImage(prompt: string, aspectRatio: ImageAspectRatio): Promise<GeneratedImage> {
+export async function generateImage(prompt: string, aspectRatio: ImageAspectRatio): Promise<GeneratedImage> {
   const styledPrompt = `(Icon style), minimal vector art, flat design, ${prompt}. solid background. No text.`;
   const dimensions = getImageDimensions(aspectRatio);
   let deepInfraFailure: ImageGenerationError | null = null;
@@ -167,21 +167,5 @@ async function generateImage(prompt: string, aspectRatio: ImageAspectRatio): Pro
       error instanceof Error ? error.message : 'Replicate image request failed',
       true,
     );
-  }
-}
-
-// The VPS and upstream account should process only one image at a time. A FIFO promise queue lets
-// interactive searches wait instead of receiving a 503 while a background backfill is active.
-let generationTail: Promise<void> = Promise.resolve();
-
-export async function generateImageQueued(prompt: string, aspectRatio: ImageAspectRatio): Promise<GeneratedImage> {
-  const previous = generationTail;
-  let release = () => {};
-  generationTail = new Promise<void>(resolve => { release = resolve; });
-  await previous;
-  try {
-    return await generateImage(prompt, aspectRatio);
-  } finally {
-    release();
   }
 }

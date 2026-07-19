@@ -28,6 +28,8 @@ const result = {
 const pending: any[] = [];
 const archivedById = new Set<string>();
 const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
+const finiteNonNegative = (value: unknown, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
 
 for (const entry of bundle.entries) {
   try {
@@ -44,10 +46,24 @@ for (const entry of bundle.entries) {
     }
     if (dataState === 'changed') throw new Error('item content changed after export');
 
+    const { project: _legacyProject, ...currentWithoutProject } = current;
+    const currentSrs = current.srs && typeof current.srs === 'object' ? current.srs : {};
     const candidate = {
-      ...current,
+      ...currentWithoutProject,
       data: entry.data,
-      srs: { ...current.srs, id: entry.id, type: entry.type },
+      srs: {
+        ...currentSrs,
+        id: entry.id,
+        type: entry.type,
+        nextReview: finiteNonNegative(currentSrs.nextReview, 0),
+        interval: finiteNonNegative(currentSrs.interval, 0),
+        memoryStrength: finiteNonNegative(currentSrs.memoryStrength, 0),
+        lastReviewDate: finiteNonNegative(currentSrs.lastReviewDate, 0),
+        totalReviews: finiteNonNegative(currentSrs.totalReviews, 0),
+        correctStreak: finiteNonNegative(currentSrs.correctStreak, 0),
+        stability: finiteNonNegative(currentSrs.stability, 0),
+      },
+      savedAt: finiteNonNegative(current.savedAt, Date.now()),
       isArchived: current.isArchived === true || entry.archiveForUsage,
       updatedAt: Math.max(Date.now(), Number(current.updatedAt || 0) + 1),
     };
@@ -61,26 +77,36 @@ for (const entry of bundle.entries) {
   }
 }
 
+const recordWrite = (candidate: any, conflicts: Set<string>) => {
+  const id = candidate.data.id;
+  if (conflicts.has(id)) {
+    result.skipped++;
+    result.errors.push({ id, error: 'item changed while the audit was being imported' });
+    return;
+  }
+  result.updated++;
+  if (archivedById.has(id)) result.archivedForUsage++;
+};
+
 for (let index = 0; index < pending.length; index += 500) {
   const batch = pending.slice(index, index + 500);
   try {
     const write = upsertMany(batch, owner.id);
     const conflicts = new Set(write.conflicts);
+    for (const candidate of batch) recordWrite(candidate, conflicts);
+  } catch (batchError) {
+    // Isolate a bad legacy record instead of losing every valid item in its transaction batch.
     for (const candidate of batch) {
-      const id = candidate.data.id;
-      if (conflicts.has(id)) {
+      try {
+        const write = upsertMany([candidate], owner.id);
+        recordWrite(candidate, new Set(write.conflicts));
+      } catch (error) {
         result.skipped++;
-        result.errors.push({ id, error: 'item changed while the audit was being imported' });
-        continue;
+        result.errors.push({
+          id: candidate.data.id,
+          error: error instanceof Error ? error.message : String(error || batchError),
+        });
       }
-      result.updated++;
-      if (archivedById.has(id)) result.archivedForUsage++;
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    for (const candidate of batch) {
-      result.skipped++;
-      result.errors.push({ id: candidate.data.id, error: message });
     }
   }
 }

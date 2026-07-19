@@ -1,8 +1,9 @@
-import { StoredItem, SearchResult, ComparisonResult, ProjectInfo, StoredComparison, ReviewEvent } from '../types';
+import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent } from '../types';
 import { dataUriToBlob } from './dataUri';
 import { log, warn, error as logError } from './logger';
 import { HttpError, jsonRequest, requestJson, requestVoid, responseToHttpError } from './http';
 import { publishServerMutation } from './syncSignals';
+import { sortVocabCardsByUsage } from './usageAudit';
 
 // Same origin — Hono serves both API and static files
 const API_BASE = '';
@@ -192,49 +193,13 @@ const blobToBase64 = (blob: Blob): Promise<string> =>
   });
 
 // ============================================================================
-// Projects API
-// ============================================================================
-
-export const loadProjects = async (): Promise<ProjectInfo[]> => {
-  return requestJson<ProjectInfo[]>(`${API_BASE}/api/projects`, undefined, 'Load projects');
-};
-
-export const createProjectApi = async (name: string): Promise<ProjectInfo> => {
-  return requestJson<ProjectInfo>(
-    `${API_BASE}/api/projects`,
-    jsonRequest('POST', { name }),
-    'Create project',
-  );
-};
-
-export const renameProjectApi = async (id: string, name: string): Promise<void> => {
-  return requestVoid(
-    `${API_BASE}/api/projects/${id}`,
-    jsonRequest('PUT', { name }),
-    'Rename project',
-  );
-};
-
-export const deleteProjectApi = async (id: string): Promise<void> => {
-  return requestVoid(
-    `${API_BASE}/api/projects/${id}`,
-    { method: 'DELETE' },
-    'Delete project',
-  );
-};
-
-// ============================================================================
 // JSON Import API
 // ============================================================================
 
 export const importJSON = async (
   items: any[],
-  project?: string
 ): Promise<{ ok: boolean; imported: number; skipped: number; imagesFetched: number }> => {
-  const url = project
-    ? `${API_BASE}/api/import?project=${encodeURIComponent(project)}`
-    : `${API_BASE}/api/import`;
-  const res = await fetch(url, {
+  const res = await fetch(`${API_BASE}/api/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(items),
@@ -270,9 +235,9 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
 
     const data = await res.json();
 
-    const vocabs = (data.vocabs || [])
+    const vocabs = sortVocabCardsByUsage((data.vocabs || [])
       .filter((v: any) => v && typeof v.word === 'string' && v.word.trim().length > 0)
-      .map((v: any) => ({ ...v, id: generateId() }));
+      .map((v: any) => ({ ...v, id: generateId() })));
 
     return {
       id: generateId(),
@@ -299,7 +264,7 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
     // client-side retry would just double an already-long wait for a busy model. Surface it instead —
     // callers must show this so the search no longer fails silently.
     if (msg.includes('timed out') || msg.includes('504') || error.name === 'AbortError') {
-      throw new Error('The search timed out — the AI service is busy. Please try again.');
+      throw new Error('The model did not finish this search before the timeout. Please retry it.');
     }
     throw new Error(msg || 'Search failed. Please try again.');
   }
@@ -413,7 +378,7 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
     logError('Word comparison failed', error);
     // See analyzeInput: the server owns the timeout + transient-retry, so don't double the wait here.
     if (msg.includes('timed out') || msg.includes('504') || error.name === 'AbortError') {
-      throw new Error('The comparison timed out — the AI service is busy. Please try again.');
+      throw new Error('The model did not finish this comparison before the timeout. Please retry it.');
     }
     throw new Error(msg || 'Word comparison failed. Please try again.');
   }
@@ -493,7 +458,6 @@ export interface ImageBackfillStatus {
 }
 
 export interface ImageBackfillScope {
-  project?: string;
   itemIds?: string[];
 }
 
@@ -679,7 +643,6 @@ export const getItemContentHash = (item: StoredItem): string => {
     srs: item.srs,
     isDeleted: item.isDeleted,
     isArchived: item.isArchived,
-    project: item.project,
   };
 
   const hash = hashString(JSON.stringify(contentToHash));

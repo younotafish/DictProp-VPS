@@ -1,7 +1,6 @@
 import type { GeneratedImage, ImageGenerationErrorCode } from './image-generation.js';
 
 export interface ImageBackfillScope {
-  project?: string;
   itemIds?: string[];
 }
 
@@ -55,7 +54,6 @@ export function collectImageBackfillTargets(items: any[], scope: ImageBackfillSc
 
   for (const item of items) {
     if (!item?.data || item.isDeleted || item.isArchived) continue;
-    if (scope.project !== undefined && item.project !== scope.project) continue;
     if (allowedIds && !allowedIds.has(item.data.id)) continue;
 
     if (item.type === 'vocab') {
