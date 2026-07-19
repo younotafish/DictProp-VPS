@@ -1,5 +1,6 @@
 services:
   app:
+    image: ${DICTPROP_IMAGE:-dictprop-vps:local}
     build: .
     ports:
       - "3000:3000"
