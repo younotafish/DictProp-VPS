@@ -20,6 +20,7 @@ const result = {
   total: bundle.entries.length,
   updated: 0,
   alreadyApplied: 0,
+  missingOrDeleted: 0,
   archivedForUsage: 0,
   skipped: 0,
   errors: [] as Array<{ id: string; error: string }>,
@@ -31,7 +32,10 @@ const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.i
 for (const entry of bundle.entries) {
   try {
     const current = currentById.get(entry.id) as any;
-    if (!current || current.isDeleted) throw new Error('item is missing or deleted');
+    if (!current || current.isDeleted) {
+      result.missingOrDeleted++;
+      continue;
+    }
     if (current.type !== entry.type) throw new Error('item type changed after export');
     const dataState = corpusAuditDataState(current.data, entry);
     if (dataState === 'target') {
@@ -43,6 +47,7 @@ for (const entry of bundle.entries) {
     const candidate = {
       ...current,
       data: entry.data,
+      srs: { ...current.srs, id: entry.id, type: entry.type },
       isArchived: current.isArchived === true || entry.archiveForUsage,
       updatedAt: Math.max(Date.now(), Number(current.updatedAt || 0) + 1),
     };

@@ -69,15 +69,20 @@ jobs:
               find data/backups -type f -name '*.partial' -delete
               LATEST_BACKUP="$(find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
                 | sort -nr | head -n 1 | cut -d' ' -f2-)"
-              if [ -n "$LATEST_BACKUP" ] && ! python3 -c '
+              BACKUP_MARKER="${LATEST_BACKUP}.verified"
+              if [ -n "$LATEST_BACKUP" ] && [ -f "$BACKUP_MARKER" ] && [ "$BACKUP_MARKER" -nt "$LATEST_BACKUP" ]; then
+                echo "Reusing persisted verification for $LATEST_BACKUP"
+              elif [ -n "$LATEST_BACKUP" ] && python3 -c '
             import sqlite3, sys
             db = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro&immutable=1", uri=True)
             result = db.execute("PRAGMA quick_check").fetchone()
             db.close()
             raise SystemExit(0 if result == ("ok",) else 1)
             ' "$LATEST_BACKUP"; then
+                touch "$BACKUP_MARKER"
+              elif [ -n "$LATEST_BACKUP" ]; then
                 echo "Removing incomplete backup: $LATEST_BACKUP"
-                rm -f "$LATEST_BACKUP"
+                rm -f "$LATEST_BACKUP" "$BACKUP_MARKER"
                 LATEST_BACKUP=""
               fi
               if [ -n "$LATEST_BACKUP" ]; then
@@ -91,6 +96,9 @@ jobs:
               # but the older one remains available if that copy fails and is pruned only after success.
               find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
                 | sort -nr | tail -n +2 | cut -d' ' -f2- | xargs -r rm -f
+              find data/backups -type f -name 'dictprop-*.db.verified' | while read -r marker; do
+                [ -f "${marker%.verified}" ] || rm -f "$marker"
+              done
             fi
             # Preserve the fresh npm/build layers when there is room for another database snapshot.
             # If space is tight, a full BuildKit prune is preferable to another SQLITE_FULL failure.
