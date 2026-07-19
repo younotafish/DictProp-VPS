@@ -6,18 +6,28 @@ import { resolve } from 'node:path';
 
 const [corpusArg, ipaArg, reportArg] = process.argv.slice(2);
 if (!corpusArg || !ipaArg) {
-  throw new Error('Usage: verify-sentence-natural-ipa.mjs <corpus.json> <ipa-manifest.json> [report.json]');
+  throw new Error('Usage: verify-sentence-natural-ipa.mjs <corpus-or-sentence-export.json> <ipa-manifest.json> [report.json]');
 }
 
 const corpus = JSON.parse(readFileSync(resolve(corpusArg), 'utf8'));
 const manifest = JSON.parse(readFileSync(resolve(ipaArg), 'utf8'));
-if (!Array.isArray(corpus?.items) || manifest?.version !== 1 || !Array.isArray(manifest.entries)) {
-  throw new Error('Corpus or IPA manifest is invalid');
+if (manifest?.version !== 1 || !Array.isArray(manifest.entries)) {
+  throw new Error('IPA manifest is invalid');
 }
 
 const stripMarkers = text => String(text || '').replace(/\{\{|\}\}|\[\[|\]\]/g, '');
-const sentenceItems = corpus.items.filter(item => item?.type === 'sentence' && !item.isDeleted);
-const sourceById = new Map(sentenceItems.map(item => [item.data?.id, item.data]));
+let sentenceSources;
+if (Array.isArray(corpus?.items)) {
+  sentenceSources = corpus.items.filter(item => item?.type === 'sentence' && !item.isDeleted).map(item => item.data);
+} else if (corpus?.version === 1 && Array.isArray(corpus.sentences)) {
+  sentenceSources = corpus.sentences;
+} else {
+  throw new Error('Sentence source is invalid');
+}
+const sourceById = new Map(sentenceSources.map(source => [source?.id, source]));
+if (sourceById.size !== sentenceSources.length || sourceById.has(undefined)) {
+  throw new Error('Sentence source contains invalid or duplicate ids');
+}
 const issues = [];
 const warnings = [];
 const seen = new Set();
@@ -26,8 +36,8 @@ let ipaBytes = 0;
 let ipaCharacters = 0;
 
 if (manifest.model !== 'gpt-5.6-sol') issues.push(`unexpected model: ${manifest.model || 'missing'}`);
-if (manifest.entries.length !== sentenceItems.length) {
-  issues.push(`entry count ${manifest.entries.length} does not match sentence count ${sentenceItems.length}`);
+if (manifest.entries.length !== sentenceSources.length) {
+  issues.push(`entry count ${manifest.entries.length} does not match sentence count ${sentenceSources.length}`);
 }
 
 for (const entry of manifest.entries) {
@@ -80,7 +90,7 @@ const report = {
   version: 1,
   verifiedAt: Date.now(),
   model: manifest.model,
-  sourceSentences: sentenceItems.length,
+  sourceSentences: sentenceSources.length,
   ipaEntries: manifest.entries.length,
   ipaBytes,
   averageIpaBytes: manifest.entries.length ? Math.round(ipaBytes / manifest.entries.length) : 0,
@@ -94,4 +104,3 @@ const output = `${JSON.stringify(report, null, 2)}\n`;
 if (reportArg) writeFileSync(resolve(reportArg), output, { mode: 0o600 });
 process.stdout.write(output);
 if (issues.length > 0) process.exitCode = 1;
-
