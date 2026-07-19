@@ -291,6 +291,7 @@ const imageStmts = {
     )`),
   assignOrphan: db.prepare(`UPDATE item_images SET user_id = ? WHERE user_id IS NULL`),
 };
+const imageIdSetCache = new Map<string, { expiresAt: number; ids: Set<string> }>();
 
 function parseImageDataUri(dataUri: string): { data: Buffer; mimeType: string } | null {
   const match = dataUri.match(/^data:(image\/(?:avif|gif|jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
@@ -314,6 +315,7 @@ function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeT
   if (reference.changes > 0 && owner?.content_hash && owner.content_hash !== contentHash) {
     imageStmts.deleteUnreferencedBlob.run(owner.content_hash);
   }
+  if (reference.changes > 0 && userId) imageIdSetCache.delete(userId);
   return reference.changes > 0;
 }
 
@@ -524,8 +526,12 @@ function rowToItem(row: ItemRow, stripImages = false, imageIds?: Set<string>) {
 
 /** Set of all ids (item + vocab) that have an image, for cheap "has image" marking. */
 function getImageIdSet(userId: string): Set<string> {
+  const cached = imageIdSetCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.ids;
   const rows = imageStmts.allIdsForUser.all(userId) as Array<{ id: string }>;
-  return new Set(rows.map(r => r.id));
+  const ids = new Set(rows.map(r => r.id));
+  imageIdSetCache.set(userId, { expiresAt: Date.now() + 60_000, ids });
+  return ids;
 }
 
 /** Inject base64 from item_images back into already-parsed items (the ?images=true path). */
@@ -1067,6 +1073,7 @@ export const createUserAndClaimItems = db.transaction((opts: {
   if (isFirstUser) {
     stmts.assignOrphanItems.run(user.id);
     imageStmts.assignOrphan.run(user.id);
+    imageIdSetCache.delete(user.id);
   }
   return user;
 });
