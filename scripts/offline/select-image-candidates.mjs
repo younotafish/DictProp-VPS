@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { killCodex, spawnCodex } from './codex-process.mjs';
 
 const [targetsArg, candidatesArg, imagesArg, workArg] = process.argv.slice(2);
 if (!targetsArg || !candidatesArg || !imagesArg) {
@@ -35,14 +35,14 @@ writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 
 
 function runCodex(args, prompt) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn('/usr/local/bin/codex', args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    const child = spawnCodex(args);
     activeChildren.add(child);
     let stderr = '';
     let hardKillTimeout;
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
     const timeout = setTimeout(() => {
-      child.kill('SIGTERM');
-      hardKillTimeout = setTimeout(() => child.kill('SIGKILL'), 10_000);
+      killCodex(child, 'SIGTERM');
+      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
     }, 15 * 60 * 1000);
     child.on('error', error => {
       activeChildren.delete(child);
@@ -115,9 +115,9 @@ async function worker() {
 }
 async function terminateActiveChildren() {
   aborting = true;
-  for (const child of activeChildren) child.kill('SIGTERM');
+  for (const child of activeChildren) killCodex(child, 'SIGTERM');
   await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000));
-  for (const child of activeChildren) child.kill('SIGKILL');
+  for (const child of activeChildren) killCodex(child, 'SIGKILL');
 }
 try {
   await Promise.all(Array.from({ length: Math.min(concurrency, payload.targets.length) }, () => worker()));

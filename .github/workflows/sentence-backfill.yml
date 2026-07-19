@@ -14,12 +14,60 @@ on:
           - corpus-import
           - image-import
           - audit
+          - repair
       release_tag:
         description: Temporary release tag containing sentence-backfill.enc (import only)
         required: false
         type: string
 
 jobs:
+  repair:
+    if: inputs.operation == 'repair'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    steps:
+      - name: Preview production repairs
+        id: repair_preview
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 15m
+          capture_stdout: true
+          script: |
+            set -e
+            cd /opt/dictprop-vps
+            docker compose exec -T app node server/dist/scripts/repair-production-data.js
+
+      - name: Report repair preview
+        env:
+          REPAIR_PREVIEW: ${{ steps.repair_preview.outputs.stdout }}
+        run: printf '%s\n' "$REPAIR_PREVIEW"
+
+      - name: Apply production repairs
+        id: repair_apply
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 15m
+          capture_stdout: true
+          script: |
+            set -e
+            cd /opt/dictprop-vps
+            # The deploy workflow keeps a verified SQLite snapshot. This repair is additionally one
+            # transaction, so a failure cannot leave a partially consolidated library.
+            docker compose exec -T app node server/dist/scripts/repair-production-data.js --apply
+
+      - name: Report applied repairs
+        env:
+          REPAIR_OUTPUT: ${{ steps.repair_apply.outputs.stdout }}
+        run: printf '%s\n' "$REPAIR_OUTPUT"
+
   audit:
     if: inputs.operation == 'audit'
     runs-on: ubuntu-latest

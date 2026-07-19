@@ -408,20 +408,33 @@ export async function migrateInlineImages() {
   // Convert legacy base64 rows to shared binary blobs in small resumable batches.
   // Existing rows remain readable throughout; content_hash is the completion marker.
   const legacyBatch = db.prepare(`SELECT rowid AS rid, id, user_id, data FROM item_images
-    WHERE rowid > ? AND content_hash IS NULL ORDER BY rowid LIMIT 10`);
+    WHERE rowid > ? AND content_hash IS NULL ORDER BY rowid LIMIT 50`);
+  const convertLegacyBatch = db.transaction((rows: Array<{
+    rid: number; id: string; user_id: string | null; data: string | Buffer;
+  }>) => {
+    let count = 0;
+    for (const row of rows) {
+      if (typeof row.data === 'string' && storeImage(row.id, row.user_id, row.data, Date.now())) count++;
+    }
+    return count;
+  });
   let imageMark = 0;
   let converted = 0;
+  let convertedSinceCheckpoint = 0;
   for (;;) {
     await new Promise(resolve => setTimeout(resolve, 0));
     const rows = legacyBatch.all(imageMark) as Array<{
       rid: number; id: string; user_id: string | null; data: string | Buffer;
     }>;
     if (rows.length === 0) break;
-    for (const row of rows) {
-      if (typeof row.data === 'string' && storeImage(row.id, row.user_id, row.data, Date.now())) converted++;
-    }
+    const count = convertLegacyBatch(rows);
+    converted += count;
+    convertedSinceCheckpoint += count;
     imageMark = rows[rows.length - 1].rid;
-    try { db.pragma('wal_checkpoint(PASSIVE)'); } catch { /* best effort */ }
+    if (convertedSinceCheckpoint >= 500) {
+      try { db.pragma('wal_checkpoint(PASSIVE)'); } catch { /* best effort */ }
+      convertedSinceCheckpoint = 0;
+    }
   }
   if (converted > 0) console.log(`[migrate] item_images: converted ${converted} legacy image(s) to deduplicated blobs`);
 }
