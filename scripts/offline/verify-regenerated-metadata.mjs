@@ -118,6 +118,7 @@ let sentences = 0;
 let protectedExamples = 0;
 let generatedExamples = 0;
 let changedSentenceSenseLinks = 0;
+const topLevelSenseKeys = new Map();
 
 for (const sourceItem of source.items) {
   const entry = targetById.get(sourceItem.id);
@@ -181,6 +182,10 @@ for (const sourceItem of source.items) {
 
   if (sourceItem.type === 'vocab') {
     validateCard(sourceItem.data, entry.data, sourceItem.id);
+    const senseKey = lexicalKey(entry.data.word, entry.data.sense);
+    const existing = topLevelSenseKeys.get(senseKey);
+    if (existing) fail(sourceItem.id, `duplicates regenerated sense identity from ${existing}`);
+    else topLevelSenseKeys.set(senseKey, sourceItem.id);
   } else {
     phrases++;
     if (entry.data.query !== sourceItem.data.query || entry.data.id !== sourceItem.data.id) {

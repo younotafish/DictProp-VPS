@@ -278,6 +278,28 @@ function legacyCard(card) {
 
 const cardTasks = [];
 const phraseTasks = [];
+const siblingSensesByWord = new Map();
+for (const record of records) {
+  const cards = record.type === 'vocab' ? [record.data] : record.type === 'phrase' ? (record.data.vocabs || []) : [];
+  for (const card of cards) {
+    const key = normalizedSentence(card.word);
+    if (!key) continue;
+    if (!siblingSensesByWord.has(key)) siblingSensesByWord.set(key, []);
+    siblingSensesByWord.get(key).push({
+      parentId: record.id,
+      cardId: card.id,
+      sense: card.sense || '',
+      definition: card.definition || '',
+    });
+  }
+}
+
+const siblingEvidenceFor = (parentId, card) =>
+  (siblingSensesByWord.get(normalizedSentence(card.word)) || [])
+    .filter(entry => !(entry.parentId === parentId && entry.cardId === card.id))
+    .slice(0, 24)
+    .map(entry => ({ sense: entry.sense, definition: entry.definition }));
+
 for (const record of records) {
   if (record.type === 'vocab') {
     const protectedExamples = protectedExamplesFor(record.data);
@@ -298,6 +320,7 @@ for (const record of records) {
         },
         protectedExamples,
         phraseContext: '',
+        otherSavedSenses: siblingEvidenceFor(record.id, record.data),
         legacyMetadata: legacyCard(record.data),
       },
     });
@@ -343,6 +366,7 @@ for (const record of records) {
           },
           protectedExamples,
           phraseContext: record.data.query,
+          otherSavedSenses: siblingEvidenceFor(record.id, card),
           legacyMetadata: legacyCard(card),
         },
       });
@@ -360,7 +384,7 @@ const cardInstruction = `You are the senior American English lexicographer rebui
 
 ${passContext}
 
-Keep the supplied headword spelling as the identity, but regenerate a concise canonical sense label and every other field. Resolve conflicts in the evidence by choosing the coherent exact sense demonstrated by the sense label, definition, examples, protected examples, and phrase context. Never silently switch to a different meaning.
+Keep the supplied headword spelling as the identity, but regenerate a concise canonical sense label and every other field. Resolve conflicts in the evidence by choosing the coherent exact sense demonstrated by the sense label, definition, examples, protected examples, and phrase context. Never silently switch to a different meaning. The otherSavedSenses list shows separately stored meanings of the same spelling; make this label precise enough to remain distinct and never collapse two genuine senses into one.
 
 Requirements:
 - chinese: natural Simplified Chinese translation of this exact sense.
