@@ -24,8 +24,8 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      window.speechSynthesis?.cancel();
-      setIsPlaying(false);
+      // Do not cancel unrelated speech merely because this control leaves the tree.
+      if (utteranceRef.current) window.speechSynthesis?.cancel();
     };
   }, []);
 
@@ -36,6 +36,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
     // If currently playing, stop it
     if (isPlaying) {
       window.speechSynthesis.cancel();
+      utteranceRef.current = null;
       setIsPlaying(false);
       return;
     }
@@ -43,8 +44,9 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
     try {
       utteranceRef.current = speak(text, {
         onStart: () => setIsPlaying(true),
-        onEnd: () => setIsPlaying(false),
+        onEnd: () => { utteranceRef.current = null; setIsPlaying(false); },
         onError: (event) => {
+          utteranceRef.current = null;
           logError('Speech synthesis error', event);
           setIsPlaying(false);
         },

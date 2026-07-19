@@ -467,6 +467,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const touchStartAt = useRef<number | null>(null);
   // A two-finger word chord owns both touch endings; blank-space sentence gestures must ignore them.
   const mobileWordChordActiveRef = useRef(false);
   const suppressMobileWordClickUntilRef = useRef(0);
@@ -512,8 +513,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
   );
 
   const onContentTouchStart = (e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartX.current = touch.clientX;
+    touchStartY.current = touch.clientY;
+    touchStartAt.current = Date.now();
   };
   
   const onContentTouchEnd = (e: React.TouchEvent) => {
@@ -537,6 +541,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
     const absX = Math.abs(diffX);
     const absY = Math.abs(diffY);
+    const gestureDuration = Date.now() - (touchStartAt.current ?? Date.now());
     const swipeThreshold = 50;
     
     // Check scroll position for edge-based navigation
@@ -580,7 +585,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // on the blank area only; ↑/↓ swipes still switch sentences. ──
     if (sentenceMode) {
       if (isHorizontalSwipe) {
-        stopCurrent();
         if (sentencePage === 'analysis') setSentencePage('sentence');
         else if (diffX < 0) setSentencePage('analysis');
         else onClose();
@@ -588,10 +592,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
         touchStartY.current = null;
         return;
       }
-      // The analysis page owns vertical scrolling and uses horizontal swipes only for returning.
+      // Normal drags scroll the analysis. A deliberate, fast long swipe switches sentences from
+      // anywhere on that page, which keeps navigation available without making routine reading jump.
       if (sentencePage === 'analysis') {
+        const isHardVerticalSwipe = isVerticalSwipe && absY >= 160 && gestureDuration <= 700;
+        if (isHardVerticalSwipe) {
+          goToSentence(currentGroupIndexRef.current + (diffY < 0 ? 1 : -1));
+        }
         touchStartX.current = null;
         touchStartY.current = null;
+        touchStartAt.current = null;
         return;
       }
       // A still tap inside the expanded word card is handled by its onClick (eyes-free zone read),
@@ -621,6 +631,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
       touchStartX.current = null;
       touchStartY.current = null;
+      touchStartAt.current = null;
       return;
     }
 
@@ -1403,15 +1414,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
     setCurrentGroupIndex(clamped);
     setCurrentItemIndex(0);
     if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+    const analysisScroller = document.querySelector<HTMLElement>('[data-sentence-analysis]');
+    if (analysisScroller) analysisScroller.scrollTop = 0;
     setTimeout(() => setIsAnimating(false), 300);
     const next = list[clamped];
     const sentence = next ? stripSentenceMarkers((next.data as SentenceData).text || '').trim() : '';
     if (sentence) speakNatural(sentence, { allowDownload: true });
   }, [speakCurrentSentence]);
 
-  // Arrow keys / trackpad wheel: in sentence mode ←/→ speak and ↑/↓ switch+speak; else normal nav.
-  const navLeft = useCallback(() => { if (sentenceModeRef.current) speakCurrentSentence(); else handlePrevItem(); }, [handlePrevItem, speakCurrentSentence]);
-  const navRight = useCallback(() => { if (sentenceModeRef.current) speakCurrentSentence(); else handleNextItem(); }, [handleNextItem, speakCurrentSentence]);
+  // Arrow keys / trackpad wheel: sentence mode uses ←/→ for its two pages and ↑/↓ for
+  // sentence navigation. Page changes deliberately leave the shared speech session untouched.
+  const navLeft = useCallback(() => { if (sentenceModeRef.current) setSentencePage('sentence'); else handlePrevItem(); }, [handlePrevItem]);
+  const navRight = useCallback(() => { if (sentenceModeRef.current) setSentencePage('analysis'); else handleNextItem(); }, [handleNextItem]);
   const navUp = useCallback(() => { if (sentenceModeRef.current) goToSentence(currentGroupIndexRef.current - 1); else handlePrevGroup(); }, [handlePrevGroup, goToSentence]);
   const navDown = useCallback(() => { if (sentenceModeRef.current) goToSentence(currentGroupIndexRef.current + 1); else handleNextGroup(); }, [handleNextGroup, goToSentence]);
 

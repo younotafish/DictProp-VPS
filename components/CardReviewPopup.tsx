@@ -7,7 +7,7 @@ import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from './HighlightedSentence';
-import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
+import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 
 const formatRelative = (ts: number): string => {
   const diff = ts - Date.now();
@@ -76,8 +76,20 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   onSaveVocab,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
+  const popupPlaybackRef = useRef<ReturnType<typeof speakNatural> | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+
+  const speakPopupWord = useCallback((text: string) => {
+    const handle = speakWord(text);
+    popupPlaybackRef.current = handle;
+    return handle;
+  }, []);
+  const speakPopupNatural = useCallback((text: string, options?: Parameters<typeof speakNatural>[1]) => {
+    const handle = speakNatural(text, options);
+    popupPlaybackRef.current = handle;
+    return handle;
+  }, []);
 
   const word = (items[0]?.data as VocabCard)?.word || '';
 
@@ -148,9 +160,9 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   useEffect(() => {
     if (!didOpenRef.current) { didOpenRef.current = true; return; }
     if (!word) return;
-    const t = setTimeout(() => speakWord(word), 100);
+    const t = setTimeout(() => speakPopupWord(word), 100);
     return () => clearTimeout(t);
-  }, [currentSense, word]);
+  }, [currentSense, word, speakPopupWord]);
 
   // Touch: a horizontal swipe across the card pages between senses (when there are multiple). Vertical
   // drags are left to the body's scroll (we only act when the move is clearly horizontal).
@@ -168,9 +180,9 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     const dx = t.clientX - s.x, dy = t.clientY - s.y;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       if (count > 1) { if (dx < 0) goNext(); else goPrev(); } // switch meaning (goTo also pronounces)
-      else if (word) speakWord(word);                          // single meaning → re-pronounce the word
+      else if (word) speakPopupWord(word);                     // single meaning → re-pronounce the word
     }
-  }, [count, goNext, goPrev, word]);
+  }, [count, goNext, goPrev, word, speakPopupWord]);
 
   const mastery = currentSaved
     ? SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type))
@@ -246,8 +258,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       if (pb.status === 'paused') { resumeCurrent(); return; }
       if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
     }
-    speakNatural(sentence, { allowDownload: true });
-  }, [holdKeepAlive]);
+    speakPopupNatural(sentence, { allowDownload: true });
+  }, [holdKeepAlive, speakPopupNatural]);
 
   // E: read both example sentences in turn; press again to pause / resume.
   const readBothExamples = useCallback(() => {
@@ -263,10 +275,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     const playNext = () => {
       if (i >= examplesList.length) return;
       if (handle && !handle.isActive()) return;
-      handle = speakNatural(examplesList[i++], { allowDownload: true, onEnd: () => setTimeout(playNext, 400), onError: () => setTimeout(playNext, 400) });
+      handle = speakPopupNatural(examplesList[i++], { allowDownload: true, onEnd: () => setTimeout(playNext, 400), onError: () => setTimeout(playNext, 400) });
     };
     playNext();
-  }, [examplesList, holdKeepAlive]);
+  }, [examplesList, holdKeepAlive, speakPopupNatural]);
 
   // Eyes-free zone tap-confirmation flash (mirrors DetailView).
   const [zoneFlash, setZoneFlash] = useState<{ zone: number; n: number } | null>(null);
@@ -357,10 +369,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         const st = getPlaybackState().status;
         if (st === 'playing') pauseCurrent();
         else if (st === 'paused') resumeCurrent();
-        else if (examplesList[0]) { holdKeepAlive(); speakNatural(examplesList[0], { allowDownload: true }); }
+        else if (examplesList[0]) { holdKeepAlive(); speakPopupNatural(examplesList[0], { allowDownload: true }); }
         return;
       }
-      if (e.key === 'p' || e.key === 'P') { e.preventDefault(); if (vocab.word) { holdKeepAlive(); speakWord(vocab.word); } return; }
+      if (e.key === 'p' || e.key === 'P') { e.preventDefault(); if (vocab.word) { holdKeepAlive(); speakPopupWord(vocab.word); } return; }
       // Cmd/Ctrl+1 · +2 → read the 1st / 2nd example sentence.
       if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
         e.preventDefault();
@@ -384,10 +396,11 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [vocab, currentSaved, onClose, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive]);
+  }, [vocab, currentSaved, onClose, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive, speakPopupNatural, speakPopupWord]);
 
-  // Stop any popup-initiated playback when the card actually closes (not on every re-render).
-  useEffect(() => () => { stopCurrent(); }, []);
+  // Do not stop a sentence that was already playing beneath the popup. The handle is token-scoped,
+  // so cleanup only stops audio this popup actually started and is still responsible for.
+  useEffect(() => () => { popupPlaybackRef.current?.stop(); }, []);
 
   return (
     <div

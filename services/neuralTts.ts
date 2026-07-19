@@ -1062,7 +1062,11 @@ export const speakWord = (text: string): SpeakHandle => {
   systemSpeak(plain);
   const isCurrent = () => token === currentToken;
   return {
-    stop: () => { try { window.speechSynthesis?.cancel(); } catch { /* ignore */ } },
+    stop: () => {
+      if (!isCurrent()) return;
+      currentToken++;
+      try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+    },
     pause: () => { try { window.speechSynthesis?.pause(); } catch { /* ignore */ } },
     resume: () => { try { window.speechSynthesis?.resume(); } catch { /* ignore */ } },
     isPaused: () => typeof window !== 'undefined' && !!window.speechSynthesis?.paused,

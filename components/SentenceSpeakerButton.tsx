@@ -8,6 +8,7 @@ import {
   pauseCurrent,
   resumeCurrent,
   stopCurrent,
+  type SpeakHandle,
   type PlaybackState,
 } from '../services/lazyTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
@@ -35,14 +36,12 @@ interface Props {
 export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '' }) => {
   const plain = useMemo(() => stripSentenceMarkers(text || '').trim(), [text]);
   const [pb, setPb] = useState<PlaybackState>(getPlaybackState);
+  const playbackHandleRef = useRef<SpeakHandle | null>(null);
   useEffect(() => subscribePlayback(setPb), []);
 
-  // Stop our audio if we unmount while it's the one playing (e.g. the view closes mid-sentence).
-  const plainRef = useRef(plain);
-  useEffect(() => { plainRef.current = plain; }, [plain]);
-  useEffect(() => () => {
-    if (plainRef.current && getPlaybackState().text === plainRef.current) stopCurrent();
-  }, []);
+  // A matching text value does not prove ownership: another view may already be reading the same
+  // sentence. The returned handle is token-scoped, so unmount only stops playback this button began.
+  useEffect(() => () => { playbackHandleRef.current?.stop(); }, []);
 
   const isMine = !!plain && pb.text === plain;
   const isLoading = isMine && pb.status === 'loading';
@@ -51,7 +50,7 @@ export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '' })
 
   const start = useCallback(() => {
     try {
-      speakNatural(plain, { allowDownload: true });
+      playbackHandleRef.current = speakNatural(plain, { allowDownload: true });
     } catch (err) {
       logError('Sentence speech failed', err);
     }
