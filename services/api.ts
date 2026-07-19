@@ -21,7 +21,18 @@ const generateId = (): string => {
 // ============================================================================
 
 export const loadAllItems = async (): Promise<StoredItem[]> => {
-  return requestJson<StoredItem[]>(`${API_BASE}/api/items`, undefined, 'Load items');
+  const items: StoredItem[] = [];
+  let cursor: RevisionCursor = { revision: 0, id: '' };
+  for (let pageNumber = 0; pageNumber < 100_000; pageNumber++) {
+    const page = await loadItemChanges(cursor, 200);
+    items.push(...page.items);
+    if (!page.hasMore) return items;
+    if (page.cursor.revision === cursor.revision && page.cursor.id === cursor.id) {
+      throw new Error('Load items cursor did not advance');
+    }
+    cursor = page.cursor;
+  }
+  throw new Error('Load items exceeded its page limit');
 };
 
 export interface RevisionCursor {

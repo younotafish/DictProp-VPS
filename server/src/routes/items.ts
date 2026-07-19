@@ -1,6 +1,7 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { getAllItems, getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary } from '../db.js';
+import { getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
@@ -91,7 +92,37 @@ function wrapVocabCard(card: any): any {
   };
 }
 
-export const itemsRoutes = new Hono<{ Variables: AuthVariables }>();
+type ItemsEnv = { Variables: AuthVariables };
+
+export const itemsRoutes = new Hono<ItemsEnv>();
+
+function streamAllItems(c: Context<ItemsEnv>, userId: string) {
+  c.header('Content-Type', 'application/json; charset=UTF-8');
+  return stream(c, async output => {
+    let cursor = { revision: 0, id: '' };
+    let first = true;
+    let pageCount = 0;
+    await output.write('[');
+    for (;;) {
+      const page = getItemsAfterRevision(cursor, 200, true, userId);
+      if (page.items.length > 0) {
+        const body = JSON.stringify(page.items).slice(1, -1);
+        if (body) {
+          await output.write(`${first ? '' : ','}${body}`);
+          first = false;
+        }
+      }
+      if (!page.hasMore) break;
+      if (page.cursor.revision === cursor.revision && page.cursor.id === cursor.id) {
+        throw new Error('Item stream cursor did not advance');
+      }
+      cursor = page.cursor;
+      if (++pageCount > 100_000) throw new Error('Item stream exceeded its page limit');
+      await output.sleep(0);
+    }
+    await output.write(']');
+  });
+}
 
 // GET /api/items — return stripped items or revision deltas. Images are always fetched separately.
 itemsRoutes.get('/items', (c) => {
@@ -116,7 +147,9 @@ itemsRoutes.get('/items', (c) => {
     if (isNaN(ts)) return c.json({ error: 'Invalid since parameter' }, 400);
     return c.json(getItemsSince(ts, true, userId));
   }
-  return c.json(getAllItems(true, userId));
+  // Keep the legacy array response contract, but serialize bounded pages into a stream. A large
+  // regenerated corpus must not monopolize the single Node event loop during JSON conversion.
+  return streamAllItems(c, userId);
 });
 
 // GET /api/items/:id/image — return raw binary image with caching headers

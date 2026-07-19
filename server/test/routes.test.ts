@@ -34,6 +34,13 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   });
   assert.equal(response.status, 200);
 
+  response = await app.request('/api/items');
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /^application\/json/);
+  const fullItems = await response.json() as any[];
+  assert.equal(fullItems.length, 1);
+  assert.equal(fullItems[0].data.id, item.data.id);
+
   const event = {
     id: 'route-review', itemId: item.data.id, itemType: 'vocab',
     reviewedAt: Date.now(), previousStep: 0, nextStep: 1,
