@@ -37,6 +37,7 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1024)
     parser.add_argument("--height", type=int, default=576)
     parser.add_argument("--quantize", type=int, choices=(4, 8), default=None)
+    parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--seed-round", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
@@ -51,6 +52,8 @@ def main() -> None:
         return
     if args.shard_count < 1 or args.shard_index < 0 or args.shard_index >= args.shard_count:
         raise ValueError("Invalid shard index/count")
+    if args.steps < 4 or args.steps > 20:
+        raise ValueError("Inference steps must be between 4 and 20")
     targets = [target for index, target in enumerate(targets) if index % args.shard_count == args.shard_index]
     if not targets:
         print("No targets assigned to this shard", flush=True)
@@ -84,7 +87,7 @@ def main() -> None:
                 image = model.generate_image(
                     seed=seed_for(target["imageId"], candidate, args.seed_round),
                     prompt=target["prompt"].strip() + quality_suffix,
-                    num_inference_steps=8,
+                    num_inference_steps=args.steps,
                     height=args.height,
                     width=args.width,
                     guidance=1.0,
