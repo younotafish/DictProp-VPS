@@ -146,17 +146,11 @@ jobs:
                   data/dictprop.db "data/backups/$BACKUP_TEMP"
               fi
               mv "data/backups/$BACKUP_TEMP" "data/backups/$BACKUP_NAME"
+              touch "data/backups/$BACKUP_NAME.verified"
               # The new verified copy supersedes the older snapshot.
               find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
                 | sort -nr | tail -n +2 | cut -d' ' -f2- | xargs -r rm -f
             fi
-            # Diagnostics before rebuild — never fail the deploy on these
-            echo "=== CONTAINER LOGS BEFORE REBUILD ==="
-            docker compose logs --tail=200 || true
-            echo "=== CONTAINER STATUS ==="
-            docker compose ps || true
-            echo "=== DMESG OOM ==="
-            dmesg | grep -i "oom\|killed\|out of memory" | tail -10 || true
             # Sync the DeepInfra key from the GH Actions secret WITHOUT clobbering other .env vars
             # (Google OAuth creds live here too). Guarded so an empty/unset secret never blanks the key.
             if [ -n "$DEEPINFRA_API_KEY" ]; then
@@ -180,11 +174,15 @@ jobs:
             docker compose up -d --no-build
             echo "Release container started"
             wait_for_health() {
-              for attempt in $(seq 1 12); do
-                if curl -sf http://localhost:3000/api/health >/dev/null; then
-                  return 0
+              consecutive=0
+              for attempt in $(seq 1 30); do
+                if curl --max-time 3 -sf http://localhost:3000/api/health >/dev/null; then
+                  consecutive=$((consecutive + 1))
+                  if [ "$consecutive" -ge 3 ]; then return 0; fi
+                else
+                  consecutive=0
                 fi
-                sleep 5
+                sleep 2
               done
               return 1
             }
