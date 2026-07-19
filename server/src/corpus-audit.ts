@@ -43,7 +43,10 @@ function withoutImageFields(value: unknown): unknown {
 }
 
 export function corpusSourceHash(data: unknown): string {
-  return createHash('sha256').update(JSON.stringify(withoutImageFields(data))).digest('hex');
+  const stableData = isRecord(data)
+    ? Object.fromEntries(Object.entries(data).filter(([key]) => key !== 'analysis' && key !== 'analysisGeneratedAt'))
+    : data;
+  return createHash('sha256').update(JSON.stringify(withoutImageFields(stableData))).digest('hex');
 }
 
 export function corpusAuditDataState(

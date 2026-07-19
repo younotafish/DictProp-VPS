@@ -34,12 +34,6 @@ const unarchivedById = new Set<string>();
 const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
 const finiteNonNegative = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
-const withoutLaterSentenceEnrichment = (data: any, type: string) => {
-  if (type !== 'sentence' || !data || typeof data !== 'object') return data;
-  const { analysis: _analysis, analysisGeneratedAt: _generatedAt, ...auditedData } = data;
-  return auditedData;
-};
-
 for (const entry of bundle.entries) {
   try {
     const current = currentById.get(entry.id) as any;
@@ -48,7 +42,7 @@ for (const entry of bundle.entries) {
       continue;
     }
     if (current.type !== entry.type) throw new Error('item type changed after export');
-    const dataState = corpusAuditDataState(withoutLaterSentenceEnrichment(current.data, entry.type), entry);
+    const dataState = corpusAuditDataState(current.data, entry);
     if (dataState === 'target') {
       result.alreadyApplied++;
       continue;

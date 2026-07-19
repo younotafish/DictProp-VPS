@@ -19,6 +19,22 @@ test('corpus hashes ignore image storage markers', () => {
   assert.equal(corpusSourceHash({ ...data, imageUrl: 'server:has_image' }), corpusSourceHash({ ...data, imageUrl: 'data:image/png;base64,AAA=' }));
 });
 
+test('corpus hashes ignore later sentence analysis enrichment', () => {
+  const sentence = { id: 'sentence-1', text: 'He came clean.', sourceWord: 'come clean', usageAudit: audit };
+  const first = {
+    ...sentence,
+    analysis: { translation: '他坦白了。', naturalSpeechIpa: '/hi keɪm kliːn/' },
+    analysisGeneratedAt: 10,
+  };
+  const later = {
+    ...sentence,
+    analysis: { translation: '他终于坦白了。', naturalSpeechIpa: '/hi keɪm kliːn/' },
+    analysisGeneratedAt: 20,
+  };
+  assert.equal(corpusSourceHash(first), corpusSourceHash(later));
+  assert.equal(corpusAuditDataState(later, { sourceHash: corpusSourceHash(first), data: first }), 'target');
+});
+
 test('corpus audit bundle requires complete and consistent decisions', () => {
   assert.equal(validateCorpusAuditBundle(bundle), null);
   assert.match(validateCorpusAuditBundle({ ...bundle, entries: [{ ...bundle.entries[0], archiveForUsage: true }] }) || '', /disagrees/);
