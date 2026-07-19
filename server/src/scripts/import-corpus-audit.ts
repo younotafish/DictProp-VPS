@@ -5,6 +5,7 @@ import { getAllItems, listAllUsers, upsertMany } from '../db.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
 import { isSentenceAnalysis } from '../sentence-analysis.js';
+import { resolveUsageArchive } from '../usage-audit.js';
 import { validateStoredItem } from '../validation.js';
 
 const manifestPath = process.argv[2];
@@ -23,11 +24,13 @@ const result = {
   alreadyApplied: 0,
   missingOrDeleted: 0,
   archivedForUsage: 0,
+  unarchivedAfterCorrection: 0,
   skipped: 0,
   errors: [] as Array<{ id: string; error: string }>,
 };
 const pending: any[] = [];
 const archivedById = new Set<string>();
+const unarchivedById = new Set<string>();
 const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
 const finiteNonNegative = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -62,6 +65,7 @@ for (const entry of bundle.entries) {
             : {}),
         }
       : {};
+    const nextArchived = resolveUsageArchive(current.isArchived === true, current.data.usageAudit, entry.data.usageAudit);
     const candidate = {
       ...currentWithoutProject,
       data: { ...entry.data, ...preservedSentenceAnalysis },
@@ -78,13 +82,14 @@ for (const entry of bundle.entries) {
         stability: finiteNonNegative(currentSrs.stability, 0),
       },
       savedAt: finiteNonNegative(current.savedAt, Date.now()),
-      isArchived: current.isArchived === true || entry.archiveForUsage,
+      isArchived: nextArchived,
       updatedAt: Math.max(Date.now(), Number(current.updatedAt || 0) + 1),
     };
     const itemError = validateStoredItem(candidate);
     if (itemError) throw new Error(itemError);
     pending.push(candidate);
     if (!current.isArchived && entry.archiveForUsage) archivedById.add(entry.id);
+    if (current.isArchived && !nextArchived) unarchivedById.add(entry.id);
   } catch (error) {
     result.skipped++;
     result.errors.push({ id: entry.id, error: error instanceof Error ? error.message : String(error) });
@@ -100,6 +105,7 @@ const recordWrite = (candidate: any, conflicts: Set<string>) => {
   }
   result.updated++;
   if (archivedById.has(id)) result.archivedForUsage++;
+  if (unarchivedById.has(id)) result.unarchivedAfterCorrection++;
 };
 
 for (let index = 0; index < pending.length; index += 500) {

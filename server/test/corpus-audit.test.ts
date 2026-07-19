@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { corpusAuditDataState, corpusSourceHash, validateCorpusAuditBundle } from '../src/corpus-audit.js';
+import { resolveUsageArchive } from '../src/usage-audit.js';
 
 const audit = { status: 'modern_american', reason: 'Common in present-day American English.', confidence: 'high', auditedAt: 1 };
 const data = {
@@ -30,4 +31,11 @@ test('corpus audit imports can resume after a partial run', () => {
   assert.equal(corpusAuditDataState(original, entry), 'source');
   assert.equal(corpusAuditDataState({ ...data, imageUrl: 'server:has_image' }, entry), 'target');
   assert.equal(corpusAuditDataState({ ...original, definition: 'changed after export' }, entry), 'changed');
+});
+
+test('usage re-audits reverse only prior usage-driven archives', () => {
+  const rareAudit = { ...audit, status: 'rare_or_dated' as const };
+  assert.equal(resolveUsageArchive(true, rareAudit, audit), false, 'corrected prior auto-archive');
+  assert.equal(resolveUsageArchive(true, audit, audit), true, 'preserved manual archive');
+  assert.equal(resolveUsageArchive(false, audit, rareAudit), true, 'applied new low-value archive');
 });

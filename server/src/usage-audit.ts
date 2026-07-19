@@ -34,6 +34,23 @@ export function shouldArchiveUsage(status: UsageStatus, confidence: UsageAudit['
   return status === 'british_only' || status === 'rare_or_dated' || status === 'narrow_specialized';
 }
 
+/**
+ * Keep explicit/manual archives, but let a later verified audit reverse an archive that the previous
+ * usage classification itself caused. The current audit is the only durable provenance available for
+ * legacy bulk archives, so a common/current audit on an archived item is treated as user-owned.
+ */
+export function resolveUsageArchive(
+  currentArchived: boolean,
+  currentAudit: unknown,
+  nextAudit: unknown,
+): boolean {
+  if (!isUsageAudit(nextAudit)) return currentArchived;
+  if (shouldArchiveUsage(nextAudit.status, nextAudit.confidence)) return true;
+  const wasArchivedForUsage = currentArchived && isUsageAudit(currentAudit) &&
+    shouldArchiveUsage(currentAudit.status, currentAudit.confidence);
+  return currentArchived && !wasArchivedForUsage;
+}
+
 export const CORPUS_AUDIT_INSTRUCTION = `You are a senior American English lexicographer auditing a private ESL study corpus.
 
 Audit the EXACT sense shown on each vocabulary card, not merely the spelling. The learner's target is useful, contemporary, broadly understood American English.
