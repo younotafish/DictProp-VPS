@@ -704,14 +704,15 @@ const entries = records.map(record => {
     }
   }
 
-  if (!isRecord(data.usageAudit)) throw new Error(`Missing top-level usage audit ${record.id}`);
+  const hasUsageAudit = isRecord(data.usageAudit);
+  if (!hasUsageAudit && record.type !== 'sentence') throw new Error(`Missing top-level usage audit ${record.id}`);
   return {
     id: record.id,
     type: record.type,
     sourceHash: record.sourceHash,
     data,
     wasArchived: record.wasArchived === true,
-    archiveForUsage: shouldArchive(data.usageAudit),
+    archiveForUsage: hasUsageAudit ? shouldArchive(data.usageAudit) : false,
   };
 });
 
