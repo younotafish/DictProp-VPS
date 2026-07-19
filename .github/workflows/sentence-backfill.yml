@@ -13,12 +13,39 @@ on:
           - corpus-export
           - corpus-import
           - image-import
+          - audit
       release_tag:
         description: Temporary release tag containing sentence-backfill.enc (import only)
         required: false
         type: string
 
 jobs:
+  audit:
+    if: inputs.operation == 'audit'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    steps:
+      - name: Audit production data
+        id: production_audit
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 15m
+          capture_stdout: true
+          script: |
+            set -e
+            cd /opt/dictprop-vps
+            docker compose exec -T app node server/dist/scripts/audit-production-data.js
+
+      - name: Report production audit
+        env:
+          AUDIT_OUTPUT: ${{ steps.production_audit.outputs.stdout }}
+        run: printf '%s\n' "$AUDIT_OUTPUT"
+
   export:
     if: inputs.operation == 'export'
     runs-on: ubuntu-latest

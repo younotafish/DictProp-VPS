@@ -4,6 +4,7 @@ import { corpusAuditDataState, validateCorpusAuditBundle, type CorpusAuditBundle
 import { getAllItems, listAllUsers, upsertMany } from '../db.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
+import { isSentenceAnalysis } from '../sentence-analysis.js';
 import { validateStoredItem } from '../validation.js';
 
 const manifestPath = process.argv[2];
@@ -30,6 +31,11 @@ const archivedById = new Set<string>();
 const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
 const finiteNonNegative = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+const withoutLaterSentenceEnrichment = (data: any, type: string) => {
+  if (type !== 'sentence' || !data || typeof data !== 'object') return data;
+  const { analysis: _analysis, analysisGeneratedAt: _generatedAt, ...auditedData } = data;
+  return auditedData;
+};
 
 for (const entry of bundle.entries) {
   try {
@@ -39,7 +45,7 @@ for (const entry of bundle.entries) {
       continue;
     }
     if (current.type !== entry.type) throw new Error('item type changed after export');
-    const dataState = corpusAuditDataState(current.data, entry);
+    const dataState = corpusAuditDataState(withoutLaterSentenceEnrichment(current.data, entry.type), entry);
     if (dataState === 'target') {
       result.alreadyApplied++;
       continue;
@@ -48,9 +54,17 @@ for (const entry of bundle.entries) {
 
     const { project: _legacyProject, ...currentWithoutProject } = current;
     const currentSrs = current.srs && typeof current.srs === 'object' ? current.srs : {};
+    const preservedSentenceAnalysis = entry.type === 'sentence' && isSentenceAnalysis(current.data.analysis)
+      ? {
+          analysis: current.data.analysis,
+          ...(finiteNonNegative(current.data.analysisGeneratedAt, 0) > 0
+            ? { analysisGeneratedAt: current.data.analysisGeneratedAt }
+            : {}),
+        }
+      : {};
     const candidate = {
       ...currentWithoutProject,
-      data: entry.data,
+      data: { ...entry.data, ...preservedSentenceAnalysis },
       srs: {
         ...currentSrs,
         id: entry.id,

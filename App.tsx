@@ -2582,18 +2582,15 @@ const App: React.FC = () => {
 
   // Refresh-replace: a real re-run of the AI for an already-saved word replaces its saved card(s).
   // A meaning present in both old and new updates IN PLACE (handleSave matches by word+sense and we pass
-  // its existing SRS), so spaced-repetition progress survives the refresh; meanings the refresh dropped
-  // are deleted; brand-new meanings are added. Called again as illustrations stream in (see GlobalSearch).
+  // its existing SRS), so spaced-repetition progress survives the refresh; brand-new meanings are added.
+  // Unmatched saved senses remain: model sense coverage varies between calls, so omission is not evidence
+  // that a valid stored meaning should be deleted. Called again as illustrations stream in (GlobalSearch).
   const handleRefreshReplace = useCallback((word: string, vocabs: VocabCard[]) => {
     if (!vocabs?.length) return;
     const spelling = word.toLowerCase().trim();
     const oldItems = latestItemsRef.current.filter(i =>
       !i.isDeleted && isVocabItem(i) && getItemSpelling(i) === spelling
     );
-    const newSenses = new Set(vocabs.map(v => v.sense || ''));
-    oldItems.forEach(o => {
-      if (!newSenses.has((o.data as VocabCard).sense || '')) handleDelete(o.data.id); // meaning dropped by refresh
-    });
     vocabs.forEach(vocab => {
       const match = oldItems.find(o => ((o.data as VocabCard).sense || '') === (vocab.sense || ''));
       if (match) {
@@ -2613,7 +2610,7 @@ const App: React.FC = () => {
         });
       }
     });
-  }, [handleDelete]);
+  }, []);
 
   const handleGeneratedImage = useCallback((vocab: VocabCard) => {
     const updated = mergeGeneratedVocabIntoStoredItem(latestItemsRef.current, vocab);
