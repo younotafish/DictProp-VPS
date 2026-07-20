@@ -9,7 +9,7 @@ DictProp is an AI-powered vocabulary learning web app for English learners. User
 **This is the VPS fork** — self-hosted on a personal VPS with Hono + SQLite, replacing the original Firebase version. The Firebase version at dictpropstore.web.app continues running untouched.
 
 - **Domain**: https://dictprop.online (Caddy reverse proxy with auto-HTTPS)
-- **VPS**: 107.152.47.101, Ubuntu 22.04, 1 CPU, 1GB RAM, Docker
+- **VPS**: 107.152.47.101, Ubuntu 22.04, 2 vCPUs, 2GB RAM, 60GB SSD, Docker
 - **GitHub**: github.com/younotafish/DictProp-VPS (public)
 
 ## CRITICAL: Network & Environment Constraints
@@ -188,7 +188,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 ### Docker Build Pitfalls
 - `canvas` npm package (used only by `generate-icons.js`) requires Python + native build tools — excluded from the image via `npm pkg delete` in the Dockerfile
 - Rollup needs platform-specific binaries — do NOT use `--ignore-scripts` with npm ci
-- VPS has only 1GB RAM — Docker builds can OOM. Add swap: `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`
+- VPS has 2GB RAM, but local Docker builds can still OOM. Keep swap available: `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`
 
 ### Caddy (HTTPS)
 - Caddyfile at `/etc/caddy/Caddyfile` on VPS
