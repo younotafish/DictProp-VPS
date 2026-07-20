@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +10,8 @@ process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-routes-test-'));
 process.env.DEV_AUTH_BYPASS = '1';
 
 const { createApp } = await import('../src/app.js');
+const { upsertSentenceEnrichment } = await import('../src/db.js');
+const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 const app = createApp({ logging: false, serveStaticFiles: false });
 
 const item = {
@@ -128,6 +131,48 @@ test('item routes reject malformed records and oversized batches', async () => {
   });
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: 'Expected array of items' });
+});
+
+test('saving a prepared example returns the server-enriched canonical sentence', async () => {
+  const text = 'The witness finally [[came clean]].';
+  const lookupHash = sentenceLookupHash(text);
+  const analysis = {
+    translation: '证人终于坦白了。',
+    naturalSpeechIpa: '/ðə ˈwɪtnəs ˈfaɪnəli keɪm kliːn/',
+    americanEnglish: { status: 'shared' as const, explanation: 'Natural shared English.' },
+    terms: [],
+    imagePrompt: 'A realistic photograph of a witness speaking candidly, without text.',
+  };
+  upsertSentenceEnrichment({
+    entry: {
+      id: `example-${lookupHash.slice(0, 40)}`,
+      text,
+      lookupHash,
+      textHash: createHash('sha256').update(text).digest('hex'),
+      analysis,
+      generatedAt: 5,
+    },
+  });
+  const sentence = {
+    type: 'sentence',
+    data: { id: 'route-prepared-sentence', text: 'The witness finally {{came clean}}.', sourceWord: 'come clean' },
+    srs: {
+      id: 'route-prepared-sentence', type: 'sentence', nextReview: 0, interval: 0, memoryStrength: 0,
+      lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 0,
+    },
+    savedAt: 1,
+    updatedAt: 1,
+  };
+  const response = await app.request('/api/items', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([sentence]),
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json() as any;
+  assert.equal(result.canonical.length, 1);
+  assert.equal(result.canonical[0].data.id, sentence.data.id);
+  assert.deepEqual(result.canonical[0].data.analysis, analysis);
 });
 
 test('runtime middleware exposes readiness/request ids and rejects cross-site mutations', async () => {

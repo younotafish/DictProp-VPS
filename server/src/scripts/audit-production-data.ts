@@ -142,7 +142,27 @@ for (const row of imageRows.iterate(owner.id) as Iterable<{
 const orphanImageBlobCount = (db.prepare(`
   SELECT COUNT(*) AS count FROM image_blobs b
   WHERE NOT EXISTS (SELECT 1 FROM item_images i WHERE i.content_hash = b.content_hash)
+    AND NOT EXISTS (SELECT 1 FROM sentence_enrichments e WHERE e.image_content_hash = b.content_hash)
 `).get() as { count: number }).count;
+const sentenceEnrichmentStats = db.prepare(`
+  SELECT
+    COUNT(*) AS total,
+    SUM(CASE WHEN image_content_hash IS NOT NULL THEN 1 ELSE 0 END) AS with_images,
+    SUM(CASE WHEN NOT json_valid(analysis) THEN 1 ELSE 0 END) AS invalid_analysis,
+    SUM(CASE WHEN image_content_hash IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM image_blobs b WHERE b.content_hash = sentence_enrichments.image_content_hash
+    ) THEN 1 ELSE 0 END) AS missing_blobs,
+    COALESCE(SUM(CASE WHEN image_content_hash IS NOT NULL THEN (
+      SELECT byte_length FROM image_blobs b WHERE b.content_hash = sentence_enrichments.image_content_hash
+    ) ELSE 0 END), 0) AS image_bytes
+  FROM sentence_enrichments
+`).get() as {
+  total: number;
+  with_images: number | null;
+  invalid_analysis: number | null;
+  missing_blobs: number | null;
+  image_bytes: number;
+};
 
 const duplicateGroups = (items: any[], keyOf: (item: any) => string) => {
   const groups = new Map<string, string[]>();
@@ -267,6 +287,13 @@ const report = {
     missingImageIds: sample(missingSentenceImages),
     missingSourceWordCount: missingSentenceSources.length,
     missingSourceWordIds: sample(missingSentenceSources),
+  },
+  sentenceEnrichments: {
+    total: sentenceEnrichmentStats.total,
+    withImages: sentenceEnrichmentStats.with_images || 0,
+    invalidAnalysisCount: sentenceEnrichmentStats.invalid_analysis || 0,
+    missingBlobCount: sentenceEnrichmentStats.missing_blobs || 0,
+    imageBytes: sentenceEnrichmentStats.image_bytes,
   },
   images: {
     storedCount: imageIds.size,

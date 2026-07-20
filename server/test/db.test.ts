@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,8 @@ import test from 'node:test';
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-db-test-'));
 
-const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
+const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
+const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const makeItem = (
   id: string,
@@ -126,6 +128,59 @@ test('stripped image markers change when image content is replaced', () => {
   const secondMarker = getItemById(id, userId, false)?.data.imageUrl;
   assert.match(secondMarker, /^server:has_image:[a-f0-9]{20}$/);
   assert.notEqual(secondMarker, firstMarker);
+});
+
+test('saving a prepared example sentence attaches its analysis and deduplicated image', () => {
+  const text = 'She finally [[came clean]] about the mistake.';
+  const lookupHash = sentenceLookupHash(text);
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  const analysis = {
+    translation: '她终于坦白了那个错误。',
+    naturalSpeechIpa: '/ʃi ˈfaɪnəli keɪm kliːn əˈbaʊt ðə mɪˈsteɪk/',
+    americanEnglish: { status: 'shared' as const, explanation: 'This is natural in American English.' },
+    terms: [],
+    imagePrompt: 'A realistic photograph of a candid conversation in a kitchen, without text.',
+  };
+  const generatedAt = 10_000;
+  const blobsBefore = (db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count;
+  assert.deepEqual(upsertSentenceEnrichment({
+    entry: {
+      id: `example-${lookupHash.slice(0, 40)}`,
+      text,
+      lookupHash,
+      textHash: createHash('sha256').update(text).digest('hex'),
+      analysis,
+      generatedAt,
+    },
+    image,
+    mimeType: 'image/png',
+  }), { status: 'inserted', imageStored: true });
+  assert.equal(getSentenceEnrichmentCount(), 1);
+
+  const sentence = {
+    type: 'sentence',
+    data: { id: 'prepared-sentence', text: 'She finally came clean about the mistake.', sourceWord: 'come clean' },
+    srs: {
+      id: 'prepared-sentence', type: 'sentence', nextReview: 0, interval: 0, memoryStrength: 0,
+      lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 0,
+    },
+    savedAt: 1,
+    updatedAt: 1,
+  };
+  upsertItem(sentence, 'enrichment-user');
+  const stored = getItemById('prepared-sentence', 'enrichment-user', false);
+  assert.deepEqual(stored?.data.analysis, analysis);
+  assert.equal(stored?.data.analysisGeneratedAt, generatedAt);
+  assert.match(stored?.data.imageUrl, /^server:has_image:[a-f0-9]{20}$/);
+
+  // A second saved identity links to the same blob instead of storing the image bytes twice.
+  upsertItem({
+    ...sentence,
+    data: { ...sentence.data, id: 'prepared-sentence-copy' },
+    srs: { ...sentence.srs, id: 'prepared-sentence-copy' },
+  }, 'enrichment-user');
+  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, blobsBefore + 1);
+  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM item_images WHERE user_id = ?').get('enrichment-user') as { count: number }).count, 2);
 });
 
 test('server revisions reject stale content independently of device clocks', () => {

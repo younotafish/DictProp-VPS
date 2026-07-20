@@ -276,7 +276,15 @@ itemsRoutes.put('/items', async (c) => {
   if (validationError) return c.json({ error: validationError }, 400);
   try {
     const result = upsertMany(body, userId);
-    const canonical = result.conflicts
+    // Return server-enriched sentences immediately instead of waiting for the next 8-second delta pull.
+    // Conflicts use this same bounded canonical response path.
+    const canonicalIds = new Set(result.conflicts);
+    for (const item of body) {
+      if (item.type !== 'sentence' || item.isDeleted || item.data?.analysis) continue;
+      const stored = getItemById(item.data.id, userId, false);
+      if (stored?.data?.analysis) canonicalIds.add(item.data.id);
+    }
+    const canonical = [...canonicalIds]
       .map(id => getItemById(id, userId, false))
       .filter(Boolean);
     return c.json({ ok: true, count: body.length, ...result, canonical });

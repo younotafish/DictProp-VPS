@@ -13,10 +13,11 @@ on:
           - corpus-export
           - corpus-import
           - image-import
+          - enrichment-import
           - audit
           - repair
       release_tag:
-        description: Temporary release tag containing sentence-backfill.enc (import only)
+        description: Temporary release tag containing the encrypted import asset
         required: false
         type: string
 
@@ -187,6 +188,76 @@ jobs:
 
       - name: Enforce sentence import success
         if: steps.sentence_import.outcome != 'success'
+        run: exit 1
+
+  enrichment-import:
+    if: inputs.operation == 'enrichment-import'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Validate enrichment input
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
+
+      - name: Import encrypted example enrichments
+        id: enrichment_import
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1
+        env:
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
+          command_timeout: 60m
+          capture_stdout: true
+          script: |
+            set -e
+            test -n "$SENTENCE_BRIDGE_KEY"
+            cd /opt/dictprop-vps
+            AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')
+            MIN_FREE_KB=$((5 * 1024 * 1024))
+            echo "example-enrichment capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
+            test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
+            rm -rf /tmp/dictprop-enrichment-bridge
+            mkdir -p /tmp/dictprop-enrichment-bridge
+            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 20 --max-time 300 \
+              --output /tmp/dictprop-enrichment-bridge/sentence-enrichments.enc \
+              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/sentence-enrichments.enc"
+            docker compose exec -T app sh -c 'rm -rf /tmp/sentence-enrichments && mkdir -p /tmp/sentence-enrichments'
+            openssl enc -d -aes-256-cbc -pbkdf2 \
+              -pass env:SENTENCE_BRIDGE_KEY \
+              -in /tmp/dictprop-enrichment-bridge/sentence-enrichments.enc \
+              | docker compose exec -T app tar -xz -C /tmp/sentence-enrichments
+            set +e
+            docker compose exec -T app nice -n 10 node server/dist/scripts/import-sentence-enrichments.js \
+              /tmp/sentence-enrichments/manifest.json
+            STATUS=$?
+            set -e
+            docker compose exec -T app rm -rf /tmp/sentence-enrichments
+            rm -rf /tmp/dictprop-enrichment-bridge
+            exit "$STATUS"
+
+      - name: Report enrichment import result
+        if: always()
+        env:
+          REMOTE_STDOUT: ${{ steps.enrichment_import.outputs.stdout }}
+          REMOTE_STDERR: ${{ steps.enrichment_import.outputs.stderr }}
+        run: |
+          printf '%s\n' "$REMOTE_STDOUT"
+          printf '%s\n' "$REMOTE_STDERR" >&2
+
+      - name: Enforce enrichment import success
+        if: steps.enrichment_import.outcome != 'success'
         run: exit 1
 
   corpus-export:

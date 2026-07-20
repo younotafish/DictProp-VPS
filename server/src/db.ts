@@ -5,6 +5,7 @@ import { randomUUID, createHash } from 'crypto';
 import { env } from './env.js';
 import { hasImageSignature } from './image-format.js';
 import { advanceReviewSrs } from './srs.js';
+import { sentenceLookupHash, type SentenceEnrichmentEntry } from './sentence-enrichment.js';
 
 // Ensure data directory exists
 mkdirSync(env.DATA_DIR, { recursive: true });
@@ -184,6 +185,27 @@ try {
   console.warn('item_images table creation:', e);
 }
 
+// Prepared example-sentence enrichment is global source material, not a user item. Keeping it in a
+// separate lookup table prevents tens of thousands of analyses and images from entering /api/items.
+// Images reuse image_blobs and are linked into a user's item_images row only when that sentence is saved.
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS sentence_enrichments (
+    lookup_hash TEXT PRIMARY KEY,
+    source_id TEXT UNIQUE NOT NULL,
+    text_hash TEXT NOT NULL,
+    source_text TEXT NOT NULL,
+    analysis TEXT NOT NULL,
+    generated_at INTEGER NOT NULL,
+    image_content_hash TEXT,
+    image_mime_type TEXT,
+    updated_at INTEGER NOT NULL
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sentence_enrichments_source_id
+    ON sentence_enrichments(source_id)`);
+} catch (e) {
+  console.warn('sentence_enrichments table creation:', e);
+}
+
 // Word comparisons: AI-generated side-by-side analyses, kept OUT of the items table (its CHECK
 // constraint only allows vocab/phrase/sentence). Keyed by the normalized word-set (e.g. 'fable|parable')
 // so direction doesn't matter and each pair stores once; surfaced on every involved word's page.
@@ -292,8 +314,34 @@ const imageStmts = {
   deleteUnreferencedBlob: db.prepare(`DELETE FROM image_blobs
     WHERE content_hash = ? AND NOT EXISTS (
       SELECT 1 FROM item_images WHERE item_images.content_hash = image_blobs.content_hash
+    ) AND NOT EXISTS (
+      SELECT 1 FROM sentence_enrichments WHERE sentence_enrichments.image_content_hash = image_blobs.content_hash
     )`),
   assignOrphan: db.prepare(`UPDATE item_images SET user_id = ? WHERE user_id IS NULL`),
+};
+
+const sentenceEnrichmentStmts = {
+  get: db.prepare(`SELECT * FROM sentence_enrichments WHERE lookup_hash = ?`),
+  count: db.prepare(`SELECT COUNT(*) AS count FROM sentence_enrichments`),
+  upsert: db.prepare(`
+    INSERT INTO sentence_enrichments (
+      lookup_hash, source_id, text_hash, source_text, analysis, generated_at,
+      image_content_hash, image_mime_type, updated_at
+    ) VALUES (
+      @lookup_hash, @source_id, @text_hash, @source_text, @analysis, @generated_at,
+      @image_content_hash, @image_mime_type, @updated_at
+    )
+    ON CONFLICT(lookup_hash) DO UPDATE SET
+      source_id = excluded.source_id,
+      text_hash = excluded.text_hash,
+      source_text = excluded.source_text,
+      analysis = excluded.analysis,
+      generated_at = excluded.generated_at,
+      image_content_hash = COALESCE(excluded.image_content_hash, sentence_enrichments.image_content_hash),
+      image_mime_type = COALESCE(excluded.image_mime_type, sentence_enrichments.image_mime_type),
+      updated_at = excluded.updated_at
+    WHERE excluded.generated_at >= sentence_enrichments.generated_at
+  `),
 };
 const imageVersionCache = new Map<string, { expiresAt: number; versions: Map<string, string> }>();
 
@@ -337,6 +385,122 @@ function storedImageToDataUri(row: { data: Buffer | string; mime_type?: string |
   if (typeof row.data === 'string') return row.data.startsWith('data:image/') ? row.data : null;
   const mime = row.mime_type || 'image/webp';
   return `data:${mime};base64,${row.data.toString('base64')}`;
+}
+
+interface SentenceEnrichmentRow {
+  lookup_hash: string;
+  source_id: string;
+  text_hash: string;
+  source_text: string;
+  analysis: string;
+  generated_at: number;
+  image_content_hash: string | null;
+  image_mime_type: string | null;
+  updated_at: number;
+}
+
+export interface SentenceEnrichmentImportRecord {
+  entry: SentenceEnrichmentEntry;
+  image?: Buffer;
+  mimeType?: string;
+}
+
+export interface SentenceEnrichmentImportResult {
+  status: 'inserted' | 'updated' | 'unchanged' | 'stale';
+  imageStored: boolean;
+}
+
+export function getSentenceEnrichmentCount(): number {
+  return (sentenceEnrichmentStmts.count.get() as { count: number }).count;
+}
+
+export function getSentenceEnrichmentForText(text: string): {
+  analysis: any;
+  generatedAt: number;
+  imageContentHash: string | null;
+  imageMimeType: string | null;
+} | null {
+  if (!text.trim()) return null;
+  const row = sentenceEnrichmentStmts.get.get(sentenceLookupHash(text)) as SentenceEnrichmentRow | undefined;
+  if (!row) return null;
+  try {
+    return {
+      analysis: JSON.parse(row.analysis),
+      generatedAt: row.generated_at,
+      imageContentHash: row.image_content_hash,
+      imageMimeType: row.image_mime_type,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord): SentenceEnrichmentImportResult {
+  const { entry, image, mimeType } = record;
+  const existing = sentenceEnrichmentStmts.get.get(entry.lookupHash) as SentenceEnrichmentRow | undefined;
+  if (existing && existing.generated_at > entry.generatedAt) return { status: 'stale', imageStored: false };
+
+  let imageContentHash: string | null = existing?.image_content_hash ?? null;
+  let imageMimeType: string | null = existing?.image_mime_type ?? null;
+  let imageStored = false;
+  if (image && mimeType) {
+    if (image.length === 0 || !/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType) ||
+        !hasImageSignature(image, mimeType)) {
+      throw new Error(`Sentence enrichment ${entry.id} has an invalid image`);
+    }
+    imageContentHash = createHash('sha256').update(image).digest('hex');
+    imageMimeType = mimeType;
+    const inserted = imageStmts.upsertBlob.run({
+      content_hash: imageContentHash,
+      data: image,
+      byte_length: image.length,
+      created_at: entry.generatedAt,
+    });
+    imageStored = inserted.changes > 0;
+  }
+
+  const analysis = JSON.stringify(entry.analysis);
+  const unchanged = !!existing && existing.source_id === entry.id && existing.text_hash === entry.textHash &&
+    existing.source_text === entry.text && existing.analysis === analysis &&
+    existing.generated_at === entry.generatedAt && existing.image_content_hash === imageContentHash &&
+    existing.image_mime_type === imageMimeType;
+  if (unchanged) return { status: 'unchanged', imageStored };
+
+  sentenceEnrichmentStmts.upsert.run({
+    lookup_hash: entry.lookupHash,
+    source_id: entry.id,
+    text_hash: entry.textHash,
+    source_text: entry.text,
+    analysis,
+    generated_at: entry.generatedAt,
+    image_content_hash: imageContentHash,
+    image_mime_type: imageMimeType,
+    updated_at: Date.now(),
+  });
+  if (existing?.image_content_hash && existing.image_content_hash !== imageContentHash) {
+    imageStmts.deleteUnreferencedBlob.run(existing.image_content_hash);
+  }
+  return { status: existing ? 'updated' : 'inserted', imageStored };
+}
+
+function linkSentenceEnrichmentImage(
+  itemId: string,
+  userId: string,
+  contentHash: string | null,
+  mimeType: string | null,
+  updatedAt: number,
+): boolean {
+  if (!contentHash || !mimeType || imageStmts.owner.get(itemId)) return false;
+  const reference = imageStmts.upsert.run({
+    id: itemId,
+    user_id: userId,
+    data: Buffer.alloc(0),
+    updated_at: updatedAt,
+    mime_type: mimeType,
+    content_hash: contentHash,
+  });
+  if (reference.changes > 0) imageVersionCache.delete(userId);
+  return reference.changes > 0;
 }
 
 /**
@@ -660,7 +824,7 @@ const nextRevision = db.prepare(`UPDATE sync_meta SET value = value + 1 WHERE ke
 export interface UpsertResult { revision: number; conflicted: boolean }
 
 export function upsertItem(item: any, userId: string): UpsertResult {
-  const data = item.data;
+  let data = item.data;
   if (!data || !data.id) throw new Error('Item missing data.id');
 
   const now = Date.now();
@@ -696,6 +860,25 @@ export function upsertItem(item: any, userId: string): UpsertResult {
     }
   }
 
+  // Ignore stale content while still accepting a newer review selected above.
+  const staleContent = !!existing && (incomingRevision !== undefined
+    ? incomingRevision < existingRevision
+    : incomingUpdatedAt < existingUpdatedAt);
+
+  // A prepared example sentence upgrades itself when it is saved. This lookup is tiny and indexed;
+  // the full enrichment pool never enters normal item reads. Preserve any explicit item analysis.
+  const enrichment = !staleContent && item.type === 'sentence' && !item.isDeleted &&
+    typeof data.text === 'string'
+    ? getSentenceEnrichmentForText(data.text)
+    : null;
+  if (enrichment && !data.analysis) {
+    data = {
+      ...data,
+      analysis: enrichment.analysis,
+      analysisGeneratedAt: enrichment.generatedAt,
+    };
+  }
+
   // Capture any incoming base64 into item_images, then strip imageUrl from the data we
   // store — base64 and markers ('idb:stored'/'server:has_image') never live in items.data.
   // For markers / missing / non-base64, we leave item_images untouched (and NEVER delete:
@@ -708,6 +891,15 @@ export function upsertItem(item: any, userId: string): UpsertResult {
   };
 
   captureImage(data.id, data.imageUrl);
+  if (enrichment) {
+    linkSentenceEnrichmentImage(
+      data.id,
+      userId,
+      enrichment.imageContentHash,
+      enrichment.imageMimeType,
+      now,
+    );
+  }
   const { imageUrl: _topImageUrl, ...rest } = data;
   const finalData: any = rest;
   if (Array.isArray(data.vocabs)) {
@@ -723,10 +915,6 @@ export function upsertItem(item: any, userId: string): UpsertResult {
     });
   }
 
-  // Ignore stale content while still accepting a newer review selected above.
-  const staleContent = !!existing && (incomingRevision !== undefined
-    ? incomingRevision < existingRevision
-    : incomingUpdatedAt < existingUpdatedAt);
   const revision = staleContent && !srsChanged
     ? existingRevision
     : ((nextRevision.get() as { value: number }).value);
