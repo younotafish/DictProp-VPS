@@ -80,6 +80,30 @@ function targetReady(target) {
   return fileReady(join(imageDir, target.filename)) || fileReady(candidatePath(target));
 }
 
+function readTargetManifest(path, label) {
+  const manifest = JSON.parse(readFileSync(path, 'utf8'));
+  if (!Array.isArray(manifest.targets)) throw new Error(`${label} is invalid`);
+  return manifest;
+}
+
+function validateChunkPartition(targets, rejected, label) {
+  const targetFiles = new Set(targets.map(target => target.filename));
+  const rejectedFiles = new Set();
+  for (const target of rejected) {
+    if (!targetFiles.has(target.filename) || rejectedFiles.has(target.filename)) {
+      throw new Error(`${label} contains an unknown or duplicate target: ${target.filename}`);
+    }
+    rejectedFiles.add(target.filename);
+  }
+  for (const target of targets) {
+    const accepted = fileReady(join(imageDir, target.filename));
+    const wasRejected = rejectedFiles.has(target.filename);
+    if (accepted === wasRejected) {
+      throw new Error(`${label} does not partition target ${target.imageId || target.filename}`);
+    }
+  }
+}
+
 function run(command, args) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
@@ -119,6 +143,22 @@ for (let index = 0; index < payload.targets.length; index += chunkSize) {
 
 for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
   const targets = chunks[chunkIndex];
+  const chunkName = `chunk-${String(chunkIndex + 1).padStart(4, '0')}`;
+  const chunkDir = join(workDir, chunkName);
+  const chunkManifest = join(chunkDir, 'targets.json');
+  const judgeDir = join(chunkDir, 'judge');
+  const rejectedPath = join(judgeDir, 'rejected-targets.json');
+  const refinedPath = join(chunkDir, 'refined.json');
+  const refineDir = join(chunkDir, 'refine');
+
+  if (fileReady(refinedPath)) {
+    const refined = readTargetManifest(refinedPath, `${chunkName} refinement checkpoint`);
+    validateChunkPartition(targets, refined.targets, `${chunkName} refinement checkpoint`);
+    refinedTargets.push(...refined.targets);
+    process.stderr.write(`Reusing completed candidate ${candidateNumber} ${chunkName}\n`);
+    continue;
+  }
+
   let lastMissing = -1;
   for (;;) {
     const missing = targets.reduce((count, target) => count + (targetReady(target) ? 0 : 1), 0);
@@ -130,26 +170,27 @@ for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
     await sleep(15_000);
   }
 
-  const chunkName = `chunk-${String(chunkIndex + 1).padStart(4, '0')}`;
-  const chunkDir = join(workDir, chunkName);
-  const chunkManifest = join(chunkDir, 'targets.json');
-  const judgeDir = join(chunkDir, 'judge');
-  const rejectedPath = join(judgeDir, 'rejected-targets.json');
-  const refinedPath = join(chunkDir, 'refined.json');
-  const refineDir = join(chunkDir, 'refine');
   mkdirSync(chunkDir, { recursive: true });
   writeFileSync(chunkManifest, `${JSON.stringify({ ...payload, targets }, null, 2)}\n`, { mode: 0o600 });
 
-  process.stderr.write(`Judging candidate ${candidateNumber}, chunk ${chunkIndex + 1}/${chunks.length}\n`);
-  await retry(process.execPath, [
-    'scripts/offline/judge-image-candidates.mjs', chunkManifest, candidateDir, imageDir, judgeDir,
-    String(candidateNumber),
-  ]);
+  if (fileReady(rejectedPath)) {
+    const rejected = readTargetManifest(rejectedPath, `${chunkName} judgment checkpoint`);
+    validateChunkPartition(targets, rejected.targets, `${chunkName} judgment checkpoint`);
+    process.stderr.write(`Reusing completed candidate ${candidateNumber} judgment for ${chunkName}\n`);
+  } else {
+    process.stderr.write(`Judging candidate ${candidateNumber}, chunk ${chunkIndex + 1}/${chunks.length}\n`);
+    await retry(process.execPath, [
+      'scripts/offline/judge-image-candidates.mjs', chunkManifest, candidateDir, imageDir, judgeDir,
+      String(candidateNumber),
+    ]);
+    const rejected = readTargetManifest(rejectedPath, `${chunkName} judgment checkpoint`);
+    validateChunkPartition(targets, rejected.targets, `${chunkName} judgment checkpoint`);
+  }
   await retry(process.execPath, [
     'scripts/offline/refine-rejected-image-prompts.mjs', rejectedPath, refinedPath, refineDir,
   ]);
-  const refined = JSON.parse(readFileSync(refinedPath, 'utf8'));
-  if (!Array.isArray(refined.targets)) throw new Error(`${chunkName} produced an invalid refinement manifest`);
+  const refined = readTargetManifest(refinedPath, `${chunkName} refinement checkpoint`);
+  validateChunkPartition(targets, refined.targets, `${chunkName} refinement checkpoint`);
   refinedTargets.push(...refined.targets);
 }
 
