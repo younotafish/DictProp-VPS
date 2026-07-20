@@ -67,7 +67,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
         style={{ touchAction: 'pan-y pinch-zoom' }}
       >
         <div className="mx-auto w-full max-w-5xl">
-          <main className="px-4 pb-[calc(3rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 lg:px-8">
+          <main className="px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 lg:px-8">
             <h1 className="max-w-4xl text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl lg:text-4xl">
               {plainSentence}
             </h1>

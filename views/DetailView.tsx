@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText, Lock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -191,6 +191,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
   const [, setAutoPlayNowTick] = useState(0);
   const [isSentenceAutoPlaying, setIsSentenceAutoPlaying] = useState(false);
+  const isSentenceAutoPlayingRef = useRef(isSentenceAutoPlaying);
+  useEffect(() => { isSentenceAutoPlayingRef.current = isSentenceAutoPlaying; }, [isSentenceAutoPlaying]);
   const [showSentenceAutoPlayPanel, setShowSentenceAutoPlayPanel] = useState(false);
   const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between every read (repeats + distinct sentences)
   const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
@@ -251,10 +253,17 @@ export const DetailView: React.FC<DetailViewProps> = ({
   useEffect(() => {
     if (prevGroupIndexRef.current !== currentGroupIndex) {
       prevGroupIndexRef.current = currentGroupIndex;
-      setSentencePage('sentence');
+      // Keep the analysis page open while moving between saved sentences. Word review still resets to
+      // its primary page when changing groups.
+      if (sentenceItems?.length) {
+        const analysisScroller = document.querySelector<HTMLElement>('[data-sentence-analysis]');
+        if (analysisScroller) analysisScroller.scrollTop = 0;
+      } else {
+        setSentencePage('sentence');
+      }
       setCurrentItemIndex(0);
     }
-  }, [currentGroupIndex]);
+  }, [currentGroupIndex, sentenceItems]);
 
   // Lazy-load the image from the server if it is missing locally.
   useEffect(() => {
@@ -467,7 +476,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
-  const touchStartAt = useRef<number | null>(null);
   // A two-finger word chord owns both touch endings; blank-space sentence gestures must ignore them.
   const mobileWordChordActiveRef = useRef(false);
   const suppressMobileWordClickUntilRef = useRef(0);
@@ -517,7 +525,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (!touch) return;
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
-    touchStartAt.current = Date.now();
   };
   
   const onContentTouchEnd = (e: React.TouchEvent) => {
@@ -541,11 +548,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
     const absX = Math.abs(diffX);
     const absY = Math.abs(diffY);
-    const gestureDuration = Date.now() - (touchStartAt.current ?? Date.now());
     const swipeThreshold = 50;
     
     // Check scroll position for edge-based navigation
-    const container = scrollContainerRef.current;
+    const container = sentenceMode && sentencePage === 'analysis'
+      ? document.querySelector<HTMLElement>('[data-sentence-analysis]')
+      : scrollContainerRef.current;
     const scrollTop = container?.scrollTop || 0;
     const scrollHeight = container?.scrollHeight || 0;
     const clientHeight = container?.clientHeight || 0;
@@ -587,21 +595,24 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (isHorizontalSwipe) {
         if (sentencePage === 'analysis') setSentencePage('sentence');
         else if (diffX < 0) setSentencePage('analysis');
+        else if (isSentenceAutoPlayingRef.current) setShowSentenceAutoPlayPanel(true);
         else onClose();
         touchStartX.current = null;
         touchStartY.current = null;
         return;
       }
-      // Normal drags scroll the analysis. A deliberate, fast long swipe switches sentences from
-      // anywhere on that page, which keeps navigation available without making routine reading jump.
+      // Match word review: normal drags only scroll. A long swipe changes sentences only after the
+      // analysis has reached the corresponding boundary (or when the content is shorter than the page).
       if (sentencePage === 'analysis') {
-        const isHardVerticalSwipe = isVerticalSwipe && absY >= 160 && gestureDuration <= 700;
-        if (isHardVerticalSwipe) {
-          goToSentence(currentGroupIndexRef.current + (diffY < 0 ? 1 : -1));
+        if (isVerticalSwipe && isLongSwipe) {
+          if (diffY < -longSwipeMin && (isAtBottom || scrollHeight <= clientHeight)) {
+            goToSentence(currentGroupIndexRef.current + 1);
+          } else if (diffY > longSwipeMin && isAtTop) {
+            goToSentence(currentGroupIndexRef.current - 1);
+          }
         }
         touchStartX.current = null;
         touchStartY.current = null;
-        touchStartAt.current = null;
         return;
       }
       // A still tap inside the expanded word card is handled by its onClick (eyes-free zone read),
@@ -631,7 +642,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
       touchStartX.current = null;
       touchStartY.current = null;
-      touchStartAt.current = null;
       return;
     }
 
@@ -1281,6 +1291,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
     if (!sentences.length) return;
 
+    // Continuous sentence autoplay owns the audio chain until its explicit Stop control is used.
+    // Keyboard/manual read commands may pause or resume its current clip, but never replace the chain.
+    if (sentenceModeRef.current && isSentenceAutoPlayingRef.current) {
+      const status = getPlaybackState().status;
+      if (status === 'playing') pauseCurrent();
+      else if (status === 'paused') resumeCurrent();
+      return;
+    }
+
     // Already reading one of these → toggle pause / resume.
     const pb = getPlaybackState();
     if (pb.text && sentences.includes(pb.text) && (pb.status === 'playing' || pb.status === 'paused')) {
@@ -1318,6 +1337,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // Mid-clip → pause; almost done → fall through and restart from the top.
       if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
     }
+    if (sentenceModeRef.current && isSentenceAutoPlayingRef.current) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
     speakNatural(sentence, { allowDownload: true });
@@ -1342,6 +1362,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (!s) return;
     const sentence = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
     if (!sentence) return;
+    if (isSentenceAutoPlayingRef.current) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
     speakNatural(sentence, { allowDownload: true });
@@ -1361,6 +1382,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (pb.status === 'playing') { pauseCurrent(); return; }
       if (pb.status === 'paused') { resumeCurrent(); return; }
     }
+    if (isSentenceAutoPlayingRef.current) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
     speakNatural(sentence, { allowDownload: true });
@@ -1384,6 +1406,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       seekCurrent(startAt); // already this sentence's clip → seek in place (seamless)
       return;
     }
+    if (isSentenceAutoPlayingRef.current) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
     speakNatural(stripped, { allowDownload: true, startAt: startAt ?? undefined }); // (re)start AT the word
@@ -1406,9 +1429,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const list = sentenceItemsRef.current ?? [];
     if (list.length === 0) return;
     const clamped = Math.max(0, Math.min(nextIndex, list.length - 1));
-    if (clamped === currentGroupIndexRef.current) { speakCurrentSentence(); return; } // already at an end → re-speak
+    const keepAutoPlaying = isSentenceAutoPlayingRef.current;
+    if (clamped === currentGroupIndexRef.current) {
+      if (!keepAutoPlaying) speakCurrentSentence(); // already at an end → re-speak outside autoplay
+      return;
+    }
     setIsAutoPlaying(false);
-    setIsSentenceAutoPlaying(false);
     setShowHeader(false);
     setIsAnimating(true);
     setCurrentGroupIndex(clamped);
@@ -1419,7 +1445,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
     setTimeout(() => setIsAnimating(false), 300);
     const next = list[clamped];
     const sentence = next ? stripSentenceMarkers((next.data as SentenceData).text || '').trim() : '';
-    if (sentence) speakNatural(sentence, { allowDownload: true });
+    // The autoplay effect restarts itself at the selected sentence after the index changes. Starting a
+    // separate manual clip here would supersede that chain and leave autoplay visually on but stalled.
+    if (!keepAutoPlaying && sentence) speakNatural(sentence, { allowDownload: true });
   }, [speakCurrentSentence]);
 
   // Arrow keys / trackpad wheel: sentence mode uses ←/→ for its two pages and ↑/↓ for
@@ -1428,6 +1456,14 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const navRight = useCallback(() => { if (sentenceModeRef.current) setSentencePage('analysis'); else handleNextItem(); }, [handleNextItem]);
   const navUp = useCallback(() => { if (sentenceModeRef.current) goToSentence(currentGroupIndexRef.current - 1); else handlePrevGroup(); }, [handlePrevGroup, goToSentence]);
   const navDown = useCallback(() => { if (sentenceModeRef.current) goToSentence(currentGroupIndexRef.current + 1); else handleNextGroup(); }, [handleNextGroup, goToSentence]);
+
+  const requestSentenceExit = useCallback(() => {
+    if (isSentenceAutoPlaying) {
+      setShowSentenceAutoPlayPanel(true);
+      return;
+    }
+    onClose();
+  }, [isSentenceAutoPlaying, onClose]);
 
   // Stop any playback when DetailView closes (covers a manual read still going at close time).
   useEffect(() => () => { stopCurrent(); }, []);
@@ -1479,7 +1515,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Keyboard navigation
   useKeyboardNavigation({
-    onEscape: sentencePage === 'analysis' ? () => setSentencePage('sentence') : onClose,
+    onEscape: sentencePage === 'analysis' ? () => setSentencePage('sentence') : requestSentenceExit,
     onArrowLeft: navLeft,
     onArrowRight: navRight,
     onArrowUp: navUp,
@@ -1827,7 +1863,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           const st = getPlaybackState().status;
           if (st === 'playing') pauseCurrent();
           else if (st === 'paused') resumeCurrent();
-          else toggleSentenceAutoPlay();              // idle/loading → start/stop continuous auto-play
+          else if (!isSentenceAutoPlaying) toggleSentenceAutoPlay(); // only the visible Stop control exits autoplay
         } else {
           setIsAutoPlaying(prev => !prev);
         }
@@ -1842,7 +1878,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, interactionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, toggleSentenceAutoPlay]);
+  }, [title, showActionMenu, interactionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, isSentenceAutoPlaying, toggleSentenceAutoPlay]);
 
   // Eyes-free read-zone band counts — how many of the two quarter-bands actually read something
   // (so the guides only draw the bands that do something). Word view: a phrase always has band 1
@@ -1882,11 +1918,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
             {/* Row 1: back + position */}
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <button
-                onClick={onClose}
-                className="flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-indigo-600 -ml-1 px-1 py-0.5 rounded-lg hover:bg-slate-100 transition-colors"
-                title="Back to Sentences (Esc)"
+                onClick={requestSentenceExit}
+                className={`flex items-center gap-1 text-sm font-medium -ml-1 px-1 py-0.5 rounded-lg transition-colors ${
+                  isSentenceAutoPlaying
+                    ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                    : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-100'
+                }`}
+                title={isSentenceAutoPlaying ? 'Auto-play is locked. Open its controls to stop.' : 'Back to Sentences (Esc)'}
               >
-                <ArrowLeft size={18} /> Sentences
+                {isSentenceAutoPlaying ? <Lock size={16} /> : <ArrowLeft size={18} />}
+                {isSentenceAutoPlaying ? 'Auto-play' : 'Sentences'}
               </button>
               <div className="flex items-center gap-2">
                 <button
@@ -2437,7 +2478,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
       {/* Auto-play control. Sentence mode collapses every setting behind one right-rail FAB. */}
       {sentenceMode ? (
-        <div className="fixed bottom-6 right-4 z-[60]">
+        <div className="fixed bottom-6 right-4 z-[80]">
           {showSentenceAutoPlayPanel && (
             <div role="dialog" aria-label="Sentence auto-play settings" className="absolute bottom-0 right-14 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
               <div className="mb-3 flex items-center justify-between">
@@ -2466,7 +2507,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => { toggleSentenceAutoPlay(); setShowSentenceAutoPlayPanel(false); }}
+                onClick={() => { setIsSentenceAutoPlaying(false); setShowSentenceAutoPlayPanel(false); }}
                 className="mt-3 w-full rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-100"
               >
                 Stop auto-play
