@@ -135,28 +135,7 @@ jobs:
       - name: Validate import input
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: test -n "$RELEASE_TAG"
-
-      - name: Download encrypted bundle
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          mkdir -p bridge
-          gh release download "$RELEASE_TAG" \
-            --repo "${{ github.repository }}" \
-            --pattern sentence-backfill.enc \
-            --dir bridge
-
-      - name: Upload encrypted bundle
-        uses: appleboy/scp-action@v1
-        with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: bridge/sentence-backfill.enc
-          target: /tmp/dictprop-sentence-bridge
-          strip_components: 1
+        run: [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
       - name: Import encrypted sentence enrichment
         id: sentence_import
@@ -164,17 +143,24 @@ jobs:
         uses: appleboy/ssh-action@v1
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: SENTENCE_BRIDGE_KEY
+          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 60m
           capture_stdout: true
           script: |
             set -e
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
+            rm -rf /tmp/dictprop-sentence-bridge
+            mkdir -p /tmp/dictprop-sentence-bridge
+            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 20 --max-time 300 \
+              --output /tmp/dictprop-sentence-bridge/sentence-backfill.enc \
+              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/sentence-backfill.enc"
             docker compose exec -T app sh -c 'rm -rf /tmp/sentence-backfill && mkdir -p /tmp/sentence-backfill'
             openssl enc -d -aes-256-cbc -pbkdf2 \
               -pass env:SENTENCE_BRIDGE_KEY \
@@ -322,43 +308,29 @@ jobs:
       - name: Validate import input
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: test -n "$RELEASE_TAG"
-
-      - name: Download encrypted bundle
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          mkdir -p bridge
-          gh release download "$RELEASE_TAG" \
-            --repo "${{ github.repository }}" \
-            --pattern offline-images.enc \
-            --dir bridge
-
-      - name: Upload encrypted bundle
-        uses: appleboy/scp-action@v1
-        with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: bridge/offline-images.enc
-          target: /tmp/dictprop-image-bridge
-          strip_components: 1
+        run: [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
       - name: Import locally generated images
         uses: appleboy/ssh-action@v1
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: SENTENCE_BRIDGE_KEY
+          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 60m
           script: |
             set -e
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
+            rm -rf /tmp/dictprop-image-bridge
+            mkdir -p /tmp/dictprop-image-bridge
+            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 20 --max-time 300 \
+              --output /tmp/dictprop-image-bridge/offline-images.enc \
+              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/offline-images.enc"
             docker compose exec -T app sh -c 'rm -rf /tmp/offline-images && mkdir -p /tmp/offline-images'
             openssl enc -d -aes-256-cbc -pbkdf2 \
               -pass env:SENTENCE_BRIDGE_KEY \

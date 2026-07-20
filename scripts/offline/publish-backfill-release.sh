@@ -123,6 +123,12 @@ while :; do
   fi
 
   if [ ! -e "$STATE_DIR/import-triggered" ]; then
+    DISPATCH_COUNT="$(cat "$STATE_DIR/import-dispatch-count" 2>/dev/null || printf '0')"
+    if ! [[ "$DISPATCH_COUNT" =~ ^[0-9]+$ ]]; then DISPATCH_COUNT=0; fi
+    if [ "$DISPATCH_COUNT" -ge 3 ]; then
+      log "$OPERATION import failed three fresh workflows; stopping for inspection"
+      exit 1
+    fi
     PREVIOUS_RUN_ID="$($GH_BIN run list \
       --repo "$REPO" \
       --workflow sentence-backfill.yml \
@@ -142,6 +148,7 @@ while :; do
       sleep_for_poll
       continue
     fi
+    printf '%s\n' "$((DISPATCH_COUNT + 1))" > "$STATE_DIR/import-dispatch-count"
     date -u +%FT%TZ > "$STATE_DIR/import-triggered"
     sleep 20
   fi
@@ -178,12 +185,9 @@ while :; do
 
   IFS=$'\t' read -r IMPORT_STATUS IMPORT_CONCLUSION IMPORT_URL <<< "$IMPORT_LINE"
   if [ "$IMPORT_STATUS" = "completed" ] && [ "$IMPORT_CONCLUSION" != "success" ]; then
-    if [ ! -e "$STATE_DIR/import-rerun" ]; then
-      log "import $IMPORT_ID ended as $IMPORT_CONCLUSION; requesting one rerun"
-      if "$GH_BIN" run rerun "$IMPORT_ID" --repo "$REPO"; then
-        touch "$STATE_DIR/import-rerun"
-      fi
-    fi
+    log "import $IMPORT_ID ended as $IMPORT_CONCLUSION; backing off before a fresh workflow"
+    rm -f "$STATE_DIR/import-triggered" "$STATE_DIR/import-run" \
+      "$STATE_DIR/previous-run" "$STATE_DIR/import-rerun"
     sleep_for_poll
     continue
   fi
