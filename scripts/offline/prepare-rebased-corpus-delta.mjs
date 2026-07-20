@@ -75,6 +75,20 @@ for (const targetEntry of target.entries) {
   });
 }
 
+const report = {
+  productionRecords: production.items.length,
+  baseRecords: base.entries.length,
+  targetRecords: target.entries.length,
+  unchangedDesired,
+  alreadyApplied,
+  missingProduction,
+  rebasedFromBase,
+  rebasedFromPredecessor,
+  rebasedEntries: entries.length,
+  conflicts: conflicts.length,
+};
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+
 if (conflicts.length > 0) {
   process.stderr.write(`${JSON.stringify({ conflicts: conflicts.slice(0, 100) }, null, 2)}\n`);
   process.exitCode = 1;
@@ -91,19 +105,6 @@ if (conflicts.length > 0) {
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
 }
-
-process.stdout.write(`${JSON.stringify({
-  productionRecords: production.items.length,
-  baseRecords: base.entries.length,
-  targetRecords: target.entries.length,
-  unchangedDesired,
-  alreadyApplied,
-  missingProduction,
-  rebasedFromBase,
-  rebasedFromPredecessor,
-  rebasedEntries: entries.length,
-  conflicts: conflicts.length,
-}, null, 2)}\n`);
 
 function corpusHash(data) {
   const stable = data && typeof data === 'object' && !Array.isArray(data)
