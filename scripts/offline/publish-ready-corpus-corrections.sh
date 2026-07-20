@@ -69,7 +69,7 @@ if [[ ! -s "$PRODUCTION_EXPORT" ]]; then
           --jq ".[] | select(.createdAt >= \"$DISPATCHED_AT\") | .databaseId")
       for run_id in "${candidate_runs[@]}"; do
         if "$GH_BIN" run view "$run_id" --repo "$REPO" --json jobs \
-          --jq '.jobs[] | select(.name == "corpus-export" and .conclusion != "skipped") | .name' 2>/dev/null \
+          --jq '.jobs[] | select(.name == "corpus-export" and (.status == "in_progress" or (.status == "completed" and .conclusion != "skipped"))) | .name' 2>/dev/null \
           | grep -qx 'corpus-export'; then
           printf '%s\n' "$run_id" > "$RUN_ID_FILE"
           break 2
