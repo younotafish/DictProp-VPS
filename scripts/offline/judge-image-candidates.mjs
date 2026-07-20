@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
 
 const [targetsArg, candidatesArg, imagesArg, workArg, candidateNumberArg] = process.argv.slice(2);
 if (!targetsArg || !candidatesArg || !imagesArg || !workArg) {
@@ -17,6 +17,7 @@ if (!Number.isSafeInteger(candidateNumber) || candidateNumber < 1 || candidateNu
 const MODEL = 'gpt-5.6-sol';
 const activeChildren = new Set();
 let aborting = false;
+installCodexSignalCleanup(activeChildren, () => { aborting = true; });
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
 if (!Array.isArray(payload.targets)) throw new Error('Target manifest is invalid');
 const candidateDir = resolve(candidatesArg);

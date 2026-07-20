@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
 
 const [targetsArg, outputArg, workArg] = process.argv.slice(2);
 if (!targetsArg || !outputArg || !workArg) {
@@ -13,6 +13,7 @@ if (!targetsArg || !outputArg || !workArg) {
 const MODEL = 'gpt-5.6-sol';
 const activeChildren = new Set();
 let aborting = false;
+installCodexSignalCleanup(activeChildren, () => { aborting = true; });
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
 if (!Array.isArray(payload.targets)) throw new Error('Rejected target manifest is invalid');
 const workDir = resolve(workArg);

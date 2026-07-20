@@ -74,7 +74,7 @@ for target in targets:
         raise RuntimeError(f"missing natural IPA: {target['imageId']}")
     image_path = root / expected_file
     with Image.open(image_path) as image:
-        if image.size != (1024, 576) or image.format != 'WEBP':
+        if image.size not in {(1024, 576), (768, 432)} or image.format != 'WEBP':
             raise RuntimeError(f'invalid final image: {image_path} {image.size} {image.format}')
         image.verify()
 print(f'Validated {len(entries)} complete sentence backfill entries')
@@ -98,4 +98,3 @@ retry "$GH_BIN" workflow run sentence-backfill.yml --repo "$REPO" --ref main \
   -f operation=import -f release_tag="$tag"
 printf '%s\n' "$tag" > /tmp/dictprop_sentence_image_release_tag
 printf '[%s] dispatched sentence backfill %s\n' "$(date -u +%FT%TZ)" "$tag"
-
