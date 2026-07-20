@@ -45,6 +45,8 @@ def main() -> None:
     parser.add_argument("--quantize", type=int, choices=(4, 8), default=None)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--seed-round", type=int, default=0)
+    parser.add_argument("--image-source-candidate", type=int, default=None)
+    parser.add_argument("--image-strength", type=float, default=None)
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument(
@@ -66,6 +68,13 @@ def main() -> None:
         raise ValueError("Inference steps must be between 4 and 20")
     if args.candidate_start < 1 or args.candidate_start > args.candidates:
         raise ValueError("Candidate start must be between 1 and --candidates")
+    if (args.image_source_candidate is None) != (args.image_strength is None):
+        raise ValueError("--image-source-candidate and --image-strength must be provided together")
+    if args.image_source_candidate is not None:
+        if args.image_source_candidate < 1 or args.image_source_candidate > 99:
+            raise ValueError("Image source candidate must be between 1 and 99")
+        if not 0.0 < args.image_strength <= 1.0:
+            raise ValueError("Image strength must be greater than 0 and at most 1")
     if args.accepted_directory:
         accepted_directory = Path(args.accepted_directory)
         targets = [
@@ -101,6 +110,11 @@ def main() -> None:
                 continue
             path.unlink(missing_ok=True)
             try:
+                source_path = None
+                if args.image_source_candidate is not None:
+                    possible_source = output / f"{stem}-{args.image_source_candidate}{suffix}"
+                    if is_complete_image(possible_source, args.width, args.height):
+                        source_path = possible_source
                 image = model.generate_image(
                     seed=seed_for(target["imageId"], candidate_index, args.seed_round),
                     prompt=target["prompt"].strip() + quality_suffix,
@@ -108,10 +122,10 @@ def main() -> None:
                     height=args.height,
                     width=args.width,
                     guidance=1.0,
-                    scheduler="er_sde",
+                    scheduler="euler" if source_path else "er_sde",
                     negative_prompt=None,
-                    image_path=None,
-                    image_strength=None,
+                    image_path=source_path,
+                    image_strength=args.image_strength if source_path else None,
                 )
                 temporary_path = output / f".{path.name}.tmp"
                 if suffix == ".webp":

@@ -19,6 +19,8 @@ first_generation_targets="${10:-}"
 krea_python="${KREA_PYTHON:-/tmp/dictprop-mflux/bin/python}"
 codex_concurrency="${CODEX_CONCURRENCY:-32}"
 krea_shard_count="${KREA_SHARD_COUNT:-1}"
+krea_image_source_candidate="${KREA_IMAGE_SOURCE_CANDIDATE:-}"
+krea_image_strength="${KREA_IMAGE_STRENGTH:-}"
 current="$targets"
 first_round=1
 watcher_pid=""
@@ -27,6 +29,16 @@ generator_pids=()
 if ! [[ "$krea_shard_count" =~ ^[0-9]+$ ]] || [[ "$krea_shard_count" -lt 1 ]] || [[ "$krea_shard_count" -gt 8 ]]; then
   echo "KREA_SHARD_COUNT must be an integer from 1 to 8" >&2
   exit 2
+fi
+if [[ -n "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
+  if [[ -z "$krea_image_source_candidate" || -z "$krea_image_strength" ]]; then
+    echo "KREA_IMAGE_SOURCE_CANDIDATE and KREA_IMAGE_STRENGTH must be set together" >&2
+    exit 2
+  fi
+  if [[ "$krea_image_source_candidate" != "previous" ]] && ! [[ "$krea_image_source_candidate" =~ ^[0-9]+$ ]]; then
+    echo "KREA_IMAGE_SOURCE_CANDIDATE must be an integer or 'previous'" >&2
+    exit 2
+  fi
 fi
 
 mkdir -p "$candidates" "$images" "$work_root"
@@ -63,13 +75,30 @@ generate_candidates() {
   local candidate_number="$2"
   local shard_index
   local shard_status=0
+  local resolved_image_source_candidate="$krea_image_source_candidate"
+  local generator_args=(
+    "$generation_targets" "$candidates" --candidate-start "$candidate_number" --candidates "$candidate_number"
+    --width "$width" --height "$height" --steps "$steps" --accepted-directory "$images"
+  )
+
+  if [[ -n "$krea_image_source_candidate" ]]; then
+    if [[ "$resolved_image_source_candidate" == "previous" ]]; then
+      resolved_image_source_candidate=$((candidate_number - 1))
+    fi
+    if [[ "$resolved_image_source_candidate" -lt 1 ]]; then
+      echo "The previous image candidate is unavailable for candidate $candidate_number" >&2
+      return 2
+    fi
+    generator_args+=(
+      --image-source-candidate "$resolved_image_source_candidate"
+      --image-strength "$krea_image_strength"
+    )
+  fi
 
   generator_pids=()
   for ((shard_index = 0; shard_index < krea_shard_count; shard_index += 1)); do
     "$krea_python" scripts/offline/generate-krea-candidates.py \
-      "$generation_targets" "$candidates" --candidate-start "$candidate_number" --candidates "$candidate_number" \
-      --width "$width" --height "$height" --steps "$steps" \
-      --accepted-directory "$images" \
+      "${generator_args[@]}" \
       --shard-count "$krea_shard_count" --shard-index "$shard_index" &
     generator_pids+=("$!")
   done
