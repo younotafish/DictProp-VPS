@@ -83,11 +83,8 @@ def main() -> None:
     model = Krea2(model_config=ModelConfig.krea2(), quantize=args.quantize)
     failures = []
     quality_suffix = (
-        " The image must teach the exact meaning at a glance: keep the defining action or relationship "
-        "large, central, and visually unambiguous. Photorealistic documentary photography, plausible "
-        "contemporary details, authentic anatomy and materials, natural light, no generic stock-photo posing, "
-        "no metaphor unless the target itself is figurative, no illustration, no animation, no 3D render, "
-        "no collage, no split screen, no visible text, no captions, no logos, no watermark."
+        " Keep the one defining action or relationship large and central, with realistic anatomy and objects. "
+        "No visible text, illustration, animation, 3D render, collage, logos, or watermark."
     )
 
     for target_index, target in enumerate(targets, start=1):
