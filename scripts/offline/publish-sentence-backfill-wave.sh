@@ -9,7 +9,7 @@ fi
 
 RELEASE_TAG="$1"
 ARCHIVE="$2"
-DEPLOY_SHA="$3"
+DEPLOY_SHA="$(git rev-parse "$3^{commit}" 2>/dev/null || printf '%s' "$3")"
 POLL_SECONDS="${4:-300}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 GH_BIN="${GH_BIN:-./.gh}"
@@ -80,7 +80,7 @@ while :; do
     --commit "$DEPLOY_SHA" \
     --limit 1 \
     --json databaseId,status,conclusion,url \
-    --jq '.[0] | [.databaseId,.status,.conclusion,.url] | @tsv' \
+    --jq 'if length == 0 then empty else .[0] | [.databaseId,.status,.conclusion,.url] | @tsv end' \
     2>/dev/null || true)"
   if [ -z "$DEPLOY_LINE" ]; then
     if [ ! -e "$STATE_DIR/deploy-dispatched" ]; then
@@ -135,7 +135,7 @@ while :; do
       --event workflow_dispatch \
       --limit 1 \
       --json databaseId \
-      --jq '.[0].databaseId' \
+      --jq 'if length == 0 then empty else .[0].databaseId end' \
       2>/dev/null || true)"
     if [ -z "$IMPORT_ID" ]; then
       log "import dispatched; waiting for its run ID"
