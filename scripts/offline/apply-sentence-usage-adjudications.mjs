@@ -31,6 +31,9 @@ const normalizedSentence = value => String(value || '')
 const lexicalKey = (word, sense) => `${normalizedSentence(word)}\0${normalizedSentence(sense)}`;
 const shouldArchive = audit => audit?.confidence !== 'low' &&
   ['narrow_specialized', 'british_only', 'rare_or_dated'].includes(audit?.status);
+const usagePriority = new Map([
+  'modern_american', 'current_general', 'narrow_specialized', 'british_only', 'rare_or_dated',
+].map((status, index) => [status, index]));
 
 const savedSentences = entries.filter(entry => entry.type === 'sentence');
 const savedTextSet = new Set(savedSentences.map(entry => normalizedSentence(entry.data?.text)).filter(Boolean));
@@ -44,6 +47,7 @@ let lexicalCorrections = 0;
 let protectedExampleDecisionsSkipped = 0;
 let protectedLexicalCorrectionsSkipped = 0;
 let savedLinksUpdated = 0;
+let phraseRecordsReordered = 0;
 
 for (const group of adjudication.entries) {
   const record = recordsById.get(group.parentId);
@@ -124,6 +128,15 @@ for (const group of adjudication.entries) {
   cardsChanged++;
 }
 
+for (const record of entries) {
+  if (record.type !== 'phrase' || !Array.isArray(record.data?.vocabs)) continue;
+  const before = record.data.vocabs.map(card => card.id).join('\0');
+  record.data.vocabs.sort((left, right) =>
+    (usagePriority.get(left.usageAudit?.status) ?? 99) -
+    (usagePriority.get(right.usageAudit?.status) ?? 99));
+  if (record.data.vocabs.map(card => card.id).join('\0') !== before) phraseRecordsReordered++;
+}
+
 const output = {
   ...corpus,
   generatedAt: Date.now(),
@@ -141,6 +154,7 @@ process.stdout.write(`${JSON.stringify({
   protectedExampleDecisionsSkipped,
   protectedLexicalCorrectionsSkipped,
   savedLinksUpdated,
+  phraseRecordsReordered,
   outputRecords: entries.length,
 }, null, 2)}\n`);
 
