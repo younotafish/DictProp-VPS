@@ -135,7 +135,8 @@ jobs:
       - name: Validate import input
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
       - name: Import encrypted sentence enrichment
         id: sentence_import
@@ -308,7 +309,8 @@ jobs:
       - name: Validate import input
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
       - name: Import locally generated images
         uses: appleboy/ssh-action@v1
