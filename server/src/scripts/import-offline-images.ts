@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
 import { corpusSourceHash } from '../corpus-audit.js';
-import { getAllItems, listAllUsers, upsertItem, upsertItemImageBinary } from '../db.js';
+import { db, getAllItems, listAllUsers, upsertItem, upsertItemImageBinary } from '../db.js';
 import { env } from '../env.js';
 import { detectImageMimeType } from '../image-format.js';
 import { validateOfflineImageBundle, type OfflineImageBundle } from '../offline-image-import.js';
@@ -23,6 +23,15 @@ const parentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id
 const touchedParentIds = new Set<string>();
 const result = { total: bundle.entries.length, replaced: 0, skipped: 0, errors: [] as Array<{ id: string; error: string }> };
 
+type PreparedEntry = {
+  entry: OfflineImageBundle['entries'][number];
+  image: Buffer;
+  mimeType: string;
+};
+const prepared: PreparedEntry[] = [];
+
+// Read and validate every file before taking SQLite's write lock. Applying the prepared wave in a
+// single transaction avoids one durable commit per statement on the resource-constrained VPS.
 for (const entry of bundle.entries) {
   try {
     const parent = parentById.get(entry.parentId) as any;
@@ -40,32 +49,44 @@ for (const entry of bundle.entries) {
     if (image.length === 0 || image.length > 10 * 1024 * 1024) throw new Error('image size is invalid');
     const mimeType = detectImageMimeType(image);
     if (!mimeType) throw new Error('image format is invalid');
-    if (!upsertItemImageBinary(entry.imageId, image, mimeType, owner.id)) throw new Error('image could not be stored');
-    touchedParentIds.add(entry.parentId);
-    result.replaced++;
+    prepared.push({ entry, image, mimeType });
   } catch (error) {
     result.skipped++;
     result.errors.push({ id: entry.imageId, error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-// Image bytes live outside the item JSON. Bump each affected parent once so revision-delta clients
-// receive the new content-hash marker and invalidate any older IndexedDB image.
-for (const parentId of touchedParentIds) {
-  const parent = parentById.get(parentId) as any;
-  if (!parent) continue;
-  try {
-    upsertItem({
-      ...parent,
-      updatedAt: Math.max(Date.now(), Number(parent.updatedAt || 0) + 1),
-    }, owner.id);
-  } catch (error) {
-    result.errors.push({
-      id: parentId,
-      error: `image revision could not be published: ${error instanceof Error ? error.message : String(error)}`,
-    });
+const applyPrepared = db.transaction((entries: PreparedEntry[]) => {
+  for (const { entry, image, mimeType } of entries) {
+    try {
+      if (!upsertItemImageBinary(entry.imageId, image, mimeType, owner.id)) throw new Error('image could not be stored');
+      touchedParentIds.add(entry.parentId);
+      result.replaced++;
+    } catch (error) {
+      result.skipped++;
+      result.errors.push({ id: entry.imageId, error: error instanceof Error ? error.message : String(error) });
+    }
   }
-}
+
+  // Image bytes live outside the item JSON. Bump each affected parent once so revision-delta clients
+  // receive the new content-hash marker and invalidate any older IndexedDB image.
+  for (const parentId of touchedParentIds) {
+    const parent = parentById.get(parentId) as any;
+    if (!parent) continue;
+    try {
+      upsertItem({
+        ...parent,
+        updatedAt: Math.max(Date.now(), Number(parent.updatedAt || 0) + 1),
+      }, owner.id);
+    } catch (error) {
+      result.errors.push({
+        id: parentId,
+        error: `image revision could not be published: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
+});
+applyPrepared(prepared);
 
 process.stdout.write(`${JSON.stringify(result)}\n`);
 if (result.errors.length > 0) process.exitCode = 1;

@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
 import {
+  db,
   getImageManifest,
   getAllItems,
   listAllUsers,
@@ -40,6 +41,17 @@ const result = {
   errors: [] as Array<{ id: string; error: string }>,
 };
 
+type PreparedEntry = {
+  entry: SentenceBackfillBundle['entries'][number];
+  item: any;
+  image: Buffer | null;
+  mimeType: string | null;
+  imageExists: boolean;
+};
+const prepared: PreparedEntry[] = [];
+
+// Keep file I/O and validation outside the write transaction. The VPS disk is slow enough that
+// autocommitting several statements per image can starve the live app for minutes.
 for (const entry of bundle.entries) {
   try {
     const item = currentById.get(entry.id) as any;
@@ -56,22 +68,10 @@ for (const entry of bundle.entries) {
       continue;
     }
 
-    const updatedAt = Math.max(Date.now(), Number(item.updatedAt || 0) + 1);
-    upsertItem({
-      ...item,
-      data: {
-        ...item.data,
-        analysis: entry.analysis,
-        analysisGeneratedAt: entry.generatedAt,
-      },
-      updatedAt,
-    }, owner.id);
-    result.analysesUpdated++;
-
-    if (!entry.imageFile) continue;
     const imageExists = imageIds.has(entry.id);
-    if (imageExists && entry.replaceImage !== true) {
-      result.imagesPreserved++;
+    if (!entry.imageFile || (imageExists && entry.replaceImage !== true)) {
+      prepared.push({ entry, item, image: null, mimeType: null, imageExists });
+      if (entry.imageFile) result.imagesPreserved++;
       continue;
     }
     const imagePath = resolve(bundleRoot, entry.imageFile);
@@ -80,14 +80,40 @@ for (const entry of bundle.entries) {
     if (image.length === 0 || image.length > 10 * 1024 * 1024) throw new Error('image size is invalid');
     const mimeType = detectImageMimeType(image);
     if (!mimeType) throw new Error('image format is invalid');
-    if (!upsertItemImageBinary(entry.id, image, mimeType, owner.id)) throw new Error('image could not be stored');
-    imageIds.add(entry.id);
-    if (imageExists) result.imagesReplaced++;
-    else result.imagesAdded++;
+    prepared.push({ entry, item, image, mimeType, imageExists });
   } catch (error) {
+    result.skipped++;
     result.errors.push({ id: entry.id, error: error instanceof Error ? error.message : String(error) });
   }
 }
+
+const applyPrepared = db.transaction((entries: PreparedEntry[]) => {
+  for (const { entry, item, image, mimeType, imageExists } of entries) {
+    try {
+      const updatedAt = Math.max(Date.now(), Number(item.updatedAt || 0) + 1);
+      upsertItem({
+        ...item,
+        data: {
+          ...item.data,
+          analysis: entry.analysis,
+          analysisGeneratedAt: entry.generatedAt,
+        },
+        updatedAt,
+      }, owner.id);
+      result.analysesUpdated++;
+
+      if (!image || !mimeType) continue;
+      if (!upsertItemImageBinary(entry.id, image, mimeType, owner.id)) throw new Error('image could not be stored');
+      imageIds.add(entry.id);
+      if (imageExists) result.imagesReplaced++;
+      else result.imagesAdded++;
+    } catch (error) {
+      result.skipped++;
+      result.errors.push({ id: entry.id, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+});
+applyPrepared(prepared);
 
 process.stdout.write(`${JSON.stringify(result)}\n`);
 if (result.errors.length > 0) process.exitCode = 1;
