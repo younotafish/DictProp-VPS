@@ -74,6 +74,7 @@ while :; do
     PUBLISHED_COUNT="$(manifest_count "${PUBLISHED_MANIFESTS[@]}")"
   fi
   if [ "$PUBLISHED_COUNT" -ge "$TOTAL_COUNT" ]; then
+    date -u +%FT%TZ > "$STATE_ROOT/complete"
     log "all $TOTAL_COUNT saved sentences are published"
     break
   fi

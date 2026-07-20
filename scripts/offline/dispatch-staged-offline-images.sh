@@ -10,6 +10,7 @@ REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
 STATE_ROOT="${OFFLINE_IMAGE_WAVE_STATE_ROOT:-/tmp/dictprop-staged-offline-images}"
 COOLDOWN_SECONDS="${OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS:-60}"
+SENTENCE_COMPLETE_MARKER="${SENTENCE_WAVE_COMPLETE_MARKER:-/tmp/dictprop-staged-sentence-backfill-v2/complete}"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -51,7 +52,7 @@ TOTAL_COUNT="$(node -e 'const fs=require("fs"); console.log(JSON.parse(fs.readFi
 mkdir -p "$STATE_ROOT"
 
 log "waiting for staged saved-sentence imports before publishing vocabulary images"
-while pgrep -f '[d]ispatch-staged-sentence-backfill.sh' >/dev/null; do
+while [ ! -s "$SENTENCE_COMPLETE_MARKER" ]; do
   sleep 300
 done
 
