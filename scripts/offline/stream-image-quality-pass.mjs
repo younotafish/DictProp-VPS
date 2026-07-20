@@ -32,36 +32,36 @@ const detachedProcessGroups = process.platform !== 'win32';
 let activeChild = null;
 let handlingSignal = false;
 
-function forwardSignal(signal) {
-  const exitCode = signal === 'SIGINT' ? 130 : 143;
-  if (handlingSignal) {
-    if (activeChild?.pid) {
-      try {
-        if (detachedProcessGroups) process.kill(-activeChild.pid, 'SIGKILL');
-        else activeChild.kill('SIGKILL');
-      } catch (error) {
-        if (error?.code !== 'ESRCH') throw error;
-      }
-    }
-    process.exit(exitCode);
-  }
-  handlingSignal = true;
-  if (!activeChild?.pid) process.exit(exitCode);
+function killActiveChild(signal) {
+  if (!activeChild?.pid) return;
   try {
     if (detachedProcessGroups) process.kill(-activeChild.pid, signal);
     else activeChild.kill(signal);
   } catch (error) {
-    if (error?.code !== 'ESRCH') throw error;
-  }
-  setTimeout(() => {
-    if (activeChild?.pid) {
+    if (error?.code === 'ESRCH') return;
+    if (detachedProcessGroups && error?.code === 'EPERM') {
       try {
-        if (detachedProcessGroups) process.kill(-activeChild.pid, 'SIGKILL');
-        else activeChild.kill('SIGKILL');
-      } catch (error) {
-        if (error?.code !== 'ESRCH') throw error;
+        activeChild.kill(signal);
+      } catch (childError) {
+        if (childError?.code !== 'ESRCH' && childError?.code !== 'EPERM') throw childError;
       }
+      return;
     }
+    throw error;
+  }
+}
+
+function forwardSignal(signal) {
+  const exitCode = signal === 'SIGINT' ? 130 : 143;
+  if (handlingSignal) {
+    killActiveChild('SIGKILL');
+    process.exit(exitCode);
+  }
+  handlingSignal = true;
+  if (!activeChild?.pid) process.exit(exitCode);
+  killActiveChild(signal);
+  setTimeout(() => {
+    killActiveChild('SIGKILL');
     process.exit(exitCode);
   }, 3_000);
 }
