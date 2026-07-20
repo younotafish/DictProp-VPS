@@ -51,7 +51,8 @@ while [[ "$candidate" -le 99 ]]; do
   candidate=$((candidate + 1))
   echo "[$(date -u +%FT%TZ)] generating candidate $candidate for $rejected_count rejects"
   retry "$krea_python" scripts/offline/generate-krea-candidates.py \
-    "$refined" "$candidates" --candidates "$candidate" --width "$width" --height "$height" --steps "$steps"
+    "$refined" "$candidates" --candidate-start "$candidate" --candidates "$candidate" \
+    --width "$width" --height "$height" --steps "$steps"
   current="$refined"
 done
 

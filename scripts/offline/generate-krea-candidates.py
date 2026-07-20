@@ -34,6 +34,12 @@ def main() -> None:
     parser.add_argument("targets")
     parser.add_argument("output_directory")
     parser.add_argument("--candidates", type=int, default=1)
+    parser.add_argument(
+        "--candidate-start",
+        type=int,
+        default=1,
+        help="First candidate number to generate (inclusive)",
+    )
     parser.add_argument("--width", type=int, default=1024)
     parser.add_argument("--height", type=int, default=576)
     parser.add_argument("--quantize", type=int, choices=(4, 8), default=None)
@@ -54,6 +60,8 @@ def main() -> None:
         raise ValueError("Invalid shard index/count")
     if args.steps < 4 or args.steps > 20:
         raise ValueError("Inference steps must be between 4 and 20")
+    if args.candidate_start < 1 or args.candidate_start > args.candidates:
+        raise ValueError("Candidate start must be between 1 and --candidates")
     targets = [target for index, target in enumerate(targets) if index % args.shard_count == args.shard_index]
     if not targets:
         print("No targets assigned to this shard", flush=True)
@@ -78,14 +86,15 @@ def main() -> None:
         if suffix not in (".jpg", ".jpeg", ".webp"):
             raise ValueError(f"Unsupported target image format: {target_path.suffix}")
         print(f"[{target_index}/{len(targets)}] {target['imageId']}", flush=True)
-        for candidate in range(args.candidates):
-            path = output / f"{stem}-{candidate + 1}{suffix}"
+        for candidate_number in range(args.candidate_start, args.candidates + 1):
+            candidate_index = candidate_number - 1
+            path = output / f"{stem}-{candidate_number}{suffix}"
             if is_complete_image(path, args.width, args.height):
                 continue
             path.unlink(missing_ok=True)
             try:
                 image = model.generate_image(
-                    seed=seed_for(target["imageId"], candidate, args.seed_round),
+                    seed=seed_for(target["imageId"], candidate_index, args.seed_round),
                     prompt=target["prompt"].strip() + quality_suffix,
                     num_inference_steps=args.steps,
                     height=args.height,
@@ -109,8 +118,8 @@ def main() -> None:
             except Exception as error:  # Continue so a long batch remains resumable.
                 temporary_path = output / f".{path.name}.tmp"
                 temporary_path.unlink(missing_ok=True)
-                failures.append({"imageId": target["imageId"], "candidate": candidate + 1, "error": str(error)})
-                print(f"FAILED {target['imageId']} candidate {candidate + 1}: {error}", flush=True)
+                failures.append({"imageId": target["imageId"], "candidate": candidate_number, "error": str(error)})
+                print(f"FAILED {target['imageId']} candidate {candidate_number}: {error}", flush=True)
 
     if failures:
         (output / "failures.json").write_text(json.dumps(failures, indent=2) + "\n")
