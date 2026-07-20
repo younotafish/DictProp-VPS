@@ -181,7 +181,7 @@ jobs:
               -in /tmp/dictprop-sentence-bridge/sentence-backfill.enc \
               | docker compose exec -T app tar -xz -C /tmp/sentence-backfill
             set +e
-            docker compose exec -T app node server/dist/scripts/import-sentence-backfill.js \
+            docker compose exec -T app nice -n 10 node server/dist/scripts/import-sentence-backfill.js \
               /tmp/sentence-backfill/manifest.json
             STATUS=$?
             set -e
@@ -365,7 +365,7 @@ jobs:
               -in /tmp/dictprop-image-bridge/offline-images.enc \
               | docker compose exec -T app tar -xz -C /tmp/offline-images
             set +e
-            docker compose exec -T app node server/dist/scripts/import-offline-images.js \
+            docker compose exec -T app nice -n 10 node server/dist/scripts/import-offline-images.js \
               /tmp/offline-images/manifest.json
             STATUS=$?
             set -e

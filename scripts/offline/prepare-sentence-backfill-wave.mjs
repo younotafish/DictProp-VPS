@@ -10,13 +10,15 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
-const [sourceArg, outputArg, ...excludeArgs] = process.argv.slice(2);
+const [sourceArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!sourceArg || !outputArg) {
-  throw new Error('Usage: prepare-sentence-backfill-wave.mjs <source-directory> <output-directory> [published-manifest.json ...]');
+  throw new Error('Usage: prepare-sentence-backfill-wave.mjs <source-directory> <output-directory> [max-entries=100] [published-manifest.json ...]');
 }
 
 const sourceDir = resolve(sourceArg);
 const outputDir = resolve(outputArg);
+const maxEntries = Number(maxEntriesArg || 100);
+if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) throw new Error('max-entries must be a positive integer');
 const manifestPath = join(sourceDir, 'manifest.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 if (manifest?.version !== 1 || !Array.isArray(manifest.entries) || manifest.entries.length === 0) {
@@ -54,6 +56,7 @@ for (const entry of manifest.entries) {
     throw new Error(`Sentence ${entry.id} is missing natural-speech IPA`);
   }
   selected.push(entry);
+  if (selected.length >= maxEntries) break;
 }
 
 mkdirSync(join(outputDir, 'images'), { recursive: true });

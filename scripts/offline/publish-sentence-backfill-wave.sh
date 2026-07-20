@@ -45,6 +45,10 @@ if [ ! -s "$ARCHIVE" ]; then
   echo "Encrypted archive not found or empty: $ARCHIVE" >&2
   exit 1
 fi
+if [ -s "$STATE_DIR/complete" ]; then
+  log "release was already imported and verified"
+  exit 0
+fi
 
 log "publisher waiting for GitHub API and Actions recovery"
 

@@ -51,6 +51,10 @@ if [ "$(basename "$ARCHIVE")" != "$ASSET_NAME" ]; then
   echo "Archive basename must match workflow asset name: $ASSET_NAME" >&2
   exit 1
 fi
+if [ -s "$STATE_DIR/complete" ]; then
+  log "release was already imported and verified"
+  exit 0
+fi
 
 log "publisher waiting for GitHub API and Actions recovery"
 
