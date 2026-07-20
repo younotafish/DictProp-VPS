@@ -70,7 +70,7 @@ while :; do
   READY_COUNT=$((ACCEPTED_COUNT - PUBLISHED_COUNT))
   if [ "$READY_COUNT" -lt "$BATCH_SIZE" ] && [ "$ACCEPTED_COUNT" -lt "$TOTAL_COUNT" ]; then
     log "$READY_COUNT unpublished enrichments ready; waiting for batch size $BATCH_SIZE"
-    sleep 300
+    sleep 60
     continue
   fi
 
@@ -89,7 +89,7 @@ while :; do
   WAVE_COUNT="$(printf '%s' "$RESULT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).waveEntries))')"
   if [ "$WAVE_COUNT" -eq 0 ]; then
     log "no unpublished verified enrichments were found; retrying later"
-    sleep 300
+    sleep 60
     continue
   fi
 
