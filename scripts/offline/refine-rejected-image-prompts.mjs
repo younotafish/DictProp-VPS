@@ -73,9 +73,11 @@ function runCodex(args, prompt) {
   });
 }
 
+const PROMPT_POLICY_VERSION = 2;
+
 const instruction = `You are a visual prompt editor for a modern American English learning app. Rewrite each rejected brief for one realistic, photorealistic 16:9 image.
 
-The revised scene must teach the exact learning target at a glance and directly fix the judge's rejection. Simplify the cast and setting. Make the single diagnostic action, relationship, contrast, cause, or consequence large and unmistakable in the foreground. Preserve context that distinguishes this exact sense from related meanings. For an abstract or figurative sense, show one plausible everyday situation that demonstrates its intended meaning; never use decorative symbolism or a misleading literal origin. Do not rely on readable documents, labels, signs, captions, typography, thought bubbles, arrows, split screens, collages, or before/after panels to explain the concept. Require authentic anatomy, objects, materials, and natural lighting. Explicitly prohibit illustration, animation, 3D rendering, visible text, logos, and watermarks. Keep each prompt under 110 words.
+The revised scene must teach the exact learning target at a glance and directly fix the judge's semantic concern. Reduce the scene to one iconic, plausible moment instead of accumulating every detail from earlier briefs. Use one focal subject or relationship and no more than three prominent people unless a group is essential to the meaning. Make the single diagnostic action, relationship, contrast, cause, or consequence large and unmistakable in the foreground. Preserve only the context needed to distinguish this sense from related meanings. For an abstract or figurative sense, show one everyday situation that demonstrates its intended meaning; never use decorative symbolism or a misleading literal origin. Do not depend on readable documents, labels, signs, captions, typography, thought bubbles, arrows, split screens, collages, or before/after panels. Require authentic anatomy, objects, materials, and natural lighting. Explicitly prohibit illustration, animation, 3D rendering, visible text, logos, and watermarks. Keep each prompt under 85 words.
 
 Return every itemIndex exactly once. The change field should briefly state how the revised composition fixes the rejected image. Return only schema-valid JSON.`;
 
@@ -91,7 +93,10 @@ async function refineBatch(batch, batchIndex) {
     rejectedBrief: target.prompt,
     rejectionReason: target.rejectionReason || 'The previous image did not communicate the exact meaning clearly enough.',
   }));
-  const fingerprint = createHash('sha256').update(JSON.stringify(records)).digest('hex').slice(0, 16);
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ promptPolicyVersion: PROMPT_POLICY_VERSION, records }))
+    .digest('hex')
+    .slice(0, 16);
   const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
   let correction = '';
   for (let attempt = 0; attempt < 3; attempt++) {

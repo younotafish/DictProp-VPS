@@ -15,6 +15,7 @@ if (!Number.isSafeInteger(candidateNumber) || candidateNumber < 1 || candidateNu
 }
 
 const MODEL = 'gpt-5.6-sol';
+const JUDGMENT_POLICY_VERSION = 2;
 const activeChildren = new Set();
 let aborting = false;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
@@ -91,7 +92,10 @@ async function judgeBatch(batch, batchIndex) {
     learningTarget: target.learningTarget,
     brief: target.prompt,
   }));
-  const fingerprint = createHash('sha256').update(JSON.stringify(records)).digest('hex').slice(0, 16);
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ judgmentPolicyVersion: JUDGMENT_POLICY_VERSION, records }))
+    .digest('hex')
+    .slice(0, 16);
   const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
   const candidates = batch.map(target => join(
     candidateDir,
@@ -102,7 +106,7 @@ async function judgeBatch(batch, batchIndex) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
-        const prompt = `Act as a strict visual editor for an American English learning app. Each attached image corresponds, in attachment order, to the itemIndex record below:\n${JSON.stringify(records)}\n\nJudge each image independently. Accept only when it directly and unambiguously communicates the EXACT contextual meaning. Semantic correctness outweighs beauty. Check realism, anatomy and object coherence, the defining action/relationship, lack of unintended text or logos, and useful 16:9 composition. Reject generic topical stock imagery, misleading literal depictions of figurative language, decorative symbolism, animation, illustration, or omission of a defining detail. A minor cosmetic flaw is not enough to reject an otherwise accurate teaching image. Copy every itemIndex exactly and return only schema-valid JSON.${correction}`;
+        const prompt = `Act as a rigorous but practical visual editor for an American English learning app. Each attached image corresponds, in attachment order, to the itemIndex record below:\n${JSON.stringify(records)}\n\nJudge each image independently against learningTarget.text, learningTarget.sense, and learningTarget.definition. The brief describes one possible composition; it is guidance, not a shot-list contract. Accept when a learner can infer the core contextual meaning at a glance, the image does not contradict that meaning, and the scene is realistic and visually coherent. Semantic usefulness outweighs literal compliance with incidental staging. Do not reject solely because of an omitted secondary action, exact person count, camera angle, accessory, facial micro-expression, or precise body position when the central teaching meaning remains clear. Reject semantic mismatches, genuinely ambiguous generic stock imagery, misleading literal depictions of figurative language, materially broken anatomy or objects, decorative symbolism, animation, illustration, or distracting visible text/logos. A minor cosmetic flaw is not enough to reject an otherwise accurate teaching image. Copy every itemIndex exactly and return only schema-valid JSON.${correction}`;
         await runCodex([
           'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check', '-m', MODEL,
           ...candidates.flatMap(path => ['-i', path]),

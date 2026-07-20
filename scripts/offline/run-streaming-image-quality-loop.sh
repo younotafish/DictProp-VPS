@@ -69,6 +69,7 @@ generate_candidates() {
     "$krea_python" scripts/offline/generate-krea-candidates.py \
       "$generation_targets" "$candidates" --candidate-start "$candidate_number" --candidates "$candidate_number" \
       --width "$width" --height "$height" --steps "$steps" \
+      --accepted-directory "$images" \
       --shard-count "$krea_shard_count" --shard-index "$shard_index" &
     generator_pids+=("$!")
   done

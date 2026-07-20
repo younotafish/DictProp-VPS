@@ -47,6 +47,10 @@ def main() -> None:
     parser.add_argument("--seed-round", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument(
+        "--accepted-directory",
+        help="Skip targets that already have a complete accepted image in this directory",
+    )
     args = parser.parse_args()
 
     payload = json.loads(Path(args.targets).read_text())
@@ -62,6 +66,13 @@ def main() -> None:
         raise ValueError("Inference steps must be between 4 and 20")
     if args.candidate_start < 1 or args.candidate_start > args.candidates:
         raise ValueError("Candidate start must be between 1 and --candidates")
+    if args.accepted_directory:
+        accepted_directory = Path(args.accepted_directory)
+        targets = [
+            target
+            for target in targets
+            if not is_complete_image(accepted_directory / target["filename"], args.width, args.height)
+        ]
     targets = [target for index, target in enumerate(targets) if index % args.shard_count == args.shard_index]
     if not targets:
         print("No targets assigned to this shard", flush=True)
