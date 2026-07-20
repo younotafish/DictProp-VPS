@@ -6,6 +6,12 @@ POOL_ROOT="${1:-data/offline-backfill/example-sentence-pool}"
 VOCAB_IMAGE_ROOT="${2:-data/offline-backfill/authoritative-vocab-images}"
 ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-8}"
 IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-32}"
+EXAMPLE_IMAGE_MODEL="${EXAMPLE_IMAGE_MODEL:-ernie-image-turbo}"
+EXAMPLE_IMAGE_MODEL_LABEL="${EXAMPLE_IMAGE_MODEL_LABEL:-baidu/ERNIE-Image-Turbo}"
+EXAMPLE_IMAGE_QUANTIZE="${EXAMPLE_IMAGE_QUANTIZE:-8}"
+EXAMPLE_IMAGE_WIDTH="${EXAMPLE_IMAGE_WIDTH:-1024}"
+EXAMPLE_IMAGE_HEIGHT="${EXAMPLE_IMAGE_HEIGHT:-576}"
+EXAMPLE_IMAGE_STEPS="${EXAMPLE_IMAGE_STEPS:-8}"
 SOURCE="$POOL_ROOT/source.json"
 PRELIMINARY_SOURCE="$POOL_ROOT/preliminary-source.json"
 PRELIMINARY_ANALYSIS="$POOL_ROOT/preliminary-analysis.json"
@@ -117,7 +123,7 @@ retry node scripts/offline/prepare-sentence-images.mjs \
   "$SOURCE" \
   "$RECONCILIATION/final-analysis.json" \
   "$FINAL_IMAGES" \
-  krea/Krea-2-Turbo
+  "$EXAMPLE_IMAGE_MODEL_LABEL"
 
 EXPECTED_VOCAB="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' "$VOCAB_IMAGE_ROOT/targets.json")"
 log "metadata is ready; waiting for $EXPECTED_VOCAB authoritative vocabulary images"
@@ -127,13 +133,15 @@ while :; do
   sleep 600
 done
 
-log "generating and strictly judging example-sentence images"
-retry env CODEX_CONCURRENCY="$IMAGE_QA_CONCURRENCY" bash scripts/offline/run-streaming-image-quality-loop.sh \
+log "generating and strictly judging example-sentence images with $EXAMPLE_IMAGE_MODEL_LABEL"
+retry env CODEX_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
+  IMAGE_MODEL="$EXAMPLE_IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$EXAMPLE_IMAGE_QUANTIZE" \
+  KREA_SHARD_COUNT=1 bash scripts/offline/run-streaming-image-quality-loop.sh \
   "$FINAL_IMAGES/targets.json" \
   "$FINAL_IMAGES/candidates" \
   "$FINAL_IMAGES/images" \
   "$FINAL_IMAGES/streaming-quality" \
-  768 432 6 1 128
+  "$EXAMPLE_IMAGE_WIDTH" "$EXAMPLE_IMAGE_HEIGHT" "$EXAMPLE_IMAGE_STEPS" 1 64
 
 EXPECTED="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' "$FINAL_IMAGES/targets.json")"
 ACTUAL="$(find "$FINAL_IMAGES/images" -maxdepth 1 -type f -name '*.webp' | wc -l | tr -d ' ')"
