@@ -47,6 +47,48 @@ jobs:
               }));
               db.close();
             '
+            echo '=== DUPLICATE SAVED SENTENCES ==='
+            docker compose exec -T app node - <<'NODE'
+              const Database = require('/app/server/node_modules/better-sqlite3');
+              const db = new Database('/app/data/dictprop.db', { readonly: true });
+              const normalize = value => String(value || '')
+                .replace(/\{\{([^{}]+)\}\}/g, '$1')
+                .replace(/\[\[([^\[\]]+)\]\]/g, '$1')
+                .normalize('NFKC')
+                .toLowerCase()
+                .replace(/[\u2018\u2019]/g, "'")
+                .replace(/[\u201c\u201d]/g, '"')
+                .replace(/[\u2013\u2014]/g, '-')
+                .replace(/\s+/g, ' ')
+                .trim();
+              const groups = new Map();
+              for (const row of db.prepare(`SELECT i.id, i.data, i.srs, i.saved_at, i.updated_at,
+                  i.is_archived, i.revision, COALESCE(ib.byte_length, LENGTH(ii.data), 0) AS image_bytes
+                FROM items i
+                LEFT JOIN item_images ii ON ii.id = i.id AND ii.user_id = i.user_id
+                LEFT JOIN image_blobs ib ON ib.content_hash = ii.content_hash
+                WHERE i.type = 'sentence' AND i.is_deleted = 0`).all()) {
+                const data = JSON.parse(row.data);
+                const key = normalize(data.text);
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push({
+                  id: row.id,
+                  text: data.text,
+                  srs: JSON.parse(row.srs),
+                  savedAt: row.saved_at,
+                  updatedAt: row.updated_at,
+                  isArchived: row.is_archived === 1,
+                  revision: row.revision,
+                  imageBytes: row.image_bytes || 0,
+                  hasAnalysis: !!data.analysis,
+                });
+              }
+              const duplicates = [...groups.entries()]
+                .filter(([, entries]) => entries.length > 1)
+                .map(([normalizedText, entries]) => ({ normalizedText, entries }));
+              console.log(JSON.stringify({ duplicateGroups: duplicates.length, duplicates }, null, 2));
+              db.close();
+            NODE
             echo '=== CONTAINERS ==='
             docker compose ps
             docker stats --no-stream || true
