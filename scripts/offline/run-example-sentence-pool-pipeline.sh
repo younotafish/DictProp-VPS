@@ -22,6 +22,8 @@ FINAL_ONLY_WORK="$POOL_ROOT/final-only-analysis-work"
 FINAL_IMAGES="$POOL_ROOT/final-images"
 AMERICAN_STATUS_OVERRIDES="$POOL_ROOT/american-status-adjudication.json"
 USAGE_ADJUDICATION="$POOL_ROOT/usage-adjudication.json"
+SUPPLEMENTAL_USAGE_ADJUDICATION="$POOL_ROOT/usage-adjudication-supplemental.json"
+MERGED_USAGE_ADJUDICATION="$POOL_ROOT/usage-adjudication-effective.json"
 USAGE_ADJUDICATION_WORK="$POOL_ROOT/usage-adjudication-final-work"
 AMERICAN_STATUS_WORK="$POOL_ROOT/american-status-final-work"
 ORIGINAL_FINAL_SOURCE="$POOL_ROOT/source-pre-usage-adjudication.json"
@@ -29,6 +31,7 @@ BASE_CORPUS_MANIFEST="${BASE_CORPUS_MANIFEST:-data/offline-backfill/final-reconc
 ADJUDICATED_CORPUS_MANIFEST="${ADJUDICATED_CORPUS_MANIFEST:-data/offline-backfill/final-reconciliation/usage-adjudicated-corpus-manifest.json}"
 BASE_CORPUS_EXPORT="${BASE_CORPUS_EXPORT:-data/offline-backfill/final-reconciliation/final-live-with-audits.json}"
 CORPUS_READY_MARKER="$POOL_ROOT/corpus-publication-ready"
+EFFECTIVE_USAGE_ADJUDICATION="$USAGE_ADJUDICATION"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -50,7 +53,8 @@ log "auditing the complete preliminary analysis cache"
 retry node scripts/offline/audit-sentence-analysis-cache.mjs \
   "$PRELIMINARY_SOURCE" \
   "$ANALYSIS_WORK" \
-  "$POOL_ROOT/cache-audit-final.json"
+  "$POOL_ROOT/cache-audit-final.json" \
+  "$PRELIMINARY_ANALYSIS"
 
 if [ -s "$USAGE_ADJUDICATION" ] && [ -s "$ORIGINAL_FINAL_SOURCE" ]; then
   log "incrementally adjudicating newly detected American-English usage conflicts"
@@ -69,9 +73,26 @@ if [ -s "$USAGE_ADJUDICATION" ] && [ -s "$ORIGINAL_FINAL_SOURCE" ]; then
     "$ADJUDICATED_CORPUS_MANIFEST" \
     "$SOURCE"
 
+  if [ -s "$SUPPLEMENTAL_USAGE_ADJUDICATION" ]; then
+    log "applying the final sentence-usage reconciliation layer"
+    retry node scripts/offline/apply-sentence-usage-adjudications.mjs \
+      "$ADJUDICATED_CORPUS_MANIFEST" \
+      "$SOURCE" \
+      "$SUPPLEMENTAL_USAGE_ADJUDICATION" \
+      "$ADJUDICATED_CORPUS_MANIFEST"
+    retry node scripts/offline/build-example-sentence-pool.mjs \
+      "$ADJUDICATED_CORPUS_MANIFEST" \
+      "$SOURCE"
+    retry node scripts/offline/merge-sentence-usage-adjudications.mjs \
+      "$MERGED_USAGE_ADJUDICATION" \
+      "$USAGE_ADJUDICATION" \
+      "$SUPPLEMENTAL_USAGE_ADJUDICATION"
+    EFFECTIVE_USAGE_ADJUDICATION="$MERGED_USAGE_ADJUDICATION"
+  fi
+
   log "incrementally adjudicating sentence-level American-English labels"
   retry env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" node scripts/offline/adjudicate-sentence-american-status.mjs \
-    "$USAGE_ADJUDICATION" \
+    "$EFFECTIVE_USAGE_ADJUDICATION" \
     "$SOURCE" \
     "$AMERICAN_STATUS_OVERRIDES" \
     "$AMERICAN_STATUS_WORK" \
@@ -81,7 +102,7 @@ if [ -s "$USAGE_ADJUDICATION" ] && [ -s "$ORIGINAL_FINAL_SOURCE" ]; then
   retry node scripts/offline/verify-regenerated-metadata.mjs \
     "$BASE_CORPUS_EXPORT" \
     "$ADJUDICATED_CORPUS_MANIFEST" \
-    "$USAGE_ADJUDICATION"
+    "$EFFECTIVE_USAGE_ADJUDICATION"
   date -u +%FT%TZ > "$CORPUS_READY_MARKER"
   log "corpus metadata is verified and ready for staged publication"
 fi
@@ -117,6 +138,14 @@ if [ -s "$AMERICAN_STATUS_OVERRIDES" ]; then
     "$AMERICAN_STATUS_OVERRIDES" \
     "$RECONCILIATION/final-analysis.json"
 fi
+
+log "verifying that active learning examples use current American English"
+node scripts/offline/verify-example-sentence-american-usage.mjs \
+  "$SOURCE" \
+  "$RECONCILIATION/final-analysis.json" \
+  "$AMERICAN_STATUS_OVERRIDES" \
+  "$EFFECTIVE_USAGE_ADJUDICATION" \
+  "$ADJUDICATED_CORPUS_MANIFEST"
 
 log "preparing realistic image targets for the reconciled example pool"
 retry node scripts/offline/prepare-sentence-images.mjs \

@@ -27,6 +27,10 @@ if (audit?.version !== 1 || !Array.isArray(audit.notAmerican)) throw new Error('
 const eligibleSource = eligibleSourceArg ? JSON.parse(readFileSync(resolve(eligibleSourceArg), 'utf8')) : null;
 if (eligibleSource && !Array.isArray(eligibleSource.sentences)) throw new Error('Eligible sentence source is invalid');
 const eligibleIds = eligibleSource ? new Set(eligibleSource.sentences.map(sentence => sentence.id)) : null;
+const eligibleGroupKeys = eligibleSource
+  ? new Set(eligibleSource.sentences.flatMap(sentence =>
+    (sentence.provenance || []).map(provenance => `${provenance.parentId}\0${provenance.cardId}`)))
+  : null;
 
 const grouped = new Map();
 for (const entry of audit.notAmerican) {
@@ -317,12 +321,24 @@ for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
     generatedByKey.set(groupKey(entry), entry);
   }
 }
-const entries = groups.map(group => {
+const currentEntries = groups.map(group => {
   const generated = generatedByKey.get(groupKey(group));
   if (generated) return generated;
   const prior = existingByKey.get(groupKey(group));
   return prior ? { ...prior, adjudicatedAt: Number(prior.adjudicatedAt || existing.generatedAt) } : null;
 });
-if (entries.some(entry => !entry)) throw new Error('A current discrepancy group has no adjudication');
+if (currentEntries.some(entry => !entry)) throw new Error('A current discrepancy group has no adjudication');
+const entriesByKey = new Map();
+for (const entry of existing?.entries || []) {
+  if (!eligibleGroupKeys || eligibleGroupKeys.has(groupKey(entry))) {
+    entriesByKey.set(groupKey(entry), {
+      ...entry,
+      adjudicatedAt: Number(entry.adjudicatedAt || existing.generatedAt),
+    });
+  }
+}
+for (const entry of currentEntries) entriesByKey.set(groupKey(entry), entry);
+const entries = [...entriesByKey.values()].sort((left, right) =>
+  left.parentId.localeCompare(right.parentId) || left.cardId.localeCompare(right.cardId));
 writeFileSync(outputPath, `${JSON.stringify({ version: 1, generatedAt, model: MODEL, entries }, null, 2)}\n`, { mode: 0o600 });
-process.stderr.write(`Wrote ${entries.length} usage discrepancy adjudications (${pendingGroups.length} generated, ${entries.length - pendingGroups.length} reused) to ${outputPath}\n`);
+process.stderr.write(`Wrote ${entries.length} usage discrepancy adjudications (${pendingGroups.length} generated, ${currentEntries.length - pendingGroups.length} current reused, ${entries.length - currentEntries.length} retained) to ${outputPath}\n`);
