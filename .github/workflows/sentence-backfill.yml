@@ -88,7 +88,7 @@ jobs:
           script: |
             set -e
             cd /opt/dictprop-vps
-            docker compose exec -T app node server/dist/scripts/audit-production-data.js
+            docker compose exec -T app nice -n 19 node server/dist/scripts/audit-production-data.js
 
       - name: Report production audit
         env:
