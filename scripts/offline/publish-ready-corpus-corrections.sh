@@ -8,6 +8,7 @@ TARGET_MANIFEST="${3:-data/offline-backfill/final-reconciliation/usage-adjudicat
 BATCH_SIZE="${4:-100}"
 REQUIRED_DEPLOY_SHA="${5:-121ecc8}"
 PUBLISHED_PREDECESSOR_MANIFEST="${PUBLISHED_CORPUS_PREDECESSOR_MANIFEST:-data/offline-backfill/final-reconciliation/rebased-usage-corrections.json}"
+PUBLISHED_PREDECESSOR_MANIFESTS="${PUBLISHED_CORPUS_PREDECESSOR_MANIFESTS:-$PUBLISHED_PREDECESSOR_MANIFEST}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
@@ -49,10 +50,15 @@ REBASE_REPORT="$WORK_ROOT/rebase-report.json"
 REBASE_ERROR="$WORK_ROOT/rebase-error.log"
 
 rebase_corpus() {
-  if [[ -s "$PUBLISHED_PREDECESSOR_MANIFEST" ]]; then
+  local predecessor_manifests=()
+  local predecessor
+  while IFS= read -r predecessor; do
+    [[ -s "$predecessor" ]] && predecessor_manifests+=("$predecessor")
+  done < <(printf '%s\n' "$PUBLISHED_PREDECESSOR_MANIFESTS" | tr ':' '\n')
+  if [[ "${#predecessor_manifests[@]}" -gt 0 ]]; then
     node scripts/offline/prepare-rebased-corpus-delta.mjs \
       "$PRODUCTION_EXPORT" "$BASE_MANIFEST" "$TARGET_MANIFEST" "$REBASED_MANIFEST" \
-      "$PUBLISHED_PREDECESSOR_MANIFEST"
+      "${predecessor_manifests[@]}"
   else
     node scripts/offline/prepare-rebased-corpus-delta.mjs \
       "$PRODUCTION_EXPORT" "$BASE_MANIFEST" "$TARGET_MANIFEST" "$REBASED_MANIFEST"

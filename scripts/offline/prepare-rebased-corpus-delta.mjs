@@ -24,12 +24,16 @@ for (const predecessorArg of predecessorArgs) {
   if (!Array.isArray(predecessor?.entries)) throw new Error(`Published predecessor is invalid: ${predecessorArg}`);
   for (const entry of uniqueMap(predecessor.entries, 'published predecessor').values()) {
     const baseEntry = baseById.get(entry.id);
-    if (!baseEntry || baseEntry.type !== entry.type || entry.sourceHash !== corpusHash(baseEntry.data)) {
+    const priorHashes = predecessorHashesById.get(entry.id) || new Set();
+    const validSourceHashes = new Set([
+      baseEntry ? corpusHash(baseEntry.data) : '',
+      ...priorHashes,
+    ]);
+    if (!baseEntry || baseEntry.type !== entry.type || !validSourceHashes.has(entry.sourceHash)) {
       throw new Error(`Published predecessor has no verified base lineage: ${entry.id}`);
     }
-    const hashes = predecessorHashesById.get(entry.id) || new Set();
-    hashes.add(corpusHash(entry.data));
-    predecessorHashesById.set(entry.id, hashes);
+    priorHashes.add(corpusHash(entry.data));
+    predecessorHashesById.set(entry.id, priorHashes);
   }
 }
 
