@@ -15,6 +15,9 @@ const allItems = getAllItems(true, owner.id) as any[];
 const liveItems = allItems.filter(item => !item.isDeleted);
 const sample = (values: string[], limit = 100) => values.slice(0, limit);
 const normalize = (value: unknown) => String(value || '').toLowerCase().trim().replace(/\s+/g, ' ');
+const normalizeSentence = (value: unknown) => normalize(String(value || '')
+  .replace(/\{\{([^{}]+)\}\}/g, '$1')
+  .replace(/\[\[([^\[\]]+)\]\]/g, '$1'));
 const countQuery = (sql: string, ...params: unknown[]): number =>
   (db.prepare(sql).get(...params) as { count: number }).count;
 
@@ -160,10 +163,10 @@ const duplicatePhrases = duplicateGroups(
   liveItems.filter(item => item.type === 'phrase'),
   item => normalize(item.data.query),
 );
-const duplicateSentences = duplicateGroups(sentenceItems, item => normalize(item.data.text));
+const duplicateSentences = duplicateGroups(sentenceItems, item => normalizeSentence(item.data.text));
 const duplicateExactSentences = duplicateGroups(
   sentenceItems,
-  item => [normalize(item.data.text), normalize(item.data.sourceWord), normalize(item.data.sourceSense)].join('\u0000'),
+  item => [normalizeSentence(item.data.text), normalize(item.data.sourceWord), normalize(item.data.sourceSense)].join('\u0000'),
 );
 
 const liveVocabWords = new Set(liveItems

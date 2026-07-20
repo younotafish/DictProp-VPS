@@ -35,6 +35,7 @@ const DUPLICATE_GROUPS = [
   ['5d9b0f5d-cc18-4ae1-87ef-f12c2bb5a85c', '62500b17-12ef-4179-aa2f-fa666fe204d9'],
   ['bff0455d-d061-4767-9b69-fddd76104a0b', 'b6721238-1995-4208-8e52-8c92dae417f9'],
   ['338d98fd-7222-4b07-b58d-321557216552', '331ea78a-4472-4c05-9d7d-3f5ef74b2ff9'],
+  ['f8e38ce0-9289-411b-b9c4-155bfd85e7a3', 'c27cfc10-5fc0-41f0-b666-c990e8cc59ef'],
 ] as const;
 
 // These pairs used superficially different legacy labels, so the exact-string audit could not
@@ -69,12 +70,18 @@ const SEMANTIC_DUPLICATE_GROUPS = [
 
 // Keep the independently selected identity for this one new/new sentence pair even when another
 // row happens to contain more legacy text. Semantic groups use their first id directly below.
-const PREFERRED_SURVIVOR_IDS = new Set(['338d98fd-7222-4b07-b58d-321557216552']);
+const PREFERRED_SURVIVOR_IDS = new Set([
+  '338d98fd-7222-4b07-b58d-321557216552',
+  'f8e38ce0-9289-411b-b9c4-155bfd85e7a3',
+]);
 
 const items = getAllItems(true, owner.id) as any[];
 const byId = new Map(items.map(item => [item.data.id, item]));
 const imageIds = new Set((db.prepare('SELECT id FROM item_images WHERE user_id = ?').all(owner.id) as Array<{ id: string }>).map(row => row.id));
 const normalize = (value: unknown) => String(value || '').toLowerCase().trim().replace(/\s+/g, ' ');
+const normalizeSentence = (value: unknown) => normalize(String(value || '')
+  .replace(/\{\{([^{}]+)\}\}/g, '$1')
+  .replace(/\[\[([^\[\]]+)\]\]/g, '$1'));
 const finite = (value: unknown, fallback = 0) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
 
@@ -123,8 +130,8 @@ function assertSameIdentity(group: any[], allowSenseMismatch: boolean): void {
     }
     return;
   }
-  const key = [normalize(first.data.text), normalize(first.data.sourceWord), normalize(first.data.sourceSense)].join('\u0000');
-  if (group.some(item => [normalize(item.data.text), normalize(item.data.sourceWord), normalize(item.data.sourceSense)].join('\u0000') !== key)) {
+  const key = [normalizeSentence(first.data.text), normalize(first.data.sourceWord), normalize(first.data.sourceSense)].join('\u0000');
+  if (group.some(item => [normalizeSentence(item.data.text), normalize(item.data.sourceWord), normalize(item.data.sourceSense)].join('\u0000') !== key)) {
     throw new Error(`Sentence duplicate group changed identity: ${group.map(item => item.data.id).join(',')}`);
   }
 }
