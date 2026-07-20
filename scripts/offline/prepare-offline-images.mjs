@@ -27,7 +27,11 @@ function withoutImages(value) {
 }
 
 function sourceHash(data) {
-  return createHash('sha256').update(JSON.stringify(withoutImages(data))).digest('hex');
+  const stableData = data && typeof data === 'object' && !Array.isArray(data)
+    ? Object.fromEntries(Object.entries(data)
+      .filter(([key]) => key !== 'analysis' && key !== 'analysisGeneratedAt'))
+    : data;
+  return createHash('sha256').update(JSON.stringify(withoutImages(stableData))).digest('hex');
 }
 
 function eligible(auditRecord) {

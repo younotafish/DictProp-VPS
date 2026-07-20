@@ -11,6 +11,7 @@ KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
 STATE_ROOT="${OFFLINE_IMAGE_WAVE_STATE_ROOT:-/tmp/dictprop-staged-offline-images}"
 COOLDOWN_SECONDS="${OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS:-60}"
 SENTENCE_COMPLETE_MARKER="${SENTENCE_WAVE_COMPLETE_MARKER:-/tmp/dictprop-staged-sentence-backfill-v2/complete}"
+CORPUS_MANIFEST="${OFFLINE_IMAGE_CORPUS_MANIFEST:-data/offline-backfill/final-reconciliation/usage-adjudicated-corpus-manifest.json}"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -50,6 +51,12 @@ fi
 
 TOTAL_COUNT="$(node -e 'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).entries.length)' "$SOURCE_ROOT/manifest.json")"
 mkdir -p "$STATE_ROOT"
+
+if [ -s "$CORPUS_MANIFEST" ]; then
+  node scripts/offline/verify-offline-image-manifest.mjs \
+    "$SOURCE_ROOT/manifest.json" \
+    "$CORPUS_MANIFEST"
+fi
 
 log "waiting for staged saved-sentence imports before publishing vocabulary images"
 while [ ! -s "$SENTENCE_COMPLETE_MARKER" ]; do
