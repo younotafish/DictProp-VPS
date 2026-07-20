@@ -19,6 +19,7 @@ first_generation_targets="${10:-}"
 krea_python="${KREA_PYTHON:-/tmp/dictprop-mflux/bin/python}"
 codex_concurrency="${CODEX_CONCURRENCY:-32}"
 krea_shard_count="${KREA_SHARD_COUNT:-1}"
+krea_quantize="${KREA_QUANTIZE:-}"
 krea_image_source_candidate="${KREA_IMAGE_SOURCE_CANDIDATE:-}"
 krea_image_strength="${KREA_IMAGE_STRENGTH:-}"
 current="$targets"
@@ -28,6 +29,10 @@ generator_pids=()
 
 if ! [[ "$krea_shard_count" =~ ^[0-9]+$ ]] || [[ "$krea_shard_count" -lt 1 ]] || [[ "$krea_shard_count" -gt 8 ]]; then
   echo "KREA_SHARD_COUNT must be an integer from 1 to 8" >&2
+  exit 2
+fi
+if [[ -n "$krea_quantize" ]] && [[ "$krea_quantize" != "4" && "$krea_quantize" != "8" ]]; then
+  echo "KREA_QUANTIZE must be 4 or 8" >&2
   exit 2
 fi
 if [[ -n "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
@@ -80,6 +85,10 @@ generate_candidates() {
     "$generation_targets" "$candidates" --candidate-start "$candidate_number" --candidates "$candidate_number"
     --width "$width" --height "$height" --steps "$steps" --accepted-directory "$images"
   )
+
+  if [[ -n "$krea_quantize" ]]; then
+    generator_args+=(--quantize "$krea_quantize")
+  fi
 
   if [[ -n "$krea_image_source_candidate" ]]; then
     if [[ "$resolved_image_source_candidate" == "previous" ]]; then
