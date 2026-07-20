@@ -15,7 +15,18 @@ export function killCodex(child, signal = 'SIGTERM') {
     if (DETACHED_PROCESS_GROUPS) process.kill(-child.pid, signal);
     else child.kill(signal);
   } catch (error) {
-    if (error?.code !== 'ESRCH') throw error;
+    if (error?.code === 'ESRCH') return;
+    // macOS can report EPERM for a detached group while its leader is already
+    // exiting. Fall back to the direct child instead of letting cleanup crash.
+    if (DETACHED_PROCESS_GROUPS && error?.code === 'EPERM') {
+      try {
+        child.kill(signal);
+      } catch (childError) {
+        if (childError?.code !== 'ESRCH' && childError?.code !== 'EPERM') throw childError;
+      }
+      return;
+    }
+    throw error;
   }
 }
 
