@@ -4,9 +4,9 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-const [productionArg, baseArg, targetArg, outputArg] = process.argv.slice(2);
+const [productionArg, baseArg, targetArg, outputArg, ...predecessorArgs] = process.argv.slice(2);
 if (!productionArg || !baseArg || !targetArg || !outputArg) {
-  throw new Error('Usage: prepare-rebased-corpus-delta.mjs <production-export.json> <base-manifest.json> <target-manifest.json> <output.json>');
+  throw new Error('Usage: prepare-rebased-corpus-delta.mjs <production-export.json> <base-manifest.json> <target-manifest.json> <output.json> [published-predecessor.json ...]');
 }
 
 const production = readJson(productionArg);
@@ -18,12 +18,28 @@ if (!Array.isArray(production?.items) || !Array.isArray(base?.entries) || !Array
 const productionById = uniqueMap(production.items, 'production item');
 const baseById = uniqueMap(base.entries, 'base entry');
 const targetById = uniqueMap(target.entries, 'target entry');
+const predecessorHashesById = new Map();
+for (const predecessorArg of predecessorArgs) {
+  const predecessor = readJson(predecessorArg);
+  if (!Array.isArray(predecessor?.entries)) throw new Error(`Published predecessor is invalid: ${predecessorArg}`);
+  for (const entry of uniqueMap(predecessor.entries, 'published predecessor').values()) {
+    const baseEntry = baseById.get(entry.id);
+    if (!baseEntry || baseEntry.type !== entry.type || entry.sourceHash !== corpusHash(baseEntry.data)) {
+      throw new Error(`Published predecessor has no verified base lineage: ${entry.id}`);
+    }
+    const hashes = predecessorHashesById.get(entry.id) || new Set();
+    hashes.add(corpusHash(entry.data));
+    predecessorHashesById.set(entry.id, hashes);
+  }
+}
 
 const entries = [];
 const conflicts = [];
 let unchangedDesired = 0;
 let alreadyApplied = 0;
 let missingProduction = 0;
+let rebasedFromBase = 0;
+let rebasedFromPredecessor = 0;
 
 for (const targetEntry of target.entries) {
   const baseEntry = baseById.get(targetEntry.id);
@@ -33,10 +49,6 @@ for (const targetEntry of target.entries) {
   }
   const baseHash = corpusHash(baseEntry.data);
   const targetHash = corpusHash(targetEntry.data);
-  if (baseHash === targetHash) {
-    unchangedDesired++;
-    continue;
-  }
   const current = productionById.get(targetEntry.id);
   if (!current || current.type !== targetEntry.type) {
     missingProduction++;
@@ -44,13 +56,18 @@ for (const targetEntry of target.entries) {
   }
   const currentHash = corpusHash(current.data);
   if (currentHash === targetHash) {
-    alreadyApplied++;
+    if (targetHash === baseHash) unchangedDesired++;
+    else alreadyApplied++;
     continue;
   }
-  if (currentHash !== baseHash) {
+  const fromBase = currentHash === baseHash;
+  const fromPredecessor = predecessorHashesById.get(targetEntry.id)?.has(currentHash) === true;
+  if (!fromBase && !fromPredecessor) {
     conflicts.push({ id: targetEntry.id, reason: 'production differs from both the reviewed base and target' });
     continue;
   }
+  if (fromBase) rebasedFromBase++;
+  else rebasedFromPredecessor++;
   entries.push({
     ...structuredClone(targetEntry),
     sourceHash: currentHash,
@@ -82,6 +99,8 @@ process.stdout.write(`${JSON.stringify({
   unchangedDesired,
   alreadyApplied,
   missingProduction,
+  rebasedFromBase,
+  rebasedFromPredecessor,
   rebasedEntries: entries.length,
   conflicts: conflicts.length,
 }, null, 2)}\n`);

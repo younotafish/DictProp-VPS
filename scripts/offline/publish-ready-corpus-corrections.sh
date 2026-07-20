@@ -7,6 +7,7 @@ BASE_MANIFEST="${2:-data/offline-backfill/final-reconciliation/authoritative-fin
 TARGET_MANIFEST="${3:-data/offline-backfill/final-reconciliation/usage-adjudicated-corpus-manifest.json}"
 BATCH_SIZE="${4:-100}"
 REQUIRED_DEPLOY_SHA="${5:-121ecc8}"
+PUBLISHED_PREDECESSOR_MANIFEST="${PUBLISHED_CORPUS_PREDECESSOR_MANIFEST:-data/offline-backfill/final-reconciliation/rebased-usage-corrections.json}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
@@ -47,6 +48,17 @@ REBASED_MANIFEST="$WORK_ROOT/rebased-corrections.json"
 REBASE_REPORT="$WORK_ROOT/rebase-report.json"
 REBASE_ERROR="$WORK_ROOT/rebase-error.log"
 
+rebase_corpus() {
+  if [[ -s "$PUBLISHED_PREDECESSOR_MANIFEST" ]]; then
+    node scripts/offline/prepare-rebased-corpus-delta.mjs \
+      "$PRODUCTION_EXPORT" "$BASE_MANIFEST" "$TARGET_MANIFEST" "$REBASED_MANIFEST" \
+      "$PUBLISHED_PREDECESSOR_MANIFEST"
+  else
+    node scripts/offline/prepare-rebased-corpus-delta.mjs \
+      "$PRODUCTION_EXPORT" "$BASE_MANIFEST" "$TARGET_MANIFEST" "$REBASED_MANIFEST"
+  fi
+}
+
 if [[ ! -s "$PRODUCTION_EXPORT" ]]; then
   if [[ ! -s "$RUN_ID_FILE" ]]; then
     DISPATCHED_AT="$(date -u +%FT%TZ)"
@@ -57,24 +69,22 @@ if [[ ! -s "$PRODUCTION_EXPORT" ]]; then
       -f operation=corpus-export
 
     for _ in $(seq 1 60); do
-      candidate_runs=()
-      while IFS= read -r candidate_run; do
-        [[ -n "$candidate_run" ]] && candidate_runs+=("$candidate_run")
-      done < <("$GH_BIN" run list \
-          --repo "$REPO" \
-          --workflow sentence-backfill.yml \
-          --event workflow_dispatch \
-          --limit 30 \
-          --json databaseId,createdAt \
-          --jq ".[] | select(.createdAt >= \"$DISPATCHED_AT\") | .databaseId")
-      for run_id in "${candidate_runs[@]}"; do
+      while IFS= read -r run_id; do
+        [[ -z "$run_id" ]] && continue
         if "$GH_BIN" run view "$run_id" --repo "$REPO" --json jobs \
           --jq '.jobs[] | select(.name == "corpus-export" and (.status == "in_progress" or (.status == "completed" and .conclusion != "skipped"))) | .name' 2>/dev/null \
           | grep -qx 'corpus-export'; then
           printf '%s\n' "$run_id" > "$RUN_ID_FILE"
-          break 2
+          break
         fi
-      done
+      done < <("$GH_BIN" run list \
+        --repo "$REPO" \
+        --workflow sentence-backfill.yml \
+        --event workflow_dispatch \
+        --limit 30 \
+        --json databaseId,createdAt \
+        --jq ".[] | select(.createdAt >= \"$DISPATCHED_AT\") | .databaseId")
+      [[ -s "$RUN_ID_FILE" ]] && break
       sleep 5
     done
     if [[ ! -s "$RUN_ID_FILE" ]]; then
@@ -96,12 +106,7 @@ fi
 
 log "rebasing verified corrections against the fresh production export"
 rm -f "$REBASED_MANIFEST" "$REBASE_REPORT" "$REBASE_ERROR"
-if ! node scripts/offline/prepare-rebased-corpus-delta.mjs \
-  "$PRODUCTION_EXPORT" \
-  "$BASE_MANIFEST" \
-  "$TARGET_MANIFEST" \
-  "$REBASED_MANIFEST" \
-  > "$REBASE_REPORT" 2> "$REBASE_ERROR"; then
+if ! rebase_corpus > "$REBASE_REPORT" 2> "$REBASE_ERROR"; then
   if grep -q 'No rebased corpus delta remains to publish' "$REBASE_ERROR"; then
     log "all verified corpus corrections are already live"
     date -u +%FT%TZ > "$STATE_ROOT/complete"
