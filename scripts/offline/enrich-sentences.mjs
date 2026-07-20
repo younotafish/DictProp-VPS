@@ -87,13 +87,30 @@ For each sentence, return these analysis fields in this exact conceptual order:
 4. terms: every genuinely uncommon word, idiom, phrasal verb, or fixed phrase. For each term include its context-specific Chinese translation; true rhotic General American IPA with stress marks and surrounding slashes; core contextual meaning and literal/earlier meaning when figurative; sense-matched English synonyms and antonyms; two natural modern American examples that make the meaning inferable and do not quote the source; and a concise, accurate historical evolution note. Prefer the longest phrase and never duplicate components. Do not pad with ordinary A1-B2 words. Explicitly disambiguate a likely learner confusion when the context selects one sense over another. Keep fields cleanly separated: originalMeaning must contain only meaning and semantic clarification, never examples or historical chronology; usage examples belong only in examples; etymology and dated development belong only in historicalEvolution.
 5. imagePrompt: a production-ready prompt for one realistic photorealistic 16:9 photograph depicting the COMPLETE sentence as one coherent concrete scene. Apply this test: the scene should let a learner infer the sentence's intended meaning, not merely its topic. Put the defining action, relationship, contrast, cause, or consequence in the foreground and include every detail needed to distinguish the intended reading. Keep the cast and composition simple enough to parse instantly. For an idiom, depict its intended contextual meaning, not a misleading literal origin. Specify camera distance, composition, and natural lighting. Require authentic anatomy, skin, materials, and contemporary details. Explicitly prohibit illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, and visible text.
 
-Everything must be English except translation and each term's chinese field. Synonyms/antonyms must match the contextual sense. If no natural antonym exists, return an empty array. State uncertainty rather than inventing etymology. Copy every itemIndex exactly, return every input once, and output only schema-valid JSON.`;
+Everything must be English except translation and each term's chinese field. Synonyms/antonyms must match the contextual sense. If no natural antonym exists, return an empty array. State uncertainty rather than inventing etymology. Never repeat a term, repeat an example within one term, emit a schema field name as content, or emit placeholder/TBD content. Copy every itemIndex exactly, return every input once, and output only schema-valid JSON.`;
 
 const batches = [];
 for (let index = 0; index < source.sentences.length; index += 12) batches.push(source.sentences.slice(index, index + 12));
 
 function validString(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizedValue(value) {
+  return String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function validTermIpa(value) {
+  const ipa = String(value || '').trim();
+  const transcriptions = ipa.match(/\/[^/\n]+\//g) || [];
+  if (transcriptions.length === 0) return false;
+  const annotations = ipa.replace(/\/[^/\n]+\//g, '');
+  return !annotations.includes('/') &&
+    /^(?:[\s;,:()[\]\-–—]*(?:past|present|plural|singular|also|or|american|us|noun|verb|adjective|adverb|stressed|unstressed)?)*[\s;,:()[\]\-–—]*$/i.test(annotations);
+}
+
+function leakedPlaceholder(value) {
+  return /^(?:placeholder|tbd|todo|(?:natural\s*speech\s*ipa|original\s*meaning|historical\s*evolution|image\s*prompt)(?:\s+placeholder)?)[.!]?$/i.test(String(value || '').trim());
 }
 
 function validateAnalysis(analysis, id) {
@@ -103,12 +120,30 @@ function validateAnalysis(analysis, id) {
       !validString(analysis.americanEnglish.explanation) || !Array.isArray(analysis.terms) || analysis.terms.length > 20) {
     throw new Error(`${id}: invalid sentence analysis`);
   }
+  if ([analysis.translation, analysis.naturalSpeechIpa, analysis.americanEnglish.explanation, analysis.imagePrompt]
+    .some(leakedPlaceholder)) {
+    throw new Error(`${id}: placeholder or schema field leaked into sentence analysis`);
+  }
+  const seenTerms = new Set();
   for (const term of analysis.terms) {
     if (!validString(term.term) || !validString(term.chinese) || !validString(term.ipa) ||
+        !validTermIpa(term.ipa) ||
         !validString(term.originalMeaning) || !validString(term.historicalEvolution) ||
         !Array.isArray(term.synonyms) || term.synonyms.length === 0 ||
-        !Array.isArray(term.antonyms) || !Array.isArray(term.examples) || term.examples.length < 2) {
+        !term.synonyms.every(validString) || !Array.isArray(term.antonyms) || !term.antonyms.every(validString) ||
+        !Array.isArray(term.examples) || term.examples.length < 2 || !term.examples.every(validString)) {
       throw new Error(`${id}: invalid term analysis`);
+    }
+    const termKey = normalizedValue(term.term);
+    if (seenTerms.has(termKey)) throw new Error(`${id}: duplicate term ${term.term}`);
+    seenTerms.add(termKey);
+    if ([term.term, term.chinese, term.ipa, term.originalMeaning, term.historicalEvolution,
+      ...term.synonyms, ...term.antonyms, ...term.examples].some(leakedPlaceholder)) {
+      throw new Error(`${id}: placeholder or schema field leaked into term ${term.term}`);
+    }
+    const exampleKeys = term.examples.map(normalizedValue);
+    if (new Set(exampleKeys).size !== exampleKeys.length) {
+      throw new Error(`${id}: duplicate example for term ${term.term}`);
     }
   }
 }
