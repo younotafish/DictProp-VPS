@@ -19,7 +19,8 @@ first_generation_targets="${10:-}"
 krea_python="${KREA_PYTHON:-/tmp/dictprop-mflux/bin/python}"
 codex_concurrency="${CODEX_CONCURRENCY:-32}"
 krea_shard_count="${KREA_SHARD_COUNT:-1}"
-krea_quantize="${KREA_QUANTIZE:-}"
+image_model="${IMAGE_MODEL:-krea2}"
+image_model_quantize="${IMAGE_MODEL_QUANTIZE:-${KREA_QUANTIZE:-}}"
 krea_image_source_candidate="${KREA_IMAGE_SOURCE_CANDIDATE:-}"
 krea_image_strength="${KREA_IMAGE_STRENGTH:-}"
 current="$targets"
@@ -31,8 +32,12 @@ if ! [[ "$krea_shard_count" =~ ^[0-9]+$ ]] || [[ "$krea_shard_count" -lt 1 ]] ||
   echo "KREA_SHARD_COUNT must be an integer from 1 to 8" >&2
   exit 2
 fi
-if [[ -n "$krea_quantize" ]] && [[ "$krea_quantize" != "4" && "$krea_quantize" != "8" ]]; then
-  echo "KREA_QUANTIZE must be 4 or 8" >&2
+if [[ "$image_model" != "krea2" && "$image_model" != "ernie-image-turbo" ]]; then
+  echo "IMAGE_MODEL must be krea2 or ernie-image-turbo" >&2
+  exit 2
+fi
+if [[ -n "$image_model_quantize" ]] && [[ "$image_model_quantize" != "4" && "$image_model_quantize" != "8" ]]; then
+  echo "IMAGE_MODEL_QUANTIZE (or KREA_QUANTIZE) must be 4 or 8" >&2
   exit 2
 fi
 if [[ -n "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
@@ -83,11 +88,11 @@ generate_candidates() {
   local resolved_image_source_candidate="$krea_image_source_candidate"
   local generator_args=(
     "$generation_targets" "$candidates" --candidate-start "$candidate_number" --candidates "$candidate_number"
-    --width "$width" --height "$height" --steps "$steps" --accepted-directory "$images"
+    --width "$width" --height "$height" --steps "$steps" --accepted-directory "$images" --model "$image_model"
   )
 
-  if [[ -n "$krea_quantize" ]]; then
-    generator_args+=(--quantize "$krea_quantize")
+  if [[ -n "$image_model_quantize" ]]; then
+    generator_args+=(--quantize "$image_model_quantize")
   fi
 
   if [[ -n "$krea_image_source_candidate" ]]; then
@@ -127,7 +132,7 @@ while [[ "$candidate" -le 99 ]]; do
     generation_targets="$first_generation_targets"
   fi
 
-  echo "[$(date -u +%FT%TZ)] streaming judge/refinement for candidate $candidate with $krea_shard_count Krea shard(s)"
+  echo "[$(date -u +%FT%TZ)] streaming judge/refinement for candidate $candidate with $krea_shard_count $image_model shard(s)"
   env CODEX_CONCURRENCY="$codex_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
     "$current" "$candidates" "$images" "$pass_work" "$refined" "$candidate" "$chunk_size" &
   watcher_pid=$!

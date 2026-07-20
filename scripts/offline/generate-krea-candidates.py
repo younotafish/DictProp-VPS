@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 from mflux.models.common.config import ModelConfig
+from mflux.models.ernie_image import ErnieImage
 from mflux.models.krea2.variants.txt2img.krea2 import Krea2
 from mflux.utils.exceptions import StopImageGenerationException
 
@@ -30,7 +31,7 @@ def is_complete_image(path: Path, width: int, height: int) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate local Krea 2 candidates for offline DictProp images")
+    parser = argparse.ArgumentParser(description="Generate local image candidates for offline DictProp images")
     parser.add_argument("targets")
     parser.add_argument("output_directory")
     parser.add_argument("--candidates", type=int, default=1)
@@ -42,6 +43,11 @@ def main() -> None:
     )
     parser.add_argument("--width", type=int, default=1024)
     parser.add_argument("--height", type=int, default=576)
+    parser.add_argument(
+        "--model",
+        choices=("krea2", "ernie-image-turbo"),
+        default="krea2",
+    )
     parser.add_argument("--quantize", type=int, choices=(4, 8), default=None)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--seed-round", type=int, default=0)
@@ -89,7 +95,10 @@ def main() -> None:
 
     output = Path(args.output_directory)
     output.mkdir(parents=True, exist_ok=True)
-    model = Krea2(model_config=ModelConfig.krea2(), quantize=args.quantize)
+    if args.model == "ernie-image-turbo":
+        model = ErnieImage(model_config=ModelConfig.ernie_image_turbo(), quantize=args.quantize)
+    else:
+        model = Krea2(model_config=ModelConfig.krea2(), quantize=args.quantize)
     failures = []
     quality_suffix = (
         " Keep the one defining action or relationship large and central, with realistic anatomy and objects. "
@@ -122,7 +131,7 @@ def main() -> None:
                     height=args.height,
                     width=args.width,
                     guidance=1.0,
-                    scheduler="euler" if source_path else "er_sde",
+                    scheduler=("euler" if source_path else "er_sde") if args.model == "krea2" else None,
                     negative_prompt=None,
                     image_path=source_path,
                     image_strength=args.image_strength if source_path else None,
