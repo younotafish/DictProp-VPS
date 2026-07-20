@@ -131,6 +131,14 @@ if [ ! -s "$RECONCILIATION/final-analysis.json" ]; then
   echo "Final example-sentence analysis was not produced" >&2
   exit 1
 fi
+log "running the final dialect sweep across the complete analysis manifest"
+retry env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" node scripts/offline/adjudicate-sentence-american-status.mjs \
+  "$EFFECTIVE_USAGE_ADJUDICATION" \
+  "$SOURCE" \
+  "$AMERICAN_STATUS_OVERRIDES" \
+  "$AMERICAN_STATUS_WORK" \
+  "$AMERICAN_STATUS_OVERRIDES" \
+  "$RECONCILIATION/final-analysis.json"
 if [ -s "$AMERICAN_STATUS_OVERRIDES" ]; then
   log "applying independently adjudicated American-English sentence labels"
   retry node scripts/offline/apply-sentence-analysis-overrides.mjs \

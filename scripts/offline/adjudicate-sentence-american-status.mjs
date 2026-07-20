@@ -5,9 +5,9 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { dirname, join, resolve } from 'node:path';
 import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
 
-const [adjudicationArg, sourceArg, outputArg, workArg, existingArg] = process.argv.slice(2);
+const [adjudicationArg, sourceArg, outputArg, workArg, existingArg, analysisArg] = process.argv.slice(2);
 if (!adjudicationArg || !sourceArg || !outputArg) {
-  throw new Error('Usage: adjudicate-sentence-american-status.mjs <usage-adjudication.json> <sentence-source.json> <manifest.json> [work-directory] [existing-manifest.json]');
+  throw new Error('Usage: adjudicate-sentence-american-status.mjs <usage-adjudication.json> <sentence-source.json> <manifest.json> [work-directory] [existing-manifest.json] [analysis.json]');
 }
 
 const MODEL = 'gpt-5.6-sol';
@@ -25,9 +25,27 @@ if (sourceById.size !== source.sentences.length) throw new Error('Sentence sourc
 
 const targets = [];
 const targetIds = new Set();
+const activeGroups = new Map();
+const groupKey = (parentId, cardId) => `${parentId}\0${cardId}`;
+
+function addTarget(group, sentence, priorAssessment) {
+  targetIds.add(sentence.id);
+  targets.push({
+    id: sentence.id,
+    textHash: sentence.textHash,
+    text: sentence.text,
+    word: group.decision.lexicalAction === 'correct' ? group.decision.correctedWord : group.word,
+    sense: group.decision.lexicalAction === 'correct' ? group.decision.correctedSense : group.sense,
+    usageStatus: group.decision.usageStatus,
+    usageReason: group.decision.usageReason,
+    priorAssessment,
+  });
+}
+
 for (const group of adjudication.entries) {
   const usageStatus = group.decision?.usageStatus;
   if (!activeStatuses.has(usageStatus)) continue;
+  activeGroups.set(groupKey(group.parentId, group.cardId), group);
   for (let index = 0; index < group.examples.length; index++) {
     if (group.decision.examples[index]?.action !== 'keep') continue;
     const example = group.examples[index];
@@ -35,17 +53,28 @@ for (const group of adjudication.entries) {
     if (!sentence || sentence.text !== example.text || targetIds.has(example.id)) {
       throw new Error(`Kept adjudication has an invalid sentence identity: ${example.id}`);
     }
-    targetIds.add(example.id);
-    targets.push({
-      id: example.id,
-      textHash: sentence.textHash,
-      text: example.text,
-      word: group.decision.lexicalAction === 'correct' ? group.decision.correctedWord : group.word,
-      sense: group.decision.lexicalAction === 'correct' ? group.decision.correctedSense : group.sense,
-      usageStatus,
-      usageReason: group.decision.usageReason,
-      priorAssessment: example.modelAssessment,
-    });
+    addTarget(group, sentence, example.modelAssessment);
+  }
+}
+
+if (analysisArg) {
+  const analysis = readJson(analysisArg);
+  if (!Array.isArray(analysis?.entries)) throw new Error('Final sentence analysis is invalid');
+  const analysisById = new Map(analysis.entries.map(entry => [entry.id, entry]));
+  if (analysisById.size !== analysis.entries.length) throw new Error('Final sentence analysis contains duplicate ids');
+  for (const sentence of source.sentences) {
+    const analyzed = analysisById.get(sentence.id);
+    if (analyzed?.textHash !== sentence.textHash || analyzed.analysis?.americanEnglish?.status !== 'not_american') continue;
+    for (const provenance of sentence.provenance || []) {
+      const group = activeGroups.get(groupKey(provenance.parentId, provenance.cardId));
+      if (!group) continue;
+      const listedIndex = group.examples.findIndex(example => example.id === sentence.id);
+      if (listedIndex >= 0 && group.decision.examples[listedIndex]?.action !== 'keep') continue;
+      if (!targetIds.has(sentence.id)) {
+        addTarget(group, sentence, analyzed.analysis.americanEnglish.explanation);
+      }
+      break;
+    }
   }
 }
 targets.sort((left, right) => left.id.localeCompare(right.id));

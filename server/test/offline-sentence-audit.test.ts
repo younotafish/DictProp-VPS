@@ -223,3 +223,73 @@ test('American-usage gate rejects current conflicts and permits independently ad
     corpusPath,
   ]);
 });
+
+test('final dialect sweep includes unlisted non-American examples from an adjudicated card', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-dialect-sweep-'));
+  const usagePath = join(root, 'usage.json');
+  const sourcePath = join(root, 'source.json');
+  const analysisPath = join(root, 'analysis.json');
+  const existingPath = join(root, 'existing.json');
+  const outputPath = join(root, 'output.json');
+  const workDir = join(root, 'work');
+  const listed = { id: 'example-1', text: 'The listed {{term}} example.', textHash: 'hash-1' };
+  const extra = { id: 'example-2', text: 'The extra {{term}} example.', textHash: 'hash-2' };
+  const provenance = {
+    parentId: 'card-1',
+    parentType: 'vocab',
+    cardId: 'card-1',
+    usageStatus: 'narrow_specialized',
+  };
+  writeJson(usagePath, {
+    version: 1,
+    entries: [{
+      parentId: 'card-1',
+      cardId: 'card-1',
+      word: 'term',
+      sense: 'specialized sense',
+      examples: [{ ...listed, modelAssessment: 'Prior assessment.' }],
+      decision: {
+        lexicalAction: 'keep',
+        correctedWord: '',
+        correctedSense: '',
+        usageStatus: 'narrow_specialized',
+        usageReason: 'A current but specialized regional expression.',
+        examples: [{ action: 'keep' }],
+      },
+    }],
+  });
+  writeJson(sourcePath, {
+    version: 1,
+    sentences: [
+      { ...listed, provenance: [provenance] },
+      { ...extra, provenance: [provenance] },
+    ],
+  });
+  writeJson(analysisPath, {
+    version: 1,
+    entries: [{
+      id: extra.id,
+      textHash: extra.textHash,
+      analysis: { americanEnglish: { status: 'not_american', explanation: 'Regional wording.' } },
+    }],
+  });
+  const existingEntries = [listed, extra].map(sentence => ({
+    id: sentence.id,
+    textHash: sentence.textHash,
+    usageStatus: 'narrow_specialized',
+    americanEnglish: { status: 'not_american', explanation: 'Independently adjudicated regional wording.' },
+  }));
+  writeJson(existingPath, { version: 1, entries: existingEntries });
+
+  execFileSync(process.execPath, [
+    join(scripts, 'adjudicate-sentence-american-status.mjs'),
+    usagePath,
+    sourcePath,
+    outputPath,
+    workDir,
+    existingPath,
+    analysisPath,
+  ]);
+  const output = JSON.parse(readFileSync(outputPath, 'utf8'));
+  assert.deepEqual(output.entries.map((entry: { id: string }) => entry.id), ['example-1', 'example-2']);
+});
