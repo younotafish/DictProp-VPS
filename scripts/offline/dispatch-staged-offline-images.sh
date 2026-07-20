@@ -167,3 +167,6 @@ PY
   log "$WAVE_NAME published ($WAVE_COUNT new images); cooling down for ${COOLDOWN_SECONDS}s"
   sleep "$COOLDOWN_SECONDS"
 done
+
+printf '%s\n' "$PUBLISHED_COUNT" > "$STATE_ROOT/complete"
+log "vocabulary image publication completion marker verified: $PUBLISHED_COUNT/$TOTAL_COUNT"
