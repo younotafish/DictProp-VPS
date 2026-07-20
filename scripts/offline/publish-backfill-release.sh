@@ -58,7 +58,8 @@ while :; do
   COMPONENT_STATE="$(component_states || printf 'unknown|unknown\n')"
   API_STATE="${COMPONENT_STATE%%|*}"
   ACTIONS_STATE="${COMPONENT_STATE#*|}"
-  if [ "$API_STATE" != "operational" ] || [ "$ACTIONS_STATE" != "operational" ]; then
+  if [ "$API_STATE" = "unknown" ] || [ "$API_STATE" = "major_outage" ] \
+    || [ "$ACTIONS_STATE" = "unknown" ] || [ "$ACTIONS_STATE" = "major_outage" ]; then
     log "GitHub not ready (API=$API_STATE, Actions=$ACTIONS_STATE); checking again later"
     sleep_for_poll
     continue
