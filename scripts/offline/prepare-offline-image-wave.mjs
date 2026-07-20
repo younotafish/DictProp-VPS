@@ -12,12 +12,12 @@ import { basename, join, resolve } from 'node:path';
 
 const [sourceArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!sourceArg || !outputArg) {
-  throw new Error('Usage: prepare-offline-image-wave.mjs <source-directory> <output-directory> [max-entries=500] [published-manifest.json ...]');
+  throw new Error('Usage: prepare-offline-image-wave.mjs <source-directory> <output-directory> [max-entries=100] [published-manifest.json ...]');
 }
 
 const sourceDir = resolve(sourceArg);
 const outputDir = resolve(outputArg);
-const maxEntries = Number(maxEntriesArg || 500);
+const maxEntries = Number(maxEntriesArg || 100);
 if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) throw new Error('max-entries must be a positive integer');
 
 const manifest = JSON.parse(readFileSync(join(sourceDir, 'manifest.json'), 'utf8'));

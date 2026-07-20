@@ -3,12 +3,13 @@
 set -euo pipefail
 
 SOURCE_ROOT="${1:-data/offline-backfill/authoritative-vocab-images}"
-BATCH_SIZE="${2:-500}"
+BATCH_SIZE="${2:-100}"
 REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
 STATE_ROOT="${OFFLINE_IMAGE_WAVE_STATE_ROOT:-/tmp/dictprop-staged-offline-images}"
+COOLDOWN_SECONDS="${OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS:-60}"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -24,6 +25,13 @@ manifest_count() {
     return
   fi
   node -e 'const fs=require("fs"); const ids=new Set(); for (const path of process.argv.slice(1)) { for (const entry of JSON.parse(fs.readFileSync(path,"utf8")).entries) ids.add(entry.imageId); } console.log(ids.size)' "$@"
+}
+
+publisher_state_dir() {
+  local tag="$1"
+  local state_key
+  state_key="$(printf '%s' "$tag" | tr -c 'A-Za-z0-9._-' '_')"
+  printf '%s/dictprop-publish-%s\n' "${TMPDIR:-/tmp}" "$state_key"
 }
 
 if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ]; then
@@ -46,6 +54,16 @@ log "waiting for staged saved-sentence imports before publishing vocabulary imag
 while pgrep -f '[d]ispatch-staged-sentence-backfill.sh' >/dev/null; do
   sleep 300
 done
+
+# Recover a wave that completed remotely just before a local restart.
+while IFS= read -r tag_file; do
+  wave_dir="$(dirname "$tag_file")"
+  release_tag="$(tr -d '[:space:]' < "$tag_file")"
+  publisher_state="$(publisher_state_dir "$release_tag")"
+  if [ -s "$publisher_state/complete" ]; then
+    cp "$publisher_state/complete" "$wave_dir/published"
+  fi
+done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-tag | sort)
 
 PUBLISHED_MANIFESTS=()
 while IFS= read -r manifest; do
@@ -123,15 +141,18 @@ PY
     printf 'vocab-images-%s-%s\n' "$WAVE_NAME" "$(date -u +%Y%m%dT%H%M%SZ)" > "$TAG_FILE"
   fi
   RELEASE_TAG="$(tr -d '[:space:]' < "$TAG_FILE")"
-  until "$GH_BIN" release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
-    || "$GH_BIN" release create "$RELEASE_TAG" \
-      --repo "$REPO" \
-      --title "Temporary encrypted vocabulary image $WAVE_NAME" \
-      --notes "Locally generated and strictly reviewed vocabulary images; removed after verified import." \
-      --latest=false; do
-    log "GitHub release creation unavailable for $WAVE_NAME; retrying later"
-    sleep 300
-  done
+  PUBLISHER_STATE="$(publisher_state_dir "$RELEASE_TAG")"
+  if [ ! -s "$PUBLISHER_STATE/complete" ]; then
+    until "$GH_BIN" release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
+      || "$GH_BIN" release create "$RELEASE_TAG" \
+        --repo "$REPO" \
+        --title "Temporary encrypted vocabulary image $WAVE_NAME" \
+        --notes "Locally generated and strictly reviewed vocabulary images; removed after verified import." \
+        --latest=false; do
+      log "GitHub release creation unavailable for $WAVE_NAME; retrying later"
+      sleep 300
+    done
+  fi
 
   scripts/offline/publish-backfill-release.sh \
     "$RELEASE_TAG" \
@@ -142,5 +163,6 @@ PY
     300
   date -u +%FT%TZ > "$WAVE_DIR/published"
   PUBLISHED_MANIFESTS+=("$WAVE_DIR/manifest.json")
-  log "$WAVE_NAME published ($WAVE_COUNT new images)"
+  log "$WAVE_NAME published ($WAVE_COUNT new images); cooling down for ${COOLDOWN_SECONDS}s"
+  sleep "$COOLDOWN_SECONDS"
 done

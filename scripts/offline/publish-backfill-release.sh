@@ -189,7 +189,7 @@ while :; do
   fi
   if [ "$IMPORT_STATUS" != "completed" ]; then
     log "$OPERATION import $IMPORT_ID is $IMPORT_STATUS"
-    sleep 180
+    sleep 60
     continue
   fi
 
