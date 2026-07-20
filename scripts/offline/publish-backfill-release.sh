@@ -18,6 +18,16 @@ GH_BIN="${GH_BIN:-./.gh}"
 STATE_KEY="$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._-' '_')"
 STATE_DIR="${TMPDIR:-/tmp}/dictprop-publish-${STATE_KEY}"
 
+case "$OPERATION" in
+  import|corpus-import|image-import|enrichment-import)
+    IMPORT_JOB="$OPERATION"
+    ;;
+  *)
+    echo "Unsupported bridge import operation: $OPERATION" >&2
+    exit 2
+    ;;
+esac
+
 mkdir -p "$STATE_DIR"
 
 log() {
@@ -155,17 +165,26 @@ while :; do
 
   if [ ! -s "$STATE_DIR/import-run" ]; then
     PREVIOUS_RUN_ID="$(tr -d '[:space:]' < "$STATE_DIR/previous-run")"
-    IMPORT_ID="$($GH_BIN run list \
+    if ! [[ "$PREVIOUS_RUN_ID" =~ ^[0-9]+$ ]]; then PREVIOUS_RUN_ID=0; fi
+    IMPORT_ID=""
+    while IFS= read -r candidate_run_id; do
+      if "$GH_BIN" run view "$candidate_run_id" --repo "$REPO" --json jobs \
+        --jq ".jobs[] | select(.name == \"$IMPORT_JOB\" and (.status == \"in_progress\" or (.status == \"completed\" and .conclusion != \"skipped\"))) | .name" \
+        2>/dev/null | grep -qx "$IMPORT_JOB"; then
+        IMPORT_ID="$candidate_run_id"
+        break
+      fi
+    done < <("$GH_BIN" run list \
       --repo "$REPO" \
       --workflow sentence-backfill.yml \
       --event workflow_dispatch \
-      --limit 10 \
+      --limit 30 \
       --json databaseId \
-      --jq "[.[] | select((.databaseId | tostring) != \"$PREVIOUS_RUN_ID\")] | if length == 0 then empty else .[0].databaseId end" \
-      2>/dev/null || true)"
+      --jq ".[] | select(.databaseId > $PREVIOUS_RUN_ID) | .databaseId" \
+      2>/dev/null || true)
     if [ -z "$IMPORT_ID" ]; then
-      log "import dispatched; waiting for its run ID"
-      sleep 120
+      log "$OPERATION import dispatched; waiting for its exact run ID"
+      sleep 20
       continue
     fi
     printf '%s\n' "$IMPORT_ID" > "$STATE_DIR/import-run"
