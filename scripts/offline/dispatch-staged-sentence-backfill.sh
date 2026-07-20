@@ -68,7 +68,11 @@ while IFS= read -r manifest; do
 done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json | sort)
 
 while :; do
-  PUBLISHED_COUNT="$(manifest_count "${PUBLISHED_MANIFESTS[@]}")"
+  if [ "${#PUBLISHED_MANIFESTS[@]}" -eq 0 ]; then
+    PUBLISHED_COUNT=0
+  else
+    PUBLISHED_COUNT="$(manifest_count "${PUBLISHED_MANIFESTS[@]}")"
+  fi
   if [ "$PUBLISHED_COUNT" -ge "$TOTAL_COUNT" ]; then
     log "all $TOTAL_COUNT saved sentences are published"
     break
@@ -86,11 +90,18 @@ while :; do
   WAVE_NAME="wave-$(printf '%04d' "$WAVE_NUMBER")"
   WAVE_DIR="$STATE_ROOT/$WAVE_NAME"
   mkdir -p "$WAVE_DIR"
-  RESULT="$(node scripts/offline/prepare-sentence-backfill-wave.mjs \
-    "$SOURCE_ROOT" \
-    "$WAVE_DIR" \
-    "$BATCH_SIZE" \
-    "${PUBLISHED_MANIFESTS[@]}")"
+  if [ "${#PUBLISHED_MANIFESTS[@]}" -eq 0 ]; then
+    RESULT="$(node scripts/offline/prepare-sentence-backfill-wave.mjs \
+      "$SOURCE_ROOT" \
+      "$WAVE_DIR" \
+      "$BATCH_SIZE")"
+  else
+    RESULT="$(node scripts/offline/prepare-sentence-backfill-wave.mjs \
+      "$SOURCE_ROOT" \
+      "$WAVE_DIR" \
+      "$BATCH_SIZE" \
+      "${PUBLISHED_MANIFESTS[@]}")"
+  fi
   WAVE_COUNT="$(printf '%s' "$RESULT" | node -e 'let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).waveEntries))')"
   if [ "$WAVE_COUNT" -eq 0 ]; then
     log "no unpublished verified sentences were found; retrying later"
