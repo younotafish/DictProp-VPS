@@ -53,6 +53,24 @@ fi
 
 mkdir -p "$candidates" "$images" "$work_root"
 
+if node - "$targets" "$images" <<'NODE'
+const { existsSync, readFileSync, statSync } = require('node:fs');
+const { join, resolve } = require('node:path');
+const [targetsPath, imagesPath] = process.argv.slice(2);
+const payload = JSON.parse(readFileSync(resolve(targetsPath), 'utf8'));
+if (!Array.isArray(payload.targets)) throw new Error('Target manifest is invalid');
+const imageDir = resolve(imagesPath);
+const complete = payload.targets.every(target => {
+  const path = join(imageDir, target.filename);
+  return existsSync(path) && statSync(path).size > 0;
+});
+process.exit(complete ? 0 : 1);
+NODE
+then
+  echo "[$(date -u +%FT%TZ)] all target images are already accepted"
+  exit 0
+fi
+
 retry() {
   local attempt=0
   until "$@"; do
@@ -63,6 +81,8 @@ retry() {
 }
 
 cleanup() {
+  # macOS Bash 3.2 treats an empty array expansion as unset under nounset.
+  set +u
   if [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" 2>/dev/null; then
     kill "$watcher_pid" 2>/dev/null || true
     wait "$watcher_pid" 2>/dev/null || true

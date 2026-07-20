@@ -45,3 +45,39 @@ test('streaming image QA reuses a completed chunk without judging it again', () 
     rejected.map(target => target.imageId));
   assert.equal(readFileSync(join(images, 'image-0.webp'), 'utf8'), 'accepted');
 });
+
+test('streaming image QA reuses historical rejections accepted by a later candidate', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-image-later-accepted-'));
+  const candidates = join(root, 'candidates');
+  const images = join(root, 'images');
+  const work = join(root, 'work');
+  const chunk = join(work, 'chunk-0001');
+  mkdirSync(candidates, { recursive: true });
+  mkdirSync(images, { recursive: true });
+  mkdirSync(chunk, { recursive: true });
+  const targets = Array.from({ length: 8 }, (_, index) => ({
+    imageId: `image-${index}`,
+    filename: `image-${index}.webp`,
+    prompt: `Prompt ${index}`,
+  }));
+  for (const target of targets.slice(0, 6)) writeFileSync(join(images, target.filename), 'accepted');
+  const historicallyRejected = targets.slice(4);
+  const targetsPath = join(root, 'targets.json');
+  const outputPath = join(root, 'refined.json');
+  writeJson(targetsPath, { version: 1, targets });
+  writeJson(join(chunk, 'refined.json'), { version: 1, targets: historicallyRejected });
+
+  execFileSync(process.execPath, [
+    resolve('..', 'scripts', 'offline', 'stream-image-quality-pass.mjs'),
+    targetsPath,
+    candidates,
+    images,
+    work,
+    outputPath,
+    '1',
+    '8',
+  ]);
+  const output = JSON.parse(readFileSync(outputPath, 'utf8'));
+  assert.deepEqual(output.targets.map((target: { imageId: string }) => target.imageId),
+    historicallyRejected.map(target => target.imageId));
+});

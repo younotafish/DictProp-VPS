@@ -86,7 +86,7 @@ function readTargetManifest(path, label) {
   return manifest;
 }
 
-function validateChunkPartition(targets, rejected, label) {
+function validateChunkCheckpoint(targets, rejected, label) {
   const targetFiles = new Set(targets.map(target => target.filename));
   const rejectedFiles = new Set();
   for (const target of rejected) {
@@ -98,8 +98,10 @@ function validateChunkPartition(targets, rejected, label) {
   for (const target of targets) {
     const accepted = fileReady(join(imageDir, target.filename));
     const wasRejected = rejectedFiles.has(target.filename);
-    if (accepted === wasRejected) {
-      throw new Error(`${label} does not partition target ${target.imageId || target.filename}`);
+    // A later candidate may now have accepted an image that this historical
+    // checkpoint rejected. Only targets recorded as accepted must stay present.
+    if (!accepted && !wasRejected) {
+      throw new Error(`${label} is missing target ${target.imageId || target.filename}`);
     }
   }
 }
@@ -153,7 +155,7 @@ for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
 
   if (fileReady(refinedPath)) {
     const refined = readTargetManifest(refinedPath, `${chunkName} refinement checkpoint`);
-    validateChunkPartition(targets, refined.targets, `${chunkName} refinement checkpoint`);
+    validateChunkCheckpoint(targets, refined.targets, `${chunkName} refinement checkpoint`);
     refinedTargets.push(...refined.targets);
     process.stderr.write(`Reusing completed candidate ${candidateNumber} ${chunkName}\n`);
     continue;
@@ -175,7 +177,7 @@ for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
 
   if (fileReady(rejectedPath)) {
     const rejected = readTargetManifest(rejectedPath, `${chunkName} judgment checkpoint`);
-    validateChunkPartition(targets, rejected.targets, `${chunkName} judgment checkpoint`);
+    validateChunkCheckpoint(targets, rejected.targets, `${chunkName} judgment checkpoint`);
     process.stderr.write(`Reusing completed candidate ${candidateNumber} judgment for ${chunkName}\n`);
   } else {
     process.stderr.write(`Judging candidate ${candidateNumber}, chunk ${chunkIndex + 1}/${chunks.length}\n`);
@@ -184,13 +186,13 @@ for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
       String(candidateNumber),
     ]);
     const rejected = readTargetManifest(rejectedPath, `${chunkName} judgment checkpoint`);
-    validateChunkPartition(targets, rejected.targets, `${chunkName} judgment checkpoint`);
+    validateChunkCheckpoint(targets, rejected.targets, `${chunkName} judgment checkpoint`);
   }
   await retry(process.execPath, [
     'scripts/offline/refine-rejected-image-prompts.mjs', rejectedPath, refinedPath, refineDir,
   ]);
   const refined = readTargetManifest(refinedPath, `${chunkName} refinement checkpoint`);
-  validateChunkPartition(targets, refined.targets, `${chunkName} refinement checkpoint`);
+  validateChunkCheckpoint(targets, refined.targets, `${chunkName} refinement checkpoint`);
   refinedTargets.push(...refined.targets);
 }
 
