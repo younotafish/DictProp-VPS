@@ -23,7 +23,30 @@ jobs:
             free -h
             echo '=== DISK ==='
             df -h .
-            du -sh data data/backups 2>/dev/null || true
+            ls -lah data | sed -n '1,80p'
+            find data/backups -maxdepth 1 -type f -printf '%s %TY-%Tm-%TdT%TH:%TM:%TS %p\n' 2>/dev/null \
+              | sort -nr | head -20 || true
+            echo '=== SQLITE STORAGE ==='
+            docker compose exec -T app node -e '
+              const Database = require("/app/server/node_modules/better-sqlite3");
+              const db = new Database("/app/data/dictprop.db", { readonly: true });
+              const scalar = sql => Object.values(db.prepare(sql).get())[0];
+              console.log(JSON.stringify({
+                pageSize: db.pragma("page_size", { simple: true }),
+                pageCount: db.pragma("page_count", { simple: true }),
+                freePages: db.pragma("freelist_count", { simple: true }),
+                journalMode: db.pragma("journal_mode", { simple: true }),
+                itemImages: scalar("SELECT COUNT(*) FROM item_images"),
+                legacyImageRows: scalar("SELECT COUNT(*) FROM item_images WHERE content_hash IS NULL"),
+                imageBlobs: scalar("SELECT COUNT(*) FROM image_blobs"),
+                sentenceImages: Object.values(db.prepare(`SELECT COUNT(*) FROM item_images ii
+                  JOIN items i ON i.id = ii.id AND i.user_id = ii.user_id
+                  WHERE i.type = ? AND i.is_deleted = 0`).get("sentence"))[0],
+                recentlyUpdatedImages: scalar(`SELECT COUNT(*) FROM item_images
+                  WHERE updated_at >= ${Date.now() - 2 * 60 * 60 * 1000}`),
+              }));
+              db.close();
+            '
             echo '=== CONTAINERS ==='
             docker compose ps
             docker stats --no-stream || true
