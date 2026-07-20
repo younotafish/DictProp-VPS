@@ -5,7 +5,7 @@ set -euo pipefail
 SOURCE_ROOT="${1:-data/offline-backfill/final-sentence-images}"
 FIRST_WAVE_MANIFEST="${2:-/tmp/dictprop-sentence-wave-1/manifest.json}"
 FIRST_WAVE_TAG="${3:-sentence-images-20260720T004225Z}"
-REQUIRED_DEPLOY_SHA="${4:-d533097}"
+REQUIRED_DEPLOY_SHA="${4:-$(git rev-parse HEAD)}"
 CHECKPOINTS="${SENTENCE_WAVE_CHECKPOINTS:-1200 1500 1714}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"

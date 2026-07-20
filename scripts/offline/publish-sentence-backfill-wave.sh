@@ -82,7 +82,15 @@ while :; do
     --jq '.[0] | [.databaseId,.status,.conclusion,.url] | @tsv' \
     2>/dev/null || true)"
   if [ -z "$DEPLOY_LINE" ]; then
-    log "archive uploaded; waiting for deployment run for $DEPLOY_SHA"
+    if [ ! -e "$STATE_DIR/deploy-dispatched" ]; then
+      log "no deployment run exists for $DEPLOY_SHA; dispatching it explicitly"
+      if "$GH_BIN" workflow run deploy.yml --repo "$REPO" --ref main; then
+        touch "$STATE_DIR/deploy-dispatched"
+        sleep 20
+      fi
+    else
+      log "archive uploaded; waiting for explicitly dispatched deployment $DEPLOY_SHA"
+    fi
     sleep_for_poll
     continue
   fi

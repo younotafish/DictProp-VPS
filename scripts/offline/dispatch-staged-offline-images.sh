@@ -4,7 +4,7 @@ set -euo pipefail
 
 SOURCE_ROOT="${1:-data/offline-backfill/authoritative-vocab-images}"
 BATCH_SIZE="${2:-500}"
-REQUIRED_DEPLOY_SHA="${3:-d533097}"
+REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
