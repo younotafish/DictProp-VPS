@@ -1,0 +1,38 @@
+name: Recover Production App
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    steps:
+      - name: Restart app container and verify health
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -e
+            cd /opt/dictprop-vps
+            docker compose restart app
+            consecutive=0
+            for attempt in $(seq 1 30); do
+              if curl --max-time 3 -sf http://localhost:3000/api/health >/dev/null; then
+                consecutive=$((consecutive + 1))
+                if [ "$consecutive" -ge 3 ]; then
+                  echo "Production app recovered"
+                  exit 0
+                fi
+              else
+                consecutive=0
+              fi
+              sleep 2
+            done
+            docker compose logs --tail=200 app || true
+            exit 1
