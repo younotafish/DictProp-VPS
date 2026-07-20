@@ -170,6 +170,10 @@ try {
   const imageColumns = db.prepare(`PRAGMA table_info(item_images)`).all() as { name: string }[];
   if (!imageColumns.some(c => c.name === 'mime_type')) db.exec(`ALTER TABLE item_images ADD COLUMN mime_type TEXT`);
   if (!imageColumns.some(c => c.name === 'content_hash')) db.exec(`ALTER TABLE item_images ADD COLUMN content_hash TEXT`);
+  // Cover stripped-item image markers without fetching legacy rows whose data column can still
+  // contain a large base64 payload. This keeps the first sync after a restart from blocking Node.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_user_versions
+    ON item_images(user_id, id, content_hash, updated_at)`);
   db.exec(`CREATE TABLE IF NOT EXISTS image_blobs (
     content_hash TEXT PRIMARY KEY,
     data BLOB NOT NULL,

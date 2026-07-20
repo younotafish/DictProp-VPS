@@ -176,7 +176,9 @@ jobs:
             echo "Release container started"
             wait_for_health() {
               consecutive=0
-              for attempt in $(seq 1 30); do
+              # Cold SQLite page-cache work may briefly occupy the single Node thread after a large
+              # backfill. Do not roll back a healthy release merely because its first sync is slow.
+              for attempt in $(seq 1 120); do
                 if curl --max-time 3 -sf http://localhost:3000/api/health >/dev/null; then
                   consecutive=$((consecutive + 1))
                   if [ "$consecutive" -ge 3 ]; then return 0; fi

@@ -20,6 +20,17 @@ jobs:
           script: |
             set -e
             cd /opt/dictprop-vps
+            echo 'Creating image-version covering index'
+            docker compose exec -T app node -e '
+              const Database = require("/app/server/node_modules/better-sqlite3");
+              const db = new Database("/app/data/dictprop.db");
+              db.pragma("busy_timeout = 300000");
+              db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_user_versions
+                ON item_images(user_id, id, content_hash, updated_at)`);
+              db.pragma("wal_checkpoint(TRUNCATE)");
+              db.close();
+              console.log("Image-version index and WAL checkpoint complete");
+            '
             docker compose restart app
             consecutive=0
             for attempt in $(seq 1 30); do
