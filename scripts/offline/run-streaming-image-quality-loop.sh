@@ -54,7 +54,9 @@ cleanup() {
     wait "$generator_pid" 2>/dev/null || true
   done
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 generate_candidates() {
   local generation_targets="$1"
