@@ -1,0 +1,35 @@
+name: Diagnose Production VPS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect host and app state
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -u
+            cd /opt/dictprop-vps
+            echo '=== UPTIME ==='
+            uptime
+            echo '=== MEMORY ==='
+            free -h
+            echo '=== DISK ==='
+            df -h .
+            du -sh data data/backups 2>/dev/null || true
+            echo '=== CONTAINERS ==='
+            docker compose ps
+            docker stats --no-stream || true
+            echo '=== RELEVANT PROCESSES ==='
+            ps -eo pid,ppid,stat,etime,%cpu,%mem,cmd \
+              | grep -E 'import-(sentence-backfill|offline-images)|docker|node|sqlite|openssl' \
+              | grep -v grep || true
+            echo '=== LOCAL HEALTH ==='
+            curl --max-time 5 -sS -w '\nHTTP %{http_code} in %{time_total}s\n' http://localhost:3000/api/health || true
