@@ -69,7 +69,7 @@ function runCodex(args, prompt) {
     const timeout = setTimeout(() => {
       killCodex(child, 'SIGTERM');
       hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, 15 * 60 * 1000);
+    }, 5 * 60 * 1000);
     child.on('error', error => {
       activeChildren.delete(child);
       reject(error);
