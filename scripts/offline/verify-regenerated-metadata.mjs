@@ -3,15 +3,26 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const [sourceArg, manifestArg] = process.argv.slice(2);
+const [sourceArg, manifestArg, adjudicationArg] = process.argv.slice(2);
 if (!sourceArg || !manifestArg) {
-  throw new Error('Usage: verify-regenerated-metadata.mjs <corpus-export.json> <regenerated-manifest.json>');
+  throw new Error('Usage: verify-regenerated-metadata.mjs <corpus-export.json> <regenerated-manifest.json> [usage-adjudication.json]');
 }
 
 const source = JSON.parse(readFileSync(resolve(sourceArg), 'utf8'));
 const manifest = JSON.parse(readFileSync(resolve(manifestArg), 'utf8'));
+const adjudication = adjudicationArg ? JSON.parse(readFileSync(resolve(adjudicationArg), 'utf8')) : null;
 if (!Array.isArray(source?.items) || !Array.isArray(manifest?.entries)) {
   throw new Error('Source export or regenerated manifest is invalid');
+}
+if (adjudication && !Array.isArray(adjudication.entries)) throw new Error('Usage adjudication is invalid');
+const lexicalCorrections = new Map();
+for (const entry of adjudication?.entries || []) {
+  if (entry.decision?.lexicalAction !== 'correct') continue;
+  if (lexicalCorrections.has(entry.cardId) || typeof entry.decision.correctedWord !== 'string' ||
+      typeof entry.decision.correctedSense !== 'string') {
+    throw new Error(`Usage adjudication has an invalid lexical correction: ${entry.cardId}`);
+  }
+  lexicalCorrections.set(entry.cardId, entry.decision);
 }
 
 const statuses = ['modern_american', 'current_general', 'narrow_specialized', 'british_only', 'rare_or_dated'];
@@ -149,7 +160,12 @@ for (const sourceItem of source.items) {
 
   const validateCard = (sourceCard, targetCard, context) => {
     cards++;
-    if (!targetCard || targetCard.id !== sourceCard.id || targetCard.word !== sourceCard.word) {
+    const protectedList = protectedExamplesFor(sourceCard, savedTextSet, linkedSentences);
+    const correction = lexicalCorrections.get(sourceCard.id);
+    const expectedWord = correction && protectedList.length === 0 ? correction.correctedWord : sourceCard.word;
+    const expectedSense = correction && protectedList.length === 0 ? correction.correctedSense : targetCard?.sense;
+    if (!targetCard || targetCard.id !== sourceCard.id || targetCard.word !== expectedWord ||
+        (correction && protectedList.length === 0 && targetCard.sense !== expectedSense)) {
       fail(context, 'card id or headword changed');
       return;
     }
@@ -160,7 +176,6 @@ for (const sourceItem of source.items) {
         (targetCard.forms || []).some(form => normalizedSentence(form) === normalizedSentence(targetCard.word))) {
       fail(context, 'forms repeats the unchanged headword');
     }
-    const protectedList = protectedExamplesFor(sourceCard, savedTextSet, linkedSentences);
     const targetExamples = new Set(targetCard.examples || []);
     if (protectedList.length > 0) {
       protectedExamples += (sourceCard.examples || []).length;
