@@ -20,7 +20,7 @@ const sentences: SentenceExportRecord[] = getAllItems(true, owner.id)
       ...(typeof data.sourceSense === 'string' ? { sourceSense: data.sourceSense } : {}),
       textHash: createHash('sha256').update(text).digest('hex'),
       hasAnalysis: isSentenceAnalysis(data.analysis),
-      hasImage: data.imageUrl === 'server:has_image' ||
+      hasImage: data.imageUrl?.startsWith('server:has_image') ||
         (typeof data.imageUrl === 'string' && data.imageUrl.startsWith('data:image/')),
     };
   });

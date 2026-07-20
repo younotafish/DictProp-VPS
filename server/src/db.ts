@@ -283,7 +283,7 @@ const imageStmts = {
     FROM item_images i LEFT JOIN image_blobs b ON b.content_hash = i.content_hash
     WHERE i.id = ? AND i.user_id = ?`),
   manifest: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
-  allIdsForUser: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
+  allIdsForUser: db.prepare(`SELECT id, content_hash, updated_at FROM item_images WHERE user_id = ?`),
   owner: db.prepare(`SELECT user_id, content_hash FROM item_images WHERE id = ?`),
   deleteUnreferencedBlob: db.prepare(`DELETE FROM image_blobs
     WHERE content_hash = ? AND NOT EXISTS (
@@ -291,7 +291,7 @@ const imageStmts = {
     )`),
   assignOrphan: db.prepare(`UPDATE item_images SET user_id = ? WHERE user_id IS NULL`),
 };
-const imageIdSetCache = new Map<string, { expiresAt: number; ids: Set<string> }>();
+const imageVersionCache = new Map<string, { expiresAt: number; versions: Map<string, string> }>();
 
 function parseImageDataUri(dataUri: string): { data: Buffer; mimeType: string } | null {
   const match = dataUri.match(/^data:(image\/(?:avif|gif|jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
@@ -315,7 +315,7 @@ function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeT
   if (reference.changes > 0 && owner?.content_hash && owner.content_hash !== contentHash) {
     imageStmts.deleteUnreferencedBlob.run(owner.content_hash);
   }
-  if (reference.changes > 0 && userId) imageIdSetCache.delete(userId);
+  if (reference.changes > 0 && userId) imageVersionCache.delete(userId);
   return reference.changes > 0;
 }
 
@@ -491,20 +491,25 @@ export interface UserRow {
   created_at: number;
 }
 
-function rowToItem(row: ItemRow, stripImages = false, imageIds?: Set<string>) {
+function rowToItem(row: ItemRow, stripImages = false, imageVersions?: Map<string, string>) {
   const data = JSON.parse(row.data);
   if (stripImages) {
     // An image exists if it's in item_images (post-migration) OR still inline (transition).
-    // Replace it with a marker so the client knows to fetch it via the image endpoint.
-    const hasImage = (id: string, url: any): boolean =>
-      (!!imageIds && imageIds.has(id)) || (typeof url === 'string' && url.startsWith('data:image/'));
-    if (hasImage(data.id, data.imageUrl)) {
-      data.imageUrl = 'server:has_image';
+    // Include a content version so clients can invalidate an older IndexedDB image after replacement.
+    const markerFor = (id: string, url: any): string | null => {
+      const version = imageVersions?.get(id);
+      if (version) return `server:has_image:${version}`;
+      return typeof url === 'string' && url.startsWith('data:image/') ? 'server:has_image:inline' : null;
+    };
+    const topMarker = markerFor(data.id, data.imageUrl);
+    if (topMarker) {
+      data.imageUrl = topMarker;
     }
     if (Array.isArray(data.vocabs)) {
       data.vocabs = data.vocabs.map((v: any) => {
-        if (hasImage(v.id, v.imageUrl)) {
-          return { ...v, imageUrl: 'server:has_image' };
+        const marker = markerFor(v.id, v.imageUrl);
+        if (marker) {
+          return { ...v, imageUrl: marker };
         }
         return v;
       });
@@ -524,14 +529,21 @@ function rowToItem(row: ItemRow, stripImages = false, imageIds?: Set<string>) {
 
 // ─── Item CRUD (all scoped by userId) ───
 
-/** Set of all ids (item + vocab) that have an image, for cheap "has image" marking. */
-function getImageIdSet(userId: string): Set<string> {
-  const cached = imageIdSetCache.get(userId);
-  if (cached && cached.expiresAt > Date.now()) return cached.ids;
-  const rows = imageStmts.allIdsForUser.all(userId) as Array<{ id: string }>;
-  const ids = new Set(rows.map(r => r.id));
-  imageIdSetCache.set(userId, { expiresAt: Date.now() + 60_000, ids });
-  return ids;
+/** Image ids and compact content versions used in stripped response markers. */
+function getImageVersionMap(userId: string): Map<string, string> {
+  const cached = imageVersionCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.versions;
+  const rows = imageStmts.allIdsForUser.all(userId) as Array<{
+    id: string;
+    content_hash: string | null;
+    updated_at: number;
+  }>;
+  const versions = new Map(rows.map(row => [
+    row.id,
+    (row.content_hash || `legacy-${row.updated_at}`).slice(0, 20),
+  ]));
+  imageVersionCache.set(userId, { expiresAt: Date.now() + 60_000, versions });
+  return versions;
 }
 
 /** Inject base64 from item_images back into already-parsed items (the ?images=true path). */
@@ -563,7 +575,7 @@ export function getAllItems(stripImages = false, userId: string) {
   }
   // Stripped list path: images live in item_images, so items.data is now tiny.
   // One cheap id-only query tells us which items/vocabs to mark as having an image.
-  const imageIds = getImageIdSet(userId);
+  const imageVersions = getImageVersionMap(userId);
   const CHUNK = 200;
   const items: any[] = [];
   let lastRowId = 0;
@@ -571,7 +583,7 @@ export function getAllItems(stripImages = false, userId: string) {
     const rows = stmts.getAllChunk.all(userId, lastRowId, CHUNK) as Array<ItemRow & { _rowid: number }>;
     if (rows.length === 0) break;
     for (const row of rows) {
-      items.push(rowToItem(row, true, imageIds));
+      items.push(rowToItem(row, true, imageVersions));
     }
     lastRowId = rows[rows.length - 1]._rowid;
   }
@@ -598,10 +610,10 @@ export function getAllSentenceTexts(): string[] {
 }
 
 export function getItemsSince(since: number, stripImages = false, userId: string) {
-  const imageIds = stripImages ? getImageIdSet(userId) : undefined;
+  const imageVersions = stripImages ? getImageVersionMap(userId) : undefined;
   const items: any[] = [];
   for (const row of stmts.getSince.iterate(userId, since, since) as Iterable<ItemRow>) {
-    items.push(rowToItem(row, stripImages, imageIds));
+    items.push(rowToItem(row, stripImages, imageVersions));
   }
   if (!stripImages) rehydrateImages(items, userId);
   return items;
@@ -628,8 +640,8 @@ export function getItemsAfterRevision(
   ) as ItemRow[];
   const hasMore = rows.length > cappedLimit;
   const page = hasMore ? rows.slice(0, cappedLimit) : rows;
-  const imageIds = stripImages ? getImageIdSet(userId) : undefined;
-  const items = page.map(row => rowToItem(row, stripImages, imageIds));
+  const imageVersions = stripImages ? getImageVersionMap(userId) : undefined;
+  const items = page.map(row => rowToItem(row, stripImages, imageVersions));
   if (!stripImages) rehydrateImages(items, userId);
   const last = page[page.length - 1];
   return {
@@ -946,7 +958,7 @@ export function softDeleteItem(id: string, userId: string) {
 export function getItemById(id: string, userId: string, includeImages = true) {
   const row = stmts.getByIdScoped.get(id, userId) as ItemRow | undefined;
   if (!row) return null;
-  if (!includeImages) return rowToItem(row, true, getImageIdSet(userId));
+  if (!includeImages) return rowToItem(row, true, getImageVersionMap(userId));
   const item = rowToItem(row);
   // Re-inject base64 from item_images for this single item.
   const d = item.data as any;
@@ -1073,7 +1085,7 @@ export const createUserAndClaimItems = db.transaction((opts: {
   if (isFirstUser) {
     stmts.assignOrphanItems.run(user.id);
     imageStmts.assignOrphan.run(user.id);
-    imageIdSetCache.delete(user.id);
+    imageVersionCache.delete(user.id);
   }
   return user;
 });

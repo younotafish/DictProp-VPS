@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
 import { corpusSourceHash } from '../corpus-audit.js';
-import { getAllItems, listAllUsers, upsertItemImageBinary } from '../db.js';
+import { getAllItems, listAllUsers, upsertItem, upsertItemImageBinary } from '../db.js';
 import { env } from '../env.js';
 import { detectImageMimeType } from '../image-format.js';
 import { validateOfflineImageBundle, type OfflineImageBundle } from '../offline-image-import.js';
@@ -20,6 +20,7 @@ if (!owner) throw new Error('Owner account not found');
 
 const bundleRoot = dirname(resolvedManifest);
 const parentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
+const touchedParentIds = new Set<string>();
 const result = { total: bundle.entries.length, replaced: 0, skipped: 0, errors: [] as Array<{ id: string; error: string }> };
 
 for (const entry of bundle.entries) {
@@ -40,10 +41,29 @@ for (const entry of bundle.entries) {
     const mimeType = detectImageMimeType(image);
     if (!mimeType) throw new Error('image format is invalid');
     if (!upsertItemImageBinary(entry.imageId, image, mimeType, owner.id)) throw new Error('image could not be stored');
+    touchedParentIds.add(entry.parentId);
     result.replaced++;
   } catch (error) {
     result.skipped++;
     result.errors.push({ id: entry.imageId, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+// Image bytes live outside the item JSON. Bump each affected parent once so revision-delta clients
+// receive the new content-hash marker and invalidate any older IndexedDB image.
+for (const parentId of touchedParentIds) {
+  const parent = parentById.get(parentId) as any;
+  if (!parent) continue;
+  try {
+    upsertItem({
+      ...parent,
+      updatedAt: Math.max(Date.now(), Number(parent.updatedAt || 0) + 1),
+    }, owner.id);
+  } catch (error) {
+    result.errors.push({
+      id: parentId,
+      error: `image revision could not be published: ${error instanceof Error ? error.message : String(error)}`,
+    });
   }
 }
 

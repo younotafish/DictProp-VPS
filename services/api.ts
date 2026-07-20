@@ -134,8 +134,9 @@ export const undoReviewMutation = async (eventId: string): Promise<UndoReviewRes
  * - network error / 5xx → throws: a transient failure (callers MAY retry).
  * This distinction lets OfflineImage retry flaky downloads instead of giving up on the first miss.
  */
-export const loadItemImage = async (itemId: string): Promise<string | null> => {
-  const res = await fetch(`${API_BASE}/api/items/${itemId}/image`);
+export const loadItemImage = async (itemId: string, imageVersion?: string): Promise<string | null> => {
+  const versionQuery = imageVersion ? `?v=${encodeURIComponent(imageVersion)}` : '';
+  const res = await fetch(`${API_BASE}/api/items/${encodeURIComponent(itemId)}/image${versionQuery}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Failed to load image: ${res.status}`);
   return blobToBase64(await res.blob());
@@ -145,7 +146,10 @@ export const loadItemImage = async (itemId: string): Promise<string | null> => {
  * Fetch images for multiple item IDs in a single request.
  * Returns a map of { id: base64DataUri }.
  */
-export const loadItemImagesBatch = async (ids: string[]): Promise<Record<string, string>> => {
+export const loadItemImagesBatch = async (
+  ids: string[],
+  imageVersions?: ReadonlyMap<string, string>,
+): Promise<Record<string, string>> => {
   if (ids.length === 0) return {};
   const result: Record<string, string> = {};
   let cursor = 0;
@@ -153,7 +157,7 @@ export const loadItemImagesBatch = async (ids: string[]): Promise<Record<string,
     while (cursor < ids.length) {
       const id = ids[cursor++];
       try {
-        const image = await loadItemImage(id);
+        const image = await loadItemImage(id, imageVersions?.get(id));
         if (image) result[id] = image;
       } catch { /* a later prefetch can retry transient failures */ }
     }

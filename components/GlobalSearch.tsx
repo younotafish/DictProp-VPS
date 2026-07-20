@@ -34,7 +34,7 @@ interface Props {
   findSavedByWord: (word: string) => VocabCard[];
   onSearch: (text: string) => void;
   isOnline: boolean;
-  onLazyLoadImage?: (itemId: string) => Promise<string | null>;
+  onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>;
   /** Replace an already-saved word's card(s) with a freshly re-run AI result (refresh). Keeps SRS. */
   onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
   /** Persist an illustration that completed after the user saved this particular sense. */

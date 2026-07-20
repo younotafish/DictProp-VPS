@@ -157,9 +157,22 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const finalData = mergedItem.data as any;
       const localData = localItem.data as any;
       const remoteData = remoteItem.data as any;
+      const remoteImageRevisionIsCurrent =
+        typeof remoteItem.serverRevision === 'number' && typeof localItem.serverRevision === 'number'
+          ? remoteItem.serverRevision > localItem.serverRevision ||
+            (remoteItem.serverRevision === localItem.serverRevision &&
+              (remoteItem.updatedAt || 0) >= (localItem.updatedAt || 0))
+          : (remoteItem.updatedAt || 0) >= (localItem.updatedAt || 0);
+      const remoteCanInvalidateImageCache = (imageUrl: unknown): imageUrl is string =>
+        typeof imageUrl === 'string' &&
+        imageUrl.startsWith('server:has_image:') &&
+        remoteImageRevisionIsCurrent;
       
-      // Main image: LOCAL ALWAYS WINS (since remote might have been stripped)
-      if (localData.imageUrl) {
+      // A newer versioned server marker must replace the local marker so IndexedDB can refresh.
+      // Otherwise preserve the local/offline image as before.
+      if (remoteCanInvalidateImageCache(remoteData.imageUrl)) {
+          finalData.imageUrl = remoteData.imageUrl;
+      } else if (localData.imageUrl) {
           // Local has an image - always keep it
           finalData.imageUrl = localData.imageUrl;
       } else if (remoteData.imageUrl && !finalData.imageUrl) {
@@ -184,8 +197,9 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
                const localVocab: any = localVocabs.get(vocab?.id);
                const remoteVocab: any = remoteVocabs.get(vocab?.id);
                
-               // Local image always wins
-               if (localVocab?.imageUrl) {
+               if (remoteCanInvalidateImageCache(remoteVocab?.imageUrl)) {
+                   vocab.imageUrl = remoteVocab.imageUrl;
+               } else if (localVocab?.imageUrl) {
                    vocab.imageUrl = localVocab.imageUrl;
                } else if (remoteVocab?.imageUrl && !vocab.imageUrl) {
                    vocab.imageUrl = remoteVocab.imageUrl;

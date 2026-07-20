@@ -118,7 +118,7 @@ interface DetailViewProps {
   savedItems: StoredItem[];
   onSearch: (text: string) => void;
   onRefresh?: (text: string) => void; // Force a real AI search, bypassing local cache
-  onLazyLoadImage?: (itemId: string) => Promise<string | null>; // Fetch image from server if missing locally
+  onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>; // Fetch image from server if missing locally
   onUpdateSRS?: (itemId: string) => void; // Direct SRS update (triggers "remember")
   onCompare?: (words: string[]) => void;
   comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
@@ -265,7 +265,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     
     // Check if this item is saved and missing an image
     const isSaved = savedItemsRef.current.some(i => i.data.id === itemId);
-    const hasImage = imageUrl && (imageUrl.startsWith('data:image/') || imageUrl === 'idb:stored' || imageUrl === 'server:has_image');
+    const hasImage = imageUrl && (imageUrl.startsWith('data:image/') || imageUrl === 'idb:stored' || imageUrl.startsWith('server:has_image'));
 
     if (isSaved && !hasImage) {
       // Trigger the server-backed lazy load.
@@ -296,7 +296,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // ('idb:stored'/'server:has_image') → OfflineImage lazy-loads it by id (IDB, then server).
   const sentenceImageUrl = currentSentence ? getItemImageUrl(currentSentence) : undefined;
   const hasSentenceImage = !!sentenceImageUrl;
-  const sentenceImageDirectSrc = sentenceImageUrl?.startsWith('data:') ? sentenceImageUrl : undefined;
+  const sentenceImageDirectSrc = sentenceImageUrl;
 
   // Refs so the post-remember timer and key handlers read fresh sentence state without re-subscribing.
   const sentenceModeRef = useRef(sentenceMode);
@@ -2258,7 +2258,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <div className="md:flex">
                   <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group max-h-48 md:max-h-none md:w-2/5 md:shrink-0">
                     {(data as SearchResult).imageUrl ? (
-                      <OfflineImage src={(data as SearchResult).imageUrl?.startsWith('data:') ? (data as SearchResult).imageUrl : undefined} itemId={(data as SearchResult).id} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" onMissing={onLazyLoadImage} />
+                      <OfflineImage src={(data as SearchResult).imageUrl} itemId={(data as SearchResult).id} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" onMissing={onLazyLoadImage} />
                     ) : (
                       <div className="flex flex-col items-center text-slate-400 py-8">
                         <SearchIcon className="mb-2 opacity-30" size={32}/>

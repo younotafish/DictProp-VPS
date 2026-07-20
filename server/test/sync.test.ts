@@ -49,6 +49,27 @@ test('phrase image merge follows vocab ids after reordering', () => {
   assert.equal(merged.vocabs[1].imageUrl, 'idb:alpha');
 });
 
+test('newer versioned server markers invalidate local image caches by vocab id', () => {
+  const local = phrase([vocab('alpha', 'idb:stored'), vocab('beta', 'idb:stored')], 1);
+  const remote = phrase([
+    vocab('beta', 'server:has_image:bbbbbbbbbbbbbbbbbbbb'),
+    vocab('alpha', 'server:has_image:aaaaaaaaaaaaaaaaaaaa'),
+  ], 2);
+
+  const merged = mergeDatasets([local], [remote])[0].data as any;
+  assert.equal(merged.vocabs[0].imageUrl, 'server:has_image:bbbbbbbbbbbbbbbbbbbb');
+  assert.equal(merged.vocabs[1].imageUrl, 'server:has_image:aaaaaaaaaaaaaaaaaaaa');
+});
+
+test('newer versioned server marker invalidates a saved top-level image', () => {
+  const local = { ...phrase([], 9_999_999), serverRevision: 4 };
+  const remote = { ...phrase([], 2), serverRevision: 5 };
+  (local.data as any).imageUrl = 'idb:stored';
+  (remote.data as any).imageUrl = 'server:has_image:cccccccccccccccccccc';
+  const merged = mergeDatasets([local], [remote])[0].data as any;
+  assert.equal(merged.imageUrl, 'server:has_image:cccccccccccccccccccc');
+});
+
 test('legacy project metadata no longer affects content identity', () => {
   const item = phrase([], 1);
   const moved = { ...item, project: 'project-b' };

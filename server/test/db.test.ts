@@ -113,6 +113,21 @@ test('image ids cannot overwrite another user', () => {
   assert.equal(upsertItemImageBinary('fake-image', Buffer.from('not an image'), 'image/png', 'user-a'), false);
 });
 
+test('stripped image markers change when image content is replaced', () => {
+  const id = 'versioned-image-item';
+  const userId = 'versioned-image-user';
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  upsertItem(makeItem(id, 'versioned image', 1_000, 0, 0), userId);
+  assert.equal(upsertItemImageBinary(id, image, 'image/png', userId), true);
+  const firstMarker = getItemById(id, userId, false)?.data.imageUrl;
+  assert.match(firstMarker, /^server:has_image:[a-f0-9]{20}$/);
+
+  assert.equal(upsertItemImageBinary(id, Buffer.concat([image, Buffer.from([0])]), 'image/png', userId), true);
+  const secondMarker = getItemById(id, userId, false)?.data.imageUrl;
+  assert.match(secondMarker, /^server:has_image:[a-f0-9]{20}$/);
+  assert.notEqual(secondMarker, firstMarker);
+});
+
 test('server revisions reject stale content independently of device clocks', () => {
   const id = 'revision-item';
   const revision = upsertItem(makeItem(id, 'current', 2_000, 0, 0), 'user-a').revision;

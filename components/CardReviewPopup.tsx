@@ -40,7 +40,7 @@ interface CardReviewPopupProps {
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
-  onLazyLoadImage?: (itemId: string) => Promise<string | null>;
+  onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>;
   /** Fetch the word's full set of AI senses (so we can page through saved + not-yet-saved meanings). */
   onFetchSenses?: (word: string) => Promise<VocabCard[]>;
   /** Save a not-yet-saved sense into the library. */

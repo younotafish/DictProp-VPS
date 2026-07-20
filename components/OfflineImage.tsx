@@ -8,7 +8,7 @@ interface Props {
   alt: string;
   className?: string;
   fallbackClassName?: string;
-  onMissing?: (itemId: string) => Promise<string | null>; // Fetch image from server, returns base64
+  onMissing?: (itemId: string, imageVersion?: string) => Promise<string | null>; // Fetch image from server, returns base64
 }
 
 /**
@@ -31,8 +31,11 @@ export const OfflineImage: React.FC<Props> = ({
   onMissing,
 }) => {
   const directSrc = src?.startsWith('data:image/') ? src : undefined;
+  const serverVersion = src?.startsWith('server:has_image:')
+    ? src.slice('server:has_image:'.length)
+    : undefined;
   // Identity of the image to show. Changes when we switch items → triggers the reset below.
-  const idKey = directSrc ?? (itemId ? `id:${itemId}` : '');
+  const idKey = directSrc ?? (itemId ? `id:${itemId}:${serverVersion || 'local'}` : '');
 
   const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(directSrc);
   const [loading, setLoading] = useState<boolean>(!directSrc && !!itemId);
@@ -66,7 +69,7 @@ export const OfflineImage: React.FC<Props> = ({
     (async () => {
       // 1) IDB cache — fast, no retry needed.
       try {
-        const cached = await loadImage(itemId);
+        const cached = await loadImage(itemId, serverVersion);
         if (cancelled) return;
         if (cached) { setResolvedSrc(cached); setLoading(false); return; }
       } catch { /* IDB miss/error → fall through to the server */ }
@@ -76,7 +79,7 @@ export const OfflineImage: React.FC<Props> = ({
       // 2) Server fetch, retrying transient failures; a genuine "no image" (null) stops immediately.
       for (let attempt = 0; ; attempt++) {
         try {
-          const img = await onMissing(itemId);
+          const img = await onMissing(itemId, serverVersion);
           if (cancelled) return;
           setResolvedSrc(img || undefined); // null = no image → placeholder
           setLoading(false);
@@ -91,7 +94,7 @@ export const OfflineImage: React.FC<Props> = ({
     })();
 
     return () => { cancelled = true; };
-  }, [idKey, itemId, directSrc, onMissing]);
+  }, [idKey, itemId, directSrc, onMissing, serverVersion]);
 
   // Loading and nothing to show yet — skeleton spinner.
   if (loading && !resolvedSrc) {

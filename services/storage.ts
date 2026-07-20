@@ -335,8 +335,21 @@ export const saveData = async (items: StoredItem[], userId: string = 'vps'): Pro
 const IMAGES_STORE = 'images';
 
 // In-memory LRU cache for frequently accessed images
-const imageCache = new Map<string, string>();
+interface CachedImageEntry {
+  url: string;
+  version?: string;
+}
+
+interface StoredImageRecord {
+  blob: Blob | string;
+  version?: string;
+}
+
+const imageCache = new Map<string, CachedImageEntry>();
 const IMAGE_CACHE_MAX = 50;
+
+const isStoredImageRecord = (value: unknown): value is StoredImageRecord =>
+  !!value && typeof value === 'object' && !(value instanceof Blob) && 'blob' in value;
 
 const blobToDataUri = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -351,15 +364,17 @@ const evictImageCache = () => {
   const firstKey = imageCache.keys().next().value;
   if (firstKey) {
     const value = imageCache.get(firstKey);
-    if (value?.startsWith('blob:')) URL.revokeObjectURL(value);
+    if (value?.url.startsWith('blob:')) URL.revokeObjectURL(value.url);
     imageCache.delete(firstKey);
   }
 };
 
-export const saveImage = async (itemId: string, base64: string): Promise<void> => {
+export const saveImage = async (itemId: string, base64: string, version?: string): Promise<void> => {
   const blob = dataUriToBlob(base64);
   const cachedUrl = URL.createObjectURL(blob);
-  imageCache.set(itemId, cachedUrl);
+  const previous = imageCache.get(itemId);
+  if (previous?.url.startsWith('blob:')) URL.revokeObjectURL(previous.url);
+  imageCache.set(itemId, { url: cachedUrl, version });
   evictImageCache();
 
   const idbAvailable = await checkIndexedDBAvailability();
@@ -370,7 +385,7 @@ export const saveImage = async (itemId: string, base64: string): Promise<void> =
     return new Promise((resolve, reject) => {
       const tx = db.transaction(IMAGES_STORE, 'readwrite');
       const store = tx.objectStore(IMAGES_STORE);
-      store.put(blob, itemId);
+      store.put(version ? { blob, version } satisfies StoredImageRecord : blob, itemId);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -379,20 +394,22 @@ export const saveImage = async (itemId: string, base64: string): Promise<void> =
   }
 };
 
-export const saveImagesBatch = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
+export const saveImagesBatch = async (images: Array<{ id: string; base64: string; version?: string }>): Promise<void> => {
   if (images.length === 0) return;
   const encoded = images.map(image => ({ ...image, blob: dataUriToBlob(image.base64) }));
 
   // Populate cache
   for (const img of encoded) {
-    imageCache.set(img.id, URL.createObjectURL(img.blob));
+    const previous = imageCache.get(img.id);
+    if (previous?.url.startsWith('blob:')) URL.revokeObjectURL(previous.url);
+    imageCache.set(img.id, { url: URL.createObjectURL(img.blob), version: img.version });
   }
   // Trim cache to limit
   while (imageCache.size > IMAGE_CACHE_MAX) {
     const firstKey = imageCache.keys().next().value;
     if (firstKey) {
       const value = imageCache.get(firstKey);
-      if (value?.startsWith('blob:')) URL.revokeObjectURL(value);
+      if (value?.url.startsWith('blob:')) URL.revokeObjectURL(value.url);
       imageCache.delete(firstKey);
     }
   }
@@ -406,7 +423,7 @@ export const saveImagesBatch = async (images: Array<{ id: string; base64: string
       const tx = db.transaction(IMAGES_STORE, 'readwrite');
       const store = tx.objectStore(IMAGES_STORE);
       for (const img of encoded) {
-        store.put(img.blob, img.id);
+        store.put(img.version ? { blob: img.blob, version: img.version } satisfies StoredImageRecord : img.blob, img.id);
       }
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
@@ -416,14 +433,18 @@ export const saveImagesBatch = async (images: Array<{ id: string; base64: string
   }
 };
 
-export const loadImage = async (itemId: string): Promise<string | null> => {
+export const loadImage = async (itemId: string, expectedVersion?: string): Promise<string | null> => {
   // Check in-memory cache first
   const cached = imageCache.get(itemId);
-  if (cached) {
+  if (cached && (!expectedVersion || cached.version === expectedVersion)) {
     // Move to end (most recently used)
     imageCache.delete(itemId);
     imageCache.set(itemId, cached);
-    return cached;
+    return cached.url;
+  }
+  if (cached) {
+    if (cached.url.startsWith('blob:')) URL.revokeObjectURL(cached.url);
+    imageCache.delete(itemId);
   }
 
   const idbAvailable = await checkIndexedDBAvailability();
@@ -436,10 +457,16 @@ export const loadImage = async (itemId: string): Promise<string | null> => {
       const store = tx.objectStore(IMAGES_STORE);
       const request = store.get(itemId);
       request.onsuccess = () => {
-        const result = request.result as string | Blob | undefined;
-        if (result) {
-          const url = result instanceof Blob ? URL.createObjectURL(result) : result;
-          imageCache.set(itemId, url);
+        const result = request.result as string | Blob | StoredImageRecord | undefined;
+        const version = isStoredImageRecord(result) ? result.version : undefined;
+        if (expectedVersion && version !== expectedVersion) {
+          resolve(null);
+          return;
+        }
+        const stored = isStoredImageRecord(result) ? result.blob : result;
+        if (stored) {
+          const url = stored instanceof Blob ? URL.createObjectURL(stored) : stored;
+          imageCache.set(itemId, { url, version });
           evictImageCache();
           resolve(url);
           return;
@@ -458,7 +485,10 @@ export const loadImage = async (itemId: string): Promise<string | null> => {
  * Check which of the given IDs already have images stored in IDB.
  * Returns the set of IDs that DO have images (i.e., don't need fetching).
  */
-export const getStoredImageIds = async (ids: string[]): Promise<Set<string>> => {
+export const getStoredImageIds = async (
+  ids: string[],
+  expectedVersions?: ReadonlyMap<string, string>,
+): Promise<Set<string>> => {
   const found = new Set<string>();
   if (ids.length === 0) return found;
 
@@ -472,15 +502,24 @@ export const getStoredImageIds = async (ids: string[]): Promise<Set<string>> => 
       const store = tx.objectStore(IMAGES_STORE);
       let pending = ids.length;
       for (const id of ids) {
-        // Use getKey instead of get to avoid loading the full base64 into memory
-        const req = store.getKey(id);
-        req.onsuccess = () => {
-          if (req.result !== undefined) found.add(id);
-          if (--pending === 0) resolve();
-        };
-        req.onerror = () => {
-          if (--pending === 0) resolve();
-        };
+        const expectedVersion = expectedVersions?.get(id);
+        if (expectedVersion) {
+          const req = store.get(id);
+          req.onsuccess = () => {
+            const value = req.result;
+            if (isStoredImageRecord(value) && value.version === expectedVersion) found.add(id);
+            if (--pending === 0) resolve();
+          };
+          req.onerror = () => { if (--pending === 0) resolve(); };
+        } else {
+          // Unversioned local/user images only need an existence check.
+          const req = store.getKey(id);
+          req.onsuccess = () => {
+            if (req.result !== undefined) found.add(id);
+            if (--pending === 0) resolve();
+          };
+          req.onerror = () => { if (--pending === 0) resolve(); };
+        }
       }
       tx.onerror = () => reject(tx.error);
     });
@@ -536,7 +575,8 @@ export const loadImagesByIds = async (ids: string[]): Promise<Map<string, string
       for (const id of ids) {
         const req = store.get(id);
         req.onsuccess = () => {
-          const value = req.result;
+          const rawValue = req.result;
+          const value = isStoredImageRecord(rawValue) ? rawValue.blob : rawValue;
           if (typeof value === 'string') result.set(id, value);
           if (value instanceof Blob) {
             blobToDataUri(value).then(dataUri => result.set(id, dataUri)).finally(() => {

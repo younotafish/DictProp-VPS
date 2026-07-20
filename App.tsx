@@ -193,14 +193,20 @@ function applyMerges(
 
 // Sentinel value replacing base64 in React state — tells OfflineImage to load from IDB
 const IMAGE_IDB_MARKER = 'idb:stored';
+const SERVER_IMAGE_MARKER = 'server:has_image';
+
+const getServerImageVersion = (url: string | undefined): string | undefined =>
+  url?.startsWith(`${SERVER_IMAGE_MARKER}:`)
+    ? url.slice(SERVER_IMAGE_MARKER.length + 1)
+    : undefined;
 
 // Check if an imageUrl is a marker (not real base64 data)
 const isImageMarker = (url: string | undefined): boolean =>
-  !!url && !url.startsWith('data:image/') && (url === IMAGE_IDB_MARKER || url === 'server:has_image');
+  !!url && (url === IMAGE_IDB_MARKER || url === SERVER_IMAGE_MARKER || url.startsWith(`${SERVER_IMAGE_MARKER}:`));
 
 /**
  * Strip base64 imageUrl fields from items and store them in IDB images store.
- * Also normalizes server markers ('server:has_image') to the client marker ('idb:stored').
+ * Versioned server markers stay in state so OfflineImage can invalidate an older IDB entry.
  * Replaces base64 with a tiny marker so layout checks (imageUrl truthy) still work.
  * This keeps ~143MB of image data out of React state.
  */
@@ -218,9 +224,6 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
         imagesToSave.push({ id: data.id, base64: vc.imageUrl });
         data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
         changed = true;
-      } else if (isImageMarker(vc.imageUrl)) {
-        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
-        changed = true;
       }
     }
 
@@ -231,18 +234,12 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
         imagesToSave.push({ id: sr.id, base64: sr.imageUrl });
         data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
         changed = true;
-      } else if (isImageMarker(sr.imageUrl)) {
-        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
-        changed = true;
       }
       if (sr.vocabs?.length) {
         let vocabsChanged = false;
         const newVocabs = sr.vocabs.map(v => {
           if (v.imageUrl?.startsWith('data:image/')) {
             imagesToSave.push({ id: v.id, base64: v.imageUrl });
-            vocabsChanged = true;
-            return { ...v, imageUrl: IMAGE_IDB_MARKER };
-          } else if (isImageMarker(v.imageUrl)) {
             vocabsChanged = true;
             return { ...v, imageUrl: IMAGE_IDB_MARKER };
           }
@@ -1137,20 +1134,27 @@ const App: React.FC = () => {
 
     // Collect all item/vocab IDs that have image markers
     const idsWithImages: string[] = [];
+    const imageVersions = new Map<string, string>();
+    const addImageMarker = (id: string, imageUrl: string | undefined) => {
+      if (!isImageMarker(imageUrl)) return;
+      idsWithImages.push(id);
+      const version = getServerImageVersion(imageUrl);
+      if (version) imageVersions.set(id, version);
+    };
     for (const item of candidates) {
       if (item.isDeleted || item.isArchived) continue;
       const data = item.data as any;
-      if (isImageMarker(data.imageUrl)) idsWithImages.push(data.id);
+      addImageMarker(data.id, data.imageUrl);
       if (Array.isArray(data.vocabs)) {
         for (const v of data.vocabs) {
-          if (isImageMarker(v.imageUrl)) idsWithImages.push(v.id);
+          addImageMarker(v.id, v.imageUrl);
         }
       }
     }
     if (idsWithImages.length === 0) return;
 
     // Check which IDs already have images in IDB
-    const alreadyStored = await getStoredImageIds(idsWithImages);
+    const alreadyStored = await getStoredImageIds(idsWithImages, imageVersions);
     const missing = idsWithImages.filter(id => !alreadyStored.has(id));
     if (missing.length === 0) return;
 
@@ -1179,8 +1183,12 @@ const App: React.FC = () => {
       if (prefetchAbortRef.current) break;
       const batch = missing.slice(i, i + BATCH_SIZE);
       try {
-        const images = await loadItemImagesBatch(batch);
-        const toSave = Object.entries(images).map(([id, base64]) => ({ id, base64 }));
+        const images = await loadItemImagesBatch(batch, imageVersions);
+        const toSave = Object.entries(images).map(([id, base64]) => ({
+          id,
+          base64,
+          version: imageVersions.get(id),
+        }));
         if (toSave.length > 0) await saveImagesBatch(toSave);
         done += batch.length;
         setImagePrefetchProgress({ done, total: missing.length });
@@ -2326,12 +2334,12 @@ const App: React.FC = () => {
   // promptless item) doesn't re-trigger costly generation on every swipe past it.
   const regenAttemptedRef = useRef<Set<string>>(new Set());
 
-  const handleLazyLoadImage = useCallback(async (itemId: string): Promise<string | null> => {
+  const handleLazyLoadImage = useCallback(async (itemId: string, imageVersion?: string): Promise<string | null> => {
     // 1) Server has it? loadItemImage THROWS on a transient failure (OfflineImage retries) and returns
     //    null only for a genuine 404 (the image is truly gone). Persist a hit to IDB for instant replay.
-    const existing = await loadItemImage(itemId);
+    const existing = await loadItemImage(itemId, imageVersion);
     if (existing) {
-      try { await saveImage(itemId, existing); } catch { /* cache write is best-effort */ }
+      try { await saveImage(itemId, existing, imageVersion); } catch { /* cache write is best-effort */ }
       log(`🖼️ Lazy-loaded image from server for: ${itemId}`);
       return existing;
     }
