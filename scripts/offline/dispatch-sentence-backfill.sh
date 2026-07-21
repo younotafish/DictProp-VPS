@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="${1:-data/offline-backfill/final-sentence-images}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
-PYTHON_BIN="${PYTHON_BIN:-/tmp/dictprop-mflux/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 ARCHIVE="${SENTENCE_BACKFILL_ARCHIVE:-/tmp/sentence-backfill.enc}"
 

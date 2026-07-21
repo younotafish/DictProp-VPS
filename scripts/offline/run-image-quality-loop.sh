@@ -14,9 +14,15 @@ width="${5:-768}"
 height="${6:-432}"
 steps="${7:-6}"
 candidate="${8:-1}"
-krea_python="${KREA_PYTHON:-/tmp/dictprop-mflux/bin/python}"
+krea_python="${KREA_PYTHON:-${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}}"
 codex_concurrency="${CODEX_CONCURRENCY:-32}"
 current="$targets"
+
+if [[ ! -x "$krea_python" ]]; then
+  echo "MFLUX runtime is unavailable: $krea_python" >&2
+  echo "Run scripts/offline/bootstrap-mflux-runtime.sh first" >&2
+  exit 2
+fi
 
 retry() {
   local attempt=0

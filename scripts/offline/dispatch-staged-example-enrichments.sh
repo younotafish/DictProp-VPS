@@ -8,6 +8,7 @@ REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
+PYTHON_BIN="${PYTHON_BIN:-${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}}"
 STATE_ROOT="${EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT:-/tmp/dictprop-staged-example-enrichments}"
 COOLDOWN_SECONDS="${EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS:-60}"
 SOURCE="$POOL_ROOT/source.json"
@@ -93,7 +94,7 @@ while :; do
     continue
   fi
 
-  /tmp/dictprop-mflux/bin/python - "$WAVE_DIR" <<'PY'
+  "$PYTHON_BIN" - "$WAVE_DIR" <<'PY'
 import json
 import sys
 from pathlib import Path

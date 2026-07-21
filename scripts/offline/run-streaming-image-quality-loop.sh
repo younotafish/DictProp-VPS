@@ -16,7 +16,7 @@ steps="${7:-6}"
 candidate="${8:-1}"
 chunk_size="${9:-128}"
 first_generation_targets="${10:-}"
-krea_python="${KREA_PYTHON:-/tmp/dictprop-mflux/bin/python}"
+krea_python="${KREA_PYTHON:-${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}}"
 codex_concurrency="${CODEX_CONCURRENCY:-32}"
 krea_shard_count="${KREA_SHARD_COUNT:-1}"
 image_model="${IMAGE_MODEL:-krea2}"
@@ -49,6 +49,11 @@ if [[ -n "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
     echo "KREA_IMAGE_SOURCE_CANDIDATE must be an integer or 'previous'" >&2
     exit 2
   fi
+fi
+if [[ ! -x "$krea_python" ]]; then
+  echo "MFLUX runtime is unavailable: $krea_python" >&2
+  echo "Run scripts/offline/bootstrap-mflux-runtime.sh first" >&2
+  exit 2
 fi
 
 mkdir -p "$candidates" "$images" "$work_root"
