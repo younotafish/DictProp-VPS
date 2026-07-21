@@ -53,6 +53,36 @@ sleep_for_poll() {
   sleep "$POLL_SECONDS"
 }
 
+deploy_run_line() {
+  local run_id="$1"
+  "$GH_BIN" run view "$run_id" \
+    --repo "$REPO" \
+    --json status,conclusion,url \
+    --jq "[\"$run_id\",.status,.conclusion,.url] | @tsv" \
+    2>/dev/null || true
+}
+
+discover_dispatched_deploy() {
+  local previous_run_id
+  local dispatched_run_id
+
+  previous_run_id="$(tr -d '[:space:]' < "$STATE_DIR/previous-deploy-run" 2>/dev/null || true)"
+  if ! [[ "$previous_run_id" =~ ^[0-9]+$ ]]; then
+    return
+  fi
+  dispatched_run_id="$($GH_BIN run list \
+    --repo "$REPO" \
+    --workflow deploy.yml \
+    --event workflow_dispatch \
+    --limit 30 \
+    --json databaseId \
+    --jq ".[] | select(.databaseId > $previous_run_id) | .databaseId" \
+    2>/dev/null | sort -n | head -1 || true)"
+  if [[ "$dispatched_run_id" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$dispatched_run_id" > "$STATE_DIR/deploy-run"
+  fi
+}
+
 if [ ! -s "$ARCHIVE" ]; then
   echo "Encrypted archive not found or empty: $ARCHIVE" >&2
   exit 1
@@ -93,26 +123,54 @@ while :; do
     fi
   fi
 
-  DEPLOY_LINE="$($GH_BIN run list \
-    --repo "$REPO" \
-    --workflow deploy.yml \
-    --commit "$DEPLOY_SHA" \
-    --limit 1 \
-    --json databaseId,status,conclusion,url \
-    --jq 'if length == 0 then empty else .[0] | [.databaseId,.status,.conclusion,.url] | @tsv end' \
-    2>/dev/null || true)"
+  DEPLOY_LINE=""
+  if [ -s "$STATE_DIR/deploy-run" ]; then
+    DEPLOY_RUN_ID="$(tr -d '[:space:]' < "$STATE_DIR/deploy-run")"
+    if [[ "$DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]; then
+      DEPLOY_LINE="$(deploy_run_line "$DEPLOY_RUN_ID")"
+    fi
+  else
+    DEPLOY_LINE="$($GH_BIN run list \
+      --repo "$REPO" \
+      --workflow deploy.yml \
+      --commit "$DEPLOY_SHA" \
+      --limit 1 \
+      --json databaseId,status,conclusion,url \
+      --jq 'if length == 0 then empty else .[0] | [.databaseId,.status,.conclusion,.url] | @tsv end' \
+      2>/dev/null || true)"
+  fi
   if [ -z "$DEPLOY_LINE" ]; then
     if [ ! -e "$STATE_DIR/deploy-dispatched" ]; then
+      PREVIOUS_DEPLOY_RUN_ID="$($GH_BIN run list \
+        --repo "$REPO" \
+        --workflow deploy.yml \
+        --event workflow_dispatch \
+        --limit 1 \
+        --json databaseId \
+        --jq 'if length == 0 then 0 else .[0].databaseId end' \
+        2>/dev/null || printf '0\n')"
+      if ! [[ "$PREVIOUS_DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]; then
+        PREVIOUS_DEPLOY_RUN_ID=0
+      fi
+      printf '%s\n' "$PREVIOUS_DEPLOY_RUN_ID" > "$STATE_DIR/previous-deploy-run"
       log "no deployment run exists for $DEPLOY_SHA; dispatching it explicitly"
       if "$GH_BIN" workflow run deploy.yml --repo "$REPO" --ref main; then
         touch "$STATE_DIR/deploy-dispatched"
         sleep 20
       fi
-    else
-      log "archive uploaded; waiting for explicitly dispatched deployment $DEPLOY_SHA"
     fi
-    sleep_for_poll
-    continue
+    if [ -e "$STATE_DIR/deploy-dispatched" ] && [ ! -s "$STATE_DIR/deploy-run" ]; then
+      discover_dispatched_deploy
+    fi
+    if [ -s "$STATE_DIR/deploy-run" ]; then
+      DEPLOY_RUN_ID="$(tr -d '[:space:]' < "$STATE_DIR/deploy-run")"
+      DEPLOY_LINE="$(deploy_run_line "$DEPLOY_RUN_ID")"
+    fi
+    if [ -z "$DEPLOY_LINE" ]; then
+      log "archive uploaded; waiting to identify the explicitly dispatched deployment"
+      sleep_for_poll
+      continue
+    fi
   fi
 
   IFS=$'\t' read -r DEPLOY_ID DEPLOY_STATUS DEPLOY_CONCLUSION DEPLOY_URL <<< "$DEPLOY_LINE"
