@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { isUsageAudit, shouldArchiveUsage } from './usage-audit.js';
+import { isUsageAudit, resolveUsageArchive, shouldArchiveUsage } from './usage-audit.js';
 
 export type CorpusItemType = 'vocab' | 'phrase' | 'sentence';
 
@@ -57,6 +57,26 @@ export function corpusAuditDataState(
   if (currentHash === corpusSourceHash(entry.data)) return 'target';
   if (currentHash === entry.sourceHash) return 'source';
   return 'changed';
+}
+
+export function corpusAuditImportState(
+  currentData: unknown,
+  currentArchived: boolean,
+  entry: Pick<CorpusAuditEntry, 'sourceHash' | 'data'>,
+): {
+  dataState: 'source' | 'target' | 'changed';
+  nextArchived: boolean;
+  alreadyApplied: boolean;
+} {
+  const dataState = corpusAuditDataState(currentData, entry);
+  const currentAudit = isRecord(currentData) ? currentData.usageAudit : undefined;
+  const nextAudit = isRecord(entry.data) ? entry.data.usageAudit : undefined;
+  const nextArchived = resolveUsageArchive(currentArchived, currentAudit, nextAudit);
+  return {
+    dataState,
+    nextArchived,
+    alreadyApplied: dataState === 'target' && currentArchived === nextArchived,
+  };
 }
 
 function hasCompleteAudit(type: CorpusItemType, data: Record<string, any>): boolean {

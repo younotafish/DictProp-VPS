@@ -1,11 +1,10 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { corpusAuditDataState, validateCorpusAuditBundle, type CorpusAuditBundle } from '../corpus-audit.js';
+import { corpusAuditImportState, validateCorpusAuditBundle, type CorpusAuditBundle } from '../corpus-audit.js';
 import { getAllItems, listAllUsers, upsertMany } from '../db.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
 import { isSentenceAnalysis } from '../sentence-analysis.js';
-import { resolveUsageArchive } from '../usage-audit.js';
 import { validateStoredItem } from '../validation.js';
 
 const manifestPath = process.argv[2];
@@ -42,8 +41,12 @@ for (const entry of bundle.entries) {
       continue;
     }
     if (current.type !== entry.type) throw new Error('item type changed after export');
-    const dataState = corpusAuditDataState(current.data, entry);
-    if (dataState === 'target') {
+    const { dataState, nextArchived, alreadyApplied } = corpusAuditImportState(
+      current.data,
+      current.isArchived === true,
+      entry,
+    );
+    if (alreadyApplied) {
       result.alreadyApplied++;
       continue;
     }
@@ -59,7 +62,6 @@ for (const entry of bundle.entries) {
             : {}),
         }
       : {};
-    const nextArchived = resolveUsageArchive(current.isArchived === true, current.data.usageAudit, entry.data.usageAudit);
     const candidate = {
       ...currentWithoutProject,
       data: { ...entry.data, ...preservedSentenceAnalysis },

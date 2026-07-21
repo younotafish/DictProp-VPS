@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { corpusAuditDataState, corpusSourceHash, validateCorpusAuditBundle } from '../src/corpus-audit.js';
+import {
+  corpusAuditDataState,
+  corpusAuditImportState,
+  corpusSourceHash,
+  validateCorpusAuditBundle,
+} from '../src/corpus-audit.js';
 import { resolveUsageArchive } from '../src/usage-audit.js';
 
 const audit = { status: 'modern_american', reason: 'Common in present-day American English.', confidence: 'high', auditedAt: 1 };
@@ -47,6 +52,23 @@ test('corpus audit imports can resume after a partial run', () => {
   assert.equal(corpusAuditDataState(original, entry), 'source');
   assert.equal(corpusAuditDataState({ ...data, imageUrl: 'server:has_image' }, entry), 'target');
   assert.equal(corpusAuditDataState({ ...original, definition: 'changed after export' }, entry), 'changed');
+});
+
+test('corpus audit imports repair usage archive drift after metadata is already applied', () => {
+  const rareAudit = { ...audit, status: 'rare_or_dated' as const };
+  const rareData = { ...data, usageAudit: rareAudit };
+  const entry = { sourceHash: corpusSourceHash(data), data: rareData };
+
+  assert.deepEqual(corpusAuditImportState(rareData, false, entry), {
+    dataState: 'target',
+    nextArchived: true,
+    alreadyApplied: false,
+  });
+  assert.deepEqual(corpusAuditImportState(rareData, true, entry), {
+    dataState: 'target',
+    nextArchived: true,
+    alreadyApplied: true,
+  });
 });
 
 test('usage re-audits reverse only prior usage-driven archives', () => {
