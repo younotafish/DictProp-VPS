@@ -7,7 +7,7 @@ BATCH_SIZE="${2:-100}"
 REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
-KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
+KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 STATE_ROOT="${OFFLINE_IMAGE_WAVE_STATE_ROOT:-/tmp/dictprop-staged-offline-images}"
 COOLDOWN_SECONDS="${OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS:-60}"
 SENTENCE_COMPLETE_MARKER="${SENTENCE_WAVE_COMPLETE_MARKER:-/tmp/dictprop-staged-sentence-backfill-v2/complete}"
@@ -122,22 +122,31 @@ while :; do
     continue
   fi
 
-  /tmp/dictprop-mflux/bin/python - "$WAVE_DIR" <<'PY'
-import json
-import sys
-from pathlib import Path
-from PIL import Image
+  node - "$WAVE_DIR" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const sharp = require('sharp');
 
-root = Path(sys.argv[1])
-entries = json.loads((root / 'manifest.json').read_text())['entries']
-for entry in entries:
-    image_path = root / entry['imageFile']
-    with Image.open(image_path) as image:
-        if image.size not in {(1024, 576), (768, 432)} or image.format != 'WEBP':
-            raise RuntimeError(f'invalid final image: {image_path} {image.size} {image.format}')
-        image.verify()
-print(f'Validated {len(entries)} staged offline images')
-PY
+(async () => {
+  const root = process.argv[2];
+  const entries = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')).entries;
+  for (const entry of entries) {
+    const imagePath = path.join(root, entry.imageFile);
+    const metadata = await sharp(imagePath, { failOn: 'error' }).metadata();
+    const validSize = (metadata.width === 1024 && metadata.height === 576)
+      || (metadata.width === 768 && metadata.height === 432);
+    if (!validSize || metadata.format !== 'webp') {
+      throw new Error(
+        `invalid final image: ${imagePath} ${metadata.width}x${metadata.height} ${metadata.format}`,
+      );
+    }
+  }
+  console.log(`Validated ${entries.length} staged offline images`);
+})().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
+NODE
 
   ARCHIVE="$WAVE_DIR/offline-images.enc"
   rm -f "$ARCHIVE"

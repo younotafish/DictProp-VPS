@@ -11,7 +11,7 @@ PUBLISHED_PREDECESSOR_MANIFEST="${PUBLISHED_CORPUS_PREDECESSOR_MANIFEST:-data/of
 PUBLISHED_PREDECESSOR_MANIFESTS="${PUBLISHED_CORPUS_PREDECESSOR_MANIFESTS:-$PUBLISHED_PREDECESSOR_MANIFEST}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
-KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
+KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 WORK_ROOT="${CORPUS_REBASE_WORK_ROOT:-data/offline-backfill/final-reconciliation/final-publication}"
 STATE_ROOT="${CORPUS_FINAL_WAVE_STATE_ROOT:-/tmp/dictprop-staged-final-corpus-audit}"
 

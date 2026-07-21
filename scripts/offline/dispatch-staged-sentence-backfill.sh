@@ -7,7 +7,7 @@ BATCH_SIZE="${2:-100}"
 REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
-KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-/tmp/dictprop_sentence_bridge_key}"
+KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 STATE_ROOT="${SENTENCE_WAVE_STATE_ROOT:-/tmp/dictprop-staged-sentence-backfill-v2}"
 COOLDOWN_SECONDS="${SENTENCE_WAVE_COOLDOWN_SECONDS:-60}"
 
