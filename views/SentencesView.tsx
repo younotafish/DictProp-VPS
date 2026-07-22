@@ -5,6 +5,11 @@ import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
 import { barColorFor } from '../components/mastery';
 import { useSentenceSearch } from '../services/sentenceSearch';
+import {
+  compareSentencesByLearningPriority,
+  orderSentencesForReview,
+  type SentenceReviewFilter,
+} from '../services/sentenceOrdering';
 import { Virtuoso } from 'react-virtuoso';
 
 interface SentencesViewProps {
@@ -36,8 +41,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
 
   const activeItems = useMemo(() => items.filter(s => !s.isArchived), [items]);
 
-  type SentenceFilter = 'all' | 'unreviewed' | 'due' | 'memorized';
-  const [filter, setFilter] = useState<SentenceFilter>('all');
+  const [filter, setFilter] = useState<SentenceReviewFilter>('all');
 
   // Fuzzy search: narrows the list live as you type; Enter runs a real AI search of the typed text.
   const [searchQuery, setSearchQuery] = useState('');
@@ -69,21 +73,9 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
       const matchIds = new Set(runSentenceSearch(deferredQuery).map(i => i.data.id));
       base = activeItems.filter(s => matchIds.has(s.data.id));
     } else {
-      const pass = (s: StoredItem): boolean => {
-        if (filter === 'all') return true;
-        const reviews = s.srs?.totalReviews ?? 0;
-        if (filter === 'unreviewed') return reviews === 0;
-        if (filter === 'due') return reviews > 0 && (s.srs?.nextReview ?? 0) <= now;
-        return reviews > 0 && (s.srs?.nextReview ?? 0) > now; // memorized
-      };
-      base = activeItems.filter(pass);
+      return orderSentencesForReview(activeItems, filter, now);
     }
-    return base.sort((a, b) => {
-      const strengthA = a.srs?.memoryStrength ?? 0;
-      const strengthB = b.srs?.memoryStrength ?? 0;
-      if (strengthA !== strengthB) return strengthA - strengthB;
-      return (b.savedAt || 0) - (a.savedAt || 0);
-    });
+    return base.sort(compareSentencesByLearningPriority);
   }, [activeItems, filter, now, deferredQuery, runSentenceSearch]);
 
   const formatDue = (ts: number) => {
@@ -145,7 +137,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               ['unreviewed', 'Unreviewed', counts.unreviewed],
               ['due', 'Due', counts.due],
               ['memorized', 'Memorized', counts.memorized],
-            ] as [SentenceFilter, string, number][]).map(([key, label, count]) => (
+            ] as [SentenceReviewFilter, string, number][]).map(([key, label, count]) => (
               <button
                 key={key}
                 onClick={() => setFilter(key)}

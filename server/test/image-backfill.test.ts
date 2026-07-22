@@ -32,12 +32,23 @@ test('collectImageBackfillTargets uses the unified library and respects item sco
         ],
       },
     },
+    {
+      type: 'sentence', data: {
+        id: 'sentence',
+        analysis: { imagePrompt: 'a complete sentence scene' },
+      },
+    },
   ];
 
   assert.deepEqual(collectImageBackfillTargets(items), [
     { imageId: 'one', prompt: 'one prompt' },
     { imageId: 'two', prompt: 'two prompt' },
     { imageId: 'nested', prompt: 'nested prompt' },
+    {
+      imageId: 'sentence',
+      prompt: 'a complete sentence scene',
+      generationOptions: { style: 'photorealistic', quality: 'high' },
+    },
   ]);
   assert.deepEqual(collectImageBackfillTargets(items, { itemIds: ['two'] }), [
     { imageId: 'two', prompt: 'two prompt' },

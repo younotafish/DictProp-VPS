@@ -3031,6 +3031,7 @@ const App: React.FC = () => {
       )}
 
       {popupItems.length > 0 && cardPopup && (
+        <Suspense fallback={<div className="fixed inset-0 z-[80] grid place-items-center bg-black/5"><Loader2 className="animate-spin text-indigo-500" /></div>}>
           <CardReviewPopup
               key={cardPopup.spelling}
               items={popupItems}
@@ -3048,6 +3049,7 @@ const App: React.FC = () => {
               onFetchSenses={fetchSensesForWord}
               onSaveVocab={saveVocabSense}
           />
+        </Suspense>
       )}
       </Suspense>
 

@@ -11,6 +11,8 @@ interface SentenceAnalysisViewProps {
   onSearch: (term: string) => void;
   onTouchStart: React.TouchEventHandler<HTMLDivElement>;
   onTouchEnd: React.TouchEventHandler<HTMLDivElement>;
+  onClick?: React.MouseEventHandler<HTMLDivElement>;
+  onDoubleClick?: React.MouseEventHandler<HTMLDivElement>;
 }
 
 const STATUS_PRESENTATION: Record<'american' | 'shared' | 'not_american', {
@@ -31,6 +33,8 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   onSearch,
   onTouchStart,
   onTouchEnd,
+  onClick,
+  onDoubleClick,
 }) => {
   const analysis = sentence.analysis;
   const plainSentence = stripSentenceMarkers(sentence.text || '').trim();
@@ -42,6 +46,8 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
       className="fixed inset-0 z-[70] flex flex-col bg-white animate-in slide-in-from-right duration-200"
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
+      onClick={onClick}
+      onDoubleClick={onDoubleClick}
     >
       <header className="shrink-0 border-b border-slate-200 bg-white/95 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 backdrop-blur-sm">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">

@@ -1,4 +1,8 @@
-import type { GeneratedImage, ImageGenerationErrorCode } from './image-generation.js';
+import type {
+  GeneratedImage,
+  ImageGenerationErrorCode,
+  ImageGenerationOptions,
+} from './image-generation.js';
 
 export interface ImageBackfillScope {
   itemIds?: string[];
@@ -7,6 +11,7 @@ export interface ImageBackfillScope {
 export interface ImageBackfillTarget {
   imageId: string;
   prompt: string;
+  generationOptions?: ImageGenerationOptions;
 }
 
 export type ImageBackfillStopReason = 'cancelled' | 'quota_exceeded' | 'not_configured' | 'provider_error';
@@ -30,7 +35,11 @@ interface JobRecord {
 
 export interface ImageBackfillDependencies {
   loadItems: (userId: string) => any[];
-  generateImage: (prompt: string, aspectRatio: '16:9') => Promise<GeneratedImage>;
+  generateImage: (
+    prompt: string,
+    aspectRatio: '16:9',
+    options?: ImageGenerationOptions,
+  ) => Promise<GeneratedImage>;
   saveImage: (userId: string, imageId: string, image: GeneratedImage) => boolean;
   delay?: (milliseconds: number) => Promise<void>;
   retryDelaysMs?: number[];
@@ -60,6 +69,20 @@ export function collectImageBackfillTargets(items: any[], scope: ImageBackfillSc
       const prompt = typeof item.data.imagePrompt === 'string' ? item.data.imagePrompt.trim() : '';
       if (prompt && !item.data.imageUrl && !targets.has(item.data.id)) {
         targets.set(item.data.id, { imageId: item.data.id, prompt });
+      }
+      continue;
+    }
+
+    if (item.type === 'sentence') {
+      const prompt = typeof item.data.analysis?.imagePrompt === 'string'
+        ? item.data.analysis.imagePrompt.trim()
+        : '';
+      if (prompt && !item.data.imageUrl && !targets.has(item.data.id)) {
+        targets.set(item.data.id, {
+          imageId: item.data.id,
+          prompt,
+          generationOptions: { style: 'photorealistic', quality: 'high' },
+        });
       }
       continue;
     }
@@ -106,7 +129,7 @@ export function createImageBackfillManager(dependencies: ImageBackfillDependenci
 
         for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
           try {
-            generated = await dependencies.generateImage(target.prompt, '16:9');
+            generated = await dependencies.generateImage(target.prompt, '16:9', target.generationOptions);
             break;
           } catch (error) {
             const code = errorCode(error);

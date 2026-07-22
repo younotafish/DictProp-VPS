@@ -591,6 +591,42 @@ function errorResponse(msg: string, status: number) {
   return { error: msg, status };
 }
 
+export async function generateAnalysisData(text: string, mode?: 'batch'): Promise<{
+  rawData: any;
+  isWord: boolean;
+  originalQuery?: string;
+  resolvedQuery: string;
+}> {
+  const apiKey = env.DEEPINFRA_API_KEY;
+  if (!apiKey) throw new Error('DEEPINFRA_API_KEY not configured');
+  const isBatch = mode === 'batch';
+  const originalQuery = containsChinese(text) ? text : undefined;
+  const isWord = isBatch || isWordOrPhrase(text);
+  const userPrompt = isWord
+    ? (isBatch
+      ? `Analyze this pre-identified vocabulary item for a C1 learner. Treat it as a SINGLE phrase — do NOT split into component words. Create vocabulary cards for ALL its meanings: "${text}"`
+      : `Analyze this word or phrase for a C1 learner. Create vocabulary cards for ALL its meanings: "${text}"`)
+    : `Analyze this sentence for a C1 learner: "${text}"`;
+  const systemPrompt = isWord ? (isBatch ? BATCH_WORD_MODE_INSTRUCTION : WORD_MODE_INSTRUCTION) : SENTENCE_MODE_INSTRUCTION;
+  let rawData: any;
+  let isValid = false;
+  for (let attempt = 0; attempt < MAX_ANALYSIS_SCHEMA_ATTEMPTS; attempt++) {
+    const modelData = await callDeepSeek(apiKey, systemPrompt, userPrompt);
+    const normalized = normalizeAnalysisResponse(modelData, { fallbackQuery: text.trim() });
+    rawData = normalized.data;
+    if (normalized.droppedCards > 0) {
+      console.warn(`Analysis normalization dropped ${normalized.droppedCards}/${normalized.inputCards} unusable vocab cards`);
+    }
+    isValid = isWord ? validateWordModeResponse(rawData) : validateSentenceModeResponse(rawData);
+    if (isValid) break;
+    if (attempt < MAX_ANALYSIS_SCHEMA_ATTEMPTS - 1) {
+      console.warn(`Analysis response contained no usable cards; retrying (${attempt + 1}/${MAX_ANALYSIS_SCHEMA_ATTEMPTS})`);
+    }
+  }
+  if (!isValid) throw new Error('Analysis response validation failed');
+  return { rawData, isWord, originalQuery, resolvedQuery: rawData.query || text };
+}
+
 // ============================================================================
 // Routes
 // ============================================================================
@@ -614,32 +650,9 @@ aiRoutes.post('/analyze', async (c) => {
   const isWord = isBatch || isWordOrPhrase(text);
   console.log(`Analyze request: ${text.length} chars, ${isWord ? 'word/phrase' : 'sentence'}${isBatch ? ', batch' : ''}${originalQuery ? ', Chinese' : ''}`);
 
-  const userPrompt = isWord
-    ? (isBatch
-      ? `Analyze this pre-identified vocabulary item for a C1 learner. Treat it as a SINGLE phrase — do NOT split into component words. Create vocabulary cards for ALL its meanings: "${text}"`
-      : `Analyze this word or phrase for a C1 learner. Create vocabulary cards for ALL its meanings: "${text}"`)
-    : `Analyze this sentence for a C1 learner: "${text}"`;
-
   try {
-    const systemPrompt = isWord ? (isBatch ? BATCH_WORD_MODE_INSTRUCTION : WORD_MODE_INSTRUCTION) : SENTENCE_MODE_INSTRUCTION;
-    let rawData: any;
-    let isValid = false;
-    for (let attempt = 0; attempt < MAX_ANALYSIS_SCHEMA_ATTEMPTS; attempt++) {
-      const modelData = await callDeepSeek(apiKey, systemPrompt, userPrompt);
-      const normalized = normalizeAnalysisResponse(modelData, { fallbackQuery: text.trim() });
-      rawData = normalized.data;
-      if (normalized.droppedCards > 0) {
-        console.warn(`Analysis normalization dropped ${normalized.droppedCards}/${normalized.inputCards} unusable vocab cards`);
-      }
-      isValid = isWord ? validateWordModeResponse(rawData) : validateSentenceModeResponse(rawData);
-      if (isValid) break;
-      if (attempt < MAX_ANALYSIS_SCHEMA_ATTEMPTS - 1) {
-        console.warn(`Analysis response contained no usable cards; retrying (${attempt + 1}/${MAX_ANALYSIS_SCHEMA_ATTEMPTS})`);
-      }
-    }
-    if (!isValid) return c.json(errorResponse('Analysis response validation failed', 502), 502);
-
-    const resolvedQuery = rawData.query || text;
+    const generated = await generateAnalysisData(text, isBatch ? 'batch' : undefined);
+    const { rawData, resolvedQuery } = generated;
 
     if (isWord) {
       return c.json({

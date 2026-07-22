@@ -494,8 +494,40 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, []);
   // Sentence-mode eyes-free taps: last tap (time + position) so a quick second tap reads as a double-tap.
   const lastSentenceTapRef = useRef<{ t: number; x: number; y: number } | null>(null);
+  const sentenceSingleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressSentenceSurfaceClickUntilRef = useRef(0);
   // Guard so a remember can't fire twice from one gesture (touch double-tap + a synthesized dblclick).
   const rememberingRef = useRef(false);
+  const cancelPendingSentenceSingleTap = () => {
+    if (sentenceSingleTapTimerRef.current) clearTimeout(sentenceSingleTapTimerRef.current);
+    sentenceSingleTapTimerRef.current = null;
+    lastSentenceTapRef.current = null;
+  };
+  const queueSentenceSurfaceTap = (x: number, y: number) => {
+    const now = Date.now();
+    const previous = lastSentenceTapRef.current;
+    const isDoubleTap = !!previous && now - previous.t < 320 &&
+      Math.abs(x - previous.x) < 40 && Math.abs(y - previous.y) < 40;
+    if (isDoubleTap) {
+      cancelPendingSentenceSingleTap();
+      handleRemember();
+      return;
+    }
+
+    // Preserve an unrelated first tap before beginning a new double-tap window.
+    if (sentenceSingleTapTimerRef.current) {
+      clearTimeout(sentenceSingleTapTimerRef.current);
+      sentenceSingleTapTimerRef.current = null;
+      toggleSentencePlayback();
+    }
+    lastSentenceTapRef.current = { t: now, x, y };
+    sentenceSingleTapTimerRef.current = setTimeout(() => {
+      sentenceSingleTapTimerRef.current = null;
+      lastSentenceTapRef.current = null;
+      toggleSentencePlayback();
+    }, 320);
+  };
+  useEffect(() => () => cancelPendingSentenceSingleTap(), []);
   // Eyes-free zone tap-confirmation flash (see EyesFreeZones). The word/phrase-view guides only render
   // on touch devices, since those zones only fire from taps (a mouse click does nothing there).
   const [zoneFlash, setZoneFlash] = useState<ZoneFlash | null>(null);
@@ -579,18 +611,17 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // Tap detection (shared by sentence + word/phrase eyes-free zones). A "still" tap is a finger that
     // essentially didn't move; controls keep their own handlers so normal tapping still works.
     const TAP_MOVE_MAX = 10;     // px — finger essentially didn't move → it's a tap, not a swipe/scroll
-    const DOUBLE_TAP_MS = 320;   // two still taps within this long (and near each other) → a double-tap
-    const DOUBLE_TAP_SLOP = 40;  // px — max gap between the two taps to still count as a double-tap
     const isStillTap = absX <= TAP_MOVE_MAX && absY <= TAP_MOVE_MAX;
     const tapTarget = e.target as HTMLElement | null;
     const onControl = !!tapTarget?.closest(
       'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]'
     );
+    const onSentenceWord = !!tapTarget?.closest('[data-word-offset]');
 
     // ── Sentence review mode (eyes-free, mirrors the word card): a still one-finger tap on blank space
     // toggles natural-voice playback — play → pause → resume; a double-tap marks the sentence remembered
-    // (same as the item-review double-click). The sentence text keeps its own onClick handler, so we act
-    // on the blank area only; ↑/↓ swipes still switch sentences. ──
+    // (same as the item-review double-click). Clickable words and controls keep their own handlers;
+    // ↑/↓ swipes still switch sentences. ──
     if (sentenceMode) {
       if (isHorizontalSwipe) {
         if (sentencePage === 'analysis') setSentencePage('sentence');
@@ -604,7 +635,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
       // Match word review: normal drags only scroll. A long swipe changes sentences only after the
       // analysis has reached the corresponding boundary (or when the content is shorter than the page).
       if (sentencePage === 'analysis') {
-        if (isVerticalSwipe && isLongSwipe) {
+        if (isStillTap && !onControl && !onSentenceWord) {
+          suppressSentenceSurfaceClickUntilRef.current = Date.now() + 500;
+          queueSentenceSurfaceTap(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+        } else if (isVerticalSwipe && isLongSwipe) {
           if (diffY < -longSwipeMin && (isAtBottom || scrollHeight <= clientHeight)) {
             goToSentence(currentGroupIndexRef.current + 1);
           } else if (diffY > longSwipeMin && isAtTop) {
@@ -617,20 +651,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
       }
       // A still tap inside the expanded word card is handled by its onClick (eyes-free zone read),
       // so the sentence play/pause/remember below ignores it — avoids a touch + synthesized-click double-fire.
-      if (isStillTap && !onControl && !tapTarget?.closest('[data-sentence-hero]') && !tapTarget?.closest('[data-sentence-image]') && !tapTarget?.closest('[data-word-card-scroll]')) {
-        const x = e.changedTouches[0].clientX;
-        const y = e.changedTouches[0].clientY;
-        const prev = lastSentenceTapRef.current;
-        const isDoubleTap = !!prev && (Date.now() - prev.t) < DOUBLE_TAP_MS
-          && Math.abs(x - prev.x) < DOUBLE_TAP_SLOP && Math.abs(y - prev.y) < DOUBLE_TAP_SLOP;
-        if (isDoubleTap) {
-          lastSentenceTapRef.current = null;
-          stopCurrent();        // drop the audio the first tap started — we're moving on
-          handleRemember();     // mark remembered → success overlay → auto-advance
-        } else {
-          lastSentenceTapRef.current = { t: Date.now(), x, y };
-          toggleSentencePlayback();
-        }
+      if (isStillTap && !onControl && !onSentenceWord && !tapTarget?.closest('[data-word-card-scroll]')) {
+        suppressSentenceSurfaceClickUntilRef.current = Date.now() + 500;
+        queueSentenceSurfaceTap(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
       } else if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
         setShowHeader(true);                                    // keep short-swipe-down → reveal header
       } else if (isVerticalSwipe && isLongSwipe) {
@@ -1135,6 +1158,20 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const sentenceRepeatsRef = useRef(sentenceRepeats);
   useEffect(() => { sentenceRepeatsRef.current = sentenceRepeats; }, [sentenceRepeats]);
 
+  const recordSentenceAutoplayExposure = useCallback(() => {
+    const sentence = currentSentenceRef.current;
+    if (!sentence) return;
+    const now = Date.now();
+    const baseSrs = SRSAlgorithm.ensure(sentence.srs, sentence.data.id, 'sentence');
+    const updated: StoredItem = {
+      ...sentence,
+      srs: SRSAlgorithm.updateAfterExposure(baseSrs, 0.25, now),
+      updatedAt: now,
+    };
+    currentSentenceRef.current = updated;
+    onSave(updated);
+  }, [onSave]);
+
   // Autoplay pause/resume across the inter-read GAP (not just mid-clip): the media-session /
   // Bluetooth pause must stop autoplay even between reads. autoPlayPausedRef gates the gap
   // scheduler; when paused mid-gap the pending continuation is stashed in resumeChainRef and
@@ -1219,7 +1256,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
         const gap = (more || sentenceModeRef.current) ? sentenceGapRef.current : CARD_GAP;
         schedule(gap, more ? playNext : advanceCard);
       };
-      handle = speakNatural(s, { allowDownload: true, onEnd: afterEach, onError: afterEach });
+      const afterSuccessfulRead = () => {
+        if (sentenceModeRef.current) recordSentenceAutoplayExposure();
+        afterEach();
+      };
+      handle = speakNatural(s, { allowDownload: true, onEnd: afterSuccessfulRead, onError: afterEach });
     };
 
     if (!sentences.length) {
@@ -1761,7 +1802,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
 
     log('👆👆 DetailView: Double click detected');
+    cancelPendingSentenceSingleTap();
     handleRemember();
+  };
+
+  const handleSentenceSurfaceClick = (e: React.MouseEvent<HTMLElement>) => {
+    if (Date.now() < suppressSentenceSurfaceClickUntilRef.current) return;
+    if (window.getSelection()?.toString().trim()) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button, a, [role="button"], input, textarea, select, label, [contenteditable="true"], [data-word-offset]')) return;
+    queueSentenceSurfaceTap(e.clientX, e.clientY);
   };
 
   // Eyes-free zone read on the EXPANDED word card during sentence review: a click/tap in the card's top
@@ -1912,6 +1962,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           style={{ touchAction: 'manipulation' }}
           onTouchStart={onContentTouchStart}
           onTouchEnd={onContentTouchEnd}
+          onClick={handleSentenceSurfaceClick}
           onDoubleClick={handleDoubleClick}
         >
           <div className={`mx-auto w-full ${hasSentenceImage ? 'max-w-3xl lg:max-w-6xl xl:max-w-[1400px]' : 'max-w-3xl'} ${cardCollapsed ? 'flex-1 flex flex-col min-h-0' : ''}`}>
@@ -1987,7 +2038,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         className={`text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-xl sm:text-3xl' : 'text-lg sm:text-xl'}`}
                         onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
                         onClickCapture={isMobile ? suppressMobileChordClick : undefined}
-                        onClick={toggleSentencePlayback}
                         title={isMobile
                           ? 'Tap a word to look it up'
                           : tapToPlay
@@ -2016,7 +2066,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
                       className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
                       onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
                       onClickCapture={isMobile ? suppressMobileChordClick : undefined}
-                      onClick={toggleSentencePlayback}
                       title={isMobile
                         ? 'Tap a word to look it up'
                         : tapToPlay
@@ -2086,6 +2135,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
           onSearch={(term) => { setSentencePage('sentence'); handleVocabSearch(term); }}
           onTouchStart={onContentTouchStart}
           onTouchEnd={onContentTouchEnd}
+          onClick={handleSentenceSurfaceClick}
+          onDoubleClick={handleDoubleClick}
         />
       )}
       {/* Word card — the supporting source-word detail. Hidden in sentence review when collapsed

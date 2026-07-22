@@ -176,6 +176,32 @@ export class SRSAlgorithm {
   }
 
   /**
+   * Add passive exposure credit without recording or rescheduling a review.
+   * The fraction is measured in the displayed-strength gain a Good review would produce.
+   */
+  static updateAfterExposure(srs: SRSData, fraction = 0.25, now = Date.now()): SRSData {
+    const weight = Math.min(1, Math.max(0, fraction));
+    if (weight === 0) return this.migrate(srs);
+
+    const currentStability = Math.max(0.1, Number(srs.stability) || 0.5);
+    const remembered = this.updateAfterRemember(srs, now);
+    const currentStrength = 18 * Math.log(1 + currentStability);
+    const rememberedStrength = Math.max(
+      currentStrength,
+      18 * Math.log(1 + Math.max(0.1, remembered.stability)),
+    );
+    const exposureStrength = currentStrength + (rememberedStrength - currentStrength) * weight;
+    const stability = Math.max(0.1, Math.exp(exposureStrength / 18) - 1);
+
+    return {
+      ...srs,
+      stability,
+      memoryStrength: this.stabilityToDisplayStrength(stability),
+      scheduler: 'fsrs-v6',
+    };
+  }
+
+  /**
    * Map stability (days) to a display strength score (0–100) for mastery badges.
    *
    * Mapping (approximate):

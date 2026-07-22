@@ -3,6 +3,7 @@ import { detectImageMimeType, type SupportedImageMime } from './image-format.js'
 import { proxyFetch } from './proxy-fetch.js';
 
 const DEEPINFRA_FLUX_URL = 'https://api.deepinfra.com/v1/inference/black-forest-labs/FLUX-1-schnell';
+const DEEPINFRA_FLUX_HIGH_QUALITY_URL = 'https://api.deepinfra.com/v1/inference/black-forest-labs/FLUX-1-dev';
 const REPLICATE_FLUX_URL = 'https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions';
 const IMAGE_TIMEOUT_MS = 60_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -13,6 +14,11 @@ export type ImageGenerationErrorCode = 'NO_API_KEY' | 'QUOTA_EXCEEDED' | 'UPSTRE
 export interface GeneratedImage {
   data: Buffer;
   mimeType: SupportedImageMime;
+}
+
+export interface ImageGenerationOptions {
+  style?: 'icon' | 'photorealistic';
+  quality?: 'fast' | 'high';
 }
 
 export class ImageGenerationError extends Error {
@@ -26,9 +32,13 @@ export class ImageGenerationError extends Error {
   }
 }
 
-async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = IMAGE_TIMEOUT_MS,
+): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await proxyFetch(url, { ...init, signal: controller.signal });
   } finally {
@@ -62,26 +72,37 @@ function decodeGeneratedImage(value: unknown): GeneratedImage {
   return { data, mimeType };
 }
 
-export async function generateImage(prompt: string, aspectRatio: ImageAspectRatio): Promise<GeneratedImage> {
-  const styledPrompt = `(Icon style), minimal vector art, flat design, ${prompt}. solid background. No text.`;
+export async function generateImage(
+  prompt: string,
+  aspectRatio: ImageAspectRatio,
+  options: ImageGenerationOptions = {},
+): Promise<GeneratedImage> {
+  const styledPrompt = options.style === 'photorealistic'
+    ? `${prompt}. Realistic photography, authentic anatomy and materials, natural light. No text, captions, logos, or watermarks.`
+    : `(Icon style), minimal vector art, flat design, ${prompt}. solid background. No text.`;
   const dimensions = getImageDimensions(aspectRatio);
+  const highQuality = options.quality === 'high';
   let deepInfraFailure: ImageGenerationError | null = null;
 
   if (env.DEEPINFRA_API_KEY) {
     try {
-      const response = await fetchWithTimeout(DEEPINFRA_FLUX_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${env.DEEPINFRA_API_KEY}`,
-          'Content-Type': 'application/json',
+      const response = await fetchWithTimeout(
+        highQuality ? DEEPINFRA_FLUX_HIGH_QUALITY_URL : DEEPINFRA_FLUX_URL,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${env.DEEPINFRA_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt: styledPrompt,
+            width: dimensions.width,
+            height: dimensions.height,
+            num_inference_steps: highQuality ? 28 : 4,
+          }),
         },
-        body: JSON.stringify({
-          prompt: styledPrompt,
-          width: dimensions.width,
-          height: dimensions.height,
-          num_inference_steps: 4,
-        }),
-      });
+        highQuality ? 180_000 : IMAGE_TIMEOUT_MS,
+      );
       if (response.ok) {
         const payload: any = await response.json();
         if (Array.isArray(payload.images) && payload.images.length > 0) {

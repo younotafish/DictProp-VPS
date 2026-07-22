@@ -251,7 +251,7 @@ test('image backfill validates scope and reports an empty job', async () => {
   response = await app.request('/api/image-backfill', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ itemIds: ['not-present'] }),
   });
   assert.equal(response.status, 200);
   const status = await response.json() as any;
