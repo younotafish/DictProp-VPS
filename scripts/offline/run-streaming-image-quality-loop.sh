@@ -32,15 +32,20 @@ if ! [[ "$krea_shard_count" =~ ^[0-9]+$ ]] || [[ "$krea_shard_count" -lt 1 ]] ||
   echo "KREA_SHARD_COUNT must be an integer from 1 to 8" >&2
   exit 2
 fi
-if [[ "$image_model" != "krea2" && "$image_model" != "ernie-image" && "$image_model" != "ernie-image-turbo" && "$image_model" != "qwen-image" && "$image_model" != "z-image-turbo" ]]; then
-  echo "IMAGE_MODEL must be krea2, ernie-image, ernie-image-turbo, qwen-image, or z-image-turbo" >&2
+if [[ "$image_model" != "krea2" && "$image_model" != "ernie-image" && "$image_model" != "ernie-image-turbo" && "$image_model" != "qwen-image" && "$image_model" != "qwen-image-edit" && "$image_model" != "z-image-turbo" ]]; then
+  echo "IMAGE_MODEL must be krea2, ernie-image, ernie-image-turbo, qwen-image, qwen-image-edit, or z-image-turbo" >&2
   exit 2
 fi
 if [[ -n "$image_model_quantize" ]] && [[ "$image_model_quantize" != "4" && "$image_model_quantize" != "8" ]]; then
   echo "IMAGE_MODEL_QUANTIZE (or KREA_QUANTIZE) must be 4 or 8" >&2
   exit 2
 fi
-if [[ -n "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
+if [[ "$image_model" == "qwen-image-edit" ]]; then
+  if [[ -z "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
+    echo "qwen-image-edit requires KREA_IMAGE_SOURCE_CANDIDATE and does not use KREA_IMAGE_STRENGTH" >&2
+    exit 2
+  fi
+elif [[ -n "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
   if [[ -z "$krea_image_source_candidate" || -z "$krea_image_strength" ]]; then
     echo "KREA_IMAGE_SOURCE_CANDIDATE and KREA_IMAGE_STRENGTH must be set together" >&2
     exit 2
@@ -128,10 +133,10 @@ generate_candidates() {
       echo "The previous image candidate is unavailable for candidate $candidate_number" >&2
       return 2
     fi
-    generator_args+=(
-      --image-source-candidate "$resolved_image_source_candidate"
-      --image-strength "$krea_image_strength"
-    )
+    generator_args+=(--image-source-candidate "$resolved_image_source_candidate")
+    if [[ -n "$krea_image_strength" ]]; then
+      generator_args+=(--image-strength "$krea_image_strength")
+    fi
   fi
 
   generator_pids=()

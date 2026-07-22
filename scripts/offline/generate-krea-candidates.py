@@ -9,6 +9,7 @@ from PIL import Image
 from mflux.models.common.config import ModelConfig
 from mflux.models.ernie_image import ErnieImage
 from mflux.models.krea2.variants.txt2img.krea2 import Krea2
+from mflux.models.qwen.variants.edit.qwen_image_edit import QwenImageEdit
 from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
 from mflux.models.z_image import ZImage
 from mflux.utils.exceptions import StopImageGenerationException
@@ -47,7 +48,14 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=576)
     parser.add_argument(
         "--model",
-        choices=("krea2", "ernie-image", "ernie-image-turbo", "qwen-image", "z-image-turbo"),
+        choices=(
+            "krea2",
+            "ernie-image",
+            "ernie-image-turbo",
+            "qwen-image",
+            "qwen-image-edit",
+            "z-image-turbo",
+        ),
         default="krea2",
     )
     parser.add_argument("--quantize", type=int, choices=(4, 8), default=None)
@@ -76,11 +84,17 @@ def main() -> None:
         raise ValueError("Inference steps must be between 4 and 60")
     if args.candidate_start < 1 or args.candidate_start > args.candidates:
         raise ValueError("Candidate start must be between 1 and --candidates")
-    if (args.image_source_candidate is None) != (args.image_strength is None):
+    if args.model == "qwen-image-edit":
+        if args.image_source_candidate is None:
+            raise ValueError("Qwen image editing requires --image-source-candidate")
+        if args.image_strength is not None:
+            raise ValueError("Qwen image editing does not use --image-strength")
+    elif (args.image_source_candidate is None) != (args.image_strength is None):
         raise ValueError("--image-source-candidate and --image-strength must be provided together")
     if args.image_source_candidate is not None:
         if args.image_source_candidate < 1 or args.image_source_candidate > 99:
             raise ValueError("Image source candidate must be between 1 and 99")
+    if args.image_strength is not None:
         if not 0.0 < args.image_strength <= 1.0:
             raise ValueError("Image strength must be greater than 0 and at most 1")
     if args.accepted_directory:
@@ -103,6 +117,8 @@ def main() -> None:
         model = ErnieImage(model_config=ModelConfig.ernie_image(), quantize=args.quantize)
     elif args.model == "qwen-image":
         model = QwenImage(model_config=ModelConfig.qwen_image(), quantize=args.quantize)
+    elif args.model == "qwen-image-edit":
+        model = QwenImageEdit(model_config=ModelConfig.qwen_image_edit(), quantize=args.quantize)
     elif args.model == "z-image-turbo":
         model = ZImage(model_config=ModelConfig.z_image_turbo(), quantize=args.quantize)
     else:
@@ -132,22 +148,44 @@ def main() -> None:
                     possible_source = output / f"{stem}-{args.image_source_candidate}{suffix}"
                     if is_complete_image(possible_source, args.width, args.height):
                         source_path = possible_source
-                generated = model.generate_image(
-                    seed=seed_for(target["imageId"], candidate_index, args.seed_round),
-                    prompt=target["prompt"].strip() + quality_suffix,
-                    num_inference_steps=args.steps,
-                    height=args.height,
-                    width=args.width,
-                    guidance=4.0 if args.model in ("ernie-image", "qwen-image") else 1.0,
-                    scheduler=(
-                        "linear"
-                        if args.model == "qwen-image"
-                        else (("euler" if source_path else "er_sde") if args.model == "krea2" else None)
-                    ),
-                    negative_prompt=None,
-                    image_path=source_path,
-                    image_strength=args.image_strength if source_path else None,
-                )
+                prompt = target["prompt"].strip() + quality_suffix
+                if args.model == "qwen-image-edit":
+                    if source_path is None:
+                        raise FileNotFoundError(
+                            f"Missing source candidate {args.image_source_candidate} for {target['imageId']}"
+                        )
+                    generated = model.generate_image(
+                        seed=seed_for(target["imageId"], candidate_index, args.seed_round),
+                        prompt=(
+                            "Edit the source photograph to teach the exact learning target at a glance. "
+                            f"Correct this prior failure: {target.get('rejectionReason', 'the meaning was unclear')} "
+                            f"The finished image must match this brief: {prompt}"
+                        ),
+                        image_paths=[str(source_path)],
+                        num_inference_steps=args.steps,
+                        height=args.height,
+                        width=args.width,
+                        guidance=4.0,
+                        scheduler="linear",
+                        negative_prompt=None,
+                    )
+                else:
+                    generated = model.generate_image(
+                        seed=seed_for(target["imageId"], candidate_index, args.seed_round),
+                        prompt=prompt,
+                        num_inference_steps=args.steps,
+                        height=args.height,
+                        width=args.width,
+                        guidance=4.0 if args.model in ("ernie-image", "qwen-image") else 1.0,
+                        scheduler=(
+                            "linear"
+                            if args.model == "qwen-image"
+                            else (("euler" if source_path else "er_sde") if args.model == "krea2" else None)
+                        ),
+                        negative_prompt=None,
+                        image_path=source_path,
+                        image_strength=args.image_strength if source_path else None,
+                    )
                 image = getattr(generated, "image", generated)
                 temporary_path = output / f".{path.name}.tmp"
                 if suffix == ".webp":
