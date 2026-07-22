@@ -1222,6 +1222,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     let handle: SpeakHandle | undefined;
     let idx = 0;
     let rep = 0;
+    let successfulReads = 0;
 
     // A fresh run (autoplay start or a next/prev navigation) always plays; only an explicit pause holds it.
     autoPlayPausedRef.current = false;
@@ -1251,13 +1252,17 @@ export const DetailView: React.FC<DetailViewProps> = ({
       const afterEach = () => {
         if (++rep < sentenceRepeatsRef.current) { schedule(sentenceGapRef.current, playNext); return; } // read again
         rep = 0;
+        successfulReads = 0;
         idx++;
         const more = idx < sentences.length;
         const gap = (more || sentenceModeRef.current) ? sentenceGapRef.current : CARD_GAP;
         schedule(gap, more ? playNext : advanceCard);
       };
       const afterSuccessfulRead = () => {
-        if (sentenceModeRef.current) recordSentenceAutoplayExposure();
+        successfulReads++;
+        const completesSuccessfulRound = rep + 1 >= sentenceRepeatsRef.current &&
+          successfulReads >= sentenceRepeatsRef.current;
+        if (sentenceModeRef.current && completesSuccessfulRound) recordSentenceAutoplayExposure();
         afterEach();
       };
       handle = speakNatural(s, { allowDownload: true, onEnd: afterSuccessfulRead, onError: afterEach });
