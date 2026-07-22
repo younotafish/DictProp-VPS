@@ -47,7 +47,7 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=576)
     parser.add_argument(
         "--model",
-        choices=("krea2", "ernie-image-turbo", "qwen-image", "z-image-turbo"),
+        choices=("krea2", "ernie-image", "ernie-image-turbo", "qwen-image", "z-image-turbo"),
         default="krea2",
     )
     parser.add_argument("--quantize", type=int, choices=(4, 8), default=None)
@@ -72,8 +72,8 @@ def main() -> None:
         return
     if args.shard_count < 1 or args.shard_index < 0 or args.shard_index >= args.shard_count:
         raise ValueError("Invalid shard index/count")
-    if args.steps < 4 or args.steps > 20:
-        raise ValueError("Inference steps must be between 4 and 20")
+    if args.steps < 4 or args.steps > 60:
+        raise ValueError("Inference steps must be between 4 and 60")
     if args.candidate_start < 1 or args.candidate_start > args.candidates:
         raise ValueError("Candidate start must be between 1 and --candidates")
     if (args.image_source_candidate is None) != (args.image_strength is None):
@@ -99,6 +99,8 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     if args.model == "ernie-image-turbo":
         model = ErnieImage(model_config=ModelConfig.ernie_image_turbo(), quantize=args.quantize)
+    elif args.model == "ernie-image":
+        model = ErnieImage(model_config=ModelConfig.ernie_image(), quantize=args.quantize)
     elif args.model == "qwen-image":
         model = QwenImage(model_config=ModelConfig.qwen_image(), quantize=args.quantize)
     elif args.model == "z-image-turbo":
@@ -136,7 +138,7 @@ def main() -> None:
                     num_inference_steps=args.steps,
                     height=args.height,
                     width=args.width,
-                    guidance=4.0 if args.model == "qwen-image" else 1.0,
+                    guidance=4.0 if args.model in ("ernie-image", "qwen-image") else 1.0,
                     scheduler=(
                         "linear"
                         if args.model == "qwen-image"
