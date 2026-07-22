@@ -32,8 +32,8 @@ if ! [[ "$krea_shard_count" =~ ^[0-9]+$ ]] || [[ "$krea_shard_count" -lt 1 ]] ||
   echo "KREA_SHARD_COUNT must be an integer from 1 to 8" >&2
   exit 2
 fi
-if [[ "$image_model" != "krea2" && "$image_model" != "ernie-image-turbo" ]]; then
-  echo "IMAGE_MODEL must be krea2 or ernie-image-turbo" >&2
+if [[ "$image_model" != "krea2" && "$image_model" != "ernie-image-turbo" && "$image_model" != "z-image-turbo" ]]; then
+  echo "IMAGE_MODEL must be krea2, ernie-image-turbo, or z-image-turbo" >&2
   exit 2
 fi
 if [[ -n "$image_model_quantize" ]] && [[ "$image_model_quantize" != "4" && "$image_model_quantize" != "8" ]]; then
