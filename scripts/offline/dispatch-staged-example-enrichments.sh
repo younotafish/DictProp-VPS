@@ -8,7 +8,9 @@ REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
-PYTHON_BIN="${PYTHON_BIN:-${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}}"
+MFLUX_PYTHON="${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}"
+CANONICAL_MFLUX_PYTHON="$HOME/.cache/dictprop/mflux/bin/python"
+PYTHON_BIN="${PYTHON_BIN:-$MFLUX_PYTHON}"
 STATE_ROOT="${EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT:-/tmp/dictprop-staged-example-enrichments}"
 COOLDOWN_SECONDS="${EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS:-60}"
 SOURCE="$POOL_ROOT/source.json"
@@ -18,6 +20,23 @@ IMAGE_ROOT="$POOL_ROOT/final-images"
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
 }
+
+python_has_pillow() {
+  [ -x "$1" ] && "$1" -c 'from PIL import Image' >/dev/null 2>&1
+}
+
+if ! python_has_pillow "$PYTHON_BIN"; then
+  if python_has_pillow "$MFLUX_PYTHON"; then
+    log "configured Python lacks Pillow; using mflux runtime: $MFLUX_PYTHON"
+    PYTHON_BIN="$MFLUX_PYTHON"
+  elif python_has_pillow "$CANONICAL_MFLUX_PYTHON"; then
+    log "configured Python lacks Pillow; using canonical mflux runtime: $CANONICAL_MFLUX_PYTHON"
+    PYTHON_BIN="$CANONICAL_MFLUX_PYTHON"
+  else
+    echo "Example enrichment validation requires a Python runtime with Pillow" >&2
+    exit 1
+  fi
+fi
 
 publisher_state_dir() {
   local tag="$1"
