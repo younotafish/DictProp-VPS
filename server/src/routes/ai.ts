@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
-import { isValidUsageAudit, normalizeAnalysisResponse } from '../ai-response.js';
+import { isValidGeneratedExampleSet, isValidUsageAudit, normalizeAnalysisResponse } from '../ai-response.js';
 
 export const aiRoutes = new Hono();
 
@@ -158,9 +158,10 @@ function validateVocabCard(vocab: any): boolean {
   for (const f of ['word', 'sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt']) {
     if (typeof vocab[f] !== 'string') return false;
   }
-  for (const f of ['forms', 'synonyms', 'antonyms', 'confusables', 'examples']) {
+  for (const f of ['forms', 'synonyms', 'antonyms', 'confusables']) {
     if (!Array.isArray(vocab[f]) || !vocab[f].every((value: unknown) => typeof value === 'string')) return false;
   }
+  if (!isValidGeneratedExampleSet(vocab.examples)) return false;
   if (vocab.wordFamily !== undefined && (
     !Array.isArray(vocab.wordFamily) ||
     !vocab.wordFamily.every((entry: any) => entry && typeof entry.word === 'string' &&
@@ -222,7 +223,14 @@ Each vocab object MUST have these fields:
     "reason": "string - Concise evidence-based note about THIS exact sense's usefulness in modern American English. For british_only, name the normal American equivalent when one exists",
     "confidence": "EXACTLY one of: high, medium, low"
   }
-}`;
+}
+
+EXAMPLE QUALITY GATE (mandatory for every vocab card):
+- Return EXACTLY TWO examples, never one and never more than two.
+- Use the two strongest, most natural examples. They must show two clearly different real-life contexts and make this exact sense obvious without sounding written, academic, or contrived.
+- Each example must contain exactly one nonempty {{studied target}} marker around the natural form used in that sentence.
+- Mark every OTHER expression that would be genuinely uncommon or non-obvious to a C1/C2 learner with [[double square brackets]]. Keep ordinary A1-B2 language unmarked and use at most four lookup markers per sentence.
+- Do not return duplicate or lightly reworded examples.`;
 
 const WORD_MODE_JSON_SCHEMA = `
 You MUST respond with valid JSON in this exact format:

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  isValidGeneratedExampleSet,
   isValidUsageAudit,
   normalizeAnalysisResponse,
   normalizeVocabCard,
@@ -17,7 +18,10 @@ const completeCard = (overrides: Record<string, unknown> = {}) => ({
   synonyms: ['financial institution'],
   antonyms: [],
   confusables: [],
-  examples: ['I stopped by the {{bank}} after work.'],
+  examples: [
+    'I stopped by the {{bank}} after work to deposit my paycheck.',
+    'The {{bank}} approved our mortgage sooner than I expected.',
+  ],
   history: 'From Old Norse banki.',
   register: 'Common, current general English.',
   mnemonic: 'Money bank.',
@@ -98,4 +102,37 @@ test('normalization accepts common model aliases for essential fields', () => {
   assert.equal(result.data.vocabs[0].word, 'wind down');
   assert.deepEqual(result.data.vocabs[0].examples, ['I need an hour to {{wind down}} after work.']);
   assert.equal(result.data.vocabs[0].usageAudit.status, 'current_general');
+});
+
+test('normalization keeps exactly two distinct examples when the model overproduces', () => {
+  const normalized = normalizeVocabCard(completeCard({
+    examples: [
+      'I stopped by the {{bank}} after work to deposit my paycheck.',
+      'I stopped by the {{bank}} after work to deposit my paycheck.',
+      'The {{bank}} finally approved our [[small-business loan]] this morning.',
+      'We called the {{bank}} to ask about the unexpected fee.',
+    ],
+  }), 'bank', 1234);
+
+  assert.ok(normalized);
+  assert.deepEqual(normalized.examples, [
+    'I stopped by the {{bank}} after work to deposit my paycheck.',
+    'The {{bank}} finally approved our [[small-business loan]] this morning.',
+  ]);
+  assert.equal(isValidGeneratedExampleSet(normalized.examples), true);
+});
+
+test('generated examples require distinct target markup and balanced uncommon-term markup', () => {
+  assert.equal(isValidGeneratedExampleSet([
+    'I stopped by the {{bank}} after work to deposit my paycheck.',
+    'The {{bank}} approved our [[small-business loan]] this morning.',
+  ]), true);
+  assert.equal(isValidGeneratedExampleSet([
+    'I stopped by the bank after work to deposit my paycheck.',
+    'The {{bank}} approved our [[small-business loan] this morning.',
+  ]), false);
+  assert.equal(isValidGeneratedExampleSet([
+    'I stopped by the {{bank}} after work to deposit my paycheck.',
+    'I stopped by the {{bank}} after work to deposit my paycheck.',
+  ]), false);
 });

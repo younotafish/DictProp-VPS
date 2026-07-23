@@ -44,6 +44,39 @@ const stringArray = (value: unknown): string[] => {
     .filter(Boolean);
 };
 
+const exampleIdentity = (value: string): string => value
+  .replace(/\{\{([^{}]+)\}\}/g, '$1')
+  .replace(/\[\[([^\[\]]+)\]\]/g, '$1')
+  .normalize('NFKC')
+  .toLowerCase()
+  .replace(/\s+/g, ' ')
+  .trim();
+
+function normalizeExamples(value: unknown): string[] {
+  const seen = new Set<string>();
+  return stringArray(value).filter(example => {
+    const identity = exampleIdentity(example);
+    if (!identity || seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  }).slice(0, 2);
+}
+
+export function isValidGeneratedExample(value: unknown): value is string {
+  if (typeof value !== 'string' || value.trim().length < 20 || value.length > 1_000) return false;
+  const targets = [...value.matchAll(/\{\{([^{}]+)\}\}/g)];
+  if (targets.length !== 1 || !targets[0][1].trim() || /\[\[|\]\]/.test(targets[0][1])) return false;
+  const lookups = [...value.matchAll(/\[\[([^\[\]]+)\]\]/g)];
+  if (lookups.length > 4 || lookups.some(match => !match[1].trim())) return false;
+  const remainder = value.replace(/\{\{[^{}]+\}\}/g, '').replace(/\[\[[^\[\]]+\]\]/g, '');
+  return !/[{}\[\]]/.test(remainder);
+}
+
+export function isValidGeneratedExampleSet(value: unknown): value is [string, string] {
+  return Array.isArray(value) && value.length === 2 && value.every(isValidGeneratedExample) &&
+    new Set(value.map(exampleIdentity)).size === 2;
+}
+
 function parseUsageStatus(value: unknown): UsageStatus | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -130,7 +163,7 @@ export function normalizeVocabCard(raw: unknown, fallbackWord: string, auditedAt
     synonyms: stringArray(source.synonyms),
     antonyms: stringArray(source.antonyms),
     confusables: stringArray(source.confusables),
-    examples: stringArray(source.examples ?? source.usageExamples),
+    examples: normalizeExamples(source.examples ?? source.usageExamples),
     history: stringValue(source.history ?? source.etymology ?? source.historicalEvolution),
     register: stringValue(source.register ?? source.usageNote),
     mnemonic: stringValue(source.mnemonic ?? source.memoryAid),
