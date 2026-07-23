@@ -35,8 +35,9 @@ const persist = async () => {
 };
 const heartbeat = setInterval(() => { void persist(); }, 30_000);
 try {
+  const job = runBackfill();
   await persist();
-  await runBackfill();
+  await job;
   await persist();
 } finally {
   clearInterval(heartbeat);

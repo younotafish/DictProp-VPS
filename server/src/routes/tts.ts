@@ -28,6 +28,7 @@ const MIMO_URL = 'https://api.deepinfra.com/v1/inference/XiaomiMiMo/MiMo-V2.5-tt
 // Default English voice. Options: Mia, Chloe (female), Milo, Dean (male), mimo_default.
 const MIMO_VOICE = 'Mia';
 const TTS_DIR = resolve(env.DATA_DIR, 'tts');
+const BACKFILL_STATUS_PATH = resolve(env.DATA_DIR, 'tts-backfill-status.json');
 const GEN_TIMEOUT_MS = 90_000;
 
 // ── Casual "style" track ─────────────────────────────────────────────────────
@@ -299,6 +300,13 @@ function generateAndStore(text: string, voice: string, reduced?: string): Promis
   return job;
 }
 
+async function generateAndVerify(text: string, voice: string, reduced?: string): Promise<void> {
+  await generateAndStore(text, voice, reduced);
+  if (!(await isComplete(ttsKey(text, voice)))) {
+    throw new Error('audio or local word timings are still incomplete');
+  }
+}
+
 // ── Background backfill ─────────────────────────────────────────────────────
 // Generates audio + word timings for EVERY saved sentence, server-side, detached from any request —
 // so the client never has to stay open. Idempotent (generateAndStore skips clips that already have
@@ -310,6 +318,25 @@ const stripMarkers = (t: string): string =>
 type BackfillStatus = { running: boolean; total: number; done: number; generated: number; failed: number; startedAt: number; finishedAt: number };
 let backfill: BackfillStatus = { running: false, total: 0, done: 0, generated: 0, failed: 0, startedAt: 0, finishedAt: 0 };
 export function getBackfillStatus(): BackfillStatus { return { ...backfill }; }
+
+async function getDetachedBackfillStatus(): Promise<BackfillStatus | null> {
+  try {
+    const value = JSON.parse(await readFile(BACKFILL_STATUS_PATH, 'utf8'));
+    const heartbeatAt = Number(value?.heartbeatAt);
+    if (value?.running !== true || !Number.isFinite(heartbeatAt) || Date.now() - heartbeatAt > 120_000) return null;
+    return {
+      running: true,
+      total: Number(value.total) || 0,
+      done: Number(value.done) || 0,
+      generated: Number(value.generated) || 0,
+      failed: Number(value.failed) || 0,
+      startedAt: Number(value.startedAt) || 0,
+      finishedAt: Number(value.finishedAt) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
 
 const BACKFILL_CONCURRENCY = 2;
 export async function runBackfill(): Promise<void> {
@@ -334,7 +361,7 @@ export async function runBackfill(): Promise<void> {
       try {
         const key = ttsKey(text, MIMO_VOICE);
         if (!(await isComplete(key))) {
-          await generateAndStore(text, MIMO_VOICE);
+          await generateAndVerify(text, MIMO_VOICE);
           backfill.generated++;
         }
       } catch (e: any) {
@@ -365,7 +392,7 @@ export async function runBackfill(): Promise<void> {
     const timingsWorker = async () => {
       while (t < needTimingsOnly.length) {
         const text = needTimingsOnly[t++];
-        try { await generateAndStore(text, CASUAL_STYLE); backfill.generated++; }
+        try { await generateAndVerify(text, CASUAL_STYLE); backfill.generated++; }
         catch (e: any) { backfill.failed++; console.warn('[tts] backfill casual timings failed:', e?.message); }
         backfill.done++;
       }
@@ -389,7 +416,7 @@ export async function runBackfill(): Promise<void> {
       while (j < chunk.length) {
         const k = j++;
         try {
-          await generateAndStore(chunk[k], CASUAL_STYLE, reduced[k]);
+          await generateAndVerify(chunk[k], CASUAL_STYLE, reduced[k]);
           backfill.generated++;
         } catch (e: any) {
           backfill.failed++;
@@ -408,11 +435,13 @@ export async function runBackfill(): Promise<void> {
 
 // POST /api/tts/backfill — start the background backfill (no-op if already running); returns status.
 // GET  /api/tts/backfill — current progress. Registered BEFORE /tts/:name so "backfill" isn't read as a key.
-ttsRoutes.post('/tts/backfill', (c) => {
+ttsRoutes.post('/tts/backfill', async (c) => {
+  const detached = await getDetachedBackfillStatus();
+  if (detached) return c.json(detached);
   runBackfill().catch((e) => console.warn('[tts] backfill error:', e?.message));
   return c.json(getBackfillStatus());
 });
-ttsRoutes.get('/tts/backfill', (c) => c.json(getBackfillStatus()));
+ttsRoutes.get('/tts/backfill', async (c) => c.json((await getDetachedBackfillStatus()) ?? getBackfillStatus()));
 
 // GET /api/tts/:name  (name = "<64-hex-key>.mp3") — serve the cached clip or 404. Never generates.
 ttsRoutes.get('/tts/:name', async (c) => {
