@@ -11,7 +11,8 @@ RUN mkdir -p /src /models \
   && echo "${WHISPER_CPP_SOURCE_SHA256}  /tmp/whisper.cpp.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/whisper.cpp.tar.gz -C /src --strip-components=1 \
   && cmake -S /src -B /src/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-    -DGGML_NATIVE=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF \
+    -DGGML_NATIVE=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_BMI2=OFF \
+    -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF \
   && cmake --build /src/build --config Release --target whisper-cli -j2 \
   && curl -fsSL --retry 5 --retry-delay 5 \
     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin \
