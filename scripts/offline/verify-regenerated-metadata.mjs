@@ -172,6 +172,10 @@ for (const sourceItem of source.items) {
     if ((sourceCard.imageUrl ?? null) !== (targetCard.imageUrl ?? null)) fail(context, 'image marker changed');
     const structuralError = cardError(targetCard);
     if (structuralError) fail(context, structuralError);
+    if (Array.isArray(sourceCard.wordFamily) && sourceCard.wordFamily.length > 0 &&
+        (!Array.isArray(targetCard.wordFamily) || targetCard.wordFamily.length === 0)) {
+      fail(context, 'word family was erased');
+    }
     if (process.env.ALLOW_REDUNDANT_FORMS !== '1' &&
         (targetCard.forms || []).some(form => normalizedSentence(form) === normalizedSentence(targetCard.word))) {
       fail(context, 'forms repeats the unchanged headword');

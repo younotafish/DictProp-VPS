@@ -114,6 +114,12 @@ if (unresolved.length > 0) {
   function mergeCard(targetCard, latestCard) {
     const target = clone(targetCard);
     copyImageMarker(target, latestCard);
+    // A model may legitimately find no family for a new opaque phrase, but an empty response must not
+    // erase a previously verified family from an existing card during corpus reconciliation.
+    if ((!Array.isArray(target.wordFamily) || target.wordFamily.length === 0) &&
+        Array.isArray(latestCard.wordFamily) && latestCard.wordFamily.length > 0) {
+      target.wordFamily = clone(latestCard.wordFamily);
+    }
     const protectedExamples = protectedExamplesFor(latestCard);
     if (protectedExamples.length > 0) {
       target.examples = clone(Array.isArray(latestCard.examples) ? latestCard.examples : []);
