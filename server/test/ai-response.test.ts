@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  hasCompleteGeneratedVocabMetadata,
   isValidGeneratedExampleSet,
   isValidUsageAudit,
   normalizeAnalysisResponse,
@@ -22,10 +23,11 @@ const completeCard = (overrides: Record<string, unknown> = {}) => ({
     'I stopped by the {{bank}} after work to deposit my paycheck.',
     'The {{bank}} approved our mortgage sooner than I expected.',
   ],
-  history: 'From Old Norse banki.',
+  history: 'From Old Norse banki, later applied to a financial counter and institution.',
   register: 'Common, current general English.',
-  mnemonic: 'Money bank.',
-  imagePrompt: 'A neighborhood bank.',
+  mnemonic: 'Picture money stored safely inside a bank vault.',
+  imagePrompt: 'A realistic neighborhood bank counter with a customer depositing a paycheck, natural daylight, no visible text.',
+  usageAudit: { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high' },
   ...overrides,
 });
 
@@ -135,4 +137,14 @@ test('generated examples require distinct target markup and balanced uncommon-te
     'I stopped by the {{bank}} after work to deposit my paycheck.',
     'I stopped by the {{bank}} after work to deposit my paycheck.',
   ]), false);
+});
+
+test('generated cards cannot pass with empty legacy metadata', () => {
+  const complete = normalizeVocabCard(completeCard(), 'bank', 1234);
+  assert.equal(hasCompleteGeneratedVocabMetadata(complete), true);
+  assert.equal(hasCompleteGeneratedVocabMetadata({ ...complete, mnemonic: '' }), false);
+  assert.equal(hasCompleteGeneratedVocabMetadata({
+    ...complete,
+    wordFamily: [{ word: 'banker', pos: '', chinese: '银行家' }],
+  }), false);
 });

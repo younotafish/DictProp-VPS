@@ -1,7 +1,11 @@
 import { Hono } from 'hono';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
-import { isValidGeneratedExampleSet, isValidUsageAudit, normalizeAnalysisResponse } from '../ai-response.js';
+import {
+  hasCompleteGeneratedVocabMetadata,
+  isValidGeneratedExampleSet,
+  normalizeAnalysisResponse,
+} from '../ai-response.js';
 
 export const aiRoutes = new Hono();
 
@@ -154,21 +158,7 @@ async function callDeepSeekComparison(apiKey: string, systemPrompt: string, user
 // ============================================================================
 
 function validateVocabCard(vocab: any): boolean {
-  if (!vocab || typeof vocab !== 'object') return false;
-  for (const f of ['word', 'sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt']) {
-    if (typeof vocab[f] !== 'string') return false;
-  }
-  for (const f of ['forms', 'synonyms', 'antonyms', 'confusables']) {
-    if (!Array.isArray(vocab[f]) || !vocab[f].every((value: unknown) => typeof value === 'string')) return false;
-  }
-  if (!isValidGeneratedExampleSet(vocab.examples)) return false;
-  if (vocab.wordFamily !== undefined && (
-    !Array.isArray(vocab.wordFamily) ||
-    !vocab.wordFamily.every((entry: any) => entry && typeof entry.word === 'string' &&
-      typeof entry.pos === 'string' && typeof entry.chinese === 'string')
-  )) return false;
-  if (!isValidUsageAudit(vocab.usageAudit)) return false;
-  return true;
+  return hasCompleteGeneratedVocabMetadata(vocab) && isValidGeneratedExampleSet(vocab?.examples);
 }
 
 function validateWordModeResponse(data: any): boolean {

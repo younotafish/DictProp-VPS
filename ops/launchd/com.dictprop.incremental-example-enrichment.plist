@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dictprop.incremental-example-enrichment</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/cjs/DictProp-VPS/scripts/offline/run-incremental-example-enrichment.sh</string>
+    <string>/Users/cjs/DictProp-VPS/data/offline-backfill/incremental-example-enrichment</string>
+    <string>/Users/cjs/DictProp-VPS/data/offline-backfill/example-sentence-pool/source.json</string>
+    <string>/Users/cjs/DictProp-VPS/data/offline-backfill/example-sentence-pool/final-images</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/cjs/DictProp-VPS</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/cjs/.local/node/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CODEX_HOME</key>
+    <string>/Users/cjs/.codex</string>
+    <key>ANALYSIS_CONCURRENCY</key>
+    <string>8</string>
+    <key>IMAGE_QA_CONCURRENCY</key>
+    <string>16</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>21600</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Nice</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/cjs/DictProp-VPS/data/offline-backfill/incremental-example-enrichment/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/cjs/DictProp-VPS/data/offline-backfill/incremental-example-enrichment/launchd.err.log</string>
+</dict>
+</plist>

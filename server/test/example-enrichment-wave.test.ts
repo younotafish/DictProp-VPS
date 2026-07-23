@@ -71,3 +71,36 @@ test('example enrichment waves are bounded, resumable, and copy only ready image
   assert.equal(manifest.entries[0].lookupHash, second.lookupHash);
   assert.equal(readFileSync(join(output, manifest.entries[0].imageFile), 'utf8'), 'image-1');
 });
+
+test('example analysis waves publish validated content without waiting for images', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-analysis-wave-'));
+  const output = join(root, 'wave');
+  const first = sentence('The first [[example]] has an explanation.');
+  const second = sentence('The second [[example]] has an explanation.');
+  const entries = [first, second].map((value, index) => ({
+    id: value.id,
+    textHash: value.textHash,
+    analysis,
+    generatedAt: index + 1,
+  }));
+  const sourcePath = join(root, 'source.json');
+  const analysisPath = join(root, 'analysis.json');
+  const excludedPath = join(root, 'published.json');
+  writeFileSync(sourcePath, JSON.stringify({ version: 1, sentences: [first, second] }));
+  writeFileSync(analysisPath, JSON.stringify({ version: 1, entries }));
+  writeFileSync(excludedPath, JSON.stringify({ version: 1, entries: [{ id: first.id }] }));
+
+  const stdout = execFileSync(process.execPath, [
+    resolve('..', 'scripts/offline/prepare-example-analysis-wave.mjs'),
+    sourcePath,
+    analysisPath,
+    output,
+    '1',
+    excludedPath,
+  ], { encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(stdout), { sourceEntries: 2, previouslyPublished: 1, waveEntries: 1 });
+  const manifest = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.entries[0].id, second.id);
+  assert.equal(manifest.entries[0].imageFile, undefined);
+  assert.equal(manifest.entries[0].analysis.translation, analysis.translation);
+});

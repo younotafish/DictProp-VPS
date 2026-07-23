@@ -44,8 +44,13 @@ export function validateSentenceEnrichmentBundle(value: unknown): string | null 
   if (typeof bundle.generatedAt !== 'number' || !Number.isFinite(bundle.generatedAt) || bundle.generatedAt <= 0) {
     return 'bundle generatedAt is invalid';
   }
-  if (!Array.isArray(bundle.entries) || bundle.entries.length === 0 || bundle.entries.length > 500) {
-    return 'bundle entries must contain 1 to 500 records';
+  if (!Array.isArray(bundle.entries) || bundle.entries.length === 0) {
+    return 'bundle entries must contain records';
+  }
+  const hasImages = bundle.entries.some((entry: any) => entry?.imageFile !== undefined);
+  const maxEntries = hasImages ? 500 : 2_000;
+  if (bundle.entries.length > maxEntries) {
+    return `bundle entries must contain at most ${maxEntries} records`;
   }
 
   const ids = new Set<string>();

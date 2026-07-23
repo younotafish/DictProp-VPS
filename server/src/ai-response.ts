@@ -77,6 +77,28 @@ export function isValidGeneratedExampleSet(value: unknown): value is [string, st
     new Set(value.map(exampleIdentity)).size === 2;
 }
 
+export function hasCompleteGeneratedVocabMetadata(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const vocab = value as any;
+  for (const [field, minimum] of [
+    ['word', 1], ['sense', 3], ['chinese', 1], ['definition', 10], ['history', 20],
+    ['register', 10], ['mnemonic', 10], ['imagePrompt', 50],
+  ] as const) {
+    if (typeof vocab[field] !== 'string' || vocab[field].trim().length < minimum) return false;
+  }
+  if (!/[\u3400-\u9fff]/u.test(vocab.chinese)) return false;
+  if (typeof vocab.ipa !== 'string' || !/^\/[^/]+\/$/.test(vocab.ipa.trim())) return false;
+  for (const field of ['forms', 'synonyms', 'antonyms', 'confusables'] as const) {
+    if (!Array.isArray(vocab[field]) || !vocab[field].every((entry: unknown) =>
+      typeof entry === 'string' && entry.trim().length > 0)) return false;
+  }
+  if (!Array.isArray(vocab.wordFamily) || !vocab.wordFamily.every((entry: any) =>
+    entry && typeof entry.word === 'string' && entry.word.trim() &&
+    typeof entry.pos === 'string' && entry.pos.trim() &&
+    typeof entry.chinese === 'string' && /[\u3400-\u9fff]/u.test(entry.chinese))) return false;
+  return isValidUsageAudit(vocab.usageAudit);
+}
+
 function parseUsageStatus(value: unknown): UsageStatus | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
