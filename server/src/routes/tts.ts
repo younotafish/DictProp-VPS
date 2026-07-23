@@ -19,15 +19,14 @@ import { join, resolve } from 'path';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import { getAllSentenceTexts } from '../db.js';
+import { alignAudioLocally } from '../local-whisper.js';
+import type { WordTiming } from '../tts-alignment.js';
 
 export const ttsRoutes = new Hono();
 
 const MIMO_URL = 'https://api.deepinfra.com/v1/inference/XiaomiMiMo/MiMo-V2.5-tts';
 // Default English voice. Options: Mia, Chloe (female), Milo, Dean (male), mimo_default.
 const MIMO_VOICE = 'Mia';
-// Word-level forced alignment: transcribe the synthesized clip back with word timestamps so the
-// client can seek playback to any word. chunk_level:'word' is REQUIRED — without it `words` is empty.
-const WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-timestamped-medium.en';
 const TTS_DIR = resolve(env.DATA_DIR, 'tts');
 const GEN_TIMEOUT_MS = 90_000;
 
@@ -37,7 +36,7 @@ const GEN_TIMEOUT_MS = 90_000;
 // sentinel = the casual recipe below. The clip is keyed by (style, ORIGINAL sentence) — so the
 // client finds it from the on-screen text — while the AUDIO is a phonetically-reduced respelling the
 // AI produces (e.g. "reaching"->"reachin'", "to him"->"ta 'im"). Vocabulary words are preserved; only
-// pronunciation changes. Casual clips have NO word timings (tap-to-seek stays on the clear track).
+// pronunciation changes. Both clear and casual clips receive locally generated word timings.
 const CASUAL_STYLE = 'casual';
 const VOICEDESIGN_URL = 'https://api.deepinfra.com/v1/inference/XiaomiMiMo/MiMo-V2.5-tts-voicedesign';
 const CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
@@ -139,12 +138,6 @@ async function synthMiMo(text: string, voice: string): Promise<Buffer> {
   return transcodeToMp3(raw);
 }
 
-// Forced word-alignment: transcribe a synthesized clip back to word-level timestamps via whisper
-// (chunk_level:'word' is REQUIRED — without it `words` comes back empty). Best-effort: returns [] on any
-// failure, so the audio still caches and the feature degrades to whole-sentence playback. A mis-heard
-// word's text may be wrong, but its start time is still correct (the client aligns by sequence).
-type WordTiming = { start: number; end: number; text: string };
-
 async function postLargeJson(url: string, body: string): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEN_TIMEOUT_MS);
@@ -167,17 +160,10 @@ async function postLargeJson(url: string, body: string): Promise<string> {
 }
 
 async function alignTimings(audio: Buffer): Promise<WordTiming[]> {
-  if (!env.DEEPINFRA_API_KEY) return [];
-  const dataUrl = `data:${sniffContentType(audio)};base64,` + audio.toString('base64');
-  const raw = await postLargeJson(WHISPER_URL, JSON.stringify({ audio: dataUrl, chunk_level: 'word', language: 'en' }));
-  if (!raw) return [];
   try {
-    const data: any = JSON.parse(raw);
-    const words: any[] = Array.isArray(data?.words) ? data.words : [];
-    return words
-      .map((w) => ({ start: Number(w?.start) || 0, end: Number(w?.end) || 0, text: String(w?.word || '').trim() }))
-      .filter((w) => w.text);
-  } catch {
+    return await alignAudioLocally(audio);
+  } catch (error: any) {
+    console.warn('[tts] local whisper alignment failed:', error?.message);
     return [];
   }
 }
@@ -336,7 +322,7 @@ export async function runBackfill(): Promise<void> {
     console.warn('[tts] backfill: failed to read items:', e?.message);
     return;
   }
-  // Two styles per sentence — clear (audio + word timings) and casual (audio only).
+  // Two styles per sentence, each with audio and word timings.
   backfill = { running: true, total: texts.length * 2, done: 0, generated: 0, failed: 0, startedAt: Date.now(), finishedAt: 0 };
   console.log(`[tts] backfill: starting for ${texts.length} sentences × 2 styles`);
 
@@ -473,7 +459,7 @@ ttsRoutes.post('/tts/generate', async (c) => {
     const voice = it.voice || MIMO_VOICE;
     try {
       const key = ttsKey(text, voice);
-      // Skip when the clip is complete for its style (clear: audio+timings; casual: audio only).
+      // Skip when both the clip and its local word timings are complete.
       if (await isComplete(key)) { skipped++; continue; }
       await generateAndStore(text, voice);
       generated++;
@@ -486,8 +472,8 @@ ttsRoutes.post('/tts/generate', async (c) => {
 });
 
 // POST /api/tts/manifest  { keys: [...], audioOnly?: bool } -> { have: [...] }  (which keys are cached).
-// audioOnly=true (casual sweeps) treats a key as cached once its audio exists — casual clips have no
-// timings. Default (clear) requires audio + timings so the sweep backfills timings for legacy clips.
+// audioOnly=true lets callers inventory clips independently. The default requires audio + timings,
+// so ordinary sweeps also repair legacy audio-only cache entries.
 ttsRoutes.post('/tts/manifest', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const keys: string[] = Array.isArray(body?.keys) ? body.keys : [];

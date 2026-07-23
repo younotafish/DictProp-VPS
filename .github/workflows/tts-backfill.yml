@@ -1,0 +1,32 @@
+name: TTS Backfill
+
+on:
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: dictprop-tts-backfill-control
+      cancel-in-progress: false
+    steps:
+      - name: Start or resume the detached TTS backfill
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -e
+            cd /opt/dictprop-vps
+            docker compose exec -d app nice -n 10 node server/dist/scripts/run-tts-backfill.js
+            sleep 3
+            docker compose exec -T app sh -c \
+              'cat /app/data/tts-backfill-status.json 2>/dev/null || echo "{\"status\":\"starting\"}"'

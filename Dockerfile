@@ -1,3 +1,23 @@
+FROM node:22-alpine AS whisper-builder
+
+ARG WHISPER_CPP_VERSION=v1.9.1
+ARG WHISPER_CPP_SOURCE_SHA256=147267177eef7b22ec3d2476dd514d1b12e160e176230b740e3d1bd600118447
+ARG WHISPER_TINY_EN_SHA256=921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f
+RUN apk add --no-cache build-base cmake curl
+RUN mkdir -p /src /models \
+  && curl -fsSL --retry 5 --retry-delay 5 \
+    "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/${WHISPER_CPP_VERSION}.tar.gz" \
+    -o /tmp/whisper.cpp.tar.gz \
+  && echo "${WHISPER_CPP_SOURCE_SHA256}  /tmp/whisper.cpp.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/whisper.cpp.tar.gz -C /src --strip-components=1 \
+  && cmake -S /src -B /src/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_NATIVE=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF \
+  && cmake --build /src/build --config Release --target whisper-cli -j2 \
+  && curl -fsSL --retry 5 --retry-delay 5 \
+    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin \
+    -o /models/ggml-tiny.en.bin \
+  && echo "${WHISPER_TINY_EN_SHA256}  /models/ggml-tiny.en.bin" | sha256sum -c -
+
 FROM node:22-alpine AS builder
 
 WORKDIR /app
@@ -36,7 +56,11 @@ WORKDIR /app
 
 # ffmpeg: transcode MiMo's WAV output to MP3 for the TTS cache (smaller + universal playback)
 # curl: proxyFetch uses it for large proxied JSON bodies; direct VPS requests still use native fetch.
-RUN apk add --no-cache ffmpeg curl
+RUN apk add --no-cache ffmpeg curl libstdc++ libgcc libgomp
+
+COPY --from=whisper-builder /src/build/bin/whisper-cli /usr/local/bin/whisper-cli
+COPY --from=whisper-builder /models/ggml-tiny.en.bin /opt/whisper/ggml-tiny.en.bin
+RUN whisper-cli --version && test -s /opt/whisper/ggml-tiny.en.bin
 
 # Server production deps only (better-sqlite3 via prebuilt binary — fast, no compile).
 COPY server/package.json server/package-lock.json ./server/
