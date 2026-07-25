@@ -83,6 +83,38 @@ discover_dispatched_deploy() {
   fi
 }
 
+discover_dispatched_import() {
+  local previous_run_id
+  local candidate_run_id
+  local candidate_kind
+
+  previous_run_id="$(tr -d '[:space:]' < "$STATE_DIR/previous-run" 2>/dev/null || true)"
+  if ! [[ "$previous_run_id" =~ ^[0-9]+$ ]]; then
+    previous_run_id=0
+  fi
+
+  while IFS= read -r candidate_run_id; do
+    candidate_kind="$("$GH_BIN" run view "$candidate_run_id" --repo "$REPO" \
+      --json status,conclusion,jobs \
+      --jq "if ([.jobs[]? | select(.name == \"$IMPORT_JOB\" and .conclusion != \"skipped\")] | length) > 0 then \"operation-job\" elif .status == \"completed\" and ([.jobs[]?] | length) == 0 and (.conclusion == \"startup_failure\" or .conclusion == \"failure\" or .conclusion == \"cancelled\" or .conclusion == \"timed_out\") then \"workflow-startup-failure\" else empty end" \
+      2>/dev/null || true)"
+    if [ "$candidate_kind" = "operation-job" ] || [ "$candidate_kind" = "workflow-startup-failure" ]; then
+      printf '%s\n' "$candidate_run_id" > "$STATE_DIR/import-run"
+      if [ "$candidate_kind" = "workflow-startup-failure" ]; then
+        log "identified failed import workflow $candidate_run_id before any job started"
+      fi
+      return
+    fi
+  done < <("$GH_BIN" run list \
+    --repo "$REPO" \
+    --workflow sentence-backfill.yml \
+    --event workflow_dispatch \
+    --limit 30 \
+    --json databaseId \
+    --jq ".[] | select(.databaseId > $previous_run_id) | .databaseId" \
+    2>/dev/null | sort -n || true)
+}
+
 if [ ! -s "$ARCHIVE" ]; then
   echo "Encrypted archive not found or empty: $ARCHIVE" >&2
   exit 1
@@ -222,30 +254,12 @@ while :; do
   fi
 
   if [ ! -s "$STATE_DIR/import-run" ]; then
-    PREVIOUS_RUN_ID="$(tr -d '[:space:]' < "$STATE_DIR/previous-run")"
-    if ! [[ "$PREVIOUS_RUN_ID" =~ ^[0-9]+$ ]]; then PREVIOUS_RUN_ID=0; fi
-    IMPORT_ID=""
-    while IFS= read -r candidate_run_id; do
-      if "$GH_BIN" run view "$candidate_run_id" --repo "$REPO" --json jobs \
-        --jq ".jobs[] | select(.name == \"$IMPORT_JOB\" and (.status == \"in_progress\" or (.status == \"completed\" and .conclusion != \"skipped\"))) | .name" \
-        2>/dev/null | grep -qx "$IMPORT_JOB"; then
-        IMPORT_ID="$candidate_run_id"
-        break
-      fi
-    done < <("$GH_BIN" run list \
-      --repo "$REPO" \
-      --workflow sentence-backfill.yml \
-      --event workflow_dispatch \
-      --limit 30 \
-      --json databaseId \
-      --jq ".[] | select(.databaseId > $PREVIOUS_RUN_ID) | .databaseId" \
-      2>/dev/null || true)
-    if [ -z "$IMPORT_ID" ]; then
+    discover_dispatched_import
+    if [ ! -s "$STATE_DIR/import-run" ]; then
       log "$OPERATION import dispatched; waiting for its exact run ID"
       sleep 20
       continue
     fi
-    printf '%s\n' "$IMPORT_ID" > "$STATE_DIR/import-run"
   fi
 
   IMPORT_ID="$(tr -d '[:space:]' < "$STATE_DIR/import-run")"
