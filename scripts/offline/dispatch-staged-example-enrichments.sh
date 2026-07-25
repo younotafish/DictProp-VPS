@@ -11,7 +11,8 @@ KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop
 MFLUX_PYTHON="${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}"
 CANONICAL_MFLUX_PYTHON="$HOME/.cache/dictprop/mflux/bin/python"
 PYTHON_BIN="${PYTHON_BIN:-$MFLUX_PYTHON}"
-STATE_ROOT="${EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT:-/tmp/dictprop-staged-example-enrichments}"
+# Publication can run for several days, so its completed-wave ledger must survive OS /tmp cleanup.
+STATE_ROOT="${EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT:-$POOL_ROOT/publish-state}"
 COOLDOWN_SECONDS="${EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS:-60}"
 SOURCE="$POOL_ROOT/source.json"
 ANALYSIS="$POOL_ROOT/final-reconciliation/final-analysis.json"
@@ -48,6 +49,17 @@ publisher_state_dir() {
 manifest_count() {
   if [ "$#" -eq 0 ]; then printf '0\n'; return; fi
   node -e 'const fs=require("fs"); const ids=new Set(); for(const path of process.argv.slice(1)) for(const entry of JSON.parse(fs.readFileSync(path)).entries) ids.add(entry.id); console.log(ids.size)' "$@"
+}
+
+next_wave_number() {
+  local next=1 wave_dir suffix number
+  while IFS= read -r wave_dir; do
+    suffix="${wave_dir##*/wave-}"
+    number=$((10#$suffix))
+    if [ "$number" -ge "$next" ]; then next=$((number + 1)); fi
+  done < <(find "$STATE_ROOT" -mindepth 1 -maxdepth 1 -type d \
+    -name 'wave-[0-9][0-9][0-9][0-9]' | sort)
+  printf '%s\n' "$next"
 }
 
 if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ] || [ "$BATCH_SIZE" -gt 500 ]; then
@@ -94,7 +106,7 @@ while :; do
     continue
   fi
 
-  WAVE_NUMBER=$((${#PUBLISHED_MANIFESTS[@]} + 1))
+  WAVE_NUMBER="$(next_wave_number)"
   WAVE_NAME="wave-$(printf '%04d' "$WAVE_NUMBER")"
   WAVE_DIR="$STATE_ROOT/$WAVE_NAME"
   mkdir -p "$WAVE_DIR"
