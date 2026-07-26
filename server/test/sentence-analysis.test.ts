@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  extractSentenceGrammarAnalysis,
   hasSentenceGrammarAnalysis,
   isSentenceGrammarAnalysis,
   isSentenceAnalysis,
@@ -57,6 +58,14 @@ test('sentence analysis accepts the durable structured format', () => {
     ...validAnalysis,
     terms: [{ ...validAnalysis.terms[0], synonyms: 'confess' }],
   }), false);
+});
+
+test('grammar response extraction tolerates harmless provider wrappers', () => {
+  const grammar = validAnalysis.grammar;
+  assert.deepEqual(extractSentenceGrammarAnalysis({ grammar }), grammar);
+  assert.deepEqual(extractSentenceGrammarAnalysis(grammar), grammar);
+  assert.deepEqual(extractSentenceGrammarAnalysis({ analysis: { grammar } }), grammar);
+  assert.equal(extractSentenceGrammarAnalysis({ grammar: { structure: 'Clause.', points: [{}] } }), null);
 });
 
 test('offline prompt fixes field order, language, dialect, and image style', () => {

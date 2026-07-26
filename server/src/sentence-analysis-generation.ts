@@ -1,8 +1,8 @@
 import { env } from './env.js';
 import { proxyFetch } from './proxy-fetch.js';
 import {
+  extractSentenceGrammarAnalysis,
   hasSentenceGrammarAnalysis,
-  isSentenceGrammarAnalysis,
   isSentenceAnalysis,
   SENTENCE_GRAMMAR_INSTRUCTION,
   SENTENCE_ANALYSIS_INSTRUCTION,
@@ -99,7 +99,9 @@ export async function generateSentenceGrammarAnalysis(
     SENTENCE_GRAMMAR_INSTRUCTION,
     sentenceGrammarUserPrompt(text, translation),
     'Sentence grammar analysis',
-    value => isSentenceGrammarAnalysis((value as any)?.grammar),
+    value => extractSentenceGrammarAnalysis(value) !== null,
   );
-  return (result as any).grammar;
+  const grammar = extractSentenceGrammarAnalysis(result);
+  if (!grammar) throw new Error('Sentence grammar analysis failed schema validation');
+  return grammar;
 }

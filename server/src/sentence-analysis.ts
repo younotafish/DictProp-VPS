@@ -58,6 +58,18 @@ export function isSentenceGrammarAnalysis(value: unknown): value is SentenceGram
     );
 }
 
+export function extractSentenceGrammarAnalysis(value: unknown): SentenceGrammarAnalysis | null {
+  if (isSentenceGrammarAnalysis(value)) return value;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const response = value as Record<string, any>;
+  if (isSentenceGrammarAnalysis(response.grammar)) return response.grammar;
+  if (response.analysis && typeof response.analysis === 'object' &&
+      isSentenceGrammarAnalysis(response.analysis.grammar)) {
+    return response.analysis.grammar;
+  }
+  return null;
+}
+
 export function hasSentenceGrammarAnalysis(
   value: unknown,
 ): value is SentenceAnalysis & { grammar: SentenceGrammarAnalysis } {
