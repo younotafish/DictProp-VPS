@@ -72,6 +72,8 @@ test('offline prompt fixes field order, language, dialect, and image style', () 
   assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /connected speech/);
   assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /photorealistic 16:9/);
   assert.match(sentenceAnalysisUserPrompt('  He came clean.  '), /"He came clean\."/);
+  assert.doesNotMatch(sentenceAnalysisUserPrompt('He {{came}} [[clean]].'), /[{}\[\]]/);
   assert.match(SENTENCE_GRAMMAR_INSTRUCTION, /advanced Chinese-speaking learner/);
   assert.match(sentenceGrammarUserPrompt('  He came clean.  ', '他坦白了。'), /Existing Chinese translation/);
+  assert.match(sentenceGrammarUserPrompt('He {{came}} [[clean]].'), /"He came clean\."/);
 });

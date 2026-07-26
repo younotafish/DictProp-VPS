@@ -137,8 +137,15 @@ Rules:
 - Keep fields cleanly separated: originalMeaning contains meaning and semantic clarification only; examples contains usage examples only; historicalEvolution contains origin and chronology only.
 `;
 
+function plainSentenceText(text: string): string {
+  return text
+    .replace(/\{\{([^{}]+)\}\}/g, '$1')
+    .replace(/\[\[([^\[\]]+)\]\]/g, '$1')
+    .trim();
+}
+
 export function sentenceAnalysisUserPrompt(text: string): string {
-  return `Analyze this text exactly as specified:\n\n${JSON.stringify(text.trim())}`;
+  return `Analyze this text exactly as specified:\n\n${JSON.stringify(plainSentenceText(text))}`;
 }
 
 export const SENTENCE_GRAMMAR_INSTRUCTION = `
@@ -169,5 +176,5 @@ Rules:
 
 export function sentenceGrammarUserPrompt(text: string, translation?: string): string {
   const context = translation?.trim() ? `\nExisting Chinese translation for sense context: ${JSON.stringify(translation.trim())}` : '';
-  return `Add only the missing grammar analysis for this sentence:\n\n${JSON.stringify(text.trim())}${context}`;
+  return `Add only the missing grammar analysis for this sentence:\n\n${JSON.stringify(plainSentenceText(text))}${context}`;
 }
