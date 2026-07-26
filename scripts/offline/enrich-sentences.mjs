@@ -11,6 +11,10 @@ if (!inputArg || !outputArg) {
 }
 
 const MODEL = 'gpt-5.6-sol';
+const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 40);
+const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+  ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
+  : 40) * 60 * 1_000;
 const activeChildren = new Set();
 let aborting = false;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
@@ -199,7 +203,7 @@ function runCodex(args, prompt) {
     const timeout = setTimeout(() => {
       killCodex(child, 'SIGTERM');
       hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, 20 * 60 * 1000);
+    }, CODEX_TIMEOUT_MS);
     child.on('error', error => {
       activeChildren.delete(child);
       reject(error);
