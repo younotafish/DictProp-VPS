@@ -1,9 +1,14 @@
 import { env } from './env.js';
 import { proxyFetch } from './proxy-fetch.js';
 import {
+  hasSentenceGrammarAnalysis,
+  isSentenceGrammarAnalysis,
   isSentenceAnalysis,
+  SENTENCE_GRAMMAR_INSTRUCTION,
   SENTENCE_ANALYSIS_INSTRUCTION,
+  sentenceGrammarUserPrompt,
   sentenceAnalysisUserPrompt,
+  type SentenceGrammarAnalysis,
   type SentenceAnalysis,
 } from './sentence-analysis.js';
 
@@ -25,10 +30,14 @@ function parseJson(content: unknown): unknown {
   }
 }
 
-export async function generateSentenceAnalysis(text: string): Promise<SentenceAnalysis> {
+async function generateJson(
+  systemInstruction: string,
+  userPrompt: string,
+  errorLabel: string,
+  isValid: (value: unknown) => boolean,
+): Promise<unknown> {
   const apiKey = env.DEEPINFRA_API_KEY;
   if (!apiKey) throw new Error('DEEPINFRA_API_KEY is not configured');
-  if (!text.trim()) throw new Error('Sentence text is empty');
 
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -47,8 +56,8 @@ export async function generateSentenceAnalysis(text: string): Promise<SentenceAn
         body: JSON.stringify({
           model: MODEL,
           messages: [
-            { role: 'system', content: `${SENTENCE_ANALYSIS_INSTRUCTION}${correction}` },
-            { role: 'user', content: sentenceAnalysisUserPrompt(text) },
+            { role: 'system', content: `${systemInstruction}${correction}` },
+            { role: 'user', content: userPrompt },
           ],
           response_format: { type: 'json_object' },
           temperature: 0.35,
@@ -57,9 +66,9 @@ export async function generateSentenceAnalysis(text: string): Promise<SentenceAn
       });
       const payload: any = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(`Sentence analysis provider returned ${response.status}`);
-      const analysis = parseJson(payload?.choices?.[0]?.message?.content);
-      if (!isSentenceAnalysis(analysis)) throw new Error('Sentence analysis failed schema validation');
-      return analysis;
+      const parsed = parseJson(payload?.choices?.[0]?.message?.content);
+      if (!isValid(parsed)) throw new Error(`${errorLabel} failed schema validation`);
+      return parsed;
     } catch (error) {
       lastError = error;
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 2_000 * (attempt + 1)));
@@ -67,5 +76,30 @@ export async function generateSentenceAnalysis(text: string): Promise<SentenceAn
       clearTimeout(timeout);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('Sentence analysis failed');
+  throw lastError instanceof Error ? lastError : new Error(`${errorLabel} failed`);
+}
+
+export async function generateSentenceAnalysis(text: string): Promise<SentenceAnalysis> {
+  if (!text.trim()) throw new Error('Sentence text is empty');
+  const analysis = await generateJson(
+    SENTENCE_ANALYSIS_INSTRUCTION,
+    sentenceAnalysisUserPrompt(text),
+    'Sentence analysis',
+    value => isSentenceAnalysis(value) && hasSentenceGrammarAnalysis(value),
+  );
+  return analysis as SentenceAnalysis;
+}
+
+export async function generateSentenceGrammarAnalysis(
+  text: string,
+  translation?: string,
+): Promise<SentenceGrammarAnalysis> {
+  if (!text.trim()) throw new Error('Sentence text is empty');
+  const result = await generateJson(
+    SENTENCE_GRAMMAR_INSTRUCTION,
+    sentenceGrammarUserPrompt(text, translation),
+    'Sentence grammar analysis',
+    value => isSentenceGrammarAnalysis((value as any)?.grammar),
+  );
+  return (result as any).grammar;
 }

@@ -1,4 +1,4 @@
-import { isSentenceAnalysis } from './sentence-analysis.js';
+import { hasSentenceGrammarAnalysis, isSentenceAnalysis } from './sentence-analysis.js';
 
 const requiredVocabStrings = [
   'word',
@@ -24,7 +24,8 @@ export function hasCompleteVocabContent(data: any): boolean {
 export function itemNeedsIncrementalEnrichment(item: any): boolean {
   if (!item?.data || item.isDeleted || item.isArchived) return false;
   if (item.type === 'sentence') {
-    return !isSentenceAnalysis(item.data.analysis) || !hasStoredImage(item.data);
+    return !isSentenceAnalysis(item.data.analysis) ||
+      !hasSentenceGrammarAnalysis(item.data.analysis) || !hasStoredImage(item.data);
   }
   if (item.type === 'vocab') {
     return !hasCompleteVocabContent(item.data) ||

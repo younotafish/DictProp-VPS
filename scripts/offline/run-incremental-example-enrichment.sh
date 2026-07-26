@@ -11,6 +11,7 @@ REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 NODE_BIN="${NODE_BIN:-node}"
 ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-8}"
+GRAMMAR_CONCURRENCY="${GRAMMAR_CONCURRENCY:-8}"
 IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-16}"
 LOCK_DIR="$ROOT/.cycle-lock"
 CURRENT_CORPUS="$ROOT/current-corpus.json"
@@ -20,7 +21,7 @@ ANALYSIS_CACHE="$ROOT/analysis-cache.json"
 RECONCILIATION="$ROOT/final-reconciliation"
 IMAGE_ROOT="$ROOT/final-images"
 PUBLISH_STATE="$ROOT/publish-state"
-ANALYSIS_PUBLISH_STATE="$ROOT/analysis-publish-state"
+ANALYSIS_PUBLISH_STATE="$ROOT/analysis-publish-state-grammar-v2"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -118,6 +119,16 @@ fi
 if [ ! -s "$RECONCILIATION/final-analysis.json" ]; then
   echo "Incremental sentence analysis reconciliation is incomplete" >&2
   exit 1
+fi
+MISSING_GRAMMAR_COUNT="$($NODE_BIN -e 'const v=JSON.parse(require("fs").readFileSync(process.argv[1])); console.log(v.entries.filter(entry => !entry.analysis?.grammar).length)' \
+  "$RECONCILIATION/final-analysis.json")"
+if [ "$MISSING_GRAMMAR_COUNT" -gt 0 ]; then
+  log "generating local GPT-5.6 grammar analysis for $MISSING_GRAMMAR_COUNT example sentence(s)"
+  GRAMMAR_ANALYSIS="$ROOT/grammar-analysis.json"
+  env CODEX_CONCURRENCY="$GRAMMAR_CONCURRENCY" "$NODE_BIN" scripts/offline/enrich-sentence-grammar.mjs \
+    "$SOURCE" "$RECONCILIATION/final-analysis.json" "$GRAMMAR_ANALYSIS" "$ROOT/grammar-work"
+  cp "$GRAMMAR_ANALYSIS" "$RECONCILIATION/final-analysis.json.tmp"
+  mv "$RECONCILIATION/final-analysis.json.tmp" "$RECONCILIATION/final-analysis.json"
 fi
 cp "$RECONCILIATION/final-analysis.json" "$ANALYSIS_CACHE.tmp"
 mv "$ANALYSIS_CACHE.tmp" "$ANALYSIS_CACHE"

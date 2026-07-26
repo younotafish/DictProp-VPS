@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { SentenceData } from '../types';
 import { stripSentenceMarkers } from './HighlightedSentence';
 
@@ -105,6 +105,37 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                   <p lang="zh-CN" className="max-w-4xl text-base font-normal leading-relaxed text-slate-700 sm:text-lg">
                     {analysis.translation}
                   </p>
+                </section>
+
+                <section className="mt-7 border-t border-slate-200 pt-6">
+                  <div className="mb-3 flex items-center gap-2 text-slate-500">
+                    <Braces size={17} className="text-violet-600" />
+                    <h2 className="text-xs font-bold uppercase text-slate-500">Grammar analysis</h2>
+                  </div>
+                  {analysis.grammar ? (
+                    <div className="max-w-4xl">
+                      <p className="border-l-2 border-violet-200 pl-3 text-base leading-relaxed text-slate-800">
+                        {analysis.grammar.structure}
+                      </p>
+                      {analysis.grammar.points.length > 0 && (
+                        <div className="mt-5 divide-y divide-slate-100 border-y border-slate-100">
+                          {analysis.grammar.points.map((point, index) => (
+                            <div key={`${point.label}:${point.excerpt}:${index}`} className="py-4 first:pt-0 last:pb-0">
+                              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                                <h3 className="text-sm font-bold text-slate-800">{point.label}</h3>
+                                <span className="rounded bg-violet-50 px-2 py-0.5 text-sm text-violet-700">{point.excerpt}</span>
+                              </div>
+                              <p className="mt-2 text-sm leading-relaxed text-slate-600 sm:text-base">
+                                {point.explanation}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-400">Grammar analysis pending.</p>
+                  )}
                 </section>
 
                 <section className="mt-7 border-t border-slate-200 pt-6">

@@ -39,13 +39,36 @@ const termSchema = {
     historicalEvolution: { type: 'string', maxLength: 4_000 },
   },
 };
+const grammarSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['structure', 'points'],
+  properties: {
+    structure: { type: 'string', minLength: 1, maxLength: 4_000 },
+    points: {
+      type: 'array',
+      maxItems: 12,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['label', 'excerpt', 'explanation'],
+        properties: {
+          label: { type: 'string', minLength: 1, maxLength: 300 },
+          excerpt: { type: 'string', minLength: 1, maxLength: 1_000 },
+          explanation: { type: 'string', minLength: 1, maxLength: 4_000 },
+        },
+      },
+    },
+  },
+};
 const analysisSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['translation', 'naturalSpeechIpa', 'americanEnglish', 'terms', 'imagePrompt'],
+  required: ['translation', 'naturalSpeechIpa', 'grammar', 'americanEnglish', 'terms', 'imagePrompt'],
   properties: {
     translation: { type: 'string', maxLength: 12_000 },
     naturalSpeechIpa: { type: 'string', minLength: 3, maxLength: 2_000 },
+    grammar: grammarSchema,
     americanEnglish: {
       type: 'object',
       additionalProperties: false,
@@ -83,9 +106,10 @@ const instruction = `You are an expert American English lexicographer and an exa
 For each sentence, return these analysis fields in this exact conceptual order:
 1. translation: a precise, natural Simplified Chinese translation of the entire text that preserves tense, modality, tone, register, implied relationships, and idiomatic force rather than translating word by word.
 2. naturalSpeechIpa: readable IPA for the COMPLETE sentence in mainstream rhotic General American English at a fluent, naturally fast conversational pace. Use ordinary connected-speech weak forms, reductions, linking, assimilation, and flapping where native speakers normally use them. Do not produce slow isolated dictionary forms, exaggerated deletion, eye-dialect respelling, or a narrow regional accent. Preserve every meaning-bearing word and enclose the single complete transcription in slashes.
-3. americanEnglish: status must be american, shared, or not_american. In English, explain whether the wording is distinctly American, shared across major varieties, or non-American, citing concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. If it is not normal American English, give the natural present-day American equivalent.
-4. terms: every genuinely uncommon word, idiom, phrasal verb, or fixed phrase. For each term include its context-specific Chinese translation; true rhotic General American IPA with stress marks and surrounding slashes; core contextual meaning and literal/earlier meaning when figurative; sense-matched English synonyms and antonyms; two natural modern American examples that make the meaning inferable and do not quote the source; and a concise, accurate historical evolution note. Prefer the longest phrase and never duplicate components. Do not pad with ordinary A1-B2 words. Explicitly disambiguate a likely learner confusion when the context selects one sense over another. Keep fields cleanly separated: originalMeaning must contain only meaning and semantic clarification, never examples or historical chronology; usage examples belong only in examples; etymology and dated development belong only in historicalEvolution.
-5. imagePrompt: a production-ready prompt for one realistic photorealistic 16:9 photograph depicting the COMPLETE sentence as one coherent concrete scene. Apply this test: the scene should let a learner infer the sentence's intended meaning, not merely its topic. Put the defining action, relationship, contrast, cause, or consequence in the foreground and include every detail needed to distinguish the intended reading. Keep the cast and composition simple enough to parse instantly. For an idiom, depict its intended contextual meaning, not a misleading literal origin. Specify camera distance, composition, and natural lighting. Require authentic anatomy, skin, materials, and contemporary details. Explicitly prohibit illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, and visible text.
+3. grammar: structure must give a compact but complete English map of the sentence's clauses and phrases in source order. points must cover every construction an advanced learner needs to parse correctly, including tense/aspect, modality, clause relationships, nonfinite or reduced clauses, reference, word order, agreement, modification, coordination, ellipsis, and information structure when relevant. Each point needs a specific label, the shortest exact excerpt from the plain sentence, and a context-specific explanation of how the form works, what it contributes, and why it is used instead of a plausible alternative. Do not pad simple sentences with trivial points.
+4. americanEnglish: status must be american, shared, or not_american. In English, explain whether the wording is distinctly American, shared across major varieties, or non-American, citing concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. If it is not normal American English, give the natural present-day American equivalent.
+5. terms: every genuinely uncommon word, idiom, phrasal verb, or fixed phrase. For each term include its context-specific Chinese translation; true rhotic General American IPA with stress marks and surrounding slashes; core contextual meaning and literal/earlier meaning when figurative; sense-matched English synonyms and antonyms; two natural modern American examples that make the meaning inferable and do not quote the source; and a concise, accurate historical evolution note. Prefer the longest phrase and never duplicate components. Do not pad with ordinary A1-B2 words. Explicitly disambiguate a likely learner confusion when the context selects one sense over another. Keep fields cleanly separated: originalMeaning must contain only meaning and semantic clarification, never examples or historical chronology; usage examples belong only in examples; etymology and dated development belong only in historicalEvolution.
+6. imagePrompt: a production-ready prompt for one realistic photorealistic 16:9 photograph depicting the COMPLETE sentence as one coherent concrete scene. Apply this test: the scene should let a learner infer the sentence's intended meaning, not merely its topic. Put the defining action, relationship, contrast, cause, or consequence in the foreground and include every detail needed to distinguish the intended reading. Keep the cast and composition simple enough to parse instantly. For an idiom, depict its intended contextual meaning, not a misleading literal origin. Specify camera distance, composition, and natural lighting. Require authentic anatomy, skin, materials, and contemporary details. Explicitly prohibit illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, and visible text.
 
 Everything must be English except translation and each term's chinese field. Synonyms/antonyms must match the contextual sense. If no natural antonym exists, return an empty array. State uncertainty rather than inventing etymology. Never repeat a term, repeat an example within one term, emit a schema field name as content, or emit placeholder/TBD content. Copy every itemIndex exactly, return every input once, and output only schema-valid JSON.`;
 
@@ -98,6 +122,12 @@ function validString(value) {
 
 function normalizedValue(value) {
   return String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function plainSentence(value) {
+  return String(value || '')
+    .replace(/\{\{([^{}]+)\}\}/g, '$1')
+    .replace(/\[\[([^\[\]]+)\]\]/g, '$1');
 }
 
 function validTermIpa(value) {
@@ -116,6 +146,8 @@ function leakedPlaceholder(value) {
 function validateAnalysis(analysis, id) {
   if (!analysis || !validString(analysis.translation) || !validString(analysis.naturalSpeechIpa) ||
       !/^\/[^/]+\/$/.test(analysis.naturalSpeechIpa.trim()) || !validString(analysis.imagePrompt) ||
+      !analysis.grammar || !validString(analysis.grammar.structure) || !Array.isArray(analysis.grammar.points) ||
+      analysis.grammar.points.length > 12 ||
       !analysis.americanEnglish || !['american', 'shared', 'not_american'].includes(analysis.americanEnglish.status) ||
       !validString(analysis.americanEnglish.explanation) || !Array.isArray(analysis.terms) || analysis.terms.length > 20) {
     throw new Error(`${id}: invalid sentence analysis`);
@@ -123,6 +155,15 @@ function validateAnalysis(analysis, id) {
   if ([analysis.translation, analysis.naturalSpeechIpa, analysis.americanEnglish.explanation, analysis.imagePrompt]
     .some(leakedPlaceholder)) {
     throw new Error(`${id}: placeholder or schema field leaked into sentence analysis`);
+  }
+  if (leakedPlaceholder(analysis.grammar.structure)) {
+    throw new Error(`${id}: placeholder leaked into grammar structure`);
+  }
+  for (const point of analysis.grammar.points) {
+    if (!point || !validString(point.label) || !validString(point.excerpt) ||
+        !validString(point.explanation) || [point.label, point.excerpt, point.explanation].some(leakedPlaceholder)) {
+      throw new Error(`${id}: invalid grammar point`);
+    }
   }
   const seenTerms = new Set();
   for (const term of analysis.terms) {
@@ -175,7 +216,12 @@ function runCodex(args, prompt) {
 }
 
 async function runBatch(batch, index) {
-  const compact = batch.map(({ text, sourceWord, sourceSense }, itemIndex) => ({ itemIndex, text, sourceWord, sourceSense }));
+  const compact = batch.map(({ text, sourceWord, sourceSense }, itemIndex) => ({
+    itemIndex,
+    text: plainSentence(text),
+    sourceWord,
+    sourceSense,
+  }));
   const fingerprint = createHash('sha256').update(JSON.stringify(compact)).digest('hex').slice(0, 16);
   const resultPath = join(workDir, `batch-${String(index + 1).padStart(4, '0')}-${fingerprint}.json`);
   let correction = '';

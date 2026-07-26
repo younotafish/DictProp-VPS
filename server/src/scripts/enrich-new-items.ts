@@ -11,8 +11,8 @@ import {
 } from '../incremental-enrichment.js';
 import { isOwnerUser } from '../owner-access.js';
 import { generateAnalysisData } from '../routes/ai.js';
-import { isSentenceAnalysis } from '../sentence-analysis.js';
-import { generateSentenceAnalysis } from '../sentence-analysis-generation.js';
+import { hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
+import { generateSentenceAnalysis, generateSentenceGrammarAnalysis } from '../sentence-analysis-generation.js';
 
 const HOUR_MS = 60 * 60 * 1_000;
 const maxItems = Math.max(1, Math.min(50, Number(process.env.INCREMENTAL_ENRICHMENT_MAX_ITEMS || 8)));
@@ -43,15 +43,26 @@ const summary = { candidates: candidates.length, contentGenerated: 0, imagesGene
 for (const original of candidates) {
   let item = original;
   try {
-    if (item.type === 'sentence' && !isSentenceAnalysis(item.data.analysis)) {
-      const analysis = await generateSentenceAnalysis(String(item.data.text || ''));
-      item = {
-        ...item,
-        data: { ...item.data, analysis, analysisGeneratedAt: Date.now() },
-        updatedAt: Date.now(),
-      };
-      upsertItem(item, owner.id);
-      summary.contentGenerated++;
+    if (item.type === 'sentence') {
+      let analysis = item.data.analysis;
+      if (!isSentenceAnalysis(analysis)) {
+        analysis = await generateSentenceAnalysis(String(item.data.text || ''));
+      } else if (!hasSentenceGrammarAnalysis(analysis)) {
+        const grammar = await generateSentenceGrammarAnalysis(
+          String(item.data.text || ''),
+          analysis.translation,
+        );
+        analysis = { ...analysis, grammar };
+      }
+      if (analysis !== item.data.analysis) {
+        item = {
+          ...item,
+          data: { ...item.data, analysis, analysisGeneratedAt: Date.now() },
+          updatedAt: Date.now(),
+        };
+        upsertItem(item, owner.id);
+        summary.contentGenerated++;
+      }
     } else if (item.type === 'vocab' && !hasCompleteVocabContent(item.data)) {
       const generated = await generateAnalysisData(String(item.data.word || ''), 'batch');
       const replacement = selectReplacementVocab(item.data, generated.rawData.vocabs);

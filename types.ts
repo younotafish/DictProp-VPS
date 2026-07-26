@@ -71,10 +71,25 @@ export interface SentenceAnalysisTerm {
   historicalEvolution: string;
 }
 
+export interface SentenceGrammarPoint {
+  label: string;
+  excerpt: string;
+  explanation: string;
+}
+
+export interface SentenceGrammarAnalysis {
+  /** Compact map of the sentence's clause and phrase structure. */
+  structure: string;
+  /** Context-specific explanations of the grammar that carries meaning in this sentence. */
+  points: SentenceGrammarPoint[];
+}
+
 export interface SentenceAnalysis {
   translation: string;
   /** Readable General American IPA for the complete sentence in natural connected speech. */
   naturalSpeechIpa?: string;
+  /** Optional during the legacy-data migration; required for newly generated analyses. */
+  grammar?: SentenceGrammarAnalysis;
   americanEnglish: {
     status: AmericanEnglishStatus;
     explanation: string;

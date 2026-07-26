@@ -6,6 +6,14 @@ import {
   selectReplacementVocab,
 } from '../src/incremental-enrichment.js';
 
+const legacySentenceAnalysis = {
+  translation: '新的。',
+  naturalSpeechIpa: '/nuː/',
+  americanEnglish: { status: 'shared', explanation: 'Natural shared English.' },
+  terms: [],
+  imagePrompt: 'A realistic photograph of something new, without text.',
+};
+
 const completeVocab = {
   id: 'word',
   word: 'word',
@@ -27,13 +35,16 @@ test('incremental enrichment selects only unfinished records added after install
     { type: 'sentence', savedAt: 99, data: { id: 'legacy', text: 'Old.', sourceWord: '' } },
     { type: 'vocab', savedAt: 101, data: { ...completeVocab, id: 'complete', imageUrl: 'server:has_image' } },
     { type: 'sentence', savedAt: 103, data: { id: 'new-sentence', text: 'New.', sourceWord: '' } },
+    { type: 'sentence', savedAt: 102.5, data: {
+      id: 'legacy-analysis', text: 'New.', sourceWord: '', analysis: legacySentenceAnalysis, imageUrl: 'server:has_image',
+    } },
     { type: 'vocab', savedAt: 102, data: { id: 'new-word', word: 'new' } },
     { type: 'sentence', savedAt: 104, isArchived: true, data: { id: 'archived', text: 'Skip.', sourceWord: '' } },
   ];
 
   assert.deepEqual(
     collectIncrementalEnrichmentItems(items, 100, 10).map(item => item.data.id),
-    ['new-word', 'new-sentence'],
+    ['new-word', 'legacy-analysis', 'new-sentence'],
   );
   assert.deepEqual(
     collectIncrementalEnrichmentItems(items, 100, 1).map(item => item.data.id),

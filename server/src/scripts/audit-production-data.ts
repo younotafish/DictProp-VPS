@@ -3,7 +3,7 @@ import { db, getAllItems, getImageManifest, listAllUsers } from '../db.js';
 import { detectImageMimeType } from '../image-format.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
-import { isSentenceAnalysis } from '../sentence-analysis.js';
+import { hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../usage-audit.js';
 import { validateStoredItem } from '../validation.js';
 
@@ -82,6 +82,9 @@ const invalidSentenceAnalysis = sentenceItems
 const missingSentenceAnalysis = sentenceItems
   .filter(item => !isSentenceAnalysis(item.data.analysis))
   .map(item => item.data.id);
+const missingSentenceGrammar = sentenceItems
+  .filter(item => !hasSentenceGrammarAnalysis(item.data.analysis))
+  .map(item => item.data.id);
 const missingAnalysisTimestamp = sentenceItems
   .filter(item => isSentenceAnalysis(item.data.analysis) &&
     !(typeof item.data.analysisGeneratedAt === 'number' && Number.isFinite(item.data.analysisGeneratedAt) && item.data.analysisGeneratedAt > 0))
@@ -149,6 +152,8 @@ const sentenceEnrichmentStats = db.prepare(`
     COUNT(*) AS total,
     SUM(CASE WHEN image_content_hash IS NOT NULL THEN 1 ELSE 0 END) AS with_images,
     SUM(CASE WHEN NOT json_valid(analysis) THEN 1 ELSE 0 END) AS invalid_analysis,
+    SUM(CASE WHEN json_valid(analysis) AND json_type(analysis, '$.grammar.structure') = 'text'
+      AND json_type(analysis, '$.grammar.points') = 'array' THEN 0 ELSE 1 END) AS missing_grammar,
     SUM(CASE WHEN image_content_hash IS NOT NULL AND NOT EXISTS (
       SELECT 1 FROM image_blobs b WHERE b.content_hash = sentence_enrichments.image_content_hash
     ) THEN 1 ELSE 0 END) AS missing_blobs,
@@ -160,6 +165,7 @@ const sentenceEnrichmentStats = db.prepare(`
   total: number;
   with_images: number | null;
   invalid_analysis: number | null;
+  missing_grammar: number | null;
   missing_blobs: number | null;
   image_bytes: number;
 };
@@ -281,6 +287,8 @@ const report = {
     missingAnalysisIds: sample(missingSentenceAnalysis),
     invalidAnalysisCount: invalidSentenceAnalysis.length,
     invalidAnalysisIds: sample(invalidSentenceAnalysis),
+    missingGrammarCount: missingSentenceGrammar.length,
+    missingGrammarIds: sample(missingSentenceGrammar),
     missingAnalysisTimestampCount: missingAnalysisTimestamp.length,
     missingAnalysisTimestampIds: sample(missingAnalysisTimestamp),
     missingImageCount: missingSentenceImages.length,
@@ -292,6 +300,7 @@ const report = {
     total: sentenceEnrichmentStats.total,
     withImages: sentenceEnrichmentStats.with_images || 0,
     invalidAnalysisCount: sentenceEnrichmentStats.invalid_analysis || 0,
+    missingGrammarCount: sentenceEnrichmentStats.missing_grammar || 0,
     missingBlobCount: sentenceEnrichmentStats.missing_blobs || 0,
     imageBytes: sentenceEnrichmentStats.image_bytes,
   },
