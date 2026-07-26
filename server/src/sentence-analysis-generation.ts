@@ -30,6 +30,17 @@ function parseJson(content: unknown): unknown {
   }
 }
 
+function describeJsonShape(value: unknown, depth = 0): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) {
+    return depth >= 2 ? `array(${value.length})` : `array(${value.length})<${describeJsonShape(value[0], depth + 1)}>`;
+  }
+  if (typeof value !== 'object') return typeof value;
+  const entries = Object.entries(value as Record<string, unknown>).slice(0, 12);
+  if (depth >= 2) return `object{${entries.map(([key]) => key).join(',')}}`;
+  return `object{${entries.map(([key, child]) => `${key}:${describeJsonShape(child, depth + 1)}`).join(',')}}`;
+}
+
 async function generateJson(
   systemInstruction: string,
   userPrompt: string,
@@ -67,7 +78,9 @@ async function generateJson(
       const payload: any = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(`Sentence analysis provider returned ${response.status}`);
       const parsed = parseJson(payload?.choices?.[0]?.message?.content);
-      if (!isValid(parsed)) throw new Error(`${errorLabel} failed schema validation`);
+      if (!isValid(parsed)) {
+        throw new Error(`${errorLabel} failed schema validation (${describeJsonShape(parsed)})`);
+      }
       return parsed;
     } catch (error) {
       lastError = error;
@@ -95,13 +108,26 @@ export async function generateSentenceGrammarAnalysis(
   translation?: string,
 ): Promise<SentenceGrammarAnalysis> {
   if (!text.trim()) throw new Error('Sentence text is empty');
-  const result = await generateJson(
-    SENTENCE_GRAMMAR_INSTRUCTION,
-    sentenceGrammarUserPrompt(text, translation),
-    'Sentence grammar analysis',
-    value => extractSentenceGrammarAnalysis(value) !== null,
-  );
-  const grammar = extractSentenceGrammarAnalysis(result);
-  if (!grammar) throw new Error('Sentence grammar analysis failed schema validation');
-  return grammar;
+  try {
+    const result = await generateJson(
+      SENTENCE_GRAMMAR_INSTRUCTION,
+      sentenceGrammarUserPrompt(text, translation),
+      'Sentence grammar analysis',
+      value => extractSentenceGrammarAnalysis(value) !== null,
+    );
+    const grammar = extractSentenceGrammarAnalysis(result);
+    if (!grammar) throw new Error('Sentence grammar analysis failed schema validation');
+    return grammar;
+  } catch (error) {
+    const focusedError = error instanceof Error ? error : new Error(String(error));
+    if (!focusedError.message.includes('schema validation')) throw focusedError;
+    try {
+      const replacement = await generateSentenceAnalysis(text);
+      if (hasSentenceGrammarAnalysis(replacement)) return replacement.grammar;
+    } catch (fallbackError) {
+      const detail = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      throw new Error(`${focusedError.message}; full-analysis fallback failed: ${detail}`);
+    }
+    throw focusedError;
+  }
 }
