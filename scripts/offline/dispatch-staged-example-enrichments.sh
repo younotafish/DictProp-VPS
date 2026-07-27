@@ -166,6 +166,8 @@ PY
     done
   fi
 
+  GH_BIN="$GH_BIN" GITHUB_REPOSITORY="$REPO" \
+    scripts/offline/wait-for-incremental-enrichment.sh
   scripts/offline/publish-backfill-release.sh \
     "$RELEASE_TAG" "$ARCHIVE" sentence-enrichments.enc enrichment-import "$REQUIRED_DEPLOY_SHA" 300
   date -u +%FT%TZ > "$WAVE_DIR/published"

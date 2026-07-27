@@ -12,6 +12,11 @@ test('production and local enrichment schedules both run every six hours', () =>
   const workflow = readRepoFile('.github/workflows/incremental-enrichment.yml');
   const launchAgent = readRepoFile('ops/launchd/com.dictprop.incremental-example-enrichment.plist');
   const runner = readRepoFile('scripts/offline/run-incremental-example-enrichment.sh');
+  const recurringPublishers = [
+    'scripts/offline/dispatch-staged-example-enrichments.sh',
+    'scripts/offline/dispatch-staged-example-analyses.sh',
+    'scripts/offline/dispatch-staged-saved-sentence-analyses.sh',
+  ].map(readRepoFile);
 
   assert.match(workflow, /cron: '23 \*\/6 \* \* \*'/);
   assert.match(workflow, /INCREMENTAL_ENRICHMENT_MAX_RUNTIME_MINUTES=70/);
@@ -19,4 +24,7 @@ test('production and local enrichment schedules both run every six hours', () =>
   assert.match(runner, /CODEX_MODEL=gpt-5\.5/);
   assert.match(runner, /shlock -f "\$LOCK_FILE" -p "\$\$"/);
   assert.match(runner, /analysis-publish-state-detailed-v1/);
+  for (const publisher of recurringPublishers) {
+    assert.match(publisher, /wait-for-incremental-enrichment\.sh/);
+  }
 });
