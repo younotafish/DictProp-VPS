@@ -53,7 +53,10 @@ test('example enrichment waves are bounded, resumable, and copy only ready image
   writeFileSync(sourcePath, JSON.stringify({ version: 1, sentences: [first, second] }));
   writeFileSync(analysisPath, JSON.stringify({ version: 1, entries }));
   writeFileSync(join(imageRoot, 'manifest.json'), JSON.stringify({ version: 1, entries: imageEntries }));
-  writeFileSync(excludedPath, JSON.stringify({ version: 1, entries: [{ id: first.id }] }));
+  writeFileSync(excludedPath, JSON.stringify({
+    version: 1,
+    entries: [{ id: first.id, textHash: first.textHash, imageFile: 'images/1.webp' }],
+  }));
 
   const stdout = execFileSync(process.execPath, [
     resolve('..', 'scripts/offline/prepare-example-enrichment-wave.mjs'),

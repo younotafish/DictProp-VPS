@@ -27,6 +27,7 @@ if (source?.version !== 1 || !Array.isArray(source.sentences) ||
 
 const analysisById = uniqueMap(analysis.entries, 'analysis');
 const imageById = uniqueMap(imageManifest.entries, 'image');
+const sourceById = uniqueMap(source.sentences, 'source');
 const publishedIds = new Set();
 for (const excludeArg of excludeArgs) {
   const published = readJson(excludeArg);
@@ -35,7 +36,11 @@ for (const excludeArg of excludeArgs) {
   }
   for (const entry of published.entries) {
     if (typeof entry?.id !== 'string' || !entry.id) throw new Error(`Published manifest has an invalid id: ${excludeArg}`);
-    publishedIds.add(entry.id);
+    const current = sourceById.get(entry.id);
+    if (typeof entry.imageFile === 'string' && entry.imageFile &&
+        current && entry.textHash === current.textHash) {
+      publishedIds.add(entry.id);
+    }
   }
 }
 

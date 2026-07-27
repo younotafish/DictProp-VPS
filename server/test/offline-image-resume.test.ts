@@ -81,3 +81,73 @@ test('streaming image QA reuses historical rejections accepted by a later candid
   assert.deepEqual(output.targets.map((target: { imageId: string }) => target.imageId),
     historicallyRejected.map(target => target.imageId));
 });
+
+test('example enrichment publication excludes only current image-bearing entries', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-image-publication-'));
+  const imageRoot = join(root, 'image-bundle');
+  const imageDirectory = join(imageRoot, 'images');
+  const output = join(root, 'wave');
+  mkdirSync(imageDirectory, { recursive: true });
+
+  const sentences = ['a', 'b', 'c'].map(id => ({
+    id: `sentence-${id}`,
+    text: `Sentence ${id}`,
+    lookupHash: `lookup-${id}`,
+    textHash: `text-${id}`,
+  }));
+  const source = join(root, 'source.json');
+  const analysis = join(root, 'analysis.json');
+  const analysisOnly = join(root, 'analysis-only.json');
+  const publishedImage = join(root, 'published-image.json');
+  writeJson(source, { version: 1, sentences });
+  writeJson(analysis, {
+    version: 1,
+    entries: sentences.map(sentence => ({
+      id: sentence.id,
+      textHash: sentence.textHash,
+      analysis: { translation: sentence.text },
+      generatedAt: 1,
+    })),
+  });
+  writeJson(join(imageRoot, 'manifest.json'), {
+    version: 1,
+    entries: sentences.map(sentence => ({
+      id: sentence.id,
+      textHash: sentence.textHash,
+      imageFile: `images/${sentence.id}.webp`,
+    })),
+  });
+  for (const sentence of sentences) {
+    writeFileSync(join(imageDirectory, `${sentence.id}.webp`), sentence.id);
+  }
+  writeJson(analysisOnly, {
+    version: 1,
+    entries: [{ id: sentences[0].id, textHash: sentences[0].textHash }],
+  });
+  writeJson(publishedImage, {
+    version: 1,
+    entries: [{
+      id: sentences[1].id,
+      textHash: sentences[1].textHash,
+      imageFile: `images/${sentences[1].id}.webp`,
+    }],
+  });
+
+  const result = JSON.parse(execFileSync(process.execPath, [
+    resolve('..', 'scripts', 'offline', 'prepare-example-enrichment-wave.mjs'),
+    source,
+    analysis,
+    imageRoot,
+    output,
+    '10',
+    analysisOnly,
+    publishedImage,
+  ], { encoding: 'utf8' }));
+  const manifest = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8'));
+
+  assert.equal(result.previouslyPublished, 1);
+  assert.deepEqual(manifest.entries.map((entry: { id: string }) => entry.id), [
+    sentences[0].id,
+    sentences[2].id,
+  ]);
+});
