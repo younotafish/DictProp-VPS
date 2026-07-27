@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const enrichScript = fileURLToPath(new URL('../../scripts/offline/enrich-sentences.mjs', import.meta.url));
+const mergeGrammarScript = fileURLToPath(
+  new URL('../../scripts/offline/merge-sentence-grammar-manifests.mjs', import.meta.url),
+);
 
 const fakeCodex = `#!/usr/bin/env node
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
@@ -113,6 +116,70 @@ test('detailed sentence migration splits failures, resumes caches, and preserves
     assert.equal(output.entries[0].analysis.naturalSpeechIpa, output.entries[0].analysis.pronunciation.fastIpa);
     assert.equal(JSON.parse(readFileSync(join(workDir, 'progress.json'), 'utf8')).status, 'complete');
     assert.equal(existsSync(join(workDir, 'failures.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('completed GPT-5.6 grammar can replace GPT-5.5 grammar without changing detailed metadata', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-merge-sentence-grammar-'));
+  try {
+    const detailedPath = join(root, 'detailed.json');
+    const grammarPath = join(root, 'grammar.json');
+    const outputPath = join(root, 'merged.json');
+    const textHash = hash('It worked.');
+    const analysis = {
+      translation: 'It succeeded.',
+      naturalSpeechIpa: '/ɪt wɝkt/',
+      americanEnglish: {
+        status: 'shared',
+        explanation: 'Yes. This is natural in American English.',
+        evidence: ['The wording is shared across major English varieties.'],
+      },
+      terms: [],
+      pronunciation: {
+        slowIpa: '/ɪt wɝkt/',
+        fastIpa: '/ɪt wɝkt/',
+        carefulSpeakerGuide: 'IT WORKED',
+        fastSpeechFeatures: ['worked can have a lightly released final consonant cluster.'],
+        intonationAndChunking: 'It worked with a final fall.',
+        keyDifference: 'Fluent delivery uses a lighter final release.',
+      },
+      grammar: {
+        structure: 'GPT-5.5 structure.',
+        points: [{ label: 'Subject', excerpt: 'It', explanation: 'It is the subject.' }],
+      },
+      imagePrompt: 'A realistic photograph of a successful result in natural light, with no visible text.',
+    };
+    const replacementGrammar = {
+      structure: 'Preserved GPT-5.6 structure.',
+      points: [{ label: 'Simple past', excerpt: 'worked', explanation: 'Worked presents a completed event.' }],
+    };
+    writeFileSync(detailedPath, JSON.stringify({
+      version: 1,
+      generatedAt: 10,
+      entries: [{ id: 'one', textHash, generatedAt: 10, analysis }],
+    }));
+    writeFileSync(grammarPath, JSON.stringify({
+      version: 1,
+      generatedAt: 20,
+      entries: [{
+        id: 'one',
+        textHash,
+        generatedAt: 20,
+        analysis: { translation: 'legacy', grammar: replacementGrammar },
+      }],
+    }));
+
+    const merged = spawnSync(process.execPath, [mergeGrammarScript, detailedPath, grammarPath, outputPath], {
+      encoding: 'utf8',
+    });
+    assert.equal(merged.status, 0, merged.stderr);
+    const output = JSON.parse(readFileSync(outputPath, 'utf8'));
+    assert.deepEqual(output.entries[0].analysis.grammar, replacementGrammar);
+    assert.equal(output.entries[0].analysis.translation, analysis.translation);
+    assert.equal(output.entries[0].analysis.pronunciation.fastIpa, analysis.pronunciation.fastIpa);
+    assert.equal(output.entries[0].generatedAt, 20);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
