@@ -9,6 +9,7 @@ import {
   SENTENCE_ANALYSIS_INSTRUCTION,
   sentenceGrammarUserPrompt,
   sentenceAnalysisUserPrompt,
+  sentenceAnalysisValidationIssues,
   withLegacyNaturalSpeechIpa,
   type SentenceGrammarAnalysis,
   type SentenceAnalysis,
@@ -56,18 +57,20 @@ async function generateJson(
   userPrompt: string,
   errorLabel: string,
   isValid: (value: unknown) => boolean,
+  validationIssues?: (value: unknown) => string[],
 ): Promise<unknown> {
   const apiKey = env.DEEPINFRA_API_KEY;
   if (!apiKey) throw new Error('DEEPINFRA_API_KEY is not configured');
 
   let lastError: unknown;
+  let retryDetail = '';
   for (let attempt = 0; attempt < 3; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
       const correction = attempt === 0
         ? ''
-        : '\nYour previous response failed schema validation. Return every required field as one valid JSON object.';
+        : `\nYour previous response failed schema validation. Fix these exact problems: ${retryDetail || 'return every required field as one valid JSON object'}.`;
       const response = await proxyFetch(CHAT_URL, {
         method: 'POST',
         headers: {
@@ -89,7 +92,9 @@ async function generateJson(
       if (!response.ok) throw new Error(`Sentence analysis provider returned ${response.status}`);
       const parsed = parseJson(payload?.choices?.[0]?.message?.content);
       if (!isValid(parsed)) {
-        throw new Error(`${errorLabel} failed schema validation (${describeJsonShape(parsed)})`);
+        retryDetail = validationIssues?.(parsed).slice(0, 8).join('; ') || '';
+        const detail = retryDetail ? `: ${retryDetail}` : '';
+        throw new Error(`${errorLabel} failed schema validation (${describeJsonShape(parsed)})${detail}`);
       }
       return parsed;
     } catch (error) {
@@ -112,6 +117,7 @@ export async function generateSentenceAnalysis(
     sentenceAnalysisUserPrompt(text),
     'Sentence analysis',
     value => extractSentenceAnalysis(value) !== null,
+    sentenceAnalysisValidationIssues,
   );
   const extracted = extractSentenceAnalysis(analysis);
   if (!extracted) throw new Error('Sentence analysis failed schema validation');

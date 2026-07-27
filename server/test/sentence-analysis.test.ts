@@ -11,6 +11,7 @@ import {
   SENTENCE_GRAMMAR_INSTRUCTION,
   sentenceGrammarUserPrompt,
   sentenceAnalysisUserPrompt,
+  sentenceAnalysisValidationIssues,
 } from '../src/sentence-analysis.js';
 import { isDetailedSentenceAnalysis } from '../../scripts/offline/sentence-analysis-contract.mjs';
 
@@ -102,6 +103,20 @@ test('full analysis extraction tolerates a JSON string under an empty provider k
   assert.deepEqual(extractSentenceAnalysis({ '': JSON.stringify(validAnalysis) }), validAnalysis);
   assert.deepEqual(extractSentenceAnalysis({ result: { analysis: validAnalysis } }), validAnalysis);
   assert.equal(extractSentenceAnalysis({ '': 'not JSON' }), null);
+});
+
+test('sentence analysis validation reports exact repair instructions', () => {
+  const issues = sentenceAnalysisValidationIssues({
+    analysis: {
+      ...validAnalysis,
+      naturalSpeechIpa: undefined,
+      terms: [{ ...validAnalysis.terms[0], synonyms: [], examples: ['Only one.'] }],
+      pronunciation: { ...validAnalysis.pronunciation, slowIpa: 'missing slashes' },
+    },
+  });
+  assert.ok(issues.includes('terms[0].synonyms must contain at least one string'));
+  assert.ok(issues.includes('terms[0].examples must contain exactly two strings'));
+  assert.ok(issues.includes('pronunciation.slowIpa must be complete IPA enclosed in slashes'));
 });
 
 test('offline prompt fixes field order, language, dialect, and image style', () => {

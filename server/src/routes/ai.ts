@@ -70,17 +70,7 @@ async function callDeepSeekOnce(apiKey: string, systemPrompt: string, userPrompt
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('DeepSeek returned empty response');
 
-  let jsonStr = content.trim();
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (fenceMatch) jsonStr = fenceMatch[1].trim();
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch {
-    const objMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (objMatch) return JSON.parse(objMatch[0]);
-    throw new Error('Failed to parse JSON from DeepSeek response');
-  }
+  return parseModelJson(content);
 }
 
 async function callDeepSeek(apiKey: string, systemPrompt: string, userPrompt: string, maxRetries = 1): Promise<any> {
@@ -112,7 +102,7 @@ async function callDeepSeek(apiKey: string, systemPrompt: string, userPrompt: st
 }
 
 // Extract a JSON object from a model's text content (strips ``` fences; falls back to the first {...}).
-function parseModelJson(content: string): any {
+export function parseModelJson(content: string): any {
   let jsonStr = content.trim();
   const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (fenceMatch) jsonStr = fenceMatch[1].trim();
@@ -120,7 +110,13 @@ function parseModelJson(content: string): any {
     return JSON.parse(jsonStr);
   } catch {
     const objMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (objMatch) return JSON.parse(objMatch[0]);
+    if (objMatch) {
+      try {
+        return JSON.parse(objMatch[0]);
+      } catch {
+        // Normalize every malformed response to the retryable parser error below.
+      }
+    }
     throw new Error('Failed to parse JSON from DeepSeek response');
   }
 }
