@@ -3,11 +3,13 @@ import { proxyFetch } from './proxy-fetch.js';
 import {
   extractSentenceAnalysis,
   extractSentenceGrammarAnalysis,
+  hasCompleteSentenceAnalysis,
   hasSentenceGrammarAnalysis,
   SENTENCE_GRAMMAR_INSTRUCTION,
   SENTENCE_ANALYSIS_INSTRUCTION,
   sentenceGrammarUserPrompt,
   sentenceAnalysisUserPrompt,
+  withLegacyNaturalSpeechIpa,
   type SentenceGrammarAnalysis,
   type SentenceAnalysis,
 } from './sentence-analysis.js';
@@ -15,6 +17,14 @@ import {
 const CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
 const MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
 const TIMEOUT_MS = 300_000;
+
+function grammarMatchesText(grammar: SentenceGrammarAnalysis | undefined, text: string): grammar is SentenceGrammarAnalysis {
+  if (!grammar) return false;
+  const plainText = text
+    .replace(/\{\{([^{}]+)\}\}/g, '$1')
+    .replace(/\[\[([^\[\]]+)\]\]/g, '$1');
+  return grammar.points.every(point => plainText.includes(point.excerpt));
+}
 
 function parseJson(content: unknown): unknown {
   if (typeof content !== 'string' || !content.trim()) throw new Error('Sentence analysis was empty');
@@ -92,7 +102,10 @@ async function generateJson(
   throw lastError instanceof Error ? lastError : new Error(`${errorLabel} failed`);
 }
 
-export async function generateSentenceAnalysis(text: string): Promise<SentenceAnalysis> {
+export async function generateSentenceAnalysis(
+  text: string,
+  preservedGrammar?: SentenceGrammarAnalysis,
+): Promise<SentenceAnalysis> {
   if (!text.trim()) throw new Error('Sentence text is empty');
   const analysis = await generateJson(
     SENTENCE_ANALYSIS_INSTRUCTION,
@@ -102,7 +115,11 @@ export async function generateSentenceAnalysis(text: string): Promise<SentenceAn
   );
   const extracted = extractSentenceAnalysis(analysis);
   if (!extracted) throw new Error('Sentence analysis failed schema validation');
-  return extracted;
+  const complete = grammarMatchesText(preservedGrammar, text)
+    ? { ...extracted, grammar: preservedGrammar }
+    : extracted;
+  if (!hasCompleteSentenceAnalysis(complete)) throw new Error('Sentence analysis failed completeness validation');
+  return withLegacyNaturalSpeechIpa(complete);
 }
 
 export async function generateSentenceGrammarAnalysis(

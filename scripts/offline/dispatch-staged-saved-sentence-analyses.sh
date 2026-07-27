@@ -22,8 +22,10 @@ publisher_state_dir() {
 }
 
 manifest_count() {
+  local analysis="$1"
+  shift
   if [ "$#" -eq 0 ]; then printf '0\n'; return; fi
-  node -e 'const fs=require("fs"); const ids=new Set(); for(const path of process.argv.slice(1)) for(const entry of JSON.parse(fs.readFileSync(path)).entries) ids.add(entry.id); console.log(ids.size)' "$@"
+  node -e 'const fs=require("fs"); const key=e=>`${e.id}\0${e.textHash}`; const current=new Set(JSON.parse(fs.readFileSync(process.argv[1])).entries.map(key)); const published=new Set(); for(const path of process.argv.slice(2)) for(const entry of JSON.parse(fs.readFileSync(path)).entries) { const identity=key(entry); if(current.has(identity)) published.add(identity); } console.log(published.size)' "$analysis" "$@"
 }
 
 if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ] || [ "$BATCH_SIZE" -gt 5000 ]; then
@@ -54,7 +56,7 @@ done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json 
 
 while :; do
   if [ "${#PUBLISHED_MANIFESTS[@]}" -eq 0 ]; then PUBLISHED_COUNT=0
-  else PUBLISHED_COUNT="$(manifest_count "${PUBLISHED_MANIFESTS[@]}")"; fi
+  else PUBLISHED_COUNT="$(manifest_count "$ANALYSIS" "${PUBLISHED_MANIFESTS[@]}")"; fi
   if [ "$PUBLISHED_COUNT" -ge "$TOTAL_COUNT" ]; then
     date -u +%FT%TZ > "$STATE_ROOT/complete"
     log "saved sentence analysis publication complete: $PUBLISHED_COUNT/$TOTAL_COUNT"

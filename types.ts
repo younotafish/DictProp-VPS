@@ -84,17 +84,36 @@ export interface SentenceGrammarAnalysis {
   points: SentenceGrammarPoint[];
 }
 
+export interface SentencePronunciationGuide {
+  /** Deliberate but natural General American pronunciation with clear word boundaries. */
+  slowIpa: string;
+  /** Fluent connected-speech General American pronunciation. */
+  fastIpa: string;
+  /** Learner-friendly stress and chunk guide, not a replacement for IPA. */
+  carefulSpeakerGuide: string;
+  /** Sentence-specific linking, reduction, flapping, assimilation, or weak-form notes. */
+  fastSpeechFeatures: string[];
+  /** Suggested thought groups and pitch movement for the complete sentence. */
+  intonationAndChunking: string;
+  /** Plain-English contrast between the careful and fluent renderings. */
+  keyDifference: string;
+}
+
 export interface SentenceAnalysis {
   translation: string;
-  /** Readable General American IPA for the complete sentence in natural connected speech. */
+  /** Legacy alias of pronunciation.fastIpa, retained while older records are migrated. */
   naturalSpeechIpa?: string;
   /** Optional during the legacy-data migration; required for newly generated analyses. */
   grammar?: SentenceGrammarAnalysis;
   americanEnglish: {
     status: AmericanEnglishStatus;
     explanation: string;
+    /** Concrete sentence-specific reasons supporting the status. */
+    evidence?: string[];
   };
   terms: SentenceAnalysisTerm[];
+  /** Optional for legacy records; required for newly generated analyses. */
+  pronunciation?: SentencePronunciationGuide;
   /** Photorealistic, text-free landscape prompt depicting the complete sentence. */
   imagePrompt: string;
 }

@@ -29,4 +29,5 @@ jobs:
             docker compose exec -T \
               -e INCREMENTAL_ENRICHMENT_MAX_ITEMS=8 \
               -e INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS=24 \
+              -e INCREMENTAL_ENRICHMENT_MAX_RUNTIME_MINUTES=70 \
               app nice -n 10 node server/dist/scripts/enrich-new-items.js

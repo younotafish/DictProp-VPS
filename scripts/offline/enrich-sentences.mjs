@@ -1,20 +1,29 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import {
+  DETAILED_SENTENCE_ANALYSIS_INSTRUCTION,
+  detailedSentenceAnalysisSchema,
+  isSentenceGrammarAnalysis,
+  normalizeDetailedSentenceAnalysis,
+} from './sentence-analysis-contract.mjs';
 
-const [inputArg, outputArg, workArg] = process.argv.slice(2);
+const [inputArg, outputArg, workArg, baseAnalysisArg] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
-  throw new Error('Usage: enrich-sentences.mjs <sentence-export.json> <manifest.json> [work-directory]');
+  throw new Error(
+    'Usage: enrich-sentences.mjs <sentence-export.json> <manifest.json> [work-directory] [base-analysis.json]',
+  );
 }
 
-const MODEL = 'gpt-5.6-sol';
+const MODEL = process.env.CODEX_MODEL || 'gpt-5.5';
 const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 40);
 const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 40) * 60 * 1_000;
+const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
 const activeChildren = new Set();
 let aborting = false;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
@@ -28,64 +37,6 @@ if (source?.version !== 1 || !Array.isArray(source.sentences) || source.sentence
   throw new Error('Sentence export is invalid or empty');
 }
 
-const termSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['term', 'chinese', 'ipa', 'originalMeaning', 'synonyms', 'antonyms', 'examples', 'historicalEvolution'],
-  properties: {
-    term: { type: 'string', maxLength: 300 },
-    chinese: { type: 'string', maxLength: 1_000 },
-    ipa: { type: 'string', maxLength: 500 },
-    originalMeaning: { type: 'string', maxLength: 4_000 },
-    synonyms: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 },
-    antonyms: { type: 'array', items: { type: 'string' }, maxItems: 8 },
-    examples: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 3 },
-    historicalEvolution: { type: 'string', maxLength: 4_000 },
-  },
-};
-const grammarSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['structure', 'points'],
-  properties: {
-    structure: { type: 'string', minLength: 1, maxLength: 4_000 },
-    points: {
-      type: 'array',
-      maxItems: 12,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['label', 'excerpt', 'explanation'],
-        properties: {
-          label: { type: 'string', minLength: 1, maxLength: 300 },
-          excerpt: { type: 'string', minLength: 1, maxLength: 1_000 },
-          explanation: { type: 'string', minLength: 1, maxLength: 4_000 },
-        },
-      },
-    },
-  },
-};
-const analysisSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['translation', 'naturalSpeechIpa', 'grammar', 'americanEnglish', 'terms', 'imagePrompt'],
-  properties: {
-    translation: { type: 'string', maxLength: 12_000 },
-    naturalSpeechIpa: { type: 'string', minLength: 3, maxLength: 2_000 },
-    grammar: grammarSchema,
-    americanEnglish: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['status', 'explanation'],
-      properties: {
-        status: { type: 'string', enum: ['american', 'shared', 'not_american'] },
-        explanation: { type: 'string', maxLength: 4_000 },
-      },
-    },
-    terms: { type: 'array', items: termSchema, maxItems: 20 },
-    imagePrompt: { type: 'string', maxLength: 4_000 },
-  },
-};
 const schema = {
   type: 'object',
   additionalProperties: false,
@@ -97,7 +48,7 @@ const schema = {
         type: 'object',
         additionalProperties: false,
         required: ['itemIndex', 'analysis'],
-        properties: { itemIndex: { type: 'integer', minimum: 0 }, analysis: analysisSchema },
+        properties: { itemIndex: { type: 'integer', minimum: 0 }, analysis: detailedSentenceAnalysisSchema },
       },
     },
   },
@@ -105,20 +56,24 @@ const schema = {
 const schemaPath = join(workDir, 'output-schema.json');
 writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
 
-const instruction = `You are an expert American English lexicographer and an exacting coach for an advanced Chinese-speaking learner. Analyze only the supplied English sentences. Be context-specific, concise, and factually conservative.
+const instruction = DETAILED_SENTENCE_ANALYSIS_INSTRUCTION;
 
-For each sentence, return these analysis fields in this exact conceptual order:
-1. translation: a precise, natural Simplified Chinese translation of the entire text that preserves tense, modality, tone, register, implied relationships, and idiomatic force rather than translating word by word.
-2. naturalSpeechIpa: readable IPA for the COMPLETE sentence in mainstream rhotic General American English at a fluent, naturally fast conversational pace. Use ordinary connected-speech weak forms, reductions, linking, assimilation, and flapping where native speakers normally use them. Do not produce slow isolated dictionary forms, exaggerated deletion, eye-dialect respelling, or a narrow regional accent. Preserve every meaning-bearing word and enclose the single complete transcription in slashes.
-3. grammar: structure must give a compact but complete English map of the sentence's clauses and phrases in source order. points must cover every construction an advanced learner needs to parse correctly, including tense/aspect, modality, clause relationships, nonfinite or reduced clauses, reference, word order, agreement, modification, coordination, ellipsis, and information structure when relevant. Each point needs a specific label, the shortest exact excerpt from the plain sentence, and a context-specific explanation of how the form works, what it contributes, and why it is used instead of a plausible alternative. Do not pad simple sentences with trivial points.
-4. americanEnglish: status must be american, shared, or not_american. In English, explain whether the wording is distinctly American, shared across major varieties, or non-American, citing concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. If it is not normal American English, give the natural present-day American equivalent.
-5. terms: every genuinely uncommon word, idiom, phrasal verb, or fixed phrase. For each term include its context-specific Chinese translation; true rhotic General American IPA with stress marks and surrounding slashes; core contextual meaning and literal/earlier meaning when figurative; sense-matched English synonyms and antonyms; two natural modern American examples that make the meaning inferable and do not quote the source; and a concise, accurate historical evolution note. Prefer the longest phrase and never duplicate components. Do not pad with ordinary A1-B2 words. Explicitly disambiguate a likely learner confusion when the context selects one sense over another. Keep fields cleanly separated: originalMeaning must contain only meaning and semantic clarification, never examples or historical chronology; usage examples belong only in examples; etymology and dated development belong only in historicalEvolution.
-6. imagePrompt: a production-ready prompt for one realistic photorealistic 16:9 photograph depicting the COMPLETE sentence as one coherent concrete scene. Apply this test: the scene should let a learner infer the sentence's intended meaning, not merely its topic. Put the defining action, relationship, contrast, cause, or consequence in the foreground and include every detail needed to distinguish the intended reading. Keep the cast and composition simple enough to parse instantly. For an idiom, depict its intended contextual meaning, not a misleading literal origin. Specify camera distance, composition, and natural lighting. Require authentic anatomy, skin, materials, and contemporary details. Explicitly prohibit illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, and visible text.
+const baseAnalysisById = new Map();
+if (baseAnalysisArg) {
+  const base = JSON.parse(readFileSync(resolve(baseAnalysisArg), 'utf8'));
+  if (base?.version !== 1 || !Array.isArray(base.entries)) throw new Error('Base analysis manifest is invalid');
+  for (const entry of base.entries) {
+    if (typeof entry?.id !== 'string' || !entry.id || baseAnalysisById.has(entry.id) ||
+        typeof entry.textHash !== 'string') throw new Error('Base analysis manifest has an invalid identity');
+    baseAnalysisById.set(entry.id, entry);
+  }
+}
 
-Everything must be English except translation and each term's chinese field. Synonyms/antonyms must match the contextual sense. If no natural antonym exists, return an empty array. State uncertainty rather than inventing etymology. Never repeat a term, repeat an example within one term, emit a schema field name as content, or emit placeholder/TBD content. Copy every itemIndex exactly, return every input once, and output only schema-valid JSON.`;
-
+const batchSize = Math.max(1, Math.min(64, Number(process.env.SENTENCE_ANALYSIS_BATCH_SIZE || 12)));
 const batches = [];
-for (let index = 0; index < source.sentences.length; index += 12) batches.push(source.sentences.slice(index, index + 12));
+for (let index = 0; index < source.sentences.length; index += batchSize) {
+  batches.push(source.sentences.slice(index, index + batchSize));
+}
 
 function validString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -144,30 +99,53 @@ function validTermIpa(value) {
 }
 
 function leakedPlaceholder(value) {
-  return /^(?:placeholder|tbd|todo|(?:natural\s*speech\s*ipa|original\s*meaning|historical\s*evolution|image\s*prompt)(?:\s+placeholder)?)[.!]?$/i.test(String(value || '').trim());
+  return /^(?:placeholder|tbd|todo|(?:slow\s*ipa|fast\s*ipa|careful\s*speaker\s*guide|original\s*meaning|historical\s*evolution|image\s*prompt)(?:\s+placeholder)?)[.!]?$/i.test(String(value || '').trim());
 }
 
-function validateAnalysis(analysis, id) {
-  if (!analysis || !validString(analysis.translation) || !validString(analysis.naturalSpeechIpa) ||
-      !/^\/[^/]+\/$/.test(analysis.naturalSpeechIpa.trim()) || !validString(analysis.imagePrompt) ||
-      !analysis.grammar || !validString(analysis.grammar.structure) || !Array.isArray(analysis.grammar.points) ||
-      analysis.grammar.points.length > 12 ||
-      !analysis.americanEnglish || !['american', 'shared', 'not_american'].includes(analysis.americanEnglish.status) ||
-      !validString(analysis.americanEnglish.explanation) || !Array.isArray(analysis.terms) || analysis.terms.length > 20) {
-    throw new Error(`${id}: invalid sentence analysis`);
+function preservedGrammarFor(sourceRecord) {
+  const entry = baseAnalysisById.get(sourceRecord.id);
+  if (!entry || entry.textHash !== sourceRecord.textHash) return undefined;
+  const grammar = entry.analysis?.grammar ?? entry.grammar;
+  if (!isSentenceGrammarAnalysis(grammar)) return undefined;
+  const text = plainSentence(sourceRecord.text);
+  return grammar.points.every(point => text.includes(point.excerpt)) ? grammar : undefined;
+}
+
+function validateAnalysis(candidate, sourceRecord) {
+  const id = sourceRecord.id;
+  const analysis = normalizeDetailedSentenceAnalysis(candidate, preservedGrammarFor(sourceRecord), id);
+  if (!/^(?:yes|no)\b/i.test(analysis.americanEnglish.explanation.trim())) {
+    throw new Error(`${id}: American English explanation must begin with Yes or No`);
   }
-  if ([analysis.translation, analysis.naturalSpeechIpa, analysis.americanEnglish.explanation, analysis.imagePrompt]
+  if ([
+    analysis.translation,
+    analysis.americanEnglish.explanation,
+    ...analysis.americanEnglish.evidence,
+    analysis.pronunciation.slowIpa,
+    analysis.pronunciation.fastIpa,
+    analysis.pronunciation.carefulSpeakerGuide,
+    ...analysis.pronunciation.fastSpeechFeatures,
+    analysis.pronunciation.intonationAndChunking,
+    analysis.pronunciation.keyDifference,
+    analysis.imagePrompt,
+  ]
     .some(leakedPlaceholder)) {
     throw new Error(`${id}: placeholder or schema field leaked into sentence analysis`);
   }
   if (leakedPlaceholder(analysis.grammar.structure)) {
     throw new Error(`${id}: placeholder leaked into grammar structure`);
   }
+  const sentenceText = plainSentence(sourceRecord.text);
+  const seenGrammarPoints = new Set();
   for (const point of analysis.grammar.points) {
     if (!point || !validString(point.label) || !validString(point.excerpt) ||
-        !validString(point.explanation) || [point.label, point.excerpt, point.explanation].some(leakedPlaceholder)) {
+        !validString(point.explanation) || !sentenceText.includes(point.excerpt) ||
+        [point.label, point.excerpt, point.explanation].some(leakedPlaceholder)) {
       throw new Error(`${id}: invalid grammar point`);
     }
+    const pointKey = `${normalizedValue(point.label)}\0${point.excerpt}`;
+    if (seenGrammarPoints.has(pointKey)) throw new Error(`${id}: duplicate grammar point`);
+    seenGrammarPoints.add(pointKey);
   }
   const seenTerms = new Set();
   for (const term of analysis.terms) {
@@ -191,6 +169,24 @@ function validateAnalysis(analysis, id) {
       throw new Error(`${id}: duplicate example for term ${term.term}`);
     }
   }
+  return analysis;
+}
+
+function compactBatch(batch) {
+  return batch.map((sourceRecord, itemIndex) => {
+    const preservedGrammar = preservedGrammarFor(sourceRecord);
+    return {
+      itemIndex,
+      text: plainSentence(sourceRecord.text),
+      sourceWord: sourceRecord.sourceWord,
+      sourceSense: sourceRecord.sourceSense,
+      ...(preservedGrammar ? { preservedGrammar } : {}),
+    };
+  });
+}
+
+function batchFingerprint(batch) {
+  return createHash('sha256').update(JSON.stringify(compactBatch(batch))).digest('hex').slice(0, 16);
 }
 
 function runCodex(args, prompt) {
@@ -220,13 +216,8 @@ function runCodex(args, prompt) {
 }
 
 async function runBatch(batch, index) {
-  const compact = batch.map(({ text, sourceWord, sourceSense }, itemIndex) => ({
-    itemIndex,
-    text: plainSentence(text),
-    sourceWord,
-    sourceSense,
-  }));
-  const fingerprint = createHash('sha256').update(JSON.stringify(compact)).digest('hex').slice(0, 16);
+  const compact = compactBatch(batch);
+  const fingerprint = batchFingerprint(batch);
   const resultPath = join(workDir, `batch-${String(index + 1).padStart(4, '0')}-${fingerprint}.json`);
   let correction = '';
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -245,30 +236,108 @@ async function runBatch(batch, index) {
       return batch.map((sourceRecord, itemIndex) => {
         const result = byIndex.get(itemIndex);
         if (!result) throw new Error(`Missing sentence index ${itemIndex}`);
-        validateAnalysis(result.analysis, sourceRecord.id);
-        return result;
+        return { ...result, analysis: validateAnalysis(result.analysis, sourceRecord) };
       });
     } catch (error) {
       if (aborting || attempt === 2) throw error;
       correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Copy every index and return a complete, schema-valid analysis for every sentence.`;
       if (existsSync(resultPath)) unlinkSync(resultPath);
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000 * (attempt + 1)));
+      await new Promise(resolvePromise => setTimeout(resolvePromise, retryDelayMs * (attempt + 1)));
     }
   }
   throw new Error(`Sentence batch ${index + 1} exhausted retries`);
 }
 
+async function runBatchResilient(batch, batchIndex, depth = 0) {
+  const splitMarkerPath = join(
+    workDir,
+    `split-${String(batchIndex + 1).padStart(4, '0')}-${batchFingerprint(batch)}.json`,
+  );
+  try {
+    if (!existsSync(splitMarkerPath)) {
+      return { results: await runBatch(batch, batchIndex), failures: [] };
+    }
+    if (batch.length === 1) {
+      unlinkSync(splitMarkerPath);
+      return { results: await runBatch(batch, batchIndex), failures: [] };
+    }
+    else throw new Error('resuming a previously split batch');
+  } catch (error) {
+    if (aborting) throw error;
+    if (batch.length === 1) {
+      const failure = {
+        id: batch[0].id,
+        textHash: batch[0].textHash,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      process.stderr.write(`Sentence ${failure.id} failed after singleton retries: ${failure.error}\n`);
+      return { results: [], failures: [failure] };
+    }
+    const midpoint = Math.ceil(batch.length / 2);
+    const left = batch.slice(0, midpoint);
+    const right = batch.slice(midpoint);
+    if (!existsSync(splitMarkerPath)) {
+      writeFileSync(splitMarkerPath, `${JSON.stringify({
+        version: 1,
+        batchIndex,
+        depth,
+        sentenceIds: batch.map(sentence => sentence.id),
+        error: error instanceof Error ? error.message : String(error),
+        splitAt: new Date().toISOString(),
+      }, null, 2)}\n`, { mode: 0o600 });
+    }
+    process.stderr.write(
+      `Sentence batch ${batchIndex + 1} failed after retries; splitting ${batch.length} sentence(s) into ${left.length}+${right.length} at depth ${depth + 1}\n`,
+    );
+    const leftResult = await runBatchResilient(left, batchIndex, depth + 1);
+    const rightResult = await runBatchResilient(right, batchIndex, depth + 1);
+    return {
+      results: [...leftResult.results, ...rightResult.results],
+      failures: [...leftResult.failures, ...rightResult.failures],
+    };
+  }
+}
+
 const generatedAt = Date.now();
 const entries = [];
 const batchResults = new Array(batches.length);
+const failures = [];
 let nextBatch = 0;
+let completedBatches = 0;
+let completedSentences = 0;
+const progressPath = join(workDir, 'progress.json');
+const failuresPath = join(workDir, 'failures.json');
+const preservedGrammarCount = source.sentences.filter(sentence => preservedGrammarFor(sentence)).length;
+
+function writeProgress(status) {
+  const tempPath = `${progressPath}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify({
+    status,
+    model: MODEL,
+    sourceSentences: source.sentences.length,
+    baseAnalyses: baseAnalysisById.size,
+    preservedGrammars: preservedGrammarCount,
+    completedSentences,
+    failedSentences: failures.length,
+    totalBatches: batches.length,
+    completedBatches,
+    updatedAt: new Date().toISOString(),
+  }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tempPath, progressPath);
+}
+
 const concurrency = Math.max(1, Math.min(64, Number(process.env.CODEX_CONCURRENCY || 20)));
 async function analysisWorker() {
   for (;;) {
     const index = nextBatch++;
     if (index >= batches.length) return;
     process.stderr.write(`Analyzing sentence batch ${index + 1}/${batches.length}\n`);
-    batchResults[index] = await runBatch(batches[index], index);
+    const outcome = await runBatchResilient(batches[index], index);
+    batchResults[index] = outcome.results;
+    failures.push(...outcome.failures);
+    completedBatches++;
+    completedSentences += outcome.results.length;
+    writeProgress('running');
   }
 }
 async function terminateActiveChildren() {
@@ -277,12 +346,30 @@ async function terminateActiveChildren() {
   await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000));
   for (const child of activeChildren) killCodex(child, 'SIGKILL');
 }
+writeProgress('running');
 try {
   await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => analysisWorker()));
 } catch (error) {
   await terminateActiveChildren();
+  writeProgress('failed');
   throw error;
 }
+
+if (failures.length > 0) {
+  const tempPath = `${failuresPath}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify({
+    version: 1,
+    generatedAt: Date.now(),
+    model: MODEL,
+    failures: failures.sort((left, right) => left.id.localeCompare(right.id)),
+  }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tempPath, failuresPath);
+  writeProgress('incomplete');
+  throw new Error(
+    `${failures.length} sentence analysis singleton(s) remain incomplete; see ${failuresPath}. Successful batches remain cached.`,
+  );
+}
+if (existsSync(failuresPath)) unlinkSync(failuresPath);
 
 for (let index = 0; index < batches.length; index++) {
   const results = batchResults[index];
@@ -298,5 +385,8 @@ for (let index = 0; index < batches.length; index++) {
 }
 
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, `${JSON.stringify({ version: 1, generatedAt, entries }, null, 2)}\n`, { mode: 0o600 });
+const outputTemp = `${outputPath}.tmp`;
+writeFileSync(outputTemp, `${JSON.stringify({ version: 1, generatedAt, entries }, null, 2)}\n`, { mode: 0o600 });
+renameSync(outputTemp, outputPath);
+writeProgress('complete');
 process.stderr.write(`Wrote ${entries.length} sentence analyses to ${outputPath}\n`);

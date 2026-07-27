@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
+import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, analysisArg, imageBundleArg] = process.argv.slice(2);
 if (!sourceArg || !analysisArg) {
@@ -149,9 +150,11 @@ function assertString(value, label) {
 }
 
 function validateAnalysis(value, id) {
+  if (!isDetailedSentenceAnalysis(value)) throw new Error(`${id}: detailed sentence analysis is incomplete`);
   assertString(value?.translation, `${id}: translation`);
-  assertString(value?.naturalSpeechIpa, `${id}: naturalSpeechIpa`);
-  if (!/^\/[^/]+\/$/.test(value.naturalSpeechIpa.trim())) throw new Error(`${id}: natural speech IPA is invalid`);
+  const fluentIpa = value.naturalSpeechIpa || value.pronunciation.fastIpa;
+  assertString(fluentIpa, `${id}: fluent IPA`);
+  if (!/^\/[^/]+\/$/.test(fluentIpa.trim())) throw new Error(`${id}: fluent IPA is invalid`);
   assertString(value?.imagePrompt, `${id}: imagePrompt`);
   if (!value?.americanEnglish || !['american', 'shared', 'not_american'].includes(value.americanEnglish.status)) {
     throw new Error(`${id}: American English status is invalid`);

@@ -2532,56 +2532,59 @@ export const DetailView: React.FC<DetailViewProps> = ({
         </div>
       )}
 
-      {/* Auto-play control. Sentence mode collapses every setting behind one right-rail FAB. */}
+      {/* Sentence playback controls. Keep speech style on the primary surface; only Auto-play-specific
+          settings belong in the secondary panel. */}
       {sentenceMode ? (
-        <div className="fixed bottom-6 right-4 z-[80]">
-          {showSentenceAutoPlayPanel && (
-            <div role="dialog" aria-label="Sentence auto-play settings" className="absolute bottom-0 right-14 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-sm font-semibold text-slate-700">Auto-play</span>
-                <button type="button" onClick={() => setShowSentenceAutoPlayPanel(false)} className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-600" title="Close settings">
-                  <X size={16} />
+        <div className="fixed bottom-6 right-4 z-[80] flex items-center gap-2">
+          <SpeechStyleToggle className="shrink-0 bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200" />
+          <div className="relative shrink-0">
+            {showSentenceAutoPlayPanel && (
+              <div role="dialog" aria-label="Sentence auto-play settings" className="absolute bottom-14 right-0 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-slate-700">Auto-play</span>
+                  <button type="button" onClick={() => setShowSentenceAutoPlayPanel(false)} className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-600" title="Close settings">
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="mb-3 flex justify-end">
+                  <PlaybackSpeedToggle className="bg-slate-100" />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button type="button" onClick={cycleTimerDuration} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Auto-play duration">
+                    <span className="block text-[10px] font-medium text-slate-400">Duration</span>
+                    {timerDisplay}
+                  </button>
+                  <button type="button" onClick={cycleRepeats} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Times each sentence is read">
+                    <span className="block text-[10px] font-medium text-slate-400">Repeats</span>
+                    ×{sentenceRepeats}
+                  </button>
+                  <button type="button" onClick={cycleGap} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Gap between reads">
+                    <span className="block text-[10px] font-medium text-slate-400">Interval</span>
+                    {sentenceGap / 1000}s
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setIsSentenceAutoPlaying(false); setShowSentenceAutoPlayPanel(false); }}
+                  className="mt-3 w-full rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-100"
+                >
+                  Stop auto-play
                 </button>
               </div>
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <SpeechStyleToggle />
-                <PlaybackSpeedToggle className="bg-slate-100" />
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <button type="button" onClick={cycleTimerDuration} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Auto-play duration">
-                  <span className="block text-[10px] font-medium text-slate-400">Duration</span>
-                  {timerDisplay}
-                </button>
-                <button type="button" onClick={cycleRepeats} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Times each sentence is read">
-                  <span className="block text-[10px] font-medium text-slate-400">Repeats</span>
-                  ×{sentenceRepeats}
-                </button>
-                <button type="button" onClick={cycleGap} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Gap between reads">
-                  <span className="block text-[10px] font-medium text-slate-400">Interval</span>
-                  {sentenceGap / 1000}s
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setIsSentenceAutoPlaying(false); setShowSentenceAutoPlayPanel(false); }}
-                className="mt-3 w-full rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-100"
-              >
-                Stop auto-play
-              </button>
-            </div>
-          )}
-          <button
-            onClick={handleSentenceAutoPlayFab}
-            className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
-              isSentenceAutoPlaying
-                ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-            title={isSentenceAutoPlaying ? 'Auto-play settings' : 'Start sentence auto-play'}
-            aria-label={isSentenceAutoPlaying ? 'Open sentence auto-play settings' : 'Start sentence auto-play'}
-          >
-            <AudioLines size={20} />
-          </button>
+            )}
+            <button
+              onClick={handleSentenceAutoPlayFab}
+              className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
+                isSentenceAutoPlaying
+                  ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+                  : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+              title={isSentenceAutoPlaying ? 'Auto-play settings' : 'Start sentence auto-play'}
+              aria-label={isSentenceAutoPlaying ? 'Open sentence auto-play settings' : 'Start sentence auto-play'}
+            >
+              <AudioLines size={20} />
+            </button>
+          </div>
         </div>
       ) : (
       <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2">

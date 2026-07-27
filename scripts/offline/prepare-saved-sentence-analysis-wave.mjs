@@ -2,6 +2,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [analysisArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!analysisArg || !outputArg) {
@@ -14,6 +15,7 @@ const readJson = path => JSON.parse(readFileSync(resolve(path), 'utf8'));
 const analysis = readJson(analysisArg);
 const outputDir = resolve(outputArg);
 const maxEntries = Number(maxEntriesArg || 5_000);
+const requireDetailed = process.env.REQUIRE_DETAILED_SENTENCE_ANALYSIS === '1';
 if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 5_000) {
   throw new Error('max-entries must be an integer from 1 to 5000');
 }
@@ -21,15 +23,19 @@ if (analysis?.version !== 1 || !Array.isArray(analysis.entries) || analysis.entr
   throw new Error('Saved sentence analysis manifest is invalid or empty');
 }
 
-const publishedIds = new Set();
+const entryIdentity = entry => `${entry.id}\0${entry.textHash}`;
+const publishedEntries = new Set();
 for (const excludeArg of excludeArgs) {
   const published = readJson(excludeArg);
   if (published?.version !== 1 || !Array.isArray(published.entries)) {
     throw new Error(`Published manifest is invalid: ${excludeArg}`);
   }
   for (const entry of published.entries) {
-    if (typeof entry?.id !== 'string' || !entry.id) throw new Error(`Published manifest has an invalid id: ${excludeArg}`);
-    publishedIds.add(entry.id);
+    if (typeof entry?.id !== 'string' || !entry.id ||
+        typeof entry.textHash !== 'string' || entry.textHash.length !== 64) {
+      throw new Error(`Published manifest has an invalid identity: ${excludeArg}`);
+    }
+    publishedEntries.add(entryIdentity(entry));
   }
 }
 
@@ -38,11 +44,12 @@ const sourceIds = new Set();
 for (const entry of analysis.entries) {
   if (typeof entry?.id !== 'string' || !entry.id || sourceIds.has(entry.id) ||
       typeof entry.textHash !== 'string' || entry.textHash.length !== 64 ||
-      !entry.analysis?.grammar || !Number.isFinite(entry.generatedAt)) {
+      !entry.analysis?.grammar || !Number.isFinite(entry.generatedAt) ||
+      (requireDetailed && !isDetailedSentenceAnalysis(entry.analysis))) {
     throw new Error(`Saved sentence analysis contains an invalid entry: ${String(entry?.id)}`);
   }
   sourceIds.add(entry.id);
-  if (publishedIds.has(entry.id)) continue;
+  if (publishedEntries.has(entryIdentity(entry))) continue;
   selected.push(entry);
   if (selected.length >= maxEntries) break;
 }
@@ -55,6 +62,6 @@ writeFileSync(join(outputDir, 'manifest.json'), `${JSON.stringify({
 }, null, 2)}\n`, { mode: 0o600 });
 process.stdout.write(`${JSON.stringify({
   sourceEntries: analysis.entries.length,
-  previouslyPublished: publishedIds.size,
+  previouslyPublished: publishedEntries.size,
   waveEntries: selected.length,
 })}\n`);

@@ -10,10 +10,11 @@ GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 NODE_BIN="${NODE_BIN:-node}"
+TSX_BIN="${TSX_BIN:-server/node_modules/.bin/tsx}"
 ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-8}"
 GRAMMAR_CONCURRENCY="${GRAMMAR_CONCURRENCY:-8}"
 IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-16}"
-LOCK_DIR="$ROOT/.cycle-lock"
+LOCK_FILE="$ROOT/.cycle.lock"
 CURRENT_CORPUS="$ROOT/current-corpus.json"
 CURRENT_POOL="$ROOT/current-source.json"
 SOURCE="$ROOT/source.json"
@@ -21,23 +22,34 @@ ANALYSIS_CACHE="$ROOT/analysis-cache.json"
 RECONCILIATION="$ROOT/final-reconciliation"
 IMAGE_ROOT="$ROOT/final-images"
 PUBLISH_STATE="$ROOT/publish-state"
-ANALYSIS_PUBLISH_STATE="$ROOT/analysis-publish-state-grammar-v2"
+ANALYSIS_PUBLISH_STATE="$ROOT/analysis-publish-state-detailed-v1"
+SAVED_ROOT="$ROOT/saved-sentences"
+SAVED_SOURCE="$SAVED_ROOT/source.json"
+SAVED_BASE_ANALYSIS="$SAVED_ROOT/current-base-analysis.json"
+SAVED_ANALYSIS_CACHE="$SAVED_ROOT/analysis-cache.json"
+SAVED_RECONCILIATION="$SAVED_ROOT/final-reconciliation"
+SAVED_PUBLISH_STATE="$SAVED_ROOT/publish-state-detailed-v1"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
 }
 
 mkdir -p "$ROOT"
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  log "another incremental example-enrichment cycle is already running"
+if ! shlock -f "$LOCK_FILE" -p "$$"; then
+  log "another incremental enrichment cycle is already running"
   exit 0
 fi
 cleanup() {
-  rm -rf "$LOCK_DIR"
+  rm -f "$LOCK_FILE"
 }
 trap cleanup EXIT INT TERM
 
-for required in "$GH_BIN" "$KEY_FILE" "$BASE_SOURCE" "$BASE_IMAGE_ROOT/targets.json"; do
+if pgrep -f '[n]ode scripts/offline/(enrich-sentences|enrich-sentence-grammar)\.mjs' >/dev/null 2>&1; then
+  log "another local sentence-analysis job is active; deferring this cycle"
+  exit 0
+fi
+
+for required in "$GH_BIN" "$KEY_FILE" "$BASE_SOURCE" "$BASE_IMAGE_ROOT/targets.json" "$TSX_BIN"; do
   if [ ! -s "$required" ]; then
     echo "Required incremental enrichment input is missing: $required" >&2
     exit 1
@@ -80,6 +92,54 @@ CORPUS_TMP="$ROOT/current-corpus.json.tmp"
 mv "$CORPUS_TMP" "$CURRENT_CORPUS"
 rm -f "$EXPORT_LOG_TMP"
 
+mkdir -p "$SAVED_ROOT"
+SAVED_SOURCE_TMP="$SAVED_SOURCE.tmp"
+if [ -s "$SAVED_SOURCE" ]; then
+  "$TSX_BIN" server/src/scripts/prepare-incremental-saved-sentence-source.ts \
+    "$CURRENT_CORPUS" "$SAVED_SOURCE_TMP" "$SAVED_SOURCE" "$SAVED_BASE_ANALYSIS"
+else
+  "$TSX_BIN" server/src/scripts/prepare-incremental-saved-sentence-source.ts \
+    "$CURRENT_CORPUS" "$SAVED_SOURCE_TMP" - "$SAVED_BASE_ANALYSIS"
+fi
+mv "$SAVED_SOURCE_TMP" "$SAVED_SOURCE"
+SAVED_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).sentences.length)' \
+  "$SAVED_SOURCE")"
+if [ "$SAVED_COUNT" -gt 0 ]; then
+  if [ ! -s "$SAVED_ANALYSIS_CACHE" ]; then
+    "$NODE_BIN" -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({version:1,generatedAt:Date.now(),entries:[]},null,2)+"\n", {mode:0o600})' \
+      "$SAVED_ANALYSIS_CACHE"
+  fi
+  "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
+    "$SAVED_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION"
+  SAVED_MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
+    "$SAVED_RECONCILIATION/report.json")"
+  if [ "$SAVED_MISSING_COUNT" -gt 0 ]; then
+    log "generating detailed local GPT-5.5 explanations for $SAVED_MISSING_COUNT saved sentence(s)"
+    SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
+    rm -f "$SAVED_NEW_ANALYSIS"
+    env CODEX_MODEL=gpt-5.5 CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
+      "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
+      "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
+      "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS"
+    "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
+      "$SAVED_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION" "$SAVED_NEW_ANALYSIS"
+  fi
+  if [ ! -s "$SAVED_RECONCILIATION/final-analysis.json" ]; then
+    echo "Incremental saved-sentence analysis reconciliation is incomplete" >&2
+    exit 1
+  fi
+  cp "$SAVED_RECONCILIATION/final-analysis.json" "$SAVED_ANALYSIS_CACHE.tmp"
+  mv "$SAVED_ANALYSIS_CACHE.tmp" "$SAVED_ANALYSIS_CACHE"
+  log "publishing detailed saved-sentence analyses"
+  REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 \
+  SAVED_SENTENCE_ANALYSIS_STATE_ROOT="$SAVED_PUBLISH_STATE" \
+  SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+    scripts/offline/dispatch-staged-saved-sentence-analyses.sh \
+      "$SAVED_ANALYSIS_CACHE" 2000 "$REQUIRED_DEPLOY_SHA"
+else
+  log "no saved sentences need detailed analysis"
+fi
+
 CURRENT_POOL_TMP="$ROOT/current-source.json.tmp"
 "$NODE_BIN" scripts/offline/build-example-sentence-pool.mjs "$CURRENT_CORPUS" "$CURRENT_POOL_TMP"
 mv "$CURRENT_POOL_TMP" "$CURRENT_POOL"
@@ -108,11 +168,12 @@ fi
 MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
   "$RECONCILIATION/report.json")"
 if [ "$MISSING_COUNT" -gt 0 ]; then
-  log "generating local GPT-5.6 explanations for $MISSING_COUNT newly discovered example sentence(s)"
+  log "generating local GPT-5.5 explanations for $MISSING_COUNT newly discovered example sentence(s)"
   NEW_ANALYSIS="$ROOT/new-analysis.json"
   rm -f "$NEW_ANALYSIS"
-  env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
-    "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work"
+  env CODEX_MODEL=gpt-5.5 CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
+    "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
+    "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
   "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
     "$SOURCE" "$ANALYSIS_CACHE" "$RECONCILIATION" "$NEW_ANALYSIS"
 fi
@@ -135,6 +196,7 @@ mv "$ANALYSIS_CACHE.tmp" "$ANALYSIS_CACHE"
 "$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
   "$SOURCE" "$RECONCILIATION/final-analysis.json"
 log "publishing validated explanations before their images"
+REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 \
 EXAMPLE_ANALYSIS_WAVE_STATE_ROOT="$ANALYSIS_PUBLISH_STATE" \
 EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
   scripts/offline/dispatch-staged-example-analyses.sh "$ROOT" 2000 "$REQUIRED_DEPLOY_SHA"

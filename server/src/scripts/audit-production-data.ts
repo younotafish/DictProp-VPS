@@ -3,7 +3,7 @@ import { db, getAllItems, getImageManifest, listAllUsers } from '../db.js';
 import { detectImageMimeType } from '../image-format.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
-import { hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
+import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../usage-audit.js';
 import { validateStoredItem } from '../validation.js';
 
@@ -84,6 +84,9 @@ const missingSentenceAnalysis = sentenceItems
   .map(item => item.data.id);
 const missingSentenceGrammar = sentenceItems
   .filter(item => !hasSentenceGrammarAnalysis(item.data.analysis))
+  .map(item => item.data.id);
+const incompleteDetailedSentenceAnalysis = sentenceItems
+  .filter(item => !hasCompleteSentenceAnalysis(item.data.analysis))
   .map(item => item.data.id);
 const missingAnalysisTimestamp = sentenceItems
   .filter(item => isSentenceAnalysis(item.data.analysis) &&
@@ -169,6 +172,14 @@ const sentenceEnrichmentStats = db.prepare(`
   missing_blobs: number | null;
   image_bytes: number;
 };
+let incompleteDetailedEnrichmentCount = 0;
+for (const row of db.prepare('SELECT analysis FROM sentence_enrichments').iterate() as Iterable<{ analysis: string }>) {
+  try {
+    if (!hasCompleteSentenceAnalysis(JSON.parse(row.analysis))) incompleteDetailedEnrichmentCount++;
+  } catch {
+    incompleteDetailedEnrichmentCount++;
+  }
+}
 
 const duplicateGroups = (items: any[], keyOf: (item: any) => string) => {
   const groups = new Map<string, string[]>();
@@ -289,6 +300,8 @@ const report = {
     invalidAnalysisIds: sample(invalidSentenceAnalysis),
     missingGrammarCount: missingSentenceGrammar.length,
     missingGrammarIds: sample(missingSentenceGrammar),
+    incompleteDetailedAnalysisCount: incompleteDetailedSentenceAnalysis.length,
+    incompleteDetailedAnalysisIds: sample(incompleteDetailedSentenceAnalysis),
     missingAnalysisTimestampCount: missingAnalysisTimestamp.length,
     missingAnalysisTimestampIds: sample(missingAnalysisTimestamp),
     missingImageCount: missingSentenceImages.length,
@@ -301,6 +314,7 @@ const report = {
     withImages: sentenceEnrichmentStats.with_images || 0,
     invalidAnalysisCount: sentenceEnrichmentStats.invalid_analysis || 0,
     missingGrammarCount: sentenceEnrichmentStats.missing_grammar || 0,
+    incompleteDetailedAnalysisCount: incompleteDetailedEnrichmentCount,
     missingBlobCount: sentenceEnrichmentStats.missing_blobs || 0,
     imageBytes: sentenceEnrichmentStats.image_bytes,
   },

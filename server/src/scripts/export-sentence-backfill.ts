@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { getAllItems, listAllUsers } from '../db.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
-import { hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
+import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import type { SentenceExportRecord } from '../sentence-backfill.js';
 
 const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
@@ -21,6 +21,7 @@ const sentences: SentenceExportRecord[] = getAllItems(true, owner.id)
       textHash: createHash('sha256').update(text).digest('hex'),
       hasAnalysis: isSentenceAnalysis(data.analysis),
       hasGrammar: hasSentenceGrammarAnalysis(data.analysis),
+      hasDetailedAnalysis: hasCompleteSentenceAnalysis(data.analysis),
       hasImage: data.imageUrl?.startsWith('server:has_image') ||
         (typeof data.imageUrl === 'string' && data.imageUrl.startsWith('data:image/')),
     };

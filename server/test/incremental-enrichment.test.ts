@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   collectIncrementalEnrichmentItems,
   hasCompleteVocabContent,
+  incrementalEnrichmentItemKey,
   selectReplacementVocab,
+  selectUnattemptedIncrementalItems,
 } from '../src/incremental-enrichment.js';
 
 const legacySentenceAnalysis = {
@@ -17,17 +19,29 @@ const legacySentenceAnalysis = {
 const completeVocab = {
   id: 'word',
   word: 'word',
+  sense: 'noun: unit of language',
   chinese: '词',
   ipa: '/wɝd/',
-  definition: 'A unit of language.',
-  history: 'An old word.',
-  register: 'common',
-  mnemonic: 'Remember word.',
-  imagePrompt: 'A word icon',
+  definition: 'A distinct unit of language with meaning or grammatical function.',
+  forms: ['word', 'words'],
+  wordFamily: [{ word: 'wording', pos: 'noun', chinese: '措辞' }],
+  history: 'From Old English word, with cognates across the Germanic languages.',
+  register: 'Common in every register of present-day English.',
+  mnemonic: 'A word is one unit you can put into a sentence.',
+  imagePrompt: 'A clean educational icon showing one highlighted word in a row of language symbols.',
   synonyms: [],
   antonyms: [],
   confusables: [],
-  examples: ['One word works.', 'That is the word.'],
+  examples: [
+    'I need one better {{word}} before I send this message to the whole team.',
+    'That {{word}} makes the instructions way easier to understand.',
+  ],
+  usageAudit: {
+    status: 'current_general',
+    reason: 'A basic and current term throughout American English.',
+    confidence: 'high',
+    auditedAt: 1,
+  },
 };
 
 test('incremental enrichment selects only unfinished records added after installation', () => {
@@ -63,4 +77,17 @@ test('vocabulary completeness and sense-matched replacement are deterministic', 
     ],
   );
   assert.equal(replacement?.sense, 'verb: rely');
+});
+
+test('a failed first batch cannot starve newer incremental candidates', () => {
+  const pending = Array.from({ length: 12 }, (_, index) => ({
+    type: 'sentence',
+    data: { id: `sentence-${index}` },
+  }));
+  const attempted = new Set(pending.slice(0, 8).map(incrementalEnrichmentItemKey));
+
+  assert.deepEqual(
+    selectUnattemptedIncrementalItems(pending, attempted, 8).map(item => item.data.id),
+    ['sentence-8', 'sentence-9', 'sentence-10', 'sentence-11'],
+  );
 });

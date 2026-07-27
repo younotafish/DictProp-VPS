@@ -85,57 +85,14 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
               </div>
             ) : (
               <>
-                {analysis.naturalSpeechIpa && (
-                  <section className="mt-5 border-t border-slate-200 pt-5">
-                    <div className="mb-2 flex items-center gap-2 text-slate-500">
-                      <AudioLines size={17} className="text-cyan-600" />
-                      <h2 className="text-xs font-bold uppercase text-slate-500">Natural speech IPA</h2>
-                    </div>
-                    <p className="max-w-4xl break-words font-mono text-base leading-relaxed text-slate-800 sm:text-lg">
-                      {analysis.naturalSpeechIpa}
-                    </p>
-                  </section>
-                )}
-
                 <section className="mt-7 border-t border-slate-200 pt-6">
                   <div className="mb-2 flex items-center gap-2 text-slate-500">
                     <Languages size={17} className="text-rose-500" />
-                    <h2 className="text-xs font-bold uppercase text-slate-500">Chinese translation</h2>
+                    <h2 className="text-base font-bold text-slate-900">1. Chinese Translation</h2>
                   </div>
                   <p lang="zh-CN" className="max-w-4xl text-base font-normal leading-relaxed text-slate-700 sm:text-lg">
                     {analysis.translation}
                   </p>
-                </section>
-
-                <section className="mt-7 border-t border-slate-200 pt-6">
-                  <div className="mb-3 flex items-center gap-2 text-slate-500">
-                    <Braces size={17} className="text-violet-600" />
-                    <h2 className="text-xs font-bold uppercase text-slate-500">Grammar analysis</h2>
-                  </div>
-                  {analysis.grammar ? (
-                    <div className="max-w-4xl">
-                      <p className="border-l-2 border-violet-200 pl-3 text-base leading-relaxed text-slate-800">
-                        {analysis.grammar.structure}
-                      </p>
-                      {analysis.grammar.points.length > 0 && (
-                        <div className="mt-5 divide-y divide-slate-100 border-y border-slate-100">
-                          {analysis.grammar.points.map((point, index) => (
-                            <div key={`${point.label}:${point.excerpt}:${index}`} className="py-4 first:pt-0 last:pb-0">
-                              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                                <h3 className="text-sm font-bold text-slate-800">{point.label}</h3>
-                                <span className="rounded bg-violet-50 px-2 py-0.5 text-sm text-violet-700">{point.excerpt}</span>
-                              </div>
-                              <p className="mt-2 text-sm leading-relaxed text-slate-600 sm:text-base">
-                                {point.explanation}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-slate-400">Grammar analysis pending.</p>
-                  )}
                 </section>
 
                 <section className="mt-7 border-t border-slate-200 pt-6">
@@ -150,17 +107,29 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                         <AmericanEnglishIcon size={22} strokeWidth={2.3} />
                       </span>
                     )}
-                    <h2 className="text-xs font-bold uppercase text-slate-500">American English</h2>
+                    <div>
+                      <h2 className="text-base font-bold text-slate-900">2. Is It American English and Why?</h2>
+                      {americanEnglishPresentation && (
+                        <p className="mt-0.5 text-xs font-semibold text-slate-500">{americanEnglishPresentation.label}</p>
+                      )}
+                    </div>
                   </div>
-                  <p className="max-w-3xl text-base leading-relaxed text-slate-700">
+                  <p className="max-w-4xl text-base leading-relaxed text-slate-700">
                     {analysis.americanEnglish.explanation}
                   </p>
+                  {analysis.americanEnglish.evidence && analysis.americanEnglish.evidence.length > 0 && (
+                    <ul className="mt-4 max-w-4xl list-disc space-y-2 pl-5 text-sm leading-relaxed text-slate-700 sm:text-base">
+                      {analysis.americanEnglish.evidence.map((reason, index) => (
+                        <li key={`${reason}:${index}`} className="pl-1">{reason}</li>
+                      ))}
+                    </ul>
+                  )}
                 </section>
 
                 <section className="mt-8 border-t border-slate-200 pt-6">
                   <div className="mb-4 flex items-center gap-2">
                     <BookOpenText size={17} className="text-emerald-600" />
-                    <h2 className="text-xs font-bold uppercase text-slate-500">Uncommon words and phrases</h2>
+                    <h2 className="text-base font-bold text-slate-900">3. Uncommon Words and Phrases</h2>
                     <span className="text-xs text-slate-400">{analysis.terms.length}</span>
                   </div>
 
@@ -174,9 +143,15 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                                 <h3 className="text-xl font-bold text-slate-900">{term.term}</h3>
-                                <span className="font-mono text-sm text-indigo-600">{term.ipa}</span>
                               </div>
-                              <p lang="zh-CN" className="mt-1 text-base font-semibold text-rose-600">{term.chinese}</p>
+                              <p lang="zh-CN" className="mt-2 text-base text-slate-700">
+                                <span className="font-semibold text-slate-500">Chinese translation: </span>
+                                {term.chinese}
+                              </p>
+                              <p className="mt-1 break-words font-mono text-sm text-indigo-700">
+                                <span className="font-sans font-semibold text-slate-500">American IPA: </span>
+                                {term.ipa}
+                              </p>
                             </div>
                             <button
                               type="button"
@@ -215,22 +190,104 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
 
                           <div className="mt-4 border-t border-slate-100 pt-4">
                             <h4 className="text-[11px] font-bold uppercase text-slate-400">Usage examples</h4>
-                            <div className="mt-2 space-y-2">
+                            <ul className="mt-2 list-disc space-y-2 pl-5">
                               {term.examples.map((example, exampleIndex) => (
-                                <p key={exampleIndex} className="border-l-2 border-indigo-200 pl-3 text-sm leading-relaxed text-slate-600">
-                                  {example}
-                                </p>
+                                <li key={exampleIndex} className="pl-1 text-sm leading-relaxed text-slate-600">{example}</li>
                               ))}
-                            </div>
+                            </ul>
                           </div>
 
-                          <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
-                            <History size={15} className="mt-0.5 shrink-0 text-amber-500" />
-                            <p className="text-sm leading-relaxed text-slate-600">{term.historicalEvolution}</p>
+                          <div className="mt-4 border-t border-slate-100 pt-4">
+                            <div className="flex items-center gap-2">
+                              <History size={15} className="shrink-0 text-amber-500" />
+                              <h4 className="text-[11px] font-bold uppercase text-slate-400">Historical evolution</h4>
+                            </div>
+                            <p className="mt-2 text-sm leading-relaxed text-slate-600">{term.historicalEvolution}</p>
                           </div>
                         </article>
                       ))}
                     </div>
+                  )}
+                </section>
+
+                <section className="mt-8 border-t border-slate-200 pt-6">
+                  <div className="mb-4 flex items-center gap-2">
+                    <AudioLines size={17} className="text-cyan-600" />
+                    <h2 className="text-base font-bold text-slate-900">4. Daily English Pronunciation</h2>
+                  </div>
+                  {analysis.pronunciation ? (
+                    <dl className="max-w-4xl divide-y divide-slate-200 border-y border-slate-200">
+                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-sm font-semibold text-slate-500">Spoken slowly</dt>
+                        <dd className="break-words font-mono text-sm leading-relaxed text-slate-800 sm:text-base">{analysis.pronunciation.slowIpa}</dd>
+                      </div>
+                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-sm font-semibold text-slate-500">Spoken quickly</dt>
+                        <dd className="break-words font-mono text-sm leading-relaxed text-slate-800 sm:text-base">{analysis.pronunciation.fastIpa}</dd>
+                      </div>
+                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-sm font-semibold text-slate-500">Careful speaker</dt>
+                        <dd className="break-words text-sm leading-relaxed text-slate-700 sm:text-base">{analysis.pronunciation.carefulSpeakerGuide}</dd>
+                      </div>
+                      <div className="grid gap-2 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-sm font-semibold text-slate-500">Fast-speech features</dt>
+                        <dd>
+                          <ul className="list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-700 sm:text-base">
+                            {analysis.pronunciation.fastSpeechFeatures.map((feature, index) => (
+                              <li key={`${feature}:${index}`} className="pl-1">{feature}</li>
+                            ))}
+                          </ul>
+                        </dd>
+                      </div>
+                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-sm font-semibold text-slate-500">Intonation &amp; chunking</dt>
+                        <dd className="break-words text-sm leading-relaxed text-slate-700 sm:text-base">{analysis.pronunciation.intonationAndChunking}</dd>
+                      </div>
+                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-sm font-semibold text-slate-500">Key difference</dt>
+                        <dd className="text-sm font-medium leading-relaxed text-slate-800 sm:text-base">{analysis.pronunciation.keyDifference}</dd>
+                      </div>
+                    </dl>
+                  ) : analysis.naturalSpeechIpa ? (
+                    <dl className="max-w-4xl border-y border-slate-200">
+                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-sm font-semibold text-slate-500">Spoken quickly</dt>
+                        <dd className="break-words font-mono text-sm leading-relaxed text-slate-800 sm:text-base">{analysis.naturalSpeechIpa}</dd>
+                      </div>
+                    </dl>
+                  ) : (
+                    <p className="text-sm text-slate-400">Pronunciation analysis pending.</p>
+                  )}
+                </section>
+
+                <section className="mt-8 border-t border-slate-200 pt-6">
+                  <div className="mb-3 flex items-center gap-2 text-slate-500">
+                    <Braces size={17} className="text-violet-600" />
+                    <h2 className="text-base font-bold text-slate-900">5. Grammar Analysis</h2>
+                  </div>
+                  {analysis.grammar ? (
+                    <div className="max-w-4xl">
+                      <p className="border-l-2 border-violet-200 pl-3 text-base leading-relaxed text-slate-800">
+                        {analysis.grammar.structure}
+                      </p>
+                      {analysis.grammar.points.length > 0 && (
+                        <div className="mt-5 divide-y divide-slate-100 border-y border-slate-100">
+                          {analysis.grammar.points.map((point, index) => (
+                            <div key={`${point.label}:${point.excerpt}:${index}`} className="py-4 first:pt-0 last:pb-0">
+                              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                                <h3 className="text-sm font-bold text-slate-800">{point.label}</h3>
+                                <span className="rounded bg-violet-50 px-2 py-0.5 text-sm text-violet-700">{point.excerpt}</span>
+                              </div>
+                              <p className="mt-2 text-sm leading-relaxed text-slate-600 sm:text-base">
+                                {point.explanation}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-400">Grammar analysis pending.</p>
                   )}
                 </section>
               </>

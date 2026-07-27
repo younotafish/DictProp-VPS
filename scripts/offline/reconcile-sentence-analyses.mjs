@@ -2,6 +2,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, baseAnalysisArg, outputDirArg, supplementalAnalysisArg] = process.argv.slice(2);
 if (!sourceArg || !baseAnalysisArg || !outputDirArg) {
@@ -30,14 +31,18 @@ const supplementalEntries = [];
 const missingSentences = [];
 const staleBaseEntries = [];
 const staleSupplementalEntries = [];
+const incompleteBaseEntries = [];
+const incompleteSupplementalEntries = [];
 
 for (const entry of baseById.values()) {
   const sentence = finalById.get(entry.id);
   if (!sentence || sentence.textHash !== entry.textHash) staleBaseEntries.push(entry);
+  else if (!isDetailedSentenceAnalysis(entry.analysis)) incompleteBaseEntries.push(entry);
 }
 for (const entry of supplementalById.values()) {
   const sentence = finalById.get(entry.id);
   if (!sentence || sentence.textHash !== entry.textHash) staleSupplementalEntries.push(entry);
+  else if (!isDetailedSentenceAnalysis(entry.analysis)) incompleteSupplementalEntries.push(entry);
 }
 
 for (const sentence of source.sentences) {
@@ -68,6 +73,8 @@ const report = {
   missing: missingSentences.length,
   staleBase: staleBaseEntries.length,
   staleSupplemental: staleSupplementalEntries.length,
+  incompleteBase: incompleteBaseEntries.length,
+  incompleteSupplemental: incompleteSupplementalEntries.length,
   complete: missingSentences.length === 0 && completeEntries.length === source.sentences.length,
 };
 
@@ -95,6 +102,12 @@ writePrivateJson(resolve(outputDir, 'stale-analysis.json'), {
   version: 1,
   generatedAt,
   entries: [...staleBaseEntries, ...staleSupplementalEntries]
+    .sort((left, right) => left.id.localeCompare(right.id)),
+});
+writePrivateJson(resolve(outputDir, 'incomplete-analysis.json'), {
+  version: 1,
+  generatedAt,
+  entries: [...incompleteBaseEntries, ...incompleteSupplementalEntries]
     .sort((left, right) => left.id.localeCompare(right.id)),
 });
 writePrivateJson(resolve(outputDir, 'report.json'), report);
@@ -147,5 +160,5 @@ function indexAnalyses(manifest, label) {
 
 function matchingEntry(entries, sentence) {
   const entry = entries.get(sentence.id);
-  return entry?.textHash === sentence.textHash ? entry : null;
+  return entry?.textHash === sentence.textHash && isDetailedSentenceAnalysis(entry.analysis) ? entry : null;
 }

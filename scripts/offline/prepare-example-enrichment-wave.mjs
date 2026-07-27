@@ -2,6 +2,7 @@
 
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, analysisArg, imagesArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!sourceArg || !analysisArg || !imagesArg || !outputArg) {
@@ -14,6 +15,7 @@ const imageRoot = resolve(imagesArg);
 const imageManifest = readJson(join(imageRoot, 'manifest.json'));
 const outputDir = resolve(outputArg);
 const maxEntries = Number(maxEntriesArg || 100);
+const requireDetailed = process.env.REQUIRE_DETAILED_SENTENCE_ANALYSIS === '1';
 if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 500) {
   throw new Error('max-entries must be an integer from 1 to 500');
 }
@@ -44,6 +46,9 @@ for (const sentence of source.sentences) {
   const imageEntry = imageById.get(sentence.id);
   if (!analysisEntry || analysisEntry.textHash !== sentence.textHash) {
     throw new Error(`Analysis identity mismatch: ${sentence.id}`);
+  }
+  if (requireDetailed && !isDetailedSentenceAnalysis(analysisEntry.analysis)) {
+    throw new Error(`Detailed analysis is incomplete: ${sentence.id}`);
   }
   if (!imageEntry || imageEntry.textHash !== sentence.textHash || typeof imageEntry.imageFile !== 'string') {
     throw new Error(`Image identity mismatch: ${sentence.id}`);

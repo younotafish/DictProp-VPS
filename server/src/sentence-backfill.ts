@@ -8,6 +8,7 @@ export interface SentenceExportRecord {
   textHash: string;
   hasAnalysis: boolean;
   hasGrammar: boolean;
+  hasDetailedAnalysis: boolean;
   hasImage: boolean;
 }
 

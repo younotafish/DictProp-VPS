@@ -1,31 +1,18 @@
-import { hasSentenceGrammarAnalysis, isSentenceAnalysis } from './sentence-analysis.js';
-
-const requiredVocabStrings = [
-  'word',
-  'chinese',
-  'ipa',
-  'definition',
-  'history',
-  'register',
-  'mnemonic',
-  'imagePrompt',
-] as const;
+import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
+import { hasCompleteGeneratedVocabMetadata, isValidGeneratedExampleSet } from './ai-response.js';
 
 export function hasStoredImage(data: any): boolean {
   return typeof data?.imageUrl === 'string' && data.imageUrl.length > 0;
 }
 
 export function hasCompleteVocabContent(data: any): boolean {
-  return !!data && requiredVocabStrings.every(field => typeof data[field] === 'string' && data[field].trim()) &&
-    Array.isArray(data.synonyms) && Array.isArray(data.antonyms) && Array.isArray(data.confusables) &&
-    Array.isArray(data.examples) && data.examples.length >= 2;
+  return hasCompleteGeneratedVocabMetadata(data) && isValidGeneratedExampleSet(data?.examples);
 }
 
 export function itemNeedsIncrementalEnrichment(item: any): boolean {
   if (!item?.data || item.isDeleted || item.isArchived) return false;
   if (item.type === 'sentence') {
-    return !isSentenceAnalysis(item.data.analysis) ||
-      !hasSentenceGrammarAnalysis(item.data.analysis) || !hasStoredImage(item.data);
+    return !hasCompleteSentenceAnalysis(item.data.analysis) || !hasStoredImage(item.data);
   }
   if (item.type === 'vocab') {
     return !hasCompleteVocabContent(item.data) ||
@@ -48,6 +35,20 @@ export function collectIncrementalEnrichmentItems(
   return items
     .filter(item => Number(item?.savedAt) >= installedAt && itemNeedsIncrementalEnrichment(item))
     .sort((a, b) => (a.savedAt - b.savedAt) || String(a.data.id).localeCompare(String(b.data.id)))
+    .slice(0, Math.max(0, limit));
+}
+
+export function incrementalEnrichmentItemKey(item: any): string {
+  return `${String(item?.type || '')}:${String(item?.data?.id || '')}`;
+}
+
+export function selectUnattemptedIncrementalItems(
+  pending: any[],
+  attempted: ReadonlySet<string>,
+  limit: number,
+): any[] {
+  return pending
+    .filter(item => !attempted.has(incrementalEnrichmentItemKey(item)))
     .slice(0, Math.max(0, limit));
 }
 

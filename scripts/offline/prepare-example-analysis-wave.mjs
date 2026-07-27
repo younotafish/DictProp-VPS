@@ -2,6 +2,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, analysisArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!sourceArg || !analysisArg || !outputArg) {
@@ -15,6 +16,7 @@ const source = readJson(sourceArg);
 const analysis = readJson(analysisArg);
 const outputDir = resolve(outputArg);
 const maxEntries = Number(maxEntriesArg || 2_000);
+const requireDetailed = process.env.REQUIRE_DETAILED_SENTENCE_ANALYSIS === '1';
 if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 2_000) {
   throw new Error('max-entries must be an integer from 1 to 2000');
 }
@@ -53,6 +55,9 @@ for (const sentence of source.sentences) {
   const entry = analysisById.get(sentence.id);
   if (!entry || entry.textHash !== sentence.textHash) {
     throw new Error(`Analysis identity mismatch: ${sentence.id}`);
+  }
+  if (requireDetailed && !isDetailedSentenceAnalysis(entry.analysis)) {
+    throw new Error(`Detailed analysis is incomplete: ${sentence.id}`);
   }
   selected.push({
     id: sentence.id,

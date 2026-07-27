@@ -79,6 +79,23 @@ git push vps main
 
 Do not push this fork to the Firebase repository. The production remote is named `vps`.
 
+## Scheduled Enrichment
+
+- GitHub Actions runs `.github/workflows/incremental-enrichment.yml` at minute 23 every six hours. The production concurrency group prevents overlap with deploys and imports. Each run drains saved vocab and saved-sentence metadata in batches until the queue is empty or its 70-minute deadline is reached; failed items do not block later batches.
+- macOS `launchd` runs `ops/launchd/com.dictprop.incremental-example-enrichment.plist` every 21,600 seconds. One resumable cycle enriches incomplete saved sentences with local GPT-5.5, then newly prepared vocab example sentences and their images. A PID lock prevents duplicate cycles, and a cycle defers while another local sentence-analysis job is active.
+- The local bridge keeps source, analysis-cache, publication-wave, and image state under `data/offline-backfill/incremental-example-enrichment/`. Publication identities include both item ID and sentence text hash, so interrupted runs resume and edited sentences can be republished safely.
+
+Install or refresh the checked-in LaunchAgent definition with:
+
+```bash
+cp ops/launchd/com.dictprop.incremental-example-enrichment.plist \
+  ~/Library/LaunchAgents/com.dictprop.incremental-example-enrichment.plist
+launchctl bootout "gui/$(id -u)/com.dictprop.incremental-example-enrichment" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" \
+  ~/Library/LaunchAgents/com.dictprop.incremental-example-enrichment.plist
+launchctl print "gui/$(id -u)/com.dictprop.incremental-example-enrichment"
+```
+
 ## Network Constraint
 
 All outbound server HTTP must go through `server/src/proxy-fetch.ts`. It uses the configured corporate proxy locally and native fetch on the VPS; large proxied JSON bodies use its internal curl transport.

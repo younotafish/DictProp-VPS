@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 const DETACHED_PROCESS_GROUPS = process.platform !== 'win32';
 
 export function spawnCodex(args) {
-  return spawn('/usr/local/bin/codex', args, {
+  return spawn(process.env.CODEX_BIN || '/usr/local/bin/codex', args, {
     stdio: ['pipe', 'ignore', 'pipe'],
     detached: DETACHED_PROCESS_GROUPS,
   });

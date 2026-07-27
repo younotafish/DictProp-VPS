@@ -22,6 +22,15 @@ export interface SentenceGrammarAnalysis {
   points: SentenceGrammarPoint[];
 }
 
+export interface SentencePronunciationGuide {
+  slowIpa: string;
+  fastIpa: string;
+  carefulSpeakerGuide: string;
+  fastSpeechFeatures: string[];
+  intonationAndChunking: string;
+  keyDifference: string;
+}
+
 export interface SentenceAnalysis {
   translation: string;
   naturalSpeechIpa?: string;
@@ -29,9 +38,17 @@ export interface SentenceAnalysis {
   americanEnglish: {
     status: AmericanEnglishStatus;
     explanation: string;
+    evidence?: string[];
   };
   terms: SentenceAnalysisTerm[];
+  pronunciation?: SentencePronunciationGuide;
   imagePrompt: string;
+}
+
+export interface CompleteSentenceAnalysis extends SentenceAnalysis {
+  grammar: SentenceGrammarAnalysis;
+  americanEnglish: SentenceAnalysis['americanEnglish'] & { evidence: string[] };
+  pronunciation: SentencePronunciationGuide;
 }
 
 const STATUSES = new Set<AmericanEnglishStatus>(['american', 'shared', 'not_american']);
@@ -39,12 +56,24 @@ const MAX_TEXT_LENGTH = 12_000;
 const MAX_TERMS = 20;
 const MAX_LIST_ITEMS = 12;
 const MAX_GRAMMAR_POINTS = 12;
+const SLASH_DELIMITED_IPA = /^\/[^/\n]+\/$/;
 
 const isString = (value: unknown, max = MAX_TEXT_LENGTH): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= max;
 
 const isStringList = (value: unknown, maxItems = MAX_LIST_ITEMS): value is string[] =>
   Array.isArray(value) && value.length <= maxItems && value.every(item => isString(item, 2_000));
+
+export function isSentencePronunciationGuide(value: unknown): value is SentencePronunciationGuide {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const pronunciation = value as Record<string, any>;
+  return isString(pronunciation.slowIpa, 2_000) && SLASH_DELIMITED_IPA.test(pronunciation.slowIpa.trim()) &&
+    isString(pronunciation.fastIpa, 2_000) && SLASH_DELIMITED_IPA.test(pronunciation.fastIpa.trim()) &&
+    isString(pronunciation.carefulSpeakerGuide, 4_000) &&
+    isStringList(pronunciation.fastSpeechFeatures, 6) &&
+    isString(pronunciation.intonationAndChunking, 4_000) &&
+    isString(pronunciation.keyDifference, 4_000);
+}
 
 export function isSentenceGrammarAnalysis(value: unknown): value is SentenceGrammarAnalysis {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -98,6 +127,20 @@ export function hasSentenceGrammarAnalysis(
   return isSentenceAnalysis(value) && isSentenceGrammarAnalysis(value.grammar);
 }
 
+export function hasCompleteSentenceAnalysis(value: unknown): value is CompleteSentenceAnalysis {
+  if (!isSentenceAnalysis(value) || !isSentenceGrammarAnalysis(value.grammar) ||
+      !isSentencePronunciationGuide(value.pronunciation)) return false;
+  if (!Array.isArray(value.americanEnglish.evidence) || value.americanEnglish.evidence.length === 0) return false;
+  if (value.pronunciation.fastSpeechFeatures.length === 0) return false;
+  if (value.naturalSpeechIpa !== undefined &&
+      value.naturalSpeechIpa.trim() !== value.pronunciation.fastIpa.trim()) return false;
+  return value.terms.every(term => term.synonyms.length > 0 && term.examples.length === 2);
+}
+
+export function withLegacyNaturalSpeechIpa(analysis: CompleteSentenceAnalysis): CompleteSentenceAnalysis {
+  return { ...analysis, naturalSpeechIpa: analysis.pronunciation.fastIpa };
+}
+
 export function isSentenceAnalysis(value: unknown): value is SentenceAnalysis {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const analysis = value as Record<string, any>;
@@ -105,8 +148,10 @@ export function isSentenceAnalysis(value: unknown): value is SentenceAnalysis {
   if (!isString(analysis.translation) || !isString(analysis.imagePrompt, 4_000)) return false;
   if (analysis.naturalSpeechIpa !== undefined && !isString(analysis.naturalSpeechIpa, 2_000)) return false;
   if (analysis.grammar !== undefined && !isSentenceGrammarAnalysis(analysis.grammar)) return false;
+  if (analysis.pronunciation !== undefined && !isSentencePronunciationGuide(analysis.pronunciation)) return false;
   if (!american || typeof american !== 'object' || Array.isArray(american) ||
       !STATUSES.has(american.status) || !isString(american.explanation, 4_000)) return false;
+  if (american.evidence !== undefined && !isStringList(american.evidence, 6)) return false;
   if (!Array.isArray(analysis.terms) || analysis.terms.length > MAX_TERMS) return false;
   return analysis.terms.every((term: any) =>
     term && typeof term === 'object' && !Array.isArray(term) &&
@@ -120,8 +165,8 @@ export function isSentenceAnalysis(value: unknown): value is SentenceAnalysis {
 export function extractSentenceAnalysis(
   value: unknown,
   depth = 0,
-): (SentenceAnalysis & { grammar: SentenceGrammarAnalysis }) | null {
-  if (hasSentenceGrammarAnalysis(value)) return value;
+): CompleteSentenceAnalysis | null {
+  if (hasCompleteSentenceAnalysis(value)) return value;
   if (depth >= 4) return null;
   if (typeof value === 'string') {
     const parsed = parseWrappedJson(value);
@@ -141,26 +186,16 @@ export function extractSentenceAnalysis(
 
 export const SENTENCE_ANALYSIS_INSTRUCTION = `
 You are an expert American English lexicographer and an exacting coach for an advanced Chinese-speaking learner.
-Analyze only the supplied English text. Be context-specific, concise, and factually careful. Return one valid JSON
+Analyze only the supplied English text. Be context-specific, thorough, and factually careful. Return one valid JSON
 object and no markdown, commentary, or extra keys.
 
 The JSON keys MUST appear in this exact order:
 {
   "translation": "A precise, natural Simplified Chinese translation preserving tense, tone, register, and idiomatic force",
-  "naturalSpeechIpa": "Readable rhotic General American IPA for the complete sentence as spoken fluently at a naturally fast conversational pace, with ordinary weak forms, reductions, linking, assimilation, and flapping where they normally occur; enclose the complete transcription in slashes",
-  "grammar": {
-    "structure": "A compact but complete English map of the sentence structure, naming the main clause and any subordinate clauses, phrases, coordination, or ellipsis in their source order",
-    "points": [
-      {
-        "label": "The specific grammar feature, such as present perfect, reduced relative clause, or inversion",
-        "excerpt": "The shortest exact span from the supplied sentence that demonstrates this feature",
-        "explanation": "A context-specific English explanation of how the form works here, what meaning or emphasis it contributes, and why this form is used rather than a plausible alternative"
-      }
-    ]
-  },
   "americanEnglish": {
     "status": "american | shared | not_american",
-    "explanation": "In English, say whether the wording is distinctly American, shared across major English varieties, or non-American, and identify the concrete lexical, spelling, grammar, or idiom evidence. Do not call a universal expression American merely because Americans use it. For non-American wording, give the natural present-day American equivalent."
+    "explanation": "A direct, nuanced English verdict beginning with Yes or No that explains whether the complete sentence is natural in present-day educated American English and in what contexts or register",
+    "evidence": ["A concrete lexical, idiomatic, spelling, grammatical, or register reason tied to an exact expression in the sentence"]
   },
   "terms": [
     {
@@ -174,21 +209,43 @@ The JSON keys MUST appear in this exact order:
       "historicalEvolution": "In English, a concise, accurate note on origin and semantic development"
     }
   ],
+  "pronunciation": {
+    "slowIpa": "Rhotic General American IPA for the complete sentence spoken deliberately and clearly, with every word boundary recoverable; enclose it in slashes",
+    "fastIpa": "Rhotic General American IPA for the complete sentence in fluent connected speech, showing ordinary weak forms, reductions, linking, assimilation, and flapping; enclose it in slashes",
+    "carefulSpeakerGuide": "A learner-friendly stress and chunk guide for the complete sentence using ordinary spelling, hyphens, slashes between thought groups, and CAPITALS for primary stress",
+    "fastSpeechFeatures": ["An exact source span followed by its specific connected-speech behavior and resulting sound"],
+    "intonationAndChunking": "The complete sentence divided into natural thought groups with / and useful rise/fall arrows, followed by a concise explanation of the information focus",
+    "keyDifference": "One or two plain-English sentences contrasting careful and fluent delivery in this exact sentence"
+  },
+  "grammar": {
+    "structure": "A compact but complete English map of the sentence structure, naming the main clause and any subordinate clauses, phrases, coordination, or ellipsis in their source order",
+    "points": [
+      {
+        "label": "The specific grammar feature, such as present perfect, reduced relative clause, or inversion",
+        "excerpt": "The shortest exact span from the supplied sentence that demonstrates this feature",
+        "explanation": "A context-specific English explanation of how the form works here, what meaning or emphasis it contributes, and why this form is used rather than a plausible alternative"
+      }
+    ]
+  },
   "imagePrompt": "A production-ready prompt for one realistic, photorealistic 16:9 image whose central action or relationship makes the complete contextual meaning inferable at a glance. Include every distinguishing detail, keep the scene easy to parse, and depict an idiom's intended meaning rather than a misleading literal origin. Specify people, setting, camera distance, composition, and natural lighting. No illustration, animation, 3D render, collage, split screen, typography, captions, logos, watermarks, or visible text."
 }
 
 Rules:
 - Everything must be English except translation and each term's chinese field.
-- naturalSpeechIpa must transcribe the complete sentence, not isolated dictionary forms. Model mainstream natural connected speech, not exaggerated casual deletion or a regional accent. Preserve every meaning-bearing word, use IPA symbols rather than respelling, and return one slash-delimited transcription.
+- americanEnglish.explanation must answer the naturalness question directly. Evidence must contain 1-6 non-redundant bullet-ready reasons and distinguish "natural in American English" from "uniquely American." For non-American wording, give the natural current American equivalent.
+- pronunciation.slowIpa and fastIpa must each transcribe the complete sentence, not isolated words. Use mainstream rhotic General American IPA, never British RP, eye-dialect respelling, exaggerated deletion, or a narrow regional accent. Preserve every meaning-bearing word.
+- pronunciation.fastSpeechFeatures must contain 1-6 sentence-specific observations. Name the relevant source words and explain the actual weak form, linking, reduction, flapping, assimilation, or release; do not list generic pronunciation advice.
+- The carefulSpeakerGuide is a pronunciation aid, not IPA. Its stress marking and thought groups must agree with both IPA transcriptions and intonationAndChunking.
 - grammar.structure must describe this sentence rather than recite a generic grammar rule. Keep it readable and use established grammatical terminology.
 - grammar.points must cover every construction an advanced learner needs to parse the sentence correctly, including tense/aspect, modality, clause relationships, nonfinite or reduced clauses, reference, word order, agreement, modification, coordination, ellipsis, and information structure when relevant. Do not pad a simple sentence with trivial observations.
 - Each grammar excerpt must be copied exactly from the supplied text after removing only {{...}} and [[...]] learning markers. Prefer one point for a multiword construction rather than fragmenting it.
-- Include every genuinely uncommon or non-obvious expression, including the studied expression when appropriate.
+- Include every uncommon or non-obvious expression an upper-intermediate Chinese-speaking learner may need here, including central literary, professional, metaphorical, or context-specific words and the studied expression when appropriate.
 - Prefer the longest meaningful phrase over duplicating its component words. Preserve source order and do not duplicate terms.
-- Do not pad the list with ordinary A1-B2 words. Return an empty terms array when the text has no uncommon expression.
+- Do not omit a meaningful B2+ word merely because an advanced reader may recognize it. Do not pad with elementary function words. Return an empty terms array only when the text truly has no expression worth explaining.
 - IPA must be rhotic General American, not British RP.
 - Synonyms and antonyms must match the sense used in this text, not unrelated dictionary senses.
 - Historical claims must be conservative. State uncertainty rather than inventing an etymology.
+- Give at least one context-matched synonym and exactly two natural usage examples for every term. Antonyms may be empty only when no context-matched opposite is natural.
 - Examples must not quote or merely paraphrase the source sentence.
 - Keep fields cleanly separated: originalMeaning contains meaning and semantic clarification only; examples contains usage examples only; historicalEvolution contains origin and chronology only.
 `;

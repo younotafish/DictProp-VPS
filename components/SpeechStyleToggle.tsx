@@ -28,6 +28,8 @@ export const SpeechStyleToggle: React.FC<{ className?: string }> = ({ className 
     <div
       className={`inline-flex items-center gap-0.5 rounded-full bg-slate-100 p-0.5 ${className}`}
       title="Speech style"
+      role="group"
+      aria-label="Speech style"
     >
       {opt('clear', 'Clear', 'Clear: crisp, fully-articulated pronunciation')}
       {opt('casual', 'Casual', 'Casual: fast, natural, reduced everyday speech')}

@@ -20,6 +20,8 @@
     <string>/Users/cjs/.local/node/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>CODEX_HOME</key>
     <string>/Users/cjs/.codex</string>
+    <key>CODEX_MODEL</key>
+    <string>gpt-5.5</string>
     <key>ANALYSIS_CONCURRENCY</key>
     <string>8</string>
     <key>IMAGE_QA_CONCURRENCY</key>

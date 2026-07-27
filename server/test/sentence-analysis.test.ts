@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   extractSentenceAnalysis,
   extractSentenceGrammarAnalysis,
+  hasCompleteSentenceAnalysis,
   hasSentenceGrammarAnalysis,
   isSentenceGrammarAnalysis,
   isSentenceAnalysis,
@@ -11,6 +12,7 @@ import {
   sentenceGrammarUserPrompt,
   sentenceAnalysisUserPrompt,
 } from '../src/sentence-analysis.js';
+import { isDetailedSentenceAnalysis } from '../../scripts/offline/sentence-analysis-contract.mjs';
 
 const validAnalysis = {
   translation: '他终于把真相说了出来。',
@@ -25,7 +27,8 @@ const validAnalysis = {
   },
   americanEnglish: {
     status: 'shared',
-    explanation: 'The wording is common across major English varieties.',
+    explanation: 'Yes. The wording is natural in educated American English and shared across major varieties.',
+    evidence: ['Come clean is a current idiom in both American and British English.'],
   },
   terms: [{
     term: 'come clean',
@@ -37,11 +40,20 @@ const validAnalysis = {
     examples: ['You should come clean before they find out.', 'She came clean about the mistake.'],
     historicalEvolution: 'The figurative sense developed from the association of cleanliness with honesty.',
   }],
+  pronunciation: {
+    slowIpa: '/hi ˈfaɪnəli keɪm kliːn/',
+    fastIpa: '/hi ˈfaɪnəli keɪm kliːn/',
+    carefulSpeakerGuide: 'he FIN-al-ly / came CLEAN',
+    fastSpeechFeatures: ['finally came links the final vowel into the following consonant without a pause.'],
+    intonationAndChunking: 'He finally came clean ↘ / with the main fall on clean.',
+    keyDifference: 'Careful speech separates each word; fluent speech links the phrase into one thought group.',
+  },
   imagePrompt: 'A photorealistic wide shot of a person admitting the truth to a close friend in a quiet kitchen, natural window light, no visible text.',
 };
 
 test('sentence analysis accepts the durable structured format', () => {
   assert.equal(isSentenceAnalysis(validAnalysis), true);
+  assert.equal(hasCompleteSentenceAnalysis(validAnalysis), true);
   assert.equal(hasSentenceGrammarAnalysis(validAnalysis), true);
   assert.equal(isSentenceGrammarAnalysis(validAnalysis.grammar), true);
   const { grammar: _grammar, ...legacyAnalysis } = validAnalysis;
@@ -59,6 +71,21 @@ test('sentence analysis accepts the durable structured format', () => {
     ...validAnalysis,
     terms: [{ ...validAnalysis.terms[0], synonyms: 'confess' }],
   }), false);
+});
+
+test('server and offline detailed-analysis predicates stay in parity', () => {
+  const cases = [
+    validAnalysis,
+    { ...validAnalysis, pronunciation: undefined },
+    { ...validAnalysis, americanEnglish: { ...validAnalysis.americanEnglish, evidence: [] } },
+    { ...validAnalysis, terms: [{ ...validAnalysis.terms[0], examples: ['Only one.'] }] },
+    { ...validAnalysis, naturalSpeechIpa: '/different/' },
+  ];
+  assert.deepEqual(
+    cases.map(value => hasCompleteSentenceAnalysis(value)),
+    cases.map(value => isDetailedSentenceAnalysis(value)),
+  );
+  assert.deepEqual(cases.map(value => hasCompleteSentenceAnalysis(value)), [true, false, false, false, false]);
 });
 
 test('grammar response extraction tolerates harmless provider wrappers', () => {
@@ -79,12 +106,12 @@ test('full analysis extraction tolerates a JSON string under an empty provider k
 
 test('offline prompt fixes field order, language, dialect, and image style', () => {
   const translation = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"translation"');
-  const naturalSpeechIpa = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"naturalSpeechIpa"');
-  const grammar = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"grammar"');
   const american = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"americanEnglish"');
   const terms = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"terms"');
+  const pronunciation = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"pronunciation"');
+  const grammar = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"grammar"');
   const image = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"imagePrompt"');
-  assert.ok(translation >= 0 && translation < naturalSpeechIpa && naturalSpeechIpa < grammar && grammar < american && american < terms && terms < image);
+  assert.ok(translation >= 0 && translation < american && american < terms && terms < pronunciation && pronunciation < grammar && grammar < image);
   assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /Everything must be English except/);
   assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /rhotic General American/);
   assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /connected speech/);
