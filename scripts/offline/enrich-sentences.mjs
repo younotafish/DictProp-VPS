@@ -19,6 +19,7 @@ if (!inputArg || !outputArg) {
 }
 
 const MODEL = process.env.CODEX_MODEL || 'gpt-5.5';
+const deferGrammarValidation = process.env.DEFER_SENTENCE_GRAMMAR_VALIDATION === '1';
 const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 40);
 const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
@@ -135,17 +136,19 @@ function validateAnalysis(candidate, sourceRecord) {
   if (leakedPlaceholder(analysis.grammar.structure)) {
     throw new Error(`${id}: placeholder leaked into grammar structure`);
   }
-  const sentenceText = plainSentence(sourceRecord.text);
-  const seenGrammarPoints = new Set();
-  for (const point of analysis.grammar.points) {
-    if (!point || !validString(point.label) || !validString(point.excerpt) ||
-        !validString(point.explanation) || !sentenceText.includes(point.excerpt) ||
-        [point.label, point.excerpt, point.explanation].some(leakedPlaceholder)) {
-      throw new Error(`${id}: invalid grammar point`);
+  if (!deferGrammarValidation) {
+    const sentenceText = plainSentence(sourceRecord.text);
+    const seenGrammarPoints = new Set();
+    for (const point of analysis.grammar.points) {
+      if (!point || !validString(point.label) || !validString(point.excerpt) ||
+          !validString(point.explanation) || !sentenceText.includes(point.excerpt) ||
+          [point.label, point.excerpt, point.explanation].some(leakedPlaceholder)) {
+        throw new Error(`${id}: invalid grammar point`);
+      }
+      const pointKey = `${normalizedValue(point.label)}\0${point.excerpt}`;
+      if (seenGrammarPoints.has(pointKey)) throw new Error(`${id}: duplicate grammar point`);
+      seenGrammarPoints.add(pointKey);
     }
-    const pointKey = `${normalizedValue(point.label)}\0${point.excerpt}`;
-    if (seenGrammarPoints.has(pointKey)) throw new Error(`${id}: duplicate grammar point`);
-    seenGrammarPoints.add(pointKey);
   }
   const seenTerms = new Set();
   for (const term of analysis.terms) {
@@ -314,6 +317,7 @@ function writeProgress(status) {
   writeFileSync(tempPath, `${JSON.stringify({
     status,
     model: MODEL,
+    grammarValidation: deferGrammarValidation ? 'deferred' : 'strict',
     sourceSentences: source.sentences.length,
     baseAnalyses: baseAnalysisById.size,
     preservedGrammars: preservedGrammarCount,

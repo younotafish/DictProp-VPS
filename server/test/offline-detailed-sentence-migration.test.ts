@@ -47,7 +47,11 @@ process.stdin.on('end', () => {
       },
       grammar: {
         structure: 'A simple declarative clause.',
-        points: [{ label: 'Clause', excerpt: item.text.split(' ')[0], explanation: 'This begins the clause.' }],
+        points: [{
+          label: 'Clause',
+          excerpt: process.env.FAKE_INVALID_GRAMMAR ? 'not in the source sentence' : item.text.split(' ')[0],
+          explanation: 'This begins the clause.',
+        }],
       },
       imagePrompt: 'A realistic photograph of the described event in natural light, with no visible text.',
     },
@@ -116,6 +120,44 @@ test('detailed sentence migration splits failures, resumes caches, and preserves
     assert.equal(output.entries[0].analysis.naturalSpeechIpa, output.entries[0].analysis.pronunciation.fastIpa);
     assert.equal(JSON.parse(readFileSync(join(workDir, 'progress.json'), 'utf8')).status, 'complete');
     assert.equal(existsSync(join(workDir, 'failures.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('parallel detail generation can defer grammar checks before a verified grammar merge', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-deferred-sentence-grammar-'));
+  try {
+    const fakeCodexPath = join(root, 'fake-codex.mjs');
+    const sourcePath = join(root, 'source.json');
+    const outputPath = join(root, 'analysis.json');
+    const workDir = join(root, 'work');
+    const callsPath = join(root, 'calls.log');
+    writeFileSync(fakeCodexPath, fakeCodex);
+    chmodSync(fakeCodexPath, 0o700);
+    writeFileSync(sourcePath, JSON.stringify({
+      version: 1,
+      sentences: [{ id: 'one', text: 'It worked.', sourceWord: 'work', textHash: hash('It worked.') }],
+    }));
+
+    const result = spawnSync(process.execPath, [enrichScript, sourcePath, outputPath, workDir], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CODEX_BIN: fakeCodexPath,
+        CODEX_CONCURRENCY: '1',
+        CODEX_RETRY_DELAY_MS: '0',
+        DEFER_SENTENCE_GRAMMAR_VALIDATION: '1',
+        FAKE_CODEX_CALLS: callsPath,
+        FAKE_INVALID_GRAMMAR: '1',
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(readFileSync(outputPath, 'utf8')).entries.length, 1);
+    assert.equal(
+      JSON.parse(readFileSync(join(workDir, 'progress.json'), 'utf8')).grammarValidation,
+      'deferred',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
