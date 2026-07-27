@@ -211,6 +211,24 @@ async function runBatch(batch, batchIndex) {
   throw new Error(`Grammar batch ${batchIndex + 1} exhausted retries`);
 }
 
+async function runBatchResilient(batch, batchIndex, depth = 0) {
+  try {
+    return await runBatch(batch, batchIndex);
+  } catch (error) {
+    if (aborting || batch.length === 1) throw error;
+    const midpoint = Math.ceil(batch.length / 2);
+    const left = batch.slice(0, midpoint);
+    const right = batch.slice(midpoint);
+    process.stderr.write(
+      `Grammar batch ${batchIndex + 1} failed after retries; splitting ${batch.length} sentence(s) into ${left.length}+${right.length} at depth ${depth + 1}\n`,
+    );
+    return [
+      ...await runBatchResilient(left, batchIndex, depth + 1),
+      ...await runBatchResilient(right, batchIndex, depth + 1),
+    ];
+  }
+}
+
 const grammarById = new Map();
 let nextBatch = 0;
 let completedBatches = 0;
@@ -237,7 +255,7 @@ async function worker() {
     const index = nextBatch++;
     if (index >= batches.length) return;
     process.stderr.write(`Generating grammar batch ${index + 1}/${batches.length}\n`);
-    const results = await runBatch(batches[index], index);
+    const results = await runBatchResilient(batches[index], index);
     for (const result of results) grammarById.set(result.id, result.grammar);
     completedBatches++;
     completedSentences += results.length;
