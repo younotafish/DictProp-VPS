@@ -58,15 +58,37 @@ export function isSentenceGrammarAnalysis(value: unknown): value is SentenceGram
     );
 }
 
-export function extractSentenceGrammarAnalysis(value: unknown): SentenceGrammarAnalysis | null {
+function parseWrappedJson(value: string): unknown | null {
+  let content = value.trim();
+  if (!content || content.length > 100_000) return null;
+  const fence = content.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+  if (fence) content = fence[1].trim();
+  if (!content.startsWith('{') && !content.startsWith('[')) return null;
+  try {
+    return JSON.parse(content);
+  } catch {
+    return null;
+  }
+}
+
+const PROVIDER_WRAPPER_KEYS = ['grammar', 'analysis', 'result', 'output', 'response', 'data', 'content', ''] as const;
+
+export function extractSentenceGrammarAnalysis(value: unknown, depth = 0): SentenceGrammarAnalysis | null {
   if (isSentenceGrammarAnalysis(value)) return value;
+  if (depth >= 4) return null;
+  if (typeof value === 'string') {
+    const parsed = parseWrappedJson(value);
+    return parsed === null ? null : extractSentenceGrammarAnalysis(parsed, depth + 1);
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const response = value as Record<string, any>;
-  if (isSentenceGrammarAnalysis(response.grammar)) return response.grammar;
-  if (response.analysis && typeof response.analysis === 'object' &&
-      isSentenceGrammarAnalysis(response.analysis.grammar)) {
-    return response.analysis.grammar;
+  for (const key of PROVIDER_WRAPPER_KEYS) {
+    if (!(key in response)) continue;
+    const grammar = extractSentenceGrammarAnalysis(response[key], depth + 1);
+    if (grammar) return grammar;
   }
+  const values = Object.values(response);
+  if (values.length === 1) return extractSentenceGrammarAnalysis(values[0], depth + 1);
   return null;
 }
 
@@ -93,6 +115,28 @@ export function isSentenceAnalysis(value: unknown): value is SentenceAnalysis {
     isStringList(term.antonyms) && isStringList(term.examples, 5) &&
     isString(term.historicalEvolution, 4_000)
   );
+}
+
+export function extractSentenceAnalysis(
+  value: unknown,
+  depth = 0,
+): (SentenceAnalysis & { grammar: SentenceGrammarAnalysis }) | null {
+  if (hasSentenceGrammarAnalysis(value)) return value;
+  if (depth >= 4) return null;
+  if (typeof value === 'string') {
+    const parsed = parseWrappedJson(value);
+    return parsed === null ? null : extractSentenceAnalysis(parsed, depth + 1);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const response = value as Record<string, unknown>;
+  for (const key of PROVIDER_WRAPPER_KEYS) {
+    if (!(key in response) || key === 'grammar') continue;
+    const analysis = extractSentenceAnalysis(response[key], depth + 1);
+    if (analysis) return analysis;
+  }
+  const values = Object.values(response);
+  if (values.length === 1) return extractSentenceAnalysis(values[0], depth + 1);
+  return null;
 }
 
 export const SENTENCE_ANALYSIS_INSTRUCTION = `

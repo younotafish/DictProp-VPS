@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  extractSentenceAnalysis,
   extractSentenceGrammarAnalysis,
   hasSentenceGrammarAnalysis,
   isSentenceGrammarAnalysis,
@@ -65,7 +66,15 @@ test('grammar response extraction tolerates harmless provider wrappers', () => {
   assert.deepEqual(extractSentenceGrammarAnalysis({ grammar }), grammar);
   assert.deepEqual(extractSentenceGrammarAnalysis(grammar), grammar);
   assert.deepEqual(extractSentenceGrammarAnalysis({ analysis: { grammar } }), grammar);
+  assert.deepEqual(extractSentenceGrammarAnalysis({ '': JSON.stringify({ grammar }) }), grammar);
+  assert.deepEqual(extractSentenceGrammarAnalysis({ content: `\`\`\`json\n${JSON.stringify({ grammar })}\n\`\`\`` }), grammar);
   assert.equal(extractSentenceGrammarAnalysis({ grammar: { structure: 'Clause.', points: [{}] } }), null);
+});
+
+test('full analysis extraction tolerates a JSON string under an empty provider key', () => {
+  assert.deepEqual(extractSentenceAnalysis({ '': JSON.stringify(validAnalysis) }), validAnalysis);
+  assert.deepEqual(extractSentenceAnalysis({ result: { analysis: validAnalysis } }), validAnalysis);
+  assert.equal(extractSentenceAnalysis({ '': 'not JSON' }), null);
 });
 
 test('offline prompt fixes field order, language, dialect, and image style', () => {
