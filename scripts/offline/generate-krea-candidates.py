@@ -111,6 +111,23 @@ def main() -> None:
 
     output = Path(args.output_directory)
     output.mkdir(parents=True, exist_ok=True)
+
+    def target_needs_generation(target: dict) -> bool:
+        target_path = Path(target["filename"])
+        return any(
+            not is_complete_image(
+                output / f"{target_path.stem}-{candidate_number}{target_path.suffix.lower()}",
+                args.width,
+                args.height,
+            )
+            for candidate_number in range(args.candidate_start, args.candidates + 1)
+        )
+
+    targets = [target for target in targets if target_needs_generation(target)]
+    if not targets:
+        print("All candidates assigned to this shard are already complete", flush=True)
+        return
+
     if args.model == "ernie-image-turbo":
         model = ErnieImage(model_config=ModelConfig.ernie_image_turbo(), quantize=args.quantize)
     elif args.model == "ernie-image":
