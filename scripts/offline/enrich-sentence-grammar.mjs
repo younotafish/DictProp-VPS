@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import { sentenceGrammarExcerptMatchesText } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, analysisArg, outputArg, workArg] = process.argv.slice(2);
 if (!sourceArg || !analysisArg || !outputArg) {
@@ -129,7 +130,7 @@ function validGrammar(grammar, text) {
     if (!point || !validString(point.label) || !validString(point.excerpt) ||
         !validString(point.explanation) ||
         [point.label, point.excerpt, point.explanation].some(leakedPlaceholder) ||
-        !text.includes(point.excerpt)) return false;
+        !sentenceGrammarExcerptMatchesText(text, point.excerpt)) return false;
     const key = `${point.label.trim().toLowerCase()}\0${point.excerpt}`;
     if (seen.has(key)) return false;
     seen.add(key);

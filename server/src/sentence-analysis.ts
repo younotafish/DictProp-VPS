@@ -64,6 +64,11 @@ const isString = (value: unknown, max = MAX_TEXT_LENGTH): value is string =>
 const isStringList = (value: unknown, maxItems = MAX_LIST_ITEMS): value is string[] =>
   Array.isArray(value) && value.length <= maxItems && value.every(item => isString(item, 2_000));
 
+export function sentenceGrammarExcerptMatchesText(text: string, excerpt: string): boolean {
+  if (text.includes(excerpt)) return true;
+  return text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2').includes(excerpt);
+}
+
 export function isSentencePronunciationGuide(value: unknown): value is SentencePronunciationGuide {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const pronunciation = value as Record<string, any>;

@@ -10,10 +10,14 @@ import {
   SENTENCE_ANALYSIS_INSTRUCTION,
   SENTENCE_GRAMMAR_INSTRUCTION,
   sentenceGrammarUserPrompt,
+  sentenceGrammarExcerptMatchesText,
   sentenceAnalysisUserPrompt,
   sentenceAnalysisValidationIssues,
 } from '../src/sentence-analysis.js';
-import { isDetailedSentenceAnalysis } from '../../scripts/offline/sentence-analysis-contract.mjs';
+import {
+  isDetailedSentenceAnalysis,
+  sentenceGrammarExcerptMatchesText as offlineSentenceGrammarExcerptMatchesText,
+} from '../../scripts/offline/sentence-analysis-contract.mjs';
 
 const validAnalysis = {
   translation: '他终于把真相说了出来。',
@@ -97,6 +101,14 @@ test('grammar response extraction tolerates harmless provider wrappers', () => {
   assert.deepEqual(extractSentenceGrammarAnalysis({ '': JSON.stringify({ grammar }) }), grammar);
   assert.deepEqual(extractSentenceGrammarAnalysis({ content: `\`\`\`json\n${JSON.stringify({ grammar })}\n\`\`\`` }), grammar);
   assert.equal(extractSentenceGrammarAnalysis({ grammar: { structure: 'Clause.', points: [{}] } }), null);
+});
+
+test('grammar excerpts may omit sentence-final punctuation inside a closing quote', () => {
+  const text = 'Speakers retain the r in words such as “car” and “hard.”';
+  const excerpt = 'words such as “car” and “hard”';
+  assert.equal(sentenceGrammarExcerptMatchesText(text, excerpt), true);
+  assert.equal(offlineSentenceGrammarExcerptMatchesText(text, excerpt), true);
+  assert.equal(sentenceGrammarExcerptMatchesText(text, 'words such as “car” and “soft”'), false);
 });
 
 test('full analysis extraction tolerates a JSON string under an empty provider key', () => {

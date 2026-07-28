@@ -8,6 +8,7 @@ import {
   SENTENCE_GRAMMAR_INSTRUCTION,
   SENTENCE_ANALYSIS_INSTRUCTION,
   sentenceGrammarUserPrompt,
+  sentenceGrammarExcerptMatchesText,
   sentenceAnalysisUserPrompt,
   sentenceAnalysisValidationIssues,
   withLegacyNaturalSpeechIpa,
@@ -24,7 +25,7 @@ function grammarMatchesText(grammar: SentenceGrammarAnalysis | undefined, text: 
   const plainText = text
     .replace(/\{\{([^{}]+)\}\}/g, '$1')
     .replace(/\[\[([^\[\]]+)\]\]/g, '$1');
-  return grammar.points.every(point => plainText.includes(point.excerpt));
+  return grammar.points.every(point => sentenceGrammarExcerptMatchesText(plainText, point.excerpt));
 }
 
 function parseJson(content: unknown): unknown {

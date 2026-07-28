@@ -9,6 +9,7 @@ import {
   detailedSentenceAnalysisSchema,
   isSentenceGrammarAnalysis,
   normalizeDetailedSentenceAnalysis,
+  sentenceGrammarExcerptMatchesText,
 } from './sentence-analysis-contract.mjs';
 
 const [inputArg, outputArg, workArg, baseAnalysisArg] = process.argv.slice(2);
@@ -109,7 +110,7 @@ function preservedGrammarFor(sourceRecord) {
   const grammar = entry.analysis?.grammar ?? entry.grammar;
   if (!isSentenceGrammarAnalysis(grammar)) return undefined;
   const text = plainSentence(sourceRecord.text);
-  return grammar.points.every(point => text.includes(point.excerpt)) ? grammar : undefined;
+  return grammar.points.every(point => sentenceGrammarExcerptMatchesText(text, point.excerpt)) ? grammar : undefined;
 }
 
 function validateAnalysis(candidate, sourceRecord) {
@@ -141,7 +142,7 @@ function validateAnalysis(candidate, sourceRecord) {
     const seenGrammarPoints = new Set();
     for (const point of analysis.grammar.points) {
       if (!point || !validString(point.label) || !validString(point.excerpt) ||
-          !validString(point.explanation) || !sentenceText.includes(point.excerpt) ||
+          !validString(point.explanation) || !sentenceGrammarExcerptMatchesText(sentenceText, point.excerpt) ||
           [point.label, point.excerpt, point.explanation].some(leakedPlaceholder)) {
         throw new Error(`${id}: invalid grammar point`);
       }

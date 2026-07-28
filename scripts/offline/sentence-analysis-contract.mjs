@@ -5,6 +5,13 @@ const stringList = (value, { min = 0, max = 12 } = {}) =>
   value.every(item => string(item, 2_000));
 const slashIpa = value => string(value, 2_000) && /^\/[^/\n]+\/$/.test(value.trim());
 
+export function sentenceGrammarExcerptMatchesText(text, excerpt) {
+  if (text.includes(excerpt)) return true;
+  // American punctuation can place the sentence-final mark inside a closing quote,
+  // even when the quoted grammar excerpt naturally omits that final mark.
+  return text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2').includes(excerpt);
+}
+
 export const sentenceGrammarSchema = {
   type: 'object',
   additionalProperties: false,
