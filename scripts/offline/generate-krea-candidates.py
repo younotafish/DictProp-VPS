@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 import argparse
+import gc
 import hashlib
 import json
 from pathlib import Path
 
+import mlx.core as mx
 from PIL import Image
 from mflux.models.common.config import ModelConfig
 from mflux.models.ernie_image import ErnieImage
@@ -219,6 +221,12 @@ def main() -> None:
                 temporary_path.unlink(missing_ok=True)
                 failures.append({"imageId": target["imageId"], "candidate": candidate_number, "error": str(error)})
                 print(f"FAILED {target['imageId']} candidate {candidate_number}: {error}", flush=True)
+            finally:
+                prompt_cache = getattr(model, "prompt_cache", None)
+                if isinstance(prompt_cache, dict):
+                    prompt_cache.clear()
+                gc.collect()
+                mx.clear_cache()
 
     if failures:
         (output / "failures.json").write_text(json.dumps(failures, indent=2) + "\n")
