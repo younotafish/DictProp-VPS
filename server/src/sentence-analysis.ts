@@ -64,6 +64,39 @@ const isString = (value: unknown, max = MAX_TEXT_LENGTH): value is string =>
 const isStringList = (value: unknown, maxItems = MAX_LIST_ITEMS): value is string[] =>
   Array.isArray(value) && value.length <= maxItems && value.every(item => isString(item, 2_000));
 
+function normalizeSentenceAnalysisCandidate(value: Record<string, unknown>): Record<string, unknown> {
+  const candidate: Record<string, any> = { ...value };
+  if (!isString(candidate.translation) && isString(candidate['']) &&
+      ('americanEnglish' in candidate || 'pronunciation' in candidate)) {
+    candidate.translation = candidate[''];
+  }
+
+  const american = candidate.americanEnglish;
+  if (american && typeof american === 'object' && !Array.isArray(american) &&
+      Array.isArray(american.evidence) && american.evidence.length > 6) {
+    candidate.americanEnglish = { ...american, evidence: american.evidence.slice(0, 6) };
+  }
+
+  const pronunciation = candidate.pronunciation;
+  if (pronunciation && typeof pronunciation === 'object' && !Array.isArray(pronunciation) &&
+      Array.isArray(pronunciation.fastSpeechFeatures)) {
+    const fastSpeechFeatures = pronunciation.fastSpeechFeatures
+      .map((feature: unknown) => {
+        if (isString(feature, 2_000)) return feature;
+        if (!feature || typeof feature !== 'object' || Array.isArray(feature)) return '';
+        return [...new Set(Object.values(feature).filter(part => isString(part, 2_000)))]
+          .join(': ')
+          .slice(0, 2_000);
+      })
+      .filter((feature: string) => feature.length > 0)
+      .slice(0, 6);
+    if (fastSpeechFeatures.length > 0) {
+      candidate.pronunciation = { ...pronunciation, fastSpeechFeatures };
+    }
+  }
+  return candidate;
+}
+
 export function sentenceGrammarExcerptMatchesText(text: string, excerpt: string): boolean {
   if (text.includes(excerpt)) return true;
   return text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2').includes(excerpt);
@@ -270,6 +303,8 @@ export function extractSentenceAnalysis(
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const response = value as Record<string, unknown>;
+  const normalized = normalizeSentenceAnalysisCandidate(response);
+  if (hasCompleteSentenceAnalysis(normalized)) return normalized;
   for (const key of PROVIDER_WRAPPER_KEYS) {
     if (!(key in response) || key === 'grammar') continue;
     const analysis = extractSentenceAnalysis(response[key], depth + 1);

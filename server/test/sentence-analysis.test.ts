@@ -117,6 +117,27 @@ test('full analysis extraction tolerates a JSON string under an empty provider k
   assert.equal(extractSentenceAnalysis({ '': 'not JSON' }), null);
 });
 
+test('full analysis extraction normalizes bounded provider-shape drift', () => {
+  const { translation, ...withoutTranslation } = validAnalysis;
+  const features = Array.from({ length: 8 }, (_, index) => ({
+    span: `source span ${index + 1}`,
+    process: `connected-speech process ${index + 1}`,
+  }));
+  const extracted = extractSentenceAnalysis({
+    ...withoutTranslation,
+    '': translation,
+    americanEnglish: {
+      ...validAnalysis.americanEnglish,
+      evidence: Array.from({ length: 8 }, (_, index) => `Evidence ${index + 1}`),
+    },
+    pronunciation: { ...validAnalysis.pronunciation, fastSpeechFeatures: features },
+  });
+  assert.equal(extracted?.translation, translation);
+  assert.equal(extracted?.americanEnglish.evidence.length, 6);
+  assert.deepEqual(extracted?.pronunciation.fastSpeechFeatures, features.slice(0, 6).map(feature =>
+    `${feature.span}: ${feature.process}`));
+});
+
 test('sentence analysis validation reports exact repair instructions', () => {
   const issues = sentenceAnalysisValidationIssues({
     analysis: {
