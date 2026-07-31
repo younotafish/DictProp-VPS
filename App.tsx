@@ -47,6 +47,9 @@ const SentencesView = lazy(loadSentencesView);
 const loadDetailView = () => import('./views/DetailView').then(module => ({ default: module.DetailView }));
 const DetailView = lazy(loadDetailView);
 
+const normalizeSentenceIdentity = (text: string): string =>
+  stripSentenceMarkers(text).normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+
 // Create lightweight cache for localStorage (target: <1MB for 3000+ items)
 // Only includes fields needed for list display + SRS scheduling
 // Full data loads from IndexedDB after initial render
@@ -2721,6 +2724,47 @@ const App: React.FC = () => {
     setDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered });
   }, [allActiveItems]);
 
+  // Expand a word-review example into the complete sentence-review experience. Existing saved
+  // sentences keep their progress; a new example is saved first so it becomes a real sentence card.
+  // Prepared analysis is requested in the background and flows into the open detail view by item id.
+  const handleOpenStudyExample = useCallback((text: string, sourceWord: string, sourceSense?: string) => {
+    const identity = normalizeSentenceIdentity(text);
+    if (!identity) return;
+
+    const existing = latestItemsRef.current.find(item =>
+      !item.isDeleted && isSentenceItem(item) &&
+      normalizeSentenceIdentity((item.data as SentenceData).text) === identity
+    );
+    let sentenceItem = existing;
+    if (!sentenceItem) {
+      const now = Date.now();
+      const id = crypto.randomUUID();
+      sentenceItem = {
+        data: { id, text, sourceWord, sourceSense },
+        type: 'sentence',
+        savedAt: now,
+        updatedAt: now,
+        srs: SRSAlgorithm.createNew(id, 'sentence'),
+      };
+      handleSaveRef.current(sentenceItem);
+    }
+
+    handleViewSentence([sentenceItem], 0);
+
+    if ((sentenceItem.data as SentenceData).analysis) return;
+    const enrichmentCandidate: StoredItem = {
+      ...sentenceItem,
+      data: { ...(sentenceItem.data as SentenceData) },
+    };
+    void saveItems([enrichmentCandidate]).then(() => {
+      if ((enrichmentCandidate.data as SentenceData).analysis) {
+        handleSaveRef.current(enrichmentCandidate);
+      }
+    }).catch(error => {
+      logError('Failed to load prepared sentence analysis:', error);
+    });
+  }, [handleViewSentence]);
+
   // Reset only this sense/item. Different meanings now keep independent FSRS schedules.
   const resetSRS = useCallback((id: string) => {
     const target = latestItemsRef.current.find(i => i.data.id === id);
@@ -3099,6 +3143,8 @@ const App: React.FC = () => {
             reviewEvents={reviewEvents}
             onReview={updateSRS}
             onUndoReview={undoSRSReview}
+            onOpenExampleSentence={handleOpenStudyExample}
+            interactionLocked={!!detailContext}
             onScroll={handleScroll}
           />
         )}

@@ -12,7 +12,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StoredItem, getItemSpelling, getItemTitle, ReviewEvent, type ReviewRating, type ReviewTaskType } from '../types';
+import { StoredItem, getItemSense, getItemSpelling, getItemTitle, ReviewEvent, type ReviewRating, type ReviewTaskType } from '../types';
 import { 
   Trophy, 
   TrendingUp, 
@@ -25,6 +25,7 @@ import {
   Eye,
   Volume2,
   Undo2,
+  Maximize2,
   X,
 } from 'lucide-react';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
@@ -40,6 +41,8 @@ interface StudyEnhancedProps {
     context: { taskType: ReviewTaskType; durationMs: number; sessionId: string; eventId: string },
   ) => Promise<boolean>;
   onUndoReview: (eventId: string) => Promise<void>;
+  onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
+  interactionLocked?: boolean;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
@@ -78,6 +81,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   reviewEvents,
   onReview,
   onUndoReview,
+  onOpenExampleSentence,
+  interactionLocked = false,
   onScroll,
 }) => {
   // Scroll container ref for position restoration
@@ -182,7 +187,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   };
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || interactionLocked) return;
     const handleSessionKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
@@ -211,7 +216,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     };
     window.addEventListener('keydown', handleSessionKey);
     return () => window.removeEventListener('keydown', handleSessionKey);
-  }, [session, currentItem, lastGrade]);
+  }, [session, currentItem, lastGrade, interactionLocked]);
 
   // Cleanup scroll save timer
   useEffect(() => () => { if (scrollSaveTimerRef.current) clearTimeout(scrollSaveTimerRef.current); }, []);
@@ -445,7 +450,23 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                 )}
                 {content.chinese && <div className="text-lg text-slate-700 mb-2">{content.chinese}</div>}
                 {content.definition && <div className="text-sm leading-relaxed text-slate-600 mb-4">{content.definition}</div>}
-                {example && <div className="text-sm leading-relaxed text-slate-500 border-l-2 border-slate-300 pl-3">{example}</div>}
+                {example && (
+                  <div className="flex items-start gap-2 border-l-2 border-slate-300 pl-3 text-sm leading-relaxed text-slate-500">
+                    <span className="min-w-0 flex-1 pt-1.5">{example}</span>
+                    <button
+                      type="button"
+                      onClick={event => {
+                        event.stopPropagation();
+                        onOpenExampleSentence(content.example, content.word, getItemSense(currentItem) || undefined);
+                      }}
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-200 hover:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                      aria-label="Open sentence review"
+                      title="Open sentence review"
+                    >
+                      <Maximize2 size={17} />
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <button
