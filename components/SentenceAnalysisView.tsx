@@ -144,13 +144,13 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                                 <h3 className="text-xl font-bold text-slate-900">{term.term}</h3>
                               </div>
-                              <p lang="zh-CN" className="mt-2 text-base text-slate-700">
-                                <span className="font-semibold text-slate-500">Chinese translation: </span>
-                                {term.chinese}
-                              </p>
-                              <p className="mt-1 break-words font-mono text-sm text-indigo-700">
+                              <p className="mt-2 break-words font-mono text-sm text-indigo-700">
                                 <span className="font-sans font-semibold text-slate-500">American IPA: </span>
                                 {term.ipa}
+                              </p>
+                              <p lang="zh-CN" className="mt-1 text-base text-slate-700">
+                                <span className="font-semibold text-slate-500">Chinese translation: </span>
+                                {term.chinese}
                               </p>
                             </div>
                             <button
