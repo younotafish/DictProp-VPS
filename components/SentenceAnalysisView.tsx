@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, ChevronDown, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { SentenceData } from '../types';
 import { stripSentenceMarkers } from './HighlightedSentence';
 
@@ -38,9 +38,10 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
 }) => {
   const analysis = sentence.analysis;
   const plainSentence = stripSentenceMarkers(sentence.text || '').trim();
-  const sentenceIpa = analysis?.pronunciation?.fastIpa ||
-    analysis?.naturalSpeechIpa ||
-    analysis?.pronunciation?.slowIpa;
+  const standardSentenceIpa = analysis?.pronunciation?.slowIpa;
+  const fastSentenceIpa = analysis?.pronunciation?.fastIpa || analysis?.naturalSpeechIpa;
+  const [americanEnglishExpanded, setAmericanEnglishExpanded] = React.useState(false);
+  React.useEffect(() => setAmericanEnglishExpanded(false), [sentence.id]);
   const americanEnglishPresentation = analysis ? STATUS_PRESENTATION[analysis.americanEnglish.status] : null;
   const AmericanEnglishIcon = americanEnglishPresentation?.icon;
 
@@ -81,10 +82,17 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
               {plainSentence}
             </h1>
 
-            {sentenceIpa && (
+            {standardSentenceIpa && (
               <p className="mt-3 max-w-4xl break-words font-mono text-sm leading-relaxed text-indigo-700 sm:text-base">
+                <span className="font-sans font-semibold text-slate-500">American IPA: </span>
+                {standardSentenceIpa}
+              </p>
+            )}
+
+            {fastSentenceIpa && fastSentenceIpa !== standardSentenceIpa && (
+              <p className={`${standardSentenceIpa ? 'mt-2' : 'mt-3'} max-w-4xl break-words font-mono text-sm leading-relaxed text-indigo-700 sm:text-base`}>
                 <span className="font-sans font-semibold text-slate-500">Natural American IPA (connected speech): </span>
-                {sentenceIpa}
+                {fastSentenceIpa}
               </p>
             )}
 
@@ -106,7 +114,13 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                 </section>
 
                 <section className="mt-7 border-t border-slate-200 pt-6">
-                  <div className="mb-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setAmericanEnglishExpanded(expanded => !expanded)}
+                    className={`flex w-full items-center gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${americanEnglishExpanded ? 'mb-3' : ''}`}
+                    aria-expanded={americanEnglishExpanded}
+                    aria-controls="american-english-details"
+                  >
                     {americanEnglishPresentation && AmericanEnglishIcon && (
                       <span
                         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${americanEnglishPresentation.className}`}
@@ -123,16 +137,24 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                         <p className="mt-0.5 text-xs font-semibold text-slate-500">{americanEnglishPresentation.label}</p>
                       )}
                     </div>
-                  </div>
-                  <p className="max-w-4xl text-base leading-relaxed text-slate-700">
-                    {analysis.americanEnglish.explanation}
-                  </p>
-                  {analysis.americanEnglish.evidence && analysis.americanEnglish.evidence.length > 0 && (
-                    <ul className="mt-4 max-w-4xl list-disc space-y-2 pl-5 text-sm leading-relaxed text-slate-700 sm:text-base">
-                      {analysis.americanEnglish.evidence.map((reason, index) => (
-                        <li key={`${reason}:${index}`} className="pl-1">{reason}</li>
-                      ))}
-                    </ul>
+                    <ChevronDown
+                      size={19}
+                      className={`ml-auto shrink-0 text-slate-400 transition-transform ${americanEnglishExpanded ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {americanEnglishExpanded && (
+                    <div id="american-english-details">
+                      <p className="max-w-4xl text-base leading-relaxed text-slate-700">
+                        {analysis.americanEnglish.explanation}
+                      </p>
+                      {analysis.americanEnglish.evidence && analysis.americanEnglish.evidence.length > 0 && (
+                        <ul className="mt-4 max-w-4xl list-disc space-y-2 pl-5 text-sm leading-relaxed text-slate-700 sm:text-base">
+                          {analysis.americanEnglish.evidence.map((reason, index) => (
+                            <li key={`${reason}:${index}`} className="pl-1">{reason}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
                 </section>
 
