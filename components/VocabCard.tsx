@@ -64,6 +64,7 @@ interface Props {
   onRefresh?: (term: string) => void;
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  onOpenExampleSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
   onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>;
 }
@@ -92,6 +93,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   onRefresh,
   onCompare,
   onSaveSentence,
+  onOpenExampleSentence,
   isSentenceSaved,
   onLazyLoadImage,
 }) => {
@@ -479,8 +481,9 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                 return (
                   <button
                     onClick={(e) => { e.stopPropagation(); if (!saved) onSaveSentence(ex, data.word, data.sense); }}
-                    className={`absolute right-0 top-0 p-0.5 transition-colors ${saved ? 'text-indigo-500' : 'text-indigo-300 hover:text-indigo-600'}`}
+                    className={`grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-indigo-50 ${saved ? 'text-indigo-500' : 'text-indigo-300 hover:text-indigo-600'}`}
                     title={saved ? 'Sentence saved' : 'Save sentence for review'}
+                    aria-label={saved ? `Example ${i + 1} saved` : `Save example ${i + 1} for review`}
                     disabled={saved}
                   >
                     {saved ? <BookmarkCheck size={14} /> : <BookmarkPlus size={14} />}
@@ -489,10 +492,23 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               })();
 
               return (
-                <li key={i} className="text-slate-700 text-sm xl:text-base leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative pr-12">
+                <li key={i} className={`text-slate-700 text-sm xl:text-base leading-relaxed border-l-2 border-indigo-200 pl-3 group/sentence relative ${onOpenExampleSentence ? 'pr-24' : 'pr-16'}`}>
                   <HighlightedSentence text={ex} itemWord={data.word || ''} onSearchWord={onSearch} />
-                  <SentenceSpeakerButton text={ex} className="absolute right-6 top-0" />
-                  {saveBtn}
+                  <div className="absolute right-0 top-0 flex items-center">
+                    {onOpenExampleSentence && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onOpenExampleSentence(ex, data.word, data.sense); }}
+                        className="grid h-7 w-7 place-items-center rounded-md text-indigo-300 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
+                        title="Open sentence review"
+                        aria-label={`Open example ${i + 1} in sentence review`}
+                      >
+                        <Maximize2 size={14} />
+                      </button>
+                    )}
+                    <SentenceSpeakerButton text={ex} className="grid h-7 w-7 place-items-center rounded-md !p-0 hover:bg-indigo-50" />
+                    {saveBtn}
+                  </div>
                 </li>
               );
             })}

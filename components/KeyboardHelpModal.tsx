@@ -62,6 +62,8 @@ export const KeyboardHelpModal: React.FC<{ onClose: () => void }> = ({ onClose }
             <ShortcutRow keys={['E']} description="Speak example sentence(s)" />
             <ShortcutRow keys={['⌘', '1']} description="Speak 1st example sentence" />
             <ShortcutRow keys={['⌘', '2']} description="Speak 2nd example sentence" />
+            <ShortcutRow keys={['⌘', '3']} description="Speak 3rd example sentence" />
+            <ShortcutRow keys={['⌘', '4']} description="Speak 4th example sentence" />
             <ShortcutRow keys={['Space']} description="Auto-play" />
           </div>
         </div>

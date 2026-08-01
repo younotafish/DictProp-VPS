@@ -125,6 +125,7 @@ interface DetailViewProps {
   comparingKeys?: string[];                   // comparison keys currently generating (background queue)
   onOpenComparison?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  onOpenExampleSentence?: (text: string, word: string, sense?: string) => StoredItem | null;
   isSentenceSaved?: (text: string) => boolean;
   onRemoveVocabFromPhrase?: (phraseId: string, vocabId: string) => void;
   /** When provided, DetailView enters "sentence mode": aligned 1:1 with `groups`, sentenceItems[i] is
@@ -157,6 +158,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   comparingKeys,
   onOpenComparison,
   onSaveSentence,
+  onOpenExampleSentence,
   isSentenceSaved,
   onRemoveVocabFromPhrase,
   sentenceItems,
@@ -179,6 +181,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [sentencePage, setSentencePage] = useState<'sentence' | 'analysis'>('sentence');
+  const [exampleSentencePreview, setExampleSentencePreview] = useState<{
+    sentence: StoredItem;
+    sourceGroup: ItemGroup;
+  } | null>(null);
+  const detailInteractionLocked = interactionLocked || !!exampleSentencePreview;
   const cardCollapsed = true; // sentence review: the sentence is always the full-page focus (the source-word card was removed — open any saved word via its footnote)
   // Sentence review — what tapping a word does. true (default) = play from that word (current behaviour);
   // false = look up the dotted [[uncommon]] term via the bottom-right search, like every other view. Persisted.
@@ -289,6 +296,52 @@ export const DetailView: React.FC<DetailViewProps> = ({
   
   const data = currentItem.data;
   const type = currentItem.type;
+
+  const openExampleSentencePreview = (text: string, word: string, sense?: string) => {
+    const sentence = onOpenExampleSentence?.(text, word, sense);
+    if (!sentence) return;
+    const spelling = word.toLowerCase().trim();
+    const candidates = savedItemsRef.current.filter(item =>
+      item.type === 'vocab' && getItemSpelling(item) === spelling
+    );
+    let source = (sense ? candidates.find(item => getItemSense(item) === sense) : undefined) || candidates[0];
+    if (!source) {
+      const synthetic: VocabCard = {
+        id: `sentence-src:${sentence.data.id}`,
+        word: word || '(unknown word)',
+        sense,
+        chinese: '',
+        ipa: '',
+        definition: '',
+        forms: [],
+        wordFamily: [],
+        synonyms: [],
+        antonyms: [],
+        confusables: [],
+        examples: [text],
+        history: '',
+        register: '',
+        mnemonic: '',
+      };
+      source = {
+        data: synthetic,
+        type: 'vocab',
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.createNew(synthetic.id, 'vocab'),
+      };
+    }
+    setIsAutoPlaying(false);
+    setIsSentenceAutoPlaying(false);
+    stopCurrent();
+    setExampleSentencePreview({
+      sentence,
+      sourceGroup: { title: getItemTitle(source), items: [source] },
+    });
+  };
+
+  const previewSentence = exampleSentencePreview
+    ? savedItems.find(item => item.data.id === exampleSentencePreview.sentence.data.id) ?? exampleSentencePreview.sentence
+    : null;
 
   // ── Sentence mode ────────────────────────────────────────────────────────────
   // Opened from the Sentences tab: each group is one saved sentence's source card, and
@@ -415,7 +468,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   useEffect(() => {
     if (!onAttachImage) return;
     const onPaste = (e: ClipboardEvent) => {
-      if (!sentenceModeRef.current || interactionLocked || showActionMenu) return;
+      if (!sentenceModeRef.current || detailInteractionLocked || showActionMenu) return;
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
       const file = extractImageFromTransfer(e.clipboardData);
@@ -426,7 +479,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [onAttachImage, interactionLocked, showActionMenu, attachImageFromFile]);
+  }, [onAttachImage, detailInteractionLocked, showActionMenu, attachImageFromFile]);
 
   // Focus the panel card when it opens so an in-panel ⌘V lands on its onPaste handler.
   useEffect(() => {
@@ -1077,7 +1130,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, [isSentenceAutoPlaying]);
 
   // Sentences to read for a card during auto-play: a phrase's query, or a vocab card's example
-  // sentences (both — capped at 2 to match the E / Cmd+1·2 readers). Stripped, empties dropped.
+  // sentences (capped at 2 for E/autoplay and eyes-free zones). Direct Cmd+1–4 playback uses the
+  // complete example list through speakSentenceAt below. Stripped, empties dropped.
   const examplesOf = (item: StoredItem | null): string[] => {
     if (!item) return [];
     if (isPhraseItem(item)) {
@@ -1372,7 +1426,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Toggle natural-voice playback for an arbitrary sentence, routed through the shared playback state so
   // the megaphone icons stay in sync: same clip already playing → pause; paused → resume; almost done →
-  // restart from the top; otherwise start fresh. Shared by the Cmd+1·2 readers and the eyes-free zone tap.
+  // restart from the top; otherwise start fresh. Shared by the Cmd+1–4 readers and eyes-free zone tap.
   const toggleSpeak = useCallback((raw: string) => {
     const sentence = stripSentenceMarkers(raw || '').trim();
     if (!sentence) return;
@@ -1389,9 +1443,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
     speakNatural(sentence, { allowDownload: true });
   }, []);
 
-  // Cmd/Ctrl+1 / +2: read the displayed card's first / second example sentence (a phrase has one:
-  // its query). A second press on the same sentence pauses/resumes — unless it's almost finished, in
-  // which case it restarts from the top.
+  // Cmd/Ctrl+1–4: read the corresponding example sentence (a phrase has one: its query). A second
+  // press on the same sentence pauses/resumes unless it is almost finished, when it restarts.
   const speakSentenceAt = useCallback((index: number) => {
     const item = currentItemRef.current;
     if (!item) return;
@@ -1568,7 +1621,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onArrowDown: navDown,
     onEnter: handleEnterFromSelection,
     onSave: handleToggleSave,
-    enabled: !showActionMenu && !interactionLocked,
+    enabled: !showActionMenu && !detailInteractionLocked,
   });
 
   // Trackpad wheel navigation
@@ -1577,7 +1630,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     onScrollRight: navRight,
     containerRef: scrollContainerRef,
     threshold: 80,
-    enabled: !interactionLocked && !!(currentGroup && currentGroup.items.length >= 1),
+    enabled: !detailInteractionLocked && !!(currentGroup && currentGroup.items.length >= 1),
   });
 
   const handleVocabSearch = (term: string) => {
@@ -1842,7 +1895,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Keyboard shortcuts
   useEffect(() => {
-    if (showActionMenu || interactionLocked) return;
+    if (showActionMenu || detailInteractionLocked) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip if in input
@@ -1869,10 +1922,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
         }
       }
 
-      // Cmd/Ctrl+1 / +2: Read the first / second example sentence aloud (neural voice)
-      if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
+      // Cmd/Ctrl+1–4: Read the corresponding example sentence aloud (neural voice)
+      if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
         e.preventDefault();
-        speakSentenceAt(e.key === '1' ? 0 : 1);
+        speakSentenceAt(Number(e.key) - 1);
       }
 
       // R: Remember (Shift+R: Reset)
@@ -1933,7 +1986,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, interactionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, isSentenceAutoPlaying, toggleSentenceAutoPlay]);
+  }, [title, showActionMenu, detailInteractionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, isSentenceAutoPlaying, toggleSentenceAutoPlay]);
 
   // Eyes-free read-zone band counts — how many of the two quarter-bands actually read something
   // (so the guides only draw the bands that do something). Word view: a phrase always has band 1
@@ -2311,6 +2364,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 showRefresh={false}
                 onCompare={onCompare}
                 onSaveSentence={onSaveSentence}
+                onOpenExampleSentence={onOpenExampleSentence ? openExampleSentencePreview : undefined}
                 isSentenceSaved={isSentenceSaved}
                 onLazyLoadImage={onLazyLoadImage}
               />
@@ -2446,6 +2500,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                             className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
                             onCompare={onCompare}
                             onSaveSentence={onSaveSentence}
+                            onOpenExampleSentence={onOpenExampleSentence ? openExampleSentencePreview : undefined}
                             isSentenceSaved={isSentenceSaved}
                             onLazyLoadImage={onLazyLoadImage}
                           />
@@ -2807,6 +2862,41 @@ export const DetailView: React.FC<DetailViewProps> = ({
             {imageError && <p className="mt-2 text-xs text-rose-500">{imageError}</p>}
           </div>
         </div>
+      )}
+
+      {exampleSentencePreview && previewSentence && (
+        <ErrorBoundary
+          onReset={() => setExampleSentencePreview(null)}
+          fallbackMessage="Something went wrong displaying this sentence. Your word card is still open."
+        >
+          <DetailView
+            key={`example-sentence:${previewSentence.data.id}`}
+            groups={[exampleSentencePreview.sourceGroup]}
+            initialGroupIndex={0}
+            initialItemIndex={0}
+            sentenceItems={[previewSentence]}
+            onClose={() => setExampleSentencePreview(null)}
+            onSave={onSave}
+            onDelete={(id) => { onDelete(id); setExampleSentencePreview(null); }}
+            onArchive={onArchive}
+            savedItems={savedItems}
+            onSearch={onSearch}
+            onRefresh={onRefresh}
+            onLazyLoadImage={onLazyLoadImage}
+            onUpdateSRS={onUpdateSRS}
+            onCompare={onCompare}
+            comparisons={comparisons}
+            comparingKeys={comparingKeys}
+            onOpenComparison={onOpenComparison}
+            onSaveSentence={onSaveSentence}
+            isSentenceSaved={isSentenceSaved}
+            onRemoveVocabFromPhrase={onRemoveVocabFromPhrase}
+            findSaved={findSaved}
+            onOpenCard={onOpenCard}
+            interactionLocked={interactionLocked}
+            onAttachImage={onAttachImage}
+          />
+        </ErrorBoundary>
       )}
 
     </div>

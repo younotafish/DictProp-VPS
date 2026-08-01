@@ -50,6 +50,13 @@ const DetailView = lazy(loadDetailView);
 const normalizeSentenceIdentity = (text: string): string =>
   stripSentenceMarkers(text).normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 
+interface DetailContext {
+  groups: ItemGroup[];
+  groupIndex: number;
+  itemIndex: number;
+  sentenceItems?: StoredItem[];
+}
+
 // Create lightweight cache for localStorage (target: <1MB for 3000+ items)
 // Only includes fields needed for list display + SRS scheduling
 // Full data loads from IndexedDB after initial render
@@ -595,7 +602,7 @@ const App: React.FC = () => {
   // resuming exactly where they were in the detail view.
   // `sentenceItems` (when present) puts DetailView in "sentence mode": it is aligned 1:1 with
   // `groups` — groups[i] is the resolved source card for the saved sentence sentenceItems[i].
-  const [detailContext, setDetailContext] = useState<{ groups: ItemGroup[], groupIndex: number, itemIndex: number, sentenceItems?: StoredItem[] } | null>(null);
+  const [detailContext, setDetailContext] = useState<DetailContext | null>(null);
   const liveDetailSentenceItems = useMemo(
     () => detailContext?.sentenceItems?.map(snapshot => sentenceItemsById.get(snapshot.data.id) ?? snapshot),
     [detailContext?.sentenceItems, sentenceItemsById],
@@ -2570,7 +2577,10 @@ const App: React.FC = () => {
   }, []);
 
   const isSentenceSaved = useCallback((text: string) => {
-    return sentenceItems.some(s => (s.data as SentenceData).text === text);
+    const identity = normalizeSentenceIdentity(text);
+    return !!identity && sentenceItems.some(s =>
+      normalizeSentenceIdentity((s.data as SentenceData).text) === identity
+    );
   }, [sentenceItems]);
 
   const isVocabSaved = useCallback((vocab: VocabCard) => {
@@ -2724,12 +2734,11 @@ const App: React.FC = () => {
     setDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered });
   }, [allActiveItems]);
 
-  // Expand a word-review example into the complete sentence-review experience. Existing saved
-  // sentences keep their progress; a new example is saved first so it becomes a real sentence card.
-  // Prepared analysis is requested in the background and flows into the open detail view by item id.
-  const handleOpenStudyExample = useCallback((text: string, sourceWord: string, sourceSense?: string) => {
+  // Resolve an example to a real sentence card. Existing sentences retain their progress; new ones
+  // are saved, then prepared analysis hydrates the already-open sentence view in the background.
+  const prepareExampleSentence = useCallback((text: string, sourceWord: string, sourceSense?: string): StoredItem | null => {
     const identity = normalizeSentenceIdentity(text);
-    if (!identity) return;
+    if (!identity) return null;
 
     const existing = latestItemsRef.current.find(item =>
       !item.isDeleted && isSentenceItem(item) &&
@@ -2749,21 +2758,26 @@ const App: React.FC = () => {
       handleSaveRef.current(sentenceItem);
     }
 
-    handleViewSentence([sentenceItem], 0);
+    if (!(sentenceItem.data as SentenceData).analysis) {
+      const enrichmentCandidate: StoredItem = {
+        ...sentenceItem,
+        data: { ...(sentenceItem.data as SentenceData) },
+      };
+      void saveItems([enrichmentCandidate]).then(() => {
+        if ((enrichmentCandidate.data as SentenceData).analysis) {
+          handleSaveRef.current(enrichmentCandidate);
+        }
+      }).catch(error => {
+        logError('Failed to load prepared sentence analysis:', error);
+      });
+    }
+    return sentenceItem;
+  }, []);
 
-    if ((sentenceItem.data as SentenceData).analysis) return;
-    const enrichmentCandidate: StoredItem = {
-      ...sentenceItem,
-      data: { ...(sentenceItem.data as SentenceData) },
-    };
-    void saveItems([enrichmentCandidate]).then(() => {
-      if ((enrichmentCandidate.data as SentenceData).analysis) {
-        handleSaveRef.current(enrichmentCandidate);
-      }
-    }).catch(error => {
-      logError('Failed to load prepared sentence analysis:', error);
-    });
-  }, [handleViewSentence]);
+  const handleOpenStudyExample = useCallback((text: string, sourceWord: string, sourceSense?: string) => {
+    const sentence = prepareExampleSentence(text, sourceWord, sourceSense);
+    if (sentence) handleViewSentence([sentence], 0);
+  }, [handleViewSentence, prepareExampleSentence]);
 
   // Reset only this sense/item. Different meanings now keep independent FSRS schedules.
   const resetSRS = useCallback((id: string) => {
@@ -3063,6 +3077,7 @@ const App: React.FC = () => {
               comparisons={comparisons}
               onOpenComparison={handleOpenComparison}
               onSaveSentence={handleSaveSentence}
+              onOpenExampleSentence={prepareExampleSentence}
               isSentenceSaved={isSentenceSaved}
               onRemoveVocabFromPhrase={handleRemoveVocabFromPhrase}
               findSaved={findSavedItem}

@@ -38,7 +38,9 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
 }) => {
   const analysis = sentence.analysis;
   const plainSentence = stripSentenceMarkers(sentence.text || '').trim();
-  const sentenceIpa = analysis?.pronunciation?.slowIpa || analysis?.naturalSpeechIpa;
+  const sentenceIpa = analysis?.pronunciation?.fastIpa ||
+    analysis?.naturalSpeechIpa ||
+    analysis?.pronunciation?.slowIpa;
   const americanEnglishPresentation = analysis ? STATUS_PRESENTATION[analysis.americanEnglish.status] : null;
   const AmericanEnglishIcon = americanEnglishPresentation?.icon;
 
@@ -81,7 +83,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
 
             {sentenceIpa && (
               <p className="mt-3 max-w-4xl break-words font-mono text-sm leading-relaxed text-indigo-700 sm:text-base">
-                <span className="font-sans font-semibold text-slate-500">American IPA: </span>
+                <span className="font-sans font-semibold text-slate-500">Natural American IPA (connected speech): </span>
                 {sentenceIpa}
               </p>
             )}

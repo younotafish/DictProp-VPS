@@ -29,7 +29,7 @@ interface Props {
  *
  * It is a PURE SUBSCRIBER to the shared playback state (services/lazyTts), keyed by the sentence
  * text. So the icon always reflects what's actually playing — whether playback was started by THIS
- * button, another speaker, the E / Cmd+1·2 keyboard readers, or swipe-to-speak. Because it holds no
+ * button, another speaker, the E / Cmd+1–4 keyboard readers, or swipe-to-speak. Because it holds no
  * private "isPlaying" state, it can't get stuck out of sync (the old "frozen on pause" bug), and a
  * click always does the right thing: pause, resume, restart-near-end, or start fresh.
  */

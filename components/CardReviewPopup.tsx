@@ -55,7 +55,7 @@ interface CardReviewPopupProps {
  *
  * Cross-device: bottom-sheet on phone, centered modal on tablet/desktop; header + action row are a
  * sticky top bar (only the card body scrolls). It owns the keyboard while open (Esc, ←/→, R/Shift+R, D,
- * P, E, Cmd/Ctrl+1·2, Space) and traps Tab; the parent disables the underlying view via interactionLocked.
+ * P, E, Cmd/Ctrl+1–4, Space) and traps Tab; the parent disables the underlying view via interactionLocked.
  * On ≥sm the left/right gutters beside the card are eyes-free read zones (top quarter = example 1, 2nd =
  * example 2), responding to tap or mouse.
  */
@@ -227,13 +227,18 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     setTimeout(() => setFlash(null), 1600);
   }, [current, onSaveVocab]);
 
-  // Eyes-free read zones are for touch only — on macOS the keyboard (P / E / Cmd+1·2) covers reading.
+  // Eyes-free read zones are for touch only — on macOS the keyboard (P / E / Cmd+1–4) covers reading.
   const isTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
 
-  // The current sense's example sentences (stripped, ≤2) — for the E / Cmd+1·2 readers and eyes-free zones.
-  const examplesList = useMemo(
-    () => (vocab.examples || []).slice(0, 2).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
+  const shortcutExamples = useMemo(
+    () => (vocab.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
     [vocab],
+  );
+
+  // E and eyes-free zones intentionally remain capped at the first two examples.
+  const examplesList = useMemo(
+    () => shortcutExamples.slice(0, 2),
+    [shortcutExamples],
   );
 
   // Hold the audio session open for the life of this popup (once, on the first playback gesture) so the
@@ -373,10 +378,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         return;
       }
       if (e.key === 'p' || e.key === 'P') { e.preventDefault(); if (vocab.word) { holdKeepAlive(); speakPopupWord(vocab.word); } return; }
-      // Cmd/Ctrl+1 · +2 → read the 1st / 2nd example sentence.
-      if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
+      // Cmd/Ctrl+1–4 → read the corresponding example sentence.
+      if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
         e.preventDefault();
-        const s = examplesList[e.key === '1' ? 0 : 1];
+        const s = shortcutExamples[Number(e.key) - 1];
         if (s) toggleSpeak(s);
         return;
       }
@@ -396,7 +401,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [vocab, currentSaved, onClose, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive, speakPopupNatural, speakPopupWord]);
+  }, [vocab, currentSaved, onClose, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, shortcutExamples, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive, speakPopupNatural, speakPopupWord]);
 
   // Do not stop a sentence that was already playing beneath the popup. The handle is token-scoped,
   // so cleanup only stops audio this popup actually started and is still responsible for.

@@ -429,13 +429,13 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         const currentResult = readyItems[viewingQueueIdx]?.results;
         const vocabCount = currentResult?.vocabs?.length || 0;
 
-        // Cmd/Ctrl+1 / +2: read the displayed card's first / second example sentence (natural voice).
+        // Cmd/Ctrl+1–4: read the displayed card's corresponding example sentence (natural voice).
         // A second press on the same sentence pauses/resumes — matches the DetailView shortcut.
-        if ((e.metaKey || e.ctrlKey) && (e.key === '1' || e.key === '2')) {
+        if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
           e.preventDefault();
           e.stopImmediatePropagation();
           const vocab = currentResult?.vocabs?.[viewingVocabIdx];
-          const sentence = stripSentenceMarkers((vocab?.examples || [])[e.key === '1' ? 0 : 1] || '').trim();
+          const sentence = stripSentenceMarkers((vocab?.examples || [])[Number(e.key) - 1] || '').trim();
           if (!sentence) return;
           const pb = getPlaybackState();
           if (pb.text === sentence) {
