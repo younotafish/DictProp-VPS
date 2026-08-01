@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const DETACHED_PROCESS_GROUPS = process.platform !== 'win32';
 const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
@@ -107,6 +110,7 @@ export async function runMetaStructured({
   bin = process.env.CURL_BIN || '/usr/bin/curl',
 }) {
   if (!apiKey) throw new Error('DEEPINFRA_API_KEY is required for the Meta IPA worker');
+  if (/[\r\n]/.test(apiKey)) throw new Error('DEEPINFRA_API_KEY contains an invalid newline');
   const body = JSON.stringify({
     model,
     messages: [{ role: 'user', content: prompt }],
@@ -117,18 +121,29 @@ export async function runMetaStructured({
       json_schema: { name: 'sentence_ipa', strict: true, schema },
     },
   });
-  const output = await runProcess({
-    command: bin,
-    args: [
-      '-fsS', '--max-time', String(Math.ceil(timeoutMs / 1_000)),
-      '-H', `Authorization: Bearer ${apiKey}`,
-      '-H', 'Content-Type: application/json',
-      '--data-binary', '@-', DEEPINFRA_CHAT_URL,
-    ],
-    input: body,
-    timeoutMs,
-    activeChildren,
-  });
+  const secretDir = mkdtempSync(join(tmpdir(), 'dictprop-meta-headers-'));
+  const headerPath = join(secretDir, 'headers');
+  writeFileSync(
+    headerPath,
+    `Authorization: Bearer ${apiKey}\nContent-Type: application/json\n`,
+    { mode: 0o600 },
+  );
+  let output;
+  try {
+    output = await runProcess({
+      command: bin,
+      args: [
+        '-fsS', '--max-time', String(Math.ceil(timeoutMs / 1_000)),
+        '-H', `@${headerPath}`,
+        '--data-binary', '@-', DEEPINFRA_CHAT_URL,
+      ],
+      input: body,
+      timeoutMs,
+      activeChildren,
+    });
+  } finally {
+    rmSync(secretDir, { recursive: true, force: true });
+  }
   const envelope = parseJsonText(output, 'Meta');
   const content = envelope?.choices?.[0]?.message?.content;
   return parseJsonText(content, 'Meta structured output');

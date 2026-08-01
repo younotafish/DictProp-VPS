@@ -32,6 +32,7 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
 })));
 `);
     writeFileSync(curl, `#!/usr/bin/env node
+if (process.argv.some(value => value.includes('test-secret'))) process.exit(2);
 process.stdin.resume();
 process.stdin.on('end', () => process.stdout.write(JSON.stringify({
   choices: [{ message: { content: JSON.stringify({ value: 'meta' }) } }]
@@ -44,7 +45,7 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
       prompt: 'test', schema, model: 'test', timeoutMs: 5_000, bin: claude,
     }), { value: 'claude' });
     assert.deepEqual(await runMetaStructured({
-      prompt: 'test', schema, model: 'test', timeoutMs: 5_000, bin: curl, apiKey: 'test',
+      prompt: 'test', schema, model: 'test', timeoutMs: 5_000, bin: curl, apiKey: 'test-secret',
     }), { value: 'meta' });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -88,4 +89,3 @@ test('reviewed IPA replaces only the fluent transcription in detailed analysis',
     rmSync(root, { recursive: true, force: true });
   }
 });
-
