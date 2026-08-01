@@ -123,11 +123,13 @@ export async function runMetaStructured({
   });
   const secretDir = mkdtempSync(join(tmpdir(), 'dictprop-meta-headers-'));
   const headerPath = join(secretDir, 'headers');
+  const bodyPath = join(secretDir, 'body.json');
   writeFileSync(
     headerPath,
     `Authorization: Bearer ${apiKey}\nContent-Type: application/json\n`,
     { mode: 0o600 },
   );
+  writeFileSync(bodyPath, body, { mode: 0o600 });
   let output;
   try {
     output = await runProcess({
@@ -137,9 +139,9 @@ export async function runMetaStructured({
         '--connect-timeout', '30',
         '--retry', '3', '--retry-all-errors', '--retry-delay', '3', '--retry-max-time', '180',
         '-H', `@${headerPath}`,
-        '--data-binary', '@-', DEEPINFRA_CHAT_URL,
+        '--data-binary', `@${bodyPath}`, DEEPINFRA_CHAT_URL,
       ],
-      input: body,
+      input: '',
       timeoutMs,
       activeChildren,
     });
