@@ -99,7 +99,14 @@ const reviewInstruction = `You are the final senior reviewer for General America
 Reject and correct any omitted or added meaning-bearing word, wrong heteronym or number reading, British/non-rhotic pronunciation, spelling masquerading as IPA, misplaced stress, or implausible reduction. Preserve natural mainstream American weak forms, linking, assimilation, and flapping, but avoid theatrical over-reduction. The result must cover the complete sentence and use exactly one surrounding pair of forward slashes. Copy every itemIndex exactly and output only schema-valid JSON.`;
 
 const stripMarkers = text => text.replace(/\{\{|\}\}|\[\[|\]\]/g, '');
-const batchSize = Math.max(1, Math.min(30, Number(process.env.IPA_BATCH_SIZE || 12)));
+function boundedBatchSize(value, fallback, maximum) {
+  const parsed = Number(value ?? fallback);
+  return Number.isFinite(parsed)
+    ? Math.max(1, Math.min(maximum, Math.floor(parsed)))
+    : Math.max(1, Math.min(maximum, fallback));
+}
+const batchSize = boundedBatchSize(process.env.IPA_BATCH_SIZE, 12, 30);
+const metaRequestBatchSize = boundedBatchSize(process.env.IPA_META_REQUEST_BATCH_SIZE, 12, batchSize);
 const batches = [];
 for (let index = 0; index < sentences.length; index += batchSize) batches.push(sentences.slice(index, index + batchSize));
 
@@ -205,6 +212,43 @@ async function generateStructured(provider, prompt, resultPath) {
   });
 }
 
+async function generateStageResult({ provider, instruction, correction, input, resultPath }) {
+  const requestBatchSize = provider === 'meta' ? metaRequestBatchSize : input.length;
+  if (input.length <= requestBatchSize) {
+    await generateStructured(
+      provider,
+      `${instruction}${correction}\n\nINPUT:\n${JSON.stringify(input)}`,
+      resultPath,
+    );
+    return;
+  }
+
+  const partPaths = [];
+  const results = [];
+  try {
+    for (let offset = 0; offset < input.length; offset += requestBatchSize) {
+      const requestInput = input.slice(offset, offset + requestBatchSize);
+      const partPath = `${resultPath}.part-${String((offset / requestBatchSize) + 1).padStart(2, '0')}`;
+      partPaths.push(partPath);
+      await generateStructured(
+        provider,
+        `${instruction}${correction}\n\nINPUT:\n${JSON.stringify(requestInput)}`,
+        partPath,
+      );
+      const parsed = JSON.parse(readFileSync(partPath, 'utf8'));
+      if (!Array.isArray(parsed.results) || parsed.results.length !== requestInput.length) {
+        throw new Error('Wrong provider request result count');
+      }
+      results.push(...parsed.results);
+    }
+    writeFileSync(resultPath, `${JSON.stringify({ results })}\n`, { mode: 0o600 });
+  } finally {
+    for (const partPath of partPaths) {
+      if (existsSync(partPath)) unlinkSync(partPath);
+    }
+  }
+}
+
 function draftProvidersFor(preferredProvider) {
   return [preferredProvider, ...enabledProviders.filter(provider => provider !== preferredProvider)];
 }
@@ -231,11 +275,13 @@ async function runStage({ batch, batchIndex, stage, instruction, input, provider
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
-        await generateStructured(
+        await generateStageResult({
           provider,
-          `${instruction}${correction}\n\nINPUT:\n${JSON.stringify(input)}`,
+          instruction,
+          correction,
+          input,
           resultPath,
-        );
+        });
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) throw new Error('Wrong result count');
