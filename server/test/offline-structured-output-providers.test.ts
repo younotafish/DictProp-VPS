@@ -33,6 +33,7 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
 `);
     writeFileSync(curl, `#!/usr/bin/env node
 if (process.argv.some(value => value.includes('test-secret'))) process.exit(2);
+if (!process.argv.includes('--retry-all-errors')) process.exit(3);
 process.stdin.resume();
 process.stdin.on('end', () => process.stdout.write(JSON.stringify({
   choices: [{ message: { content: JSON.stringify({ value: 'meta' }) } }]

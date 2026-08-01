@@ -205,13 +205,20 @@ async function generateStructured(provider, prompt, resultPath) {
   });
 }
 
-function reviewProviderFor(draftProvider) {
+function draftProvidersFor(preferredProvider) {
+  return [preferredProvider, ...enabledProviders.filter(provider => provider !== preferredProvider)];
+}
+
+function reviewProvidersFor(draftProvider) {
   const preferences = draftProvider === 'codex'
     ? ['claude', 'meta', 'codex']
     : draftProvider === 'claude'
       ? ['codex', 'meta', 'claude']
       : ['codex', 'claude', 'meta'];
-  return preferences.find(provider => enabledProviders.includes(provider));
+  const distinctProviders = preferences.filter(
+    provider => enabledProviders.includes(provider) && provider !== draftProvider,
+  );
+  return distinctProviders.length > 0 ? distinctProviders : [draftProvider];
 }
 
 async function runStage({ batch, batchIndex, stage, instruction, input, provider }) {
@@ -241,12 +248,39 @@ async function runStage({ batch, batchIndex, stage, instruction, input, provider
       });
     } catch (error) {
       if (aborting || attempt === 2) throw error;
-      correction = `\n\nThe previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Return every complete transcription with the exact indexes.`;
+      const detail = error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `${provider} ${stage} batch ${batchIndex + 1} attempt ${attempt + 1} failed: ${detail}\n`,
+      );
+      correction = `\n\nThe previous response failed validation: ${detail}. Return every complete transcription with the exact indexes.`;
       if (existsSync(resultPath)) unlinkSync(resultPath);
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000 * (attempt + 1)));
+      await new Promise(resolvePromise => setTimeout(
+        resolvePromise,
+        (1_000 * (attempt + 1)) + Math.floor(Math.random() * 1_000),
+      ));
     }
   }
   throw new Error(`${provider} ${stage} batch ${batchIndex + 1} exhausted retries`);
+}
+
+async function runStageAcrossProviders(args, providers) {
+  let lastError;
+  for (let index = 0; index < providers.length; index++) {
+    const provider = providers[index];
+    try {
+      return { provider, results: await runStage({ ...args, provider }) };
+    } catch (error) {
+      if (aborting) throw error;
+      lastError = error;
+      const nextProvider = providers[index + 1];
+      if (nextProvider) {
+        process.stderr.write(
+          `${provider} ${args.stage} batch ${args.batchIndex + 1} failed after retries; falling back to ${nextProvider}\n`,
+        );
+      }
+    }
+  }
+  throw lastError || new Error(`${args.stage} batch ${args.batchIndex + 1} has no available provider`);
 }
 
 async function runBatch(batch, batchIndex, draftProvider) {
@@ -256,26 +290,26 @@ async function runBatch(batch, batchIndex, draftProvider) {
     sourceWord: sourceWord || '',
     sourceSense: sourceSense || '',
   }));
-  const draft = await runStage({
+  const draftAttempt = await runStageAcrossProviders({
     batch,
     batchIndex,
     stage: 'draft',
     instruction: generationInstruction,
     input: sourceInput,
-    provider: draftProvider,
-  });
+  }, draftProvidersFor(draftProvider));
+  const draft = draftAttempt.results;
   const reviewInput = sourceInput.map((sourceRecord, itemIndex) => ({
     ...sourceRecord,
     draftNaturalSpeechIpa: draft[itemIndex].naturalSpeechIpa,
   }));
-  return runStage({
+  const reviewAttempt = await runStageAcrossProviders({
     batch,
     batchIndex,
     stage: 'review',
     instruction: reviewInstruction,
     input: reviewInput,
-    provider: reviewProviderFor(draftProvider),
-  });
+  }, reviewProvidersFor(draftAttempt.provider));
+  return reviewAttempt.results;
 }
 
 const results = new Array(batches.length);
@@ -290,7 +324,7 @@ async function worker(draftProvider) {
   for (;;) {
     const index = providerQueues[draftProvider].shift();
     if (index === undefined) return;
-    const reviewer = reviewProviderFor(draftProvider);
+    const reviewer = reviewProvidersFor(draftProvider)[0];
     process.stderr.write(
       `Generating natural IPA batch ${index + 1}/${batches.length} with ${draftProvider}; reviewing with ${reviewer}\n`,
     );

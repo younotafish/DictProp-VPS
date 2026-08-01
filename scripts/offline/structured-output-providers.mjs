@@ -134,6 +134,8 @@ export async function runMetaStructured({
       command: bin,
       args: [
         '-fsS', '--max-time', String(Math.ceil(timeoutMs / 1_000)),
+        '--connect-timeout', '30',
+        '--retry', '3', '--retry-all-errors', '--retry-delay', '3', '--retry-max-time', '180',
         '-H', `@${headerPath}`,
         '--data-binary', '@-', DEEPINFRA_CHAT_URL,
       ],
