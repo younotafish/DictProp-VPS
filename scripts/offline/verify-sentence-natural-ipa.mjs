@@ -35,7 +35,10 @@ const ipaToSources = new Map();
 let ipaBytes = 0;
 let ipaCharacters = 0;
 
-if (manifest.model !== 'gpt-5.6-sol') issues.push(`unexpected model: ${manifest.model || 'missing'}`);
+if (typeof manifest.model !== 'string' ||
+    (manifest.model !== 'gpt-5.6-sol' && !manifest.model.startsWith('cross-reviewed:'))) {
+  issues.push(`unexpected model: ${manifest.model || 'missing'}`);
+}
 if (manifest.entries.length !== sentenceSources.length) {
   issues.push(`entry count ${manifest.entries.length} does not match sentence count ${sentenceSources.length}`);
 }

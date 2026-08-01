@@ -4,13 +4,20 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { killCodex, spawnCodex } from './codex-process.mjs';
+import { runClaudeStructured, runMetaStructured } from './structured-output-providers.mjs';
 
 const [inputArg, outputArg, workArg] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
   throw new Error('Usage: generate-sentence-natural-ipa.mjs <corpus-or-sentence-export.json> <ipa-manifest.json> [work-directory]');
 }
 
-const MODEL = 'gpt-5.6-sol';
+const CODEX_MODEL = process.env.IPA_CODEX_MODEL || process.env.CODEX_MODEL || 'gpt-5.6-sol';
+const CLAUDE_MODEL = process.env.IPA_CLAUDE_MODEL || 'claude-opus-4-8';
+const META_MODEL = process.env.IPA_META_MODEL || 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
+const requestedTimeoutMinutes = Number(process.env.IPA_TIMEOUT_MINUTES || 30);
+const PROVIDER_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+  ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
+  : 30) * 60 * 1_000;
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'natural-ipa-work'));
@@ -96,6 +103,40 @@ const batchSize = Math.max(1, Math.min(30, Number(process.env.IPA_BATCH_SIZE || 
 const batches = [];
 for (let index = 0; index < sentences.length; index += batchSize) batches.push(sentences.slice(index, index + batchSize));
 
+function boundedConcurrency(value, fallback, allowZero = false) {
+  const parsed = Number(value ?? fallback);
+  const minimum = allowZero ? 0 : 1;
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(64, Math.floor(parsed))) : fallback;
+}
+
+const providerLimits = {
+  codex: boundedConcurrency(process.env.IPA_CODEX_CONCURRENCY ?? process.env.CODEX_CONCURRENCY, 20, true),
+  claude: boundedConcurrency(process.env.IPA_CLAUDE_CONCURRENCY, 0, true),
+  meta: boundedConcurrency(process.env.IPA_META_CONCURRENCY, 0, true),
+};
+const providerModels = { codex: CODEX_MODEL, claude: CLAUDE_MODEL, meta: META_MODEL };
+const enabledProviders = Object.keys(providerLimits).filter(provider => providerLimits[provider] > 0);
+if (enabledProviders.length === 0) throw new Error('At least one IPA provider must have positive concurrency');
+
+function createSemaphore(limit) {
+  let active = 0;
+  const waiters = [];
+  return async function withSlot(task) {
+    if (active >= limit) await new Promise(resolvePromise => waiters.push(resolvePromise));
+    active++;
+    try {
+      return await task();
+    } finally {
+      active--;
+      waiters.shift()?.();
+    }
+  };
+}
+
+const providerSlots = Object.fromEntries(
+  enabledProviders.map(provider => [provider, createSemaphore(providerLimits[provider])]),
+);
+
 function validateIpa(value, sentence, id) {
   if (typeof value !== 'string') throw new Error(`${id}: IPA is not a string`);
   const ipa = value.trim();
@@ -119,7 +160,7 @@ function runCodex(args, prompt) {
     const timeout = setTimeout(() => {
       killCodex(child, 'SIGTERM');
       hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, 20 * 60 * 1000);
+    }, PROVIDER_TIMEOUT_MS);
     child.on('error', error => {
       activeChildren.delete(child);
       reject(error);
@@ -135,20 +176,59 @@ function runCodex(args, prompt) {
   });
 }
 
-async function runStage({ batch, batchIndex, stage, instruction, input }) {
+async function generateStructured(provider, prompt, resultPath) {
+  await providerSlots[provider](async () => {
+    if (provider === 'codex') {
+      await runCodex([
+        'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
+        '-m', CODEX_MODEL, '--output-schema', schemaPath, '-o', resultPath, '-'
+      ], prompt);
+      return;
+    }
+    const result = provider === 'claude'
+      ? await runClaudeStructured({
+          prompt,
+          schema,
+          model: CLAUDE_MODEL,
+          effort: process.env.IPA_CLAUDE_EFFORT || 'high',
+          timeoutMs: PROVIDER_TIMEOUT_MS,
+          activeChildren,
+        })
+      : await runMetaStructured({
+          prompt,
+          schema,
+          model: META_MODEL,
+          timeoutMs: PROVIDER_TIMEOUT_MS,
+          activeChildren,
+        });
+    writeFileSync(resultPath, `${JSON.stringify(result)}\n`, { mode: 0o600 });
+  });
+}
+
+function reviewProviderFor(draftProvider) {
+  const preferences = draftProvider === 'codex'
+    ? ['claude', 'meta', 'codex']
+    : draftProvider === 'claude'
+      ? ['codex', 'meta', 'claude']
+      : ['codex', 'claude', 'meta'];
+  return preferences.find(provider => enabledProviders.includes(provider));
+}
+
+async function runStage({ batch, batchIndex, stage, instruction, input, provider }) {
   const fingerprint = createHash('sha256')
-    .update(JSON.stringify({ model: MODEL, stage, input }))
+    .update(JSON.stringify({ provider, model: providerModels[provider], stage, input }))
     .digest('hex')
     .slice(0, 16);
-  const resultPath = join(workDir, `${stage}-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
+  const resultPath = join(workDir, `${stage}-${provider}-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
   let correction = '';
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
-        await runCodex([
-          'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-          '-m', MODEL, '--output-schema', schemaPath, '-o', resultPath, '-'
-        ], `${instruction}${correction}\n\nINPUT:\n${JSON.stringify(input)}`);
+        await generateStructured(
+          provider,
+          `${instruction}${correction}\n\nINPUT:\n${JSON.stringify(input)}`,
+          resultPath,
+        );
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) throw new Error('Wrong result count');
@@ -166,10 +246,10 @@ async function runStage({ batch, batchIndex, stage, instruction, input }) {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000 * (attempt + 1)));
     }
   }
-  throw new Error(`${stage} batch ${batchIndex + 1} exhausted retries`);
+  throw new Error(`${provider} ${stage} batch ${batchIndex + 1} exhausted retries`);
 }
 
-async function runBatch(batch, batchIndex) {
+async function runBatch(batch, batchIndex, draftProvider) {
   const sourceInput = batch.map(({ text, sourceWord, sourceSense }, itemIndex) => ({
     itemIndex,
     sentence: stripMarkers(text).trim(),
@@ -182,6 +262,7 @@ async function runBatch(batch, batchIndex) {
     stage: 'draft',
     instruction: generationInstruction,
     input: sourceInput,
+    provider: draftProvider,
   });
   const reviewInput = sourceInput.map((sourceRecord, itemIndex) => ({
     ...sourceRecord,
@@ -193,18 +274,27 @@ async function runBatch(batch, batchIndex) {
     stage: 'review',
     instruction: reviewInstruction,
     input: reviewInput,
+    provider: reviewProviderFor(draftProvider),
   });
 }
 
 const results = new Array(batches.length);
-let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(64, Number(process.env.CODEX_CONCURRENCY || 20)));
-async function worker() {
+const draftSchedule = enabledProviders.flatMap(provider =>
+  Array.from({ length: providerLimits[provider] }, () => provider)
+);
+const providerQueues = Object.fromEntries(enabledProviders.map(provider => [provider, []]));
+for (let index = 0; index < batches.length; index++) {
+  providerQueues[draftSchedule[index % draftSchedule.length]].push(index);
+}
+async function worker(draftProvider) {
   for (;;) {
-    const index = nextBatch++;
-    if (index >= batches.length) return;
-    process.stderr.write(`Generating and reviewing natural IPA batch ${index + 1}/${batches.length}\n`);
-    results[index] = await runBatch(batches[index], index);
+    const index = providerQueues[draftProvider].shift();
+    if (index === undefined) return;
+    const reviewer = reviewProviderFor(draftProvider);
+    process.stderr.write(
+      `Generating natural IPA batch ${index + 1}/${batches.length} with ${draftProvider}; reviewing with ${reviewer}\n`,
+    );
+    results[index] = await runBatch(batches[index], index, draftProvider);
   }
 }
 
@@ -216,7 +306,10 @@ async function terminateActiveChildren() {
 }
 
 try {
-  await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => worker()));
+  const workers = enabledProviders.flatMap(provider =>
+    Array.from({ length: Math.min(providerLimits[provider], providerQueues[provider].length) }, () => worker(provider))
+  );
+  await Promise.all(workers);
 } catch (error) {
   await terminateActiveChildren();
   throw error;
@@ -237,5 +330,12 @@ for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
 }
 
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, `${JSON.stringify({ version: 1, model: MODEL, generatedAt, entries }, null, 2)}\n`, { mode: 0o600 });
+const models = Object.fromEntries(enabledProviders.map(provider => [provider, providerModels[provider]]));
+writeFileSync(outputPath, `${JSON.stringify({
+  version: 1,
+  model: `cross-reviewed:${enabledProviders.join('+')}`,
+  models,
+  generatedAt,
+  entries,
+}, null, 2)}\n`, { mode: 0o600 });
 process.stderr.write(`Wrote ${entries.length} reviewed sentence IPA records to ${outputPath}\n`);

@@ -89,7 +89,13 @@ const entries = sentenceSources.map(source => {
   const result = {
     id: source.id,
     textHash,
-    analysis: { ...analysis, naturalSpeechIpa: ipaEntry.naturalSpeechIpa },
+    analysis: {
+      ...analysis,
+      ...(analysis.pronunciation
+        ? { pronunciation: { ...analysis.pronunciation, fastIpa: ipaEntry.naturalSpeechIpa } }
+        : {}),
+      naturalSpeechIpa: ipaEntry.naturalSpeechIpa,
+    },
     generatedAt,
   };
   if (imageEntry?.imageFile) {

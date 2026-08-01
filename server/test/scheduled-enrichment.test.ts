@@ -22,6 +22,10 @@ test('production and local enrichment schedules both run every six hours', () =>
   assert.match(workflow, /INCREMENTAL_ENRICHMENT_MAX_RUNTIME_MINUTES=70/);
   assert.match(launchAgent, /<key>StartInterval<\/key>\s*<integer>21600<\/integer>/);
   assert.match(runner, /CODEX_MODEL=gpt-5\.5/);
+  assert.match(runner, /IPA_CLAUDE_CONCURRENCY="\$\{IPA_CLAUDE_CONCURRENCY:-2\}"/);
+  assert.match(runner, /IPA_META_CONCURRENCY="\$\{IPA_META_CONCURRENCY:-4\}"/);
+  assert.match(runner, /generate-sentence-natural-ipa\.mjs/);
+  assert.match(runner, /apply-reviewed-natural-ipa\.mjs/);
   assert.match(runner, /shlock -f "\$LOCK_FILE" -p "\$\$"/);
   assert.match(runner, /analysis-publish-state-detailed-v1/);
   for (const publisher of recurringPublishers) {

@@ -24,6 +24,14 @@
     <string>gpt-5.5</string>
     <key>ANALYSIS_CONCURRENCY</key>
     <string>8</string>
+    <key>IPA_CODEX_CONCURRENCY</key>
+    <string>4</string>
+    <key>IPA_CLAUDE_CONCURRENCY</key>
+    <string>2</string>
+    <key>IPA_META_CONCURRENCY</key>
+    <string>4</string>
+    <key>IPA_BATCH_SIZE</key>
+    <string>24</string>
     <key>IMAGE_QA_CONCURRENCY</key>
     <string>16</string>
   </dict>

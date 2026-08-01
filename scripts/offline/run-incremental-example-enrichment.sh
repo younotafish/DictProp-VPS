@@ -13,6 +13,10 @@ NODE_BIN="${NODE_BIN:-node}"
 TSX_BIN="${TSX_BIN:-server/node_modules/.bin/tsx}"
 ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-8}"
 GRAMMAR_CONCURRENCY="${GRAMMAR_CONCURRENCY:-8}"
+IPA_CODEX_CONCURRENCY="${IPA_CODEX_CONCURRENCY:-4}"
+IPA_CLAUDE_CONCURRENCY="${IPA_CLAUDE_CONCURRENCY:-2}"
+IPA_META_CONCURRENCY="${IPA_META_CONCURRENCY:-4}"
+IPA_BATCH_SIZE="${IPA_BATCH_SIZE:-24}"
 IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-16}"
 LOCK_FILE="$ROOT/.cycle.lock"
 CURRENT_CORPUS="$ROOT/current-corpus.json"
@@ -34,6 +38,30 @@ log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
 }
 
+if [ "$IPA_META_CONCURRENCY" -gt 0 ] && [ -z "${DEEPINFRA_API_KEY:-}" ] && [ -s .env ]; then
+  DEEPINFRA_API_KEY="$($NODE_BIN -e 'const f=require("fs"),d=require("./server/node_modules/dotenv");process.stdout.write(d.parse(f.readFileSync(".env")).DEEPINFRA_API_KEY||"")')"
+  export DEEPINFRA_API_KEY
+fi
+
+apply_reviewed_ipa() {
+  local source="$1"
+  local analysis="$2"
+  local root="$3"
+  local ipa="$root/natural-ipa.json"
+  local merged="$analysis.reviewed-ipa.tmp"
+  log "generating cross-reviewed connected-speech IPA with GPT, Claude, and Meta workers"
+  env IPA_BATCH_SIZE="$IPA_BATCH_SIZE" \
+    IPA_CODEX_CONCURRENCY="$IPA_CODEX_CONCURRENCY" \
+    IPA_CLAUDE_CONCURRENCY="$IPA_CLAUDE_CONCURRENCY" \
+    IPA_META_CONCURRENCY="$IPA_META_CONCURRENCY" \
+    "$NODE_BIN" scripts/offline/generate-sentence-natural-ipa.mjs \
+      "$source" "$ipa" "$root/natural-ipa-work"
+  "$NODE_BIN" scripts/offline/verify-sentence-natural-ipa.mjs "$source" "$ipa" \
+    "$root/natural-ipa-verification.json"
+  "$NODE_BIN" scripts/offline/apply-reviewed-natural-ipa.mjs "$analysis" "$ipa" "$merged"
+  mv "$merged" "$analysis"
+}
+
 mkdir -p "$ROOT"
 if ! shlock -f "$LOCK_FILE" -p "$$"; then
   log "another incremental enrichment cycle is already running"
@@ -44,7 +72,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if pgrep -f '[n]ode scripts/offline/(enrich-sentences|enrich-sentence-grammar)\.mjs' >/dev/null 2>&1; then
+if pgrep -f '[n]ode scripts/offline/(enrich-sentences|enrich-sentence-grammar|generate-sentence-natural-ipa)\.mjs' >/dev/null 2>&1; then
   log "another local sentence-analysis job is active; deferring this cycle"
   exit 0
 fi
@@ -128,6 +156,7 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
     echo "Incremental saved-sentence analysis reconciliation is incomplete" >&2
     exit 1
   fi
+  apply_reviewed_ipa "$SAVED_SOURCE" "$SAVED_RECONCILIATION/final-analysis.json" "$SAVED_ROOT"
   cp "$SAVED_RECONCILIATION/final-analysis.json" "$SAVED_ANALYSIS_CACHE.tmp"
   mv "$SAVED_ANALYSIS_CACHE.tmp" "$SAVED_ANALYSIS_CACHE"
   log "publishing detailed saved-sentence analyses"
@@ -191,6 +220,7 @@ if [ "$MISSING_GRAMMAR_COUNT" -gt 0 ]; then
   cp "$GRAMMAR_ANALYSIS" "$RECONCILIATION/final-analysis.json.tmp"
   mv "$RECONCILIATION/final-analysis.json.tmp" "$RECONCILIATION/final-analysis.json"
 fi
+apply_reviewed_ipa "$SOURCE" "$RECONCILIATION/final-analysis.json" "$ROOT"
 cp "$RECONCILIATION/final-analysis.json" "$ANALYSIS_CACHE.tmp"
 mv "$ANALYSIS_CACHE.tmp" "$ANALYSIS_CACHE"
 "$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
