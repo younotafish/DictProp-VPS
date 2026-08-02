@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -15,6 +16,12 @@ const applyScript = fileURLToPath(
 );
 const naturalIpaScript = fileURLToPath(
   new URL('../../scripts/offline/generate-sentence-natural-ipa.mjs', import.meta.url),
+);
+const checkpointIpaScript = fileURLToPath(
+  new URL('../../scripts/offline/checkpoint-reviewed-natural-ipa.mjs', import.meta.url),
+);
+const mergeIpaScript = fileURLToPath(
+  new URL('../../scripts/offline/merge-reviewed-natural-ipa.mjs', import.meta.url),
 );
 const schema = {
   type: 'object',
@@ -147,6 +154,69 @@ process.stdout.write(JSON.stringify({
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(readFileSync(callLog, 'utf8').trim().split('\n').map(Number), [2, 2, 1, 2, 2, 1]);
     assert.equal(JSON.parse(readFileSync(outputPath, 'utf8')).entries.length, 5);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reviewed IPA checkpoints preserve completed batches across a larger-batch restart', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-ipa-checkpoint-'));
+  try {
+    const sourcePath = join(root, 'source.json');
+    const workPath = join(root, 'work');
+    const partialPath = join(root, 'partial.json');
+    const remainingPath = join(root, 'remaining.json');
+    const generatedPath = join(root, 'generated.json');
+    const mergedPath = join(root, 'merged.json');
+    const sentences = Array.from({ length: 5 }, (_, index) => ({
+      id: `sentence-${index}`,
+      text: 'This is a complete test sentence.',
+      sourceWord: 'test',
+    }));
+    const ipa = '/ðɪs ɪz ə kəmˈplit ˈtɛst ˈsɛntəns/';
+    writeFileSync(sourcePath, JSON.stringify({ version: 1, sentences }));
+    mkdirSync(workPath);
+    writeFileSync(join(workPath, 'review-codex-0001-first.json'), JSON.stringify({
+      results: [{ itemIndex: 0, naturalSpeechIpa: ipa }, { itemIndex: 1, naturalSpeechIpa: ipa }],
+    }));
+    writeFileSync(join(workPath, 'review-meta-0002-invalid.json'), JSON.stringify({
+      results: [{ itemIndex: 0, naturalSpeechIpa: 'not ipa' }],
+    }));
+    writeFileSync(join(workPath, 'review-claude-0003-last.json'), JSON.stringify({
+      results: [{ itemIndex: 0, naturalSpeechIpa: ipa }],
+    }));
+
+    const checkpoint = spawnSync(process.execPath, [
+      checkpointIpaScript, sourcePath, workPath, '2', partialPath, remainingPath,
+    ], { encoding: 'utf8' });
+    assert.equal(checkpoint.status, 0, checkpoint.stderr);
+    const checkpointReport = JSON.parse(checkpoint.stdout);
+    assert.equal(checkpointReport.reviewedSentences, 3);
+    assert.equal(checkpointReport.remainingSentences, 2);
+    assert.equal(checkpointReport.invalidCandidates, 1);
+    const remaining = JSON.parse(readFileSync(remainingPath, 'utf8'));
+    assert.deepEqual(remaining.sentences.map((sentence: { id: string }) => sentence.id), [
+      'sentence-2', 'sentence-3',
+    ]);
+    writeFileSync(generatedPath, JSON.stringify({
+      version: 1,
+      model: 'cross-reviewed:test',
+      generatedAt: 20,
+      entries: remaining.sentences.map((sentence: { id: string; text: string }) => ({
+        id: sentence.id,
+        textHash: createHash('sha256').update(sentence.text).digest('hex'),
+        naturalSpeechIpa: ipa,
+        generatedAt: 20,
+      })),
+    }));
+
+    const merge = spawnSync(process.execPath, [
+      mergeIpaScript, sourcePath, mergedPath, partialPath, generatedPath,
+    ], { encoding: 'utf8' });
+    assert.equal(merge.status, 0, merge.stderr);
+    const merged = JSON.parse(readFileSync(mergedPath, 'utf8'));
+    assert.deepEqual(merged.entries.map((entry: { id: string }) => entry.id),
+      sentences.map(sentence => sentence.id));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

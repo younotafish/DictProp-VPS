@@ -105,7 +105,7 @@ function boundedBatchSize(value, fallback, maximum) {
     ? Math.max(1, Math.min(maximum, Math.floor(parsed)))
     : Math.max(1, Math.min(maximum, fallback));
 }
-const batchSize = boundedBatchSize(process.env.IPA_BATCH_SIZE, 12, 30);
+const batchSize = boundedBatchSize(process.env.IPA_BATCH_SIZE, 12, 50);
 const metaRequestBatchSize = boundedBatchSize(process.env.IPA_META_REQUEST_BATCH_SIZE, 12, batchSize);
 const batches = [];
 for (let index = 0; index < sentences.length; index += batchSize) batches.push(sentences.slice(index, index + batchSize));
