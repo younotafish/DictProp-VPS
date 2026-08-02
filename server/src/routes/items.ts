@@ -1,12 +1,13 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary } from '../db.js';
+import { getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
 import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
 import { resolvePublicHttpUrl } from '../safe-url.js';
+import { sentenceLookupHash } from '../sentence-enrichment.js';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 const IMAGE_FETCH_TIMEOUT_MS = 30_000;
@@ -95,6 +96,39 @@ function wrapVocabCard(card: any): any {
 type ItemsEnv = { Variables: AuthVariables };
 
 export const itemsRoutes = new Hono<ItemsEnv>();
+
+// Prepared example metadata is global source material. Looking it up must not create a user item:
+// expanding an example is a read-only action, while bookmarking remains an explicit save.
+itemsRoutes.post('/sentence-enrichments/lookup', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const text = body?.text;
+  if (typeof text !== 'string' || !text.trim() || text.length > 20_000) {
+    return c.json({ error: 'Expected a non-empty sentence' }, 400);
+  }
+  const enrichment = getSentenceEnrichmentForText(text);
+  if (!enrichment) return c.json({ found: false });
+  const lookupHash = sentenceLookupHash(text);
+  c.header('Cache-Control', 'private, max-age=300');
+  return c.json({
+    found: true,
+    analysis: enrichment.analysis,
+    analysisGeneratedAt: enrichment.generatedAt,
+    ...(enrichment.imageContentHash && enrichment.imageMimeType
+      ? { imageUrl: `/api/sentence-enrichments/${lookupHash}/image` }
+      : {}),
+  });
+});
+
+itemsRoutes.get('/sentence-enrichments/:lookupHash/image', (c) => {
+  const image = getSentenceEnrichmentImage(c.req.param('lookupHash'));
+  if (!image) return c.notFound();
+  return new Response(image.data, {
+    headers: {
+      'Content-Type': image.mimeType,
+      'Cache-Control': 'private, max-age=86400',
+    },
+  });
+});
 
 function streamAllItems(c: Context<ItemsEnv>, userId: string) {
   c.header('Content-Type', 'application/json; charset=UTF-8');

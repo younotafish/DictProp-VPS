@@ -152,7 +152,27 @@ test('saving a prepared example returns the server-enriched canonical sentence',
       analysis,
       generatedAt: 5,
     },
+    image: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+    mimeType: 'image/png',
   });
+
+  let response = await app.request('/api/sentence-enrichments/lookup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: 'The witness finally {{came clean}}.' }),
+  });
+  assert.equal(response.status, 200);
+  const preview = await response.json() as any;
+  assert.equal(preview.found, true);
+  assert.deepEqual(preview.analysis, analysis);
+  assert.equal(preview.analysisGeneratedAt, 5);
+  assert.match(preview.imageUrl, /^\/api\/sentence-enrichments\/[a-f0-9]{64}\/image$/);
+
+  response = await app.request(preview.imageUrl);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'image/png');
+  assert.ok((await response.arrayBuffer()).byteLength > 8);
+
   const sentence = {
     type: 'sentence',
     data: { id: 'route-prepared-sentence', text: 'The witness finally {{came clean}}.', sourceWord: 'come clean' },
@@ -163,7 +183,7 @@ test('saving a prepared example returns the server-enriched canonical sentence',
     savedAt: 1,
     updatedAt: 1,
   };
-  const response = await app.request('/api/items', {
+  response = await app.request('/api/items', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify([sentence]),

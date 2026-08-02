@@ -13,7 +13,7 @@ interface Props {
 
 /**
  * Image component with offline support.
- * - If `src` is a base64 data URI, renders it directly.
+ * - If `src` is a base64 data URI or authenticated same-origin API URL, renders it directly.
  * - Else if `itemId` is provided, lazy-loads base64 from the IDB images store, then (on a miss)
  *   from the server via `onMissing`.
  *
@@ -30,7 +30,7 @@ export const OfflineImage: React.FC<Props> = ({
   fallbackClassName = '',
   onMissing,
 }) => {
-  const directSrc = src?.startsWith('data:image/') ? src : undefined;
+  const directSrc = src && (src.startsWith('data:image/') || src.startsWith('/api/')) ? src : undefined;
   const serverVersion = src?.startsWith('server:has_image:')
     ? src.slice('server:has_image:'.length)
     : undefined;

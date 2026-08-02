@@ -21,6 +21,7 @@ interface Props {
   /** The example sentence (may contain {{…}}/[[…]] markers — they're stripped before speaking). */
   text: string;
   className?: string;
+  iconSize?: number;
 }
 
 /**
@@ -33,7 +34,7 @@ interface Props {
  * private "isPlaying" state, it can't get stuck out of sync (the old "frozen on pause" bug), and a
  * click always does the right thing: pause, resume, restart-near-end, or start fresh.
  */
-export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '' }) => {
+export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '', iconSize = 14 }) => {
   const plain = useMemo(() => stripSentenceMarkers(text || '').trim(), [text]);
   const [pb, setPb] = useState<PlaybackState>(getPlaybackState);
   const playbackHandleRef = useRef<SpeakHandle | null>(null);
@@ -47,6 +48,7 @@ export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '' })
   const isLoading = isMine && pb.status === 'loading';
   const isPlaying = isMine && (pb.status === 'playing' || pb.status === 'paused');
   const isPaused = isMine && pb.status === 'paused';
+  const label = isLoading ? 'Loading natural voice' : !isPlaying ? 'Listen to this sentence' : isPaused ? 'Resume' : 'Pause';
 
   const start = useCallback(() => {
     try {
@@ -78,16 +80,17 @@ export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '' })
       type="button"
       onClick={handleClick}
       className={`p-0.5 transition-colors ${isPlaying ? 'text-indigo-500' : 'text-indigo-300 hover:text-indigo-600'} ${className}`}
-      title={isLoading ? 'Loading natural voice…' : !isPlaying ? 'Listen to this sentence' : isPaused ? 'Resume' : 'Pause'}
+      title={label}
+      aria-label={label}
     >
       {isLoading ? (
-        <Loader2 size={14} className="animate-spin" />
+        <Loader2 size={iconSize} className="animate-spin" />
       ) : isPlaying && !isPaused ? (
-        <Pause size={14} className="animate-pulse" />
+        <Pause size={iconSize} className="animate-pulse" />
       ) : isPlaying && isPaused ? (
-        <Play size={14} />
+        <Play size={iconSize} />
       ) : (
-        <Volume2 size={14} />
+        <Volume2 size={iconSize} />
       )}
     </button>
   );

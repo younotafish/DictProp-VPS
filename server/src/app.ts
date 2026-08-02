@@ -104,6 +104,7 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/image-backfill', smallJsonLimit);
   app.use('/api/comparisons', smallJsonLimit);
   app.use('/api/comparisons/*', smallJsonLimit);
+  app.use('/api/sentence-enrichments/*', smallJsonLimit);
   app.use('/api/tts/*', smallJsonLimit);
   app.use('/api/reviews', smallJsonLimit);
   app.use('/api/reviews/*', smallJsonLimit);

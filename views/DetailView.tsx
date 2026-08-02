@@ -19,7 +19,7 @@ import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
 import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap, type SpeakHandle } from '../services/lazyTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { loadImage } from '../services/storage';
-import { log, warn } from '../services/logger';
+import { log, warn, error as logError } from '../services/logger';
 
 // Helper to format relative time for next review
 const formatRelativeTime = (timestamp: number): string => {
@@ -105,6 +105,9 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
   }
 };
 
+const normalizeSentenceIdentity = (text: string): string =>
+  stripSentenceMarkers(text).normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+
 
 interface DetailViewProps {
   groups?: ItemGroup[];
@@ -125,7 +128,7 @@ interface DetailViewProps {
   comparingKeys?: string[];                   // comparison keys currently generating (background queue)
   onOpenComparison?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
-  onOpenExampleSentence?: (text: string, word: string, sense?: string) => StoredItem | null;
+  onOpenExampleSentence?: (text: string, word: string, sense?: string) => StoredItem | null | Promise<StoredItem | null>;
   isSentenceSaved?: (text: string) => boolean;
   onRemoveVocabFromPhrase?: (phraseId: string, vocabId: string) => void;
   /** When provided, DetailView enters "sentence mode": aligned 1:1 with `groups`, sentenceItems[i] is
@@ -136,6 +139,8 @@ interface DetailViewProps {
   onOpenCard?: (item: StoredItem) => void;
   /** True while the card popup owns input — DetailView's keyboard/nav handlers stand down. */
   interactionLocked?: boolean;
+  /** Read-only example preview. Analysis/audio remain available; review mutations require saving first. */
+  sentencePreviewOnly?: boolean;
   /** Sentence mode: attach a pasted/picked image to a sentence (offloads to IDB + server, marks the item). */
   onAttachImage?: (item: StoredItem, base64: string) => Promise<void> | void;
 }
@@ -165,6 +170,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   findSaved,
   onOpenCard,
   interactionLocked = false,
+  sentencePreviewOnly = false,
   onAttachImage,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -185,6 +191,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     sentence: StoredItem;
     sourceGroup: ItemGroup;
   } | null>(null);
+  const exampleSentenceRequestRef = useRef(0);
   const detailInteractionLocked = interactionLocked || !!exampleSentencePreview;
   const cardCollapsed = true; // sentence review: the sentence is always the full-page focus (the source-word card was removed — open any saved word via its footnote)
   // Sentence review — what tapping a word does. true (default) = play from that word (current behaviour);
@@ -298,8 +305,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const type = currentItem.type;
 
   const openExampleSentencePreview = (text: string, word: string, sense?: string) => {
-    const sentence = onOpenExampleSentence?.(text, word, sense);
-    if (!sentence) return;
+    if (!onOpenExampleSentence) return;
+    const requestId = ++exampleSentenceRequestRef.current;
+    const previewId = `sentence-preview:${crypto.randomUUID()}`;
+    const sentence: StoredItem = {
+      data: { id: previewId, text, sourceWord: word, sourceSense: sense },
+      type: 'sentence',
+      savedAt: Date.now(),
+      srs: SRSAlgorithm.createNew(previewId, 'sentence'),
+    };
     const spelling = word.toLowerCase().trim();
     const candidates = savedItemsRef.current.filter(item =>
       item.type === 'vocab' && getItemSpelling(item) === spelling
@@ -337,10 +351,35 @@ export const DetailView: React.FC<DetailViewProps> = ({
       sentence,
       sourceGroup: { title: getItemTitle(source), items: [source] },
     });
+    void Promise.resolve(onOpenExampleSentence(text, word, sense)).then(hydrated => {
+      if (!hydrated || exampleSentenceRequestRef.current !== requestId) return;
+      setExampleSentencePreview(current => current ? { ...current, sentence: hydrated } : current);
+    }).catch(error => {
+      logError('Failed to open prepared example sentence:', error);
+    });
   };
 
+  const savedPreviewSentence = exampleSentencePreview
+    ? savedItems.find(item => item.type === 'sentence' && (
+      item.data.id === exampleSentencePreview.sentence.data.id ||
+      normalizeSentenceIdentity((item.data as SentenceData).text) ===
+        normalizeSentenceIdentity((exampleSentencePreview.sentence.data as SentenceData).text)
+    ))
+    : undefined;
   const previewSentence = exampleSentencePreview
-    ? savedItems.find(item => item.data.id === exampleSentencePreview.sentence.data.id) ?? exampleSentencePreview.sentence
+    ? savedPreviewSentence
+      ? {
+          ...savedPreviewSentence,
+          data: {
+            ...(exampleSentencePreview.sentence.data as SentenceData),
+            ...(savedPreviewSentence.data as SentenceData),
+            analysis: (savedPreviewSentence.data as SentenceData).analysis ??
+              (exampleSentencePreview.sentence.data as SentenceData).analysis,
+            imageUrl: (savedPreviewSentence.data as SentenceData).imageUrl ??
+              (exampleSentencePreview.sentence.data as SentenceData).imageUrl,
+          },
+        }
+      : exampleSentencePreview.sentence
     : null;
 
   // ── Sentence mode ────────────────────────────────────────────────────────────
@@ -351,7 +390,27 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Clamp to the (possibly shrunk-by-deletion) list so the shown card AND the "i / N" counter stay valid
   // even when the local index is briefly stale relative to the latest sentenceItems.
   const sentenceIndex = sentenceMode ? Math.min(currentGroupIndex, sentenceItems!.length - 1) : 0;
-  const currentSentence = sentenceMode ? (sentenceItems![sentenceIndex] ?? null) : null;
+  const currentSentenceSnapshot = sentenceMode ? (sentenceItems![sentenceIndex] ?? null) : null;
+  const savedCurrentSentence = currentSentenceSnapshot?.data.id.startsWith('sentence-preview:')
+    ? savedItems.find(item => item.type === 'sentence' &&
+        normalizeSentenceIdentity((item.data as SentenceData).text) ===
+        normalizeSentenceIdentity((currentSentenceSnapshot.data as SentenceData).text))
+    : undefined;
+  const currentSentence = savedCurrentSentence && currentSentenceSnapshot
+    ? {
+        ...savedCurrentSentence,
+        data: {
+          ...(currentSentenceSnapshot.data as SentenceData),
+          ...(savedCurrentSentence.data as SentenceData),
+          analysis: (savedCurrentSentence.data as SentenceData).analysis ??
+            (currentSentenceSnapshot.data as SentenceData).analysis,
+          imageUrl: (savedCurrentSentence.data as SentenceData).imageUrl ??
+            (currentSentenceSnapshot.data as SentenceData).imageUrl,
+        },
+      }
+    : currentSentenceSnapshot;
+  const isSentencePreview = !savedCurrentSentence && !!currentSentenceSnapshot &&
+    (sentencePreviewOnly || currentSentenceSnapshot.data.id.startsWith('sentence-preview:'));
   const currentSentenceText = currentSentence ? (currentSentence.data as SentenceData).text : '';
 
   // User-attached image for the sentence under review. Base64 → render directly; a marker
@@ -373,7 +432,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
   });
 
   // Sentence-mode stats (mirror the word-card stats below, computed across the saved sentences).
-  const sentenceMastery = currentSentence?.srs ? SRSAlgorithm.getMasteryLevel(currentSentence.srs) : null;
+  const sentenceMastery = !isSentencePreview && currentSentence?.srs
+    ? SRSAlgorithm.getMasteryLevel(currentSentence.srs)
+    : null;
   const sentenceMasteryColors = sentenceMastery ? getMasteryColors(sentenceMastery.color) : null;
   const { sentenceMemorizedCount, sentenceDueCount } = useMemo(() => {
     const list = sentenceItems ?? [];
@@ -1687,6 +1748,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handleDeleteItem = () => {
     // Sentence mode: delete the SENTENCE (App removes its group + advances/closes the flow).
     if (sentenceMode && currentSentence) {
+      if (isSentencePreview) return;
       log('🗑️ DetailView: Deleting sentence:', currentSentence.data.id);
       setShowActionMenu(false);
       onDelete(currentSentence.data.id);
@@ -1726,6 +1788,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const handleResetSRS = useCallback(() => {
     // Sentence mode: reset just this sentence's SRS.
     if (sentenceModeRef.current && currentSentenceRef.current) {
+      if (isSentencePreview) return;
       const s = currentSentenceRef.current;
       log('🔄 DetailView: Resetting SRS for sentence:', s.data.id);
       onSave({ ...s, srs: SRSAlgorithm.createNew(s.data.id, 'sentence') });
@@ -1763,13 +1826,17 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
 
     setShowActionMenu(false);
-  }, [data, title, type, onSave]);
+  }, [data, title, type, onSave, isSentencePreview]);
 
   const handleRemember = useCallback(() => {
     // Ignore re-entry while a remember is mid-animation — a touch double-tap and the synthesized
     // dblclick can both land, and we must not advance/score the same sentence twice.
     if (rememberingRef.current) return;
     rememberingRef.current = true;
+    if (isSentencePreview && sentenceModeRef.current) {
+      rememberingRef.current = false;
+      return;
+    }
     // Sentence mode: remember THIS sentence (its own SRS) and show the success overlay. The card STAYS
     // put afterwards — same as word-item review — so you can keep looking at it; switch sentences manually
     // (swipe ↑/↓, arrow keys, or the next-sentence gesture) when you're ready. The live SRS refresh means
@@ -1850,7 +1917,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setRememberInfo(null);
       rememberingRef.current = false;
     }, 1500);
-  }, [data, type, onSave, onUpdateSRS, title, onClose]);
+  }, [data, type, onSave, onUpdateSRS, title, onClose, isSentencePreview]);
 
   const handleDoubleClick = () => {
     // Avoid triggering when selecting text
@@ -1930,6 +1997,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
       // R: Remember (Shift+R: Reset)
       if (e.key === 'r' || e.key === 'R') {
+         if (sentenceMode && isSentencePreview) return;
          if (e.shiftKey) {
              e.preventDefault();
              handleResetSRS();
@@ -1951,7 +2019,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (e.key === 'd' || e.key === 'D') {
         if (!e.metaKey && !e.ctrlKey) {
           e.preventDefault();
-          if (isSaved || sentenceMode) handleDeleteItem();
+          if (isSaved || (sentenceMode && !isSentencePreview)) handleDeleteItem();
         }
       }
 
@@ -1986,7 +2054,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, detailInteractionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, isSentenceAutoPlaying, toggleSentenceAutoPlay]);
+  }, [title, showActionMenu, detailInteractionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, isSentencePreview, isSentenceAutoPlaying, toggleSentenceAutoPlay]);
 
   // Eyes-free read-zone band counts — how many of the two quarter-bands actually read something
   // (so the guides only draw the bands that do something). Word view: a phrase always has band 1
@@ -2033,10 +2101,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
                     : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-100'
                 }`}
-                title={isSentenceAutoPlaying ? 'Auto-play is locked. Open its controls to stop.' : 'Back to Sentences (Esc)'}
+                title={isSentenceAutoPlaying ? 'Auto-play is locked. Open its controls to stop.' : isSentencePreview ? 'Back to word (Esc)' : 'Back to Sentences (Esc)'}
               >
                 {isSentenceAutoPlaying ? <Lock size={16} /> : <ArrowLeft size={18} />}
-                {isSentenceAutoPlaying ? 'Auto-play' : 'Sentences'}
+                {isSentenceAutoPlaying ? 'Auto-play' : isSentencePreview ? 'Word' : 'Sentences'}
               </button>
               <div className="flex items-center gap-2">
                 <button
@@ -2170,15 +2238,34 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 </>
               )}
               <div className="ml-auto flex items-center gap-1">
-                <button onClick={handleResetSRS} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)">
-                  <RotateCcw size={15} />
-                </button>
-                <button onClick={handleDeleteItem} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete sentence (D)">
-                  <Trash2 size={15} />
-                </button>
-                <button onClick={handleRemember} className="flex items-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg transition-colors" title="Remember (R)">
-                  <CheckCircle2 size={14} /> Got it
-                </button>
+                {isSentencePreview ? (
+                  onSaveSentence && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const sentence = currentSentence.data as SentenceData;
+                        onSaveSentence(sentence.text, sentence.sourceWord, sentence.sourceSense);
+                      }}
+                      className="flex min-h-11 items-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
+                      title="Save sentence for review"
+                    >
+                      <Bookmark size={17} /> Save sentence
+                    </button>
+                  )
+                ) : (
+                  <>
+                    <button onClick={handleResetSRS} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)">
+                      <RotateCcw size={15} />
+                    </button>
+                    <button onClick={handleDeleteItem} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete sentence (D)">
+                      <Trash2 size={15} />
+                    </button>
+                    <button onClick={handleRemember} className="flex items-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg transition-colors" title="Remember (R)">
+                      <CheckCircle2 size={14} /> Got it
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -2770,7 +2857,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {/* Attach-image FAB (sentence mode only). Sits above the global AI-search FAB in the right rail
           (bottom-40 clears its bottom-24; z-[57] is above the search FAB's z-[55], below the autoplay
           cluster's z-[60]). Hidden while its own paste panel is open. */}
-      {sentenceMode && currentSentence && !showImagePanel && (
+      {sentenceMode && currentSentence && !isSentencePreview && !showImagePanel && (
         <button
           onClick={handleImageFabTap}
           className="fixed bottom-40 right-4 z-[57] w-12 h-12 touch-manipulation rounded-full flex items-center justify-center shadow-lg bg-white/90 backdrop-blur-sm text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
@@ -2784,7 +2871,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {/* Paste / drop / pick panel — mirrors the bottom-right AI-search input overlay. The card is
           focusable + data-image-panel so an in-panel ⌘V lands on onPaste (the window listener is the
           primary path). */}
-      {sentenceMode && currentSentence && showImagePanel && (
+      {sentenceMode && currentSentence && !isSentencePreview && showImagePanel && (
         <div className="fixed bottom-28 right-4 left-4 z-[58] animate-in slide-in-from-bottom-2 duration-200">
           <div
             data-image-panel
@@ -2866,7 +2953,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
       {exampleSentencePreview && previewSentence && (
         <ErrorBoundary
-          onReset={() => setExampleSentencePreview(null)}
+          onReset={() => { exampleSentenceRequestRef.current += 1; setExampleSentencePreview(null); }}
           fallbackMessage="Something went wrong displaying this sentence. Your word card is still open."
         >
           <DetailView
@@ -2875,9 +2962,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
             initialGroupIndex={0}
             initialItemIndex={0}
             sentenceItems={[previewSentence]}
-            onClose={() => setExampleSentencePreview(null)}
+            onClose={() => { exampleSentenceRequestRef.current += 1; setExampleSentencePreview(null); }}
             onSave={onSave}
-            onDelete={(id) => { onDelete(id); setExampleSentencePreview(null); }}
+            onDelete={(id) => { onDelete(id); exampleSentenceRequestRef.current += 1; setExampleSentencePreview(null); }}
             onArchive={onArchive}
             savedItems={savedItems}
             onSearch={onSearch}
@@ -2894,6 +2981,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             findSaved={findSaved}
             onOpenCard={onOpenCard}
             interactionLocked={interactionLocked}
+            sentencePreviewOnly={!savedPreviewSentence}
             onAttachImage={onAttachImage}
           />
         </ErrorBoundary>

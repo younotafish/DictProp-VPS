@@ -2734,9 +2734,9 @@ const App: React.FC = () => {
     setDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered });
   }, [allActiveItems]);
 
-  // Resolve an example to a real sentence card. Existing sentences retain their progress; new ones
-  // are saved, then prepared analysis hydrates the already-open sentence view in the background.
-  const prepareExampleSentence = useCallback((text: string, sourceWord: string, sourceSense?: string): StoredItem | null => {
+  // Resolve an example to a sentence card without changing the notebook. Prepared analysis and its
+  // image are global source material, so previewing can read them before the user explicitly saves.
+  const prepareExampleSentence = useCallback(async (text: string, sourceWord: string, sourceSense?: string): Promise<StoredItem | null> => {
     const identity = normalizeSentenceIdentity(text);
     if (!identity) return null;
 
@@ -2744,38 +2744,33 @@ const App: React.FC = () => {
       !item.isDeleted && isSentenceItem(item) &&
       normalizeSentenceIdentity((item.data as SentenceData).text) === identity
     );
-    let sentenceItem = existing;
-    if (!sentenceItem) {
-      const now = Date.now();
-      const id = crypto.randomUUID();
-      sentenceItem = {
-        data: { id, text, sourceWord, sourceSense },
-        type: 'sentence',
-        savedAt: now,
-        updatedAt: now,
-        srs: SRSAlgorithm.createNew(id, 'sentence'),
-      };
-      handleSaveRef.current(sentenceItem);
-    }
+    if (existing && (existing.data as SentenceData).analysis) return existing;
 
-    if (!(sentenceItem.data as SentenceData).analysis) {
-      const enrichmentCandidate: StoredItem = {
-        ...sentenceItem,
-        data: { ...(sentenceItem.data as SentenceData) },
-      };
-      void saveItems([enrichmentCandidate]).then(() => {
-        if ((enrichmentCandidate.data as SentenceData).analysis) {
-          handleSaveRef.current(enrichmentCandidate);
-        }
-      }).catch(error => {
-        logError('Failed to load prepared sentence analysis:', error);
-      });
-    }
-    return sentenceItem;
+    const id = existing?.data.id ?? `sentence-preview:${crypto.randomUUID()}`;
+    let enrichment = null;
+    try {
+      const { default: loadEnrichment } = await import('./services/sentenceEnrichment');
+      enrichment = await loadEnrichment(text);
+    } catch { /* The preview remains usable when prepared metadata is unavailable. */ }
+    return {
+      ...(existing ?? {
+        type: 'sentence' as const,
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.createNew(id, 'sentence'),
+      }),
+      data: {
+        ...(existing?.data as SentenceData | undefined),
+        id,
+        text,
+        sourceWord,
+        sourceSense,
+        ...(enrichment ?? {}),
+      },
+    };
   }, []);
 
-  const handleOpenStudyExample = useCallback((text: string, sourceWord: string, sourceSense?: string) => {
-    const sentence = prepareExampleSentence(text, sourceWord, sourceSense);
+  const handleOpenStudyExample = useCallback(async (text: string, sourceWord: string, sourceSense?: string) => {
+    const sentence = await prepareExampleSentence(text, sourceWord, sourceSense);
     if (sentence) handleViewSentence([sentence], 0);
   }, [handleViewSentence, prepareExampleSentence]);
 

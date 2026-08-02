@@ -322,6 +322,12 @@ const imageStmts = {
 
 const sentenceEnrichmentStmts = {
   get: db.prepare(`SELECT * FROM sentence_enrichments WHERE lookup_hash = ?`),
+  getImage: db.prepare(`
+    SELECT b.data, e.image_mime_type
+    FROM sentence_enrichments e
+    JOIN image_blobs b ON b.content_hash = e.image_content_hash
+    WHERE e.lookup_hash = ?
+  `),
   count: db.prepare(`SELECT COUNT(*) AS count FROM sentence_enrichments`),
   upsert: db.prepare(`
     INSERT INTO sentence_enrichments (
@@ -433,6 +439,19 @@ export function getSentenceEnrichmentForText(text: string): {
   } catch {
     return null;
   }
+}
+
+export function getSentenceEnrichmentImage(lookupHash: string): {
+  data: Buffer;
+  mimeType: string;
+} | null {
+  if (!/^[a-f0-9]{64}$/.test(lookupHash)) return null;
+  const row = sentenceEnrichmentStmts.getImage.get(lookupHash) as {
+    data: Buffer;
+    image_mime_type: string;
+  } | undefined;
+  if (!row?.data || !/^image\/(?:avif|gif|jpeg|png|webp)$/.test(row.image_mime_type || '')) return null;
+  return { data: row.data, mimeType: row.image_mime_type };
 }
 
 export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord): SentenceEnrichmentImportResult {

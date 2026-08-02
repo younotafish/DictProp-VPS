@@ -124,7 +124,7 @@ export interface SentenceData {
   text: string; // The sentence text. Markup: {{studied item}} (emphasis) and [[uncommon term]] (clickable lookup)
   sourceWord: string; // The vocab word this sentence came from
   sourceSense?: string; // The sense label of the source word
-  imageUrl?: string; // Optional user-attached image (base64 data URI in memory; 'idb:stored'/'server:has_image' marker once offloaded)
+  imageUrl?: string; // Attached or prepared image (base64/API URL in memory; IDB/server marker once offloaded)
   analysis?: SentenceAnalysis;
   analysisGeneratedAt?: number;
   usageAudit?: UsageAudit;
@@ -258,7 +258,7 @@ export const getItemSense = (item: StoredItem): string => {
 };
 
 /**
- * Gets the image URL of a stored item (base64 data URI).
+ * Gets the image reference of a stored item (data URI, API URL, or lazy-load marker).
  * @param item - The stored item
  * @returns Base64 image data URI or undefined if no image
  */
