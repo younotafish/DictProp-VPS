@@ -24,6 +24,7 @@ test('production and local enrichment schedules both run every six hours', () =>
   assert.match(runner, /CODEX_MODEL=gpt-5\.5/);
   assert.match(runner, /IPA_CLAUDE_CONCURRENCY="\$\{IPA_CLAUDE_CONCURRENCY:-2\}"/);
   assert.match(runner, /IPA_META_CONCURRENCY="\$\{IPA_META_CONCURRENCY:-2\}"/);
+  assert.match(runner, /IPA_CLAUDE_REQUEST_BATCH_SIZE="\$\{IPA_CLAUDE_REQUEST_BATCH_SIZE:-24\}"/);
   assert.match(runner, /IPA_META_REQUEST_BATCH_SIZE="\$\{IPA_META_REQUEST_BATCH_SIZE:-12\}"/);
   assert.match(runner, /generate-sentence-natural-ipa\.mjs/);
   assert.match(runner, /apply-reviewed-natural-ipa\.mjs/);

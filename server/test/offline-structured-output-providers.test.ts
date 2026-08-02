@@ -105,6 +105,7 @@ test('Meta IPA batches are split into bounded replayable requests', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-meta-ipa-batches-'));
   try {
     const curl = join(root, 'curl.cjs');
+    const codex = join(root, 'codex.cjs');
     const sourcePath = join(root, 'source.json');
     const outputPath = join(root, 'ipa.json');
     const workPath = join(root, 'work');
@@ -118,15 +119,33 @@ const prompt = body.messages[0].content;
 const marker = '\\n\\nINPUT:\\n';
 const input = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length));
 fs.appendFileSync(process.env.CALL_LOG, String(input.length) + '\\n');
+const failThisChunk = input[0].itemIndex === 2 && !fs.existsSync(process.env.FAIL_FLAG);
+if (failThisChunk) fs.writeFileSync(process.env.FAIL_FLAG, 'failed once');
 const results = input.map(record => ({
   itemIndex: record.itemIndex,
-  naturalSpeechIpa: '/ðɪs ɪz ə kəmˈplit ˈtɛst ˈsɛntəns/'
+  naturalSpeechIpa: failThisChunk ? 'invalid' : '/ðɪs ɪz ə kəmˈplit ˈtɛst ˈsɛntəns/'
 }));
 process.stdout.write(JSON.stringify({
   choices: [{ message: { content: JSON.stringify({ results }) } }]
 }));
 `);
+    writeFileSync(codex, `#!/usr/bin/env node
+const fs = require('node:fs');
+let prompt = '';
+process.stdin.on('data', chunk => { prompt += chunk; });
+process.stdin.on('end', () => {
+  const marker = '\\n\\nINPUT:\\n';
+  const input = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length));
+  const results = input.map(record => ({
+    itemIndex: record.itemIndex,
+    naturalSpeechIpa: '/ðɪs ɪz ə kəmˈplit ˈtɛst ˈsɛntəns/'
+  }));
+  const outputIndex = process.argv.indexOf('-o');
+  fs.writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ results }));
+});
+`);
     chmodSync(curl, 0o700);
+    chmodSync(codex, 0o700);
     writeFileSync(sourcePath, JSON.stringify({
       version: 1,
       sentences: Array.from({ length: 5 }, (_, index) => ({
@@ -142,13 +161,73 @@ process.stdout.write(JSON.stringify({
       env: {
         ...process.env,
         CALL_LOG: callLog,
+        FAIL_FLAG: join(root, 'failed-once'),
         CURL_BIN: curl,
+        CODEX_BIN: codex,
         DEEPINFRA_API_KEY: 'test-secret',
-        IPA_CODEX_CONCURRENCY: '0',
+        IPA_CODEX_CONCURRENCY: '1',
         IPA_CLAUDE_CONCURRENCY: '0',
         IPA_META_CONCURRENCY: '1',
+        IPA_DRAFT_PROVIDERS: 'meta',
         IPA_BATCH_SIZE: '5',
         IPA_META_REQUEST_BATCH_SIZE: '2',
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(readFileSync(callLog, 'utf8').trim().split('\n').map(Number), [2, 2, 2, 1]);
+    assert.equal(JSON.parse(readFileSync(outputPath, 'utf8')).entries.length, 5);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Claude IPA batches are split before oversized structured reviews', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-claude-ipa-batches-'));
+  try {
+    const claude = join(root, 'claude.cjs');
+    const sourcePath = join(root, 'source.json');
+    const outputPath = join(root, 'ipa.json');
+    const workPath = join(root, 'work');
+    const callLog = join(root, 'calls.log');
+    writeFileSync(claude, `#!/usr/bin/env node
+const fs = require('node:fs');
+let prompt = '';
+process.stdin.on('data', chunk => { prompt += chunk; });
+process.stdin.on('end', () => {
+  const marker = '\\n\\nINPUT:\\n';
+  const input = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length));
+  fs.appendFileSync(process.env.CALL_LOG, String(input.length) + '\\n');
+  const results = input.map(record => ({
+    itemIndex: record.itemIndex,
+    naturalSpeechIpa: '/ðɪs ɪz ə kəmˈplit ˈtɛst ˈsɛntəns/'
+  }));
+  process.stdout.write(JSON.stringify({
+    type: 'result', is_error: false, structured_output: { results }
+  }));
+});
+`);
+    chmodSync(claude, 0o700);
+    writeFileSync(sourcePath, JSON.stringify({
+      version: 1,
+      sentences: Array.from({ length: 5 }, (_, index) => ({
+        id: `sentence-${index}`,
+        text: 'This is a complete test sentence.',
+        sourceWord: 'test',
+      })),
+    }));
+
+    const result = spawnSync(process.execPath, [naturalIpaScript, sourcePath, outputPath, workPath], {
+      encoding: 'utf8',
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        CALL_LOG: callLog,
+        CLAUDE_BIN: claude,
+        IPA_CODEX_CONCURRENCY: '0',
+        IPA_CLAUDE_CONCURRENCY: '1',
+        IPA_META_CONCURRENCY: '0',
+        IPA_BATCH_SIZE: '5',
+        IPA_CLAUDE_REQUEST_BATCH_SIZE: '2',
       },
     });
     assert.equal(result.status, 0, result.stderr);

@@ -106,6 +106,7 @@ function boundedBatchSize(value, fallback, maximum) {
     : Math.max(1, Math.min(maximum, fallback));
 }
 const batchSize = boundedBatchSize(process.env.IPA_BATCH_SIZE, 12, 50);
+const claudeRequestBatchSize = boundedBatchSize(process.env.IPA_CLAUDE_REQUEST_BATCH_SIZE, 24, batchSize);
 const metaRequestBatchSize = boundedBatchSize(process.env.IPA_META_REQUEST_BATCH_SIZE, 12, batchSize);
 const batches = [];
 for (let index = 0; index < sentences.length; index += batchSize) batches.push(sentences.slice(index, index + batchSize));
@@ -124,6 +125,18 @@ const providerLimits = {
 const providerModels = { codex: CODEX_MODEL, claude: CLAUDE_MODEL, meta: META_MODEL };
 const enabledProviders = Object.keys(providerLimits).filter(provider => providerLimits[provider] > 0);
 if (enabledProviders.length === 0) throw new Error('At least one IPA provider must have positive concurrency');
+const configuredDraftProviders = String(process.env.IPA_DRAFT_PROVIDERS || '')
+  .split(',')
+  .map(provider => provider.trim().toLowerCase())
+  .filter(Boolean);
+const draftProviders = configuredDraftProviders.length > 0
+  ? [...new Set(configuredDraftProviders)]
+  : enabledProviders;
+for (const provider of draftProviders) {
+  if (!enabledProviders.includes(provider)) {
+    throw new Error(`IPA draft provider is not enabled: ${provider}`);
+  }
+}
 
 function createSemaphore(limit) {
   let active = 0;
@@ -149,10 +162,15 @@ function validateIpa(value, sentence, id) {
   const ipa = value.trim();
   if (!/^\/[^/\n]+\/$/.test(ipa)) throw new Error(`${id}: IPA must have exactly one surrounding slash pair`);
   if (/[\[\]{}<>`]/.test(ipa)) throw new Error(`${id}: IPA contains markup`);
+  if (/[0-9A-Z]/.test(ipa)) throw new Error(`${id}: IPA contains digits or uppercase spelling`);
+  if (/əʊ|ɜː|ɒ/.test(ipa)) throw new Error(`${id}: IPA contains a likely non-American transcription`);
   const sourceWords = stripMarkers(sentence).match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) || [];
   const ipaTokens = ipa.slice(1, -1).trim().split(/\s+/).filter(Boolean);
   if (sourceWords.length >= 6 && ipaTokens.length < Math.ceil(sourceWords.length * 0.55)) {
     throw new Error(`${id}: IPA appears to omit part of the sentence`);
+  }
+  if (ipaTokens.length > sourceWords.length * 1.7 + 4) {
+    throw new Error(`${id}: IPA has implausibly many tokens`);
   }
   return ipa;
 }
@@ -213,7 +231,11 @@ async function generateStructured(provider, prompt, resultPath) {
 }
 
 async function generateStageResult({ provider, instruction, correction, input, resultPath }) {
-  const requestBatchSize = provider === 'meta' ? metaRequestBatchSize : input.length;
+  const requestBatchSize = provider === 'meta'
+    ? metaRequestBatchSize
+    : provider === 'claude'
+      ? claudeRequestBatchSize
+      : input.length;
   if (input.length <= requestBatchSize) {
     await generateStructured(
       provider,
@@ -225,26 +247,50 @@ async function generateStageResult({ provider, instruction, correction, input, r
 
   const partPaths = [];
   const results = [];
+  let complete = false;
   try {
     for (let offset = 0; offset < input.length; offset += requestBatchSize) {
       const requestInput = input.slice(offset, offset + requestBatchSize);
       const partPath = `${resultPath}.part-${String((offset / requestBatchSize) + 1).padStart(2, '0')}`;
       partPaths.push(partPath);
-      await generateStructured(
-        provider,
-        `${instruction}${correction}\n\nINPUT:\n${JSON.stringify(requestInput)}`,
-        partPath,
-      );
-      const parsed = JSON.parse(readFileSync(partPath, 'utf8'));
-      if (!Array.isArray(parsed.results) || parsed.results.length !== requestInput.length) {
-        throw new Error('Wrong provider request result count');
+      try {
+        if (!existsSync(partPath)) {
+          await generateStructured(
+            provider,
+            `${instruction}${correction}\n\nINPUT:\n${JSON.stringify(requestInput)}`,
+            partPath,
+          );
+        }
+        const parsed = JSON.parse(readFileSync(partPath, 'utf8'));
+        if (!Array.isArray(parsed.results) || parsed.results.length !== requestInput.length) {
+          throw new Error('Wrong provider request result count');
+        }
+        const byIndex = new Map(parsed.results.map(result => [result.itemIndex, result]));
+        if (byIndex.size !== requestInput.length) throw new Error('Duplicate provider request indexes');
+        for (const record of requestInput) {
+          const result = byIndex.get(record.itemIndex);
+          if (!result) throw new Error(`Missing provider request index ${record.itemIndex}`);
+          results.push({
+            itemIndex: record.itemIndex,
+            naturalSpeechIpa: validateIpa(
+              result.naturalSpeechIpa,
+              record.sentence,
+              `item ${record.itemIndex}`,
+            ),
+          });
+        }
+      } catch (error) {
+        if (existsSync(partPath)) unlinkSync(partPath);
+        throw error;
       }
-      results.push(...parsed.results);
     }
     writeFileSync(resultPath, `${JSON.stringify({ results })}\n`, { mode: 0o600 });
+    complete = true;
   } finally {
-    for (const partPath of partPaths) {
-      if (existsSync(partPath)) unlinkSync(partPath);
+    if (complete) {
+      for (const partPath of partPaths) {
+        if (existsSync(partPath)) unlinkSync(partPath);
+      }
     }
   }
 }
@@ -254,11 +300,16 @@ function draftProvidersFor(preferredProvider) {
 }
 
 function reviewProvidersFor(draftProvider) {
-  const preferences = draftProvider === 'codex'
+  const defaults = draftProvider === 'codex'
     ? ['claude', 'meta', 'codex']
     : draftProvider === 'claude'
       ? ['codex', 'meta', 'claude']
       : ['codex', 'claude', 'meta'];
+  const configured = String(process.env[`IPA_${draftProvider.toUpperCase()}_REVIEW_PROVIDERS`] || '')
+    .split(',')
+    .map(provider => provider.trim().toLowerCase())
+    .filter(Boolean);
+  const preferences = [...new Set([...configured, ...defaults])];
   const distinctProviders = preferences.filter(
     provider => enabledProviders.includes(provider) && provider !== draftProvider,
   );
@@ -359,10 +410,10 @@ async function runBatch(batch, batchIndex, draftProvider) {
 }
 
 const results = new Array(batches.length);
-const draftSchedule = enabledProviders.flatMap(provider =>
+const draftSchedule = draftProviders.flatMap(provider =>
   Array.from({ length: providerLimits[provider] }, () => provider)
 );
-const providerQueues = Object.fromEntries(enabledProviders.map(provider => [provider, []]));
+const providerQueues = Object.fromEntries(draftProviders.map(provider => [provider, []]));
 for (let index = 0; index < batches.length; index++) {
   providerQueues[draftSchedule[index % draftSchedule.length]].push(index);
 }
@@ -386,7 +437,7 @@ async function terminateActiveChildren() {
 }
 
 try {
-  const workers = enabledProviders.flatMap(provider =>
+  const workers = draftProviders.flatMap(provider =>
     Array.from({ length: Math.min(providerLimits[provider], providerQueues[provider].length) }, () => worker(provider))
   );
   await Promise.all(workers);
@@ -415,6 +466,7 @@ writeFileSync(outputPath, `${JSON.stringify({
   version: 1,
   model: `cross-reviewed:${enabledProviders.join('+')}`,
   models,
+  draftProviders,
   generatedAt,
   entries,
 }, null, 2)}\n`, { mode: 0o600 });
