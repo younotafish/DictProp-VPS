@@ -16,6 +16,7 @@ import { authRoutes } from './routes/auth.js';
 import { comparisonsRoutes } from './routes/comparisons.js';
 import { imageRoutes } from './routes/images.js';
 import { itemsRoutes } from './routes/items.js';
+import { realLifeRoutes } from './routes/real-life.js';
 import { ttsRoutes } from './routes/tts.js';
 
 export interface AppOptions {
@@ -105,6 +106,7 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/comparisons', smallJsonLimit);
   app.use('/api/comparisons/*', smallJsonLimit);
   app.use('/api/sentence-enrichments/*', smallJsonLimit);
+  app.use('/api/real-life/*', smallJsonLimit);
   app.use('/api/tts/*', smallJsonLimit);
   app.use('/api/reviews', smallJsonLimit);
   app.use('/api/reviews/*', smallJsonLimit);
@@ -132,6 +134,7 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
   app.use('/api/import', createConcurrencyLimit(1));
   app.route('/api', itemsRoutes);
+  app.route('/api', realLifeRoutes);
   app.route('/api', options.aiRouter ?? aiRoutes);
   app.route('/api', imageRoutes);
   app.route('/api', ttsRoutes);

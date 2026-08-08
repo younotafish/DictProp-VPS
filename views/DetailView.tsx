@@ -127,7 +127,7 @@ interface DetailViewProps {
   comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
   comparingKeys?: string[];                   // comparison keys currently generating (background queue)
   onOpenComparison?: (words: string[]) => void;
-  onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  onSaveSentence?: (text: string, word: string, sense?: string, prepared?: SentenceData) => void;
   onOpenExampleSentence?: (text: string, word: string, sense?: string) => StoredItem | null | Promise<StoredItem | null>;
   isSentenceSaved?: (text: string) => boolean;
   onRemoveVocabFromPhrase?: (phraseId: string, vocabId: string) => void;
@@ -391,27 +391,94 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // even when the local index is briefly stale relative to the latest sentenceItems.
   const sentenceIndex = sentenceMode ? Math.min(currentGroupIndex, sentenceItems!.length - 1) : 0;
   const currentSentenceSnapshot = sentenceMode ? (sentenceItems![sentenceIndex] ?? null) : null;
+  const catalogSentencePreview = !!(currentSentenceSnapshot &&
+    (currentSentenceSnapshot.data as SentenceData).catalogSentenceId);
+  const readOnlySentencePreview = sentencePreviewOnly || catalogSentencePreview;
+  const [preparedSentenceById, setPreparedSentenceById] = useState<Record<string, StoredItem>>({});
+  const [preparingSentenceId, setPreparingSentenceId] = useState<string | null>(null);
+  const preparationRequestsRef = useRef(new Set<string>());
+  const unavailableSentenceIdsRef = useRef(new Set<string>());
+  const preparedSentenceSnapshot = currentSentenceSnapshot
+    ? (preparedSentenceById[currentSentenceSnapshot.data.id] ?? currentSentenceSnapshot)
+    : null;
   const savedCurrentSentence = currentSentenceSnapshot?.data.id.startsWith('sentence-preview:')
     ? savedItems.find(item => item.type === 'sentence' &&
         normalizeSentenceIdentity((item.data as SentenceData).text) ===
         normalizeSentenceIdentity((currentSentenceSnapshot.data as SentenceData).text))
     : undefined;
-  const currentSentence = savedCurrentSentence && currentSentenceSnapshot
+  const currentSentence = savedCurrentSentence && preparedSentenceSnapshot
     ? {
         ...savedCurrentSentence,
         data: {
-          ...(currentSentenceSnapshot.data as SentenceData),
+          ...(preparedSentenceSnapshot.data as SentenceData),
           ...(savedCurrentSentence.data as SentenceData),
-          analysis: (savedCurrentSentence.data as SentenceData).analysis ??
-            (currentSentenceSnapshot.data as SentenceData).analysis,
+          analysis: (preparedSentenceSnapshot.data as SentenceData).analysis ??
+            (savedCurrentSentence.data as SentenceData).analysis,
           imageUrl: (savedCurrentSentence.data as SentenceData).imageUrl ??
-            (currentSentenceSnapshot.data as SentenceData).imageUrl,
+            (preparedSentenceSnapshot.data as SentenceData).imageUrl,
         },
       }
-    : currentSentenceSnapshot;
+    : preparedSentenceSnapshot;
   const isSentencePreview = !savedCurrentSentence && !!currentSentenceSnapshot &&
-    (sentencePreviewOnly || currentSentenceSnapshot.data.id.startsWith('sentence-preview:'));
+    (readOnlySentencePreview || currentSentenceSnapshot.data.id.startsWith('sentence-preview:'));
   const currentSentenceText = currentSentence ? (currentSentence.data as SentenceData).text : '';
+  const sentenceExitLabel = catalogSentencePreview
+    ? 'Real Life'
+    : isSentencePreview
+      ? 'Word'
+      : 'Sentences';
+
+  useEffect(() => {
+    if (!catalogSentencePreview || !currentSentenceSnapshot) return;
+    const id = currentSentenceSnapshot.data.id;
+    const sourceSentence = currentSentenceSnapshot.data as SentenceData;
+    if (!sourceSentence.catalogSentenceId || unavailableSentenceIdsRef.current.has(id)) return;
+    const prepared = preparedSentenceById[id];
+    if ((prepared?.data as SentenceData | undefined)?.analysis || preparationRequestsRef.current.has(id)) return;
+    preparationRequestsRef.current.add(id);
+    setPreparingSentenceId(id);
+    void import('../services/sentenceEnrichment').then(({ default: loadPreparedSentenceEnrichment }) =>
+      loadPreparedSentenceEnrichment(sourceSentence.text)
+    ).then(result => {
+      if (!result) {
+        unavailableSentenceIdsRef.current.add(id);
+        return;
+      }
+      const preparedItem: StoredItem = {
+        ...currentSentenceSnapshot,
+        data: {
+          ...sourceSentence,
+          analysis: result.analysis,
+          analysisGeneratedAt: result.analysisGeneratedAt,
+          ...(result.imageUrl ? { imageUrl: result.imageUrl } : {}),
+        },
+      };
+      setPreparedSentenceById(current => ({ ...current, [id]: preparedItem }));
+
+      const savedMatch = savedItemsRef.current.find(candidate =>
+        candidate.type === 'sentence' && !candidate.isDeleted &&
+        normalizeSentenceIdentity((candidate.data as SentenceData).text) === normalizeSentenceIdentity(sourceSentence.text)
+      );
+      if (savedMatch) {
+        const savedData = savedMatch.data as SentenceData;
+        onSave({
+          ...savedMatch,
+          data: {
+            ...savedData,
+            catalogSentenceId: sourceSentence.catalogSentenceId,
+            analysis: result.analysis,
+            analysisGeneratedAt: result.analysisGeneratedAt,
+            imageUrl: savedData.imageUrl ?? result.imageUrl,
+          },
+        });
+      }
+    }).catch(error => {
+      warn('Failed to load prepared Real Life sentence', error);
+    }).finally(() => {
+      preparationRequestsRef.current.delete(id);
+      setPreparingSentenceId(current => current === id ? null : current);
+    });
+  }, [catalogSentencePreview, currentSentenceSnapshot, onSave, preparedSentenceById]);
 
   // User-attached image for the sentence under review. Base64 → render directly; a marker
   // ('idb:stored'/'server:has_image') → OfflineImage lazy-loads it by id (IDB, then server).
@@ -2101,10 +2168,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
                     : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-100'
                 }`}
-                title={isSentenceAutoPlaying ? 'Auto-play is locked. Open its controls to stop.' : isSentencePreview ? 'Back to word (Esc)' : 'Back to Sentences (Esc)'}
+                title={isSentenceAutoPlaying ? 'Auto-play is locked. Open its controls to stop.' : `Back to ${sentenceExitLabel} (Esc)`}
               >
                 {isSentenceAutoPlaying ? <Lock size={16} /> : <ArrowLeft size={18} />}
-                {isSentenceAutoPlaying ? 'Auto-play' : isSentencePreview ? 'Word' : 'Sentences'}
+                {isSentenceAutoPlaying ? 'Auto-play' : sentenceExitLabel}
               </button>
               <div className="flex items-center gap-2">
                 <button
@@ -2116,6 +2183,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 >
                   <BookOpenText size={15} />
                 </button>
+                {preparingSentenceId === currentSentenceSnapshot?.data.id && (
+                  <span className="flex items-center gap-1 text-[10px] font-semibold text-indigo-500">
+                    <Loader2 size={12} className="animate-spin" /> Loading lesson
+                  </span>
+                )}
                 {!isMobile && (
                   <button
                     onClick={(e) => { e.stopPropagation(); setTapToPlay(v => { const next = !v; try { localStorage.setItem('dictprop_sentence_tap_play', next ? '1' : '0'); } catch { /* ignore */ } return next; }); }}
@@ -2128,7 +2200,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <span className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
                   <MessageSquareQuote size={12} /> {sentenceIndex + 1} / {sentenceItems?.length ?? 0}
                 </span>
-                {sentenceDueCount > 0 && (
+                {!readOnlySentencePreview && sentenceDueCount > 0 && (
                   <span className="text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
                     {sentenceDueCount} due
                   </span>
@@ -2245,7 +2317,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                       onClick={(event) => {
                         event.stopPropagation();
                         const sentence = currentSentence.data as SentenceData;
-                        onSaveSentence(sentence.text, sentence.sourceWord, sentence.sourceSense);
+                        onSaveSentence(sentence.text, sentence.sourceWord, sentence.sourceSense, sentence);
                       }}
                       className="flex min-h-11 items-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
                       title="Save sentence for review"

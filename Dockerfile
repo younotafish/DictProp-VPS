@@ -32,6 +32,7 @@ COPY package.json package-lock.json ./
 RUN npm pkg delete devDependencies.canvas && npm ci --onnxruntime-node-install-cuda=skip
 COPY index.html index.tsx tsconfig.json postcss.config.js ./
 COPY App.tsx types.ts ./
+COPY content/ ./content/
 COPY src/ ./src/
 COPY public/ ./public/
 COPY views/ ./views/
@@ -70,6 +71,7 @@ RUN cd server && npm ci --production
 # Copy built artifacts from builder
 COPY --from=builder /app/server/dist/ ./server/dist/
 COPY --from=builder /app/dist/ ./dist/
+COPY --from=builder /app/content/ ./content/
 
 RUN mkdir -p /app/data
 

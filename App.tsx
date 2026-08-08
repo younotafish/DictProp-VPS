@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
-import { Book, BrainCircuit, Keyboard, MessageSquareQuote, Loader2, X } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, startImageBackfill, getImageBackfillStatus, cancelImageBackfill, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type ImageBackfillScope, type ImageBackfillStatus, type RevisionCursor } from './services/api';
@@ -26,6 +26,7 @@ const DuplicatesModal = lazy(() => import('./components/DuplicatesModal').then(m
 const CardReviewPopup = lazy(() => import('./components/CardReviewPopup').then(module => ({ default: module.CardReviewPopup })));
 const KeyboardHelpModal = lazy(() => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
 const StudyEnhanced = lazy(() => import('./views/StudyEnhanced').then(module => ({ default: module.StudyEnhanced })));
+const AppNavigation = lazy(() => import('./components/AppNavigation'));
 const SENTENCE_CHUNK_RELOAD_KEY = 'sentence_chunk_reload_attempted';
 const loadSentencesView = async () => {
   try {
@@ -44,6 +45,7 @@ const loadSentencesView = async () => {
   }
 };
 const SentencesView = lazy(loadSentencesView);
+const RealLifeView = lazy(() => import('./views/RealLifeView').then(module => ({ default: module.RealLifeView })));
 const loadDetailView = () => import('./views/DetailView').then(module => ({ default: module.DetailView }));
 const DetailView = lazy(loadDetailView);
 
@@ -273,25 +275,7 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
   return stripped;
 }
 
-// Keyboard shortcut display component
 const DETAIL_CONTEXT_KEY = 'app_detail_context';
-
-const NavButton = ({ view, currentView, onClick, icon: Icon, label, badge }: { view: ViewState, currentView: ViewState, onClick: (view: ViewState) => void, icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, label: string, badge?: number }) => (
-  <button
-    onClick={() => onClick(view)}
-    className={`flex flex-col items-center justify-center flex-1 py-3 gap-1 transition-colors relative ${currentView === view ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
-  >
-    <div className="relative">
-      <Icon size={24} strokeWidth={currentView === view ? 2.5 : 2} />
-      {badge !== undefined && badge > 0 && (
-        <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 bg-violet-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
-          {badge > 99 ? '99+' : badge}
-        </span>
-      )}
-    </div>
-    <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
-  </button>
-);
 
 const App: React.FC = () => {
   // Auth state
@@ -328,7 +312,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
     const saved = localStorage.getItem('app_current_view');
     // Default to notebook, and handle legacy 'search' value from old localStorage
-    if (!saved || saved === 'search' || !['notebook', 'study', 'sentences'].includes(saved)) {
+    if (!saved || saved === 'search' || !['notebook', 'study', 'sentences', 'real-life'].includes(saved)) {
       return 'notebook';
     }
     return saved as ViewState;
@@ -337,7 +321,7 @@ const App: React.FC = () => {
   // Sentence detail is a substantial lazy chunk. Start fetching it as soon as the list is visible so
   // tapping a sentence never pays the network/module-parse cost before the full-screen view can mount.
   useEffect(() => {
-    if (currentView === 'sentences') void loadDetailView().catch(() => {});
+    if (currentView === 'sentences' || currentView === 'real-life') void loadDetailView().catch(() => {});
   }, [currentView]);
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadDetailView().catch(() => {}); }, 2_000);
@@ -2561,14 +2545,18 @@ const App: React.FC = () => {
   const handleOpenComparison = handleCompare;
 
   // Save sentence for review
-  const handleSaveSentence = useCallback((text: string, sourceWord: string, sourceSense?: string) => {
+  const handleSaveSentence = useCallback((text: string, sourceWord: string, sourceSense?: string, prepared?: SentenceData) => {
     const sentenceData: SentenceData = {
       id: crypto.randomUUID(),
       text,
       sourceWord,
       sourceSense,
+      ...(prepared?.catalogSentenceId ? { catalogSentenceId: prepared.catalogSentenceId } : {}),
+      ...(prepared?.analysis ? { analysis: prepared.analysis } : {}),
+      ...(prepared?.analysisGeneratedAt ? { analysisGeneratedAt: prepared.analysisGeneratedAt } : {}),
+      ...(prepared?.imageUrl ? { imageUrl: prepared.imageUrl } : {}),
     };
-    handleSave({
+    handleSaveRef.current({
       data: sentenceData,
       type: 'sentence',
       savedAt: Date.now(),
@@ -3172,6 +3160,16 @@ const App: React.FC = () => {
           />
         )}
 
+        {currentView === 'real-life' && (
+          <RealLifeView
+            onOpenSentence={handleViewSentence}
+            isSentenceSaved={isSentenceSaved}
+            onScroll={handleScroll}
+            findSaved={findSavedItem}
+            onOpenCard={openCardPopup}
+          />
+        )}
+
         </Suspense>
       </main>
 
@@ -3194,20 +3192,15 @@ const App: React.FC = () => {
       />
       </Suspense>
 
-      <nav ref={navRef} className="fixed bottom-0 left-0 right-0 bg-white flex justify-between px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 z-30 transition-transform duration-300 translate-y-0">
-        <NavButton view="notebook" currentView={currentView} onClick={setCurrentView} icon={Book} label="Notebook" />
-        <NavButton view="sentences" currentView={currentView} onClick={setCurrentView} icon={MessageSquareQuote} label="Sentences" badge={sentenceDueCount || undefined} />
-        <NavButton view="study" currentView={currentView} onClick={setCurrentView} icon={BrainCircuit} label="Study" />
-        {/* Keyboard shortcuts hint - only visible on desktop */}
-        <button 
-          onClick={() => setShowKeyboardHelp(true)}
-          className="hidden md:flex flex-col items-center justify-center py-3 gap-1 text-slate-300 hover:text-slate-500 transition-colors"
-          title="Keyboard shortcuts (?)"
-        >
-          <Keyboard size={20} strokeWidth={2} />
-          <span className="text-[10px] font-bold uppercase tracking-wider">?</span>
-        </button>
-      </nav>
+      <Suspense fallback={null}>
+        <AppNavigation
+          ref={navRef}
+          currentView={currentView}
+          onNavigate={setCurrentView}
+          sentenceDueCount={sentenceDueCount}
+          onKeyboardHelp={() => setShowKeyboardHelp(true)}
+        />
+      </Suspense>
 
       {/* Keyboard Shortcuts Help Modal */}
       <Suspense fallback={null}>
