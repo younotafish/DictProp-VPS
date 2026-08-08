@@ -21,7 +21,13 @@ test('Real Life progress ids are stable and include the collection boundary', ()
   assert.equal((item.data as any).catalogCollectionId, 'career-conversations');
   assert.equal((item.data as any).catalogSentenceId, career.id);
   assert.equal(isRealLifeProgressItem(item), true);
-  assert.deepEqual(createRealLifeProgressItemFromId(item.data.id, 100), item);
+  const recreated = createRealLifeProgressItemFromId(item.data.id, 100);
+  assert.ok(recreated);
+  assert.deepEqual(recreated.data, item.data);
+  assert.equal(recreated.savedAt, item.savedAt);
+  assert.equal(recreated.srs.id, item.srs.id);
+  assert.equal(recreated.srs.type, item.srs.type);
+  assert.equal(recreated.srs.totalReviews, 0);
   assert.equal(createRealLifeProgressItemFromId('real-life-sentence:not-in-catalog'), null);
 });
 
