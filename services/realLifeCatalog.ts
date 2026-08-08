@@ -1,6 +1,11 @@
 import catalogSource from '../content/real-life-catalog.json';
 
-export type RealLifeAccent = 'indigo' | 'emerald';
+export type RealLifeAccent = 'indigo' | 'emerald' | 'amber';
+
+interface RealLifeSourceLink {
+  label: string;
+  url: string;
+}
 
 interface RawSentence {
   text: string;
@@ -21,6 +26,8 @@ interface RawCollection {
   description: string;
   level: string;
   accent: RealLifeAccent;
+  sourceNote?: string;
+  sourceLinks?: RealLifeSourceLink[];
   sections: RawSection[];
 }
 

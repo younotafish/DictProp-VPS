@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "collection": {
+    "id": "executive-communication",
+    "title": "Executive Communication",
+    "eyebrow": "Strategic leadership language",
+    "description": "Original practice lines synthesizing Mike Li's publicly described methods for executive presence, managing up, influence, and meeting leadership.",
+    "level": "C1–C2",
+    "accent": "amber",
+    "sourceNote": "Synthesized from Mike Li's public course syllabus and free lessons. These are original practice lines, not quotations.",
+    "sourceLinks": [
+      {
+        "label": "Mike Li on LinkedIn",
+        "url": "https://www.linkedin.com/in/mikelaoli/"
+      },
+      {
+        "label": "Executive Presence course",
+        "url": "https://maven.com/mikeli/beyondthescript"
+      },
+      {
+        "label": "Executive Presence Killers",
+        "url": "https://maven.com/p/207f8a/breakthrough-non-native-speaker-executive-presence-killers"
+      },
+      {
+        "label": "Managing Up case study",
+        "url": "https://maven.com/p/ec1bda"
+      }
+    ]
+  },
+  "methodology": [
+    "Treat executive communication as structure, delivery, audience judgment, cultural decoding, credibility, and impact rather than accent perfection.",
+    "Replace excessive apology with concise ownership, corrective action, and prevention.",
+    "Replace excessive praise with authentic, level-ground professional rapport.",
+    "Replace excessive context with headline-first senior-level brevity.",
+    "Manage up by learning the manager's preferred communication method, anticipating questions and roadblocks, and maintaining a reliable update loop.",
+    "Move from reactive task-taker to trusted strategic partner by connecting work to leadership priorities.",
+    "Influence without authority through stakeholder mapping, strategic alignment, and deliberate communication before, during, and after decisions.",
+    "Prepare crucial meetings around outcomes, resistance, worst-case scenarios, and reframing options.",
+    "Own the full meeting cycle: prepare, facilitate, read the room, handle disagreement, recap, assign ownership, and follow through.",
+    "Build visibility through useful judgment and proactive communication rather than speaking volume."
+  ],
+  "sections": [
+    {
+      "id": "headline-first-brevity",
+      "title": "Headline-first brevity",
+      "description": "Lead with the conclusion, calibrate detail, and make the decision easy to grasp.",
+      "guidance": "Lines for concise executive updates, recommendations, escalations, and answers that give the headline before context."
+    },
+    {
+      "id": "action-over-apology",
+      "title": "Action over apology",
+      "description": "Own mistakes without shrinking, then move quickly to correction and prevention.",
+      "guidance": "Lines that acknowledge impact once, state corrective action, explain prevention, and avoid repeated or self-undermining apologies."
+    },
+    {
+      "id": "level-ground-relationships",
+      "title": "Level-ground relationships",
+      "description": "Build authentic rapport without flattery, deference, or performative praise.",
+      "guidance": "Lines for sincere recognition, respectful challenge, peer-level rapport, and professional confidence with senior leaders."
+    },
+    {
+      "id": "manager-lens",
+      "title": "The manager's lens",
+      "description": "Adapt to how a leader consumes information, makes decisions, and measures success.",
+      "guidance": "Lines for discovering communication preferences, clarifying expectations, understanding priorities, and tailoring the message."
+    },
+    {
+      "id": "proactive-update-loop",
+      "title": "The proactive update loop",
+      "description": "Create predictable visibility so leaders never need to chase the work.",
+      "guidance": "Lines that report status, changes, risks, asks, next steps, cadence, and thresholds for escalation."
+    },
+    {
+      "id": "strategic-partnership",
+      "title": "From task to strategy",
+      "description": "Connect execution to outcomes and become a source of judgment, not just labor.",
+      "guidance": "Lines that challenge the premise, propose options, connect tasks to goals, anticipate downstream effects, and act as a strategic ally."
+    },
+    {
+      "id": "stakeholder-mapping",
+      "title": "Stakeholder mapping",
+      "description": "Identify decision power, incentives, concerns, and the support needed to move.",
+      "guidance": "Lines for mapping decision makers, influencers, blockers, incentives, hidden dependencies, and coalition gaps."
+    },
+    {
+      "id": "prewire-influence",
+      "title": "Pre-wire the decision",
+      "description": "Build understanding and surface objections before the formal meeting.",
+      "guidance": "Lines for one-on-one pre-wiring, testing a proposal, soliciting objections, incorporating feedback, and preventing meeting surprises."
+    },
+    {
+      "id": "high-stakes-preparation",
+      "title": "Prepare for high stakes",
+      "description": "Define the outcome, anticipate resistance, and plan for the worst credible turn.",
+      "guidance": "Lines for outcome definition, assumptions, likely objections, evidence, concessions, walk-away points, and worst-case responses."
+    },
+    {
+      "id": "own-the-room",
+      "title": "Own the room",
+      "description": "Set the frame, guide participation, read dynamics, and protect the meeting outcome.",
+      "guidance": "Lines a facilitator uses to open, frame, redirect, invite voices, stop circular debate, manage time, and steer toward a decision."
+    },
+    {
+      "id": "reframe-conflict",
+      "title": "Reframe conflict",
+      "description": "Turn positional disagreement into a productive discussion of interests and tradeoffs.",
+      "guidance": "Lines that lower defensiveness, separate intent from impact, name the real tension, preserve face, and propose a shared frame."
+    },
+    {
+      "id": "close-and-follow-through",
+      "title": "Close and follow through",
+      "description": "Convert discussion into a durable decision with owners, dates, and an update path.",
+      "guidance": "Lines for summarizing decisions, distinguishing open questions, assigning owners, confirming dates, documenting dissent, and following up."
+    },
+    {
+      "id": "cross-cultural-visibility",
+      "title": "Cross-cultural visibility",
+      "description": "Make judgment visible while communicating confidently across cultural expectations.",
+      "guidance": "Lines for entering discussion early, asking high-value questions, claiming credit accurately, disagreeing across hierarchy, and clarifying implicit norms."
+    }
+  ]
+}

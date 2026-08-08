@@ -5,6 +5,8 @@ import {
   BookmarkCheck,
   BriefcaseBusiness,
   Compass,
+  Crown,
+  ExternalLink,
   Search,
   ShoppingBag,
   Sparkles,
@@ -42,6 +44,12 @@ const collectionStyle = {
     active: 'bg-emerald-600 text-white',
     icon: ShoppingBag,
   },
+  amber: {
+    tile: 'from-amber-600 via-orange-600 to-rose-500',
+    soft: 'bg-amber-50 text-amber-800',
+    active: 'bg-amber-600 text-white',
+    icon: Crown,
+  },
 } as const;
 
 const CollectionTile: React.FC<{
@@ -72,6 +80,11 @@ const CollectionTile: React.FC<{
           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/70 sm:text-xs">{collection.eyebrow}</p>
           <h2 className="mt-2 text-xl font-bold leading-tight sm:text-3xl">{collection.title}</h2>
           <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-white/80 sm:text-sm">{collection.description}</p>
+          {collection.sourceNote && (
+            <span className="mt-3 inline-flex w-fit rounded-full border border-white/20 bg-white/15 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-white/90 sm:text-[10px]">
+              Research synthesis
+            </span>
+          )}
         </div>
 
         <div className="mt-5 flex flex-wrap gap-1.5">
@@ -267,6 +280,26 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
               </button>
             ))}
           </div>
+
+          {selectedCollection.sourceNote && (
+            <details className="mt-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-[11px] text-amber-950">
+              <summary className="cursor-pointer font-bold">Methodology &amp; public sources</summary>
+              <p className="mt-1.5 leading-relaxed text-amber-900/80">{selectedCollection.sourceNote}</p>
+              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+                {selectedCollection.sourceLinks?.map(link => (
+                  <a
+                    key={link.url}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-semibold text-amber-800 hover:text-amber-950 hover:underline"
+                  >
+                    {link.label} <ExternalLink size={10} />
+                  </a>
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       </header>
 

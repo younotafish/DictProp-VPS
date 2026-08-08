@@ -6,7 +6,7 @@
       "title": "Career Conversations",
       "eyebrow": "Workplace English",
       "description": "Lead meetings, build rapport, handle disagreement, and move work forward with natural professional English.",
-      "level": "B2–C1",
+      "level": "C1",
       "accent": "indigo",
       "sections": [
         {
@@ -692,6 +692,1062 @@
             { "text": "What is the next escalation step if this department can't resolve the issue?", "focus": "next escalation step" },
             { "text": "I'd like confirmation by email so there is a written record of the agreement.", "focus": "written record" },
             { "text": "Thank you for taking ownership of the problem and following it through.", "focus": "taking ownership" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "executive-communication",
+      "title": "Executive Communication",
+      "eyebrow": "Strategic leadership language",
+      "description": "Original practice lines synthesizing Mike Li's publicly described methods for executive presence, managing up, influence, and meeting leadership.",
+      "level": "C1–C2",
+      "accent": "amber",
+      "sourceNote": "Synthesized from Mike Li's public course syllabus and free lessons. These are original practice lines, not quotations.",
+      "sourceLinks": [
+        {
+          "label": "Mike Li on LinkedIn",
+          "url": "https://www.linkedin.com/in/mikelaoli/"
+        },
+        {
+          "label": "Executive Presence course",
+          "url": "https://maven.com/mikeli/beyondthescript"
+        },
+        {
+          "label": "Executive Presence Killers",
+          "url": "https://maven.com/p/207f8a/breakthrough-non-native-speaker-executive-presence-killers"
+        },
+        {
+          "label": "Managing Up case study",
+          "url": "https://maven.com/p/ec1bda"
+        }
+      ],
+      "sections": [
+        {
+          "id": "headline-first-brevity",
+          "title": "Headline-first brevity",
+          "description": "Lead with the conclusion, calibrate detail, and make the decision easy to grasp.",
+          "sentences": [
+            {
+              "text": "The short answer is yes: we can hit the date if scope stays fixed.",
+              "focus": "hit the date"
+            },
+            {
+              "text": "My recommendation is to approve the pilot now and revisit scale after two data points.",
+              "focus": "revisit scale"
+            },
+            {
+              "text": "Bottom line, the risk is manageable, but the timeline has no slack left.",
+              "focus": "no slack left"
+            },
+            {
+              "text": "I would not escalate this yet; the decision we need today is which priority comes first.",
+              "focus": "which priority comes first"
+            },
+            {
+              "text": "The headline is that customers are responding, while operational cost is the constraint.",
+              "focus": "operational cost is the constraint"
+            },
+            {
+              "text": "Yes, but with one condition: we need legal review before we commit publicly.",
+              "focus": "commit publicly"
+            },
+            {
+              "text": "I see three options, and the lowest-regret move is extending the deadline by one week.",
+              "focus": "lowest-regret move"
+            },
+            {
+              "text": "The issue is not quality; it is that the dependency is coming in too late.",
+              "focus": "coming in too late"
+            },
+            {
+              "text": "For decision purposes, the financial upside is clear, but adoption remains unproven.",
+              "focus": "adoption remains unproven"
+            },
+            {
+              "text": "My read: this is worth doing only if we can measure impact within the quarter.",
+              "focus": "measure impact within the quarter"
+            },
+            {
+              "text": "The answer is no for now; the business case is not strong enough yet.",
+              "focus": "business case"
+            },
+            {
+              "text": "Before I add detail, do you want the risk view or the cost view first?",
+              "focus": "risk view"
+            },
+            {
+              "text": "The fastest path is to keep the launch date and defer the optional features.",
+              "focus": "defer the optional features"
+            },
+            {
+              "text": "I am comfortable with the spend, provided we treat this as a capped experiment.",
+              "focus": "capped experiment"
+            },
+            {
+              "text": "The main change since last week is demand, which is stronger than our forecast.",
+              "focus": "stronger than our forecast"
+            },
+            {
+              "text": "I would decide today, because the incremental data will not change the recommendation.",
+              "focus": "incremental data"
+            },
+            {
+              "text": "The concern is concentration: one vendor now controls the piece we cannot replace quickly.",
+              "focus": "cannot replace quickly"
+            },
+            {
+              "text": "Here is the headline: we are on track, but only because the team absorbed extra work.",
+              "focus": "absorbed extra work"
+            }
+          ]
+        },
+        {
+          "id": "action-over-apology",
+          "title": "Action over apology",
+          "description": "Own mistakes without shrinking, then move quickly to correction and prevention.",
+          "sentences": [
+            {
+              "text": "I missed the dependency, which delayed the handoff; I am correcting the timeline and adding a review gate.",
+              "focus": "missed the dependency"
+            },
+            {
+              "text": "The estimate was too optimistic; I have reset the delivery plan and will validate assumptions before committing dates.",
+              "focus": "validate assumptions"
+            },
+            {
+              "text": "I caused extra work for the team, so I am taking ownership of the cleanup and changing the checklist to prevent a repeat.",
+              "focus": "prevent a repeat"
+            },
+            {
+              "text": "You are right to flag the gap; I have assigned an owner and added a control point before release.",
+              "focus": "added a control point"
+            },
+            {
+              "text": "I do not want to over-apologize here; the useful move is to fix the issue and put a safeguard in place.",
+              "focus": "put a safeguard in place"
+            },
+            {
+              "text": "The data I shared was incomplete; I am sending the corrected view today and labeling each source by confidence level going forward.",
+              "focus": "confidence level"
+            },
+            {
+              "text": "I missed that risk in the review, and I am updating the model so it surfaces earlier next time.",
+              "focus": "surfaces earlier next time"
+            },
+            {
+              "text": "The handoff created confusion; I am rewriting the instructions and moving ownership questions to the front.",
+              "focus": "moving ownership questions to the front"
+            },
+            {
+              "text": "I understand the impact on your timeline; I am clearing the blocker now and will build in earlier escalation.",
+              "focus": "build in earlier escalation"
+            },
+            {
+              "text": "Let me correct the record: the delay came from my process gap, and the new review step closes it.",
+              "focus": "correct the record"
+            },
+            {
+              "text": "I gave you an outdated number; I am replacing it with the verified figure and noting the source.",
+              "focus": "verified figure"
+            },
+            {
+              "text": "Before we spend more time on fault, can I walk through the fix and the prevention step?",
+              "focus": "the prevention step"
+            },
+            {
+              "text": "I own that miss, and I recommend we pause the launch until the validation pass is complete.",
+              "focus": "validation pass"
+            },
+            {
+              "text": "The customer impact is clear; I am coordinating the response today and adding monitoring so we catch this earlier.",
+              "focus": "adding monitoring"
+            },
+            {
+              "text": "I should have escalated sooner; I am doing that now and setting a threshold for future escalation.",
+              "focus": "setting a threshold"
+            },
+            {
+              "text": "This was a preventable miss, and I am tightening the process instead of asking the team to absorb it again.",
+              "focus": "absorb it again"
+            },
+            {
+              "text": "I understand why confidence took a hit; I am rebuilding it with corrected output and a visible quality check.",
+              "focus": "a visible quality check"
+            },
+            {
+              "text": "I will not make this a long apology; I will make the correction, document the change, and report the result.",
+              "focus": "document the change"
+            }
+          ]
+        },
+        {
+          "id": "level-ground-relationships",
+          "title": "Level-ground relationships",
+          "description": "Build authentic rapport without flattery, deference, or performative praise.",
+          "sentences": [
+            {
+              "text": "I appreciate the rigor in your analysis, and I want to test one assumption before we move forward.",
+              "focus": "test one assumption"
+            },
+            {
+              "text": "Your point lands because it names the risk plainly, not because it makes the answer easy.",
+              "focus": "names the risk plainly"
+            },
+            {
+              "text": "I see the tradeoff differently, but I think we're solving for the same business outcome.",
+              "focus": "solving for the same business outcome"
+            },
+            {
+              "text": "That's a fair challenge; let me separate the concern I share from the conclusion I don't.",
+              "focus": "separate the concern I share"
+            },
+            {
+              "text": "I value how directly you raised that, and I'll respond with the same level of candor.",
+              "focus": "same level of candor"
+            },
+            {
+              "text": "Before we align too quickly, what would make this recommendation feel credible from your side?",
+              "focus": "feel credible from your side"
+            },
+            {
+              "text": "I don't want to overstate it, but your call changed how the team managed the risk.",
+              "focus": "managed the risk"
+            },
+            {
+              "text": "We may disagree on timing, yet I think your objection improves the shape of the plan.",
+              "focus": "improves the shape of the plan"
+            },
+            {
+              "text": "Let me push on that respectfully, because the current framing may hide an important cost.",
+              "focus": "hide an important cost"
+            },
+            {
+              "text": "I can support the direction, provided we are honest about the capacity it will require.",
+              "focus": "honest about the capacity"
+            },
+            {
+              "text": "What I respect here is the judgment, not just the effort, behind that recommendation.",
+              "focus": "judgment, not just the effort"
+            },
+            {
+              "text": "I'm comfortable naming the concern directly, since avoiding it would make our partnership weaker.",
+              "focus": "naming the concern directly"
+            },
+            {
+              "text": "That perspective helps, and I want to add a customer-facing angle before we decide.",
+              "focus": "customer-facing angle"
+            },
+            {
+              "text": "I don't need us to agree immediately; I need us to pressure-test the reasoning together.",
+              "focus": "pressure-test the reasoning"
+            },
+            {
+              "text": "You've earned trust on this topic, so I'm going to challenge the exception, not the pattern.",
+              "focus": "challenge the exception"
+            },
+            {
+              "text": "If I sound firm, it's because I think this issue deserves senior-level attention, not ceremony.",
+              "focus": "deserves senior-level attention"
+            },
+            {
+              "text": "I hear the concern, and I also think we can discuss it without turning caution into indecision.",
+              "focus": "turning caution into indecision"
+            },
+            {
+              "text": "Let's keep the conversation peer-level: clear evidence, direct questions, and no need for ceremony.",
+              "focus": "keep the conversation peer-level"
+            }
+          ]
+        },
+        {
+          "id": "manager-lens",
+          "title": "The manager's lens",
+          "description": "Adapt to how a leader consumes information, makes decisions, and measures success.",
+          "sentences": [
+            {
+              "text": "Before I send the full memo, do you want the recommendation first or the reasoning first?",
+              "focus": "recommendation first"
+            },
+            {
+              "text": "For decisions like this, what level of evidence gives you enough confidence to move?",
+              "focus": "enough confidence"
+            },
+            {
+              "text": "I can frame this around cost, risk, speed, or customer impact; which lens matters most right now?",
+              "focus": "which lens matters most"
+            },
+            {
+              "text": "If your main concern is timing, I'll keep the discussion on sequencing and tradeoffs.",
+              "focus": "main concern"
+            },
+            {
+              "text": "What would make this feel like a win from your seat, not just from my team's view?",
+              "focus": "from your seat"
+            },
+            {
+              "text": "I want to calibrate my updates: do you prefer quick bullets, a brief narrative, or a live discussion?",
+              "focus": "calibrate my updates"
+            },
+            {
+              "text": "When you review this, are you looking for confidence in the plan, or do you want to pressure-test the assumptions?",
+              "focus": "pressure-test the assumptions"
+            },
+            {
+              "text": "I'll separate what I know, what I believe, and what still needs verification.",
+              "focus": "needs verification"
+            },
+            {
+              "text": "If you only have two minutes, the decision point is whether to prioritize coverage or quality.",
+              "focus": "decision point"
+            },
+            {
+              "text": "Before I optimize the work, I want to confirm what success will be measured against.",
+              "focus": "measured against"
+            },
+            {
+              "text": "I may be over-indexing on execution details; the leadership question seems to be capacity and risk.",
+              "focus": "over-indexing on execution details"
+            },
+            {
+              "text": "Would it help if I brought you options with clear tradeoffs instead of a single preferred path?",
+              "focus": "clear tradeoffs"
+            },
+            {
+              "text": "I hear that speed matters, but I don't want to sacrifice the reliability metric you own.",
+              "focus": "sacrifice the reliability metric"
+            },
+            {
+              "text": "To make this easier to judge, I'll tie each recommendation to the outcome you flagged.",
+              "focus": "tie each recommendation"
+            },
+            {
+              "text": "If this is a board-level concern, I'll remove the operational detail and focus on exposure, timing, and choice.",
+              "focus": "board-level concern"
+            },
+            {
+              "text": "What questions do you expect from above, so I can answer them before they slow the decision?",
+              "focus": "slow the decision"
+            },
+            {
+              "text": "I can keep this asynchronous unless you want to talk through the judgment call live.",
+              "focus": "judgment call"
+            },
+            {
+              "text": "My recommendation changes if your priority is adoption rather than short-term savings.",
+              "focus": "short-term savings"
+            }
+          ]
+        },
+        {
+          "id": "proactive-update-loop",
+          "title": "The proactive update loop",
+          "description": "Create predictable visibility so leaders never need to chase the work.",
+          "sentences": [
+            {
+              "text": "I'll send a concise update every Friday, with exceptions surfaced the same day.",
+              "focus": "exceptions surfaced the same day"
+            },
+            {
+              "text": "The project is on track, and the only watch item is vendor approval timing.",
+              "focus": "only watch item"
+            },
+            {
+              "text": "Nothing needs your decision today, but I want this risk on your radar.",
+              "focus": "risk on your radar"
+            },
+            {
+              "text": "If scope changes again, I recommend we reset the date instead of compressing review.",
+              "focus": "reset the date"
+            },
+            {
+              "text": "By Wednesday, I will confirm whether the dependency is real or just noise.",
+              "focus": "whether the dependency is real"
+            },
+            {
+              "text": "Can I switch these updates to bullets unless a decision is required?",
+              "focus": "unless a decision is required"
+            },
+            {
+              "text": "I am tracking two paths, and I will escalate if either affects launch readiness.",
+              "focus": "affects launch readiness"
+            },
+            {
+              "text": "The customer feedback changed the priority, so I am updating the plan before work continues.",
+              "focus": "changed the priority"
+            },
+            {
+              "text": "For visibility, the current blocker is legal review; my ask is a 24-hour turnaround.",
+              "focus": "24-hour turnaround"
+            },
+            {
+              "text": "If I do not hear back by noon, I will proceed with the lower-risk option.",
+              "focus": "lower-risk option"
+            },
+            {
+              "text": "I am keeping the update short because the status is stable and no tradeoff has changed.",
+              "focus": "no tradeoff has changed"
+            },
+            {
+              "text": "The metric moved in the wrong direction, and I am isolating the cause today.",
+              "focus": "isolating the cause"
+            },
+            {
+              "text": "My next update will include the revised timeline, owner, and confidence level.",
+              "focus": "revised timeline"
+            },
+            {
+              "text": "This is still recoverable, but the decision window closes tomorrow afternoon.",
+              "focus": "decision window closes"
+            },
+            {
+              "text": "Would you rather see risks as they appear, or only when they require intervention?",
+              "focus": "require intervention"
+            },
+            {
+              "text": "I will flag any variance over 10 percent without waiting for the weekly review.",
+              "focus": "variance over 10 percent"
+            },
+            {
+              "text": "The team is clear on the path; I am watching capacity, quality, and stakeholder response.",
+              "focus": "watching capacity, quality, and stakeholder response"
+            },
+            {
+              "text": "I can absorb this change if we pause one lower-value request this week.",
+              "focus": "absorb this change"
+            }
+          ]
+        },
+        {
+          "id": "strategic-partnership",
+          "title": "From task to strategy",
+          "description": "Connect execution to outcomes and become a source of judgment, not just labor.",
+          "sentences": [
+            {
+              "text": "Before we optimize the deck, I want to confirm the decision it is supposed to unlock.",
+              "focus": "decision it is supposed to unlock"
+            },
+            {
+              "text": "If the goal is retention, this request may solve the symptom while leaving the root cause untouched.",
+              "focus": "leaving the root cause untouched"
+            },
+            {
+              "text": "I can execute this as requested, or we can choose the option with the bigger strategic payoff.",
+              "focus": "bigger strategic payoff"
+            },
+            {
+              "text": "What outcome are we willing to protect if the timeline forces us to trade scope for speed?",
+              "focus": "trade scope for speed"
+            },
+            {
+              "text": "The work is straightforward; the strategic question is whether it moves the metric leadership actually cares about.",
+              "focus": "moves the metric"
+            },
+            {
+              "text": "I would not start with more analysis; I would start by clarifying which bet we are making.",
+              "focus": "which bet we are making"
+            },
+            {
+              "text": "This solves the immediate ask, but it may create a support burden we have not priced in.",
+              "focus": "create a support burden"
+            },
+            {
+              "text": "My recommendation is to sequence this behind the customer-impact work, unless the priority has changed.",
+              "focus": "unless the priority has changed"
+            },
+            {
+              "text": "I want to challenge the premise before we invest more time in a narrow execution plan.",
+              "focus": "challenge the premise"
+            },
+            {
+              "text": "A faster path is available, but it gives us less learning and a weaker basis for scaling.",
+              "focus": "weaker basis for scaling"
+            },
+            {
+              "text": "If we treat this as a capacity problem, we may miss the incentives driving the behavior.",
+              "focus": "incentives driving the behavior"
+            },
+            {
+              "text": "I can own the deliverable, and I also want to surface the decision risks around it.",
+              "focus": "surface the decision risks"
+            },
+            {
+              "text": "This task belongs in the roadmap only if it materially advances the leadership priority we agreed on.",
+              "focus": "materially advances the leadership priority"
+            },
+            {
+              "text": "Rather than adding another feature, I would test whether the current workflow is solving the right problem.",
+              "focus": "solving the right problem"
+            },
+            {
+              "text": "The tradeoff is not effort versus quality; it is short-term delivery versus long-term operating cost.",
+              "focus": "short-term delivery versus long-term operating cost"
+            },
+            {
+              "text": "Before we commit, I want to understand who benefits, who absorbs the cost, and who can block adoption.",
+              "focus": "who absorbs the cost"
+            },
+            {
+              "text": "I do not think the team needs more tasks; it needs a clearer theory of impact.",
+              "focus": "theory of impact"
+            },
+            {
+              "text": "My concern is downstream: this may look efficient now and still make the next quarter harder.",
+              "focus": "make the next quarter harder"
+            }
+          ]
+        },
+        {
+          "id": "stakeholder-mapping",
+          "title": "Stakeholder mapping",
+          "description": "Identify decision power, incentives, concerns, and the support needed to move.",
+          "sentences": [
+            {
+              "text": "Before we ask for approval, let's separate the actual decision owner from the people who only need visibility.",
+              "focus": "actual decision owner"
+            },
+            {
+              "text": "Who has veto power here, and what concern would make them use it?",
+              "focus": "veto power"
+            },
+            {
+              "text": "The finance team is not blocking the work; their incentive is avoiding an unfunded operating commitment.",
+              "focus": "unfunded operating commitment"
+            },
+            {
+              "text": "I recommend we map supporters, skeptics, and quiet influencers before we treat this as aligned.",
+              "focus": "quiet influencers"
+            },
+            {
+              "text": "Which stakeholder benefits if we move quickly, and who absorbs the risk if we are wrong?",
+              "focus": "absorbs the risk"
+            },
+            {
+              "text": "The technical dependency looks minor, but the team owning it controls our launch window.",
+              "focus": "controls our launch window"
+            },
+            {
+              "text": "Let's not mistake enthusiasm in this room for support from the people carrying the implementation burden.",
+              "focus": "implementation burden"
+            },
+            {
+              "text": "If legal's concern is precedent, we need a narrow exception, not another broad reassurance.",
+              "focus": "narrow exception"
+            },
+            {
+              "text": "The missing sponsor is not seniority; it is someone credible with the field organization.",
+              "focus": "credible with the field organization"
+            },
+            {
+              "text": "I would like to know whose metrics improve, whose workload increases, and whose authority feels reduced.",
+              "focus": "authority feels reduced"
+            },
+            {
+              "text": "Before we escalate, let's identify the blocker’s legitimate concern and the tradeoff they are protecting.",
+              "focus": "legitimate concern"
+            },
+            {
+              "text": "This proposal has executive interest, but it lacks a coalition in the teams that must change behavior.",
+              "focus": "lacks a coalition"
+            },
+            {
+              "text": "Who needs to hear the customer risk, and who needs to hear the cost of delay?",
+              "focus": "cost of delay"
+            },
+            {
+              "text": "The operations lead may not decide, but their resistance can slow adoption for months.",
+              "focus": "slow adoption"
+            },
+            {
+              "text": "I am comfortable proceeding only after we name the dependencies that are outside our control.",
+              "focus": "outside our control"
+            },
+            {
+              "text": "Let's clarify whether the regional leads need approval rights, consultation, or simply early context.",
+              "focus": "approval rights"
+            },
+            {
+              "text": "If procurement is measured on savings, we should not frame this only as speed and flexibility.",
+              "focus": "measured on savings"
+            },
+            {
+              "text": "Our gap is not analysis; it is a trusted messenger for the group that feels exposed.",
+              "focus": "trusted messenger"
+            }
+          ]
+        },
+        {
+          "id": "prewire-influence",
+          "title": "Pre-wire the decision",
+          "description": "Build understanding and surface objections before the formal meeting.",
+          "sentences": [
+            {
+              "text": "Before we put this in front of the group, I want to understand where you see risk.",
+              "focus": "put this in front of the group"
+            },
+            {
+              "text": "I am not asking for approval yet; I am testing whether the logic holds under pressure.",
+              "focus": "holds under pressure"
+            },
+            {
+              "text": "If your team is likely to resist this, I would rather hear the hard version now.",
+              "focus": "the hard version"
+            },
+            {
+              "text": "What would make this proposal difficult for you to support in the room?",
+              "focus": "difficult for you to support"
+            },
+            {
+              "text": "I have adjusted the rollout based on your concern, especially around timing and local ownership.",
+              "focus": "based on your concern"
+            },
+            {
+              "text": "My goal is to avoid a public surprise, so I am checking the assumptions with you first.",
+              "focus": "checking the assumptions"
+            },
+            {
+              "text": "If the decision hinges on cost, I can bring a narrower option instead of a full rollout.",
+              "focus": "decision hinges on cost"
+            },
+            {
+              "text": "I want to pressure-test the recommendation before the formal discussion, not negotiate it live.",
+              "focus": "pressure-test the recommendation"
+            },
+            {
+              "text": "Where do you think the room will split, and who needs more context before Tuesday?",
+              "focus": "the room will split"
+            },
+            {
+              "text": "That objection is useful; I can address it directly if you are comfortable with the framing.",
+              "focus": "comfortable with the framing"
+            },
+            {
+              "text": "I am hearing support for the direction, but hesitation on sequencing; is that the right read?",
+              "focus": "hesitation on sequencing"
+            },
+            {
+              "text": "Let me separate the decision from the implementation concerns, because those may need different owners.",
+              "focus": "separate the decision from the implementation concerns"
+            },
+            {
+              "text": "If you disagree with the premise, I want to resolve that before we debate execution details.",
+              "focus": "disagree with the premise"
+            },
+            {
+              "text": "I can incorporate your feedback, but I do not want to reopen scope without a clear tradeoff.",
+              "focus": "without a clear tradeoff"
+            },
+            {
+              "text": "Who would be surprised by this recommendation, and what would they need to see beforehand?",
+              "focus": "surprised by this recommendation"
+            },
+            {
+              "text": "I am aligning with each lead individually so the meeting can focus on the actual decision.",
+              "focus": "focus on the actual decision"
+            },
+            {
+              "text": "If there is a political constraint I am missing, please name it now so we can plan responsibly.",
+              "focus": "political constraint I am missing"
+            },
+            {
+              "text": "I will bring the revised version forward only after the main concerns are visible and owned.",
+              "focus": "visible and owned"
+            }
+          ]
+        },
+        {
+          "id": "high-stakes-preparation",
+          "title": "Prepare for high stakes",
+          "description": "Define the outcome, anticipate resistance, and plan for the worst credible turn.",
+          "sentences": [
+            {
+              "text": "Before we enter the room, I want one sentence on the outcome we are unwilling to trade away.",
+              "focus": "unwilling to trade away"
+            },
+            {
+              "text": "Our strongest case is the business risk we prevent, not the effort we have already invested.",
+              "focus": "business risk we prevent"
+            },
+            {
+              "text": "If they challenge the timeline, we should separate real capacity limits from discomfort with the decision.",
+              "focus": "real capacity limits"
+            },
+            {
+              "text": "The assumption I would test first is whether the sponsor values speed more than reversibility.",
+              "focus": "values speed more than reversibility"
+            },
+            {
+              "text": "Let's name the objection we least want to hear, because that is probably the one that matters.",
+              "focus": "objection we least want to hear"
+            },
+            {
+              "text": "I recommend we lead with the evidence they trust, then use our analysis to close the gap.",
+              "focus": "evidence they trust"
+            },
+            {
+              "text": "If procurement pushes for a broader review, our concession can be scope, not decision ownership.",
+              "focus": "decision ownership"
+            },
+            {
+              "text": "The walk-away point is simple: we cannot accept a launch date that relies on unstaffed work.",
+              "focus": "walk-away point"
+            },
+            {
+              "text": "If the meeting turns defensive, I will restate the shared risk before returning to our ask.",
+              "focus": "turns defensive"
+            },
+            {
+              "text": "We should prepare a version that protects the relationship even if the answer is no.",
+              "focus": "protects the relationship"
+            },
+            {
+              "text": "What would change our recommendation, and what would merely make us uncomfortable defending it?",
+              "focus": "change our recommendation"
+            },
+            {
+              "text": "I want to know where we are confident, where we are guessing, and where we need a fallback.",
+              "focus": "need a fallback"
+            },
+            {
+              "text": "If they ask for guarantees, I will offer control points rather than pretend the risk disappears.",
+              "focus": "offer control points"
+            },
+            {
+              "text": "Our least expensive concession is extending the pilot, as long as success criteria stay measurable.",
+              "focus": "least expensive concession"
+            },
+            {
+              "text": "The worst credible turn is losing the executive sponsor; our response should be a narrower, finance-backed option.",
+              "focus": "worst credible turn"
+            },
+            {
+              "text": "If legal blocks the current path, we should already have a compliant alternative ready to discuss.",
+              "focus": "compliant alternative"
+            },
+            {
+              "text": "I would not trade accountability for speed; a rushed yes that nobody owns will fail later.",
+              "focus": "trade accountability for speed"
+            },
+            {
+              "text": "Before we ask for approval, let's decide what evidence would make us pause.",
+              "focus": "make us pause"
+            }
+          ]
+        },
+        {
+          "id": "own-the-room",
+          "title": "Own the room",
+          "description": "Set the frame, guide participation, read dynamics, and protect the meeting outcome.",
+          "sentences": [
+            {
+              "text": "Let's anchor on the decision we need today, then work backward through the facts that change it.",
+              "focus": "anchor on the decision"
+            },
+            {
+              "text": "Before we debate solutions, I want us aligned on the problem we are actually solving.",
+              "focus": "aligned on the problem"
+            },
+            {
+              "text": "I am going to pause us there because we are circling the same tradeoff without new evidence.",
+              "focus": "circling the same tradeoff"
+            },
+            {
+              "text": "We have twelve minutes left, so let's move from preferences to the criteria for choosing.",
+              "focus": "move from preferences to the criteria"
+            },
+            {
+              "text": "Priya, you have been close to the customer feedback; what are we missing from that angle?",
+              "focus": "close to the customer feedback"
+            },
+            {
+              "text": "I hear two concerns underneath the disagreement: implementation risk and the signal this sends to the market.",
+              "focus": "underneath the disagreement"
+            },
+            {
+              "text": "Let's separate what must be decided today from what can be refined after we choose a direction.",
+              "focus": "refined after we choose"
+            },
+            {
+              "text": "If anyone sees a material risk we have not named, this is the moment to put it on the table.",
+              "focus": "put it on the table"
+            },
+            {
+              "text": "I am not looking for consensus yet; I am looking for the strongest objection to each option.",
+              "focus": "the strongest objection"
+            },
+            {
+              "text": "Let's bring in someone who has not spoken, because silence here may mean information we need.",
+              "focus": "silence here may mean information"
+            },
+            {
+              "text": "That point is noted; I want to return to the question that determines the outcome.",
+              "focus": "determines the outcome"
+            },
+            {
+              "text": "We can revisit history later, but right now the room needs a forward-looking choice.",
+              "focus": "a forward-looking choice"
+            },
+            {
+              "text": "I am going to challenge that assumption, not the recommendation, because it drives the whole plan.",
+              "focus": "challenge that assumption"
+            },
+            {
+              "text": "Let's test this against the worst credible scenario before we treat it as settled.",
+              "focus": "the worst credible scenario"
+            },
+            {
+              "text": "If the decision maker walked in now, what headline would we give and what evidence would support it?",
+              "focus": "what evidence would support it"
+            },
+            {
+              "text": "We are drifting into execution details; the decision in front of us is whether this path is viable.",
+              "focus": "drifting into execution details"
+            },
+            {
+              "text": "I want the dissent clearly stated before we move on, so the decision does not look cleaner than it is.",
+              "focus": "the dissent clearly stated"
+            },
+            {
+              "text": "Here is my read of the room: we have alignment on direction, but not yet on risk tolerance.",
+              "focus": "my read of the room"
+            }
+          ]
+        },
+        {
+          "id": "reframe-conflict",
+          "title": "Reframe conflict",
+          "description": "Turn positional disagreement into a productive discussion of interests and tradeoffs.",
+          "sentences": [
+            {
+              "text": "I do not think we disagree on the goal; I think we are weighing speed and control differently.",
+              "focus": "weighing speed and control"
+            },
+            {
+              "text": "Before we defend solutions, can we name the risk each option is trying to reduce?",
+              "focus": "defend solutions"
+            },
+            {
+              "text": "Your concern about quality is valid; my concern is that the current path leaves us no recovery margin.",
+              "focus": "recovery margin"
+            },
+            {
+              "text": "Let me separate intent from impact: I know the push was practical, but it landed as pressure.",
+              "focus": "separate intent from impact"
+            },
+            {
+              "text": "If we frame this as ownership versus collaboration, we will miss the operational tradeoff underneath.",
+              "focus": "operational tradeoff"
+            },
+            {
+              "text": "I can support the direction if we make the unresolved dependency explicit and decide who carries that risk.",
+              "focus": "unresolved dependency"
+            },
+            {
+              "text": "What would need to be true for your team to feel comfortable with a narrower first release?",
+              "focus": "narrower first release"
+            },
+            {
+              "text": "I hear two legitimate interests here: protecting momentum and avoiding a decision we later unwind.",
+              "focus": "protecting momentum"
+            },
+            {
+              "text": "Rather than debate whose estimate is right, let's agree on the evidence that would change either view.",
+              "focus": "evidence that would change either view"
+            },
+            {
+              "text": "I do not want this to become a judgment on anyone's competence; it is a constraint problem.",
+              "focus": "constraint problem"
+            },
+            {
+              "text": "The tension is real: the business wants optionality, while the implementation needs a stable target.",
+              "focus": "business wants optionality"
+            },
+            {
+              "text": "Can we shift from defending positions to comparing the costs each path creates?",
+              "focus": "defending positions"
+            },
+            {
+              "text": "I am willing to move on timing, but not on the standard we promised customers.",
+              "focus": "standard we promised customers"
+            },
+            {
+              "text": "There may be a face-saving way through this: keep the principle, but adjust the sequence.",
+              "focus": "face-saving way"
+            },
+            {
+              "text": "I respect the urgency; I am asking whether the shortcut creates a second problem we cannot see yet.",
+              "focus": "shortcut creates a second problem"
+            },
+            {
+              "text": "Let's test both concerns against the same standard, so this does not become a personality debate.",
+              "focus": "personality debate"
+            },
+            {
+              "text": "If the real issue is accountability, we should discuss decision rights instead of relitigating the last disagreement.",
+              "focus": "decision rights"
+            },
+            {
+              "text": "My recommendation is to pause the yes-or-no vote and define the tradeoff we are actually choosing.",
+              "focus": "define the tradeoff"
+            }
+          ]
+        },
+        {
+          "id": "close-and-follow-through",
+          "title": "Close and follow through",
+          "description": "Convert discussion into a durable decision with owners, dates, and an update path.",
+          "sentences": [
+            {
+              "text": "To close this out, the decision is to proceed with Option B, with Finance owning the cost validation by Friday.",
+              "focus": "Finance owning the cost validation"
+            },
+            {
+              "text": "The one unresolved question is regulatory timing; everything else should move forward under the current plan.",
+              "focus": "unresolved question"
+            },
+            {
+              "text": "Before we leave, can we confirm who owns the customer communication and when the draft will be ready?",
+              "focus": "customer communication"
+            },
+            {
+              "text": "I hear the concern, and I'll document the dissent while we still move with the agreed path.",
+              "focus": "document the dissent"
+            },
+            {
+              "text": "Let's separate decisions from open questions so the recap does not reopen what we already settled.",
+              "focus": "open questions"
+            },
+            {
+              "text": "My recommendation is that Product owns the requirements, Engineering owns feasibility, and Operations owns the launch checklist.",
+              "focus": "owns the launch checklist"
+            },
+            {
+              "text": "If no one objects by noon tomorrow, I'll treat this as approved and send the implementation note.",
+              "focus": "treat this as approved"
+            },
+            {
+              "text": "The follow-up path is simple: weekly written updates, with escalation only if timing, scope, or cost changes.",
+              "focus": "follow-up path"
+            },
+            {
+              "text": "Let's capture the tradeoff we accepted, because future teams will need to understand why we chose speed over customization.",
+              "focus": "capture the tradeoff"
+            },
+            {
+              "text": "I can take the recap, but I need each owner to confirm dates before the end of day.",
+              "focus": "confirm dates"
+            },
+            {
+              "text": "For the record, the decision stands, and the remaining risk is whether the vendor can meet the revised timeline.",
+              "focus": "remaining risk"
+            },
+            {
+              "text": "Can we name the accountable owner now, instead of leaving this as a shared responsibility?",
+              "focus": "accountable owner"
+            },
+            {
+              "text": "I'll send the decision log today, including owners, dates, dependencies, and the two issues still pending.",
+              "focus": "decision log"
+            },
+            {
+              "text": "If the legal review changes our assumptions, we will revisit scope; otherwise, execution starts Monday.",
+              "focus": "changes our assumptions"
+            },
+            {
+              "text": "Let's not close with general alignment; I want a clear owner, next milestone, and escalation trigger.",
+              "focus": "escalation trigger"
+            },
+            {
+              "text": "The disagreement is noted, and the path forward is to test the concern in the first release cycle.",
+              "focus": "path forward"
+            },
+            {
+              "text": "Please reply to the recap only with corrections, not new preferences, unless something material was missed.",
+              "focus": "something material was missed"
+            },
+            {
+              "text": "I'll follow up after the client call with any change to owners, timing, or the decision itself.",
+              "focus": "decision itself"
+            }
+          ]
+        },
+        {
+          "id": "cross-cultural-visibility",
+          "title": "Cross-cultural visibility",
+          "description": "Make judgment visible while communicating confidently across cultural expectations.",
+          "sentences": [
+            {
+              "text": "I want to come in early here, before the tradeoff gets framed too narrowly.",
+              "focus": "before the tradeoff gets framed"
+            },
+            {
+              "text": "The risk I see is not execution speed; it is whether the decision survives regional differences.",
+              "focus": "survives regional differences"
+            },
+            {
+              "text": "Can we clarify what a strong challenge sounds like in this room, so I calibrate appropriately?",
+              "focus": "what a strong challenge sounds like"
+            },
+            {
+              "text": "I may be missing the local norm, but my read is that silence is being treated as agreement.",
+              "focus": "silence is being treated as agreement"
+            },
+            {
+              "text": "I led the customer analysis, and the team's input strengthened the recommendation.",
+              "focus": "strengthened the recommendation"
+            },
+            {
+              "text": "I agree with the goal; I am less convinced that this path reduces the relationship risk.",
+              "focus": "reduces the relationship risk"
+            },
+            {
+              "text": "Before we move on, I want to name the assumption behind my recommendation.",
+              "focus": "name the assumption behind"
+            },
+            {
+              "text": "Would it help if I separated my cultural read from the operational risk?",
+              "focus": "my cultural read"
+            },
+            {
+              "text": "I do not want to overstate my role, but this outcome came from the model I built.",
+              "focus": "overstate my role"
+            },
+            {
+              "text": "My question is whether the message lands the same way with teams outside headquarters.",
+              "focus": "lands the same way"
+            },
+            {
+              "text": "I hear the senior preference, and I want to test one consequence before we lock it in.",
+              "focus": "test one consequence"
+            },
+            {
+              "text": "In my previous context, direct pushback was expected; should I use that style here or soften it?",
+              "focus": "direct pushback was expected"
+            },
+            {
+              "text": "Let me make my judgment visible: I see a timing issue, not a capability issue.",
+              "focus": "make my judgment visible"
+            },
+            {
+              "text": "If the expectation is to signal disagreement indirectly, I need to understand that norm clearly.",
+              "focus": "signal disagreement indirectly"
+            },
+            {
+              "text": "I support the direction, but I would recommend changing the sequence for stakeholder confidence.",
+              "focus": "changing the sequence for stakeholder confidence"
+            },
+            {
+              "text": "Can I ask the question that may be obvious to others but is not obvious to me?",
+              "focus": "obvious to others"
+            },
+            {
+              "text": "I want to give credit accurately: Maria shaped the narrative, and I handled the evidence base.",
+              "focus": "give credit accurately"
+            },
+            {
+              "text": "My hesitation is not resistance; I am trying to protect how this decision will be interpreted.",
+              "focus": "protect how this decision will be interpreted"
+            }
           ]
         }
       ]

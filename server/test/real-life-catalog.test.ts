@@ -10,16 +10,17 @@ import { createRealLifeRoutes } from '../src/routes/real-life.js';
 
 const firstSentenceId = 'career-conversations:rapport-and-small-talk:01';
 
-test('Real Life catalog contains two substantial, stable collections', () => {
+test('Real Life catalog contains three substantial, stable collections', () => {
   const summaries = getRealLifeCatalogSummaries();
   assert.deepEqual(
     summaries.map(summary => [summary.id, summary.sentenceCount]),
     [
       ['career-conversations', 234],
       ['daily-shopping', 252],
+      ['executive-communication', 234],
     ],
   );
-  assert.equal(getRealLifeCatalogSentenceCount(), 486);
+  assert.equal(getRealLifeCatalogSentenceCount(), 720);
   const sentence = getRealLifeCatalogSentence(firstSentenceId);
   assert.equal(sentence?.focus, 'unplug');
   assert.match(sentence?.text || '', /unplug/);
@@ -33,7 +34,7 @@ test('Real Life route exposes catalog metadata without a generation endpoint', a
   assert.equal(response.status, 200);
   assert.deepEqual(
     (await response.json() as any).collections.map((collection: any) => collection.sentenceCount),
-    [234, 252],
+    [234, 252, 234],
   );
 
   response = await app.request(`/api/real-life/sentences/${encodeURIComponent(firstSentenceId)}/prepare`, {
