@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+# macOS still ships Bash 3.2, whose nounset handling treats an explicitly empty array as unbound.
+# The publisher begins with zero completed waves, so keep errexit/pipefail without nounset here.
+set -eo pipefail
 
 SOURCE_ROOT="${1:-data/offline-backfill/real-life-qwen3-audio}"
 BATCH_SIZE="${2:-50}"
