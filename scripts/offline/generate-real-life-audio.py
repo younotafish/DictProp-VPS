@@ -44,6 +44,14 @@ INSTRUCTIONS = {
         "using natural linking and reductions. Stay intelligible and preserve every word exactly; do not paraphrase."
     ),
 }
+STYLE_WPM_BOUNDS = {
+    "clear": (85, 245),
+    "casual": (105, 285),
+}
+STYLE_WPM_NORMALIZATION_TARGETS = {
+    "clear": (105, 225),
+    "casual": (125, 265),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -104,13 +112,17 @@ def duration_seconds(path: Path) -> float:
     return float(sf.info(path).duration)
 
 
-def transcode(wav_path: Path, mp3_path: Path, ffmpeg: str) -> None:
+def transcode(wav_path: Path, mp3_path: Path, ffmpeg: str, tempo: float = 1.0) -> None:
     mp3_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = mp3_path.with_suffix(".mp3.tmp")
+    filters = []
+    if not math.isclose(tempo, 1.0, abs_tol=0.001):
+        filters.append(f"atempo={tempo:.6f}")
+    filters.append("loudnorm=I=-18:TP=-2:LRA=7")
     subprocess.run(
         [
             ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav_path),
-            "-af", "loudnorm=I=-18:TP=-2:LRA=7", "-ar", "24000", "-ac", "1", "-b:a", "80k",
+            "-af", ",".join(filters), "-ar", "24000", "-ac", "1", "-b:a", "80k",
             "-f", "mp3", str(temporary),
         ],
         check=True,
@@ -130,15 +142,23 @@ def validate_waveform(audio: np.ndarray, sample_rate: int, text: str, style: str
     clipping = float(np.mean(np.abs(audio) >= 0.995))
     words = max(1, len(re.findall(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*", text)))
     wpm = words / duration * 60
-    minimum_wpm = 85 if style == "clear" else 105
-    maximum_wpm = 245 if style == "clear" else 285
     if not 0.5 <= duration <= 90:
         raise ValueError(f"duration {duration:.2f}s is outside the quality gate")
     if peak < 0.02 or rms < 0.004 or clipping > 0.01:
         raise ValueError(f"level gate failed: peak={peak:.4f} rms={rms:.4f} clipping={clipping:.4f}")
-    if not minimum_wpm <= wpm <= maximum_wpm:
-        raise ValueError(f"speaking rate {wpm:.1f} WPM is outside the {style} gate")
+    if not 50 <= wpm <= 400:
+        raise ValueError(f"speaking rate {wpm:.1f} WPM is too extreme to normalize safely")
     return {"duration": duration, "peak": peak, "rms": rms, "clipping": clipping, "wpm": wpm}
+
+
+def tempo_for_style(raw_wpm: float, style: str) -> float:
+    minimum, maximum = STYLE_WPM_BOUNDS[style]
+    target_minimum, target_maximum = STYLE_WPM_NORMALIZATION_TARGETS[style]
+    if raw_wpm < minimum:
+        return target_minimum / raw_wpm
+    if raw_wpm > maximum:
+        return target_maximum / raw_wpm
+    return 1.0
 
 
 def generate_waveform(model: Any, text: str, style: str, seed: int) -> tuple[np.ndarray, int]:
@@ -253,9 +273,17 @@ def main() -> None:
                     audio_path = output_root / relative_audio
                     timings_path = output_root / relative_timings
                     audio, sample_rate = generate_waveform(tts_model, text, style, int(key[:12], 16) + attempt)
-                    metrics = validate_waveform(audio, sample_rate, text, style)
+                    raw_metrics = validate_waveform(audio, sample_rate, text, style)
                     sf.write(wav_path, audio, sample_rate, subtype="PCM_16")
-                    transcode(wav_path, audio_path, args.ffmpeg)
+                    tempo = tempo_for_style(raw_metrics["wpm"], style)
+                    transcode(wav_path, audio_path, args.ffmpeg, tempo)
+                    processed_audio, processed_sample_rate = sf.read(audio_path, dtype="float32")
+                    metrics = validate_waveform(processed_audio, int(processed_sample_rate), text, style)
+                    minimum_wpm, maximum_wpm = STYLE_WPM_BOUNDS[style]
+                    if not minimum_wpm <= metrics["wpm"] <= maximum_wpm:
+                        raise ValueError(
+                            f"normalized speaking rate {metrics['wpm']:.1f} WPM is outside the {style} gate"
+                        )
                     duration = duration_seconds(audio_path)
                     timings = align_words(aligner, audio_path, text, duration)
                     timings_path.parent.mkdir(parents=True, exist_ok=True)
