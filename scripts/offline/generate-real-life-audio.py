@@ -186,10 +186,22 @@ def generate_waveform(model: Any, text: str, style: str, seed: int) -> tuple[np.
 
 def align_words(aligner: Any, audio_path: Path, text: str, duration: float) -> list[dict[str, Any]]:
     result = aligner.generate(audio=str(audio_path), text=text, language="English")
-    timings = [
-        {"start": round(float(item.start_time), 3), "end": round(float(item.end_time), 3), "text": str(item.text)}
-        for item in result.items
-    ]
+    timings = []
+    for item in result.items:
+        start = float(item.start_time)
+        end = float(item.end_time)
+        # The Qwen aligner occasionally places a very short article at the exact shared boundary
+        # between its neighbours (for example, `a: 0.80-0.80`). Preserve that word with a bounded
+        # 40 ms seek target; overlaps below 50 ms are accepted by the client and importer.
+        if -0.001 <= end - start < 0.02:
+            center = (start + end) / 2
+            start = max(0.0, center - 0.02)
+            end = min(duration, center + 0.02)
+        timings.append({
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "text": str(item.text),
+        })
     expected = re.findall(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*", text)
     if len(timings) < max(1, math.floor(len(expected) * 0.85)) or len(timings) > len(expected) + 3:
         raise ValueError(f"aligner returned {len(timings)} words for {len(expected)} expected")
