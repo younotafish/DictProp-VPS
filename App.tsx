@@ -18,6 +18,7 @@ import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 import { subscribeToServerMutations } from './services/syncSignals';
 import { getUsagePriority, sortStoredSensesByUsage, sortVocabCardsByUsage } from './services/usageAudit';
+import { isRealLifeProgressItem } from './services/realLifeProgressIdentity';
 
 const NotebookView = lazy(() => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
 const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(module => ({ default: module.GlobalSearch })));
@@ -91,6 +92,8 @@ const createLightweightCache = (items: StoredItem[]): any[] =>
         text: item.data.text,
         sourceWord: item.data.sourceWord,
         sourceSense: item.data.sourceSense,
+        catalogSentenceId: item.data.catalogSentenceId,
+        catalogCollectionId: item.data.catalogCollectionId,
       };
     } else {
       const vocab = item.data as VocabCard;
@@ -469,7 +472,7 @@ const App: React.FC = () => {
         for (;;) {
           const mutation = readPendingReviewMutations(userId)[0];
           if (!mutation) break;
-          const response = await applyReviewMutation(mutation.event, mutation.itemIds);
+          const response = await applyReviewMutation(mutation.event, mutation.itemIds, mutation.seedItem);
           await reconcileAppliedReview(response.items);
           removePendingReviewMutation(userId, mutation.event.id);
         }
@@ -554,11 +557,24 @@ const App: React.FC = () => {
   const activeItems = allActiveItems;
   // Items available for study (excludes archived and sentences)
   const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
-  // Sentence items
-  const sentenceItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type === 'sentence'), [savedItems]);
+  // Ordinary saved sentences and Real Life progress deliberately use separate queues. Real Life
+  // records are stable, collection-namespaced sentence items so their FSRS state never changes the
+  // Sentences tab's score or due count (and vice versa).
+  const allSentenceItems = useMemo(
+    () => savedItems.filter(i => !i.isDeleted && i.type === 'sentence'),
+    [savedItems],
+  );
+  const realLifeProgressItems = useMemo(
+    () => allSentenceItems.filter(isRealLifeProgressItem),
+    [allSentenceItems],
+  );
+  const sentenceItems = useMemo(
+    () => allSentenceItems.filter(item => !isRealLifeProgressItem(item)),
+    [allSentenceItems],
+  );
   const sentenceItemsById = useMemo(
-    () => new Map(sentenceItems.map(item => [item.data.id, item])),
-    [sentenceItems],
+    () => new Map(allSentenceItems.map(item => [item.data.id, item])),
+    [allSentenceItems],
   );
   const sentenceDueCount = useMemo(() => {
     const now = Date.now();
@@ -2552,6 +2568,7 @@ const App: React.FC = () => {
       sourceWord,
       sourceSense,
       ...(prepared?.catalogSentenceId ? { catalogSentenceId: prepared.catalogSentenceId } : {}),
+      ...(prepared?.catalogCollectionId ? { catalogCollectionId: prepared.catalogCollectionId } : {}),
       ...(prepared?.analysis ? { analysis: prepared.analysis } : {}),
       ...(prepared?.analysisGeneratedAt ? { analysisGeneratedAt: prepared.analysisGeneratedAt } : {}),
       ...(prepared?.imageUrl ? { imageUrl: prepared.imageUrl } : {}),
@@ -2729,7 +2746,7 @@ const App: React.FC = () => {
     if (!identity) return null;
 
     const existing = latestItemsRef.current.find(item =>
-      !item.isDeleted && isSentenceItem(item) &&
+      !item.isDeleted && isSentenceItem(item) && !isRealLifeProgressItem(item) &&
       normalizeSentenceIdentity((item.data as SentenceData).text) === identity
     );
     if (existing && (existing.data as SentenceData).analysis) return existing;
@@ -2784,12 +2801,27 @@ const App: React.FC = () => {
   const updateSRS = async (
     itemId: string,
     rating: ReviewRating = 'good',
-    context?: { taskType?: ReviewTaskType; durationMs?: number; sessionId?: string; eventId?: string },
+    context?: {
+      taskType?: ReviewTaskType;
+      durationMs?: number;
+      sessionId?: string;
+      eventId?: string;
+      /** Materializes an implicit Real Life sentence on its first review. */
+      seedItem?: StoredItem;
+    },
   ): Promise<boolean> => {
     const now = Date.now();
 
-    const baseItems = latestItemsRef.current;
-    const targetItem = baseItems.find(i => i.data.id === itemId);
+    let baseItems = latestItemsRef.current;
+    let targetItem = baseItems.find(i => i.data.id === itemId);
+    const requestedSeed = context?.seedItem;
+    const seedItem = !targetItem && requestedSeed?.data.id === itemId && isRealLifeProgressItem(requestedSeed)
+      ? requestedSeed
+      : undefined;
+    if (!targetItem && seedItem) {
+      targetItem = seedItem;
+      baseItems = [...baseItems, seedItem];
+    }
     if (!targetItem) return false;
 
     const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
@@ -2809,11 +2841,18 @@ const App: React.FC = () => {
 
     // Pure transform, applied to BOTH the ref (fresh source for concurrent handlers) and — defensively —
     // to prevState inside setSyncState, so a concurrent update can't drop the change.
-    const applySrs = (items: StoredItem[]): StoredItem[] => items.map(item =>
-      idsToUpdate.has(item.data.id)
-        ? { ...item, srs: { ...updatedSRS, id: item.data.id }, updatedAt: now }
-        : item
-    );
+    const applySrs = (items: StoredItem[]): StoredItem[] => {
+      let foundTarget = false;
+      const updated = items.map(item => {
+        if (!idsToUpdate.has(item.data.id)) return item;
+        foundTarget = true;
+        return { ...item, srs: { ...updatedSRS, id: item.data.id }, updatedAt: now };
+      });
+      if (!foundTarget && seedItem) {
+        updated.push({ ...seedItem, srs: { ...updatedSRS, id: seedItem.data.id }, updatedAt: now });
+      }
+      return updated;
+    };
 
     const newItems = applySrs(baseItems);
     const itemsToSync = newItems.filter(item => idsToUpdate.has(item.data.id));
@@ -2821,6 +2860,7 @@ const App: React.FC = () => {
       event: reviewEvent,
       itemIds: [...idsToUpdate],
       optimisticSrs: Object.fromEntries(itemsToSync.map(item => [item.data.id, item.srs])),
+      ...(seedItem ? { seedItem } : {}),
     };
 
     // The small localStorage outbox is synchronous and lands before React or IndexedDB work. Its
@@ -3052,6 +3092,7 @@ const App: React.FC = () => {
               onDelete={handleDelete}
               onArchive={handleArchive}
               savedItems={activeItems}
+              savedSentenceItems={allSentenceItems}
               onSearch={handleRecursiveSearch}
               onRefresh={handleRefreshViaGlobal}
               onLazyLoadImage={handleLazyLoadImage}
@@ -3163,6 +3204,8 @@ const App: React.FC = () => {
         {currentView === 'real-life' && (
           <RealLifeView
             onOpenSentence={handleViewSentence}
+            progressItems={realLifeProgressItems}
+            onUpdateSRS={updateSRS}
             isSentenceSaved={isSentenceSaved}
             onScroll={handleScroll}
             findSaved={findSavedItem}

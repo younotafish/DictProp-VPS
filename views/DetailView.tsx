@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison } from '../types';
+import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison, type ReviewRating } from '../types';
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText, Lock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
@@ -20,6 +20,7 @@ import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, g
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { loadImage } from '../services/storage';
 import { log, warn, error as logError } from '../services/logger';
+import { isRealLifeProgressItem } from '../services/realLifeProgress';
 
 // Helper to format relative time for next review
 const formatRelativeTime = (timestamp: number): string => {
@@ -119,10 +120,16 @@ interface DetailViewProps {
   onDelete: (id: string) => void;
   onArchive?: (id: string) => void;
   savedItems: StoredItem[];
+  /** Sentence records are separate from notebook cards; used to resolve catalog progress by exact id. */
+  savedSentenceItems?: StoredItem[];
   onSearch: (text: string) => void;
   onRefresh?: (text: string) => void; // Force a real AI search, bypassing local cache
   onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>; // Fetch image from server if missing locally
-  onUpdateSRS?: (itemId: string) => void; // Direct SRS update (triggers "remember")
+  onUpdateSRS?: (
+    itemId: string,
+    rating?: ReviewRating,
+    context?: { seedItem?: StoredItem },
+  ) => void | Promise<boolean>; // Direct SRS update (triggers "remember")
   onCompare?: (words: string[]) => void;
   comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
   comparingKeys?: string[];                   // comparison keys currently generating (background queue)
@@ -154,6 +161,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onDelete,
   onArchive,
   savedItems,
+  savedSentenceItems = [],
   onSearch,
   onRefresh,
   onLazyLoadImage,
@@ -225,6 +233,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Keep a ref to savedItems so callbacks always see fresh data without re-creating
   const savedItemsRef = useRef(savedItems);
   useEffect(() => { savedItemsRef.current = savedItems; }, [savedItems]);
+  const savedSentenceItemsRef = useRef(savedSentenceItems);
+  useEffect(() => { savedSentenceItemsRef.current = savedSentenceItems; }, [savedSentenceItems]);
 
   // Set indices only on initial mount — after that, DetailView owns navigation
   // and the runtime clamping (lines below) handles out-of-bounds after deletion
@@ -360,7 +370,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
 
   const savedPreviewSentence = exampleSentencePreview
-    ? savedItems.find(item => item.type === 'sentence' && (
+    ? savedSentenceItems.find(item => item.type === 'sentence' && !isRealLifeProgressItem(item) && (
       item.data.id === exampleSentencePreview.sentence.data.id ||
       normalizeSentenceIdentity((item.data as SentenceData).text) ===
         normalizeSentenceIdentity((exampleSentencePreview.sentence.data as SentenceData).text)
@@ -393,7 +403,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const currentSentenceSnapshot = sentenceMode ? (sentenceItems![sentenceIndex] ?? null) : null;
   const catalogSentencePreview = !!(currentSentenceSnapshot &&
     (currentSentenceSnapshot.data as SentenceData).catalogSentenceId);
-  const readOnlySentencePreview = sentencePreviewOnly || catalogSentencePreview;
   const [preparedSentenceById, setPreparedSentenceById] = useState<Record<string, StoredItem>>({});
   const [preparingSentenceId, setPreparingSentenceId] = useState<string | null>(null);
   const preparationRequestsRef = useRef(new Set<string>());
@@ -401,11 +410,21 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const preparedSentenceSnapshot = currentSentenceSnapshot
     ? (preparedSentenceById[currentSentenceSnapshot.data.id] ?? currentSentenceSnapshot)
     : null;
-  const savedCurrentSentence = currentSentenceSnapshot?.data.id.startsWith('sentence-preview:')
-    ? savedItems.find(item => item.type === 'sentence' &&
-        normalizeSentenceIdentity((item.data as SentenceData).text) ===
-        normalizeSentenceIdentity((currentSentenceSnapshot.data as SentenceData).text))
+  const currentSentenceData = currentSentenceSnapshot?.data as SentenceData | undefined;
+  const savedCurrentSentence = currentSentenceSnapshot
+    ? catalogSentencePreview
+      ? savedSentenceItems.find(item => item.type === 'sentence' && !item.isDeleted && (
+          item.data.id === currentSentenceSnapshot.data.id ||
+          ((item.data as SentenceData).catalogSentenceId === currentSentenceData?.catalogSentenceId &&
+            (item.data as SentenceData).catalogCollectionId === currentSentenceData?.catalogCollectionId)
+        ))
+      : currentSentenceSnapshot.data.id.startsWith('sentence-preview:')
+        ? savedSentenceItems.find(item => item.type === 'sentence' && !item.isDeleted &&
+            normalizeSentenceIdentity((item.data as SentenceData).text) ===
+            normalizeSentenceIdentity(currentSentenceData?.text ?? ''))
+        : undefined
     : undefined;
+  const readOnlySentencePreview = sentencePreviewOnly || (catalogSentencePreview && !savedCurrentSentence);
   const currentSentence = savedCurrentSentence && preparedSentenceSnapshot
     ? {
         ...savedCurrentSentence,
@@ -455,9 +474,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
       };
       setPreparedSentenceById(current => ({ ...current, [id]: preparedItem }));
 
-      const savedMatch = savedItemsRef.current.find(candidate =>
-        candidate.type === 'sentence' && !candidate.isDeleted &&
-        normalizeSentenceIdentity((candidate.data as SentenceData).text) === normalizeSentenceIdentity(sourceSentence.text)
+      const savedMatch = savedSentenceItemsRef.current.find(candidate =>
+        candidate.type === 'sentence' && !candidate.isDeleted && (
+          candidate.data.id === id ||
+          ((candidate.data as SentenceData).catalogSentenceId === sourceSentence.catalogSentenceId &&
+            (candidate.data as SentenceData).catalogCollectionId === sourceSentence.catalogCollectionId)
+        )
       );
       if (savedMatch) {
         const savedData = savedMatch.data as SentenceData;
@@ -466,6 +488,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           data: {
             ...savedData,
             catalogSentenceId: sourceSentence.catalogSentenceId,
+            catalogCollectionId: sourceSentence.catalogCollectionId,
             analysis: result.analysis,
             analysisGeneratedAt: result.analysisGeneratedAt,
             imageUrl: savedData.imageUrl ?? result.imageUrl,
@@ -1900,7 +1923,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // dblclick can both land, and we must not advance/score the same sentence twice.
     if (rememberingRef.current) return;
     rememberingRef.current = true;
-    if (isSentencePreview && sentenceModeRef.current) {
+    if (isSentencePreview && !catalogSentencePreview && sentenceModeRef.current) {
       rememberingRef.current = false;
       return;
     }
@@ -1918,7 +1941,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
       const noPenaltyStep = Math.min(baseSRS.totalReviews + 1, schedule.length);
       const intervalWithout = schedule[Math.max(0, Math.min(noPenaltyStep - 1, schedule.length - 1))];
       setRememberInfo({ intervalDays: Math.round(previewSRS.stability), penalty, daysOverdue, intervalWithout });
-      onUpdateSRS?.(s.data.id);
+      onUpdateSRS?.(
+        s.data.id,
+        'good',
+        catalogSentencePreview ? { seedItem: s } : undefined,
+      );
       setShowSuccessAnim(true);
       setTimeout(() => {
         setShowSuccessAnim(false);
@@ -1984,7 +2011,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       setRememberInfo(null);
       rememberingRef.current = false;
     }, 1500);
-  }, [data, type, onSave, onUpdateSRS, title, onClose, isSentencePreview]);
+  }, [catalogSentencePreview, data, type, onSave, onUpdateSRS, title, onClose, isSentencePreview]);
 
   const handleDoubleClick = () => {
     // Avoid triggering when selecting text
@@ -2064,8 +2091,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
       // R: Remember (Shift+R: Reset)
       if (e.key === 'r' || e.key === 'R') {
-         if (sentenceMode && isSentencePreview) return;
+         if (sentenceMode && isSentencePreview && !catalogSentencePreview) return;
          if (e.shiftKey) {
+             if (isSentencePreview) return;
              e.preventDefault();
              handleResetSRS();
          } else {
@@ -2121,7 +2149,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [title, showActionMenu, detailInteractionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, isSentencePreview, isSentenceAutoPlaying, toggleSentenceAutoPlay]);
+  }, [title, showActionMenu, detailInteractionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, isSentencePreview, catalogSentencePreview, isSentenceAutoPlaying, toggleSentenceAutoPlay]);
 
   // Eyes-free read-zone band counts — how many of the two quarter-bands actually read something
   // (so the guides only draw the bands that do something). Word view: a phrase always has band 1
@@ -2311,7 +2339,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
               )}
               <div className="ml-auto flex items-center gap-1">
                 {isSentencePreview ? (
-                  onSaveSentence && (
+                  catalogSentencePreview ? (
+                    <button
+                      type="button"
+                      onClick={handleRemember}
+                      className="flex min-h-11 items-center gap-2 rounded-md bg-emerald-500 px-4 text-sm font-bold text-white transition-colors hover:bg-emerald-600"
+                      title="Remember in this Real Life collection (R)"
+                    >
+                      <CheckCircle2 size={17} /> Got it
+                    </button>
+                  ) : onSaveSentence && (
                     <button
                       type="button"
                       onClick={(event) => {
@@ -3039,6 +3076,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             onDelete={(id) => { onDelete(id); exampleSentenceRequestRef.current += 1; setExampleSentencePreview(null); }}
             onArchive={onArchive}
             savedItems={savedItems}
+            savedSentenceItems={savedSentenceItems}
             onSearch={onSearch}
             onRefresh={onRefresh}
             onLazyLoadImage={onLazyLoadImage}

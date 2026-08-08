@@ -1,0 +1,6 @@
+# Apple-Silicon runtime verified on 2026-08-08. Keep MLX pinned: 0.32.0 fails to build its Metal
+# compiler cache on the current generation host.
+mlx==0.31.2
+mlx-metal==0.31.2
+mlx-audio==0.4.7
+soundfile==0.14.0

@@ -23,7 +23,17 @@
  */
 import { speak as systemSpeak } from './speech';
 import { stripSentenceMarkers } from '../components/HighlightedSentence';
-import { ttsKey, fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, TTS_VOICE, type WordTiming } from './api';
+import {
+  ttsKey,
+  fetchCachedTTS,
+  fetchCachedTTSTimings,
+  requestTTSGeneration,
+  TTS_CASUAL_VOICE,
+  TTS_LEGACY_CASUAL_VOICE,
+  TTS_LEGACY_VOICE,
+  TTS_VOICE,
+  type WordTiming,
+} from './api';
 import { getAudioBlob, putAudioBlob, getTimings, putTimings } from './audioCache';
 import { log, warn } from './logger';
 import { getTtsStyle, getTtsStyleToken, getPlaybackRate, subscribePlaybackRate, subscribeTtsStyle } from './ttsSettings';
@@ -45,7 +55,7 @@ const WEBGPU_ENGINE: Engine = { device: 'webgpu', dtype: 'fp32' };
 const WASM_ENGINE: Engine = { device: 'wasm', dtype: 'fp32' };
 
 export const DEFAULT_VOICE = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
-// MiMo voice for the server-cached PRIMARY TTS comes from api.ts (TTS_VOICE) — single source of truth.
+// Versioned Qwen3 cache tokens and their temporary MiMo rollout fallbacks come from api.ts.
 
 // ── Speech style: clear (crisp MiMo) ⇄ casual (reduced, mumbled) ──────────────
 // A persisted GLOBAL choice of which cached track to play. Every play site routes through this engine,
@@ -711,6 +721,27 @@ const loadClipUrl = async (key: string): Promise<string | null> => {
   return url;
 };
 
+const legacyTokenFor = (token: string): string =>
+  token === TTS_CASUAL_VOICE
+    ? TTS_LEGACY_CASUAL_VOICE
+    : token === TTS_VOICE
+      ? TTS_LEGACY_VOICE
+      : token;
+
+interface ResolvedCachedClip { key: string; url: string; token: string }
+
+/** Prefer the locally generated versioned clip, then use the matching MiMo cache during rollout. */
+const resolveCachedClip = async (text: string, token: string): Promise<ResolvedCachedClip | null> => {
+  const key = await ttsKey(text, token);
+  const url = await loadClipUrl(key);
+  if (url) return { key, url, token };
+  const legacyToken = legacyTokenFor(token);
+  if (legacyToken === token) return null;
+  const legacyKey = await ttsKey(text, legacyToken);
+  const legacyUrl = await loadClipUrl(legacyKey);
+  return legacyUrl ? { key: legacyKey, url: legacyUrl, token: legacyToken } : null;
+};
+
 /** Per-word timings for clip `key` (memory → IDB → server, write-through). Null when none exist. */
 const loadTimingsCached = async (key: string): Promise<WordTiming[] | null> => {
   const mem = ttsTimingsCache.get(key);
@@ -728,8 +759,12 @@ const loadTimingsCached = async (key: string): Promise<WordTiming[] | null> => {
 export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> => {
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return null;
-  const key = await ttsKey(plain, styleToken());
-  return loadTimingsCached(key);
+  const token = styleToken();
+  const key = await ttsKey(plain, token);
+  const timings = await loadTimingsCached(key);
+  if (timings) return timings;
+  const legacyToken = legacyTokenFor(token);
+  return legacyToken === token ? null : loadTimingsCached(await ttsKey(plain, legacyToken));
 };
 
 /** Ensure word timings exist for `text` (current style): warm them if present, else kick off background
@@ -738,7 +773,7 @@ export const ensureTimings = async (text: string): Promise<void> => {
   const t = await getTimingsFor(text);
   if (t) return;
   const plain = stripSentenceMarkers(text).trim();
-  if (plain) requestTTSGeneration([{ text: plain, voice: styleToken() }]).catch(() => { /* best-effort backfill */ });
+  if (plain) requestTTSGeneration([{ text: plain, voice: legacyTokenFor(styleToken()) }]).catch(() => { /* best-effort backfill */ });
 };
 
 /** Seek the currently-playing clip to a time offset (seconds) and ensure it's playing. No-op if idle. */
@@ -833,9 +868,8 @@ export const prefetchTTS = (texts: string[]): void => {
     const plain = stripSentenceMarkers(raw || '').trim();
     if (!plain) continue;
     (async () => {
-      const key = await ttsKey(plain, token);
-      await loadClipUrl(key);       // memory → IDB → server (write-through to IDB)
-      await loadTimingsCached(key);
+      const clip = await resolveCachedClip(plain, token);
+      if (clip) await loadTimingsCached(clip.key);
     })().catch(() => { /* best-effort */ });
   }
 };
@@ -854,16 +888,19 @@ export const ensureTTS = async (texts: string[]): Promise<void> => {
     // Pull anything already cached (memory → IDB → server) into the device cache; collect true misses.
     const missing: string[] = [];
     await Promise.all(plains.map(async (plain) => {
-      const key = await ttsKey(plain, token);
-      if (!(await loadClipUrl(key))) missing.push(plain);
+      if (!(await resolveCachedClip(plain, token))) missing.push(plain);
     }));
     if (missing.length) {
       // Generate the missing clips server-side (one batch), then pull them into the device cache.
-      await requestTTSGeneration(missing.map(text => ({ text, voice: token })));
-      await Promise.all(missing.map(async (plain) => { await loadClipUrl(await ttsKey(plain, token)); }));
+      const generationToken = legacyTokenFor(token);
+      await requestTTSGeneration(missing.map(text => ({ text, voice: generationToken })));
+      await Promise.all(missing.map(async (plain) => { await loadClipUrl(await ttsKey(plain, generationToken)); }));
     }
     // Warm per-word timings (both styles have them now) so tap-to-seek is ready on the first tap.
-    await Promise.all(plains.map(async (plain) => { await loadTimingsCached(await ttsKey(plain, token)); }));
+    await Promise.all(plains.map(async (plain) => {
+      const clip = await resolveCachedClip(plain, token);
+      if (clip) await loadTimingsCached(clip.key);
+    }));
   } catch {
     /* best-effort — speakNatural still falls back at play time */
   }
@@ -891,18 +928,19 @@ export const preloadAudio = async (
   const missing: string[] = [];
   await Promise.all(plains.map(async (plain) => {
     try {
-      const key = await ttsKey(plain, token);
-      if (await loadClipUrl(key)) { await loadTimingsCached(key); tick(); return; }
+      const clip = await resolveCachedClip(plain, token);
+      if (clip) { await loadTimingsCached(clip.key); tick(); return; }
       missing.push(plain); // absent everywhere → generate below
     } catch { tick(); }
   }));
 
   // 2) Generate the missing clips server-side (one batch), then pull them into the device cache.
   if (missing.length) {
-    try { await requestTTSGeneration(missing.map(text => ({ text, voice: token }))); } catch { /* best-effort */ }
+    const generationToken = legacyTokenFor(token);
+    try { await requestTTSGeneration(missing.map(text => ({ text, voice: generationToken }))); } catch { /* best-effort */ }
     await Promise.all(missing.map(async (plain) => {
       try {
-        const key = await ttsKey(plain, token);
+        const key = await ttsKey(plain, generationToken);
         await loadClipUrl(key);
         await loadTimingsCached(key);
       } catch { /* ignore */ }
@@ -954,8 +992,8 @@ const resolveTimingsForPlayback = async (
 
 /**
  * Speak `text` with the best available voice:
- *   1. cached MiMo clip from the server (instant, on every device) — the primary path
- *   2. on a cache MISS: kick off background generation (fills the cache for next time), then fall
+ *   1. locally generated Qwen3 clip from the server cache, with MiMo as a batch-rollout fallback
+ *   2. on a true cache MISS: kick off legacy generation (fills the fallback cache), then fall
  *      back immediately — macOS/desktop → in-browser Kokoro, iOS/iPadOS → system Web Speech voice.
  * The cache miss never blocks the tap on the ~2.75 s generation. Returns a handle whose
  * stop()/pause()/resume() control whichever backend ends up playing.
@@ -986,41 +1024,39 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
 
   (async () => {
     try {
-      const key = await ttsKey(plain, voiceTok);
-      if (!isCurrent()) return; // superseded by a newer call
-
-      // 1) memory cache → 2) IndexedDB (survives launches) → 3) server cache, for the chosen style.
-      const url = await loadClipUrl(key);
+      // 1) memory → 2) IndexedDB → 3) server, preferring Qwen3 and then the matching MiMo track.
+      const clip = await resolveCachedClip(plain, voiceTok);
       if (!isCurrent()) return;
-      if (url) {
+      if (clip) {
         // loadClipUrl already inserted/touched the in-memory entry as most-recently-used.
         // Resolve per-word timings to trim the quiet lead-in, but WITHOUT blocking the tap on the fetch:
         // we already hold the audio, so a slow/stalled timings round-trip must not hold up playback (the
         // "takes forever to load" bug). Warm timings are instant; a cold miss waits only a short budget,
         // then plays now while the fetch keeps warming in the background for the next play / tap-to-seek.
-        currentTimings = await resolveTimingsForPlayback(key, () => {
-          requestTTSGeneration([{ text: plain, voice: voiceTok }]).catch(() => {}); // backfill timings for this style
+        currentTimings = await resolveTimingsForPlayback(clip.key, () => {
+          // Offline Qwen imports always include timings; only a legacy fallback can be repaired live.
+          if (clip.token === legacyTokenFor(voiceTok)) {
+            requestTTSGeneration([{ text: plain, voice: clip.token }]).catch(() => {});
+          }
         });
         if (!isCurrent()) return;
         // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
         const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
-        await playUrl(url, isCurrent, markStart, markEnd, begin);
+        await playUrl(clip.url, isCurrent, markStart, markEnd, begin);
         return;
       }
 
       // Casual MISS → queue its generation, but don't make the user wait: fall back to the
       // (essentially always-cached) CLEAR clip right now so the sentence still plays immediately.
       if (casual) {
-        requestTTSGeneration([{ text: plain, voice: getTtsStyleToken() }]).catch(() => { /* best-effort */ });
-        const clearKey = await ttsKey(plain, TTS_VOICE);
+        requestTTSGeneration([{ text: plain, voice: TTS_LEGACY_CASUAL_VOICE }]).catch(() => { /* best-effort */ });
+        const clearClip = await resolveCachedClip(plain, TTS_VOICE);
         if (!isCurrent()) return;
-        const clearUrl = await loadClipUrl(clearKey);
-        if (!isCurrent()) return;
-        if (clearUrl) {
-          currentTimings = await resolveTimingsForPlayback(clearKey, () => {}); // non-blocking; no backfill on the fallback clip
+        if (clearClip) {
+          currentTimings = await resolveTimingsForPlayback(clearClip.key, () => {}); // non-blocking; no backfill on the fallback clip
           if (!isCurrent()) return;
           const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
-          await playUrl(clearUrl, isCurrent, markStart, markEnd, begin);
+          await playUrl(clearClip.url, isCurrent, markStart, markEnd, begin);
           return;
         }
 
@@ -1029,7 +1065,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
 
       // 3) MISS — fill the clear cache for next time (fire-and-forget), then fall back now (no timings).
       currentTimings = null;
-      requestTTSGeneration([{ text: plain, voice: TTS_VOICE }]).catch(() => { /* best-effort */ });
+      requestTTSGeneration([{ text: plain, voice: TTS_LEGACY_VOICE }]).catch(() => { /* best-effort */ });
       if (isIOS()) { systemFallback(); return; }
       await speakViaKokoro(plain, { onStart: markStart, onEnd: markEnd, allowDownload }, isCurrent, systemFallback);
     } catch (err) {

@@ -4,6 +4,8 @@ export interface PendingReviewMutation {
   event: ReviewEvent;
   itemIds: string[];
   optimisticSrs: Record<string, SRSData>;
+  /** Base item used when the first review materializes an implicit catalog sentence. */
+  seedItem?: StoredItem;
 }
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;

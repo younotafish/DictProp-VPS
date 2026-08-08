@@ -102,10 +102,11 @@ export interface AppliedReviewResponse {
 export const applyReviewMutation = async (
   event: ReviewEvent,
   itemIds: string[],
+  seedItem?: StoredItem,
 ): Promise<AppliedReviewResponse> => {
   const result = await requestJson<AppliedReviewResponse>(
     `${API_BASE}/api/reviews/apply`,
-    jsonRequest('POST', { event, itemIds }),
+    jsonRequest('POST', { event, itemIds, ...(seedItem ? { seedItem } : {}) }),
     'Apply review',
   );
   publishServerMutation();
@@ -505,8 +506,13 @@ export const cancelImageBackfill = async (): Promise<ImageBackfillStatus> => {
 // TTS cache (server-side MiMo audio, fetched as cached clips)
 // ============================================================================
 
-// MiMo voice for the server-cached TTS. MUST match the server default (server/src/routes/tts.ts MIMO_VOICE).
-export const TTS_VOICE = 'Mia';
+// Versioned, locally generated Qwen3-TTS cache tokens. A new token is required for any future model,
+// voice, or recipe change because clips are content-addressed and cached immutably on every device.
+export const TTS_VOICE = 'qwen3-aiden-clear-v1';
+export const TTS_CASUAL_VOICE = 'qwen3-aiden-casual-v1';
+// MiMo remains a rollout/cache-miss fallback while local batches are being generated and published.
+export const TTS_LEGACY_VOICE = 'Mia';
+export const TTS_LEGACY_CASUAL_VOICE = 'casual';
 
 /** One word's playback timing within a cached clip (from the server's whisper word-alignment pass). */
 export interface WordTiming { start: number; end: number; text: string }

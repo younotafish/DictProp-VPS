@@ -449,6 +449,7 @@ itemsRoutes.post('/reviews/apply', async (c) => {
   const body = await c.req.json().catch(() => null);
   const event = body?.event;
   const itemIds = body?.itemIds;
+  const seedItem = body?.seedItem;
   if (!event || typeof event.id !== 'string' || event.id.length === 0 || event.id.length > 200 ||
       typeof event.itemId !== 'string' || event.itemId.length === 0 || event.itemId.length > 200 ||
       !['vocab', 'phrase', 'sentence'].includes(event.itemType) ||
@@ -460,7 +461,20 @@ itemsRoutes.post('/reviews/apply', async (c) => {
       !itemIds.every((id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 200)) {
     return c.json({ error: 'Invalid review mutation' }, 400);
   }
+  if (seedItem !== undefined) {
+    const validationError = validateStoredItem(seedItem);
+    if (validationError || seedItem.data.id !== event.itemId || seedItem.type !== event.itemType ||
+        seedItem.srs.id !== event.itemId || seedItem.srs.totalReviews !== event.previousStep) {
+      return c.json({ error: validationError ? `Invalid review seed: ${validationError}` : 'Review seed does not match event' }, 400);
+    }
+  }
   try {
+    // Catalog sentences are implicit until their first review. Seed the base item before applying the
+    // idempotent event so an offline/retried first review cannot race the ordinary item sync or advance
+    // the schedule twice. Existing items always win; the seed is used only for a genuinely absent id.
+    if (seedItem !== undefined && !getItemById(event.itemId, userId, false)) {
+      upsertItem(seedItem, userId);
+    }
     const result = applyReviewEvent(event, itemIds, userId);
     if (!result) return c.json({ error: 'Review item not found' }, 404);
     return c.json(result, result.applied ? 201 : 200);

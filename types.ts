@@ -126,6 +126,8 @@ export interface SentenceData {
   sourceSense?: string; // The sense label of the source word
   /** Stable provenance id for a sentence originating in the read-only Real Life catalog. */
   catalogSentenceId?: string;
+  /** Collection boundary for an isolated Real Life memorization record. */
+  catalogCollectionId?: string;
   imageUrl?: string; // Attached or prepared image (base64/API URL in memory; IDB/server marker once offloaded)
   analysis?: SentenceAnalysis;
   analysisGeneratedAt?: number;

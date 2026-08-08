@@ -107,6 +107,56 @@ test('review route validates mutations before touching the database', async () =
   assert.deepEqual(await response.json(), { error: 'Invalid review mutation' });
 });
 
+test('a first catalog review atomically seeds its isolated sentence item', async () => {
+  const id = 'real-life-sentence:career-conversations:test:01';
+  const seedItem = {
+    type: 'sentence',
+    data: {
+      id,
+      text: 'Could we {{pressure-test}} that assumption before we commit?',
+      sourceWord: 'pressure-test',
+      sourceSense: 'Driving alignment',
+      catalogSentenceId: 'career-conversations:test:01',
+      catalogCollectionId: 'career-conversations',
+    },
+    srs: {
+      id, type: 'sentence', nextReview: 0, interval: 0, memoryStrength: 0,
+      lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 0.5,
+    },
+    savedAt: 1,
+  };
+  const event = {
+    id: 'catalog-first-review', itemId: id, itemType: 'sentence',
+    reviewedAt: Date.now(), previousStep: 0, nextStep: 1, rating: 'good',
+  };
+  const apply = (body: unknown) => app.request('/api/reviews/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  let response = await apply({ event, itemIds: [id], seedItem });
+  assert.equal(response.status, 201);
+  let result = await response.json() as any;
+  assert.equal(result.applied, true);
+  assert.equal(result.items[0].data.catalogCollectionId, 'career-conversations');
+  assert.equal(result.items[0].srs.totalReviews, 1);
+
+  response = await apply({ event, itemIds: [id], seedItem });
+  assert.equal(response.status, 200);
+  result = await response.json() as any;
+  assert.equal(result.applied, false);
+  assert.equal(result.items[0].srs.totalReviews, 1);
+
+  response = await apply({
+    event: { ...event, id: 'catalog-bad-seed', itemId: `${id}-other` },
+    itemIds: [`${id}-other`],
+    seedItem,
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'Review seed does not match event' });
+});
+
 test('item routes reject malformed records and oversized batches', async () => {
   let response = await app.request('/api/items', {
     method: 'PUT',

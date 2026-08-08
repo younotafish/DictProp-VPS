@@ -3,17 +3,20 @@ import {
   ArrowLeft,
   ArrowRight,
   BookmarkCheck,
+  Check,
+  CheckCircle2,
   BriefcaseBusiness,
   Compass,
   Crown,
   ExternalLink,
+  Play,
   Search,
   ShoppingBag,
   Sparkles,
   X,
 } from 'lucide-react';
 import { Virtuoso } from 'react-virtuoso';
-import type { StoredItem } from '../types';
+import type { ReviewRating, StoredItem } from '../types';
 import { HighlightedSentence } from '../components/HighlightedSentence';
 import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
@@ -22,9 +25,24 @@ import {
   type RealLifeCollection,
   type RealLifeSentence,
 } from '../services/realLifeCatalog';
+import {
+  buildRealLifeStudyItems,
+  createRealLifeProgressItem,
+  getRealLifeCollectionProgress,
+  indexRealLifeProgress,
+  realLifeProgressItemId,
+  type RealLifeCollectionProgress,
+} from '../services/realLifeProgress';
+import type { SentenceReviewFilter } from '../services/sentenceOrdering';
 
 interface RealLifeViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
+  progressItems: StoredItem[];
+  onUpdateSRS: (
+    itemId: string,
+    rating?: ReviewRating,
+    context?: { seedItem?: StoredItem },
+  ) => void | Promise<boolean>;
   isSentenceSaved: (text: string) => boolean;
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
   findSaved?: (term: string) => StoredItem | null;
@@ -54,8 +72,9 @@ const collectionStyle = {
 
 const CollectionTile: React.FC<{
   collection: RealLifeCollection;
+  progress: RealLifeCollectionProgress;
   onOpen: () => void;
-}> = ({ collection, onOpen }) => {
+}> = ({ collection, progress, onOpen }) => {
   const style = collectionStyle[collection.accent];
   const Icon = style.icon;
   return (
@@ -98,14 +117,30 @@ const CollectionTile: React.FC<{
           </span>
         </div>
 
-        <div className="mt-auto flex items-end justify-between pt-6">
+        <div className="mt-auto pt-5">
+          <div className="mb-4">
+            <div className="mb-1.5 flex items-center justify-between text-[10px] font-semibold text-white/75 sm:text-xs">
+              <span>{progress.reviewed} reviewed</span>
+              <span>{progress.masteryScore}% mastery</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-black/15">
+              <div
+                className="h-full rounded-full bg-white/90 transition-all"
+                style={{ width: `${progress.total === 0 ? 0 : Math.round((progress.reviewed / progress.total) * 100)}%` }}
+              />
+            </div>
+          </div>
+          <div className="flex items-end justify-between">
           <div>
             <p className="text-2xl font-bold tabular-nums sm:text-3xl">{collection.sentences.length}</p>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-white/70 sm:text-xs">real conversations</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-white/70 sm:text-xs">
+              {progress.toReview > 0 ? `${progress.toReview} to review` : 'review complete'}
+            </p>
           </div>
           <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-800 transition-transform group-hover:translate-x-1">
             <ArrowRight size={18} />
           </span>
+          </div>
         </div>
       </div>
     </button>
@@ -114,6 +149,8 @@ const CollectionTile: React.FC<{
 
 export const RealLifeView: React.FC<RealLifeViewProps> = ({
   onOpenSentence,
+  progressItems,
+  onUpdateSRS,
   isSentenceSaved,
   onScroll,
   findSaved,
@@ -121,53 +158,68 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
 }) => {
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const [sectionId, setSectionId] = useState('all');
+  const [reviewFilter, setReviewFilter] = useState<SentenceReviewFilter>('all');
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
 
   const selectedCollection = REAL_LIFE_COLLECTIONS.find(collection => collection.id === selectedCollectionId) ?? null;
+  const now = useMemo(() => Date.now(), [progressItems]);
+  const progressBySentence = useMemo(() => indexRealLifeProgress(progressItems), [progressItems]);
+  const collectionProgress = useMemo(
+    () => new Map(REAL_LIFE_COLLECTIONS.map(collection => [
+      collection.id,
+      getRealLifeCollectionProgress(collection, progressItems, now),
+    ])),
+    [now, progressItems],
+  );
+
+  const matchesReviewFilter = (sentence: RealLifeSentence, filter: SentenceReviewFilter): boolean => {
+    if (filter === 'all') return true;
+    const item = progressBySentence.get(sentence.id);
+    const reviews = item?.srs?.totalReviews ?? 0;
+    if (filter === 'unreviewed') return reviews === 0;
+    if (filter === 'due') return reviews > 0 && (item?.srs?.nextReview ?? 0) <= now;
+    return reviews > 0 && (item?.srs?.nextReview ?? 0) > now;
+  };
 
   const filtered = useMemo(() => {
     if (!selectedCollection) return [];
     const normalizedQuery = deferredQuery.trim().toLocaleLowerCase('en-US');
     return selectedCollection.sentences.filter(sentence => {
       if (sectionId !== 'all' && sentence.sectionId !== sectionId) return false;
+      if (!matchesReviewFilter(sentence, reviewFilter)) return false;
       if (!normalizedQuery) return true;
       return `${sentence.text} ${sentence.focus} ${sentence.sectionTitle}`
         .toLocaleLowerCase('en-US')
         .includes(normalizedQuery);
     });
-  }, [deferredQuery, sectionId, selectedCollection]);
+  }, [deferredQuery, now, progressBySentence, reviewFilter, sectionId, selectedCollection]);
 
   const openCollection = (collection: RealLifeCollection) => {
     setSelectedCollectionId(collection.id);
     setSectionId('all');
+    setReviewFilter('all');
     setQuery('');
   };
 
   const closeCollection = () => {
     setSelectedCollectionId(null);
     setSectionId('all');
+    setReviewFilter('all');
     setQuery('');
   };
 
   const openSentence = (ordered: RealLifeSentence[], index: number) => {
-    const savedAt = Date.now();
-    const previewItems: StoredItem[] = ordered.map(sentence => {
-      const id = `sentence-preview:real-life:${sentence.id}`;
-      return {
-        data: {
-          id,
-          text: sentence.markedText,
-          sourceWord: sentence.focus,
-          sourceSense: sentence.sectionTitle,
-          catalogSentenceId: sentence.id,
-        },
-        type: 'sentence',
-        savedAt,
-        srs: SRSAlgorithm.createNew(id, 'sentence'),
-      };
+    onOpenSentence(buildRealLifeStudyItems(ordered, progressItems, Date.now()), index);
+  };
+
+  const startStudy = () => {
+    if (!selectedCollection) return;
+    const actionable = selectedCollection.sentences.filter(sentence => {
+      const item = progressBySentence.get(sentence.id);
+      return (item?.srs?.totalReviews ?? 0) === 0 || (item?.srs?.nextReview ?? 0) <= now;
     });
-    onOpenSentence(previewItems, index);
+    openSentence(actionable.length > 0 ? actionable : selectedCollection.sentences, 0);
   };
 
   if (!selectedCollection) {
@@ -197,7 +249,12 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
 
           <div className="grid grid-cols-2 gap-3 sm:gap-5">
             {REAL_LIFE_COLLECTIONS.map(collection => (
-              <CollectionTile key={collection.id} collection={collection} onOpen={() => openCollection(collection)} />
+              <CollectionTile
+                key={collection.id}
+                collection={collection}
+                progress={collectionProgress.get(collection.id)!}
+                onOpen={() => openCollection(collection)}
+              />
             ))}
           </div>
         </div>
@@ -207,6 +264,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
 
   const style = collectionStyle[selectedCollection.accent];
   const CollectionIcon = style.icon;
+  const selectedProgress = collectionProgress.get(selectedCollection.id)!;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-50">
@@ -235,6 +293,20 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
             <span className={`hidden rounded-full px-2.5 py-1 text-xs font-bold sm:inline-flex ${style.soft}`}>
               {selectedCollection.level}
             </span>
+            <button
+              type="button"
+              onClick={startStudy}
+              className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-bold text-white transition-colors hover:bg-slate-700"
+              title={`Study ${selectedCollection.title}`}
+            >
+              <Play size={14} fill="currentColor" /> Study
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 px-3 py-2 text-center">
+            <div><p className="text-sm font-bold text-slate-800">{selectedProgress.masteryScore}%</p><p className="text-[10px] text-slate-400">mastery</p></div>
+            <div><p className="text-sm font-bold text-slate-800">{selectedProgress.reviewed}/{selectedProgress.total}</p><p className="text-[10px] text-slate-400">reviewed</p></div>
+            <div><p className="text-sm font-bold text-orange-600">{selectedProgress.toReview}</p><p className="text-[10px] text-slate-400">to review</p></div>
           </div>
 
           <div className="relative mt-3">
@@ -258,6 +330,24 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
                 <X size={15} />
               </button>
             )}
+          </div>
+
+          <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+            {([
+              ['all', 'All', selectedProgress.total],
+              ['unreviewed', 'Unreviewed', selectedProgress.unreviewed],
+              ['due', 'Due', selectedProgress.due],
+              ['memorized', 'Memorized', selectedProgress.memorized],
+            ] as [SentenceReviewFilter, string, number][]).map(([key, label, count]) => (
+              <button
+                type="button"
+                key={key}
+                onClick={() => setReviewFilter(key)}
+                className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${reviewFilter === key ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                {label} <span className={reviewFilter === key ? 'text-white/70' : 'text-slate-400'}>{count}</span>
+              </button>
+            ))}
           </div>
 
           <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
@@ -320,6 +410,10 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
           components={{ Footer: () => <div className="h-[calc(6rem+env(safe-area-inset-bottom))]" /> }}
           itemContent={(index, sentence) => {
             const saved = isSentenceSaved(sentence.text);
+            const progressItem = progressBySentence.get(sentence.id);
+            const reviews = progressItem?.srs?.totalReviews ?? 0;
+            const actionable = reviews === 0 || (progressItem?.srs?.nextReview ?? 0) <= now;
+            const mastery = progressItem?.srs ? SRSAlgorithm.getMasteryLevel(progressItem.srs) : null;
             return (
               <div className="mx-auto w-full max-w-5xl px-3 pt-2 sm:px-4">
                 <article
@@ -350,7 +444,31 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
                             <BookmarkCheck size={11} /> Saved
                           </span>
                         )}
+                        {reviews > 0 ? (
+                          <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                            <CheckCircle2 size={11} /> {Math.round(mastery?.percentage ?? 0)}%
+                          </span>
+                        ) : (
+                          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Unreviewed</span>
+                        )}
                         <div className="ml-auto flex shrink-0 items-center gap-2">
+                          {actionable && (
+                            <button
+                              type="button"
+                              onClick={event => {
+                                event.stopPropagation();
+                                void onUpdateSRS(
+                                  realLifeProgressItemId(sentence.id),
+                                  'good',
+                                  { seedItem: createRealLifeProgressItem(sentence) },
+                                );
+                              }}
+                              className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
+                              title="Mark as reviewed"
+                            >
+                              <Check size={12} /> Reviewed
+                            </button>
+                          )}
                           <SentenceSpeakerButton text={sentence.text} className="rounded-full p-1.5 hover:bg-indigo-50" iconSize={15} />
                           <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-400" />
                         </div>

@@ -1,13 +1,12 @@
-import { TTS_VOICE } from './api';
+import { TTS_CASUAL_VOICE, TTS_VOICE } from './api';
 
 export type TtsStyle = 'clear' | 'casual';
-const CASUAL_TOKEN = 'casual';
 const TTS_STYLE_KEY = 'tts_style';
 let style: TtsStyle = typeof localStorage !== 'undefined' && localStorage.getItem(TTS_STYLE_KEY) === 'casual' ? 'casual' : 'clear';
 const styleListeners = new Set<(value: TtsStyle) => void>();
 
 export const getTtsStyle = () => style;
-export const getTtsStyleToken = () => style === 'casual' ? CASUAL_TOKEN : TTS_VOICE;
+export const getTtsStyleToken = () => style === 'casual' ? TTS_CASUAL_VOICE : TTS_VOICE;
 export const subscribeTtsStyle = (callback: (value: TtsStyle) => void) => {
   styleListeners.add(callback);
   callback(style);

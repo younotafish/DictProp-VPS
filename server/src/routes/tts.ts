@@ -27,6 +27,10 @@ export const ttsRoutes = new Hono();
 const MIMO_URL = 'https://api.deepinfra.com/v1/inference/XiaomiMiMo/MiMo-V2.5-tts';
 // Default English voice. Options: Mia, Chloe (female), Milo, Dean (male), mimo_default.
 const MIMO_VOICE = 'Mia';
+const OFFLINE_CACHE_VOICES = new Set([
+  'qwen3-aiden-clear-v1',
+  'qwen3-aiden-casual-v1',
+]);
 const TTS_DIR = resolve(env.DATA_DIR, 'tts');
 const BACKFILL_STATUS_PATH = resolve(env.DATA_DIR, 'tts-backfill-status.json');
 const GEN_TIMEOUT_MS = 90_000;
@@ -270,6 +274,9 @@ function generateAndStore(text: string, voice: string, reduced?: string): Promis
   const existing = inFlight.get(key);
   if (existing) return existing;
   const job = (async () => {
+    if (OFFLINE_CACHE_VOICES.has(voice)) {
+      throw new Error(`${voice} is populated only by the verified offline audio bridge`);
+    }
     const p = pathForKey(key);
     const tp = timingsPathForKey(key);
     let audioBuf: Buffer | null = null;
@@ -490,6 +497,9 @@ ttsRoutes.post('/tts/generate', async (c) => {
       const key = ttsKey(text, voice);
       // Skip when both the clip and its local word timings are complete.
       if (await isComplete(key)) { skipped++; continue; }
+      // Versioned Qwen clips are generated, aligned, and validated on Apple Silicon, then imported.
+      // Never silently put MiMo bytes behind an immutable Qwen cache key.
+      if (OFFLINE_CACHE_VOICES.has(voice)) { skipped++; continue; }
       await generateAndStore(text, voice);
       generated++;
     } catch (e: any) {

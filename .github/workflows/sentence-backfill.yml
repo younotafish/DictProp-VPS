@@ -13,6 +13,7 @@ on:
           - corpus-export
           - corpus-import
           - image-import
+          - audio-import
           - enrichment-import
           - audit
           - repair
@@ -416,4 +417,58 @@ jobs:
             set -e
             docker compose exec -T app rm -rf /tmp/offline-images
             rm -rf /tmp/dictprop-image-bridge
+            exit "$STATUS"
+
+  audio-import:
+    if: inputs.operation == 'audio-import'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Validate audio import input
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
+
+      - name: Import locally generated audio
+        uses: appleboy/ssh-action@v1
+        env:
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
+          command_timeout: 60m
+          script: |
+            set -e
+            test -n "$SENTENCE_BRIDGE_KEY"
+            cd /opt/dictprop-vps
+            AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')
+            MIN_FREE_KB=$((5 * 1024 * 1024))
+            echo "offline-audio capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
+            test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
+            rm -rf /tmp/dictprop-audio-bridge
+            mkdir -p /tmp/dictprop-audio-bridge
+            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 20 --max-time 600 \
+              --output /tmp/dictprop-audio-bridge/offline-audio.enc \
+              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/offline-audio.enc"
+            docker compose exec -T app sh -c 'rm -rf /tmp/offline-audio && mkdir -p /tmp/offline-audio'
+            openssl enc -d -aes-256-cbc -pbkdf2 \
+              -pass env:SENTENCE_BRIDGE_KEY \
+              -in /tmp/dictprop-audio-bridge/offline-audio.enc \
+              | docker compose exec -T app tar -xz -C /tmp/offline-audio
+            set +e
+            docker compose exec -T app nice -n 10 node server/dist/scripts/import-offline-tts.js \
+              /tmp/offline-audio/manifest.json
+            STATUS=$?
+            set -e
+            docker compose exec -T app rm -rf /tmp/offline-audio
+            rm -rf /tmp/dictprop-audio-bridge
             exit "$STATUS"
