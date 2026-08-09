@@ -1,6 +1,6 @@
 import catalogSource from '../content/real-life-catalog.json';
 
-export type RealLifeAccent = 'indigo' | 'emerald' | 'amber';
+export type RealLifeAccent = 'indigo' | 'emerald' | 'amber' | 'rose' | 'sky';
 
 interface RealLifeSourceLink {
   label: string;

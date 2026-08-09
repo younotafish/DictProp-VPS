@@ -122,3 +122,7 @@ export function getRealLifeCatalogSummaries(): readonly RealLifeCatalogSummary[]
 export function getRealLifeCatalogSentenceCount(): number {
   return catalog.byId.size;
 }
+
+export function getAllRealLifeCatalogSentenceTexts(): string[] {
+  return Array.from(catalog.byId.values(), sentence => sentence.text);
+}

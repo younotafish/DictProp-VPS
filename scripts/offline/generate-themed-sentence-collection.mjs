@@ -17,6 +17,10 @@ if (brief?.version !== 1 || !brief.collection?.id || !Array.isArray(brief.method
     !Array.isArray(brief.sections) || brief.sections.length === 0) {
   throw new Error('The themed-sentence generation brief is invalid');
 }
+const sentencesPerSection = Number(brief.sentencesPerSection ?? 18);
+if (!Number.isSafeInteger(sentencesPerSection) || sentencesPerSection < 8 || sentencesPerSection > 50) {
+  throw new Error('sentencesPerSection must be an integer from 8 to 50');
+}
 
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'generation-work'));
@@ -30,8 +34,8 @@ const schema = {
     sectionId: { type: 'string', minLength: 1, maxLength: 100 },
     sentences: {
       type: 'array',
-      minItems: 18,
-      maxItems: 18,
+      minItems: sentencesPerSection,
+      maxItems: sentencesPerSection,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -62,7 +66,8 @@ const normalized = value => String(value || '').normalize('NFKC').toLocaleLowerC
   .trim();
 
 function validateSection(value, section) {
-  if (value?.sectionId !== section.id || !Array.isArray(value.sentences) || value.sentences.length !== 18) {
+  if (value?.sectionId !== section.id || !Array.isArray(value.sentences) ||
+      value.sentences.length !== sentencesPerSection) {
     throw new Error(`${section.id}: wrong section identity or sentence count`);
   }
   const seen = new Set();
@@ -70,7 +75,8 @@ function validateSection(value, section) {
     const text = String(sentence?.text || '').trim();
     const focus = String(sentence?.focus || '').trim();
     const textKey = normalized(text);
-    if (text.length < 35 || text.length > 280 || !/[.!?]$/.test(text)) {
+    const wordCount = text.match(/[A-Za-z0-9]+(?:['’\-][A-Za-z0-9]+)*/g)?.length ?? 0;
+    if (text.length < 35 || text.length > 280 || wordCount < 8 || wordCount > 32 || !/[.!?]$/.test(text)) {
       throw new Error(`${section.id}/${index + 1}: sentence must be a complete, bounded utterance`);
     }
     if (focus.length < 2 || focus.length > 80 || !textKey.includes(normalized(focus))) {
@@ -87,31 +93,41 @@ function validateSection(value, section) {
 
 function promptFor(section, correction = '') {
   const neighboringSections = brief.sections.map(item => `${item.title}: ${item.description}`).join('\n');
-  return `You are designing an advanced American-English memorization collection for a Chinese-speaking professional.
+  const audience = String(brief.audience || 'an adult English learner').trim();
+  const level = String(brief.collection.level || brief.level || 'B2-C1').trim();
+  const domain = String(brief.domain || brief.collection.title).trim();
+  const extraRequirements = Array.isArray(brief.requirements)
+    ? brief.requirements.map(item => `- ${item}`).join('\n')
+    : '';
+  return `You are designing a practical American-English memorization collection for ${audience}.
 
-Create exactly 18 ORIGINAL, recitation-ready workplace utterances for this section:
+Create exactly ${sentencesPerSection} ORIGINAL, recitation-ready spoken utterances for this section:
+COLLECTION: ${brief.collection.title}
+DOMAIN: ${domain}
+TARGET LEVEL: ${level}
 SECTION ID: ${section.id}
 TITLE: ${section.title}
 PURPOSE: ${section.description}
 SPECIFIC GUIDANCE: ${section.guidance}
 
-The collection synthesizes these publicly described executive-communication principles:
+Collection-wide content principles:
 ${brief.methodology.map(item => `- ${item}`).join('\n')}
 
 The other sections are listed below. Keep this section sharply differentiated and avoid stealing their main scenarios:
 ${neighboringSections}
 
 Requirements:
-- Write natural present-day educated American English at C1-C2 pragmatic difficulty.
-- C2 means strategic framing, tact, implication, judgment, and rhetorical control—not ornate or unnatural vocabulary.
-- Each line must be something a leader could actually say aloud in a meeting, one-on-one, update, or consequential workplace conversation.
-- Vary sentence structures and situations. Include statements, questions, redirects, recommendations, and boundary-setting where appropriate.
-- Make the collection broadly useful across industries; do not mention Amazon or any specific employer.
-- Do not quote, name, impersonate, or attribute wording to Mike Li. These must be new practice lines inspired only by public high-level ideas.
+- Write natural, present-day spoken American English at ${level} difficulty.
+- Keep the complexity pragmatic and useful: tact, clarification, negotiation, problem-solving, and precise requests—not ornate vocabulary.
+- Every line must be something the implied speaker could realistically say aloud in the stated situation.
+- Vary speakers, sentence structures, and scenarios. Include questions, answers, requests, clarifications, recommendations, and tactful boundary-setting where appropriate.
+- Keep the collection broadly useful and avoid specific real companies, brands, or destinations unless the section explicitly requires a generic example.
+- Do not quote, name, impersonate, or attribute wording to a real person. These must be original practice lines.
 - Do not write abstract advice, definitions, labels, placeholders, or commentary. Write only usable utterances.
 - For every sentence, choose one meaningful B2+ contiguous expression copied EXACTLY from that sentence as focus. It should be worth learning, not an elementary function word.
 - Keep each sentence between roughly 8 and 32 words and end it with normal punctuation.
-- Return sectionId exactly and exactly 18 unique sentence objects.${correction}`;
+${extraRequirements}
+- Return sectionId exactly and exactly ${sentencesPerSection} unique sentence objects.${correction}`;
 }
 
 function runCodex(prompt, resultPath) {
@@ -146,12 +162,7 @@ function runCodex(prompt, resultPath) {
 }
 
 async function generateSection(section) {
-  const fingerprint = createHash('sha256').update(JSON.stringify({
-    collection: brief.collection,
-    methodology: brief.methodology,
-    sections: brief.sections,
-    section,
-  })).digest('hex').slice(0, 16);
+  const fingerprint = createHash('sha256').update(JSON.stringify({ brief, section })).digest('hex').slice(0, 16);
   const resultPath = join(workDir, `${section.id}-${fingerprint}.json`);
   let correction = '';
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -161,7 +172,7 @@ async function generateSection(section) {
     } catch (error) {
       if (aborting || attempt === 2) throw error;
       if (existsSync(resultPath)) unlinkSync(resultPath);
-      correction = `\n\nYour previous output failed validation: ${error instanceof Error ? error.message : String(error)}. Return a completely corrected section with all 18 entries.`;
+      correction = `\n\nYour previous output failed validation: ${error instanceof Error ? error.message : String(error)}. Return a completely corrected section with all ${sentencesPerSection} entries.`;
     }
   }
   throw new Error(`${section.id}: exhausted generation retries`);

@@ -20,13 +20,14 @@ export const setTtsStyle = (value: TtsStyle) => {
 };
 
 export const RATE_PRESETS = [1.0, 1.1, 1.3, 1.5, 1.75, 2.0] as const;
+const DEFAULT_RATE = 1.0;
 const RATE_KEY = 'tts_rate';
 const clampRate = (value: number) => Math.min(2, Math.max(1, value));
 let rate = (() => {
   try {
     const value = Number(localStorage.getItem(RATE_KEY));
-    return Number.isFinite(value) && value > 0 ? clampRate(value) : 1.1;
-  } catch { return 1.1; }
+    return Number.isFinite(value) && value > 0 ? clampRate(value) : DEFAULT_RATE;
+  } catch { return DEFAULT_RATE; }
 })();
 const rateListeners = new Set<(value: number) => void>();
 export const getPlaybackRate = () => rate;

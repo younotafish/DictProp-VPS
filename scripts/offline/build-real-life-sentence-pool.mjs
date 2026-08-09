@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 const [catalogArg, outputArg, collectionArg, sectionArg] = process.argv.slice(2);
 if (!catalogArg || !outputArg) {
   throw new Error(
-    'Usage: build-real-life-sentence-pool.mjs <catalog.json> <output.json> [collection-id] [section-id]',
+    'Usage: build-real-life-sentence-pool.mjs <catalog.json> <output.json> [collection-id[,collection-id...]] [section-id]',
   );
 }
 
@@ -15,6 +15,9 @@ const catalog = JSON.parse(readFileSync(resolve(catalogArg), 'utf8'));
 if (catalog?.version !== 1 || !Array.isArray(catalog.collections)) {
   throw new Error('Real Life catalog is invalid');
 }
+const selectedCollectionIds = new Set(
+  String(collectionArg || '').split(',').map(value => value.trim()).filter(Boolean),
+);
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const normalizeSentence = value => String(value || '')
@@ -31,7 +34,7 @@ const normalizeSentence = value => String(value || '')
 const sentences = [];
 const seenLookupHashes = new Set();
 for (const collection of catalog.collections) {
-  if (collectionArg && collection.id !== collectionArg) continue;
+  if (selectedCollectionIds.size > 0 && !selectedCollectionIds.has(collection.id)) continue;
   if (!collection?.id || !collection.title || !Array.isArray(collection.sections)) {
     throw new Error('Real Life catalog contains an invalid collection');
   }
@@ -74,7 +77,7 @@ for (const collection of catalog.collections) {
 }
 
 if (sentences.length === 0) {
-  throw new Error(`No Real Life sentences matched${collectionArg ? ` collection ${collectionArg}` : ''}${sectionArg ? ` section ${sectionArg}` : ''}`);
+  throw new Error(`No Real Life sentences matched${collectionArg ? ` collection selection ${collectionArg}` : ''}${sectionArg ? ` section ${sectionArg}` : ''}`);
 }
 
 const output = {

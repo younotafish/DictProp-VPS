@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "sentencesPerSection": 20,
+  "audience": "an adult English learner who wants confident, natural English throughout a trip",
+  "domain": "realistic conversations during air, rail, road, public-transit, hotel, and sightseeing travel",
+  "collection": {
+    "id": "travel-conversations",
+    "title": "Travel Conversations",
+    "eyebrow": "Travel English",
+    "description": "Navigate bookings, airports, disruptions, local transportation, hotels, sightseeing, road trips, and travel emergencies.",
+    "level": "B2–C1",
+    "accent": "sky"
+  },
+  "methodology": [
+    "Teach complete problem-solving exchanges rather than isolated tourist vocabulary.",
+    "Prioritize clear, calm, and specific language when time, money, safety, or travel documents are involved.",
+    "Include both traveler and service-provider language so learners can understand likely questions, explanations, and constraints.",
+    "Use pragmatic B2–C1 complexity: confirming assumptions, comparing options, negotiating alternatives, documenting problems, and escalating proportionately.",
+    "Cover routine travel and credible disruptions without making every situation dramatic or adversarial.",
+    "Keep destinations, carriers, hotels, booking sites, and rental companies generic so every line transfers broadly.",
+    "Favor natural spoken American English while retaining internationally understandable travel terminology.",
+    "Make each utterance independently useful and specific enough that its setting and communicative goal are apparent."
+  ],
+  "requirements": [
+    "Distribute lines across travelers, airline and airport staff, border officers, drivers, transit employees, hotel staff, guides, rental agents, and emergency personnel.",
+    "Avoid repetitive openings such as 'Could you,' 'Can I,' and 'Where is'; vary questions, explanations, confirmations, warnings, and solutions.",
+    "Include tactful escalation and documentation language for cancellations, lost property, incorrect charges, unsafe conditions, and inaccessible services.",
+    "Do not use real brands, flight numbers, hotel names, street addresses, or destinations.",
+    "Do not turn sentences into generic travel advice, vocabulary definitions, or written-form boilerplate."
+  ],
+  "sections": [
+    {
+      "id": "planning-and-booking",
+      "title": "Planning & booking",
+      "description": "Compare itineraries, understand fare conditions, reserve services, and verify what a booking includes.",
+      "guidance": "Cover flexible versus restricted fares, connections, baggage, room or seat preferences, deposits, cancellation terms, confirmation details, accessibility requests, and booking-agent responses."
+    },
+    {
+      "id": "airport-checkin-and-baggage",
+      "title": "Airport check-in & baggage",
+      "description": "Check in, choose a seat, handle documents, tag bags, and resolve baggage restrictions.",
+      "guidance": "Include kiosks, passport checks, seat changes, upgrades, checked and carry-on bags, overweight items, fragile baggage, special equipment, boarding passes, and staff explanations."
+    },
+    {
+      "id": "security-immigration-and-customs",
+      "title": "Security, immigration & customs",
+      "description": "Answer official questions, clarify procedures, declare items, and respond calmly to additional screening.",
+      "guidance": "Cover security preparation, prohibited items, medication, purpose and duration of travel, accommodation, onward tickets, declarations, inspection, missing forms, and requests for clarification."
+    },
+    {
+      "id": "delays-cancellations-and-connections",
+      "title": "Delays, cancellations & connections",
+      "description": "Understand a disruption, protect an onward trip, compare remedies, and document what happened.",
+      "guidance": "Include missed connections, rebooking, standby, overnight delays, meals or lodging, baggage routing, alternative airports, refund versus credit, status updates, and proportionate escalation."
+    },
+    {
+      "id": "trains-buses-and-ferries",
+      "title": "Trains, buses & ferries",
+      "description": "Buy the right ticket, find the correct service, make transfers, and handle changes on intercity transport.",
+      "guidance": "Cover platforms and gates, reserved seats, validation, zones, transfers, last services, delays, replacement transport, luggage, quiet cars, stops, and staff announcements."
+    },
+    {
+      "id": "taxis-rideshares-and-local-transit",
+      "title": "Taxis, rideshares & local transit",
+      "description": "Arrange local transportation, clarify pickup and route details, and resolve fare or destination confusion.",
+      "guidance": "Include pickup landmarks, identifying a vehicle, routes, meters and estimates, tolls, card payment, accessibility, transit cards, service changes, wrong turns, safe drop-off points, and receipts."
+    },
+    {
+      "id": "hotel-arrival-and-checkin",
+      "title": "Hotel arrival & check-in",
+      "description": "Locate a reservation, understand policies, request practical accommodations, and settle into a property.",
+      "guidance": "Cover early arrival, deposits and incidentals, room type, bed setup, breakfast, Wi-Fi, parking, luggage storage, upgrades, accessibility, key cards, and front-desk explanations."
+    },
+    {
+      "id": "room-problems-and-checkout",
+      "title": "Room problems & checkout",
+      "description": "Report maintenance, cleanliness, noise, safety, or billing problems and agree on a workable remedy.",
+      "guidance": "Include malfunctioning equipment, housekeeping, noise, pests, missing items, room moves, late checkout, folio review, disputed fees, luggage after checkout, and manager resolutions."
+    },
+    {
+      "id": "navigation-sightseeing-and-tours",
+      "title": "Navigation, sightseeing & tours",
+      "description": "Ask precise directions, understand local guidance, book activities, and communicate with a guide or venue.",
+      "guidance": "Cover landmarks, walking routes, closing times, timed entry, sold-out visits, tour pace, meeting points, accessibility, photographs, local recommendations, getting separated, and guide instructions."
+    },
+    {
+      "id": "rentals-road-trips-and-emergencies",
+      "title": "Rentals, road trips & emergencies",
+      "description": "Rent and inspect a vehicle, manage road-trip logistics, and seek effective help when something goes wrong.",
+      "guidance": "Cover license and insurance, deposits, existing damage, fuel and charging, tolls, navigation, breakdowns, collisions, medical help, lost documents or phones, theft reports, consular help, and emergency directions."
+    }
+  ]
+}

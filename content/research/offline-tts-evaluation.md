@@ -4,10 +4,11 @@ Evaluated on 2026-08-08 for the Real Life sentence catalog. The production targe
 generated speech that can be imported into the VPS cache in small, resumable batches. The VPS does
 not run the model.
 
-## Decision
+## Status
 
-Use `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit` with the built-in **Aiden** voice and two
-versioned recipes:
+The earlier decision to treat Qwen/Aiden as a quality replacement for MiMo is **withdrawn pending
+perceptual testing**. Do not generate another bulk wave with these voice versions solely on the
+strength of the ASR benchmark below. The currently imported recipes are:
 
 - `qwen3-aiden-clear-v1`: polished, conversational General American English
 - `qwen3-aiden-casual-v1`: brisk, linked, naturally reduced General American English
@@ -37,10 +38,35 @@ speaking-rate, and forced-alignment gates.
 | Qwen casual | 0 / 71 | -0.161 | 0.977 | 4.72 s | 0.23 s |
 | MiMo clear | 0 / 71 | -0.216 | 0.971 | 5.70 s | 0.26 s |
 
-The sample is deliberately small, so these numbers are a release gate rather than a universal TTS
-benchmark. They show that Qwen preserved every tested word while producing tighter delivery and
-better ASR sequence confidence than the current free MiMo track. That is the relevant improvement
-for sentence memorization. MiMo remains a temporary per-clip fallback until each Qwen batch lands.
+The sample is deliberately small, and these measurements establish intelligibility only. They do
+**not** measure native-likeness, connected-speech fluency, rhythm, stress, voice preference, or
+whether a listener would choose the clip for memorization. The original interpretation overstated
+what the evidence supported.
+
+## Connected-speech finding
+
+An audit of all 720 imported Qwen sentences found that the two recipes are not perceptually distinct
+enough to support their labels. Casual averages 194 WPM versus 186 WPM for Clear, while positive
+inter-word gaps and long-pause distributions are nearly identical. The app also plays cached clips
+at a legacy default of 1.1×, inherited from the slower MiMo track. That raises the effective means to
+roughly 214 and 204 WPM without creating more natural linkage.
+
+This release changes only the untouched default to 1.0× so cached speech plays at its authored
+rate. A listener's explicitly saved playback-rate preference is preserved.
+
+The setup has three plausible quality problems that require a controlled listening test:
+
+- Aiden is described as clear, and the long prompts further emphasize articulation and exact word
+  preservation; that may encourage read-aloud delivery instead of conversational phrasing.
+- Production sampling (`temperature` 0.72/0.82, `top_k` 35, `top_p` 0.92, repetition penalty 1.08)
+  is narrower than Qwen's published defaults (0.9, 50, 1.0, 1.05).
+- The 8-bit MLX conversion and the Aiden voice were never perceptually compared with bf16, Ryan,
+  concise prompting, or MiMo under matched playback conditions.
+
+`generate-qwen-naturalness-benchmark.py` and `generate-mimo-naturalness-benchmark.mjs` render a
+five-sentence connected-speech set for blinded human ranking. A new immutable voice token and bulk
+generation are required if a different voice, model precision, prompt, sampling recipe, or playback
+rate wins.
 
 ## Reproducible runtime
 

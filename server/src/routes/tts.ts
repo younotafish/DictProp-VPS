@@ -20,6 +20,7 @@ import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import { getAllSentenceTexts } from '../db.js';
 import { alignAudioLocally } from '../local-whisper.js';
+import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import type { WordTiming } from '../tts-alignment.js';
 
 export const ttsRoutes = new Hono();
@@ -351,7 +352,11 @@ export async function runBackfill(): Promise<void> {
   // Synchronous setup (runs before the first await, so a non-awaiting caller still sees `total`).
   let texts: string[];
   try {
-    texts = Array.from(new Set(getAllSentenceTexts().map(stripMarkers).filter(Boolean)));
+    texts = Array.from(new Set(
+      [...getAllSentenceTexts(), ...getAllRealLifeCatalogSentenceTexts()]
+        .map(stripMarkers)
+        .filter(Boolean),
+    ));
   } catch (e: any) {
     console.warn('[tts] backfill: failed to read items:', e?.message);
     return;

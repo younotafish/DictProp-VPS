@@ -28,6 +28,8 @@ data/
 tts-samples/
 server/dist/
 server/node_modules/
+__pycache__/
+*.pyc
 
 # Playwright
 .playwright/

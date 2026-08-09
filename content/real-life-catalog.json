@@ -1751,6 +1751,1766 @@
           ]
         }
       ]
+    },
+    {
+      "id": "restaurant-conversations",
+      "title": "Restaurant Conversations",
+      "eyebrow": "Dining English",
+      "description": "Handle reservations, menus, dietary needs, ordering, service problems, payment, and takeout with natural, tactful English.",
+      "level": "B2–C1",
+      "accent": "rose",
+      "sections": [
+        {
+          "id": "reservations-and-arrival",
+          "title": "Reservations & arrival",
+          "description": "Book, change, confirm, and locate a reservation, then handle waits and walk-in availability.",
+          "sentences": [
+            {
+              "text": "How far in advance do reservations open for holiday weekends, and is there a limit on party size?",
+              "focus": "How far in advance do reservations open"
+            },
+            {
+              "text": "I can fit four in at 7:30; may I have the name for the reservation and a number where we can reach you?",
+              "focus": "a number where we can reach you"
+            },
+            {
+              "text": "I booked online for 6:30, but the confirmation email says 7:30, so I’d like to verify the actual time.",
+              "focus": "verify the actual time"
+            },
+            {
+              "text": "I’m not seeing that booking yet; would you mind showing me the confirmation number so I can trace it?",
+              "focus": "showing me the confirmation number"
+            },
+            {
+              "text": "Our party has grown from four to six; is there any way to adjust tonight’s reservation without changing the time?",
+              "focus": "adjust tonight’s reservation"
+            },
+            {
+              "text": "We can accommodate six, but the earliest opening is 8:15; otherwise, I can keep your original table for four.",
+              "focus": "the earliest opening is 8:15"
+            },
+            {
+              "text": "Something came up, and we’re hoping to move our reservation from seven to eight rather than cancel altogether.",
+              "focus": "Something came up"
+            },
+            {
+              "text": "Nothing is open at eight, but I can add you to the cancellation list and call if something changes.",
+              "focus": "add you to the cancellation list"
+            },
+            {
+              "text": "We’re running about twenty minutes late; please let me know whether you can still hold the table.",
+              "focus": "running about twenty minutes late"
+            },
+            {
+              "text": "We hold reservations for fifteen minutes, but I can extend that by ten if you’re already on your way.",
+              "focus": "extend that by ten"
+            },
+            {
+              "text": "Hi, we have a reservation under Chen for five people at 7:15, and the full party is here.",
+              "focus": "the full party is here"
+            },
+            {
+              "text": "We’re resetting your table now; once it’s reset, I’ll come get your party from the waiting area.",
+              "focus": "once it’s reset"
+            },
+            {
+              "text": "Go ahead and check in under my name; I’m parking now and should be inside within five minutes.",
+              "focus": "check in under my name"
+            },
+            {
+              "text": "We normally seat complete parties, though I can check whether your table is ready while you wait for the last guest.",
+              "focus": "seat complete parties"
+            },
+            {
+              "text": "We don’t have a reservation; what’s the current wait for two, and do you accept walk-ins at the bar?",
+              "focus": "accept walk-ins at the bar"
+            },
+            {
+              "text": "For a party of two, the estimate is twenty-five to thirty minutes, but I’ll text you as soon as a table opens.",
+              "focus": "as soon as a table opens"
+            },
+            {
+              "text": "You’re welcome to wait here, but bar seats are first come, first served and may fill before your table is ready.",
+              "focus": "first come, first served"
+            },
+            {
+              "text": "We were quoted thirty minutes, and it’s been nearly fifty; could you give us a realistic update?",
+              "focus": "give us a realistic update"
+            },
+            {
+              "text": "You’re right that the estimate was off; we need another fifteen minutes, or I can seat you immediately at the communal table.",
+              "focus": "the estimate was off"
+            },
+            {
+              "text": "To avoid the late-cancellation fee, please call by noon Thursday if your plans change.",
+              "focus": "avoid the late-cancellation fee"
+            }
+          ]
+        },
+        {
+          "id": "seating-and-comfort",
+          "title": "Seating & comfort",
+          "description": "Negotiate table location, accessibility, space, temperature, noise, and other seating needs.",
+          "sentences": [
+            {
+              "text": "Would your party be more comfortable in a booth, or do you need chairs that can be moved around?",
+              "focus": "chairs that can be moved around"
+            },
+            {
+              "text": "A regular table would work better for us, since my father has trouble sliding into a booth.",
+              "focus": "has trouble sliding into"
+            },
+            {
+              "text": "We can seat you on the patio, but I want to mention that the heaters don't reach the far tables.",
+              "focus": "the heaters don't reach the far tables"
+            },
+            {
+              "text": "We’d prefer a table near the restroom, but not directly in the path of servers coming from the kitchen.",
+              "focus": "not directly in the path of servers"
+            },
+            {
+              "text": "We'll need one high chair and enough room beside it to keep the aisle clear.",
+              "focus": "keep the aisle clear"
+            },
+            {
+              "text": "For safety, the stroller can't block this walkway; I can store it near the host stand.",
+              "focus": "can't block this walkway"
+            },
+            {
+              "text": "Is there a step-free route to a table with enough clearance for a wheelchair?",
+              "focus": "enough clearance for a wheelchair"
+            },
+            {
+              "text": "Yes, the entire route is accessible, and I'll remove one chair before I seat you.",
+              "focus": "the entire route is accessible"
+            },
+            {
+              "text": "Rather than leaving our bags where they could obstruct the aisle, is there somewhere secure you can keep them?",
+              "focus": "obstruct the aisle"
+            },
+            {
+              "text": "I can hang your coats, but please keep valuables with you because the closet isn't monitored.",
+              "focus": "please keep valuables with you"
+            },
+            {
+              "text": "There's a strong draft from that door; would moving one table over be possible?",
+              "focus": "a strong draft from that door"
+            },
+            {
+              "text": "We're happy to move you, although we can't combine those tables because they would block an emergency exit.",
+              "focus": "block an emergency exit"
+            },
+            {
+              "text": "The sun is directly in her eyes; could you lower the shade or suggest a less exposed table?",
+              "focus": "a less exposed table"
+            },
+            {
+              "text": "This area is louder than we expected; do you have anything away from the bar and speakers?",
+              "focus": "louder than we expected"
+            },
+            {
+              "text": "The bar will get busier soon, so the back dining room is your best bet for a quieter conversation.",
+              "focus": "your best bet for a quieter conversation"
+            },
+            {
+              "text": "Before we settle in, does everyone have enough elbow room, or should we ask for a larger table?",
+              "focus": "Before we settle in"
+            },
+            {
+              "text": "This table keeps rocking whenever we lean on it; could someone stabilize it before the drinks arrive?",
+              "focus": "keeps rocking whenever we lean on it"
+            },
+            {
+              "text": "I'm sorry we missed your accessibility note; let me find a suitable table without making you wait again.",
+              "focus": "without making you wait again"
+            },
+            {
+              "text": "The lighting here is too dim for me to read the menu; is there a brighter table available?",
+              "focus": "too dim for me to read the menu"
+            },
+            {
+              "text": "We reserved outdoor seating, but with this wind, we'd prefer the first available indoor table, even if it's smaller.",
+              "focus": "the first available indoor table"
+            }
+          ]
+        },
+        {
+          "id": "understanding-the-menu",
+          "title": "Understanding the menu",
+          "description": "Clarify unfamiliar items, ingredients, portions, preparation, availability, and pricing.",
+          "sentences": [
+            {
+              "text": "I’m not familiar with that term—what does the dish actually consist of?",
+              "focus": "actually consist of"
+            },
+            {
+              "text": "It’s a slow-braised cut with a rich sauce, served over mashed vegetables.",
+              "focus": "slow-braised cut"
+            },
+            {
+              "text": "Is the lunch portion substantially smaller, or is it enough for a full meal?",
+              "focus": "substantially smaller"
+            },
+            {
+              "text": "The family-style menu lists one price; is that charged per person or for the entire table?",
+              "focus": "charged per person or for the entire table"
+            },
+            {
+              "text": "When the menu says grilled, does that mean flame-grilled or cooked on a flat-top?",
+              "focus": "cooked on a flat-top"
+            },
+            {
+              "text": "Before we order the fish, what is today’s market price?",
+              "focus": "today’s market price"
+            },
+            {
+              "text": "Today’s market price is forty-two dollars, and that includes your choice of two sides.",
+              "focus": "your choice of two sides"
+            },
+            {
+              "text": "We’ve sold out of the short ribs, but the braised chicken is available and has a similar preparation.",
+              "focus": "has a similar preparation"
+            },
+            {
+              "text": "Tonight’s special features roasted vegetables and seared beef, finished with a mildly spicy sauce.",
+              "focus": "finished with a mildly spicy sauce"
+            },
+            {
+              "text": "Can one person order the tasting menu, or does the entire table have to participate?",
+              "focus": "does the entire table have to participate"
+            },
+            {
+              "text": "The leaf symbol means the dish can be made vegan, but you’ll need to request the modified version when ordering.",
+              "focus": "you’ll need to request the modified version"
+            },
+            {
+              "text": "The tasting menu includes six courses, but beverages and the optional cheese course are priced separately.",
+              "focus": "are priced separately"
+            },
+            {
+              "text": "Before we commit to the tasting menu, please spell out every supplement so the final price is clear.",
+              "focus": "spell out every supplement"
+            },
+            {
+              "text": "Just so you know, the dinner menu starts at five, so only the bar menu is available right now.",
+              "focus": "only the bar menu is available"
+            },
+            {
+              "text": "The happy-hour price applies to the drink alone; adding the appetizer pairing brings the total to eighteen dollars.",
+              "focus": "applies to the drink alone"
+            },
+            {
+              "text": "The combo includes a fountain drink and one side, while bottled drinks and premium sides cost extra.",
+              "focus": "premium sides cost extra"
+            },
+            {
+              "text": "If we order the large platter, will it comfortably feed four people as a main course?",
+              "focus": "comfortably feed four people"
+            },
+            {
+              "text": "The menu describes this fish as cured; should I expect it to be raw in the center or fully cooked?",
+              "focus": "should I expect it to be raw in the center"
+            },
+            {
+              "text": "Does the listed weight refer to the steak before cooking, and is the bone included in that number?",
+              "focus": "refer to the steak before cooking"
+            },
+            {
+              "text": "Is the children’s menu limited to guests under a certain age, or may an adult order the smaller portion?",
+              "focus": "limited to guests under a certain age"
+            }
+          ]
+        },
+        {
+          "id": "dietary-needs",
+          "title": "Dietary needs & allergies",
+          "description": "Communicate allergies and dietary restrictions precisely and verify that an order can be handled safely.",
+          "sentences": [
+            {
+              "text": "I have a severe peanut allergy, so please tell me whether this dish or its garnish could contain peanuts.",
+              "focus": "severe peanut allergy"
+            },
+            {
+              "text": "Our fryer is shared with shellfish, so I can't promise that cross-contact won't occur.",
+              "focus": "cross-contact won't occur"
+            },
+            {
+              "text": "Before I order, would you please verify with the kitchen that the sauce contains no sesame?",
+              "focus": "verify with the kitchen"
+            },
+            {
+              "text": "The dressing includes Worcestershire sauce, which contains fish, although fish isn't listed in the menu description.",
+              "focus": "isn't listed in the menu description"
+            },
+            {
+              "text": "Is the broth made entirely from plant-based ingredients, including the flavoring and any finishing fat?",
+              "focus": "made entirely from plant-based ingredients"
+            },
+            {
+              "text": "We can make that vegetarian by replacing the chicken with roasted mushrooms, but the standard sauce still contains dairy.",
+              "focus": "replacing the chicken with roasted mushrooms"
+            },
+            {
+              "text": "I'm vegan, and I'd appreciate it if you could leave off the cheese and use oil instead of butter.",
+              "focus": "use oil instead of butter"
+            },
+            {
+              "text": "Is this gluten-free because the ingredients contain no gluten, or is it also prepared in a separate area?",
+              "focus": "prepared in a separate area"
+            },
+            {
+              "text": "May I ask whether this is an allergy, an intolerance, or a preference, so we can follow the right precautions?",
+              "focus": "follow the right precautions"
+            },
+            {
+              "text": "I can't have dairy; does the bread or marinade contain milk, butter, whey, or any other milk-derived ingredient?",
+              "focus": "any other milk-derived ingredient"
+            },
+            {
+              "text": "The cocktail itself is dairy-free, but the foam is made with egg white; would that work for you?",
+              "focus": "the foam is made with egg white"
+            },
+            {
+              "text": "Given the severity of your allergy, we can't safely accommodate it in our kitchen, and I don't want to give you false reassurance.",
+              "focus": "give you false reassurance"
+            },
+            {
+              "text": "If the bread arrives packaged, may I see the label and verify the complete ingredient and allergen statement myself?",
+              "focus": "verify the complete ingredient and allergen statement"
+            },
+            {
+              "text": "I avoid alcohol entirely; does the sauce contain cooking wine, and can it be omitted before the dish is prepared?",
+              "focus": "can it be omitted before the dish is prepared"
+            },
+            {
+              "text": "I ordered this without cheese because of a dairy allergy, so this isn't safe for me; please have it remade from scratch.",
+              "focus": "remade from scratch"
+            },
+            {
+              "text": "You're right; we'll remake the entire dish with clean utensils and a fresh set of ingredients.",
+              "focus": "clean utensils and a fresh set of ingredients"
+            },
+            {
+              "text": "Please don't share that appetizer with me; even a small bite could trigger a serious reaction.",
+              "focus": "trigger a serious reaction"
+            },
+            {
+              "text": "Because of the allergy, your meal will take about fifteen extra minutes while we sanitize the station and change gloves.",
+              "focus": "sanitize the station and change gloves"
+            },
+            {
+              "text": "Since the substitution is medically necessary, would you mind checking whether the additional charge can be waived?",
+              "focus": "additional charge can be waived"
+            },
+            {
+              "text": "I've noted the allergy for your party and alerted the server, but the kitchen will still need to confirm what is safe.",
+              "focus": "the kitchen will still need to confirm"
+            }
+          ]
+        },
+        {
+          "id": "recommendations-and-pairings",
+          "title": "Recommendations & pairings",
+          "description": "Ask for and give useful recommendations based on taste, appetite, budget, and drink pairings.",
+          "sentences": [
+            {
+              "text": "I usually prefer bright, savory flavors over anything sweet; which entrée would you steer me toward?",
+              "focus": "steer me toward"
+            },
+            {
+              "text": "Are you looking for something light and fresh, or would a richer, more filling dish suit you better tonight?",
+              "focus": "suit you better"
+            },
+            {
+              "text": "Our signature entrée is popular, but the lean cut can run dry, so I wouldn’t recommend it if tenderness matters most.",
+              "focus": "can run dry"
+            },
+            {
+              "text": "How spicy is that dish in practice, and does the heat build or hit you right away?",
+              "focus": "in practice"
+            },
+            {
+              "text": "It has a noticeable kick, though I can recommend a milder option with the same depth of flavor.",
+              "focus": "a noticeable kick"
+            },
+            {
+              "text": "We’re trying to keep dinner around forty dollars per person; where would you say the menu offers the best value?",
+              "focus": "offers the best value"
+            },
+            {
+              "text": "If presentation matters, the shared platter makes more of an impression, though individual entrées make dietary preferences easier to manage.",
+              "focus": "makes more of an impression"
+            },
+            {
+              "text": "I’m in the mood for something crisp rather than soft or creamy; which appetizer fits that preference best?",
+              "focus": "something crisp rather than soft or creamy"
+            },
+            {
+              "text": "Between those two, the roasted option is more balanced, while the fried one is heavier and better for sharing.",
+              "focus": "more balanced"
+            },
+            {
+              "text": "I enjoy dry wines with good acidity; what would pair well without overpowering the fish?",
+              "focus": "without overpowering"
+            },
+            {
+              "text": "The lighter red complements the smoky flavors, but I’d choose the crisp white if you want a cleaner finish.",
+              "focus": "a cleaner finish"
+            },
+            {
+              "text": "What nonalcoholic drink has enough acidity to cut through the richness of the pasta?",
+              "focus": "cut through the richness"
+            },
+            {
+              "text": "The seasonal vegetables are at their peak this week, so I’d choose that side over the year-round options.",
+              "focus": "at their peak this week"
+            },
+            {
+              "text": "Since we’re ordering several rich dishes, let’s balance them with something fresh instead of adding another heavy side.",
+              "focus": "balance them with something fresh"
+            },
+            {
+              "text": "I can tell you our house specialty, though your server can give you a more detailed pairing once you’re seated.",
+              "focus": "give you a more detailed pairing"
+            },
+            {
+              "text": "Would you prefer something easy to eat neatly, or are you comfortable with a dish that requires some hands-on work?",
+              "focus": "requires some hands-on work"
+            },
+            {
+              "text": "The combo looks cheaper, but unless you want the drink and side, ordering the sandwich alone actually costs less.",
+              "focus": "actually costs less"
+            },
+            {
+              "text": "I always order familiar dishes; what would you suggest if I want to branch out without choosing anything too rich?",
+              "focus": "branch out"
+            },
+            {
+              "text": "If you’re short on time, skip the roast; the grilled entrée has similar flavors and comes out much faster.",
+              "focus": "If you’re short on time"
+            },
+            {
+              "text": "Which entrée holds up best as leftovers if I’m unlikely to finish a full portion tonight?",
+              "focus": "holds up best as leftovers"
+            }
+          ]
+        },
+        {
+          "id": "ordering-and-customizing",
+          "title": "Ordering & customizing",
+          "description": "Place a complete order, specify preparation, request reasonable changes, and confirm details.",
+          "sentences": [
+            {
+              "text": "I’ll have the steak medium-rare, with the sauce on the side and vegetables instead of fries.",
+              "focus": "with the sauce on the side"
+            },
+            {
+              "text": "One burger is medium and one is well-done; please identify the well-done one when you set them down.",
+              "focus": "identify the well-done one when you set them down"
+            },
+            {
+              "text": "Please go easy on the dressing and toss the salad evenly rather than pouring it over the top.",
+              "focus": "go easy on the dressing"
+            },
+            {
+              "text": "Make that the combo, add avocado, hold the mayonnaise, and swap the fries for a side salad.",
+              "focus": "swap the fries for a side salad"
+            },
+            {
+              "text": "We can substitute the side salad, but there’s a two-dollar upcharge; would you still like the change?",
+              "focus": "would you still like the change"
+            },
+            {
+              "text": "Let’s split two appetizers among the four of us and ask for extra plates.",
+              "focus": "split two appetizers among the four of us"
+            },
+            {
+              "text": "That dish is portioned for one, but I can bring extra plates if you’d like to share it.",
+              "focus": "portioned for one"
+            },
+            {
+              "text": "Please bring the soup first, then hold the main courses until everyone has finished.",
+              "focus": "hold the main courses until everyone has finished"
+            },
+            {
+              "text": "I’ll put in the appetizers now and hold the entrées until you give me the go-ahead.",
+              "focus": "give me the go-ahead"
+            },
+            {
+              "text": "The standard cocktail uses the house bourbon; substituting a premium brand adds three dollars. Would you still like it?",
+              "focus": "substituting a premium brand"
+            },
+            {
+              "text": "For drinks, we’ll share a bottle of sparkling water instead of ordering individual glasses.",
+              "focus": "instead of ordering individual glasses"
+            },
+            {
+              "text": "Let me read that back: one medium-rare steak, salad instead of potatoes, sauce on the side, and no cheese.",
+              "focus": "Let me read that back"
+            },
+            {
+              "text": "I’d like the appetizer as my main course, but please bring it at the same time as everyone else’s entrées.",
+              "focus": "at the same time as everyone else’s entrées"
+            },
+            {
+              "text": "We’ll order one entrée now and decide on a second after we see how large the portion is.",
+              "focus": "after we see how large the portion is"
+            },
+            {
+              "text": "Your order has already gone to the kitchen, but I can still ask whether the garnish can be left off.",
+              "focus": "Your order has already gone to the kitchen"
+            },
+            {
+              "text": "The server asked me to confirm that we can accommodate one substitution, but we can’t rebuild the dish ingredient by ingredient.",
+              "focus": "accommodate one substitution"
+            },
+            {
+              "text": "You’ll place the full order at the table, and your server can coordinate any substitutions or separate courses.",
+              "focus": "coordinate any substitutions or separate courses"
+            },
+            {
+              "text": "I’m eating here after ordering at the counter; should I take a number or wait near the pickup area?",
+              "focus": "should I take a number or wait near the pickup area"
+            },
+            {
+              "text": "When you say medium, do you mean a warm pink center? I want to be sure we’re using the same standard.",
+              "focus": "we’re using the same standard"
+            },
+            {
+              "text": "Before you ring that in, does adding the extra sauce change the price, or is it included?",
+              "focus": "Before you ring that in"
+            }
+          ]
+        },
+        {
+          "id": "service-and-pacing",
+          "title": "Service & pacing",
+          "description": "Manage timing, refills, missing items, check-ins, and the pace of a meal without sounding abrupt.",
+          "sentences": [
+            {
+              "text": "We’re still waiting for one person, so please hold off on taking our order until she arrives.",
+              "focus": "hold off on taking our order"
+            },
+            {
+              "text": "I’ll ask the kitchen to space the courses about fifteen minutes apart, unless you’d prefer a different pace.",
+              "focus": "space the courses about fifteen minutes apart"
+            },
+            {
+              "text": "Everything sounds good; we just need a few more minutes before we decide.",
+              "focus": "need a few more minutes before we decide"
+            },
+            {
+              "text": "We’ve had enough time to look everything over, and we’re ready to order whenever you are.",
+              "focus": "look everything over"
+            },
+            {
+              "text": "When you have a moment, would you top off my water and bring another iced tea?",
+              "focus": "top off my water"
+            },
+            {
+              "text": "Since the bar closes before the kitchen, I’ll check once more for drink orders before your entrées arrive.",
+              "focus": "the bar closes before the kitchen"
+            },
+            {
+              "text": "When you have a chance, could you replace this chipped glass before you refill it?",
+              "focus": "replace this chipped glass"
+            },
+            {
+              "text": "Are you finished with these plates, or would you prefer that I leave them until everyone is done?",
+              "focus": "prefer that I leave them until everyone is done"
+            },
+            {
+              "text": "We have a show at eight, so is a forty-five-minute meal realistic with the kitchen’s current timing?",
+              "focus": "with the kitchen’s current timing"
+            },
+            {
+              "text": "Your entrées should be out shortly; I’m watching the ticket and will update you if that changes.",
+              "focus": "will update you if that changes"
+            },
+            {
+              "text": "I’ll give you a moment, then check back once you’ve had a chance to taste everything.",
+              "focus": "check back once you’ve had a chance to taste everything"
+            },
+            {
+              "text": "I seem to be missing a soup spoon; would you bring one before the first course arrives?",
+              "focus": "I seem to be missing a soup spoon"
+            },
+            {
+              "text": "We’re still waiting on one side dish; could you check whether it was left off the ticket?",
+              "focus": "left off the ticket"
+            },
+            {
+              "text": "We’re in the middle of a private conversation; could you give us a few minutes before checking back?",
+              "focus": "give us a few minutes before checking back"
+            },
+            {
+              "text": "The kitchen just sold the last portion of your entrée; I’m sorry we didn’t catch that before taking your order.",
+              "focus": "we didn’t catch that before taking your order"
+            },
+            {
+              "text": "Our entrées arrived before we finished the appetizers, so the courses are running together; can you pause the next course?",
+              "focus": "the courses are running together"
+            },
+            {
+              "text": "Before you bring another sparkling water, would you confirm whether refills are included or charged separately?",
+              "focus": "included or charged separately"
+            },
+            {
+              "text": "My shift is ending, but another server will take over your table; I’ve already briefed them on your order.",
+              "focus": "take over your table"
+            },
+            {
+              "text": "Your sandwich is ready, but the fries are three minutes behind; would you prefer the sandwich now or everything together?",
+              "focus": "would you prefer the sandwich now or everything together"
+            },
+            {
+              "text": "Before dessert, would you mind brushing the crumbs off the table and replacing our used napkins?",
+              "focus": "brushing the crumbs off the table"
+            }
+          ]
+        },
+        {
+          "id": "problems-and-resolution",
+          "title": "Problems & resolution",
+          "description": "Raise concerns about food or service and negotiate a proportionate, professional resolution.",
+          "sentences": [
+            {
+              "text": "This isn't the sandwich listed on my receipt, so I may have received someone else's order.",
+              "focus": "may have received someone else's order"
+            },
+            {
+              "text": "You're right—the side dish was left off your order; I'll bring it immediately and remove its charge from the bill.",
+              "focus": "left off your order"
+            },
+            {
+              "text": "This soup is far too salty to eat; I’d rather choose a different starter than have the same one remade.",
+              "focus": "I’d rather choose a different starter than have the same one remade"
+            },
+            {
+              "text": "A glass shattered beside your plate; for safety, I’m replacing anything uncovered that might have been exposed.",
+              "focus": "anything uncovered that might have been exposed"
+            },
+            {
+              "text": "The center of this chicken is still cold, so I don't feel comfortable eating it, even if it's reheated.",
+              "focus": "don't feel comfortable eating it"
+            },
+            {
+              "text": "This steak is well-done rather than medium-rare; a remake is fine, provided the kitchen checks it before serving.",
+              "focus": "provided the kitchen checks it"
+            },
+            {
+              "text": "I apologize for the mistake; I'll ask the kitchen to prioritize the remake and keep your other dishes warm.",
+              "focus": "prioritize the remake"
+            },
+            {
+              "text": "We've been waiting nearly forty minutes since ordering, and we need an honest estimate before deciding whether to stay.",
+              "focus": "an honest estimate"
+            },
+            {
+              "text": "The kitchen is backed up, and your meals will take another twenty minutes; I understand if you'd prefer to cancel.",
+              "focus": "you'd prefer to cancel"
+            },
+            {
+              "text": "I spilled that drink while reaching across you; let me replace it and bring towels for your jacket.",
+              "focus": "while reaching across you"
+            },
+            {
+              "text": "The sauce landed on my coat, so may I speak with a manager about reasonable cleaning costs?",
+              "focus": "reasonable cleaning costs"
+            },
+            {
+              "text": "Please send us the cleaning receipt, and we'll reimburse the charge; tonight's entrée will also be removed from your bill.",
+              "focus": "reimburse the charge"
+            },
+            {
+              "text": "I realize you're busy, but we've repeatedly been passed over while tables seated later have already received their food.",
+              "focus": "repeatedly been passed over"
+            },
+            {
+              "text": "Let's give them a chance to fix it, but I don't think we should pay for food that never arrived.",
+              "focus": "a chance to fix it"
+            },
+            {
+              "text": "Would you prefer a replacement, or should I remove the dish from the check so you can choose something else?",
+              "focus": "remove the dish from the check"
+            },
+            {
+              "text": "At this point, we don't have time for a remake, so removing the item is the most practical solution.",
+              "focus": "the most practical solution"
+            },
+            {
+              "text": "Since most of the meal was satisfactory, I can comp the affected dish and offer dessert rather than the entire check.",
+              "focus": "most of the meal was satisfactory"
+            },
+            {
+              "text": "These meals were left at another table before being brought to us; for hygiene reasons, we need freshly plated replacements.",
+              "focus": "for hygiene reasons"
+            },
+            {
+              "text": "I’ll brief the floor manager and ask them to come by within five minutes with specific options, so you aren’t left waiting again.",
+              "focus": "so you aren’t left waiting again"
+            },
+            {
+              "text": "Table twelve says their server made a dismissive comment; I’ve apologized, but the floor manager needs to speak with them directly.",
+              "focus": "made a dismissive comment"
+            }
+          ]
+        },
+        {
+          "id": "group-meals-and-occasions",
+          "title": "Group meals & occasions",
+          "description": "Coordinate a group order, celebrations, shared food, separate needs, and social decisions at the table.",
+          "sentences": [
+            {
+              "text": "Let’s keep a separate serving utensil with each dish so the spicy sauces don’t get mixed into the milder food.",
+              "focus": "a separate serving utensil with each dish"
+            },
+            {
+              "text": "Before we decide, does anyone strongly prefer individual entrées over sharing several dishes family-style?",
+              "focus": "strongly prefer"
+            },
+            {
+              "text": "We’re torn between the two larger platters; which one gives a group of six more variety?",
+              "focus": "torn between"
+            },
+            {
+              "text": "Could you take a group photo and fit everyone into the frame, including the people seated at both ends?",
+              "focus": "fit everyone into the frame"
+            },
+            {
+              "text": "The birthday is a surprise; when I signal, please bring the dessert without announcing it ahead of time.",
+              "focus": "without announcing it ahead of time"
+            },
+            {
+              "text": "For parties of eight or more, we recommend narrowing the choices to three entrées so the kitchen can serve everyone together.",
+              "focus": "narrowing the choices"
+            },
+            {
+              "text": "I’m hosting this business dinner, so please bring the check directly to me and keep the arrangement discreet.",
+              "focus": "keep the arrangement discreet"
+            },
+            {
+              "text": "Our children will share one entrée; would you bring an extra plate and serve their food as soon as it’s ready?",
+              "focus": "as soon as it’s ready"
+            },
+            {
+              "text": "We brought a birthday cake; is there a cutting fee, and can you refrigerate it until we’re ready for dessert?",
+              "focus": "is there a cutting fee"
+            },
+            {
+              "text": "I’m not drinking tonight, but please go ahead without me; sparkling water is perfect for my toast.",
+              "focus": "please go ahead without me"
+            },
+            {
+              "text": "Dinner is my invitation, so order what you genuinely want; there’s no need to choose the least expensive option.",
+              "focus": "there’s no need to choose the least expensive option"
+            },
+            {
+              "text": "Please ask before refilling the wineglasses; a few people are pacing themselves, and one person has stopped drinking.",
+              "focus": "a few people are pacing themselves"
+            },
+            {
+              "text": "We ordered two different shared vegetables, but these plates are identical; please verify the group order before we start passing them.",
+              "focus": "verify the group order"
+            },
+            {
+              "text": "Everyone else has been served, and her meal is now fifteen minutes behind; what can arrive quickly as a replacement?",
+              "focus": "fifteen minutes behind"
+            },
+            {
+              "text": "Just to confirm, does the large-party service charge already cover gratuity, or should we add a separate tip?",
+              "focus": "large-party service charge"
+            },
+            {
+              "text": "Two people need to leave early; could their entrées come first and their checks be closed separately?",
+              "focus": "their checks be closed separately"
+            },
+            {
+              "text": "To keep this organized, let’s have one person collect everyone’s choices and give the final order to the server.",
+              "focus": "collect everyone’s choices"
+            },
+            {
+              "text": "Could you itemize each guest’s meal by seat, even though the host will pay the full check?",
+              "focus": "itemize each guest’s meal by seat"
+            },
+            {
+              "text": "We can seat the rest of the party now, and I’ll direct your late guest to the table when they arrive.",
+              "focus": "direct your late guest to the table"
+            },
+            {
+              "text": "I’m happy to share, but let’s agree before ordering that we’ll ask before taking the last portion of anything.",
+              "focus": "taking the last portion"
+            }
+          ]
+        },
+        {
+          "id": "dessert-bill-and-takeout",
+          "title": "Dessert, payment & takeout",
+          "description": "Finish the meal, resolve the check, tip, package leftovers, and manage pickup or delivery issues.",
+          "sentences": [
+            {
+              "text": "We’re still deciding on dessert, but please bring two decaf coffees while we look over the options.",
+              "focus": "look over the options"
+            },
+            {
+              "text": "Tonight’s dessert special isn’t overly sweet, pairs well with coffee, and is large enough for two people to share.",
+              "focus": "isn’t overly sweet"
+            },
+            {
+              "text": "Could you check the remaining balance on this gift card before putting the rest on my credit card?",
+              "focus": "the remaining balance on this gift card"
+            },
+            {
+              "text": "Whenever you have a moment, we’re finished here and ready for the check.",
+              "focus": "Whenever you have a moment"
+            },
+            {
+              "text": "I can put everything on one check, or split it by seat if that works better for your group.",
+              "focus": "split it by seat"
+            },
+            {
+              "text": "Let’s keep dinner together, but put the drinks on my card and divide the rest evenly among us.",
+              "focus": "divide the rest evenly"
+            },
+            {
+              "text": "I can close your bar tab with two cards and cash, though I’ll need a specific dollar amount for each card.",
+              "focus": "a specific dollar amount for each card"
+            },
+            {
+              "text": "I believe this appetizer was charged twice; would you review the itemized check before I pay?",
+              "focus": "review the itemized check"
+            },
+            {
+              "text": "You’re right; I’ve removed the duplicate charge, and the updated total should appear on this receipt.",
+              "focus": "removed the duplicate charge"
+            },
+            {
+              "text": "That card didn’t go through, but you’re welcome to try another card or pay the balance in cash.",
+              "focus": "pay the balance in cash"
+            },
+            {
+              "text": "Please run my card for the full amount; I’ll leave the tip in cash, but I still need an itemized receipt.",
+              "focus": "leave the tip in cash"
+            },
+            {
+              "text": "This dessert tastes spoiled, so I’m not comfortable eating it; please take it away and remove it from the check.",
+              "focus": "remove it from the check"
+            },
+            {
+              "text": "Would you mind boxing these separately and keeping the sauce in a leakproof container?",
+              "focus": "boxing these separately"
+            },
+            {
+              "text": "I’ll label each box and pack the cold items apart from anything you’ll need to reheat.",
+              "focus": "pack the cold items apart"
+            },
+            {
+              "text": "Welcome back—give me the name on the takeout order, and I’ll check the pickup shelf for you.",
+              "focus": "the name on the takeout order"
+            },
+            {
+              "text": "I’m picking up the takeout order under my name; could we confirm the contents before I leave?",
+              "focus": "confirm the contents before I leave"
+            },
+            {
+              "text": "Your pickup is running about fifteen minutes behind, and I can text you as soon as it’s ready.",
+              "focus": "running about fifteen minutes behind"
+            },
+            {
+              "text": "I’ve checked every bag: the entrée inside isn’t what I ordered, and the two side orders on the receipt are missing.",
+              "focus": "isn’t what I ordered"
+            },
+            {
+              "text": "We can refund the missing items and remake the incorrect entrée, but delivery will take another thirty minutes.",
+              "focus": "remake the incorrect entrée"
+            },
+            {
+              "text": "For the best texture, reheat the entrée uncovered in the oven and add the sauce after it’s hot.",
+              "focus": "reheat the entrée uncovered"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "travel-conversations",
+      "title": "Travel Conversations",
+      "eyebrow": "Travel English",
+      "description": "Navigate bookings, airports, disruptions, local transportation, hotels, sightseeing, road trips, and travel emergencies.",
+      "level": "B2–C1",
+      "accent": "sky",
+      "sections": [
+        {
+          "id": "planning-and-booking",
+          "title": "Planning & booking",
+          "description": "Compare itineraries, understand fare conditions, reserve services, and verify what a booking includes.",
+          "sentences": [
+            {
+              "text": "Before I book, please compare the flexible fare with the restricted fare, including change fees, refund rules, and the final price.",
+              "focus": "compare the flexible fare with the restricted fare"
+            },
+            {
+              "text": "The restricted fare is cheaper, but it cannot be refunded, and any date change requires paying the fare difference.",
+              "focus": "paying the fare difference"
+            },
+            {
+              "text": "Is the fifty-minute connection realistic if I have to change terminals, or would the later itinerary be a safer choice?",
+              "focus": "would the later itinerary be a safer choice"
+            },
+            {
+              "text": "I’d choose the later itinerary because this terminal change requires another security screening before you reach the connecting gate.",
+              "focus": "requires another security screening"
+            },
+            {
+              "text": "The quoted fare can be held for twenty-four hours, but taxes may change if payment is not completed by then.",
+              "focus": "taxes may change if payment is not completed"
+            },
+            {
+              "text": "That fare includes a carry-on, while checked baggage must be purchased separately before departure.",
+              "focus": "purchased separately"
+            },
+            {
+              "text": "For the room reservation, I’d prefer two beds away from the elevator, but quiet matters more than the floor.",
+              "focus": "quiet matters more than the floor"
+            },
+            {
+              "text": "I can record those preferences, although room location is subject to availability and cannot be guaranteed.",
+              "focus": "subject to availability"
+            },
+            {
+              "text": "How much is due today, and when will the remaining balance and security deposit be charged?",
+              "focus": "remaining balance"
+            },
+            {
+              "text": "The first night is charged as a deposit, and you may cancel without penalty until forty-eight hours before arrival.",
+              "focus": "cancel without penalty"
+            },
+            {
+              "text": "Please read back the travel dates, passenger names, and email address before you issue the confirmation.",
+              "focus": "read back the travel dates"
+            },
+            {
+              "text": "I’ve corrected the duplicate fee and emailed an itemized confirmation showing the final total and payment schedule.",
+              "focus": "itemized confirmation"
+            },
+            {
+              "text": "Please add a wheelchair request and note that I need step-free access from the entrance to my reserved seat.",
+              "focus": "step-free access"
+            },
+            {
+              "text": "I’ve added the assistance request, but the station requires forty-eight hours’ notice to guarantee staff support.",
+              "focus": "guarantee staff support"
+            },
+            {
+              "text": "For the overnight train, are there two forward-facing seats together in the quiet car, preferably near the restroom?",
+              "focus": "forward-facing seats together"
+            },
+            {
+              "text": "Before reserving the car, I need the total with taxes, unlimited mileage, insurance options, and the additional-driver fee.",
+              "focus": "the total with taxes"
+            },
+            {
+              "text": "The quoted rate includes unlimited mileage, but insurance, fuel, tolls, and the refundable deposit are separate.",
+              "focus": "refundable deposit"
+            },
+            {
+              "text": "I need an open-dated return ticket; how long will I have to reserve the return journey after departure?",
+              "focus": "an open-dated return ticket"
+            },
+            {
+              "text": "If the tour does not meet its minimum group size, how much notice will I receive before it is canceled?",
+              "focus": "meet its minimum group size"
+            },
+            {
+              "text": "Does the booking platform convert the charge into my home currency, or will my bank determine the exchange rate?",
+              "focus": "determine the exchange rate"
+            }
+          ]
+        },
+        {
+          "id": "airport-checkin-and-baggage",
+          "title": "Airport check-in & baggage",
+          "description": "Check in, choose a seat, handle documents, tag bags, and resolve baggage restrictions.",
+          "sentences": [
+            {
+              "text": "The kiosk keeps rejecting my passport, so please direct me to a staffed counter before the check-in cutoff.",
+              "focus": "before the check-in cutoff"
+            },
+            {
+              "text": "Since the passport reader failed, I’ll verify your documents manually and print boarding passes for both segments at this counter.",
+              "focus": "verify your documents manually"
+            },
+            {
+              "text": "The reservation omits my middle name, but my first and last names match my passport; will that affect document verification?",
+              "focus": "affect document verification"
+            },
+            {
+              "text": "The passport’s cover is damaged, so I need a supervisor to confirm that the document is still acceptable for travel.",
+              "focus": "confirm that the document is still acceptable for travel"
+            },
+            {
+              "text": "We’re traveling together, but the kiosk separated us; is there any way to move one of us into the same row?",
+              "focus": "move one of us into the same row"
+            },
+            {
+              "text": "I can move you to two adjacent seats near the back, although neither seat will be on the aisle.",
+              "focus": "two adjacent seats"
+            },
+            {
+              "text": "Before I accept the upgrade, what is the total charge, and does it change my baggage allowance or ticket conditions?",
+              "focus": "does it change my baggage allowance"
+            },
+            {
+              "text": "The upgrade includes extra legroom and priority boarding, but your checked-bag allowance remains unchanged.",
+              "focus": "checked-bag allowance remains unchanged"
+            },
+            {
+              "text": "Your fare includes one checked bag, while this smaller suitcase qualifies as your carry-on if it fits the sizing frame.",
+              "focus": "qualifies as your carry-on"
+            },
+            {
+              "text": "I’ve tagged both suitcases to your final destination; keep these claim receipts in case the tags become detached.",
+              "focus": "in case the tags become detached"
+            },
+            {
+              "text": "This carry-on exceeds the size limit, so it must be checked after you remove medication, valuables, and spare lithium batteries.",
+              "focus": "exceeds the size limit"
+            },
+            {
+              "text": "I’m traveling with an infant; may I keep the stroller until the gate, and where will it be returned after landing?",
+              "focus": "where will it be returned after landing"
+            },
+            {
+              "text": "Repacking is allowed here, but if the bag remains overweight, the fixed fee applies and I cannot waive it.",
+              "focus": "I cannot waive it"
+            },
+            {
+              "text": "This case contains fragile camera equipment; how should it be tagged, and is hand inspection available?",
+              "focus": "is hand inspection available"
+            },
+            {
+              "text": "We can add a fragile tag, but it does not guarantee special handling, and checked baggage remains subject to limited liability.",
+              "focus": "remains subject to limited liability"
+            },
+            {
+              "text": "I’m checking a folding bicycle today; does it count toward my standard allowance, or is there a separate equipment fee?",
+              "focus": "count toward my standard allowance"
+            },
+            {
+              "text": "The bicycle qualifies as special equipment, but it must be packed securely, and the handling fee is charged separately.",
+              "focus": "qualifies as special equipment"
+            },
+            {
+              "text": "Your medical device does not count toward the carry-on limit, provided it is packed separately and contains only medically necessary supplies.",
+              "focus": "provided it is packed separately"
+            },
+            {
+              "text": "The touchscreen kiosk is not accessible to me, so I need an agent to complete check-in and issue my boarding pass.",
+              "focus": "not accessible to me"
+            },
+            {
+              "text": "This receipt shows an incorrect checked-bag fee; please reverse it or document the dispute and refer me to a supervisor.",
+              "focus": "document the dispute"
+            }
+          ]
+        },
+        {
+          "id": "security-immigration-and-customs",
+          "title": "Security, immigration & customs",
+          "description": "Answer official questions, clarify procedures, declare items, and respond calmly to additional screening.",
+          "sentences": [
+            {
+              "text": "This sealed duty-free liquid was purchased after my first screening; will the tamper-evident bag be accepted during my connection?",
+              "focus": "will the tamper-evident bag be accepted"
+            },
+            {
+              "text": "I just noticed a small pocketknife in my carry-on; is there a way to surrender it before screening?",
+              "focus": "surrender it before screening"
+            },
+            {
+              "text": "That tool cannot pass through security, but you may return to the public area to dispose of it.",
+              "focus": "cannot pass through security"
+            },
+            {
+              "text": "These injectable medications are for a chronic condition, and the prescription labels match the name in my passport.",
+              "focus": "prescription labels match"
+            },
+            {
+              "text": "Liquid medication may exceed the usual limit, but it must be declared and may be subject to separate screening.",
+              "focus": "subject to separate screening"
+            },
+            {
+              "text": "I'm traveling for tourism and to attend a professional conference; I don't plan to work or study during this visit.",
+              "focus": "attend a professional conference"
+            },
+            {
+              "text": "My employer is covering the conference expenses, while I’m paying for the rest of the trip myself.",
+              "focus": "covering the conference expenses"
+            },
+            {
+              "text": "I'll be staying at a hotel for the first week, and here is the reservation confirmation with the address.",
+              "focus": "reservation confirmation with the address"
+            },
+            {
+              "text": "My onward ticket is booked for next Thursday, and I can show the confirmation if you need proof of onward travel.",
+              "focus": "proof of onward travel"
+            },
+            {
+              "text": "Your stated itinerary doesn't match this booking; would you explain the change and show your updated plans?",
+              "focus": "doesn't match this booking"
+            },
+            {
+              "text": "To make sure I answer correctly, could you clarify what counts as an agricultural product on this declaration?",
+              "focus": "what counts as an agricultural product"
+            },
+            {
+              "text": "I'm declaring these commercially packaged snacks because they contain meat, although they are sealed and labeled.",
+              "focus": "commercially packaged snacks"
+            },
+            {
+              "text": "I'm carrying cash above the reporting threshold, and I'd like to declare the full amount before proceeding.",
+              "focus": "above the reporting threshold"
+            },
+            {
+              "text": "Please place the declared items on the counter so I can inspect them and verify the declaration.",
+              "focus": "verify the declaration"
+            },
+            {
+              "text": "I'm happy to open the bag; please indicate which items you need inspected so I don't disturb anything unnecessarily.",
+              "focus": "which items you need inspected"
+            },
+            {
+              "text": "I wasn't given an arrival declaration during the flight; should I complete one here or submit it electronically?",
+              "focus": "submit it electronically"
+            },
+            {
+              "text": "You've been selected for additional screening, which may include a bag search and a swab of your electronic devices.",
+              "focus": "selected for additional screening"
+            },
+            {
+              "text": "I packed this bag myself, and I’ve kept it with me the whole time since leaving the hotel.",
+              "focus": "I’ve kept it with me the whole time"
+            },
+            {
+              "text": "Because I have an implanted medical device, I'd prefer a private screening and a witness, if that is permitted.",
+              "focus": "implanted medical device"
+            },
+            {
+              "text": "If this item must be retained, please provide a written receipt and explain whether I can appeal the decision.",
+              "focus": "provide a written receipt"
+            }
+          ]
+        },
+        {
+          "id": "delays-cancellations-and-connections",
+          "title": "Delays, cancellations & connections",
+          "description": "Understand a disruption, protect an onward trip, compare remedies, and document what happened.",
+          "sentences": [
+            {
+              "text": "The departure board keeps changing; what caused the delay, and what is your best current estimate for boarding?",
+              "focus": "best current estimate"
+            },
+            {
+              "text": "Your late inbound flight makes the original connection impossible, so I’ve rebooked you on the next available departure at no charge.",
+              "focus": "next available departure"
+            },
+            {
+              "text": "Before I accept that itinerary, would flying into a nearby airport get me there tonight with fewer connections?",
+              "focus": "flying into a nearby airport"
+            },
+            {
+              "text": "I can place you on standby for the earlier flight, but your confirmed seat tomorrow will remain protected.",
+              "focus": "remain protected"
+            },
+            {
+              "text": "Since the cancellation creates an overnight delay, does the airline provide a hotel room, meal vouchers, and transportation?",
+              "focus": "creates an overnight delay"
+            },
+            {
+              "text": "The disruption is weather-related, so lodging isn't covered, but I can offer a discounted hotel rate and meal voucher.",
+              "focus": "lodging isn't covered"
+            },
+            {
+              "text": "Please confirm whether my checked bag will follow the rebooked itinerary or remain tagged to the canceled flight.",
+              "focus": "follow the rebooked itinerary"
+            },
+            {
+              "text": "The rebooked flight leaves before the partner airline’s counter opens; how will the new boarding pass be issued?",
+              "focus": "before the partner airline’s counter opens"
+            },
+            {
+              "text": "If I decline the replacement flight, am I entitled to a refund to my original payment method rather than travel credit?",
+              "focus": "original payment method"
+            },
+            {
+              "text": "Because the airline canceled the service, you may choose a full refund; the credit is optional and expires in twelve months.",
+              "focus": "the credit is optional"
+            },
+            {
+              "text": "I understand the queue is long, but please have a supervisor review this and provide written confirmation of the cancellation reason.",
+              "focus": "provide written confirmation"
+            },
+            {
+              "text": "We still expect a ninety-minute delay; watch the app and gate displays because the boarding time may change again.",
+              "focus": "boarding time may change"
+            },
+            {
+              "text": "These flights were booked on separate tickets; if the delay causes a misconnection, can you rebook the second segment here?",
+              "focus": "booked on separate tickets"
+            },
+            {
+              "text": "The substitute train has no seat reservations, so board any coach with available seats and keep your original ticket for inspection.",
+              "focus": "has no seat reservations"
+            },
+            {
+              "text": "The canceled ferry was wheelchair-accessible; what equivalent service can you arrange without separating me from my mobility device?",
+              "focus": "without separating me from my mobility device"
+            },
+            {
+              "text": "The wheelchair lift has passed its safety check, and I’ll secure your mobility device before the replacement bus departs.",
+              "focus": "has passed its safety check"
+            },
+            {
+              "text": "Has the crew reached its legal duty limit, or are you still expecting a replacement crew before the flight is canceled?",
+              "focus": "reached its legal duty limit"
+            },
+            {
+              "text": "The airport curfew prevents another departure tonight, so the earliest permitted takeoff is scheduled for six tomorrow morning.",
+              "focus": "The airport curfew prevents another departure"
+            },
+            {
+              "text": "Since the tour was canceled after we arrived, I'll document the closure and process refunds instead of issuing vouchers.",
+              "focus": "instead of issuing vouchers"
+            },
+            {
+              "text": "The replacement aircraft has fewer seats, so we’re asking for volunteers to take a later flight in exchange for compensation.",
+              "focus": "asking for volunteers to take a later flight"
+            }
+          ]
+        },
+        {
+          "id": "trains-buses-and-ferries",
+          "title": "Trains, buses & ferries",
+          "description": "Buy the right ticket, find the correct service, make transfers, and handle changes on intercity transport.",
+          "sentences": [
+            {
+              "text": "Before I pay, please confirm this ticket covers the express bus and ferry connection without an additional fare.",
+              "focus": "without an additional fare"
+            },
+            {
+              "text": "Your train leaves from platform six, but check the departure board because track assignments sometimes change at short notice.",
+              "focus": "change at short notice"
+            },
+            {
+              "text": "Is gate twelve still correct for the coastal ferry, or has boarding moved to the lower terminal?",
+              "focus": "has boarding moved"
+            },
+            {
+              "text": "That seat is reserved from the next station, so you're welcome to use it until the ticket holder boards.",
+              "focus": "until the ticket holder boards"
+            },
+            {
+              "text": "My sleeper reservation lists an upper berth; is it possible to switch to a lower berth before boarding?",
+              "focus": "switch to a lower berth"
+            },
+            {
+              "text": "These paper tickets must be validated in the yellow machine before boarding, even though they already show today's date.",
+              "focus": "must be validated"
+            },
+            {
+              "text": "This regional pass covers three zones; which zone should I add for the final leg to the ferry terminal?",
+              "focus": "the final leg"
+            },
+            {
+              "text": "You'll have nine minutes to transfer, and the connecting bus normally departs from the bay directly across the concourse.",
+              "focus": "directly across the concourse"
+            },
+            {
+              "text": "Does this ticket allow an overnight stopover, or would I need separate tickets for each leg of the journey?",
+              "focus": "allow an overnight stopover"
+            },
+            {
+              "text": "This train splits at the next station, so remain in one of the first four cars for the airport branch.",
+              "focus": "splits at the next station"
+            },
+            {
+              "text": "Will the conductor accept a screenshot of my mobile ticket if I lose service inside the tunnel?",
+              "focus": "accept a screenshot of my mobile ticket"
+            },
+            {
+              "text": "For safety, please keep large suitcases in the luggage rack rather than blocking the aisle or emergency exit.",
+              "focus": "rather than blocking the aisle"
+            },
+            {
+              "text": "This is the quiet car, so phone calls aren't permitted; the café car is a better place for a conversation.",
+              "focus": "phone calls aren't permitted"
+            },
+            {
+              "text": "Is this ticket still valid if I miss my stop and need to double back on the next train?",
+              "focus": "need to double back"
+            },
+            {
+              "text": "The platform is shorter than the train, so passengers in the last two cars should move forward before we arrive.",
+              "focus": "passengers in the last two cars should move forward"
+            },
+            {
+              "text": "Pets may travel on this ferry only in the designated cabin, and space must be reserved before departure.",
+              "focus": "only in the designated cabin"
+            },
+            {
+              "text": "I’m getting off at a request stop; how far in advance should I signal the driver?",
+              "focus": "getting off at a request stop"
+            },
+            {
+              "text": "My card was charged twice at the ticket machine, so I'd like a transaction record before I file a dispute.",
+              "focus": "before I file a dispute"
+            },
+            {
+              "text": "The elevator to platform three is out of service; which step-free route can I use with this wheelchair?",
+              "focus": "which step-free route"
+            },
+            {
+              "text": "The crew has suspended outdoor seating because of rough water, so please move inside and use the handrails.",
+              "focus": "has suspended outdoor seating"
+            }
+          ]
+        },
+        {
+          "id": "taxis-rideshares-and-local-transit",
+          "title": "Taxis, rideshares & local transit",
+          "description": "Arrange local transportation, clarify pickup and route details, and resolve fare or destination confusion.",
+          "sentences": [
+            {
+              "text": "I’m standing beside the main entrance, directly across from the taxi pickup sign.",
+              "focus": "directly across from the taxi pickup sign"
+            },
+            {
+              "text": "I’m in a silver sedan with my hazard lights on; the last two plate letters are K and R.",
+              "focus": "hazard lights on"
+            },
+            {
+              "text": "The highway route is about ten minutes faster, but it includes a toll; would you prefer the cheaper local route?",
+              "focus": "prefer the cheaper local route"
+            },
+            {
+              "text": "With normal traffic, I’d estimate twenty-five dollars, though the meter determines the final fare.",
+              "focus": "the meter determines the final fare"
+            },
+            {
+              "text": "I didn’t agree to a flat-rate trip; please keep the meter running unless we agree on a fixed price.",
+              "focus": "agree on a fixed price"
+            },
+            {
+              "text": "Does your card reader work, and may I add the tip electronically rather than pay cash?",
+              "focus": "add the tip electronically"
+            },
+            {
+              "text": "I need a wheelchair-accessible vehicle with enough room for one passenger and a folding wheelchair.",
+              "focus": "wheelchair-accessible vehicle"
+            },
+            {
+              "text": "I’ve booked an accessible taxi for 8:15, and the driver confirmed they can secure your wheelchair properly.",
+              "focus": "secure your wheelchair properly"
+            },
+            {
+              "text": "I loaded a weekly pass onto this card; when does it activate, and does the seven-day period start today?",
+              "focus": "does the seven-day period start today"
+            },
+            {
+              "text": "Because of construction, this bus is temporarily bypassing three stops; use the marked stop on the next block.",
+              "focus": "temporarily bypassing three stops"
+            },
+            {
+              "text": "If I transfer within two hours, does the second bus count under the same fare, or will I be charged again?",
+              "focus": "transfer within two hours"
+            },
+            {
+              "text": "We seem to be heading away from the museum; would you mind checking the destination pin before we continue?",
+              "focus": "checking the destination pin"
+            },
+            {
+              "text": "The navigation app hasn’t updated for an unexpected road closure, so I’m taking the next legal turn back.",
+              "focus": "unexpected road closure"
+            },
+            {
+              "text": "Please drop me at the well-lit entrance on this side; crossing that intersection with luggage doesn’t feel safe.",
+              "focus": "well-lit entrance"
+            },
+            {
+              "text": "I can’t stop in the traffic lane, but I can pull into the loading zone just past the entrance.",
+              "focus": "pull into the loading zone"
+            },
+            {
+              "text": "This fare includes two tolls we didn’t use; please show me an itemized breakdown before I authorize the payment.",
+              "focus": "itemized breakdown"
+            },
+            {
+              "text": "Once the card payment goes through, please email me a receipt showing the fare, tolls, and tip separately.",
+              "focus": "showing the fare, tolls, and tip separately"
+            },
+            {
+              "text": "The transit card reader says “insufficient balance,” although I reloaded it online; how long does an online reload take to appear?",
+              "focus": "how long does an online reload take to appear"
+            },
+            {
+              "text": "The driver canceled after arriving at the wrong pickup point, so I’d like the cancellation fee reviewed and documented.",
+              "focus": "cancellation fee reviewed and documented"
+            },
+            {
+              "text": "I’ve already paid for three rides today; does this system apply a daily fare cap automatically?",
+              "focus": "apply a daily fare cap automatically"
+            }
+          ]
+        },
+        {
+          "id": "hotel-arrival-and-checkin",
+          "title": "Hotel arrival & check-in",
+          "description": "Locate a reservation, understand policies, request practical accommodations, and settle into a property.",
+          "sentences": [
+            {
+              "text": "We’re traveling with a baby; could you verify that the crib has been set up safely before we take our bags upstairs?",
+              "focus": "verify that the crib has been set up safely"
+            },
+            {
+              "text": "May I see a photo ID and the confirmation email, since the last name isn’t appearing in our system?",
+              "focus": "appearing in our system"
+            },
+            {
+              "text": "Your room is still being cleaned, but early check-in may be available for a fee after noon.",
+              "focus": "early check-in may be available"
+            },
+            {
+              "text": "The deposit listed here is higher than the amount I was quoted; please verify it and note any correction before I sign.",
+              "focus": "note any correction before I sign"
+            },
+            {
+              "text": "We authorize two hundred dollars for incidentals, such as room service or damage, and release the unused amount after checkout.",
+              "focus": "release the unused amount"
+            },
+            {
+              "text": "I reserved a room with two separate beds; could you confirm the bed setup before issuing the keys?",
+              "focus": "confirm the bed setup"
+            },
+            {
+              "text": "That room type is unavailable tonight, so I can offer one king bed plus a rollaway at no additional charge.",
+              "focus": "at no additional charge"
+            },
+            {
+              "text": "Is breakfast included in my rate, and what time does service end on weekdays?",
+              "focus": "included in my rate"
+            },
+            {
+              "text": "Wi-Fi is complimentary; select the guest network and enter your last name with the room number.",
+              "focus": "select the guest network"
+            },
+            {
+              "text": "I’m driving a rental car; which parking option allows overnight access without moving it in the morning?",
+              "focus": "allows overnight access"
+            },
+            {
+              "text": "Self-parking includes in-and-out privileges, while valet parking carries a separate nightly fee.",
+              "focus": "in-and-out privileges"
+            },
+            {
+              "text": "Since my room isn’t ready, please tag both bags and give me a claim receipt for luggage storage.",
+              "focus": "give me a claim receipt"
+            },
+            {
+              "text": "We’ll store them securely behind the desk; if anything is missing, we’ll document the claim and review the handoff log.",
+              "focus": "review the handoff log"
+            },
+            {
+              "text": "I’m traveling with teenagers; are adjoining rooms available, and can both reservations be linked so the rooms stay together?",
+              "focus": "can both reservations be linked"
+            },
+            {
+              "text": "We have an accessible room near the elevator, although its bathroom has a tub rather than a roll-in shower.",
+              "focus": "rather than a roll-in shower"
+            },
+            {
+              "text": "I requested a visual fire alarm and doorbell alert; could someone confirm both devices work before I unpack?",
+              "focus": "a visual fire alarm and doorbell alert"
+            },
+            {
+              "text": "These key cards activate the elevator and side entrance, but they will stop working at eleven on your departure day.",
+              "focus": "activate the elevator and side entrance"
+            },
+            {
+              "text": "My partner will arrive later; what identification will they need to receive a key card in my name?",
+              "focus": "what identification will they need"
+            },
+            {
+              "text": "The front desk is staffed around the clock, and dial zero from your room if you need assistance.",
+              "focus": "staffed around the clock"
+            },
+            {
+              "text": "My confirmation shows the reservation as guaranteed, so please document the cancellation and ask a manager to review the available alternatives.",
+              "focus": "document the cancellation"
+            }
+          ]
+        },
+        {
+          "id": "room-problems-and-checkout",
+          "title": "Room problems & checkout",
+          "description": "Report maintenance, cleanliness, noise, safety, or billing problems and agree on a workable remedy.",
+          "sentences": [
+            {
+              "text": "The air conditioner has stopped cooling, and the room is still warm after I reset the thermostat twice.",
+              "focus": "has stopped cooling"
+            },
+            {
+              "text": "I can have an engineer take a look right away, or we can discuss moving you if it cannot be fixed promptly.",
+              "focus": "cannot be fixed promptly"
+            },
+            {
+              "text": "The bathroom floor is sticky, and the bed linens look as though the room wasn't cleaned properly.",
+              "focus": "wasn't cleaned properly"
+            },
+            {
+              "text": "I'm sorry this was missed; I'll send housekeeping back up and ask a supervisor to inspect the room afterward.",
+              "focus": "send housekeeping back up"
+            },
+            {
+              "text": "Most of the noise seems to be coming from the room next door, and it has continued well past midnight.",
+              "focus": "well past midnight"
+            },
+            {
+              "text": "I'll remind them of quiet hours without identifying you; if the noise continues, please call us again.",
+              "focus": "without identifying you"
+            },
+            {
+              "text": "I noticed small insects near the nightstand, so I'd like the room inspected and the problem documented before I move.",
+              "focus": "the problem documented"
+            },
+            {
+              "text": "We take pest reports seriously, so I'll move you immediately and have a manager follow up about tonight's charges.",
+              "focus": "take pest reports seriously"
+            },
+            {
+              "text": "My watch is missing from the desk where I left it before housekeeping came in; please make an incident report.",
+              "focus": "make an incident report"
+            },
+            {
+              "text": "I'll check the lost-and-found log and speak with the housekeeping supervisor, but security may also need a description of the watch.",
+              "focus": "check the lost-and-found log"
+            },
+            {
+              "text": "The shower has had no hot water since this morning; when should I expect service to be restored?",
+              "focus": "when should I expect service to be restored"
+            },
+            {
+              "text": "We have the same room type two floors higher, and I'll arrange help with your bags if that move works for you.",
+              "focus": "if that move works for you"
+            },
+            {
+              "text": "The grab bar in the shower is loose, which makes the bathroom unsafe for me to use.",
+              "focus": "makes the bathroom unsafe"
+            },
+            {
+              "text": "My departure was pushed back, so I'm hoping to extend checkout until two without paying for another full night.",
+              "focus": "extend checkout until two"
+            },
+            {
+              "text": "I’ll send security to unlock the in-room safe after we verify your identity and confirm which belongings are inside.",
+              "focus": "after we verify your identity"
+            },
+            {
+              "text": "Before I pay, I'd like to go over the folio because the nightly rate changes don't match my confirmation.",
+              "focus": "go over the folio"
+            },
+            {
+              "text": "I didn't use the minibar, so I dispute this charge and would like someone to verify when the item was recorded.",
+              "focus": "I dispute this charge"
+            },
+            {
+              "text": "I reviewed the housekeeping record and will remove the fee; I'll also email a corrected receipt showing a zero balance.",
+              "focus": "showing a zero balance"
+            },
+            {
+              "text": "Could you split the final bill between these two cards and show the amounts separately on each receipt?",
+              "focus": "show the amounts separately on each receipt"
+            },
+            {
+              "text": "Since the repeated plumbing problem disrupted two nights, the manager approved a partial refund and written confirmation for your records.",
+              "focus": "approved a partial refund"
+            }
+          ]
+        },
+        {
+          "id": "navigation-sightseeing-and-tours",
+          "title": "Navigation, sightseeing & tours",
+          "description": "Ask precise directions, understand local guidance, book activities, and communicate with a guide or venue.",
+          "sentences": [
+            {
+              "text": "I’m trying to reach the riverfront monument on foot; which entrance avoids the steep stairs and construction detour?",
+              "focus": "construction detour"
+            },
+            {
+              "text": "Stay on this sidewalk for three blocks, then bear left at the clock tower; the museum entrance will be directly across the plaza.",
+              "focus": "bear left at the clock tower"
+            },
+            {
+              "text": "The gallery closes at six, but last admission is at five fifteen, so you’ll need to arrive before then.",
+              "focus": "last admission"
+            },
+            {
+              "text": "My ticket is for a 2:30 timed entry; is there a grace period if the shuttle arrives late?",
+              "focus": "grace period"
+            },
+            {
+              "text": "Today’s guided visits are sold out, although you can join the standby list or take the self-guided route.",
+              "focus": "join the standby list"
+            },
+            {
+              "text": "The audio guide is available in six languages, and you can switch tracks without restarting the tour.",
+              "focus": "switch tracks without restarting the tour"
+            },
+            {
+              "text": "I’m comfortable walking for two hours, but I may need a slower pace on uneven ground.",
+              "focus": "a slower pace on uneven ground"
+            },
+            {
+              "text": "Let’s confirm the meeting point: we’ll gather beside the visitor center’s north entrance, not at the main gate.",
+              "focus": "confirm the meeting point"
+            },
+            {
+              "text": "Is the observation deck wheelchair accessible all the way from this entrance, including the elevator and restroom?",
+              "focus": "wheelchair accessible all the way"
+            },
+            {
+              "text": "The advertised accessible route is closed, and the alternative has stairs; please document that and explain my refund options.",
+              "focus": "The advertised accessible route is closed"
+            },
+            {
+              "text": "Photography without flash is allowed in most rooms, but tripods and selfie sticks must remain in the coat check.",
+              "focus": "Photography without flash is allowed"
+            },
+            {
+              "text": "Before taking pictures of local residents, please ask permission and respect anyone who declines.",
+              "focus": "respect anyone who declines"
+            },
+            {
+              "text": "For a quieter neighborhood walk with independent shops, I’d recommend the area behind the public market rather than the crowded main square.",
+              "focus": "rather than the crowded main square"
+            },
+            {
+              "text": "If anyone gets separated, return to the fountain by the east gate and call the number printed on your tour badge.",
+              "focus": "gets separated"
+            },
+            {
+              "text": "Please stay behind the marked line, keep your audio receiver on, and wait for my signal before crossing the service road.",
+              "focus": "wait for my signal"
+            },
+            {
+              "text": "Your admission permits same-day reentry, but have the attendant stamp your ticket before you leave for lunch.",
+              "focus": "permits same-day reentry"
+            },
+            {
+              "text": "I’m having trouble following at this pace; could you summarize the key points before we move to the next room?",
+              "focus": "summarize the key points"
+            },
+            {
+              "text": "The receipt includes two audio-guide rentals, but I used only one; please correct the charge before I leave.",
+              "focus": "correct the charge"
+            },
+            {
+              "text": "This overlook feels unsafe in the high winds, so I’m going back to the sheltered meeting area and notifying the guide.",
+              "focus": "sheltered meeting area"
+            },
+            {
+              "text": "If the weather turns, which part of the walking tour can we skip without missing the main historical sites?",
+              "focus": "If the weather turns"
+            }
+          ]
+        },
+        {
+          "id": "rentals-road-trips-and-emergencies",
+          "title": "Rentals, road trips & emergencies",
+          "description": "Rent and inspect a vehicle, manage road-trip logistics, and seek effective help when something goes wrong.",
+          "sentences": [
+            {
+              "text": "Before I release the car, I’ll need to verify your driver’s license and add anyone else who may drive.",
+              "focus": "verify your driver’s license"
+            },
+            {
+              "text": "Does the collision waiver cover damage to the tires and windshield, or would I need separate protection for those?",
+              "focus": "cover damage to the tires and windshield"
+            },
+            {
+              "text": "The security deposit is a temporary card hold, and it should disappear within five business days after return.",
+              "focus": "temporary card hold"
+            },
+            {
+              "text": "I’ve photographed the dent and windshield scrape; please note them on the inspection report before I sign.",
+              "focus": "note them on the inspection report"
+            },
+            {
+              "text": "These brakes feel unusually soft, and I’m not comfortable driving the car until someone inspects or replaces it.",
+              "focus": "I’m not comfortable driving the car"
+            },
+            {
+              "text": "This car must return with a full tank, or we’ll apply a refueling fee based on local pump prices.",
+              "focus": "a refueling fee based on local pump prices"
+            },
+            {
+              "text": "The battery is at seventy-two percent, and the charging cable is under the trunk floor; please return it above fifty percent.",
+              "focus": "the charging cable is under the trunk floor"
+            },
+            {
+              "text": "Are there geographic restrictions on this rental, or may I cross the border if I obtain written approval first?",
+              "focus": "geographic restrictions on this rental"
+            },
+            {
+              "text": "The navigation system keeps routing us toward a closed road; is there a reliable detour that avoids unpaved roads?",
+              "focus": "a reliable detour that avoids unpaved roads"
+            },
+            {
+              "text": "The car is shaking and the engine warning light is flashing, so I’ve pulled over; please arrange a tow.",
+              "focus": "the engine warning light is flashing"
+            },
+            {
+              "text": "A tow truck is about forty minutes away; stay behind the guardrail, and don’t attempt repairs on the traffic side.",
+              "focus": "don’t attempt repairs on the traffic side"
+            },
+            {
+              "text": "The other driver left before exchanging insurance information; I photographed the license plate and need to report the hit-and-run.",
+              "focus": "left before exchanging insurance information"
+            },
+            {
+              "text": "My passenger struck her head and feels dizzy, although she’s conscious; please send medical help to our location.",
+              "focus": "please send medical help to our location"
+            },
+            {
+              "text": "Keep her still, don’t give her anything to eat or drink, and tell me immediately if she becomes less responsive.",
+              "focus": "if she becomes less responsive"
+            },
+            {
+              "text": "Our plans changed; what would it cost to return the car one day late at a different location?",
+              "focus": "return the car one day late at a different location"
+            },
+            {
+              "text": "My passport was stolen, and I’m traveling tomorrow; can the consulate issue an emergency travel document?",
+              "focus": "issue an emergency travel document"
+            },
+            {
+              "text": "My phone was stolen, and it contains my digital car key; how can I regain access to the rental car?",
+              "focus": "regain access to the rental car"
+            },
+            {
+              "text": "Because the reserved hand-control vehicle was canceled, I need an equivalent accessible car today or written confirmation and a full refund.",
+              "focus": "an equivalent accessible car"
+            },
+            {
+              "text": "The receipt includes an incorrect fuel charge; please review my time-stamped photo and remove it, or have a supervisor explain the decision.",
+              "focus": "review my time-stamped photo"
+            },
+            {
+              "text": "We’re on the eastbound shoulder near mile marker forty-two, beside a closed rest area with a blue roof.",
+              "focus": "on the eastbound shoulder near mile marker forty-two"
+            }
+          ]
+        }
+      ]
     }
   ]
 }

@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "sentencesPerSection": 20,
+  "audience": "an adult English learner who wants confident, natural restaurant English",
+  "domain": "realistic conversations among diners, hosts, servers, bartenders, and restaurant managers",
+  "collection": {
+    "id": "restaurant-conversations",
+    "title": "Restaurant Conversations",
+    "eyebrow": "Dining English",
+    "description": "Handle reservations, menus, dietary needs, ordering, service problems, payment, and takeout with natural, tactful English.",
+    "level": "B2–C1",
+    "accent": "rose"
+  },
+  "methodology": [
+    "Teach complete conversational moves rather than isolated menu vocabulary.",
+    "Balance courteous directness with the tact expected in present-day American restaurants.",
+    "Include both guest-facing and staff-facing language so learners can understand likely replies as well as make requests.",
+    "Prefer specific clarification, confirmation, and repair language over vague or overly apologetic wording.",
+    "Use pragmatic B2–C1 complexity: managing expectations, negotiating alternatives, resolving errors, and handling social nuance.",
+    "Cover quick-service, casual, and full-service dining without tying the material to a particular brand or cuisine.",
+    "Keep lines useful on their own while making the likely situation and speaker intention easy to infer.",
+    "Reflect common American practices around reservations, substitutions, tipping, splitting checks, leftovers, and takeout."
+  ],
+  "requirements": [
+    "Distribute lines across diners, hosts, servers, bartenders, managers, and members of a dining party; do not make every line a customer request.",
+    "Avoid repetitive openings such as 'Could you,' 'Can I,' and 'I'd like'; use varied natural sentence shapes.",
+    "Include tactful but firm language for allergy safety, incorrect orders, delays, charges, and unacceptable food.",
+    "Do not invent restaurant names, app names, loyalty programs, or culture-specific dishes merely to add variety.",
+    "Do not turn sentences into vocabulary definitions or etiquette lessons."
+  ],
+  "sections": [
+    {
+      "id": "reservations-and-arrival",
+      "title": "Reservations & arrival",
+      "description": "Book, change, confirm, and locate a reservation, then handle waits and walk-in availability.",
+      "guidance": "Cover phone reservations, online-booking confusion, changing party size or time, late arrivals, walk-ins, wait estimates, holding a table, and host responses."
+    },
+    {
+      "id": "seating-and-comfort",
+      "title": "Seating & comfort",
+      "description": "Negotiate table location, accessibility, space, temperature, noise, and other seating needs.",
+      "guidance": "Cover booths versus tables, outdoor seating, high chairs, wheelchair access, bags and coats, drafts, sunlight, noise, moving tables, and tactful limits from staff."
+    },
+    {
+      "id": "understanding-the-menu",
+      "title": "Understanding the menu",
+      "description": "Clarify unfamiliar items, ingredients, portions, preparation, availability, and pricing.",
+      "guidance": "Include descriptions, portion comparisons, cooking methods, market-price questions, sold-out items, specials, side choices, tasting menus, and what is included."
+    },
+    {
+      "id": "dietary-needs",
+      "title": "Dietary needs & allergies",
+      "description": "Communicate allergies and dietary restrictions precisely and verify that an order can be handled safely.",
+      "guidance": "Cover severe allergies, cross-contact, hidden ingredients, vegetarian and vegan needs, gluten and dairy concerns, substitutions, kitchen verification, and declining unsafe accommodation."
+    },
+    {
+      "id": "recommendations-and-pairings",
+      "title": "Recommendations & pairings",
+      "description": "Ask for and give useful recommendations based on taste, appetite, budget, and drink pairings.",
+      "guidance": "Include flavor preferences, spice, richness, sharing, value, signature dishes, wine or nonalcoholic pairings, server follow-up questions, and honest comparisons."
+    },
+    {
+      "id": "ordering-and-customizing",
+      "title": "Ordering & customizing",
+      "description": "Place a complete order, specify preparation, request reasonable changes, and confirm details.",
+      "guidance": "Cover doneness, dressings and sauces, sides, add-ons, omissions, courses, shared plates, drinks, substitutions, order read-backs, and limits on modifications."
+    },
+    {
+      "id": "service-and-pacing",
+      "title": "Service & pacing",
+      "description": "Manage timing, refills, missing items, check-ins, and the pace of a meal without sounding abrupt.",
+      "guidance": "Include waiting for another guest, spacing courses, needing time, signaling readiness, refills, utensils, clearing plates, time constraints, server updates, and kitchen delays."
+    },
+    {
+      "id": "problems-and-resolution",
+      "title": "Problems & resolution",
+      "description": "Raise concerns about food or service and negotiate a proportionate, professional resolution.",
+      "guidance": "Cover wrong or missing dishes, unsafe ingredients, temperature and doneness, excessive waits, spilled items, poor service, remake versus removal, manager responses, and fair remedies."
+    },
+    {
+      "id": "group-meals-and-occasions",
+      "title": "Group meals & occasions",
+      "description": "Coordinate a group order, celebrations, shared food, separate needs, and social decisions at the table.",
+      "guidance": "Include ordering for a group, sharing etiquette, choosing dishes, late guests, birthdays, business meals, children, alcohol decisions, invitations, and discreet arrangements with staff."
+    },
+    {
+      "id": "dessert-bill-and-takeout",
+      "title": "Dessert, payment & takeout",
+      "description": "Finish the meal, resolve the check, tip, package leftovers, and manage pickup or delivery issues.",
+      "guidance": "Cover dessert and coffee, asking for the check, splitting or combining payment, disputed charges, cards and cash, receipts, tips, boxes, takeout pickup, missing items, and reheating guidance."
+    }
+  ]
+}

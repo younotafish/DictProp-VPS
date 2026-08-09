@@ -33,7 +33,6 @@ test('Real Life progress ids are stable and include the collection boundary', ()
 
 test('each collection computes an isolated queue and mastery score', () => {
   const career = REAL_LIFE_COLLECTIONS[0];
-  const shopping = REAL_LIFE_COLLECTIONS[1];
   const careerItem = createRealLifeProgressItem(career.sentences[0], 100);
   careerItem.srs = {
     ...SRSAlgorithm.createNew(careerItem.data.id, 'sentence'),
@@ -50,11 +49,13 @@ test('each collection computes an isolated queue and mastery score', () => {
   assert.equal(careerProgress.unreviewed, career.sentences.length - 1);
   assert.equal(careerProgress.masteryScore, Math.round(60 / career.sentences.length));
 
-  const shoppingProgress = getRealLifeCollectionProgress(shopping, [careerItem], NOW);
-  assert.equal(shoppingProgress.reviewed, 0);
-  assert.equal(shoppingProgress.due, 0);
-  assert.equal(shoppingProgress.masteryScore, 0);
-  assert.equal(shoppingProgress.unreviewed, shopping.sentences.length);
+  for (const collection of REAL_LIFE_COLLECTIONS.slice(1)) {
+    const isolatedProgress = getRealLifeCollectionProgress(collection, [careerItem], NOW);
+    assert.equal(isolatedProgress.reviewed, 0, `${collection.id} must not inherit Career reviews`);
+    assert.equal(isolatedProgress.due, 0, `${collection.id} must not inherit Career due cards`);
+    assert.equal(isolatedProgress.masteryScore, 0, `${collection.id} must not inherit Career mastery`);
+    assert.equal(isolatedProgress.unreviewed, collection.sentences.length);
+  }
 });
 
 test('study items overlay only their exact stored catalog progress', () => {

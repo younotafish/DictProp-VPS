@@ -506,11 +506,11 @@ export const cancelImageBackfill = async (): Promise<ImageBackfillStatus> => {
 // TTS cache (server-side MiMo audio, fetched as cached clips)
 // ============================================================================
 
-// Versioned, locally generated Qwen3-TTS cache tokens. A new token is required for any future model,
-// voice, or recipe change because clips are content-addressed and cached immutably on every device.
-export const TTS_VOICE = 'qwen3-aiden-clear-v1';
-export const TTS_CASUAL_VOICE = 'qwen3-aiden-casual-v1';
-// MiMo remains a rollout/cache-miss fallback while local batches are being generated and published.
+// MiMo remains the production default while the offline replacement undergoes a blinded
+// connected-speech benchmark. Imported Qwen clips retain their immutable cache keys on the server,
+// but the client must not prefer them until a perceptual recipe is approved.
+export const TTS_VOICE = 'Mia';
+export const TTS_CASUAL_VOICE = 'casual';
 export const TTS_LEGACY_VOICE = 'Mia';
 export const TTS_LEGACY_CASUAL_VOICE = 'casual';
 

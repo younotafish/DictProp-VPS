@@ -55,7 +55,7 @@ const WEBGPU_ENGINE: Engine = { device: 'webgpu', dtype: 'fp32' };
 const WASM_ENGINE: Engine = { device: 'wasm', dtype: 'fp32' };
 
 export const DEFAULT_VOICE = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
-// Versioned Qwen3 cache tokens and their temporary MiMo rollout fallbacks come from api.ts.
+// Production voice tokens and any rollout fallbacks come from api.ts.
 
 // ── Speech style: clear (crisp MiMo) ⇄ casual (reduced, mumbled) ──────────────
 // A persisted GLOBAL choice of which cached track to play. Every play site routes through this engine,
@@ -66,7 +66,7 @@ const styleToken = getTtsStyleToken;
 
 // ── Playback speed: adjustable voice rate for example sentences ────────────────
 // A persisted GLOBAL playback rate for the cached-clip (<audio>) path — i.e. the example-sentence
-// voice. The plain 1.0× MiMo clip reads a touch slow for review, so the default is 1.1×; it's
+// voice. Cached clips should play at their authored rate by default, so the default is 1.0×; it's
 // adjustable up to 2×. Applied at the one shared <audio> element (see playUrl) with preservesPitch,
 // so a faster rate speeds up the speech WITHOUT raising the pitch. Like the style toggle, it's a
 // single global value routed through this engine, so one control governs word review, sentence
@@ -730,7 +730,7 @@ const legacyTokenFor = (token: string): string =>
 
 interface ResolvedCachedClip { key: string; url: string; token: string }
 
-/** Prefer the locally generated versioned clip, then use the matching MiMo cache during rollout. */
+/** Resolve the configured production clip, then its matching rollout fallback when one differs. */
 const resolveCachedClip = async (text: string, token: string): Promise<ResolvedCachedClip | null> => {
   const key = await ttsKey(text, token);
   const url = await loadClipUrl(key);
@@ -992,7 +992,7 @@ const resolveTimingsForPlayback = async (
 
 /**
  * Speak `text` with the best available voice:
- *   1. locally generated Qwen3 clip from the server cache, with MiMo as a batch-rollout fallback
+ *   1. the currently approved cached production clip
  *   2. on a true cache MISS: kick off legacy generation (fills the fallback cache), then fall
  *      back immediately — macOS/desktop → in-browser Kokoro, iOS/iPadOS → system Web Speech voice.
  * The cache miss never blocks the tap on the ~2.75 s generation. Returns a handle whose
@@ -1024,7 +1024,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
 
   (async () => {
     try {
-      // 1) memory → 2) IndexedDB → 3) server, preferring Qwen3 and then the matching MiMo track.
+      // 1) memory → 2) IndexedDB → 3) server, with a version-specific fallback when configured.
       const clip = await resolveCachedClip(plain, voiceTok);
       if (!isCurrent()) return;
       if (clip) {
@@ -1034,7 +1034,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         // "takes forever to load" bug). Warm timings are instant; a cold miss waits only a short budget,
         // then plays now while the fetch keeps warming in the background for the next play / tap-to-seek.
         currentTimings = await resolveTimingsForPlayback(clip.key, () => {
-          // Offline Qwen imports always include timings; only a legacy fallback can be repaired live.
+          // Imported offline clips include timings; a live-generated production/fallback clip can be repaired here.
           if (clip.token === legacyTokenFor(voiceTok)) {
             requestTTSGeneration([{ text: plain, voice: clip.token }]).catch(() => {});
           }

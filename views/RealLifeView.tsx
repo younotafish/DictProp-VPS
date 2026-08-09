@@ -9,10 +9,12 @@ import {
   Compass,
   Crown,
   ExternalLink,
+  Plane,
   Play,
   Search,
   ShoppingBag,
   Sparkles,
+  UtensilsCrossed,
   X,
 } from 'lucide-react';
 import { Virtuoso } from 'react-virtuoso';
@@ -67,6 +69,18 @@ const collectionStyle = {
     soft: 'bg-amber-50 text-amber-800',
     active: 'bg-amber-600 text-white',
     icon: Crown,
+  },
+  rose: {
+    tile: 'from-rose-600 via-red-500 to-orange-500',
+    soft: 'bg-rose-50 text-rose-700',
+    active: 'bg-rose-600 text-white',
+    icon: UtensilsCrossed,
+  },
+  sky: {
+    tile: 'from-sky-600 via-blue-600 to-indigo-500',
+    soft: 'bg-sky-50 text-sky-700',
+    active: 'bg-sky-600 text-white',
+    icon: Plane,
   },
 } as const;
 
