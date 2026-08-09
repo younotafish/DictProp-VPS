@@ -347,26 +347,19 @@ async function getDetachedBackfillStatus(): Promise<BackfillStatus | null> {
 }
 
 const BACKFILL_CONCURRENCY = 2;
-export async function runBackfill(): Promise<void> {
-  if (backfill.running) return;
-  // Synchronous setup (runs before the first await, so a non-awaiting caller still sees `total`).
-  let texts: string[];
-  try {
-    // Catalog speech is product-critical and finite. Keep it ahead of the much larger saved-item
-    // library so a new Real Life collection does not wait behind tens of thousands of user texts.
-    texts = Array.from(new Set(
-      [...getAllRealLifeCatalogSentenceTexts(), ...getAllSentenceTexts()]
-        .map(stripMarkers)
-        .filter(Boolean),
-    ));
-  } catch (e: any) {
-    console.warn('[tts] backfill: failed to read items:', e?.message);
-    return;
-  }
-  // Two styles per sentence, each with audio and word timings.
-  backfill = { running: true, total: texts.length * 2, done: 0, generated: 0, failed: 0, startedAt: Date.now(), finishedAt: 0 };
-  console.log(`[tts] backfill: starting for ${texts.length} sentences × 2 styles`);
+export function partitionBackfillTexts(catalogInput: string[], libraryInput: string[]): {
+  catalog: string[];
+  library: string[];
+} {
+  const catalog = Array.from(new Set(catalogInput.map(stripMarkers).filter(Boolean)));
+  const catalogSet = new Set(catalog);
+  const library = Array.from(new Set(libraryInput.map(stripMarkers).filter(Boolean)))
+    .filter(text => !catalogSet.has(text));
+  return { catalog, library };
+}
 
+async function runBackfillGroup(texts: string[]): Promise<void> {
+  if (texts.length === 0) return;
   // ── Clear pass: per-item parallel (each item also runs a whisper alignment). ──
   let idx = 0;
   const clearWorker = async () => {
@@ -441,6 +434,31 @@ export async function runBackfill(): Promise<void> {
     };
     await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => casualWorker()));
   }
+}
+
+export async function runBackfill(): Promise<void> {
+  if (backfill.running) return;
+  // Synchronous setup (runs before the first await, so a non-awaiting caller still sees `total`).
+  let catalogTexts: string[];
+  let libraryTexts: string[];
+  try {
+    ({ catalog: catalogTexts, library: libraryTexts } = partitionBackfillTexts(
+      getAllRealLifeCatalogSentenceTexts(),
+      getAllSentenceTexts(),
+    ));
+  } catch (e: any) {
+    console.warn('[tts] backfill: failed to read items:', e?.message);
+    return;
+  }
+  const sentenceCount = catalogTexts.length + libraryTexts.length;
+  // Two styles per sentence, each with audio and word timings.
+  backfill = { running: true, total: sentenceCount * 2, done: 0, generated: 0, failed: 0, startedAt: Date.now(), finishedAt: 0 };
+  console.log(`[tts] backfill: starting for ${sentenceCount} sentences × 2 styles`);
+
+  // The catalog is finite and product-critical. Finish both styles there before scanning the much
+  // larger saved-item library, otherwise a new collection's casual track can wait for days.
+  await runBackfillGroup(catalogTexts);
+  await runBackfillGroup(libraryTexts);
 
   backfill.running = false;
   backfill.finishedAt = Date.now();
