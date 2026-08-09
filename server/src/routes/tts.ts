@@ -352,8 +352,10 @@ export async function runBackfill(): Promise<void> {
   // Synchronous setup (runs before the first await, so a non-awaiting caller still sees `total`).
   let texts: string[];
   try {
+    // Catalog speech is product-critical and finite. Keep it ahead of the much larger saved-item
+    // library so a new Real Life collection does not wait behind tens of thousands of user texts.
     texts = Array.from(new Set(
-      [...getAllSentenceTexts(), ...getAllRealLifeCatalogSentenceTexts()]
+      [...getAllRealLifeCatalogSentenceTexts(), ...getAllSentenceTexts()]
         .map(stripMarkers)
         .filter(Boolean),
     ));
