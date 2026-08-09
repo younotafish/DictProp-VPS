@@ -124,10 +124,14 @@ export interface SentenceData {
   text: string; // The sentence text. Markup: {{studied item}} (emphasis) and [[uncommon term]] (clickable lookup)
   sourceWord: string; // The vocab word this sentence came from
   sourceSense?: string; // The sense label of the source word
-  /** Stable provenance id for a sentence originating in the read-only Real Life catalog. */
+  /** Identifies which read-only learning catalog owns an isolated review record. */
+  catalogKind?: 'real-life' | 'essay';
+  /** Stable provenance id for a sentence originating in a read-only catalog. */
   catalogSentenceId?: string;
-  /** Collection boundary for an isolated Real Life memorization record. */
+  /** Collection or essay boundary for an isolated memorization record. */
   catalogCollectionId?: string;
+  /** Human-readable catalog title used when returning from sentence review. */
+  catalogTitle?: string;
   imageUrl?: string; // Attached or prepared image (base64/API URL in memory; IDB/server marker once offloaded)
   analysis?: SentenceAnalysis;
   analysisGeneratedAt?: number;
@@ -197,7 +201,7 @@ export interface ItemGroup {
 
 export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
-export type ViewState = 'notebook' | 'study' | 'sentences' | 'real-life';
+export type ViewState = 'notebook' | 'study' | 'sentences' | 'real-life' | 'essays';
 
 // In-memory library state; durable mutation journals live in the storage/sync services.
 export interface SyncState {

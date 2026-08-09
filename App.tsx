@@ -19,6 +19,7 @@ import { log, warn, error as logError } from './services/logger';
 import { subscribeToServerMutations } from './services/syncSignals';
 import { getUsagePriority, sortStoredSensesByUsage, sortVocabCardsByUsage } from './services/usageAudit';
 import { isRealLifeProgressItem } from './services/realLifeProgressIdentity';
+import { isEssayProgressItem } from './services/essayProgressIdentity';
 
 const NotebookView = lazy(() => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
 const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(module => ({ default: module.GlobalSearch })));
@@ -47,6 +48,7 @@ const loadSentencesView = async () => {
 };
 const SentencesView = lazy(loadSentencesView);
 const RealLifeView = lazy(() => import('./views/RealLifeView').then(module => ({ default: module.RealLifeView })));
+const EssaysView = lazy(() => import('./views/EssaysView').then(module => ({ default: module.EssaysView })));
 const loadDetailView = () => import('./views/DetailView').then(module => ({ default: module.DetailView }));
 const DetailView = lazy(loadDetailView);
 
@@ -92,8 +94,10 @@ const createLightweightCache = (items: StoredItem[]): any[] =>
         text: item.data.text,
         sourceWord: item.data.sourceWord,
         sourceSense: item.data.sourceSense,
+        catalogKind: item.data.catalogKind,
         catalogSentenceId: item.data.catalogSentenceId,
         catalogCollectionId: item.data.catalogCollectionId,
+        catalogTitle: item.data.catalogTitle,
       };
     } else {
       const vocab = item.data as VocabCard;
@@ -315,7 +319,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
     const saved = localStorage.getItem('app_current_view');
     // Default to notebook, and handle legacy 'search' value from old localStorage
-    if (!saved || saved === 'search' || !['notebook', 'study', 'sentences', 'real-life'].includes(saved)) {
+    if (!saved || saved === 'search' || !['notebook', 'study', 'sentences', 'real-life', 'essays'].includes(saved)) {
       return 'notebook';
     }
     return saved as ViewState;
@@ -324,7 +328,7 @@ const App: React.FC = () => {
   // Sentence detail is a substantial lazy chunk. Start fetching it as soon as the list is visible so
   // tapping a sentence never pays the network/module-parse cost before the full-screen view can mount.
   useEffect(() => {
-    if (currentView === 'sentences' || currentView === 'real-life') void loadDetailView().catch(() => {});
+    if (currentView === 'sentences' || currentView === 'real-life' || currentView === 'essays') void loadDetailView().catch(() => {});
   }, [currentView]);
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadDetailView().catch(() => {}); }, 2_000);
@@ -557,9 +561,9 @@ const App: React.FC = () => {
   const activeItems = allActiveItems;
   // Items available for study (excludes archived and sentences)
   const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
-  // Ordinary saved sentences and Real Life progress deliberately use separate queues. Real Life
-  // records are stable, collection-namespaced sentence items so their FSRS state never changes the
-  // Sentences tab's score or due count (and vice versa).
+  // Ordinary saved sentences, Real Life collections, and Essays deliberately use separate queues.
+  // Catalog records have stable namespaced ids, so reviewing one context never changes another
+  // context's score or the Sentences tab's due count.
   const allSentenceItems = useMemo(
     () => savedItems.filter(i => !i.isDeleted && i.type === 'sentence'),
     [savedItems],
@@ -568,8 +572,12 @@ const App: React.FC = () => {
     () => allSentenceItems.filter(isRealLifeProgressItem),
     [allSentenceItems],
   );
+  const essayProgressItems = useMemo(
+    () => allSentenceItems.filter(isEssayProgressItem),
+    [allSentenceItems],
+  );
   const sentenceItems = useMemo(
-    () => allSentenceItems.filter(item => !isRealLifeProgressItem(item)),
+    () => allSentenceItems.filter(item => !isRealLifeProgressItem(item) && !isEssayProgressItem(item)),
     [allSentenceItems],
   );
   const sentenceItemsById = useMemo(
@@ -2569,6 +2577,8 @@ const App: React.FC = () => {
       sourceSense,
       ...(prepared?.catalogSentenceId ? { catalogSentenceId: prepared.catalogSentenceId } : {}),
       ...(prepared?.catalogCollectionId ? { catalogCollectionId: prepared.catalogCollectionId } : {}),
+      ...(prepared?.catalogKind ? { catalogKind: prepared.catalogKind } : {}),
+      ...(prepared?.catalogTitle ? { catalogTitle: prepared.catalogTitle } : {}),
       ...(prepared?.analysis ? { analysis: prepared.analysis } : {}),
       ...(prepared?.analysisGeneratedAt ? { analysisGeneratedAt: prepared.analysisGeneratedAt } : {}),
       ...(prepared?.imageUrl ? { imageUrl: prepared.imageUrl } : {}),
@@ -2746,7 +2756,7 @@ const App: React.FC = () => {
     if (!identity) return null;
 
     const existing = latestItemsRef.current.find(item =>
-      !item.isDeleted && isSentenceItem(item) && !isRealLifeProgressItem(item) &&
+      !item.isDeleted && isSentenceItem(item) && !isRealLifeProgressItem(item) && !isEssayProgressItem(item) &&
       normalizeSentenceIdentity((item.data as SentenceData).text) === identity
     );
     if (existing && (existing.data as SentenceData).analysis) return existing;
@@ -2806,7 +2816,7 @@ const App: React.FC = () => {
       durationMs?: number;
       sessionId?: string;
       eventId?: string;
-      /** Materializes an implicit Real Life sentence on its first review. */
+      /** Materializes an implicit catalog sentence on its first review. */
       seedItem?: StoredItem;
     },
   ): Promise<boolean> => {
@@ -2815,7 +2825,8 @@ const App: React.FC = () => {
     let baseItems = latestItemsRef.current;
     let targetItem = baseItems.find(i => i.data.id === itemId);
     const requestedSeed = context?.seedItem;
-    const seedItem = !targetItem && requestedSeed?.data.id === itemId && isRealLifeProgressItem(requestedSeed)
+    const seedItem = !targetItem && requestedSeed?.data.id === itemId &&
+      (isRealLifeProgressItem(requestedSeed) || isEssayProgressItem(requestedSeed))
       ? requestedSeed
       : undefined;
     if (!targetItem && seedItem) {
@@ -3210,6 +3221,14 @@ const App: React.FC = () => {
             onScroll={handleScroll}
             findSaved={findSavedItem}
             onOpenCard={openCardPopup}
+          />
+        )}
+
+        {currentView === 'essays' && (
+          <EssaysView
+            onOpenSentence={handleViewSentence}
+            progressItems={essayProgressItems}
+            onScroll={handleScroll}
           />
         )}
 

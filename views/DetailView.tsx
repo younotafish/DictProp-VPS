@@ -403,6 +403,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const currentSentenceSnapshot = sentenceMode ? (sentenceItems![sentenceIndex] ?? null) : null;
   const catalogSentencePreview = !!(currentSentenceSnapshot &&
     (currentSentenceSnapshot.data as SentenceData).catalogSentenceId);
+  const catalogPreviewKind = currentSentenceSnapshot
+    ? ((currentSentenceSnapshot.data as SentenceData).catalogKind ?? 'real-life')
+    : undefined;
   const [preparedSentenceById, setPreparedSentenceById] = useState<Record<string, StoredItem>>({});
   const [preparingSentenceId, setPreparingSentenceId] = useState<string | null>(null);
   const preparationRequestsRef = useRef(new Set<string>());
@@ -442,7 +445,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     (readOnlySentencePreview || currentSentenceSnapshot.data.id.startsWith('sentence-preview:'));
   const currentSentenceText = currentSentence ? (currentSentence.data as SentenceData).text : '';
   const sentenceExitLabel = catalogSentencePreview
-    ? 'Real Life'
+    ? catalogPreviewKind === 'essay' ? 'Essays' : 'Real Life'
     : isSentencePreview
       ? 'Word'
       : 'Sentences';
@@ -489,6 +492,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
             ...savedData,
             catalogSentenceId: sourceSentence.catalogSentenceId,
             catalogCollectionId: sourceSentence.catalogCollectionId,
+            catalogKind: sourceSentence.catalogKind,
+            catalogTitle: sourceSentence.catalogTitle,
             analysis: result.analysis,
             analysisGeneratedAt: result.analysisGeneratedAt,
             imageUrl: savedData.imageUrl ?? result.imageUrl,
@@ -496,7 +501,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         });
       }
     }).catch(error => {
-      warn('Failed to load prepared Real Life sentence', error);
+      warn('Failed to load prepared catalog sentence', error);
     }).finally(() => {
       preparationRequestsRef.current.delete(id);
       setPreparingSentenceId(current => current === id ? null : current);
@@ -2344,7 +2349,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                       type="button"
                       onClick={handleRemember}
                       className="flex min-h-11 items-center gap-2 rounded-md bg-emerald-500 px-4 text-sm font-bold text-white transition-colors hover:bg-emerald-600"
-                      title="Remember in this Real Life collection (R)"
+                      title={`Remember in this ${catalogPreviewKind === 'essay' ? 'essay' : 'Real Life collection'} (R)`}
                     >
                       <CheckCircle2 size={17} /> Got it
                     </button>

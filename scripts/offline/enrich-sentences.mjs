@@ -58,7 +58,12 @@ const schema = {
 const schemaPath = join(workDir, 'output-schema.json');
 writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
 
-const instruction = DETAILED_SENTENCE_ANALYSIS_INSTRUCTION;
+const instruction = `${DETAILED_SENTENCE_ANALYSIS_INSTRUCTION}
+
+Some records include contextBefore and/or contextAfter. Use that neighboring source text only to
+resolve pronouns, references, historical situation, tone, and the image scene. Analyze, translate,
+transcribe, and illustrate only the target text field; never merge neighboring wording into the
+target sentence or its grammar excerpts.`;
 
 const baseAnalysisById = new Map();
 if (baseAnalysisArg) {
@@ -184,6 +189,8 @@ function compactBatch(batch) {
       text: plainSentence(sourceRecord.text),
       sourceWord: sourceRecord.sourceWord,
       sourceSense: sourceRecord.sourceSense,
+      ...(sourceRecord.contextBefore ? { contextBefore: plainSentence(sourceRecord.contextBefore) } : {}),
+      ...(sourceRecord.contextAfter ? { contextAfter: plainSentence(sourceRecord.contextAfter) } : {}),
       ...(preservedGrammar ? { preservedGrammar } : {}),
     };
   });

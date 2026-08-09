@@ -1,5 +1,5 @@
 import React, { forwardRef } from 'react';
-import { Book, BrainCircuit, Compass, Keyboard, MessageSquareQuote } from 'lucide-react';
+import { Book, BookOpenText, BrainCircuit, Compass, Keyboard, MessageSquareQuote } from 'lucide-react';
 import type { ViewState } from '../types';
 
 interface NavButtonProps {
@@ -48,6 +48,7 @@ const AppNavigation = forwardRef<HTMLElement, AppNavigationProps>(({
     <NavButton view="notebook" currentView={currentView} onClick={onNavigate} icon={Book} label="Notebook" />
     <NavButton view="sentences" currentView={currentView} onClick={onNavigate} icon={MessageSquareQuote} label="Sentences" badge={sentenceDueCount || undefined} />
     <NavButton view="real-life" currentView={currentView} onClick={onNavigate} icon={Compass} label="Real Life" />
+    <NavButton view="essays" currentView={currentView} onClick={onNavigate} icon={BookOpenText} label="Essays" />
     <NavButton view="study" currentView={currentView} onClick={onNavigate} icon={BrainCircuit} label="Study" />
     <button
       onClick={onKeyboardHelp}

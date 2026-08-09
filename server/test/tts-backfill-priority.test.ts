@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { partitionBackfillTexts, retryBackfillOperation } from '../src/routes/tts.js';
 
-test('TTS backfill keeps the Real Life catalog ahead of the general library', () => {
+test('TTS backfill keeps product catalogs ahead of the general library', () => {
   const queue = partitionBackfillTexts(
     ['{{Catalog first}}', 'Shared sentence', ''],
     ['Library later', '[[Shared sentence]]', 'Library later', 'Final backlog item'],

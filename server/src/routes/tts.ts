@@ -21,6 +21,7 @@ import { proxyFetch } from '../proxy-fetch.js';
 import { getAllSentenceTexts } from '../db.js';
 import { alignAudioLocally } from '../local-whisper.js';
 import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
+import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
 import type { WordTiming } from '../tts-alignment.js';
 
 export const ttsRoutes = new Hono();
@@ -474,7 +475,7 @@ export async function runBackfill(): Promise<void> {
   let libraryTexts: string[];
   try {
     ({ catalog: catalogTexts, library: libraryTexts } = partitionBackfillTexts(
-      getAllRealLifeCatalogSentenceTexts(),
+      [...getAllRealLifeCatalogSentenceTexts(), ...getAllEssayCatalogSentenceTexts()],
       getAllSentenceTexts(),
     ));
   } catch (e: any) {
