@@ -2059,8 +2059,8 @@
               "focus": "prepared in a separate area"
             },
             {
-              "text": "May I ask whether this is an allergy, an intolerance, or a preference, so we can follow the right precautions?",
-              "focus": "follow the right precautions"
+              "text": "May I ask whether this is an allergy, an intolerance, or a preference, so we can take the right precautions?",
+              "focus": "take the right precautions"
             },
             {
               "text": "I can't have dairy; does the bread or marinade contain milk, butter, whey, or any other milk-derived ingredient?",
@@ -2122,8 +2122,8 @@
               "focus": "suit you better"
             },
             {
-              "text": "Our signature entrée is popular, but the lean cut can run dry, so I wouldn’t recommend it if tenderness matters most.",
-              "focus": "can run dry"
+              "text": "Our signature entrée is popular, but the lean cut can dry out, so I wouldn’t recommend it if tenderness matters most.",
+              "focus": "if tenderness matters most"
             },
             {
               "text": "How spicy is that dish in practice, and does the heat build or hit you right away?",
@@ -2383,8 +2383,8 @@
               "focus": "left off your order"
             },
             {
-              "text": "This soup is far too salty to eat; I’d rather choose a different starter than have the same one remade.",
-              "focus": "I’d rather choose a different starter than have the same one remade"
+              "text": "This soup is far too salty to eat; I’d rather choose a different appetizer than have this one remade.",
+              "focus": "I’d rather choose a different appetizer than have this one remade"
             },
             {
               "text": "A glass shattered beside your plate; for safety, I’m replacing anything uncovered that might have been exposed.",
@@ -2439,8 +2439,8 @@
               "focus": "the most practical solution"
             },
             {
-              "text": "Since most of the meal was satisfactory, I can comp the affected dish and offer dessert rather than the entire check.",
-              "focus": "most of the meal was satisfactory"
+              "text": "Since most of the meal was satisfactory, I can comp the affected dish and offer dessert, rather than comp the entire check.",
+              "focus": "rather than comp the entire check"
             },
             {
               "text": "These meals were left at another table before being brought to us; for hygiene reasons, we need freshly plated replacements.",
@@ -2502,7 +2502,7 @@
               "focus": "please go ahead without me"
             },
             {
-              "text": "Dinner is my invitation, so order what you genuinely want; there’s no need to choose the least expensive option.",
+              "text": "Dinner is my treat, so order what you genuinely want; there’s no need to choose the least expensive option.",
               "focus": "there’s no need to choose the least expensive option"
             },
             {
@@ -2510,8 +2510,8 @@
               "focus": "a few people are pacing themselves"
             },
             {
-              "text": "We ordered two different shared vegetables, but these plates are identical; please verify the group order before we start passing them.",
-              "focus": "verify the group order"
+              "text": "We ordered two different vegetable dishes to share, but these plates are identical; please check our order before we start passing them around.",
+              "focus": "before we start passing them around"
             },
             {
               "text": "Everyone else has been served, and her meal is now fifteen minutes behind; what can arrive quickly as a replacement?",
@@ -2601,8 +2601,8 @@
               "focus": "boxing these separately"
             },
             {
-              "text": "I’ll label each box and pack the cold items apart from anything you’ll need to reheat.",
-              "focus": "pack the cold items apart"
+              "text": "I’ll label each box and pack the cold items separately from anything you’ll need to reheat.",
+              "focus": "separately from anything you’ll need to reheat"
             },
             {
               "text": "Welcome back—give me the name on the takeout order, and I’ll check the pickup shelf for you.",
@@ -2714,8 +2714,8 @@
               "focus": "refundable deposit"
             },
             {
-              "text": "I need an open-dated return ticket; how long will I have to reserve the return journey after departure?",
-              "focus": "an open-dated return ticket"
+              "text": "I need a flexible round-trip ticket with an open return date; how long after departure will I have to book the return trip?",
+              "focus": "a flexible round-trip ticket with an open return date"
             },
             {
               "text": "If the tour does not meet its minimum group size, how much notice will I receive before it is canceled?",
@@ -3121,8 +3121,8 @@
               "focus": "temporarily bypassing three stops"
             },
             {
-              "text": "If I transfer within two hours, does the second bus count under the same fare, or will I be charged again?",
-              "focus": "transfer within two hours"
+              "text": "If I transfer within two hours, is the second bus covered by the same fare, or will I be charged again?",
+              "focus": "covered by the same fare"
             },
             {
               "text": "We seem to be heading away from the museum; would you mind checking the destination pin before we continue?",
@@ -3141,7 +3141,7 @@
               "focus": "pull into the loading zone"
             },
             {
-              "text": "This fare includes two tolls we didn’t use; please show me an itemized breakdown before I authorize the payment.",
+              "text": "This fare includes charges for two tolls we didn’t incur; please show me an itemized breakdown before I authorize the payment.",
               "focus": "itemized breakdown"
             },
             {
@@ -3287,8 +3287,8 @@
               "focus": "take pest reports seriously"
             },
             {
-              "text": "My watch is missing from the desk where I left it before housekeeping came in; please make an incident report.",
-              "focus": "make an incident report"
+              "text": "My watch is missing from the desk where I left it before housekeeping came in; please file an incident report.",
+              "focus": "file an incident report"
             },
             {
               "text": "I'll check the lost-and-found log and speak with the housekeeping supervisor, but security may also need a description of the watch.",
@@ -3331,8 +3331,8 @@
               "focus": "show the amounts separately on each receipt"
             },
             {
-              "text": "Since the repeated plumbing problem disrupted two nights, the manager approved a partial refund and written confirmation for your records.",
-              "focus": "approved a partial refund"
+              "text": "Since the recurring plumbing problem disrupted your stay for two nights, the manager approved a partial refund and provided written confirmation for your records.",
+              "focus": "provided written confirmation for your records"
             }
           ]
         },
@@ -3445,11 +3445,11 @@
               "focus": "note them on the inspection report"
             },
             {
-              "text": "These brakes feel unusually soft, and I’m not comfortable driving the car until someone inspects or replaces it.",
+              "text": "These brakes feel unusually soft, and I’m not comfortable driving the car until someone inspects or replaces them.",
               "focus": "I’m not comfortable driving the car"
             },
             {
-              "text": "This car must return with a full tank, or we’ll apply a refueling fee based on local pump prices.",
+              "text": "This car must be returned with a full tank, or we’ll charge a refueling fee based on local pump prices.",
               "focus": "a refueling fee based on local pump prices"
             },
             {
@@ -3497,8 +3497,8 @@
               "focus": "regain access to the rental car"
             },
             {
-              "text": "Because the reserved hand-control vehicle was canceled, I need an equivalent accessible car today or written confirmation and a full refund.",
-              "focus": "an equivalent accessible car"
+              "text": "Because my reservation for a vehicle with hand controls was canceled, I need an equivalently equipped accessible car today, or written confirmation and a full refund.",
+              "focus": "an equivalently equipped accessible car"
             },
             {
               "text": "The receipt includes an incorrect fuel charge; please review my time-stamped photo and remove it, or have a supervisor explain the decision.",
