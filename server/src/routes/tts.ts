@@ -347,6 +347,30 @@ async function getDetachedBackfillStatus(): Promise<BackfillStatus | null> {
 }
 
 const BACKFILL_CONCURRENCY = 2;
+const BACKFILL_GENERATION_ATTEMPTS = 3;
+const BACKFILL_RETRY_DELAY_MS = 1_000;
+
+export async function retryBackfillOperation(
+  operation: () => Promise<void>,
+  attempts = BACKFILL_GENERATION_ATTEMPTS,
+  delayMs = BACKFILL_RETRY_DELAY_MS,
+): Promise<{ succeeded: boolean; attempts: number; error?: unknown }> {
+  const boundedAttempts = Math.max(1, Math.floor(attempts));
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= boundedAttempts; attempt++) {
+    try {
+      await operation();
+      return { succeeded: true, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < boundedAttempts && delayMs > 0) {
+        await new Promise(resolveDelay => setTimeout(resolveDelay, delayMs * attempt));
+      }
+    }
+  }
+  return { succeeded: false, attempts: boundedAttempts, error: lastError };
+}
+
 export function partitionBackfillTexts(catalogInput: string[], libraryInput: string[]): {
   catalog: string[];
   library: string[];
@@ -365,15 +389,15 @@ async function runBackfillGroup(texts: string[]): Promise<void> {
   const clearWorker = async () => {
     while (idx < texts.length) {
       const text = texts[idx++];
-      try {
-        const key = ttsKey(text, MIMO_VOICE);
-        if (!(await isComplete(key))) {
-          await generateAndVerify(text, MIMO_VOICE);
-          backfill.generated++;
+      const key = ttsKey(text, MIMO_VOICE);
+      if (!(await isComplete(key))) {
+        const result = await retryBackfillOperation(() => generateAndVerify(text, MIMO_VOICE));
+        if (result.succeeded) backfill.generated++;
+        else {
+          const e = result.error as any;
+          backfill.failed++;
+          console.warn(`[tts] backfill clear item failed after ${result.attempts} attempts:`, e?.message);
         }
-      } catch (e: any) {
-        backfill.failed++;
-        console.warn('[tts] backfill clear item failed:', e?.message);
       }
       backfill.done++;
     }
@@ -399,8 +423,13 @@ async function runBackfillGroup(texts: string[]): Promise<void> {
     const timingsWorker = async () => {
       while (t < needTimingsOnly.length) {
         const text = needTimingsOnly[t++];
-        try { await generateAndVerify(text, CASUAL_STYLE); backfill.generated++; }
-        catch (e: any) { backfill.failed++; console.warn('[tts] backfill casual timings failed:', e?.message); }
+        const result = await retryBackfillOperation(() => generateAndVerify(text, CASUAL_STYLE));
+        if (result.succeeded) backfill.generated++;
+        else {
+          const e = result.error as any;
+          backfill.failed++;
+          console.warn(`[tts] backfill casual timings failed after ${result.attempts} attempts:`, e?.message);
+        }
         backfill.done++;
       }
     };
@@ -422,12 +451,14 @@ async function runBackfillGroup(texts: string[]): Promise<void> {
     const casualWorker = async () => {
       while (j < chunk.length) {
         const k = j++;
-        try {
-          await generateAndVerify(chunk[k], CASUAL_STYLE, reduced[k]);
-          backfill.generated++;
-        } catch (e: any) {
+        const result = await retryBackfillOperation(
+          () => generateAndVerify(chunk[k], CASUAL_STYLE, reduced[k]),
+        );
+        if (result.succeeded) backfill.generated++;
+        else {
+          const e = result.error as any;
           backfill.failed++;
-          console.warn('[tts] backfill casual item failed:', e?.message);
+          console.warn(`[tts] backfill casual item failed after ${result.attempts} attempts:`, e?.message);
         }
         backfill.done++;
       }
