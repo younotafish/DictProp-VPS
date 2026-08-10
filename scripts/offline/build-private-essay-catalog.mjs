@@ -17,14 +17,23 @@ if (manifest?.version !== 1 || !Array.isArray(manifest.essays) || manifest.essay
 }
 
 const segmenter = new Intl.Segmenter('en-US', { granularity: 'sentence' });
-const stopWords = new Set(`a an and are as at be been being but by can could did do does doing for from had has have having he her hers him his how i if in into is it its may me might more most must my no nor not of on one or our ours she should so some such than that the their theirs them then there these they this those through to too under up us very was we were what when where which while who whom why will with would you your yours`.split(/\s+/));
+const stopWords = new Set(`a although an and are as at be because been being but by can could did do does doing even for from had has have having he her hers him his how i if in into is it its may me might more most must my no nor not of on one or our ours she should so some such than that the their theirs them then there these they this those though through to too under up us very was we were what when where which while who whom why will with would you your yours`.split(/\s+/));
+// Preserve historically important wording in the reader without turning slurs into cloze targets.
+const blockedFocusWords = new Set(['nigger', 'darkies']);
+const functionFocusWords = new Set(`aren't can't couldn't didn't doesn't don't hadn't hasn't haven't here's i'm i'll isn't it's that's there's they're they've we're we've weren't what's who's won't wouldn't you’re you're`.split(/\s+/));
 
 function pickFocus(text) {
-  const candidates = [...text.matchAll(/[A-Za-z]+(?:[’'][A-Za-z]+)*(?:-[A-Za-z]+)*/g)]
-    .map((match, index) => ({ value: match[0], index, lower: match[0].toLocaleLowerCase('en-US') }))
-    .filter(candidate => candidate.value.length >= 4 && !stopWords.has(candidate.lower));
+  const tokens = [...text.matchAll(/[A-Za-z]+(?:[’'][A-Za-z]+)*(?:-[A-Za-z]+)*/g)]
+    .map((match, index) => ({ value: match[0], index, lower: match[0].toLocaleLowerCase('en-US') }));
+  const candidates = tokens
+    .filter(candidate => candidate.value.length >= 4 &&
+      !stopWords.has(candidate.lower) && !blockedFocusWords.has(candidate.lower) &&
+      !functionFocusWords.has(candidate.lower.replace(/’/g, "'")));
   if (candidates.length === 0) {
-    return text.match(/[A-Za-z]+(?:[’'][A-Za-z]+)*/)?.[0] || text.slice(0, 24).trim();
+    const safeFallback = tokens
+      .filter(candidate => !blockedFocusWords.has(candidate.lower))
+      .sort((left, right) => right.value.length - left.value.length || left.index - right.index)[0];
+    return safeFallback?.value || text.slice(0, 24).trim();
   }
   candidates.sort((left, right) => {
     const score = candidate => Math.min(candidate.value.length, 14) + (candidate.value.includes('-') ? 2 : 0);
