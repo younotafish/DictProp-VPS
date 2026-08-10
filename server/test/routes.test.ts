@@ -29,6 +29,16 @@ const item = {
   updatedAt: 1,
 };
 
+test('private essay route is network-only and empty before an owner catalog is imported', async () => {
+  const response = await app.request('/api/essays/catalog');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive');
+  const catalog = await response.json() as any;
+  assert.equal(catalog.version, 1);
+  assert.deepEqual(catalog.essays, []);
+});
+
 test('Hono routes apply reviews idempotently and expose revision deltas', async () => {
   let response = await app.request('/api/items', {
     method: 'PUT',

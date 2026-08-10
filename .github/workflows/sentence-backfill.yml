@@ -15,6 +15,7 @@ on:
           - image-import
           - audio-import
           - enrichment-import
+          - essay-import
           - audit
           - repair
       release_tag:
@@ -259,6 +260,72 @@ jobs:
 
       - name: Enforce enrichment import success
         if: steps.enrichment_import.outcome != 'success'
+        run: exit 1
+
+  essay-import:
+    if: inputs.operation == 'essay-import'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Validate private essay input
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
+
+      - name: Import encrypted private essay catalog
+        id: essay_import
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1
+        env:
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
+          command_timeout: 15m
+          capture_stdout: true
+          script: |
+            set -e
+            test -n "$SENTENCE_BRIDGE_KEY"
+            cd /opt/dictprop-vps
+            rm -rf /tmp/dictprop-essay-bridge
+            mkdir -p /tmp/dictprop-essay-bridge
+            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 20 --max-time 300 \
+              --output /tmp/dictprop-essay-bridge/private-essay-catalog.enc \
+              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/private-essay-catalog.enc"
+            docker compose exec -T app sh -c 'rm -rf /tmp/private-essay-catalog && mkdir -p /tmp/private-essay-catalog'
+            openssl enc -d -aes-256-cbc -pbkdf2 \
+              -pass env:SENTENCE_BRIDGE_KEY \
+              -in /tmp/dictprop-essay-bridge/private-essay-catalog.enc \
+              | docker compose exec -T app tar -xz -C /tmp/private-essay-catalog
+            set +e
+            docker compose exec -T app node server/dist/scripts/import-private-essay-catalog.js \
+              /tmp/private-essay-catalog/catalog.json
+            STATUS=$?
+            set -e
+            docker compose exec -T app rm -rf /tmp/private-essay-catalog
+            rm -rf /tmp/dictprop-essay-bridge
+            exit "$STATUS"
+
+      - name: Report private essay import result
+        if: always()
+        env:
+          REMOTE_STDOUT: ${{ steps.essay_import.outputs.stdout }}
+          REMOTE_STDERR: ${{ steps.essay_import.outputs.stderr }}
+        run: |
+          printf '%s\n' "$REMOTE_STDOUT"
+          printf '%s\n' "$REMOTE_STDERR" >&2
+
+      - name: Enforce private essay import success
+        if: steps.essay_import.outcome != 'success'
         run: exit 1
 
   corpus-export:

@@ -1,4 +1,4 @@
-import React, { Fragment, useMemo, useState } from 'react';
+import React, { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -11,7 +11,13 @@ import {
   Sparkles,
 } from 'lucide-react';
 import type { StoredItem } from '../types';
-import { ESSAYS, type Essay, type EssaySentence } from '../services/essayCatalog';
+import { loadPrivateEssayCatalog } from '../services/api';
+import {
+  ESSAYS,
+  installPrivateEssayCatalog,
+  type Essay,
+  type EssaySentence,
+} from '../services/essayCatalog';
 import {
   buildEssayStudyItems,
   getEssayProgress,
@@ -115,13 +121,31 @@ const EssayTile: React.FC<{
 
 export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progressItems, onScroll }) => {
   const [selectedEssayId, setSelectedEssayId] = useState<string | null>(null);
-  const selectedEssay = ESSAYS.find(essay => essay.id === selectedEssayId) ?? null;
+  const [essays, setEssays] = useState<Essay[]>(() => [...ESSAYS]);
+  const [privateCatalogStatus, setPrivateCatalogStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const selectedEssay = essays.find(essay => essay.id === selectedEssayId) ?? null;
   const now = useMemo(() => Date.now(), [progressItems]);
   const progressIndex = useMemo(() => indexEssayProgress(progressItems), [progressItems]);
   const progressByEssay = useMemo(
-    () => new Map(ESSAYS.map(essay => [essay.id, getEssayProgress(essay, progressItems, now)])),
-    [now, progressItems],
+    () => new Map(essays.map(essay => [essay.id, getEssayProgress(essay, progressItems, now)])),
+    [essays, now, progressItems],
   );
+  const classicEssays = useMemo(() => essays.filter(essay => essay.collection === 'classic'), [essays]);
+  const modernEssays = useMemo(() => essays.filter(essay => essay.collection === 'modern'), [essays]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadPrivateEssayCatalog()
+      .then(source => {
+        if (cancelled) return;
+        setEssays(installPrivateEssayCatalog(source));
+        setPrivateCatalogStatus('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setPrivateCatalogStatus('error');
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const openSentence = (essay: Essay, sentence: EssaySentence) => {
     const index = essay.sentences.findIndex(candidate => candidate.id === sentence.id);
@@ -144,13 +168,13 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
           <header className="mb-7 sm:mb-10">
             <div className="flex items-center gap-2 text-indigo-600">
               <BookOpenText size={20} />
-              <span className="text-xs font-bold uppercase tracking-[0.18em]">Classic Essays</span>
+              <span className="text-xs font-bold uppercase tracking-[0.18em]">American Essays</span>
             </div>
             <h1 className="mt-3 max-w-3xl text-3xl font-bold tracking-tight text-slate-950 sm:text-5xl">
               Read the whole argument, one sentence at a time.
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base">
-              Five public-domain American classics, selected for lasting ideas and memorable prose. Tap any sentence to hear it, unpack it, and memorize it in that essay’s own review queue.
+              Historical American classics and a private modern collection, each preserved as a complete reading experience. Tap any sentence to hear it, unpack it, and memorize it in that essay’s own review queue.
             </p>
           </header>
 
@@ -159,10 +183,15 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
               <Sparkles size={16} className="text-amber-500" />
               <h2 className="text-sm font-bold text-slate-800">The collection</h2>
             </div>
-            <span className="text-xs font-medium text-slate-400">{ESSAYS.length} complete essays</span>
+            <span className="text-xs font-medium text-slate-400">{essays.length} complete essays</span>
+          </div>
+
+          <div className="mb-3 mt-5">
+            <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Historical classics</h3>
+            <p className="mt-1 text-xs text-slate-400">Public-domain texts that preserve their original period voice.</p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5">
-            {ESSAYS.map(essay => (
+            {classicEssays.map(essay => (
               <EssayTile
                 key={essay.id}
                 essay={essay}
@@ -171,6 +200,31 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
               />
             ))}
           </div>
+
+          <div className="mb-3 mt-9">
+            <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Modern American voices</h3>
+            <p className="mt-1 text-xs text-slate-400">Owner-private study texts selected for natural, influential modern prose.</p>
+          </div>
+          {modernEssays.length > 0 ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5">
+              {modernEssays.map(essay => (
+                <EssayTile
+                  key={essay.id}
+                  essay={essay}
+                  progress={progressByEssay.get(essay.id)!}
+                  onOpen={() => setSelectedEssayId(essay.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-7 text-sm text-slate-500">
+              {privateCatalogStatus === 'loading'
+                ? 'Loading the private modern collection…'
+                : privateCatalogStatus === 'error'
+                  ? 'The private modern collection is temporarily unavailable; the historical collection remains fully usable.'
+                  : 'No private modern essays have been imported yet.'}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -228,7 +282,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
           </section>
 
           <aside className="mx-auto mt-5 max-w-3xl rounded-2xl border border-stone-200 bg-stone-100/70 px-4 py-3 text-xs leading-relaxed text-stone-600">
-            <span className="font-bold text-stone-800">Reading note:</span> {selectedEssay.modernityNote} Every body sentence is clickable; the original historical wording is preserved.
+            <span className="font-bold text-stone-800">Reading note:</span> {selectedEssay.modernityNote} Every body sentence is clickable; {selectedEssay.collection === 'classic' ? 'the original historical wording is preserved.' : 'its review history remains isolated inside this essay.'}
           </aside>
 
           <div className="mx-auto mt-10 max-w-3xl font-serif text-[1.08rem] leading-[1.9] text-stone-800 sm:mt-14 sm:text-xl sm:leading-[2]">
@@ -272,7 +326,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
           </div>
 
           <footer className="mx-auto mt-12 max-w-3xl border-t border-stone-300 pt-6 text-xs leading-relaxed text-stone-500">
-            <p>{selectedEssay.publicDomainNote}</p>
+            <p>{selectedEssay.rightsNote ?? selectedEssay.publicDomainNote}</p>
             <a
               href={selectedEssay.sourceUrl}
               target="_blank"

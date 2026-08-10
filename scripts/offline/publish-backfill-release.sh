@@ -19,7 +19,7 @@ STATE_KEY="$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._-' '_')"
 STATE_DIR="${TMPDIR:-/tmp}/dictprop-publish-${STATE_KEY}"
 
 case "$OPERATION" in
-  import|corpus-import|image-import|enrichment-import|audio-import)
+  import|corpus-import|image-import|enrichment-import|audio-import|essay-import)
     IMPORT_JOB="$OPERATION"
     ;;
   *)

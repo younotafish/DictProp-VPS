@@ -4,9 +4,13 @@ import { log, warn, error as logError } from './logger';
 import { HttpError, jsonRequest, requestJson, requestVoid, responseToHttpError } from './http';
 import { publishServerMutation } from './syncSignals';
 import { sortVocabCardsByUsage } from './usageAudit';
+import type { RawEssayCatalog } from './essayCatalog';
 
 // Same origin — Hono serves both API and static files
 const API_BASE = '';
+
+export const loadPrivateEssayCatalog = async (): Promise<RawEssayCatalog> =>
+  requestJson<RawEssayCatalog>(`${API_BASE}/api/essays/catalog`, undefined, 'Load private essay catalog');
 
 // Internal ID generator
 const generateId = (): string => {
