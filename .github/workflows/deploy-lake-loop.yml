@@ -1,0 +1,119 @@
+name: Deploy Lake Loop to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      archive_b64:
+        description: Encrypted Lake Loop site archive
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    steps:
+      - name: Decrypt and validate site archive
+        env:
+          ARCHIVE_B64: ${{ inputs.archive_b64 }}
+          ARCHIVE_KEY: ${{ secrets.TRIP_ARCHIVE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$ARCHIVE_B64"
+          test -n "$ARCHIVE_KEY"
+          mkdir -p lake-loop-upload
+          printf '%s' "$ARCHIVE_B64" \
+            | base64 --decode \
+            | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:ARCHIVE_KEY \
+            | tar -xzf - -C lake-loop-upload
+          test -s lake-loop-upload/index.html
+          test -s lake-loop-upload/styles.css
+          test -s lake-loop-upload/app.js
+          test "$(find lake-loop-upload -maxdepth 1 -type f | wc -l)" -eq 3
+
+      - name: Upload private static site
+        uses: appleboy/scp-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: lake-loop-upload/*
+          target: /var/www/lake-loop-26
+          strip_components: 1
+          rm: true
+          overwrite: true
+
+      - name: Configure password-protected Caddy route
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 3m
+          script: |
+            set -eu
+            test -s /var/www/lake-loop-26/index.html
+            chown -R root:root /var/www/lake-loop-26
+            find /var/www/lake-loop-26 -type d -exec chmod 755 {} +
+            find /var/www/lake-loop-26 -type f -exec chmod 644 {} +
+
+            backup="/etc/caddy/Caddyfile.lake-loop.$(date -u +%Y%m%dT%H%M%SZ)"
+            cp /etc/caddy/Caddyfile "$backup"
+
+            python3 - <<'PY'
+            from pathlib import Path
+
+            path = Path("/etc/caddy/Caddyfile")
+            text = path.read_text(encoding="utf-8")
+            begin = "    # BEGIN MANAGED LAKE LOOP"
+            end = "    # END MANAGED LAKE LOOP"
+
+            if begin in text:
+                prefix, remainder = text.split(begin, 1)
+                _, suffix = remainder.split(end, 1)
+                text = prefix.rstrip() + "\n" + suffix.lstrip("\n")
+
+            site = "dictprop.online, www.dictprop.online {"
+            if site not in text:
+                raise SystemExit("Expected dictprop.online Caddy site block not found")
+
+            block = r"""    # BEGIN MANAGED LAKE LOOP
+                @lake_loop_root path /lake-loop-26
+                redir @lake_loop_root /lake-loop-26/ 308
+
+                handle_path /lake-loop-26/* {
+                    basic_auth {
+                        lake $2y$12$EIuuwcUUTmrG1AdDhQifCO9T/w7MNFtheSHy3MFVyXa9.0kF9cF32
+                    }
+                    root * /var/www/lake-loop-26
+                    header {
+                        Cache-Control "private, no-store"
+                        X-Robots-Tag "noindex, nofollow, noarchive"
+                    }
+                    file_server
+                }
+                # END MANAGED LAKE LOOP"""
+
+            insert_at = text.index(site) + len(site)
+            text = text[:insert_at] + "\n" + block + text[insert_at:]
+            path.write_text(text, encoding="utf-8")
+            PY
+
+            if ! caddy fmt --overwrite /etc/caddy/Caddyfile \
+              || ! caddy validate --config /etc/caddy/Caddyfile; then
+              cp "$backup" /etc/caddy/Caddyfile
+              echo "Caddy validation failed; original configuration restored"
+              exit 1
+            fi
+
+            systemctl reload caddy
+            status="$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://dictprop.online/lake-loop-26/)"
+            test "$status" = 401
+            echo "Lake Loop deployed and protected (HTTP $status without credentials)"
+
