@@ -71,8 +71,8 @@ jobs:
 
             path = Path("/etc/caddy/Caddyfile")
             text = path.read_text(encoding="utf-8")
-            begin = "    # BEGIN MANAGED LAKE LOOP"
-            end = "    # END MANAGED LAKE LOOP"
+            begin = "# BEGIN MANAGED LAKE LOOP"
+            end = "# END MANAGED LAKE LOOP"
 
             if begin in text:
                 prefix, remainder = text.split(begin, 1)
