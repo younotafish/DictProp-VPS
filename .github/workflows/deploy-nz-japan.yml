@@ -1,0 +1,152 @@
+name: Deploy NZ Japan Travel Plan to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_id:
+        description: GitHub draft-release asset ID containing the encrypted site
+        required: true
+        type: string
+      archive_sha256:
+        description: SHA-256 of the encrypted archive
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    steps:
+      - name: Download, decrypt and validate site archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_ID: ${{ inputs.asset_id }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          ARCHIVE_KEY: ${{ secrets.TRIP_ARCHIVE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$ASSET_ID"
+          test -n "$ARCHIVE_SHA256"
+          test -n "$ARCHIVE_KEY"
+
+          curl --fail --location --silent --show-error \
+            -H "Accept: application/octet-stream" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}" \
+            -o site.enc
+
+          echo "$ARCHIVE_SHA256  site.enc" | sha256sum --check --strict
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -pass env:ARCHIVE_KEY -in site.enc -out site.tar.gz
+
+          tar -tzf site.tar.gz > archive-list.txt
+          if grep -Eq '(^/|(^|/)\.\.(/|$))' archive-list.txt; then
+            echo "Unsafe path found in archive"
+            exit 1
+          fi
+
+          mkdir -p nz-japan-upload
+          tar -xzf site.tar.gz -C nz-japan-upload
+          if find nz-japan-upload -type l -print -quit | grep -q .; then
+            echo "Symbolic links are not allowed in the site archive"
+            exit 1
+          fi
+
+          test -s nz-japan-upload/index.html
+          test -s nz-japan-upload/styles.css
+          test -s nz-japan-upload/app.js
+          test -s nz-japan-upload/itinerary.md
+          test -s nz-japan-upload/sources-selected.md
+          test -s nz-japan-upload/assets/lucide.min.js
+          test -s nz-japan-upload/assets/images/milford-sound.jpg
+
+          find nz-japan-upload -mindepth 1 -maxdepth 1 -printf '%f\n' | sort > actual-top-level.txt
+          printf '%s\n' app.js assets index.html itinerary.md sources-selected.md styles.css | sort > expected-top-level.txt
+          diff -u expected-top-level.txt actual-top-level.txt
+
+      - name: Upload private static site
+        uses: appleboy/scp-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: nz-japan-upload/*
+          target: /var/www/nz-japan-2026
+          strip_components: 1
+          rm: true
+          overwrite: true
+
+      - name: Configure password-protected Caddy route
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 3m
+          script: |
+            set -eu
+            test -s /var/www/nz-japan-2026/index.html
+            chown -R root:root /var/www/nz-japan-2026
+            find /var/www/nz-japan-2026 -type d -exec chmod 755 {} +
+            find /var/www/nz-japan-2026 -type f -exec chmod 644 {} +
+
+            backup="/etc/caddy/Caddyfile.nz-japan.$(date -u +%Y%m%dT%H%M%SZ)"
+            cp /etc/caddy/Caddyfile "$backup"
+
+            python3 - <<'PY'
+            from pathlib import Path
+
+            path = Path("/etc/caddy/Caddyfile")
+            text = path.read_text(encoding="utf-8")
+            begin = "# BEGIN MANAGED NZ JAPAN 2026"
+            end = "# END MANAGED NZ JAPAN 2026"
+
+            if begin in text:
+                prefix, remainder = text.split(begin, 1)
+                _, suffix = remainder.split(end, 1)
+                text = prefix.rstrip() + "\n" + suffix.lstrip("\n")
+
+            site = "dictprop.online, www.dictprop.online {"
+            if site not in text:
+                raise SystemExit("Expected dictprop.online Caddy site block not found")
+
+            block = r"""    # BEGIN MANAGED NZ JAPAN 2026
+                @nz_japan_root path /nz-japan-2026
+                redir @nz_japan_root /nz-japan-2026/ 308
+
+                handle_path /nz-japan-2026/* {
+                    basic_auth {
+                        travel $2y$12$EIuuwcUUTmrG1AdDhQifCO9T/w7MNFtheSHy3MFVyXa9.0kF9cF32
+                    }
+                    root * /var/www/nz-japan-2026
+                    header {
+                        Cache-Control "private, no-store"
+                        X-Robots-Tag "noindex, nofollow, noarchive"
+                    }
+                    file_server
+                }
+                # END MANAGED NZ JAPAN 2026"""
+
+            insert_at = text.index(site) + len(site)
+            text = text[:insert_at] + "\n" + block + text[insert_at:]
+            path.write_text(text, encoding="utf-8")
+            PY
+
+            if ! caddy fmt --overwrite /etc/caddy/Caddyfile \
+              || ! caddy validate --config /etc/caddy/Caddyfile; then
+              cp "$backup" /etc/caddy/Caddyfile
+              echo "Caddy validation failed; original configuration restored"
+              exit 1
+            fi
+
+            systemctl reload caddy
+            http_status="$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://dictprop.online/nz-japan-2026/)"
+            test "$http_status" = 401
+            echo "NZ Japan travel plan deployed and protected (HTTP $http_status without credentials)"
