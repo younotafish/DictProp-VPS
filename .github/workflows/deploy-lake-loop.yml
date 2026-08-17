@@ -113,7 +113,6 @@ jobs:
             fi
 
             systemctl reload caddy
-            status="$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://dictprop.online/lake-loop-26/)"
-            test "$status" = 401
-            echo "Lake Loop deployed and protected (HTTP $status without credentials)"
-
+            http_status="$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://dictprop.online/lake-loop-26/)"
+            test "$http_status" = 401
+            echo "Lake Loop deployed and protected (HTTP $http_status without credentials)"
