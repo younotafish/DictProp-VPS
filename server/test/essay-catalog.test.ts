@@ -85,3 +85,39 @@ test('private essay catalog validation accepts modern texts and protects static 
   }];
   assert.throws(() => validatePrivateEssayCatalog(duplicate), /invalid essay/);
 });
+
+test('private essay catalog accepts book-sized collections up to the safety limit', () => {
+  const expanded = structuredClone(privateCatalog);
+  expanded.essays = Array.from({ length: 21 }, (_, index) => {
+    const essay = structuredClone(privateCatalog.essays[0]);
+    essay.id = `modern-test-essay-${index + 1}`;
+    essay.paragraphs[0] = {
+      kind: 'body',
+      id: `${essay.id}:p001`,
+      sentences: [{
+        id: `${essay.id}:p001:s01`,
+        text: `Attention becomes deliberate when routine number ${index + 1} stops feeling invisible.`,
+        focus: 'deliberate',
+      }],
+    };
+    return essay;
+  });
+  assert.doesNotThrow(() => validatePrivateEssayCatalog(expanded));
+
+  const oversized = structuredClone(expanded);
+  oversized.essays = Array.from({ length: 101 }, (_, index) => {
+    const essay = structuredClone(expanded.essays[index % expanded.essays.length]);
+    essay.id = `oversized-test-essay-${index + 1}`;
+    essay.paragraphs[0] = {
+      kind: 'body',
+      id: `${essay.id}:p001`,
+      sentences: [{
+        id: `${essay.id}:p001:s01`,
+        text: `Attention becomes deliberate when oversized routine ${index + 1} stops feeling invisible.`,
+        focus: 'deliberate',
+      }],
+    };
+    return essay;
+  });
+  assert.throws(() => validatePrivateEssayCatalog(oversized), /too many essays/);
+});

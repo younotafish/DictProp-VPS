@@ -99,7 +99,7 @@ function buildCatalog(
   if (!options.allowEmpty && source.essays.length === 0) {
     throw new Error('Essay catalog must contain at least one essay');
   }
-  if (source.essays.length > 20) throw new Error('Essay catalog contains too many essays');
+  if (source.essays.length > 100) throw new Error('Essay catalog contains too many essays');
 
   const essayIds = new Set<string>();
   const sentenceIds = new Set<string>();

@@ -132,6 +132,22 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
   );
   const classicEssays = useMemo(() => essays.filter(essay => essay.collection === 'classic'), [essays]);
   const modernEssays = useMemo(() => essays.filter(essay => essay.collection === 'modern'), [essays]);
+  const modernGroups = useMemo(() => {
+    const publicationCounts = new Map<string, number>();
+    for (const essay of modernEssays) {
+      publicationCounts.set(essay.publication, (publicationCounts.get(essay.publication) ?? 0) + 1);
+    }
+    const groups = new Map<string, Essay[]>();
+    for (const essay of modernEssays) {
+      const key = (publicationCounts.get(essay.publication) ?? 0) > 1
+        ? essay.publication
+        : 'Standalone essays';
+      const group = groups.get(key) ?? [];
+      group.push(essay);
+      groups.set(key, group);
+    }
+    return [...groups.entries()].map(([title, groupedEssays]) => ({ title, essays: groupedEssays }));
+  }, [modernEssays]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,14 +222,28 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
             <p className="mt-1 text-xs text-slate-400">Owner-private study texts selected for natural, influential modern prose.</p>
           </div>
           {modernEssays.length > 0 ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5">
-              {modernEssays.map(essay => (
-                <EssayTile
-                  key={essay.id}
-                  essay={essay}
-                  progress={progressByEssay.get(essay.id)!}
-                  onOpen={() => setSelectedEssayId(essay.id)}
-                />
+            <div className="space-y-8">
+              {modernGroups.map(group => (
+                <section key={group.title}>
+                  {modernGroups.length > 1 && (
+                    <div className="mb-3 flex items-baseline justify-between gap-3">
+                      <h4 className="text-sm font-bold text-slate-700">{group.title}</h4>
+                      <span className="shrink-0 text-xs font-medium text-slate-400">
+                        {group.essays.length} {group.essays.length === 1 ? 'reading' : 'readings'}
+                      </span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5">
+                    {group.essays.map(essay => (
+                      <EssayTile
+                        key={essay.id}
+                        essay={essay}
+                        progress={progressByEssay.get(essay.id)!}
+                        onOpen={() => setSelectedEssayId(essay.id)}
+                      />
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           ) : (

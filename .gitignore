@@ -43,3 +43,7 @@ popdict_all_books/
 popdict_all_books*.zip
 scripts/.upload-books-state.json
 scripts/.DS_Store
+
+# Owner-provided copyrighted source books; processed output remains under ignored data/.
+/dokumen.pub_the-anthropocene-reviewed-essays-on-a-human-centered-planet-signed-0525555218-9780525555216.mobi
+/When_Breath_Becomes_Air_By_Paul_Kalanithi_\(z-lib.org\).pdf

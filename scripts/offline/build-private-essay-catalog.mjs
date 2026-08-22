@@ -50,21 +50,42 @@ function normalizeParagraph(value) {
     .trim();
 }
 
-function sentencesFor(text, essayId, paragraphPosition) {
+function normalizeEpigraph(value) {
+  return String(value || '')
+    .normalize('NFC')
+    .split(/\r?\n/)
+    .map(line => line.replace(/[ \t]+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function sentencesFor(text, essayId, paragraphPosition, mergeSentenceFragments) {
   const rawSegments = [...segmenter.segment(text)]
     .map(({ segment }) => segment.trim())
     .filter(Boolean);
   const segments = [];
   for (const segment of rawSegments) {
     const previous = segments.at(-1);
-    if (previous && /\b(?:Mr|Mrs|Ms|Dr|Prof|Sen|Rep|Gov|Gen|Lt|Col|Sgt)\.$/.test(previous)) {
-      segments[segments.length - 1] = `${previous} ${segment}`;
+    const titleNeedsContinuation = previous &&
+      /\b(?:Mr|Mrs|Ms|Dr|Prof|Sen|Rep|Gov|Gen|Lt|Col|Sgt)\.$/.test(previous.text);
+    const fragmentNeedsContinuation = mergeSentenceFragments && previous && !previous.sealed && (
+      /^(?:[A-Z]|\d+)\.$/.test(previous.text) ||
+      /(?:\b[A-Z]\.\s*){2}$/.test(previous.text) ||
+      (/\b[A-Z][a-z]+,? [A-Z]\.$/.test(previous.text) &&
+        !/\bWorld War I\.$/.test(previous.text)) ||
+      /\b(?:of|As|part|widower|choosing|by) [A-Z]\.$/.test(previous.text)
+    );
+    const qwertyContinuation = mergeSentenceFragments && previous &&
+      previous.text.endsWith('Q W E .') && segment === 'T Y.';
+    if (titleNeedsContinuation || fragmentNeedsContinuation || qwertyContinuation) {
+      previous.text = `${previous.text} ${segment}`;
+      if (qwertyContinuation) previous.sealed = true;
     } else {
-      segments.push(segment);
+      segments.push({ text: segment, sealed: false });
     }
   }
   if (segments.length === 0) throw new Error(`${essayId} paragraph ${paragraphPosition} has no sentences`);
-  return segments.map((sentence, sentenceIndex) => {
+  return segments.map(({ text: sentence }, sentenceIndex) => {
     if (sentence.length > 4_000) throw new Error(`${essayId} contains a sentence longer than 4,000 characters`);
     return {
       id: `${essayId}:p${String(paragraphPosition).padStart(3, '0')}:s${String(sentenceIndex + 1).padStart(2, '0')}`,
@@ -82,21 +103,33 @@ const essays = manifest.essays.map(spec => {
   if (!spec.textFile || !spec.rightsNote) {
     throw new Error(`${spec.id} must provide textFile and rightsNote`);
   }
+  if (spec.mergeSentenceFragments !== undefined && typeof spec.mergeSentenceFragments !== 'boolean') {
+    throw new Error(`${spec.id} contains an invalid mergeSentenceFragments option`);
+  }
+  const epigraph = spec.epigraph === undefined ? '' : normalizeEpigraph(spec.epigraph);
+  if (spec.epigraph !== undefined && (!epigraph || epigraph.length > 20_000)) {
+    throw new Error(`${spec.id} contains an invalid epigraph`);
+  }
   essayIds.add(spec.id);
   const textPath = resolve(dirname(manifestPath), spec.textFile);
   const rawText = readFileSync(textPath, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
   const blocks = rawText.split(/\n\s*\n+/).map(normalizeParagraph).filter(Boolean);
   if (blocks.length === 0) throw new Error(`${spec.id} has no readable paragraphs`);
-  const paragraphs = blocks.map((text, index) => ({
+  const bodyParagraphs = blocks.map((text, index) => ({
     kind: 'body',
     id: `${spec.id}:p${String(index + 1).padStart(3, '0')}`,
-    sentences: sentencesFor(text, spec.id, index + 1),
+    sentences: sentencesFor(text, spec.id, index + 1, spec.mergeSentenceFragments === true),
   }));
-  const sentences = paragraphs.flatMap(paragraph => paragraph.sentences);
+  const sentences = bodyParagraphs.flatMap(paragraph => paragraph.sentences);
   const wordCount = sentences.reduce((total, sentence) =>
     total + (sentence.text.match(/[A-Za-z0-9]+(?:[’'][A-Za-z0-9]+)*/g)?.length ?? 0), 0);
   const textDigest = createHash('sha256').update(rawText).digest('hex');
-  const { textFile: _textFile, ...metadata } = spec;
+  const {
+    textFile: _textFile,
+    epigraph: _epigraph,
+    mergeSentenceFragments: _mergeSentenceFragments,
+    ...metadata
+  } = spec;
   return {
     ...metadata,
     collection: 'modern',
@@ -105,7 +138,10 @@ const essays = manifest.essays.map(spec => {
     readingMinutes: Math.max(1, Math.round(wordCount / 210)),
     sentenceCount: sentences.length,
     sourceTextSha256: textDigest,
-    paragraphs,
+    paragraphs: [
+      ...(epigraph ? [{ kind: 'epigraph', text: epigraph }] : []),
+      ...bodyParagraphs,
+    ],
   };
 });
 
