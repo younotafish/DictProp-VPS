@@ -99,7 +99,11 @@ function normalizeSentenceAnalysisCandidate(value: Record<string, unknown>): Rec
 
 export function sentenceGrammarExcerptMatchesText(text: string, excerpt: string): boolean {
   if (text.includes(excerpt)) return true;
-  return text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2').includes(excerpt);
+  const withoutSentenceFinalPunctuation = text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2');
+  if (withoutSentenceFinalPunctuation.includes(excerpt)) return true;
+  const withoutQuotedPunctuation = (value: string) => value.replace(/[,.;:!?](?=[\u201d\u2019"'])/gu, '');
+  return withoutQuotedPunctuation(withoutSentenceFinalPunctuation)
+    .includes(withoutQuotedPunctuation(excerpt));
 }
 
 export function isSentencePronunciationGuide(value: unknown): value is SentencePronunciationGuide {

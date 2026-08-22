@@ -9,7 +9,11 @@ export function sentenceGrammarExcerptMatchesText(text, excerpt) {
   if (text.includes(excerpt)) return true;
   // American punctuation can place the sentence-final mark inside a closing quote,
   // even when the quoted grammar excerpt naturally omits that final mark.
-  return text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2').includes(excerpt);
+  const withoutSentenceFinalPunctuation = text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2');
+  if (withoutSentenceFinalPunctuation.includes(excerpt)) return true;
+  const withoutQuotedPunctuation = value => value.replace(/[,.;:!?](?=[\u201d\u2019"'])/gu, '');
+  return withoutQuotedPunctuation(withoutSentenceFinalPunctuation)
+    .includes(withoutQuotedPunctuation(excerpt));
 }
 
 export const sentenceGrammarSchema = {

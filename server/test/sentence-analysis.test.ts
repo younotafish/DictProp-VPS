@@ -111,6 +111,14 @@ test('grammar excerpts may omit sentence-final punctuation inside a closing quot
   assert.equal(sentenceGrammarExcerptMatchesText(text, 'words such as “car” and “soft”'), false);
 });
 
+test('grammar excerpts may omit punctuation inside a closing quote', () => {
+  const text = 'Rather than being a book for “the season only,” it became a book for all seasons.';
+  const excerpt = 'Rather than being a book for “the season only”';
+  assert.equal(sentenceGrammarExcerptMatchesText(text, excerpt), true);
+  assert.equal(offlineSentenceGrammarExcerptMatchesText(text, excerpt), true);
+  assert.equal(sentenceGrammarExcerptMatchesText(text, 'a book for “all seasons”'), false);
+});
+
 test('full analysis extraction tolerates a JSON string under an empty provider key', () => {
   assert.deepEqual(extractSentenceAnalysis({ '': JSON.stringify(validAnalysis) }), validAnalysis);
   assert.deepEqual(extractSentenceAnalysis({ result: { analysis: validAnalysis } }), validAnalysis);
