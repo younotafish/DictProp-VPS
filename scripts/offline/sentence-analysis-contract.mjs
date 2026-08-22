@@ -12,8 +12,9 @@ export function sentenceGrammarExcerptMatchesText(text, excerpt) {
   const withoutSentenceFinalPunctuation = text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2');
   if (withoutSentenceFinalPunctuation.includes(excerpt)) return true;
   const withoutQuotedPunctuation = value => value.replace(/[,.;:!?](?=[\u201d\u2019"'])/gu, '');
-  return withoutQuotedPunctuation(withoutSentenceFinalPunctuation)
-    .includes(withoutQuotedPunctuation(excerpt));
+  const withoutLineBreakMarkers = value => withoutQuotedPunctuation(value).replace(/\s+\/\s+/gu, ' ');
+  return withoutLineBreakMarkers(withoutSentenceFinalPunctuation)
+    .includes(withoutLineBreakMarkers(excerpt));
 }
 
 export const sentenceGrammarSchema = {

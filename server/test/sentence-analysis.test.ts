@@ -119,6 +119,14 @@ test('grammar excerpts may omit punctuation inside a closing quote', () => {
   assert.equal(sentenceGrammarExcerptMatchesText(text, 'a book for “all seasons”'), false);
 });
 
+test('grammar excerpts may treat spaced slashes as poetic line breaks', () => {
+  const text = '“The first snows / floated down and silenced / all trace of the world.”';
+  const excerpt = 'floated down and silenced all trace of the world';
+  assert.equal(sentenceGrammarExcerptMatchesText(text, excerpt), true);
+  assert.equal(offlineSentenceGrammarExcerptMatchesText(text, excerpt), true);
+  assert.equal(sentenceGrammarExcerptMatchesText(text, 'floated up and silenced all trace'), false);
+});
+
 test('full analysis extraction tolerates a JSON string under an empty provider key', () => {
   assert.deepEqual(extractSentenceAnalysis({ '': JSON.stringify(validAnalysis) }), validAnalysis);
   assert.deepEqual(extractSentenceAnalysis({ result: { analysis: validAnalysis } }), validAnalysis);

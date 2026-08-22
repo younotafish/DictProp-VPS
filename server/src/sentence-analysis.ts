@@ -102,8 +102,9 @@ export function sentenceGrammarExcerptMatchesText(text: string, excerpt: string)
   const withoutSentenceFinalPunctuation = text.replace(/([.!?])([\u201d\u2019"'])$/u, '$2');
   if (withoutSentenceFinalPunctuation.includes(excerpt)) return true;
   const withoutQuotedPunctuation = (value: string) => value.replace(/[,.;:!?](?=[\u201d\u2019"'])/gu, '');
-  return withoutQuotedPunctuation(withoutSentenceFinalPunctuation)
-    .includes(withoutQuotedPunctuation(excerpt));
+  const withoutLineBreakMarkers = (value: string) => withoutQuotedPunctuation(value).replace(/\s+\/\s+/gu, ' ');
+  return withoutLineBreakMarkers(withoutSentenceFinalPunctuation)
+    .includes(withoutLineBreakMarkers(excerpt));
 }
 
 export function isSentencePronunciationGuide(value: unknown): value is SentencePronunciationGuide {
