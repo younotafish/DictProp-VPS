@@ -49,7 +49,7 @@ jobs:
           rm: true
           overwrite: true
 
-      - name: Configure password-protected Caddy route
+      - name: Configure Google-protected Caddy route
         uses: appleboy/ssh-action@v1
         with:
           host: 107.152.47.101
@@ -88,8 +88,8 @@ jobs:
                 redir @lake_loop_root /lake-loop-26/ 308
 
                 handle_path /lake-loop-26/* {
-                    basic_auth {
-                        lake $2y$12$EIuuwcUUTmrG1AdDhQifCO9T/w7MNFtheSHy3MFVyXa9.0kF9cF32
+                    forward_auth localhost:3000 {
+                        uri /api/auth/gate?returnTo=/lake-loop-26/
                     }
                     root * /var/www/lake-loop-26
                     header {
@@ -113,6 +113,8 @@ jobs:
             fi
 
             systemctl reload caddy
-            http_status="$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://dictprop.online/lake-loop-26/)"
-            test "$http_status" = 401
-            echo "Lake Loop deployed and protected (HTTP $http_status without credentials)"
+            headers="$(mktemp)"
+            http_status="$(curl --max-time 10 -sS -D "$headers" -o /dev/null -w '%{http_code}' https://dictprop.online/lake-loop-26/)"
+            test "$http_status" = 302
+            grep -Eiq '^location: /api/auth/login\?returnTo=%2F(lake-loop-26%2F)?' "$headers"
+            echo "Lake Loop deployed and protected by Google login (HTTP $http_status without a session)"

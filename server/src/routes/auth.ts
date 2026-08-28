@@ -16,6 +16,7 @@ import {
   listAllUsers,
 } from '../db.js';
 import { isOwnerUser, ownerLoginDecision } from '../owner-access.js';
+import { sanitizeAuthReturnTo } from '../auth-return.js';
 
 export const authRoutes = new Hono();
 
@@ -42,8 +43,17 @@ function isSecure(c: any): boolean {
 authRoutes.get('/login', (c) => {
   const state = randomUUID();
   const redirectUri = getRedirectUri(c);
+  const returnTo = sanitizeAuthReturnTo(c.req.query('returnTo'));
 
   setCookie(c, 'oauth_state', state, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: isSecure(c),
+    path: '/api/auth/callback',
+    maxAge: 300, // 5 minutes
+  });
+
+  setCookie(c, 'oauth_return_to', returnTo, {
     httpOnly: true,
     sameSite: 'Lax',
     secure: isSecure(c),
@@ -69,9 +79,11 @@ authRoutes.get('/callback', async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state');
   const savedState = getCookie(c, 'oauth_state');
+  const returnTo = sanitizeAuthReturnTo(getCookie(c, 'oauth_return_to'));
 
   // Clear the state cookie
   deleteCookie(c, 'oauth_state', { path: '/api/auth/callback' });
+  deleteCookie(c, 'oauth_return_to', { path: '/api/auth/callback' });
 
   if (!code || !state || state !== savedState) {
     return c.json({ error: 'Invalid OAuth state' }, 400);
@@ -147,7 +159,27 @@ authRoutes.get('/callback', async (c) => {
     maxAge: 30 * 24 * 60 * 60, // 30 days
   });
 
-  return c.redirect('/');
+  return c.redirect(returnTo);
+});
+
+// GET /api/auth/gate — Caddy forward-auth endpoint for the private trip site
+authRoutes.get('/gate', (c) => {
+  if (env.DEV_AUTH_BYPASS) return c.body(null, 204);
+
+  const returnTo = sanitizeAuthReturnTo(c.req.query('returnTo'));
+  const token = getCookie(c, 'session');
+  if (token) {
+    const userRow = getSessionUser(token);
+    if (userRow && isOwnerUser(userRow, env.OWNER_GOOGLE_EMAIL)) {
+      return c.body(null, 204);
+    }
+
+    if (userRow) deleteSession(token);
+    deleteCookie(c, 'session', { path: '/' });
+  }
+
+  c.header('Cache-Control', 'private, no-store');
+  return c.redirect(`/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
 });
 
 // GET /api/auth/me — current user info
