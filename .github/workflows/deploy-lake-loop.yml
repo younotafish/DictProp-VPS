@@ -31,7 +31,7 @@ jobs:
           printf '%s' "$ARCHIVE_B64" \
             | base64 --decode \
             | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:ARCHIVE_KEY \
-            | tar -xzf - -C lake-loop-upload
+            | tar -xJf - -C lake-loop-upload
           test -s lake-loop-upload/index.html
           test -s lake-loop-upload/styles.css
           test -s lake-loop-upload/app.js
