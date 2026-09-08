@@ -16,7 +16,7 @@ jobs:
       group: dictprop-production
       cancel-in-progress: false
     steps:
-      - name: Enrich newly added words and sentences
+      - name: Enrich incomplete words and sentences
         uses: appleboy/ssh-action@v1
         with:
           host: 107.152.47.101

@@ -1,5 +1,3 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { getAllItems, listAllUsers, upsertItem, upsertItemImageBinary } from '../db.js';
 import { env } from '../env.js';
 import { generateImage } from '../image-generation.js';
@@ -29,23 +27,9 @@ const maxRuntimeMinutes = boundedNumber(
   5,
   75,
 );
-const statePath = join(env.DATA_DIR, 'incremental-enrichment-state.json');
 const now = Date.now();
 const deadline = now + maxRuntimeMinutes * 60_000;
-
-let installedAt = now - lookbackHours * HOUR_MS;
-if (existsSync(statePath)) {
-  try {
-    const state = JSON.parse(readFileSync(statePath, 'utf8'));
-    if (state?.version === 1 && Number.isFinite(state.installedAt) && state.installedAt > 0) {
-      installedAt = state.installedAt;
-    }
-  } catch (error) {
-    console.warn('Ignoring invalid incremental enrichment state:', error instanceof Error ? error.message : error);
-  }
-} else {
-  writeFileSync(statePath, `${JSON.stringify({ version: 1, installedAt, createdAt: now }, null, 2)}\n`, { mode: 0o600 });
-}
+const prioritySince = now - lookbackHours * HOUR_MS;
 
 const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
 if (!owner) throw new Error('Owner account not found');
@@ -59,13 +43,15 @@ const summary = {
   imagesGenerated: 0,
   failures: 0,
   remaining: 0,
+  recentRemaining: 0,
+  historicalRemaining: 0,
   deadlineReached: false,
 };
 
 drain: for (;;) {
   const pending = collectIncrementalEnrichmentItems(
     getAllItems(true, owner.id),
-    installedAt,
+    prioritySince,
     Number.MAX_SAFE_INTEGER,
   );
   for (const item of pending) discovered.add(incrementalEnrichmentItemKey(item));
@@ -134,10 +120,13 @@ drain: for (;;) {
 }
 
 summary.candidates = discovered.size;
-summary.remaining = collectIncrementalEnrichmentItems(
+const remaining = collectIncrementalEnrichmentItems(
   getAllItems(true, owner.id),
-  installedAt,
+  prioritySince,
   Number.MAX_SAFE_INTEGER,
-).length;
-console.log(JSON.stringify({ installedAt, ...summary }));
+);
+summary.remaining = remaining.length;
+summary.recentRemaining = remaining.filter(item => Number(item?.savedAt) >= prioritySince).length;
+summary.historicalRemaining = summary.remaining - summary.recentRemaining;
+console.log(JSON.stringify({ prioritySince, ...summary }));
 if (summary.failures > 0 || (summary.deadlineReached && summary.remaining > 0)) process.exitCode = 1;

@@ -44,7 +44,7 @@ const completeVocab = {
   },
 };
 
-test('incremental enrichment selects only unfinished records added after installation', () => {
+test('incremental enrichment prioritizes recent records and still drains the historical backlog', () => {
   const items = [
     { type: 'sentence', savedAt: 99, data: { id: 'legacy', text: 'Old.', sourceWord: '' } },
     { type: 'vocab', savedAt: 101, data: { ...completeVocab, id: 'complete', imageUrl: 'server:has_image' } },
@@ -58,7 +58,7 @@ test('incremental enrichment selects only unfinished records added after install
 
   assert.deepEqual(
     collectIncrementalEnrichmentItems(items, 100, 10).map(item => item.data.id),
-    ['new-word', 'legacy-analysis', 'new-sentence'],
+    ['new-word', 'legacy-analysis', 'new-sentence', 'legacy'],
   );
   assert.deepEqual(
     collectIncrementalEnrichmentItems(items, 100, 1).map(item => item.data.id),

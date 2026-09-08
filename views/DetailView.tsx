@@ -19,6 +19,7 @@ import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
 import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap, type SpeakHandle } from '../services/lazyTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { loadImage } from '../services/storage';
+import { getTtsStyle, subscribeTtsStyle } from '../services/ttsSettings';
 import { log, warn, error as logError } from '../services/logger';
 import { isRealLifeProgressItem } from '../services/realLifeProgress';
 
@@ -108,6 +109,48 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
 
 const normalizeSentenceIdentity = (text: string): string =>
   stripSentenceMarkers(text).normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+
+const SENTENCE_PREFETCH_AHEAD = 5;
+
+// Keep this in step with the server's detailed-analysis contract. Older sentence records can have a
+// small legacy analysis object; those still need the newer grammar, pronunciation, and evidence pass.
+const hasDetailedSentenceAnalysis = (analysis: SentenceData['analysis']): boolean =>
+  !!analysis?.grammar?.structure &&
+  !!analysis.pronunciation?.slowIpa &&
+  !!analysis.pronunciation.fastIpa &&
+  Array.isArray(analysis.pronunciation.fastSpeechFeatures) &&
+  analysis.pronunciation.fastSpeechFeatures.length > 0 &&
+  Array.isArray(analysis.americanEnglish?.evidence) &&
+  analysis.americanEnglish.evidence.length > 0 &&
+  Array.isArray(analysis.terms) &&
+  analysis.terms.every(term => Array.isArray(term.synonyms) && term.synonyms.length > 0 &&
+    Array.isArray(term.examples) && term.examples.length === 2);
+
+const mergePreparedSentence = (snapshot: StoredItem, prepared?: StoredItem): StoredItem => {
+  if (!prepared) return snapshot;
+  const liveData = snapshot.data as SentenceData;
+  const preparedData = prepared.data as SentenceData;
+  const keepLiveAnalysis = hasDetailedSentenceAnalysis(liveData.analysis);
+  return {
+    ...prepared,
+    ...snapshot,
+    data: {
+      ...preparedData,
+      ...liveData,
+      analysis: keepLiveAnalysis ? liveData.analysis : (preparedData.analysis ?? liveData.analysis),
+      analysisGeneratedAt: keepLiveAnalysis
+        ? liveData.analysisGeneratedAt
+        : (preparedData.analysisGeneratedAt ?? liveData.analysisGeneratedAt),
+      // A user-attached/live item image always wins over prepared source material.
+      imageUrl: liveData.imageUrl ?? preparedData.imageUrl,
+    },
+  };
+};
+
+const serverImageVersion = (imageUrl: string | undefined): string | undefined =>
+  imageUrl?.startsWith('server:has_image:')
+    ? imageUrl.slice('server:has_image:'.length)
+    : undefined;
 
 
 interface DetailViewProps {
@@ -218,6 +261,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [showSentenceAutoPlayPanel, setShowSentenceAutoPlayPanel] = useState(false);
   const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between every read (repeats + distinct sentences)
   const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
+  const [prefetchSpeechStyle, setPrefetchSpeechStyle] = useState(getTtsStyle);
+  useEffect(() => subscribeTtsStyle(setPrefetchSpeechStyle), []);
   // Whole-session preload progress (audio clips + images), null when idle/done. See the preload effect below.
   const [preloadProgress, setPreloadProgress] = useState<{ done: number; total: number } | null>(null);
   const sessionPreloadStartedRef = useRef(false);
@@ -235,6 +280,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   useEffect(() => { savedItemsRef.current = savedItems; }, [savedItems]);
   const savedSentenceItemsRef = useRef(savedSentenceItems);
   useEffect(() => { savedSentenceItemsRef.current = savedSentenceItems; }, [savedSentenceItems]);
+  const onSaveRef = useRef(onSave);
+  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
 
   // Set indices only on initial mount — after that, DetailView owns navigation
   // and the runtime clamping (lines below) handles out-of-bounds after deletion
@@ -409,9 +456,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [preparedSentenceById, setPreparedSentenceById] = useState<Record<string, StoredItem>>({});
   const [preparingSentenceId, setPreparingSentenceId] = useState<string | null>(null);
   const preparationRequestsRef = useRef(new Set<string>());
-  const unavailableSentenceIdsRef = useRef(new Set<string>());
+  const checkedSentenceEnrichmentsRef = useRef(new Set<string>());
   const preparedSentenceSnapshot = currentSentenceSnapshot
-    ? (preparedSentenceById[currentSentenceSnapshot.data.id] ?? currentSentenceSnapshot)
+    ? mergePreparedSentence(
+        currentSentenceSnapshot,
+        preparedSentenceById[currentSentenceSnapshot.data.id],
+      )
     : null;
   const currentSentenceData = currentSentenceSnapshot?.data as SentenceData | undefined;
   const savedCurrentSentence = currentSentenceSnapshot
@@ -429,17 +479,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
     : undefined;
   const readOnlySentencePreview = sentencePreviewOnly || (catalogSentencePreview && !savedCurrentSentence);
   const currentSentence = savedCurrentSentence && preparedSentenceSnapshot
-    ? {
-        ...savedCurrentSentence,
-        data: {
-          ...(preparedSentenceSnapshot.data as SentenceData),
-          ...(savedCurrentSentence.data as SentenceData),
-          analysis: (preparedSentenceSnapshot.data as SentenceData).analysis ??
-            (savedCurrentSentence.data as SentenceData).analysis,
-          imageUrl: (savedCurrentSentence.data as SentenceData).imageUrl ??
-            (preparedSentenceSnapshot.data as SentenceData).imageUrl,
-        },
-      }
+    ? mergePreparedSentence(savedCurrentSentence, preparedSentenceSnapshot)
     : preparedSentenceSnapshot;
   const isSentencePreview = !savedCurrentSentence && !!currentSentenceSnapshot &&
     (readOnlySentencePreview || currentSentenceSnapshot.data.id.startsWith('sentence-preview:'));
@@ -450,63 +490,96 @@ export const DetailView: React.FC<DetailViewProps> = ({
       ? 'Word'
       : 'Sentences';
 
-  useEffect(() => {
-    if (!catalogSentencePreview || !currentSentenceSnapshot) return;
-    const id = currentSentenceSnapshot.data.id;
-    const sourceSentence = currentSentenceSnapshot.data as SentenceData;
-    if (!sourceSentence.catalogSentenceId || unavailableSentenceIdsRef.current.has(id)) return;
-    const prepared = preparedSentenceById[id];
-    if ((prepared?.data as SentenceData | undefined)?.analysis || preparationRequestsRef.current.has(id)) return;
-    preparationRequestsRef.current.add(id);
-    setPreparingSentenceId(id);
-    void import('../services/sentenceEnrichment').then(({ default: loadPreparedSentenceEnrichment }) =>
-      loadPreparedSentenceEnrichment(sourceSentence.text)
-    ).then(result => {
-      if (!result) {
-        unavailableSentenceIdsRef.current.add(id);
-        return;
-      }
+  // Current sentence plus the five immediately ahead. The item JSON is already resident, but catalog
+  // enrichment is fetched separately, so warm it before those sentences become visible. This also
+  // upgrades saved legacy analyses whenever the shared enrichment pool has a detailed replacement.
+  const sentencePreloadWindow = useMemo(() => {
+    if (!sentenceMode || !sentenceItems?.length) return [];
+    return sentenceItems
+      .slice(sentenceIndex, sentenceIndex + SENTENCE_PREFETCH_AHEAD + 1)
+      .map(sentence => mergePreparedSentence(sentence, preparedSentenceById[sentence.data.id]));
+  }, [sentenceMode, sentenceItems, sentenceIndex, preparedSentenceById]);
+
+  const prepareSentenceEnrichment = useCallback(async (snapshot: StoredItem, showLoading: boolean) => {
+    const id = snapshot.data.id;
+    const sourceSentence = snapshot.data as SentenceData;
+    const requestKey = `${id}:${normalizeSentenceIdentity(sourceSentence.text)}`;
+    if ((hasDetailedSentenceAnalysis(sourceSentence.analysis) && sourceSentence.imageUrl) ||
+        checkedSentenceEnrichmentsRef.current.has(requestKey) ||
+        preparationRequestsRef.current.has(requestKey)) return;
+
+    preparationRequestsRef.current.add(requestKey);
+    if (showLoading && !hasDetailedSentenceAnalysis(sourceSentence.analysis)) setPreparingSentenceId(id);
+    try {
+      const { default: loadPreparedSentenceEnrichment } = await import('../services/sentenceEnrichment');
+      const result = await loadPreparedSentenceEnrichment(sourceSentence.text);
+      checkedSentenceEnrichmentsRef.current.add(requestKey);
+      if (!result) return;
+
       const preparedItem: StoredItem = {
-        ...currentSentenceSnapshot,
+        ...snapshot,
         data: {
           ...sourceSentence,
           analysis: result.analysis,
           analysisGeneratedAt: result.analysisGeneratedAt,
-          ...(result.imageUrl ? { imageUrl: result.imageUrl } : {}),
+          imageUrl: sourceSentence.imageUrl ?? result.imageUrl,
         },
       };
-      setPreparedSentenceById(current => ({ ...current, [id]: preparedItem }));
+      setPreparedSentenceById(current => ({
+        ...current,
+        [id]: mergePreparedSentence(current[id] ?? snapshot, preparedItem),
+      }));
 
-      const savedMatch = savedSentenceItemsRef.current.find(candidate =>
-        candidate.type === 'sentence' && !candidate.isDeleted && (
-          candidate.data.id === id ||
-          ((candidate.data as SentenceData).catalogSentenceId === sourceSentence.catalogSentenceId &&
-            (candidate.data as SentenceData).catalogCollectionId === sourceSentence.catalogCollectionId)
-        )
-      );
-      if (savedMatch) {
-        const savedData = savedMatch.data as SentenceData;
-        onSave({
-          ...savedMatch,
-          data: {
-            ...savedData,
-            catalogSentenceId: sourceSentence.catalogSentenceId,
-            catalogCollectionId: sourceSentence.catalogCollectionId,
-            catalogKind: sourceSentence.catalogKind,
-            catalogTitle: sourceSentence.catalogTitle,
-            analysis: result.analysis,
-            analysisGeneratedAt: result.analysisGeneratedAt,
-            imageUrl: savedData.imageUrl ?? result.imageUrl,
-          },
-        });
+      // A lookup is read-only for catalog previews, but an already-saved sentence should retain the
+      // richer result and its image link across devices. Read the ref after the await to preserve any
+      // SRS update that happened while this request was in flight.
+      const savedMatch = savedSentenceItemsRef.current.find(candidate => {
+        if (candidate.type !== 'sentence' || candidate.isDeleted) return false;
+        const candidateData = candidate.data as SentenceData;
+        return candidate.data.id === id ||
+          (!!sourceSentence.catalogSentenceId &&
+            candidateData.catalogSentenceId === sourceSentence.catalogSentenceId &&
+            candidateData.catalogCollectionId === sourceSentence.catalogCollectionId) ||
+          normalizeSentenceIdentity(candidateData.text) === normalizeSentenceIdentity(sourceSentence.text);
+      });
+      if (!savedMatch) return;
+
+      const savedData = savedMatch.data as SentenceData;
+      const replaceAnalysis = !hasDetailedSentenceAnalysis(savedData.analysis);
+      const nextImageUrl = savedData.imageUrl ?? result.imageUrl;
+      if (!replaceAnalysis && nextImageUrl === savedData.imageUrl) return;
+      onSaveRef.current({
+        ...savedMatch,
+        data: {
+          ...savedData,
+          ...(sourceSentence.catalogSentenceId ? { catalogSentenceId: sourceSentence.catalogSentenceId } : {}),
+          ...(sourceSentence.catalogCollectionId ? { catalogCollectionId: sourceSentence.catalogCollectionId } : {}),
+          ...(sourceSentence.catalogKind ? { catalogKind: sourceSentence.catalogKind } : {}),
+          ...(sourceSentence.catalogTitle ? { catalogTitle: sourceSentence.catalogTitle } : {}),
+          analysis: replaceAnalysis ? result.analysis : savedData.analysis,
+          analysisGeneratedAt: replaceAnalysis ? result.analysisGeneratedAt : savedData.analysisGeneratedAt,
+          ...(nextImageUrl ? { imageUrl: nextImageUrl } : {}),
+        },
+      });
+    } catch (error) {
+      // Network failures are deliberately not marked checked: moving forward or reconnecting retries.
+      warn('Failed to preload sentence enrichment', error);
+    } finally {
+      preparationRequestsRef.current.delete(requestKey);
+      if (showLoading) setPreparingSentenceId(current => current === id ? null : current);
+    }
+  }, []);
+
+  useEffect(() => {
+    const prepare = () => {
+      for (let index = 0; index < sentencePreloadWindow.length; index++) {
+        void prepareSentenceEnrichment(sentencePreloadWindow[index], index === 0);
       }
-    }).catch(error => {
-      warn('Failed to load prepared catalog sentence', error);
-    }).finally(() => {
-      preparationRequestsRef.current.delete(id);
-      setPreparingSentenceId(current => current === id ? null : current);
-    });
-  }, [catalogSentencePreview, currentSentenceSnapshot, onSave, preparedSentenceById]);
+    };
+    prepare();
+    window.addEventListener('online', prepare);
+    return () => window.removeEventListener('online', prepare);
+  }, [sentencePreloadWindow, prepareSentenceEnrichment]);
 
   // User-attached image for the sentence under review. Base64 → render directly; a marker
   // ('idb:stored'/'server:has_image') → OfflineImage lazy-loads it by id (IDB, then server).
@@ -1029,7 +1102,53 @@ export const DetailView: React.FC<DetailViewProps> = ({
       prefetchTTS([currentSentenceText]);
       ensureTimings(currentSentenceText);
     }
-  }, [sentenceMode, currentSentenceText]);
+  }, [sentenceMode, currentSentenceText, prefetchSpeechStyle]);
+
+  // Aggressively stage the next five sentence cards while the learner is reading the current one.
+  // Audio (including word timings) is persisted in the dedicated IDB cache; item images are persisted
+  // in the image IDB cache. Prepared catalog-image URLs use the authenticated browser HTTP cache.
+  const warmedSentenceImagesRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!sentenceMode || sentencePreloadWindow.length <= 1) return;
+    const upcoming = sentencePreloadWindow.slice(1, SENTENCE_PREFETCH_AHEAD + 1);
+    const texts = upcoming.map(item => (item.data as SentenceData).text).filter(Boolean);
+
+    const warm = () => {
+      void preloadAudio(texts);
+      for (const item of upcoming) {
+        const imageUrl = getItemImageUrl(item);
+        if (!imageUrl || imageUrl.startsWith('data:image/')) continue;
+
+        if (imageUrl.startsWith('/api/')) {
+          const cacheKey = `url:${imageUrl}`;
+          if (warmedSentenceImagesRef.current.has(cacheKey)) continue;
+          warmedSentenceImagesRef.current.add(cacheKey);
+          void fetch(imageUrl, { cache: 'force-cache' }).then(async response => {
+            if (!response.ok) throw new Error(`Image preload failed (${response.status})`);
+            await response.blob(); // consume the full body before considering it warm
+          }).catch(() => warmedSentenceImagesRef.current.delete(cacheKey));
+          continue;
+        }
+
+        if (!onLazyLoadImage || (imageUrl !== 'idb:stored' && !imageUrl.startsWith('server:has_image'))) continue;
+        const version = serverImageVersion(imageUrl);
+        const cacheKey = `item:${item.data.id}:${version ?? 'local'}`;
+        if (warmedSentenceImagesRef.current.has(cacheKey)) continue;
+        warmedSentenceImagesRef.current.add(cacheKey);
+        void loadImage(item.data.id, version).then(cached =>
+          cached ? cached : onLazyLoadImage(item.data.id, version)
+        ).then(loaded => {
+          if (!loaded) warmedSentenceImagesRef.current.delete(cacheKey);
+        }).catch(() => warmedSentenceImagesRef.current.delete(cacheKey));
+      }
+    };
+
+    warm();
+    // A failed warm-up is retried as soon as a flaky connection comes back, even if the learner has
+    // stayed on the same sentence throughout the outage.
+    window.addEventListener('online', warm);
+    return () => window.removeEventListener('online', warm);
+  }, [sentenceMode, sentencePreloadWindow, onLazyLoadImage, prefetchSpeechStyle]);
 
   // P key to pronounce current word
   // Moved to bottom to access handlers
@@ -2385,11 +2504,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
           </div>
         </div>
       )}
-      {sentenceMode && currentSentence && sentencePage === 'analysis' && (
+      {sentenceMode && currentSentence && (
         <SentenceAnalysisView
           sentence={currentSentence.data as SentenceData}
           position={sentenceIndex + 1}
           total={sentenceItems?.length ?? 0}
+          visible={sentencePage === 'analysis'}
           onBack={() => setSentencePage('sentence')}
           onSearch={(term) => { setSentencePage('sentence'); handleVocabSearch(term); }}
           onTouchStart={onContentTouchStart}

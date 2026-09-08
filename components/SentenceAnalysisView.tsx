@@ -7,6 +7,8 @@ interface SentenceAnalysisViewProps {
   sentence: SentenceData;
   position: number;
   total: number;
+  /** Keep the panel mounted while hidden so its scroll position survives page swipes. */
+  visible: boolean;
   onBack: () => void;
   onSearch: (term: string) => void;
   onTouchStart: React.TouchEventHandler<HTMLDivElement>;
@@ -29,6 +31,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   sentence,
   position,
   total,
+  visible,
   onBack,
   onSearch,
   onTouchStart,
@@ -41,13 +44,29 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   const standardSentenceIpa = analysis?.pronunciation?.slowIpa;
   const fastSentenceIpa = analysis?.pronunciation?.fastIpa || analysis?.naturalSpeechIpa;
   const [americanEnglishExpanded, setAmericanEnglishExpanded] = React.useState(false);
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+  const rememberedScrollTopRef = React.useRef(0);
+  const previousSentenceIdRef = React.useRef(sentence.id);
   React.useEffect(() => setAmericanEnglishExpanded(false), [sentence.id]);
+  React.useLayoutEffect(() => {
+    const sentenceChanged = previousSentenceIdRef.current !== sentence.id;
+    if (sentenceChanged) {
+      previousSentenceIdRef.current = sentence.id;
+      rememberedScrollTopRef.current = 0;
+    }
+    if (visible && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = rememberedScrollTopRef.current;
+    }
+  }, [sentence.id, visible]);
   const americanEnglishPresentation = analysis ? STATUS_PRESENTATION[analysis.americanEnglish.status] : null;
   const AmericanEnglishIcon = americanEnglishPresentation?.icon;
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex flex-col bg-white animate-in slide-in-from-right duration-200"
+      className={visible
+        ? 'fixed inset-0 z-[70] flex flex-col bg-white animate-in slide-in-from-right duration-200'
+        : 'hidden'}
+      aria-hidden={!visible}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
       onClick={onClick}
@@ -72,9 +91,13 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
       </header>
 
       <div
+        ref={scrollContainerRef}
         data-sentence-analysis
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         style={{ touchAction: 'pan-y pinch-zoom' }}
+        onScroll={(event) => {
+          if (visible) rememberedScrollTopRef.current = event.currentTarget.scrollTop;
+        }}
       >
         <div className="mx-auto w-full max-w-5xl">
           <main className="px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 lg:px-8">

@@ -40,6 +40,26 @@ log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
 }
 
+# GitHub occasionally resets the HTTP/2 stream while a completed workflow log is being downloaded.
+# Retrying this read is safe and keeps one transient transport error from aborting a six-hour cycle.
+download_workflow_log() {
+  local run_id="$1"
+  local destination="$2"
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if "$GH_BIN" run view "$run_id" --repo "$REPO" --log > "$destination"; then
+      return 0
+    fi
+    rm -f "$destination"
+    if [ "$attempt" -lt 5 ]; then
+      log "workflow log download failed (attempt $attempt/5); retrying"
+      sleep "$((attempt * 5))"
+    fi
+  done
+  echo "Could not download workflow log for run $run_id after 5 attempts" >&2
+  return 1
+}
+
 if [ "$IPA_META_CONCURRENCY" -gt 0 ] && [ -z "${DEEPINFRA_API_KEY:-}" ] && [ -s .env ]; then
   DEEPINFRA_API_KEY="$($NODE_BIN -e 'const f=require("fs"),d=require("./server/node_modules/dotenv");process.stdout.write(d.parse(f.readFileSync(".env")).DEEPINFRA_API_KEY||"")')"
   export DEEPINFRA_API_KEY
@@ -118,7 +138,7 @@ fi
 "$GH_BIN" run watch "$EXPORT_RUN_ID" --repo "$REPO" --exit-status --interval 10
 EXPORT_LOG_TMP="$ROOT/workflow-export.log.tmp"
 CORPUS_TMP="$ROOT/current-corpus.json.tmp"
-"$GH_BIN" run view "$EXPORT_RUN_ID" --repo "$REPO" --log > "$EXPORT_LOG_TMP"
+download_workflow_log "$EXPORT_RUN_ID" "$EXPORT_LOG_TMP"
 "$NODE_BIN" scripts/offline/decrypt-workflow-export.mjs \
   "$EXPORT_LOG_TMP" CORPUS_EXPORT "$KEY_FILE" "$CORPUS_TMP"
 mv "$CORPUS_TMP" "$CURRENT_CORPUS"

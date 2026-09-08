@@ -29,12 +29,19 @@ export function itemNeedsIncrementalEnrichment(item: any): boolean {
 
 export function collectIncrementalEnrichmentItems(
   items: any[],
-  installedAt: number,
+  prioritySince: number,
   limit: number,
 ): any[] {
   return items
-    .filter(item => Number(item?.savedAt) >= installedAt && itemNeedsIncrementalEnrichment(item))
-    .sort((a, b) => (a.savedAt - b.savedAt) || String(a.data.id).localeCompare(String(b.data.id)))
+    .filter(item => itemNeedsIncrementalEnrichment(item))
+    .sort((a, b) => {
+      // Keep newly saved material responsive without permanently excluding the historical backlog.
+      const aPriority = Number(a?.savedAt) >= prioritySince ? 0 : 1;
+      const bPriority = Number(b?.savedAt) >= prioritySince ? 0 : 1;
+      return (aPriority - bPriority) ||
+        (Number(a?.savedAt || 0) - Number(b?.savedAt || 0)) ||
+        String(a.data.id).localeCompare(String(b.data.id));
+    })
     .slice(0, Math.max(0, limit));
 }
 
