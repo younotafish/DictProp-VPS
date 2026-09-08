@@ -27,13 +27,30 @@ export function itemNeedsIncrementalEnrichment(item: any): boolean {
   return false;
 }
 
+export function itemNeedsHistoricalEnrichment(item: any): boolean {
+  if (!item?.data || item.isDeleted || item.isArchived) return false;
+  if (item.type === 'sentence') return itemNeedsIncrementalEnrichment(item);
+  if (item.type === 'vocab') {
+    return !!item.data.imagePrompt?.trim() && !hasStoredImage(item.data);
+  }
+  if (item.type === 'phrase') {
+    const phraseNeedsImage = !!item.data.imagePrompt?.trim() && !hasStoredImage(item.data);
+    const vocabNeedsImage = Array.isArray(item.data.vocabs) && item.data.vocabs.some((vocab: any) =>
+      !!vocab?.imagePrompt?.trim() && !hasStoredImage(vocab));
+    return phraseNeedsImage || vocabNeedsImage;
+  }
+  return false;
+}
+
 export function collectIncrementalEnrichmentItems(
   items: any[],
   prioritySince: number,
   limit: number,
 ): any[] {
   return items
-    .filter(item => itemNeedsIncrementalEnrichment(item))
+    .filter(item => Number(item?.savedAt) >= prioritySince
+      ? itemNeedsIncrementalEnrichment(item)
+      : itemNeedsHistoricalEnrichment(item))
     .sort((a, b) => {
       // Keep newly saved material responsive without permanently excluding the historical backlog.
       const aPriority = Number(a?.savedAt) >= prioritySince ? 0 : 1;

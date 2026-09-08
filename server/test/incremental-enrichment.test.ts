@@ -47,6 +47,8 @@ const completeVocab = {
 test('incremental enrichment prioritizes recent records and still drains the historical backlog', () => {
   const items = [
     { type: 'sentence', savedAt: 99, data: { id: 'legacy', text: 'Old.', sourceWord: '' } },
+    { type: 'vocab', savedAt: 98, data: { id: 'legacy-incomplete-word', word: 'old' } },
+    { type: 'vocab', savedAt: 97, data: { id: 'legacy-image-gap', word: 'pictured', imagePrompt: 'A picture.' } },
     { type: 'vocab', savedAt: 101, data: { ...completeVocab, id: 'complete', imageUrl: 'server:has_image' } },
     { type: 'sentence', savedAt: 103, data: { id: 'new-sentence', text: 'New.', sourceWord: '' } },
     { type: 'sentence', savedAt: 102.5, data: {
@@ -58,7 +60,7 @@ test('incremental enrichment prioritizes recent records and still drains the his
 
   assert.deepEqual(
     collectIncrementalEnrichmentItems(items, 100, 10).map(item => item.data.id),
-    ['new-word', 'legacy-analysis', 'new-sentence', 'legacy'],
+    ['new-word', 'legacy-analysis', 'new-sentence', 'legacy-image-gap', 'legacy'],
   );
   assert.deepEqual(
     collectIncrementalEnrichmentItems(items, 100, 1).map(item => item.data.id),

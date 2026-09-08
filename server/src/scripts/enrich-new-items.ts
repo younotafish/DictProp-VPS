@@ -89,7 +89,8 @@ drain: for (;;) {
           upsertItem(item, owner.id);
           summary.contentGenerated++;
         }
-      } else if (item.type === 'vocab' && !hasCompleteVocabContent(item.data)) {
+      } else if (item.type === 'vocab' && Number(item.savedAt) >= prioritySince &&
+          !hasCompleteVocabContent(item.data)) {
         const generated = await generateAnalysisData(String(item.data.word || ''), 'batch');
         const replacement = selectReplacementVocab(item.data, generated.rawData.vocabs);
         if (!replacement) throw new Error('No matching replacement vocabulary card was generated');
