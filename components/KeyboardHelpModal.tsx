@@ -76,6 +76,7 @@ export const KeyboardHelpModal: React.FC<{ onClose: () => void }> = ({ onClose }
             <ShortcutRow keys={['↑', '↓']} description="Switch between saved sentences" />
             <ShortcutRow keys={['E']} description="Speak the saved sentence (natural voice)" />
             <ShortcutRow keys={['Space']} description="Pause / resume sentence · auto-play when idle" />
+            <ShortcutRow keys={['⌘', 'Click word']} description="Play the sentence from that word (Mac)" />
             <ShortcutRow keys={['Tap', 'ⁿ']} description="Footnote on a saved word → open its full card" />
             <ShortcutRow keys={['R']} description="Remember (stays on the sentence)" />
             <ShortcutRow keys={['Shift', 'R']} description="Reset memory strength" />

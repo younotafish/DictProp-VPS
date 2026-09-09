@@ -7,7 +7,9 @@ import { Hono } from 'hono';
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-auth-gate-test-'));
 process.env.OWNER_GOOGLE_EMAIL = 'owner@example.com';
-delete process.env.DEV_AUTH_BYPASS;
+// dotenv loads the repository's local development settings when env.ts is imported. An explicit
+// false value keeps this auth test deterministic even when the developer has bypass enabled in .env.
+process.env.DEV_AUTH_BYPASS = '0';
 
 const { authRoutes } = await import('../src/routes/auth.js');
 const { createSession, createUserAndClaimItems } = await import('../src/db.js');

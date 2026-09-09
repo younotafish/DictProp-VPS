@@ -20,6 +20,19 @@ button,
   user-select: text !important;
 }
 
+/* macOS sentence review: holding Command previews the word that a click will seek to. */
+.sentence-command-seek-active [data-word-offset] {
+  cursor: pointer;
+  border-radius: 0.25rem;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.sentence-command-seek-active [data-word-offset]:hover {
+  color: #4338ca;
+  background-color: #eef2ff;
+  box-shadow: 0 0 0 2px #c7d2fe;
+}
+
 :where(button, a, input, textarea, select, [tabindex]):focus-visible {
   outline: 2px solid #4f46e5;
   outline-offset: 2px;

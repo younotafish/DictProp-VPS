@@ -229,6 +229,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isAndroid = /Android/.test(navigator.userAgent);
   const isMobile = isIOS || isAndroid;
+  // iPadOS commonly reports MacIntel, so exclude touch devices before enabling laptop-only Command
+  // interactions. Checking both fields covers current Chromium/Safari and older Firefox builds.
+  const isMacDesktop = !isMobile && /Mac/i.test(`${navigator.platform} ${navigator.userAgent}`);
 
   // State for 2D navigation
   const [currentGroupIndex, setCurrentGroupIndex] = useState(initialGroupIndex);
@@ -250,6 +253,25 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [tapToPlay, setTapToPlay] = useState(() => {
     try { return localStorage.getItem('dictprop_sentence_tap_play') !== '0'; } catch { return true; }
   });
+  const [isCommandHeld, setIsCommandHeld] = useState(false);
+  useEffect(() => {
+    if (!isMacDesktop) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Meta') setIsCommandHeld(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Meta') setIsCommandHeld(false);
+    };
+    const reset = () => setIsCommandHeld(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', reset);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', reset);
+    };
+  }, [isMacDesktop]);
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
   const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
   const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(20);
@@ -742,6 +764,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {sentenceCopied ? <Check size={14} /> : <Copy size={14} />}
     </button>
   );
+  const commandClickHint = isMacDesktop ? (
+    <span
+      className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold transition-colors ${isCommandHeld ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <kbd className="font-sans">⌘</kbd>
+      {isCommandHeld ? 'Click a word — play starts there' : 'click a word to play from there'}
+    </span>
+  ) : null;
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
@@ -1935,6 +1966,25 @@ export const DetailView: React.FC<DetailViewProps> = ({
     e.stopPropagation();
   };
 
+  // macOS equivalent of the iPhone/iPad two-finger word chord: Command-click always starts at the
+  // clicked word. Capture the click before HighlightedSentence applies its ordinary click action, so
+  // this remains available in both look-up mode and the optional one-click playback mode.
+  const handleSentenceWordClickCapture = (e: React.MouseEvent<HTMLElement>) => {
+    if (isMobile) {
+      suppressMobileChordClick(e);
+      return;
+    }
+    if (!isMacDesktop || !e.metaKey) return;
+    const target = e.target instanceof Element ? e.target : null;
+    const word = target?.closest('[data-word-offset]') as HTMLElement | null;
+    if (!word || !e.currentTarget.contains(word)) return;
+    const offset = Number(word.dataset.wordOffset);
+    if (!Number.isFinite(offset)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void playFromWordOffset(offset);
+  };
+
   const handleSaveVocab = (vocab: VocabCard) => {
     const vocabSpelling = (vocab.word || '').toLowerCase().trim();
     const items = savedItemsRef.current;
@@ -2344,7 +2394,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   <button
                     onClick={(e) => { e.stopPropagation(); setTapToPlay(v => { const next = !v; try { localStorage.setItem('dictprop_sentence_tap_play', next ? '1' : '0'); } catch { /* ignore */ } return next; }); }}
                     className={`flex items-center justify-center w-7 h-7 rounded-full transition-colors ${tapToPlay ? 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}
-                    title={tapToPlay ? 'Tap a word = play from it. Tap here to switch to look-up.' : 'Tap any word = look it up (saved words open their card). Tap here to switch to play-from-word.'}
+                    title={tapToPlay
+                      ? 'Click a word = play from it. Click here to switch to look-up.'
+                      : isMacDesktop
+                        ? 'Click a word = look it up. Command-click always plays from that word.'
+                        : 'Click any word = look it up. Click here to switch to play-from-word.'}
                   >
                     {tapToPlay ? <Volume2 size={15} /> : <SearchIcon size={15} />}
                   </button>
@@ -2385,14 +2439,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
                     <div className="flex-1 min-w-0">
                       <p
                         data-sentence-hero
-                        className={`text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-xl sm:text-3xl' : 'text-lg sm:text-xl'}`}
+                        className={`text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${isCommandHeld ? 'sentence-command-seek-active' : ''} ${cardCollapsed ? 'text-xl sm:text-3xl' : 'text-lg sm:text-xl'}`}
                         onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
-                        onClickCapture={isMobile ? suppressMobileChordClick : undefined}
+                        onClickCapture={handleSentenceWordClickCapture}
                         title={isMobile
                           ? 'Tap a word to look it up'
                           : tapToPlay
-                          ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
-                          : 'Tap any word to look it up (saved words open their card) · tap blank space to play/pause · double-tap blank space to remember'}
+                          ? 'Click a word to play from it · click blank space to play/pause · double-click blank space to remember'
+                          : isMacDesktop
+                            ? 'Click a word to look it up · Command-click to play from it · click blank space to play/pause'
+                            : 'Click any word to look it up · click blank space to play/pause · double-click blank space to remember'}
                       >
                         <HighlightedSentence
                           text={currentSentenceText}
@@ -2402,9 +2458,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
                           {...(isMobile || !tapToPlay ? { onSearchWord: handleVocabSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
                         />
                       </p>
-                      <div className="mt-5 flex items-center justify-center md:justify-start gap-3">
+                      <div className="mt-5 flex flex-wrap items-center justify-center md:justify-start gap-3">
                         <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
                         {copySentenceButton}
+                        {commandClickHint}
                       </div>
                     </div>
                   </div>
@@ -2413,14 +2470,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   <>
                     <p
                       data-sentence-hero
-                      className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
+                      className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${isCommandHeld ? 'sentence-command-seek-active' : ''} ${cardCollapsed ? 'text-2xl sm:text-4xl' : 'text-lg sm:text-xl'}`}
                       onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
-                      onClickCapture={isMobile ? suppressMobileChordClick : undefined}
+                      onClickCapture={handleSentenceWordClickCapture}
                       title={isMobile
                         ? 'Tap a word to look it up'
                         : tapToPlay
-                        ? 'Tap a word to play from it · tap blank space to play/pause · double-tap blank space to remember'
-                        : 'Tap any word to look it up (saved words open their card) · tap blank space to play/pause · double-tap blank space to remember'}
+                        ? 'Click a word to play from it · click blank space to play/pause · double-click blank space to remember'
+                        : isMacDesktop
+                          ? 'Click a word to look it up · Command-click to play from it · click blank space to play/pause'
+                          : 'Click any word to look it up · click blank space to play/pause · double-click blank space to remember'}
                     >
                       <HighlightedSentence
                         text={currentSentenceText}
@@ -2430,9 +2489,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         {...(isMobile || !tapToPlay ? { onSearchWord: handleVocabSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
                       />
                     </p>
-                    <div className="mt-5 flex items-center justify-center gap-3">
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
                       <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
                       {copySentenceButton}
+                      {commandClickHint}
                     </div>
                   </>
                 )}
