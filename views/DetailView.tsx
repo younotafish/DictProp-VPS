@@ -1809,12 +1809,18 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const pb = getPlaybackState();
     if (pb.text === stripped && (pb.status === 'playing' || pb.status === 'paused') && startAt != null) {
       seekCurrent(startAt); // already this sentence's clip → seek in place (seamless)
+      if (pb.status === 'paused') resumeCurrent();
       return;
     }
     if (isSentenceAutoPlayingRef.current) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
-    speakNatural(stripped, { allowDownload: true, startAt: startAt ?? undefined }); // (re)start AT the word
+    // Timings can be absent for a legacy/system-voice clip or during a flaky-network timeout. Reading
+    // the remaining text is a prosody compromise, but it preserves the interaction's core promise:
+    // Command-click starts audibly at the selected word rather than unexpectedly returning to word one.
+    const fallbackRemainder = stripped.slice(Math.max(0, offset)).trimStart();
+    const textToSpeak = startAt == null && fallbackRemainder ? fallbackRemainder : stripped;
+    speakNatural(textToSpeak, { allowDownload: true, startAt: startAt ?? undefined }); // (re)start AT the word
   }, []);
 
   // Enter (sentence mode): play from the word the caret/selection sits in. No-op if not in a word, so
