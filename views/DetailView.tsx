@@ -766,11 +766,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
   );
   const commandClickHint = isMacDesktop ? (
     <span
-      className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold transition-colors ${isCommandHeld ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}
+      className={`hidden h-6 w-6 items-center justify-center rounded-full text-xs font-semibold transition-colors sm:inline-flex ${isCommandHeld ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}
+      title="Command-click a word to start playback there"
+      aria-label="Command-click a word to start playback there"
       onClick={(e) => e.stopPropagation()}
     >
       <kbd className="font-sans">⌘</kbd>
-      {isCommandHeld ? 'Click a word — play starts there' : 'click a word to play from there'}
     </span>
   ) : null;
 
