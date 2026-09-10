@@ -40,6 +40,14 @@ test('corpus hashes ignore later sentence analysis enrichment', () => {
   assert.equal(corpusAuditDataState(later, { sourceHash: corpusSourceHash(first), data: first }), 'target');
 });
 
+test('corpus hashes ignore a sentence speech-style preference', () => {
+  const sentence = { id: 'sentence-1', text: 'He came clean.', sourceWord: 'come clean', usageAudit: audit };
+  assert.equal(
+    corpusSourceHash({ ...sentence, preferredSpeechStyle: 'casual' }),
+    corpusSourceHash({ ...sentence, preferredSpeechStyle: 'clear' }),
+  );
+});
+
 test('corpus audit bundle requires complete and consistent decisions', () => {
   assert.equal(validateCorpusAuditBundle(bundle), null);
   assert.match(validateCorpusAuditBundle({ ...bundle, entries: [{ ...bundle.entries[0], archiveForUsage: true }] }) || '', /disagrees/);

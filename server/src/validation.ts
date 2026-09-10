@@ -58,6 +58,10 @@ export function validateStoredItem(value: unknown): string | null {
       !isFiniteNonNegative(value.data.analysisGeneratedAt)) {
     return 'sentence analysisGeneratedAt is invalid';
   }
+  if (value.type === 'sentence' && value.data.preferredSpeechStyle !== undefined &&
+      value.data.preferredSpeechStyle !== 'clear' && value.data.preferredSpeechStyle !== 'casual') {
+    return 'sentence preferredSpeechStyle is invalid';
+  }
   if (value.data.usageAudit !== undefined && !isUsageAudit(value.data.usageAudit)) {
     return 'item usageAudit is invalid';
   }

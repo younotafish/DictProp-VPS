@@ -44,7 +44,8 @@ function withoutImageFields(value: unknown): unknown {
 
 export function corpusSourceHash(data: unknown): string {
   const stableData = isRecord(data)
-    ? Object.fromEntries(Object.entries(data).filter(([key]) => key !== 'analysis' && key !== 'analysisGeneratedAt'))
+    ? Object.fromEntries(Object.entries(data).filter(([key]) =>
+        key !== 'analysis' && key !== 'analysisGeneratedAt' && key !== 'preferredSpeechStyle'))
     : data;
   return createHash('sha256').update(JSON.stringify(withoutImageFields(stableData))).digest('hex');
 }

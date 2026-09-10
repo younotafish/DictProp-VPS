@@ -19,7 +19,7 @@ import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
 import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap, type SpeakHandle } from '../services/lazyTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
 import { loadImage } from '../services/storage';
-import { getTtsStyle, subscribeTtsStyle } from '../services/ttsSettings';
+import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
 import { log, warn, error as logError } from '../services/logger';
 import { isRealLifeProgressItem } from '../services/realLifeProgress';
 
@@ -620,6 +620,30 @@ export const DetailView: React.FC<DetailViewProps> = ({
     sentenceItemsRef.current = sentenceItems;
     currentGroupIndexRef.current = currentGroupIndex;
   });
+
+  const currentSentenceSpeechStyle = currentSentence
+    ? (currentSentence.data as SentenceData).preferredSpeechStyle
+    : undefined;
+
+  // Each saved sentence remembers its own last choice. Sentences without one continue using the
+  // persisted global fallback, so existing libraries retain their current behaviour until selected.
+  useEffect(() => {
+    if (sentenceMode && currentSentenceSpeechStyle) setTtsStyle(currentSentenceSpeechStyle);
+  }, [sentenceMode, currentSentence?.data.id, currentSentenceSpeechStyle]);
+
+  const rememberCurrentSentenceSpeechStyle = useCallback((nextStyle: TtsStyle) => {
+    const sentence = currentSentenceRef.current;
+    if (!sentence || isSentencePreview) return;
+    const sentenceData = sentence.data as SentenceData;
+    if (sentenceData.preferredSpeechStyle === nextStyle) return;
+    const updated: StoredItem = {
+      ...sentence,
+      data: { ...sentenceData, preferredSpeechStyle: nextStyle },
+      updatedAt: Date.now(),
+    };
+    currentSentenceRef.current = updated;
+    onSaveRef.current(updated);
+  }, [isSentencePreview]);
 
   // Sentence-mode stats (mirror the word-card stats below, computed across the saved sentences).
   const sentenceMastery = !isSentencePreview && currentSentence?.srs
@@ -1527,8 +1551,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // have stable progress identities and are intentionally persisted like ordinary saved sentences.
     if (sentence.data.id.startsWith('sentence-preview:') && !sentenceData.catalogSentenceId) return;
     const now = Date.now();
+    const speechStyle = getTtsStyle();
     const updated: StoredItem = {
       ...sentence,
+      data: sentenceData.preferredSpeechStyle === speechStyle
+        ? sentenceData
+        : { ...sentenceData, preferredSpeechStyle: speechStyle },
       srs: SRSAlgorithm.updateAfterExposure(sentence.srs, now),
       updatedAt: now,
     };
@@ -1875,6 +1903,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
     setTimeout(() => setIsAnimating(false), 300);
     const next = list[clamped];
     const sentence = next ? stripSentenceMarkers((next.data as SentenceData).text || '').trim() : '';
+    const nextSpeechStyle = next ? (next.data as SentenceData).preferredSpeechStyle : undefined;
+    if (nextSpeechStyle) setTtsStyle(nextSpeechStyle);
     // The autoplay effect restarts itself at the selected sentence after the index changes. Starting a
     // separate manual clip here would supersede that chain and leave autoplay visually on but stalled.
     if (!keepAutoPlaying && sentence && next) {
@@ -3008,7 +3038,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
           settings belong in the secondary panel. */}
       {sentenceMode ? (
         <div className="fixed bottom-6 right-4 z-[80] flex items-center gap-2">
-          <SpeechStyleToggle className="shrink-0 bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200" />
+          <SpeechStyleToggle
+            className="shrink-0 bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200"
+            onChange={rememberCurrentSentenceSpeechStyle}
+          />
           <div className="relative shrink-0">
             {showSentenceAutoPlayPanel && (
               <div role="dialog" aria-label="Sentence auto-play settings" className="absolute bottom-14 right-0 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">

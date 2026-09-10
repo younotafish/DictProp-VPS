@@ -124,6 +124,8 @@ export interface SentenceData {
   text: string; // The sentence text. Markup: {{studied item}} (emphasis) and [[uncommon term]] (clickable lookup)
   sourceWord: string; // The vocab word this sentence came from
   sourceSense?: string; // The sense label of the source word
+  /** Last Clear/Casual choice made while reviewing this sentence. */
+  preferredSpeechStyle?: 'clear' | 'casual';
   /** Identifies which read-only learning catalog owns an isolated review record. */
   catalogKind?: 'real-life' | 'essay';
   /** Stable provenance id for a sentence originating in a read-only catalog. */

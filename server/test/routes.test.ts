@@ -187,6 +187,24 @@ test('item routes reject malformed records and oversized batches', async () => {
   response = await app.request('/api/items', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([{
+      ...item,
+      type: 'sentence',
+      data: {
+        id: item.data.id,
+        text: 'This sentence has an invalid speech style.',
+        sourceWord: 'style',
+        preferredSpeechStyle: 'dramatic',
+      },
+      srs: { ...item.srs, type: 'sentence' },
+    }]),
+  });
+  assert.equal(response.status, 400);
+  assert.match((await response.json() as any).error, /preferredSpeechStyle/);
+
+  response = await app.request('/api/items', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(Array.from({ length: 501 }, () => item)),
   });
   assert.equal(response.status, 400);

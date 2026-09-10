@@ -62,9 +62,13 @@ for (const entry of bundle.entries) {
             : {}),
         }
       : {};
+    const preservedSentenceSpeechStyle = entry.type === 'sentence' &&
+      (current.data.preferredSpeechStyle === 'clear' || current.data.preferredSpeechStyle === 'casual')
+      ? { preferredSpeechStyle: current.data.preferredSpeechStyle }
+      : {};
     const candidate = {
       ...currentWithoutProject,
-      data: { ...entry.data, ...preservedSentenceAnalysis },
+      data: { ...entry.data, ...preservedSentenceAnalysis, ...preservedSentenceSpeechStyle },
       srs: {
         ...currentSrs,
         id: entry.id,

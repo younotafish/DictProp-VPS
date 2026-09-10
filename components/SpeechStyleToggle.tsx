@@ -2,18 +2,25 @@ import React, { useEffect, useState } from 'react';
 import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
 
 /**
- * Global Clear ⇄ Casual speech-style switch. The choice lives in the TTS engine (persisted), and
- * every play site routes through it — so one toggle governs word review, sentence review, and the
- * global-search popup at once. Render it anywhere; all instances stay in sync via subscribeTtsStyle.
+ * Shared Clear ⇄ Casual speech-style switch. The global fallback lives in the TTS engine (persisted),
+ * and every play site routes through it. Sentence review can also use `onChange` to retain a choice
+ * on the sentence itself. Render it anywhere; all instances stay in sync via subscribeTtsStyle.
  */
-export const SpeechStyleToggle: React.FC<{ className?: string }> = ({ className = '' }) => {
+export const SpeechStyleToggle: React.FC<{
+  className?: string;
+  onChange?: (style: TtsStyle) => void;
+}> = ({ className = '', onChange }) => {
   const [style, setStyle] = useState<TtsStyle>(getTtsStyle());
   useEffect(() => subscribeTtsStyle(setStyle), []);
 
   const opt = (value: TtsStyle, label: string, title: string) => (
     <button
       type="button"
-      onClick={(e) => { e.stopPropagation(); setTtsStyle(value); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        setTtsStyle(value);
+        onChange?.(value);
+      }}
       aria-pressed={style === value}
       title={title}
       className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
