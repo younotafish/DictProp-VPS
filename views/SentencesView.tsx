@@ -63,8 +63,8 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
     return { all: activeItems.length, unreviewed, due, memorized };
   }, [activeItems, now]);
 
-  // Match the Notebook word-item ordering: least-memorized first (memoryStrength ASC), ties broken by
-  // most-recently added (savedAt DESC — newest on top). Filtered by the selected review state first.
+  // Least-memorized first. Among equally strong sentences, untouched/least-recently heard comes first,
+  // then most-recently added. Passive listening therefore rotates a card down without inflating mastery.
   const sorted = useMemo(() => {
     const q = deferredQuery.trim();
     let base: StoredItem[];

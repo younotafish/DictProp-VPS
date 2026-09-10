@@ -148,6 +148,8 @@ export interface SRSData {
   // Display-only mastery score derived from stability
   memoryStrength: number; // 0-100, derived from stability via log mapping
   lastReviewDate: number; // Timestamp of last review
+  /** Last completed passive listen; affects sentence ordering only, never FSRS mastery. */
+  lastExposureDate?: number;
   totalReviews: number; // Total scheduler repetitions, including Again ratings
   correctStreak: number; // Consecutive non-Again ratings
   

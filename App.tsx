@@ -1004,7 +1004,11 @@ const App: React.FC = () => {
             let hasChanges = false;
 
             // 1. SRS Migration
-            const needsSRSMigration = processedItems.some(item => typeof item.srs?.memoryStrength !== 'number');
+            const needsSRSMigration = processedItems.some(item =>
+                typeof item.srs?.memoryStrength !== 'number' ||
+                (item.type === 'sentence' && (item.srs?.totalReviews ?? 0) === 0 &&
+                    ((item.srs?.memoryStrength ?? 0) !== 0 || (item.srs?.stability ?? 0.5) !== 0.5))
+            );
             if (needsSRSMigration && processedItems.length > 0) {
                 processedItems = processedItems.map(item => ({
                     ...item,

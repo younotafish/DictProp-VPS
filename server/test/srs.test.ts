@@ -54,23 +54,32 @@ test('client preview and server-authoritative review transitions stay identical'
   }
 });
 
-test('autoplay exposure adds one quarter of a Good strength gain without recording a review', () => {
+test('passive exposure records recency without changing memorization or review state', () => {
   const now = 50 * 86_400_000;
   const base = {
     ...SRSAlgorithm.createNew('sentence', 'sentence'),
     nextReview: 40 * 86_400_000,
   };
-  const remembered = SRSAlgorithm.updateAfterRemember(base, now);
-  const exposed = SRSAlgorithm.updateAfterExposure(base, 0.25, now);
-  const rawStrength = (stability: number) => 18 * Math.log(1 + stability);
+  const exposed = SRSAlgorithm.updateAfterExposure(base, now);
 
-  assert.ok(Math.abs(
-    (rawStrength(exposed.stability) - rawStrength(base.stability)) -
-    (rawStrength(remembered.stability) - rawStrength(base.stability)) * 0.25,
-  ) < 1e-9);
+  assert.equal(exposed.lastExposureDate, now);
   assert.equal(exposed.totalReviews, base.totalReviews);
   assert.equal(exposed.correctStreak, base.correctStreak);
   assert.equal(exposed.lastReviewDate, base.lastReviewDate);
   assert.equal(exposed.nextReview, base.nextReview);
-  assert.ok(exposed.memoryStrength > base.memoryStrength);
+  assert.equal(exposed.stability, base.stability);
+  assert.equal(exposed.memoryStrength, base.memoryStrength);
+  assert.equal(exposed.fsrsState, base.fsrsState);
+});
+
+test('migrating a never-reviewed item does not manufacture display strength from seed stability', () => {
+  const pollutedByLegacyExposure = {
+    ...SRSAlgorithm.createNew('fresh-sentence', 'sentence'),
+    memoryStrength: 42,
+    stability: 9,
+  };
+  const migrated = SRSAlgorithm.migrate(pollutedByLegacyExposure);
+  assert.equal(migrated.memoryStrength, 0);
+  assert.equal(migrated.stability, 0.5);
+  assert.equal(migrated.totalReviews, 0);
 });

@@ -1518,14 +1518,17 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const sentenceRepeatsRef = useRef(sentenceRepeats);
   useEffect(() => { sentenceRepeatsRef.current = sentenceRepeats; }, [sentenceRepeats]);
 
-  const recordSentenceAutoplayExposure = useCallback(() => {
+  const recordSentenceExposure = useCallback((expectedSentenceId?: string) => {
     const sentence = currentSentenceRef.current;
-    if (!sentence) return;
+    if (!sentence || (expectedSentenceId && sentence.data.id !== expectedSentenceId)) return;
+    const sentenceData = sentence.data as SentenceData;
+    // Listening to an unsaved word-card preview must not silently save it. Catalog previews already
+    // have stable progress identities and are intentionally persisted like ordinary saved sentences.
+    if (sentence.data.id.startsWith('sentence-preview:') && !sentenceData.catalogSentenceId) return;
     const now = Date.now();
-    const baseSrs = SRSAlgorithm.ensure(sentence.srs, sentence.data.id, 'sentence');
     const updated: StoredItem = {
       ...sentence,
-      srs: SRSAlgorithm.updateAfterExposure(baseSrs, 0.25, now),
+      srs: SRSAlgorithm.updateAfterExposure(sentence.srs, now),
       updatedAt: now,
     };
     currentSentenceRef.current = updated;
@@ -1622,7 +1625,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         successfulReads++;
         const completesSuccessfulRound = rep + 1 >= sentenceRepeatsRef.current &&
           successfulReads >= sentenceRepeatsRef.current;
-        if (sentenceModeRef.current && completesSuccessfulRound) recordSentenceAutoplayExposure();
+        if (sentenceModeRef.current && completesSuccessfulRound) recordSentenceExposure();
         afterEach();
       };
       handle = speakNatural(s, { allowDownload: true, onEnd: afterSuccessfulRead, onError: afterEach });
@@ -1685,7 +1688,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Press again to pause; once more to resume.
   const readBothSentences = useCallback(() => {
     let sentences: string[];
+    let exposureSentenceId: string | undefined;
     if (sentenceModeRef.current && currentSentenceRef.current) {
+      exposureSentenceId = currentSentenceRef.current.data.id;
       sentences = [stripSentenceMarkers((currentSentenceRef.current.data as SentenceData).text)].filter(Boolean);
     } else {
       const item = currentItemRef.current;
@@ -1723,12 +1728,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
       const s = sentences[idx++];
       handle = speakNatural(s, {
         allowDownload: true,
-        onEnd: () => setTimeout(playNext, 400),   // small breath between the two sentences
+        onEnd: () => {
+          if (exposureSentenceId) recordSentenceExposure(exposureSentenceId);
+          setTimeout(playNext, 400);               // small breath between the two sentences
+        },
         onError: () => setTimeout(playNext, 400),
       });
     };
     playNext();
-  }, []);
+  }, [recordSentenceExposure]);
 
   // Toggle natural-voice playback for an arbitrary sentence, routed through the shared playback state so
   // the megaphone icons stay in sync: same clip already playing → pause; paused → resume; almost done →
@@ -1770,8 +1778,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (isSentenceAutoPlayingRef.current) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
-    speakNatural(sentence, { allowDownload: true });
-  }, []);
+    speakNatural(sentence, {
+      allowDownload: true,
+      onEnd: () => recordSentenceExposure(s.data.id),
+    });
+  }, [recordSentenceExposure]);
 
   // Tap the sentence (or context-aware Space): pause it if it's playing, resume if paused, otherwise
   // (re)start it from the top. Routed through the shared playback state so it stays in sync with the
@@ -1790,12 +1801,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
     if (isSentenceAutoPlayingRef.current) return;
     setIsAutoPlaying(false);
     setIsSentenceAutoPlaying(false);
-    speakNatural(sentence, { allowDownload: true });
-  }, []);
+    speakNatural(sentence, {
+      allowDownload: true,
+      onEnd: () => recordSentenceExposure(s.data.id),
+    });
+  }, [recordSentenceExposure]);
 
   // Play the current sentence starting at a clicked/selected word (by its char offset in the stripped
   // sentence). If this sentence's clip is already the active audio, seek it in place (seamless);
-  // otherwise (re)start the sentence and seek once it's playing. Falls back to whole-sentence playback
+  // otherwise (re)start the sentence and seek once it's playing. Falls back to reading the remainder
   // when no word timings are available (legacy clip / in-browser / system voice).
   const playFromWordOffset = useCallback(async (offset: number) => {
     const s = currentSentenceRef.current;
@@ -1820,8 +1834,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // Command-click starts audibly at the selected word rather than unexpectedly returning to word one.
     const fallbackRemainder = stripped.slice(Math.max(0, offset)).trimStart();
     const textToSpeak = startAt == null && fallbackRemainder ? fallbackRemainder : stripped;
-    speakNatural(textToSpeak, { allowDownload: true, startAt: startAt ?? undefined }); // (re)start AT the word
-  }, []);
+    speakNatural(textToSpeak, {
+      allowDownload: true,
+      startAt: startAt ?? undefined,
+      onEnd: () => recordSentenceExposure(s.data.id),
+    }); // (re)start AT the word
+  }, [recordSentenceExposure]);
 
   // Enter (sentence mode): play from the word the caret/selection sits in. No-op if not in a word, so
   // it never hijacks Enter elsewhere. Words carry data-word-offset (see HighlightedSentence).
@@ -1858,8 +1876,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const sentence = next ? stripSentenceMarkers((next.data as SentenceData).text || '').trim() : '';
     // The autoplay effect restarts itself at the selected sentence after the index changes. Starting a
     // separate manual clip here would supersede that chain and leave autoplay visually on but stalled.
-    if (!keepAutoPlaying && sentence) speakNatural(sentence, { allowDownload: true });
-  }, [speakCurrentSentence]);
+    if (!keepAutoPlaying && sentence && next) {
+      speakNatural(sentence, {
+        allowDownload: true,
+        onEnd: () => recordSentenceExposure(next.data.id),
+      });
+    }
+  }, [recordSentenceExposure, speakCurrentSentence]);
 
   // Arrow keys / trackpad wheel: sentence mode uses ←/→ for its two pages and ↑/↓ for
   // sentence navigation. Page changes deliberately leave the shared speech session untouched.
@@ -2465,7 +2488,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         />
                       </p>
                       <div className="mt-5 flex flex-wrap items-center justify-center md:justify-start gap-3">
-                        <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
+                        <SentenceSpeakerButton
+                          text={stripSentenceMarkers(currentSentenceText)}
+                          onComplete={() => recordSentenceExposure(currentSentence.data.id)}
+                        />
                         {copySentenceButton}
                         {commandClickHint}
                       </div>
@@ -2496,7 +2522,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
                       />
                     </p>
                     <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-                      <SentenceSpeakerButton text={stripSentenceMarkers(currentSentenceText)} />
+                      <SentenceSpeakerButton
+                        text={stripSentenceMarkers(currentSentenceText)}
+                        onComplete={() => recordSentenceExposure(currentSentence.data.id)}
+                      />
                       {copySentenceButton}
                       {commandClickHint}
                     </div>

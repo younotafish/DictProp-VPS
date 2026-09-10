@@ -24,6 +24,9 @@ export function validateStoredItem(value: unknown): string | null {
   for (const field of ['nextReview', 'interval', 'memoryStrength', 'lastReviewDate', 'totalReviews', 'correctStreak', 'stability']) {
     if (!isFiniteNonNegative(value.srs[field])) return `item.srs.${field} is invalid`;
   }
+  if (value.srs.lastExposureDate !== undefined && !isFiniteNonNegative(value.srs.lastExposureDate)) {
+    return 'item.srs.lastExposureDate is invalid';
+  }
   if (!isFiniteNonNegative(value.savedAt)) return 'item.savedAt is invalid';
   if (value.updatedAt !== undefined && !isFiniteNonNegative(value.updatedAt)) return 'item.updatedAt is invalid';
   if (value.serverRevision !== undefined && (!Number.isSafeInteger(value.serverRevision) || value.serverRevision < 0)) {

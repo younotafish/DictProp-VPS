@@ -22,6 +22,8 @@ interface Props {
   text: string;
   className?: string;
   iconSize?: number;
+  /** Called only after playback reaches the end successfully, never on pause/cancel/error. */
+  onComplete?: () => void;
 }
 
 /**
@@ -34,7 +36,7 @@ interface Props {
  * private "isPlaying" state, it can't get stuck out of sync (the old "frozen on pause" bug), and a
  * click always does the right thing: pause, resume, restart-near-end, or start fresh.
  */
-export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '', iconSize = 14 }) => {
+export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '', iconSize = 14, onComplete }) => {
   const plain = useMemo(() => stripSentenceMarkers(text || '').trim(), [text]);
   const [pb, setPb] = useState<PlaybackState>(getPlaybackState);
   const playbackHandleRef = useRef<SpeakHandle | null>(null);
@@ -52,11 +54,11 @@ export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '', i
 
   const start = useCallback(() => {
     try {
-      playbackHandleRef.current = speakNatural(plain, { allowDownload: true });
+      playbackHandleRef.current = speakNatural(plain, { allowDownload: true, onEnd: onComplete });
     } catch (err) {
       logError('Sentence speech failed', err);
     }
-  }, [plain]);
+  }, [plain, onComplete]);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

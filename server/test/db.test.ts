@@ -39,6 +39,7 @@ const makeItem = (
     interval: 1440,
     memoryStrength: 10,
     lastReviewDate,
+    lastExposureDate: 0,
     totalReviews,
     correctStreak: totalReviews,
     stability: 1,
@@ -66,6 +67,31 @@ test('content and SRS resolve conflicts using independent clocks', () => {
   assert.equal(stored.data.definition, 'new content');
   assert.equal(stored.srs.lastReviewDate, 4_000);
   assert.equal(stored.srs.totalReviews, 3);
+});
+
+test('passive exposure has an independent conflict clock and preserves review progress', () => {
+  const id = 'exposure-conflict-item';
+  const original = makeItem(id, 'original', 2_000, 2_000, 2);
+  original.srs.lastExposureDate = 3_000;
+  upsertItem(original, 'exposure-user');
+
+  const newerExposureWithOldReview = makeItem(id, 'new content', 4_000, 1_000, 1);
+  newerExposureWithOldReview.srs.lastExposureDate = 5_000;
+  upsertItem(newerExposureWithOldReview, 'exposure-user');
+  let stored = getItemById(id, 'exposure-user');
+  assert.ok(stored);
+  assert.equal(stored.srs.lastReviewDate, 2_000);
+  assert.equal(stored.srs.totalReviews, 2);
+  assert.equal(stored.srs.lastExposureDate, 5_000);
+
+  const newerReviewWithOldExposure = makeItem(id, 'latest content', 6_000, 6_000, 3);
+  newerReviewWithOldExposure.srs.lastExposureDate = 4_000;
+  upsertItem(newerReviewWithOldExposure, 'exposure-user');
+  stored = getItemById(id, 'exposure-user');
+  assert.ok(stored);
+  assert.equal(stored.srs.lastReviewDate, 6_000);
+  assert.equal(stored.srs.totalReviews, 3);
+  assert.equal(stored.srs.lastExposureDate, 5_000);
 });
 
 test('item ids cannot overwrite another user', () => {

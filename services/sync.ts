@@ -148,6 +148,22 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
           }
       }
 
+      // Passive sentence exposure has its own conflict clock. It must survive merges without being
+      // promoted into lastReviewDate (which would corrupt FSRS elapsed-time calculations) or allowing
+      // a stale device to overwrite newer explicit review progress.
+      const latestExposure = Math.max(
+        localItem.srs?.lastExposureDate ?? 0,
+        remoteItem.srs?.lastExposureDate ?? 0,
+      );
+      if (latestExposure > 0 && (mergedItem.srs?.lastExposureDate ?? 0) !== latestExposure) {
+        mergedItem.srs = { ...mergedItem.srs, lastExposureDate: latestExposure };
+      }
+      if (mergedItem.type === 'sentence' && (mergedItem.srs?.totalReviews ?? 0) === 0) {
+        // Old autoplay builds wrote passive credit into stability. Normalize it even when the remote
+        // copy won the ordinary review-clock comparison, then let dirty sync repair the server copy.
+        mergedItem.srs = SRSAlgorithm.migrate(mergedItem.srs);
+      }
+
       // C. IMAGE MERGE (Preservation for Offline)
       // PRIORITY: Local images ALWAYS win over remote
       // This is critical because:

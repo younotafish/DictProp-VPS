@@ -6,6 +6,7 @@
  * - Existing fixed-schedule rows become FSRS rows on their next review
  * - The legacy "remember" action maps to Good
  * - memoryStrength is display-only, derived from stability
+ * - Passive listening records recency for queue rotation without changing mastery
  */
 
 import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
@@ -36,14 +37,22 @@ export class SRSAlgorithm {
    * Strips legacy fields and infers schedule step from totalReviews/stability.
    */
   static migrate(srs: SRSData): SRSData {
+    const totalReviews = srs.totalReviews ?? 0;
+    const isUnreviewedSentence = srs.type === 'sentence' && totalReviews === 0;
+    const stability = isUnreviewedSentence ? 0.5 : (srs.stability ?? 0.5);
     // Already has the required fields — just ensure display strength is up to date
     return {
       ...srs,
-      memoryStrength: this.stabilityToDisplayStrength(srs.stability ?? 0.5),
-      stability: srs.stability ?? 0.5,
-      totalReviews: srs.totalReviews ?? 0,
+      // A never-reviewed sentence is still unmemorized even though FSRS needs a non-zero seed
+      // stability. Keep this correction sentence-scoped so legacy word-card display stays untouched.
+      memoryStrength: isUnreviewedSentence
+        ? 0
+        : this.stabilityToDisplayStrength(stability),
+      stability,
+      totalReviews,
       correctStreak: srs.correctStreak ?? 0,
       lastReviewDate: srs.lastReviewDate ?? 0,
+      lastExposureDate: srs.lastExposureDate ?? 0,
     };
   }
 
@@ -73,6 +82,7 @@ export class SRSAlgorithm {
       interval: 0,
       memoryStrength: 0,
       lastReviewDate: 0, // 0 = never reviewed
+      lastExposureDate: 0,
       totalReviews: 0,
       correctStreak: 0,
       stability: 0.5, // Initial stability (half a day)
@@ -175,29 +185,11 @@ export class SRSAlgorithm {
     return this.updateAfterRating(srs, 'good', now);
   }
 
-  /**
-   * Add passive exposure credit without recording or rescheduling a review.
-   * The fraction is measured in the displayed-strength gain a Good review would produce.
-   */
-  static updateAfterExposure(srs: SRSData, fraction = 0.25, now = Date.now()): SRSData {
-    const weight = Math.min(1, Math.max(0, fraction));
-    if (weight === 0) return this.migrate(srs);
-
-    const currentStability = Math.max(0.1, Number(srs.stability) || 0.5);
-    const remembered = this.updateAfterRemember(srs, now);
-    const currentStrength = 18 * Math.log(1 + currentStability);
-    const rememberedStrength = Math.max(
-      currentStrength,
-      18 * Math.log(1 + Math.max(0.1, remembered.stability)),
-    );
-    const exposureStrength = currentStrength + (rememberedStrength - currentStrength) * weight;
-    const stability = Math.max(0.1, Math.exp(exposureStrength / 18) - 1);
-
+  /** Record a completed passive listen without changing any memorization or FSRS state. */
+  static updateAfterExposure(srs: SRSData, now = Date.now()): SRSData {
     return {
       ...srs,
-      stability,
-      memoryStrength: this.stabilityToDisplayStrength(stability),
-      scheduler: 'fsrs-v6',
+      lastExposureDate: Math.max(srs.lastExposureDate ?? 0, now),
     };
   }
 

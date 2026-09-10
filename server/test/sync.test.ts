@@ -104,3 +104,54 @@ test('server revision outranks a skewed device timestamp', () => {
   assert.equal((merged.data as any).translation, 'server revision wins');
   assert.equal(merged.serverRevision, 5);
 });
+
+test('passive exposure recency merges independently from explicit review progress', () => {
+  const local = phrase([], 2);
+  local.srs = {
+    ...local.srs,
+    lastReviewDate: 20,
+    totalReviews: 2,
+    lastExposureDate: 30,
+  };
+  const remote = phrase([], 3);
+  remote.srs = {
+    ...remote.srs,
+    lastReviewDate: 10,
+    totalReviews: 1,
+    lastExposureDate: 40,
+  };
+
+  const merged = mergeDatasets([local], [remote])[0];
+  assert.equal(merged.srs.lastReviewDate, 20);
+  assert.equal(merged.srs.totalReviews, 2);
+  assert.equal(merged.srs.lastExposureDate, 40);
+});
+
+test('passive exposure changes the dirty-sync hash', () => {
+  const before = phrase([], 1);
+  const after = {
+    ...before,
+    srs: { ...before.srs, lastExposureDate: 123 },
+  };
+  assert.notEqual(getItemContentHash(before), getItemContentHash(after));
+});
+
+test('legacy passive strength is removed when an unreviewed sentence returns from the server', () => {
+  const base = phrase([], 1);
+  const local: StoredItem = {
+    ...base,
+    type: 'sentence',
+    data: { id: 'legacy-exposure', text: 'Still unreviewed.', sourceWord: '' },
+    srs: { ...base.srs, id: 'legacy-exposure', type: 'sentence', memoryStrength: 0, stability: 0.5 },
+  };
+  const remote: StoredItem = {
+    ...local,
+    updatedAt: 2,
+    srs: { ...local.srs, memoryStrength: 38, stability: 7 },
+  };
+
+  const merged = mergeDatasets([local], [remote])[0];
+  assert.equal(merged.srs.totalReviews, 0);
+  assert.equal(merged.srs.memoryStrength, 0);
+  assert.equal(merged.srs.stability, 0.5);
+});

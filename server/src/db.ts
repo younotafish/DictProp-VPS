@@ -877,6 +877,17 @@ export function upsertItem(item: any, userId: string): UpsertResult {
                (incomingReview === existingReview && incomingReviews > existingReviews)) {
       srsChanged = true;
     }
+
+    // A passive listen is deliberately independent from FSRS review progress. Preserve its newest
+    // timestamp even when the other device owns the newer explicit review, and mark a newer incoming
+    // exposure as an SRS change so stale content cannot suppress its revision.
+    const incomingExposure = Number(item.srs?.lastExposureDate) || 0;
+    const existingExposure = Number(existingSrs?.lastExposureDate) || 0;
+    const latestExposure = Math.max(incomingExposure, existingExposure);
+    if ((Number(selectedSrs?.lastExposureDate) || 0) !== latestExposure) {
+      selectedSrs = { ...selectedSrs, lastExposureDate: latestExposure };
+    }
+    if (incomingExposure > existingExposure) srsChanged = true;
   }
 
   // Ignore stale content while still accepting a newer review selected above.
