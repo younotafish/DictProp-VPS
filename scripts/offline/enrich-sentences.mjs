@@ -147,9 +147,15 @@ function validateAnalysis(candidate, sourceRecord) {
     const seenGrammarPoints = new Set();
     for (const point of analysis.grammar.points) {
       if (!point || !validString(point.label) || !validString(point.excerpt) ||
-          !validString(point.explanation) || !sentenceGrammarExcerptMatchesText(sentenceText, point.excerpt) ||
+          !validString(point.explanation) ||
           [point.label, point.excerpt, point.explanation].some(leakedPlaceholder)) {
         throw new Error(`${id}: invalid grammar point`);
+      }
+      if (!sentenceGrammarExcerptMatchesText(sentenceText, point.excerpt)) {
+        throw new Error(
+          `${id}: grammar excerpt ${JSON.stringify(point.excerpt)} is not an exact quote from ` +
+          `${JSON.stringify(sentenceText)}; preserve even awkward source wording and punctuation`,
+        );
       }
       const pointKey = `${normalizedValue(point.label)}\0${point.excerpt}`;
       if (seenGrammarPoints.has(pointKey)) throw new Error(`${id}: duplicate grammar point`);
