@@ -261,10 +261,14 @@ EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
 BASE_EXPECTED="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' \
   "$BASE_IMAGE_ROOT/targets.json")"
 BASE_ACCEPTED="$(find "$BASE_IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ] || \
-    pgrep -f "run-streaming-image-quality-loop.sh $BASE_IMAGE_ROOT/targets.json" >/dev/null 2>&1; then
-  log "bulk image pipeline is still active at $BASE_ACCEPTED/$BASE_EXPECTED; incremental images are queued"
+if pgrep -f '[r]un-streaming-image-quality-loop\.sh' >/dev/null 2>&1; then
+  log "another local image pipeline is active; incremental images are queued"
   exit 0
+fi
+if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ]; then
+  # A tiny hard tail may exhaust the independent bulk QA loop. It remains visible in production
+  # coverage reports, but must not permanently starve every example discovered afterwards.
+  log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
 fi
 
 TARGET_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
