@@ -34,6 +34,7 @@ for (const excludeArg of excludeArgs) {
   if (published?.version !== 1 || !Array.isArray(published.entries)) {
     throw new Error(`Published manifest is invalid: ${excludeArg}`);
   }
+  if (Number(published.generatedAt || 0) < Number(source.exportedAt || 0)) continue;
   for (const entry of published.entries) {
     if (typeof entry?.id !== 'string' || !entry.id) throw new Error(`Published manifest has an invalid id: ${excludeArg}`);
     const current = sourceById.get(entry.id);
@@ -46,6 +47,7 @@ for (const excludeArg of excludeArgs) {
 
 const selected = [];
 for (const sentence of source.sentences) {
+  if (sentence.hasImage === true) continue;
   if (publishedIds.has(sentence.id)) continue;
   const analysisEntry = analysisById.get(sentence.id);
   const imageEntry = imageById.get(sentence.id);

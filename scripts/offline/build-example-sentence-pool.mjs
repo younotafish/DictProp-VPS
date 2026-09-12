@@ -12,6 +12,11 @@ if (!corpusArg || !outputArg) {
 const source = JSON.parse(readFileSync(resolve(corpusArg), 'utf8'));
 const records = Array.isArray(source?.items) ? source.items : source?.entries;
 if (!Array.isArray(records) || records.length === 0) throw new Error('Corpus input has no records');
+const enrichmentCoverage = new Map(
+  (Array.isArray(source?.exampleEnrichmentCoverage) ? source.exampleEnrichmentCoverage : [])
+    .filter(entry => typeof entry?.lookupHash === 'string')
+    .map(entry => [entry.lookupHash, entry]),
+);
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const plainSentence = value => String(value || '')
@@ -48,6 +53,7 @@ function addCard(record, card, cardIndex) {
       continue;
     }
     const lookupHash = sha256(normalized);
+    const prepared = enrichmentCoverage.get(lookupHash);
     const provenance = {
       parentId: record.id,
       parentType: record.type,
@@ -73,8 +79,8 @@ function addCard(record, card, cardIndex) {
       sourceSense: card.sense || '',
       textHash: sha256(text),
       lookupHash,
-      hasAnalysis: false,
-      hasImage: false,
+      hasAnalysis: prepared?.hasAnalysis === true,
+      hasImage: prepared?.hasImage === true,
       provenance: [provenance],
     });
   }
@@ -97,6 +103,8 @@ const output = {
   sentences,
   stats: {
     corpusRecords: records.length,
+    exampleEnrichmentCoverageAvailable: Array.isArray(source?.exampleEnrichmentCoverage),
+    exampleEnrichmentCoverageRows: enrichmentCoverage.size,
     savedSentenceTexts: savedTexts.size,
     exampleSlots,
     savedSlots,

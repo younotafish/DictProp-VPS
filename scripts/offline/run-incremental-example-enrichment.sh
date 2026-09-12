@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="${1:-data/offline-backfill/incremental-example-enrichment}"
 BASE_SOURCE="${2:-data/offline-backfill/example-sentence-pool/source.json}"
 BASE_IMAGE_ROOT="${3:-data/offline-backfill/example-sentence-pool/final-images}"
+BASE_ANALYSIS="${BASE_ANALYSIS:-$(dirname "$BASE_SOURCE")/final-reconciliation/final-analysis.json}"
 REQUIRED_DEPLOY_SHA="${4:-$(git rev-parse HEAD)}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
@@ -25,10 +26,11 @@ CURRENT_CORPUS="$ROOT/current-corpus.json"
 CURRENT_POOL="$ROOT/current-source.json"
 SOURCE="$ROOT/source.json"
 ANALYSIS_CACHE="$ROOT/analysis-cache.json"
+COMBINED_ANALYSIS_CACHE="$ROOT/combined-analysis-cache.json"
 RECONCILIATION="$ROOT/final-reconciliation"
 IMAGE_ROOT="$ROOT/final-images"
-PUBLISH_STATE="$ROOT/publish-state"
-ANALYSIS_PUBLISH_STATE="$ROOT/analysis-publish-state-detailed-v1"
+PUBLISH_STATE="$ROOT/publish-state-coverage-v2"
+ANALYSIS_PUBLISH_STATE="$ROOT/analysis-publish-state-coverage-v2"
 SAVED_ROOT="$ROOT/saved-sentences"
 SAVED_SOURCE="$SAVED_ROOT/source.json"
 SAVED_BASE_ANALYSIS="$SAVED_ROOT/current-base-analysis.json"
@@ -101,7 +103,7 @@ if pgrep -f '[n]ode scripts/offline/(enrich-sentences|enrich-sentence-grammar|ge
   exit 0
 fi
 
-for required in "$GH_BIN" "$KEY_FILE" "$BASE_SOURCE" "$BASE_IMAGE_ROOT/targets.json" "$TSX_BIN"; do
+for required in "$GH_BIN" "$KEY_FILE" "$BASE_SOURCE" "$BASE_ANALYSIS" "$BASE_IMAGE_ROOT/targets.json" "$TSX_BIN"; do
   if [ ! -s "$required" ]; then
     echo "Required incremental enrichment input is missing: $required" >&2
     exit 1
@@ -216,8 +218,10 @@ if [ ! -s "$ANALYSIS_CACHE" ]; then
   "$NODE_BIN" -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({version:1,generatedAt:Date.now(),entries:[]},null,2)+"\n", {mode:0o600})' \
     "$ANALYSIS_CACHE"
 fi
+"$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
+  "$COMBINED_ANALYSIS_CACHE" "$BASE_ANALYSIS" "$ANALYSIS_CACHE"
 "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-  "$SOURCE" "$ANALYSIS_CACHE" "$RECONCILIATION"
+  "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION"
 MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
   "$RECONCILIATION/report.json")"
 if [ "$MISSING_COUNT" -gt 0 ]; then
@@ -226,9 +230,9 @@ if [ "$MISSING_COUNT" -gt 0 ]; then
   rm -f "$NEW_ANALYSIS"
   env CODEX_MODEL=gpt-5.5 CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
     "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
-    "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
+      "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
   "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-    "$SOURCE" "$ANALYSIS_CACHE" "$RECONCILIATION" "$NEW_ANALYSIS"
+    "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION" "$NEW_ANALYSIS"
 fi
 if [ ! -s "$RECONCILIATION/final-analysis.json" ]; then
   echo "Incremental sentence analysis reconciliation is incomplete" >&2
@@ -245,8 +249,9 @@ if [ "$MISSING_GRAMMAR_COUNT" -gt 0 ]; then
   mv "$RECONCILIATION/final-analysis.json.tmp" "$RECONCILIATION/final-analysis.json"
 fi
 apply_reviewed_ipa "$SOURCE" "$RECONCILIATION/final-analysis.json" "$ROOT"
-cp "$RECONCILIATION/final-analysis.json" "$ANALYSIS_CACHE.tmp"
-mv "$ANALYSIS_CACHE.tmp" "$ANALYSIS_CACHE"
+"$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
+  "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE" "$RECONCILIATION/final-analysis.json"
+mv "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE"
 "$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
   "$SOURCE" "$RECONCILIATION/final-analysis.json"
 log "publishing validated explanations before their images"
@@ -256,29 +261,35 @@ EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
   scripts/offline/dispatch-staged-example-analyses.sh "$ROOT" 2000 "$REQUIRED_DEPLOY_SHA"
 
 "$NODE_BIN" scripts/offline/prepare-sentence-images.mjs \
-  "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT" baidu/ERNIE-Image-Turbo
-
-BASE_EXPECTED="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' \
-  "$BASE_IMAGE_ROOT/targets.json")"
-BASE_ACCEPTED="$(find "$BASE_IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
-if pgrep -f '[r]un-streaming-image-quality-loop\.sh' >/dev/null 2>&1; then
-  log "another local image pipeline is active; incremental images are queued"
-  exit 0
-fi
-if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ]; then
-  # A tiny hard tail may exhaust the independent bulk QA loop. It remains visible in production
-  # coverage reports, but must not permanently starve every example discovered afterwards.
-  log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
-fi
-
-TARGET_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
+  "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT" baidu/ERNIE-Image-Turbo \
+  "$BASE_IMAGE_ROOT/images"
+IMAGE_TARGET_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' \
   "$IMAGE_ROOT/targets.json")"
-log "generating and judging incremental example images locally"
-env CODEX_CONCURRENCY="$IMAGE_QA_CONCURRENCY" IMAGE_MODEL=ernie-image-turbo \
-  IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
-  bash scripts/offline/run-streaming-image-quality-loop.sh \
-  "$IMAGE_ROOT/targets.json" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
-  "$IMAGE_ROOT/streaming-quality/$TARGET_FINGERPRINT" 1024 576 4 1 64
+
+if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
+  BASE_EXPECTED="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' \
+    "$BASE_IMAGE_ROOT/targets.json")"
+  BASE_ACCEPTED="$(find "$BASE_IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
+  if pgrep -f '[r]un-streaming-image-quality-loop\.sh' >/dev/null 2>&1; then
+    log "another local image pipeline is active; incremental images are queued"
+    exit 0
+  fi
+  if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ]; then
+    # A tiny hard tail may exhaust the independent bulk QA loop. It remains visible in production
+    # coverage reports, but must not permanently starve every example discovered afterwards.
+    log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
+  fi
+  TARGET_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
+    "$IMAGE_ROOT/targets.json")"
+  log "generating and judging $IMAGE_TARGET_COUNT missing example image(s) locally"
+  env CODEX_CONCURRENCY="$IMAGE_QA_CONCURRENCY" IMAGE_MODEL=ernie-image-turbo \
+    IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
+    bash scripts/offline/run-streaming-image-quality-loop.sh \
+    "$IMAGE_ROOT/targets.json" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
+    "$IMAGE_ROOT/streaming-quality/$TARGET_FINGERPRINT" 1024 576 4 1 64
+else
+  log "production already covers every image in the repair source"
+fi
 
 "$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
   "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT"

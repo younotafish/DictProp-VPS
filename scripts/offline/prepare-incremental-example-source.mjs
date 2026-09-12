@@ -32,15 +32,36 @@ const previous = previousArg
   ? readSource(previousArg, 'Previous incremental sentence source', true)
   : { source: null, byId: new Map() };
 
-// Keep the incremental source monotonic. This makes publication resumable even if an old example is
-// later edited or removed. The lookup identity ignores learning markup, so the first verified version
-// remains valid for later markup-only changes and does not need to be republished under the same id.
-const incremental = new Map(previous.byId);
+// Legacy exports without coverage stay monotonic for compatibility. Once the export reports live
+// coverage, retain the first text/hash identity only for sentences that remain in the current corpus.
+// The lookup identity ignores learning markup, so markup-only changes do not require regeneration.
+const coverageAvailable = current.source.stats?.exampleEnrichmentCoverageAvailable === true;
+// Once production coverage is available, the live corpus is authoritative. Historical entries that
+// are no longer referenced do not need repeated repair attempts; if they return later, their server
+// coverage will decide whether they are re-added.
+const incremental = coverageAvailable ? new Map() : new Map(previous.byId);
 let newlyDiscovered = 0;
+let coverageRepairs = 0;
 for (const [id, sentence] of current.byId) {
-  if (baseline.byId.has(id)) continue;
-  if (incremental.has(id)) continue;
-  newlyDiscovered++;
+  const prior = previous.byId.get(id);
+  const needsCoverageRepair = coverageAvailable &&
+    (sentence.hasAnalysis !== true || sentence.hasImage !== true);
+  if (coverageAvailable && !needsCoverageRepair) continue;
+  if (prior) {
+    // Preserve the first published text/hash identity, while refreshing server coverage flags used
+    // to decide which analysis and image waves still need publication.
+    incremental.set(id, {
+      ...prior,
+      ...(coverageAvailable ? {
+        hasAnalysis: sentence.hasAnalysis === true,
+        hasImage: sentence.hasImage === true,
+      } : {}),
+    });
+    continue;
+  }
+  if (baseline.byId.has(id) && !needsCoverageRepair) continue;
+  if (baseline.byId.has(id)) coverageRepairs++;
+  else newlyDiscovered++;
   incremental.set(id, sentence);
 }
 
@@ -60,6 +81,10 @@ const output = {
     baselineSentences: baseline.byId.size,
     currentSentences: current.byId.size,
     newlyDiscovered,
+    coverageRepairs,
+    retired: coverageAvailable
+      ? [...previous.byId.keys()].filter(id => !current.byId.has(id)).length
+      : 0,
   },
 };
 const outputPath = resolve(outputArg);
@@ -70,5 +95,7 @@ process.stdout.write(`${JSON.stringify({
   currentSentences: current.byId.size,
   previousIncremental: previous.byId.size,
   newlyDiscovered,
+  coverageRepairs,
+  retired: output.stats.retired,
   incrementalSentences: sentences.length,
 }, null, 2)}\n`);

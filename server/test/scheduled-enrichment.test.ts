@@ -32,7 +32,8 @@ test('production and local enrichment schedules both run every six hours', () =>
   assert.match(runner, /generate-sentence-natural-ipa\.mjs/);
   assert.match(runner, /apply-reviewed-natural-ipa\.mjs/);
   assert.match(runner, /shlock -f "\$LOCK_FILE" -p "\$\$"/);
-  assert.match(runner, /analysis-publish-state-detailed-v1/);
+  assert.match(runner, /analysis-publish-state-coverage-v2/);
+  assert.match(runner, /publish-state-coverage-v2/);
   assert.match(runner, /another local image pipeline is active/);
   assert.match(runner, /continuing with incremental images/);
   for (const publisher of recurringPublishers) {

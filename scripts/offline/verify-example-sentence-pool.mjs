@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, analysisArg, imageBundleArg] = process.argv.slice(2);
@@ -70,6 +70,7 @@ if (imageBundleArg) {
   for (const target of targets.targets) {
     const sentence = sourceById.get(target?.imageId);
     if (!sentence) throw new Error(`Image target has no source: ${target?.imageId}`);
+    if (sentence.hasImage === true) throw new Error(`Image target is already covered in production: ${target?.imageId}`);
     if (targetsById.has(target.imageId)) throw new Error(`Duplicate image target: ${target.imageId}`);
     const expectedFilename = `${sha256(target.imageId).slice(0, 32)}.webp`;
     if (target.filename !== expectedFilename) throw new Error(`${target.imageId}: unexpected image filename`);
@@ -78,9 +79,13 @@ if (imageBundleArg) {
     }
     targetsById.set(target.imageId, target);
   }
-  if (targetsById.size !== sourceById.size) throw new Error('Image target coverage mismatch');
-  const targetFilenames = new Set([...targetsById.values()].map(target => target.filename));
-
+  const requiredImageIds = new Set(
+    [...sourceById.values()].filter(sentence => sentence.hasImage !== true).map(sentence => sentence.id),
+  );
+  if (targetsById.size !== requiredImageIds.size ||
+      [...requiredImageIds].some(id => !targetsById.has(id))) {
+    throw new Error('Image target coverage mismatch');
+  }
   const manifestById = new Map();
   for (const entry of manifest.entries) {
     if (manifestById.has(entry.id)) throw new Error(`Duplicate image manifest entry: ${entry.id}`);
@@ -101,14 +106,9 @@ if (imageBundleArg) {
     imageCount++;
     manifestById.set(entry.id, entry);
   }
-  if (manifestById.size !== sourceById.size) throw new Error('Image manifest coverage mismatch');
-
-  const actualFiles = readdirSync(join(imageBundleDir, 'images')).filter(name => name.endsWith('.webp'));
-  if (actualFiles.length !== imageCount) throw new Error('Image directory contains missing or extra WebP files');
-  for (const filename of actualFiles) {
-    if (!targetFilenames.has(basename(filename))) {
-      throw new Error(`Unexpected image file: ${filename}`);
-    }
+  if (manifestById.size !== requiredImageIds.size ||
+      [...requiredImageIds].some(id => !manifestById.has(id))) {
+    throw new Error('Image manifest coverage mismatch');
   }
 }
 
@@ -119,6 +119,7 @@ process.stdout.write(`${JSON.stringify({
   analysisBytes,
   averageAnalysisBytes: Math.round(analysisBytes / analysisById.size),
   images: imageCount,
+  productionCoveredImages: [...sourceById.values()].filter(sentence => sentence.hasImage === true).length,
   imageBytes,
   averageImageBytes: imageCount ? Math.round(imageBytes / imageCount) : 0,
   verified: true,

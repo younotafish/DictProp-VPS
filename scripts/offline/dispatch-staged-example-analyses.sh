@@ -25,8 +25,21 @@ publisher_state_dir() {
 }
 
 manifest_count() {
+  local source="$1"
+  shift
   if [ "$#" -eq 0 ]; then printf '0\n'; return; fi
-  node -e 'const fs=require("fs"); const ids=new Set(); for(const path of process.argv.slice(1)) for(const entry of JSON.parse(fs.readFileSync(path)).entries) ids.add(entry.id); console.log(ids.size)' "$@"
+  node -e 'const fs=require("fs"); const source=JSON.parse(fs.readFileSync(process.argv[1])); const targets=new Set(source.sentences.filter(entry => entry.hasAnalysis !== true).map(entry => entry.id)); const ids=new Set(); for(const path of process.argv.slice(2)){const manifest=JSON.parse(fs.readFileSync(path)); if(Number(manifest.generatedAt||0)<Number(source.exportedAt||0)) continue; for(const entry of manifest.entries) if(targets.has(entry.id)) ids.add(entry.id)} console.log(ids.size)' "$source" "$@"
+}
+
+next_wave_number() {
+  local next=1 wave_dir suffix number
+  while IFS= read -r wave_dir; do
+    suffix="${wave_dir##*/wave-}"
+    number=$((10#$suffix))
+    if [ "$number" -ge "$next" ]; then next=$((number + 1)); fi
+  done < <(find "$STATE_ROOT" -mindepth 1 -maxdepth 1 -type d \
+    -name 'wave-[0-9][0-9][0-9][0-9]' | sort)
+  printf '%s\n' "$next"
 }
 
 if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ] || [ "$BATCH_SIZE" -gt 2000 ]; then
@@ -40,7 +53,7 @@ for required in "$SOURCE" "$ANALYSIS" "$KEY_FILE"; do
   fi
 done
 
-TOTAL_COUNT="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).sentences.length)' "$SOURCE")"
+TOTAL_COUNT="$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1])); console.log(x.sentences.filter(entry => entry.hasAnalysis !== true).length)' "$SOURCE")"
 mkdir -p "$STATE_ROOT"
 
 while IFS= read -r tag_file; do
@@ -57,14 +70,14 @@ done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json 
 
 while :; do
   if [ "${#PUBLISHED_MANIFESTS[@]}" -eq 0 ]; then PUBLISHED_COUNT=0
-  else PUBLISHED_COUNT="$(manifest_count "${PUBLISHED_MANIFESTS[@]}")"; fi
+  else PUBLISHED_COUNT="$(manifest_count "$SOURCE" "${PUBLISHED_MANIFESTS[@]}")"; fi
   if [ "$PUBLISHED_COUNT" -ge "$TOTAL_COUNT" ]; then
     printf '%s\n' "$PUBLISHED_COUNT" > "$STATE_ROOT/complete"
     log "example-sentence analysis publication complete: $PUBLISHED_COUNT/$TOTAL_COUNT"
     exit 0
   fi
 
-  WAVE_NUMBER=$((${#PUBLISHED_MANIFESTS[@]} + 1))
+  WAVE_NUMBER="$(next_wave_number)"
   WAVE_NAME="wave-$(printf '%04d' "$WAVE_NUMBER")"
   WAVE_DIR="$STATE_ROOT/$WAVE_NAME"
   mkdir -p "$WAVE_DIR"

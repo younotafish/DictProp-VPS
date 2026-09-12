@@ -38,6 +38,7 @@ for (const excludeArg of excludeArgs) {
   if (published?.version !== 1 || !Array.isArray(published.entries)) {
     throw new Error(`Published manifest is invalid: ${excludeArg}`);
   }
+  if (Number(published.generatedAt || 0) < Number(source.exportedAt || 0)) continue;
   for (const entry of published.entries) {
     if (typeof entry?.id !== 'string' || !entry.id) throw new Error(`Published manifest has an invalid id: ${excludeArg}`);
     publishedIds.add(entry.id);
@@ -51,6 +52,7 @@ for (const sentence of source.sentences) {
     throw new Error('Sentence source has an invalid or duplicate id');
   }
   sourceIds.add(sentence.id);
+  if (sentence.hasAnalysis === true) continue;
   if (publishedIds.has(sentence.id)) continue;
   const entry = analysisById.get(sentence.id);
   if (!entry || entry.textHash !== sentence.textHash) {

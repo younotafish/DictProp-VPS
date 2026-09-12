@@ -7,7 +7,7 @@ import test from 'node:test';
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-db-test-'));
 
-const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
+const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const makeItem = (
@@ -207,6 +207,47 @@ test('saving a prepared example sentence attaches its analysis and deduplicated 
   }, 'enrichment-user');
   assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, blobsBefore + 1);
   assert.equal((db.prepare('SELECT COUNT(*) AS count FROM item_images WHERE user_id = ?').get('enrichment-user') as { count: number }).count, 2);
+});
+
+test('a late image repairs a newer sentence analysis without replacing its content', () => {
+  const text = 'A late image should not overwrite newer analysis.';
+  const lookupHash = sentenceLookupHash(text);
+  const image = Buffer.concat([
+    Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+    Buffer.from('late-image'),
+  ]);
+  const identity = {
+    id: `example-${lookupHash.slice(0, 40)}`,
+    text,
+    lookupHash,
+    textHash: createHash('sha256').update(text).digest('hex'),
+  };
+  const newerAnalysis = {
+    translation: 'newer',
+    americanEnglish: { status: 'shared' as const, explanation: 'Newer analysis.' },
+    terms: [],
+    imagePrompt: 'newer prompt',
+  };
+  const staleAnalysis = {
+    translation: 'stale',
+    americanEnglish: { status: 'shared' as const, explanation: 'Stale analysis.' },
+    terms: [],
+    imagePrompt: 'stale prompt',
+  };
+
+  assert.deepEqual(upsertSentenceEnrichment({
+    entry: { ...identity, analysis: newerAnalysis, generatedAt: 20_000 },
+  }), { status: 'inserted', imageStored: false });
+  assert.deepEqual(upsertSentenceEnrichment({
+    entry: { ...identity, analysis: staleAnalysis, generatedAt: 10_000 },
+    image,
+    mimeType: 'image/png',
+  }), { status: 'updated', imageStored: true });
+
+  const stored = getSentenceEnrichmentForText(text);
+  assert.deepEqual(stored?.analysis, newerAnalysis);
+  assert.equal(stored?.generatedAt, 20_000);
+  assert.ok(stored?.imageContentHash);
 });
 
 test('server revisions reject stale content independently of device clocks', () => {

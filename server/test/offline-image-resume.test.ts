@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -82,7 +83,7 @@ test('streaming image QA reuses historical rejections accepted by a later candid
     historicallyRejected.map(target => target.imageId));
 });
 
-test('example enrichment publication excludes only current image-bearing entries', () => {
+test('example enrichment publication excludes published and production-covered images', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-image-publication-'));
   const imageRoot = join(root, 'image-bundle');
   const imageDirectory = join(imageRoot, 'images');
@@ -95,6 +96,7 @@ test('example enrichment publication excludes only current image-bearing entries
     lookupHash: `lookup-${id}`,
     textHash: `text-${id}`,
   }));
+  (sentences[2] as any).hasImage = true;
   const source = join(root, 'source.json');
   const analysis = join(root, 'analysis.json');
   const analysisOnly = join(root, 'analysis-only.json');
@@ -148,6 +150,67 @@ test('example enrichment publication excludes only current image-bearing entries
   assert.equal(result.previouslyPublished, 1);
   assert.deepEqual(manifest.entries.map((entry: { id: string }) => entry.id), [
     sentences[0].id,
-    sentences[2].id,
   ]);
+});
+
+test('sentence image preparation reuses a verified baseline image', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-image-fallback-'));
+  const sourcePath = join(root, 'source.json');
+  const analysisPath = join(root, 'analysis.json');
+  const outputRoot = join(root, 'output');
+  const fallbackRoot = join(root, 'fallback');
+  const id = 'example-reused-image';
+  const coveredId = 'example-production-covered-image';
+  const filename = `${createHash('sha256').update(id).digest('hex').slice(0, 32)}.webp`;
+  mkdirSync(fallbackRoot, { recursive: true });
+  writeFileSync(join(fallbackRoot, filename), 'baseline-image');
+  writeJson(sourcePath, {
+    version: 1,
+    sentences: [
+      { id, text: 'A reusable image.', textHash: 'text-hash', lookupHash: 'lookup' },
+      {
+        id: coveredId,
+        text: 'Production already has this image.',
+        textHash: 'covered-hash',
+        lookupHash: 'covered-lookup',
+        hasImage: true,
+      },
+    ],
+  });
+  writeJson(analysisPath, {
+    version: 1,
+    generatedAt: 1,
+    entries: [
+      { id, textHash: 'text-hash', analysis: { imagePrompt: 'A reusable image.' }, generatedAt: 1 },
+      {
+        id: coveredId,
+        textHash: 'covered-hash',
+        analysis: { imagePrompt: 'A covered image.' },
+        generatedAt: 1,
+      },
+    ],
+  });
+
+  execFileSync(process.execPath, [
+    resolve('..', 'scripts', 'offline', 'prepare-sentence-images.mjs'),
+    sourcePath,
+    analysisPath,
+    outputRoot,
+    'test-model',
+    fallbackRoot,
+  ]);
+
+  assert.equal(readFileSync(join(outputRoot, 'images', filename), 'utf8'), 'baseline-image');
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(outputRoot, 'targets.json'), 'utf8')).targets.map(
+      (target: { imageId: string }) => target.imageId,
+    ),
+    [id],
+  );
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(outputRoot, 'manifest.json'), 'utf8')).entries.map(
+      (entry: { id: string }) => entry.id,
+    ),
+    [id],
+  );
 });

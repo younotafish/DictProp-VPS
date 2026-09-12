@@ -50,7 +50,7 @@ manifest_count() {
   local source="$1"
   shift
   if [ "$#" -eq 0 ]; then printf '0\n'; return; fi
-  node -e 'const fs=require("fs"); const source=JSON.parse(fs.readFileSync(process.argv[1])); const current=new Map(source.sentences.map(entry => [entry.id, entry.textHash])); const ids=new Set(); for(const path of process.argv.slice(2)) for(const entry of JSON.parse(fs.readFileSync(path)).entries) if (typeof entry.imageFile === "string" && entry.imageFile && current.get(entry.id) === entry.textHash) ids.add(entry.id); console.log(ids.size)' "$source" "$@"
+  node -e 'const fs=require("fs"); const source=JSON.parse(fs.readFileSync(process.argv[1])); const current=new Map(source.sentences.filter(entry => entry.hasImage !== true).map(entry => [entry.id, entry.textHash])); const ids=new Set(); for(const path of process.argv.slice(2)){const manifest=JSON.parse(fs.readFileSync(path)); if(Number(manifest.generatedAt||0)<Number(source.exportedAt||0)) continue; for(const entry of manifest.entries) if(typeof entry.imageFile === "string" && entry.imageFile && current.get(entry.id) === entry.textHash) ids.add(entry.id)} console.log(ids.size)' "$source" "$@"
 }
 
 next_wave_number() {
@@ -75,7 +75,7 @@ fi
 
 log "waiting for reconciled example-sentence metadata and image targets"
 while [ ! -s "$SOURCE" ] || [ ! -s "$ANALYSIS" ] || [ ! -s "$IMAGE_ROOT/manifest.json" ]; do sleep 300; done
-TOTAL_COUNT="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).sentences.length)' "$SOURCE")"
+TOTAL_COUNT="$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1])); console.log(x.sentences.filter(entry => entry.hasImage !== true).length)' "$SOURCE")"
 mkdir -p "$STATE_ROOT"
 
 # Recover a remotely completed wave after a local publisher restart.
@@ -100,7 +100,7 @@ while :; do
     exit 0
   fi
 
-  ACCEPTED_COUNT="$(find "$IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
+  ACCEPTED_COUNT="$(node -e 'const fs=require("fs"),crypto=require("crypto"),path=require("path"); const source=JSON.parse(fs.readFileSync(process.argv[1])); const imageRoot=process.argv[2]; console.log(source.sentences.filter(entry => entry.hasImage !== true && fs.existsSync(path.join(imageRoot, crypto.createHash("sha256").update(entry.id).digest("hex").slice(0,32)+".webp"))).length)' "$SOURCE" "$IMAGE_ROOT/images")"
   READY_COUNT=$((ACCEPTED_COUNT - PUBLISHED_COUNT))
   if [ "$READY_COUNT" -lt "$BATCH_SIZE" ] && [ "$ACCEPTED_COUNT" -lt "$TOTAL_COUNT" ]; then
     log "$READY_COUNT unpublished enrichments ready; waiting for batch size $BATCH_SIZE"

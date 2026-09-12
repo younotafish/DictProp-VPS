@@ -322,6 +322,14 @@ const imageStmts = {
 
 const sentenceEnrichmentStmts = {
   get: db.prepare(`SELECT * FROM sentence_enrichments WHERE lookup_hash = ?`),
+  hasImage: db.prepare(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM sentence_enrichments e
+      JOIN image_blobs b ON b.content_hash = e.image_content_hash
+      WHERE e.lookup_hash = ? AND b.byte_length > 0
+    ) AS has_image
+  `),
   getImage: db.prepare(`
     SELECT b.data, e.image_mime_type
     FROM sentence_enrichments e
@@ -329,6 +337,13 @@ const sentenceEnrichmentStmts = {
     WHERE e.lookup_hash = ?
   `),
   count: db.prepare(`SELECT COUNT(*) AS count FROM sentence_enrichments`),
+  attachImage: db.prepare(`
+    UPDATE sentence_enrichments
+    SET image_content_hash = @image_content_hash,
+        image_mime_type = @image_mime_type,
+        updated_at = @updated_at
+    WHERE lookup_hash = @lookup_hash
+  `),
   upsert: db.prepare(`
     INSERT INTO sentence_enrichments (
       lookup_hash, source_id, text_hash, source_text, analysis, generated_at,
@@ -457,7 +472,14 @@ export function getSentenceEnrichmentImage(lookupHash: string): {
 export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord): SentenceEnrichmentImportResult {
   const { entry, image, mimeType } = record;
   const existing = sentenceEnrichmentStmts.get.get(entry.lookupHash) as SentenceEnrichmentRow | undefined;
-  if (existing && existing.generated_at > entry.generatedAt) return { status: 'stale', imageStored: false };
+  const existingHasImage = existing
+    ? (sentenceEnrichmentStmts.hasImage.get(entry.lookupHash) as { has_image: number }).has_image === 1
+    : false;
+  const attachImageToNewerAnalysis = !!existing && existing.generated_at > entry.generatedAt &&
+    !!image && !!mimeType && !existingHasImage;
+  if (existing && existing.generated_at > entry.generatedAt && !attachImageToNewerAnalysis) {
+    return { status: 'stale', imageStored: false };
+  }
 
   let imageContentHash: string | null = existing?.image_content_hash ?? null;
   let imageMimeType: string | null = existing?.image_mime_type ?? null;
@@ -476,6 +498,21 @@ export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord)
       created_at: entry.generatedAt,
     });
     imageStored = inserted.changes > 0;
+  }
+
+  // Media and analysis can finish in separate resumable waves. A verified late image may repair a
+  // newer analysis row, but must never replace that row's text, analysis, or generation timestamp.
+  if (attachImageToNewerAnalysis) {
+    sentenceEnrichmentStmts.attachImage.run({
+      lookup_hash: entry.lookupHash,
+      image_content_hash: imageContentHash,
+      image_mime_type: imageMimeType,
+      updated_at: Date.now(),
+    });
+    if (existing.image_content_hash && existing.image_content_hash !== imageContentHash) {
+      imageStmts.deleteUnreferencedBlob.run(existing.image_content_hash);
+    }
+    return { status: 'updated', imageStored };
   }
 
   const analysis = JSON.stringify(entry.analysis);

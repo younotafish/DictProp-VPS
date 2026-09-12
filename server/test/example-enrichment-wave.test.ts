@@ -80,7 +80,9 @@ test('example analysis waves publish validated content without waiting for image
   const output = join(root, 'wave');
   const first = sentence('The first [[example]] has an explanation.');
   const second = sentence('The second [[example]] has an explanation.');
-  const entries = [first, second].map((value, index) => ({
+  const third = sentence('The third [[example]] has an explanation.');
+  (second as any).hasAnalysis = true;
+  const entries = [first, second, third].map((value, index) => ({
     id: value.id,
     textHash: value.textHash,
     analysis,
@@ -89,7 +91,7 @@ test('example analysis waves publish validated content without waiting for image
   const sourcePath = join(root, 'source.json');
   const analysisPath = join(root, 'analysis.json');
   const excludedPath = join(root, 'published.json');
-  writeFileSync(sourcePath, JSON.stringify({ version: 1, sentences: [first, second] }));
+  writeFileSync(sourcePath, JSON.stringify({ version: 1, sentences: [first, second, third] }));
   writeFileSync(analysisPath, JSON.stringify({ version: 1, entries }));
   writeFileSync(excludedPath, JSON.stringify({ version: 1, entries: [{ id: first.id }] }));
 
@@ -101,9 +103,51 @@ test('example analysis waves publish validated content without waiting for image
     '1',
     excludedPath,
   ], { encoding: 'utf8' });
-  assert.deepEqual(JSON.parse(stdout), { sourceEntries: 2, previouslyPublished: 1, waveEntries: 1 });
+  assert.deepEqual(JSON.parse(stdout), { sourceEntries: 3, previouslyPublished: 1, waveEntries: 1 });
   const manifest = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8'));
-  assert.equal(manifest.entries[0].id, second.id);
+  assert.equal(manifest.entries[0].id, third.id);
   assert.equal(manifest.entries[0].imageFile, undefined);
   assert.equal(manifest.entries[0].analysis.translation, analysis.translation);
+});
+
+test('example waves ignore publication manifests older than the production snapshot', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-stale-enrichment-wave-'));
+  const imageRoot = join(root, 'image-bundle');
+  const analysisOutput = join(root, 'analysis-wave');
+  const imageOutput = join(root, 'image-wave');
+  mkdirSync(join(imageRoot, 'images'), { recursive: true });
+  const target = sentence('This [[example]] is still missing in production.');
+  const entry = { id: target.id, textHash: target.textHash, analysis, generatedAt: 101 };
+  const imageEntry = { ...entry, imageFile: 'images/target.webp' };
+  const sourcePath = join(root, 'source.json');
+  const analysisPath = join(root, 'analysis.json');
+  const stalePath = join(root, 'stale.json');
+  writeFileSync(sourcePath, JSON.stringify({ version: 1, exportedAt: 100, sentences: [target] }));
+  writeFileSync(analysisPath, JSON.stringify({ version: 1, entries: [entry] }));
+  writeFileSync(join(imageRoot, 'manifest.json'), JSON.stringify({ version: 1, entries: [imageEntry] }));
+  writeFileSync(join(imageRoot, imageEntry.imageFile), Buffer.from('image'));
+  writeFileSync(stalePath, JSON.stringify({ version: 1, generatedAt: 99, entries: [imageEntry] }));
+
+  const analysisResult = JSON.parse(execFileSync(process.execPath, [
+    resolve('..', 'scripts/offline/prepare-example-analysis-wave.mjs'),
+    sourcePath,
+    analysisPath,
+    analysisOutput,
+    '1',
+    stalePath,
+  ], { encoding: 'utf8' }));
+  const imageResult = JSON.parse(execFileSync(process.execPath, [
+    resolve('..', 'scripts/offline/prepare-example-enrichment-wave.mjs'),
+    sourcePath,
+    analysisPath,
+    imageRoot,
+    imageOutput,
+    '1',
+    stalePath,
+  ], { encoding: 'utf8' }));
+
+  assert.equal(analysisResult.previouslyPublished, 0);
+  assert.equal(analysisResult.waveEntries, 1);
+  assert.equal(imageResult.previouslyPublished, 0);
+  assert.equal(imageResult.waveEntries, 1);
 });
