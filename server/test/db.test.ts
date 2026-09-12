@@ -209,7 +209,7 @@ test('saving a prepared example sentence attaches its analysis and deduplicated 
   assert.equal((db.prepare('SELECT COUNT(*) AS count FROM item_images WHERE user_id = ?').get('enrichment-user') as { count: number }).count, 2);
 });
 
-test('a late image repairs a newer sentence analysis without replacing its content', () => {
+test('a late image repairs media without replacing a complete sentence analysis', () => {
   const text = 'A late image should not overwrite newer analysis.';
   const lookupHash = sentenceLookupHash(text);
   const image = Buffer.concat([
@@ -224,8 +224,22 @@ test('a late image repairs a newer sentence analysis without replacing its conte
   };
   const newerAnalysis = {
     translation: 'newer',
-    americanEnglish: { status: 'shared' as const, explanation: 'Newer analysis.' },
+    naturalSpeechIpa: '/ə ˈleɪt ˈɪmɪdʒ/',
+    americanEnglish: {
+      status: 'shared' as const,
+      explanation: 'Newer analysis.',
+      evidence: ['The sentence is natural.'],
+    },
     terms: [],
+    pronunciation: {
+      slowIpa: '/ə ˈleɪt ˈɪmɪdʒ/',
+      fastIpa: '/ə ˈleɪt ˈɪmɪdʒ/',
+      carefulSpeakerGuide: 'a LATE IM-age',
+      fastSpeechFeatures: ['The article is reduced.'],
+      intonationAndChunking: 'A late image ↘',
+      keyDifference: 'Fluent speech reduces the article.',
+    },
+    grammar: { structure: 'A noun phrase.', points: [] },
     imagePrompt: 'newer prompt',
   };
   const staleAnalysis = {
@@ -239,7 +253,7 @@ test('a late image repairs a newer sentence analysis without replacing its conte
     entry: { ...identity, analysis: newerAnalysis, generatedAt: 20_000 },
   }), { status: 'inserted', imageStored: false });
   assert.deepEqual(upsertSentenceEnrichment({
-    entry: { ...identity, analysis: staleAnalysis, generatedAt: 10_000 },
+    entry: { ...identity, analysis: staleAnalysis, generatedAt: 20_000 },
     image,
     mimeType: 'image/png',
   }), { status: 'updated', imageStored: true });

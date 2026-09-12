@@ -118,8 +118,37 @@ export function isSentenceGrammarAnalysis(value) {
       string(point.label, 300) && string(point.excerpt, 1_000) && string(point.explanation, 4_000));
 }
 
-export function isDetailedSentenceAnalysis(value) {
+function isSentencePronunciationGuide(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) &&
+    slashIpa(value.slowIpa) && slashIpa(value.fastIpa) &&
+    string(value.carefulSpeakerGuide, 4_000) &&
+    stringList(value.fastSpeechFeatures, { max: 6 }) &&
+    string(value.intonationAndChunking, 4_000) && string(value.keyDifference, 4_000);
+}
+
+// Mirrors the server's import contract. Production-covered analyses may use this legacy shape as
+// transport metadata for a missing image; the server preserves its newer complete analysis.
+export function isSentenceAnalysis(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const american = value.americanEnglish;
+  if (!string(value.translation) || !string(value.imagePrompt, 4_000)) return false;
+  if (value.naturalSpeechIpa !== undefined && !string(value.naturalSpeechIpa, 2_000)) return false;
+  if (value.grammar !== undefined && !isSentenceGrammarAnalysis(value.grammar)) return false;
+  if (value.pronunciation !== undefined && !isSentencePronunciationGuide(value.pronunciation)) return false;
+  if (!american || typeof american !== 'object' || Array.isArray(american) ||
+      !['american', 'shared', 'not_american'].includes(american.status) ||
+      !string(american.explanation, 4_000)) return false;
+  if (american.evidence !== undefined && !stringList(american.evidence, { max: 6 })) return false;
+  if (!Array.isArray(value.terms) || value.terms.length > 20) return false;
+  return value.terms.every(term => term && typeof term === 'object' && !Array.isArray(term) &&
+    string(term.term, 300) && string(term.chinese, 1_000) && string(term.ipa, 500) &&
+    string(term.originalMeaning, 4_000) && stringList(term.synonyms, { max: 12 }) &&
+    stringList(term.antonyms, { max: 12 }) && stringList(term.examples, { max: 5 }) &&
+    string(term.historicalEvolution, 4_000));
+}
+
+export function isDetailedSentenceAnalysis(value) {
+  if (!isSentenceAnalysis(value)) return false;
   const american = value.americanEnglish;
   const pronunciation = value.pronunciation;
   const grammar = value.grammar;

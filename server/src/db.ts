@@ -6,6 +6,7 @@ import { env } from './env.js';
 import { hasImageSignature } from './image-format.js';
 import { advanceReviewSrs } from './srs.js';
 import { sentenceLookupHash, type SentenceEnrichmentEntry } from './sentence-enrichment.js';
+import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
 
 // Ensure data directory exists
 mkdirSync(env.DATA_DIR, { recursive: true });
@@ -475,9 +476,19 @@ export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord)
   const existingHasImage = existing
     ? (sentenceEnrichmentStmts.hasImage.get(entry.lookupHash) as { has_image: number }).has_image === 1
     : false;
-  const attachImageToNewerAnalysis = !!existing && existing.generated_at > entry.generatedAt &&
-    !!image && !!mimeType && !existingHasImage;
-  if (existing && existing.generated_at > entry.generatedAt && !attachImageToNewerAnalysis) {
+  let existingAnalysisComplete = false;
+  if (existing) {
+    try {
+      existingAnalysisComplete = hasCompleteSentenceAnalysis(JSON.parse(existing.analysis));
+    } catch {
+      existingAnalysisComplete = false;
+    }
+  }
+  const preserveExistingAnalysis = existingAnalysisComplete && !hasCompleteSentenceAnalysis(entry.analysis);
+  const attachImageWithoutAnalysis = !!existing && !!image && !!mimeType && !existingHasImage &&
+    (existing.generated_at > entry.generatedAt || preserveExistingAnalysis);
+  if (existing && (existing.generated_at > entry.generatedAt || preserveExistingAnalysis) &&
+      !attachImageWithoutAnalysis) {
     return { status: 'stale', imageStored: false };
   }
 
@@ -502,7 +513,7 @@ export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord)
 
   // Media and analysis can finish in separate resumable waves. A verified late image may repair a
   // newer analysis row, but must never replace that row's text, analysis, or generation timestamp.
-  if (attachImageToNewerAnalysis) {
+  if (attachImageWithoutAnalysis) {
     sentenceEnrichmentStmts.attachImage.run({
       lookup_hash: entry.lookupHash,
       image_content_hash: imageContentHash,

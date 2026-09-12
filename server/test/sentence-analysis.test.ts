@@ -16,6 +16,7 @@ import {
 } from '../src/sentence-analysis.js';
 import {
   isDetailedSentenceAnalysis,
+  isSentenceAnalysis as isOfflineSentenceAnalysis,
   sentenceGrammarExcerptMatchesText as offlineSentenceGrammarExcerptMatchesText,
 } from '../../scripts/offline/sentence-analysis-contract.mjs';
 
@@ -91,6 +92,10 @@ test('server and offline detailed-analysis predicates stay in parity', () => {
     cases.map(value => isDetailedSentenceAnalysis(value)),
   );
   assert.deepEqual(cases.map(value => hasCompleteSentenceAnalysis(value)), [true, false, false, false, false]);
+  assert.deepEqual(
+    cases.map(value => isSentenceAnalysis(value)),
+    cases.map(value => isOfflineSentenceAnalysis(value)),
+  );
 });
 
 test('grammar response extraction tolerates harmless provider wrappers', () => {

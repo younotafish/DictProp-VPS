@@ -2,7 +2,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
+import { isDetailedSentenceAnalysis, isSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, baseAnalysisArg, outputDirArg, supplementalAnalysisArg] = process.argv.slice(2);
 if (!sourceArg || !baseAnalysisArg || !outputDirArg) {
@@ -15,6 +15,7 @@ const source = readJson(sourceArg);
 const baseAnalysis = readJson(baseAnalysisArg);
 const supplementalAnalysis = supplementalAnalysisArg ? readJson(supplementalAnalysisArg) : null;
 const outputDir = resolve(outputDirArg);
+const allowProductionCoveredBasic = process.env.ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS === '1';
 
 if (source?.version !== 1 || !Array.isArray(source.sentences) || source.sentences.length === 0) {
   throw new Error('Final sentence source is invalid or empty');
@@ -37,12 +38,12 @@ const incompleteSupplementalEntries = [];
 for (const entry of baseById.values()) {
   const sentence = finalById.get(entry.id);
   if (!sentence || sentence.textHash !== entry.textHash) staleBaseEntries.push(entry);
-  else if (!isDetailedSentenceAnalysis(entry.analysis)) incompleteBaseEntries.push(entry);
+  else if (!acceptableAnalysis(entry.analysis, sentence)) incompleteBaseEntries.push(entry);
 }
 for (const entry of supplementalById.values()) {
   const sentence = finalById.get(entry.id);
   if (!sentence || sentence.textHash !== entry.textHash) staleSupplementalEntries.push(entry);
-  else if (!isDetailedSentenceAnalysis(entry.analysis)) incompleteSupplementalEntries.push(entry);
+  else if (!acceptableAnalysis(entry.analysis, sentence)) incompleteSupplementalEntries.push(entry);
 }
 
 for (const sentence of source.sentences) {
@@ -160,5 +161,10 @@ function indexAnalyses(manifest, label) {
 
 function matchingEntry(entries, sentence) {
   const entry = entries.get(sentence.id);
-  return entry?.textHash === sentence.textHash && isDetailedSentenceAnalysis(entry.analysis) ? entry : null;
+  return entry?.textHash === sentence.textHash && acceptableAnalysis(entry.analysis, sentence) ? entry : null;
+}
+
+function acceptableAnalysis(analysis, sentence) {
+  return isDetailedSentenceAnalysis(analysis) ||
+    (allowProductionCoveredBasic && sentence?.hasAnalysis === true && isSentenceAnalysis(analysis));
 }

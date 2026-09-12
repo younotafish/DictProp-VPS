@@ -13,7 +13,6 @@ KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop
 NODE_BIN="${NODE_BIN:-node}"
 TSX_BIN="${TSX_BIN:-server/node_modules/.bin/tsx}"
 ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-8}"
-GRAMMAR_CONCURRENCY="${GRAMMAR_CONCURRENCY:-8}"
 IPA_CODEX_CONCURRENCY="${IPA_CODEX_CONCURRENCY:-4}"
 IPA_CLAUDE_CONCURRENCY="${IPA_CLAUDE_CONCURRENCY:-2}"
 IPA_META_CONCURRENCY="${IPA_META_CONCURRENCY:-2}"
@@ -220,17 +219,20 @@ if [ ! -s "$ANALYSIS_CACHE" ]; then
 fi
 "$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
   "$COMBINED_ANALYSIS_CACHE" "$BASE_ANALYSIS" "$ANALYSIS_CACHE"
+ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
 "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
   "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION"
 MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
   "$RECONCILIATION/report.json")"
 if [ "$MISSING_COUNT" -gt 0 ]; then
-  log "generating local GPT-5.5 explanations for $MISSING_COUNT newly discovered example sentence(s)"
+  log "generating local GPT-5.5 explanations for $MISSING_COUNT production gap(s)"
   NEW_ANALYSIS="$ROOT/new-analysis.json"
   rm -f "$NEW_ANALYSIS"
   env CODEX_MODEL=gpt-5.5 CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
     "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
+  apply_reviewed_ipa "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-repair"
+  ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
   "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
     "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION" "$NEW_ANALYSIS"
 fi
@@ -238,17 +240,6 @@ if [ ! -s "$RECONCILIATION/final-analysis.json" ]; then
   echo "Incremental sentence analysis reconciliation is incomplete" >&2
   exit 1
 fi
-MISSING_GRAMMAR_COUNT="$($NODE_BIN -e 'const v=JSON.parse(require("fs").readFileSync(process.argv[1])); console.log(v.entries.filter(entry => !entry.analysis?.grammar).length)' \
-  "$RECONCILIATION/final-analysis.json")"
-if [ "$MISSING_GRAMMAR_COUNT" -gt 0 ]; then
-  log "generating local GPT-5.6 grammar analysis for $MISSING_GRAMMAR_COUNT example sentence(s)"
-  GRAMMAR_ANALYSIS="$ROOT/grammar-analysis.json"
-  env CODEX_CONCURRENCY="$GRAMMAR_CONCURRENCY" "$NODE_BIN" scripts/offline/enrich-sentence-grammar.mjs \
-    "$SOURCE" "$RECONCILIATION/final-analysis.json" "$GRAMMAR_ANALYSIS" "$ROOT/grammar-work"
-  cp "$GRAMMAR_ANALYSIS" "$RECONCILIATION/final-analysis.json.tmp"
-  mv "$RECONCILIATION/final-analysis.json.tmp" "$RECONCILIATION/final-analysis.json"
-fi
-apply_reviewed_ipa "$SOURCE" "$RECONCILIATION/final-analysis.json" "$ROOT"
 "$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
   "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE" "$RECONCILIATION/final-analysis.json"
 mv "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE"

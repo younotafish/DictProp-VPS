@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
+import { isDetailedSentenceAnalysis, isSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, analysisArg, imageBundleArg] = process.argv.slice(2);
 if (!sourceArg || !analysisArg) {
@@ -49,7 +49,7 @@ for (const entry of analysis.entries) {
   const sentence = sourceById.get(entry.id);
   if (!sentence) throw new Error(`Analysis has no source sentence: ${entry.id}`);
   if (entry.textHash !== sentence.textHash) throw new Error(`${entry.id}: analysis text hash mismatch`);
-  validateAnalysis(entry.analysis, entry.id);
+  validateAnalysis(entry.analysis, entry.id, sentence.hasAnalysis !== true);
   analysisById.set(entry.id, entry);
 }
 if (analysisById.size !== sourceById.size) {
@@ -150,8 +150,14 @@ function assertString(value, label) {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${label} is invalid`);
 }
 
-function validateAnalysis(value, id) {
-  if (!isDetailedSentenceAnalysis(value)) throw new Error(`${id}: detailed sentence analysis is incomplete`);
+function validateAnalysis(value, id, requireDetailed) {
+  if (requireDetailed && !isDetailedSentenceAnalysis(value)) {
+    throw new Error(`${id}: detailed sentence analysis is incomplete`);
+  }
+  if (!requireDetailed && !isSentenceAnalysis(value)) {
+    throw new Error(`${id}: production-covered sentence analysis is not importable`);
+  }
+  if (!requireDetailed) return;
   assertString(value?.translation, `${id}: translation`);
   const fluentIpa = value.naturalSpeechIpa || value.pronunciation.fastIpa;
   assertString(fluentIpa, `${id}: fluent IPA`);

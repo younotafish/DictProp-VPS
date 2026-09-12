@@ -136,6 +136,19 @@ test('recurring reconciliation does not reuse a legacy incomplete analysis cache
     assert.equal(report.missing, 1);
     assert.equal(report.incompleteBase, 1);
     assert.equal(report.complete, false);
+
+    writeFileSync(sourcePath, JSON.stringify({
+      version: 1,
+      sentences: [{ id: 'legacy', text: 'It worked.', textHash, hasAnalysis: true }],
+    }));
+    const coveredOutputDir = join(root, 'production-covered-output');
+    execFileSync(process.execPath, [reconcileScript, sourcePath, cachePath, coveredOutputDir], {
+      env: { ...process.env, ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS: '1' },
+    });
+    const coveredReport = JSON.parse(readFileSync(join(coveredOutputDir, 'report.json'), 'utf8'));
+    assert.equal(coveredReport.reused, 1);
+    assert.equal(coveredReport.missing, 0);
+    assert.equal(coveredReport.complete, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
