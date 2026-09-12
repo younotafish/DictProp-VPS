@@ -17,12 +17,15 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Enrich incomplete words and sentences
+        id: enrichment
+        continue-on-error: true
         uses: appleboy/ssh-action@v1
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           command_timeout: 80m
+          capture_stdout: true
           script: |
             set -e
             cd /opt/dictprop-vps
@@ -31,3 +34,22 @@ jobs:
               -e INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS=24 \
               -e INCREMENTAL_ENRICHMENT_MAX_RUNTIME_MINUTES=70 \
               app nice -n 10 node server/dist/scripts/enrich-new-items.js
+
+      - name: Report content coverage
+        if: always()
+        env:
+          ENRICHMENT_STDOUT: ${{ steps.enrichment.outputs.stdout }}
+          ENRICHMENT_STDERR: ${{ steps.enrichment.outputs.stderr }}
+        run: |
+          printf '%s\n' "$ENRICHMENT_STDOUT"
+          printf '%s\n' "$ENRICHMENT_STDERR" >&2
+          {
+            echo '### Incremental content enrichment'
+            echo '```json'
+            printf '%s\n' "$ENRICHMENT_STDOUT" | tail -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce complete enrichment pass
+        if: steps.enrichment.outcome != 'success'
+        run: exit 1

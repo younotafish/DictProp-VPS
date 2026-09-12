@@ -1,5 +1,9 @@
-import { getAllItems, listAllUsers, upsertItem, upsertItemImageBinary } from '../db.js';
+import { db, getAllItems, listAllUsers, upsertItem, upsertItemImageBinary } from '../db.js';
 import { env } from '../env.js';
+import {
+  summarizeExampleEnrichmentCoverage,
+  type StoredSentenceEnrichmentRecord,
+} from '../example-enrichment-coverage.js';
 import { generateImage } from '../image-generation.js';
 import { collectImageBackfillTargets } from '../image-backfill.js';
 import {
@@ -8,6 +12,7 @@ import {
   incrementalEnrichmentItemKey,
   selectReplacementVocab,
   selectUnattemptedIncrementalItems,
+  summarizeIncrementalEnrichmentBacklog,
 } from '../incremental-enrichment.js';
 import { isOwnerUser } from '../owner-access.js';
 import { generateAnalysisData } from '../routes/ai.js';
@@ -45,6 +50,15 @@ const summary = {
   remaining: 0,
   recentRemaining: 0,
   historicalRemaining: 0,
+  remainingByType: { sentence: 0, vocab: 0, phrase: 0 },
+  remainingGaps: {
+    sentenceDetailedAnalysis: 0,
+    sentenceImage: 0,
+    recentVocabContent: 0,
+    vocabImage: 0,
+    phraseImage: 0,
+    nestedVocabImage: 0,
+  },
   deadlineReached: false,
 };
 
@@ -121,13 +135,18 @@ drain: for (;;) {
 }
 
 summary.candidates = discovered.size;
-const remaining = collectIncrementalEnrichmentItems(
-  getAllItems(true, owner.id),
-  prioritySince,
-  Number.MAX_SAFE_INTEGER,
-);
-summary.remaining = remaining.length;
-summary.recentRemaining = remaining.filter(item => Number(item?.savedAt) >= prioritySince).length;
-summary.historicalRemaining = summary.remaining - summary.recentRemaining;
-console.log(JSON.stringify({ prioritySince, ...summary }));
-if (summary.failures > 0 || (summary.deadlineReached && summary.remaining > 0)) process.exitCode = 1;
+const finalItems = getAllItems(true, owner.id);
+const remaining = summarizeIncrementalEnrichmentBacklog(finalItems, prioritySince);
+summary.remaining = remaining.items;
+summary.recentRemaining = remaining.recentItems;
+summary.historicalRemaining = remaining.historicalItems;
+summary.remainingByType = remaining.byType;
+summary.remainingGaps = remaining.gaps;
+const storedExampleEnrichments = db.prepare(`
+  SELECT lookup_hash, analysis, image_content_hash FROM sentence_enrichments
+`).iterate() as Iterable<StoredSentenceEnrichmentRecord>;
+const exampleSentenceCoverage = summarizeExampleEnrichmentCoverage(finalItems, storedExampleEnrichments);
+console.log(JSON.stringify({ prioritySince, ...summary, exampleSentenceCoverage }));
+// A successful run is a hard guarantee that its own eligible queue was drained. This catches
+// malformed records that remain eligible without throwing during an attempted generation.
+if (summary.failures > 0 || summary.remaining > 0) process.exitCode = 1;

@@ -2,6 +2,10 @@ import { createHash } from 'crypto';
 import { db, getAllItems, getImageManifest, listAllUsers } from '../db.js';
 import { detectImageMimeType } from '../image-format.js';
 import { env } from '../env.js';
+import {
+  summarizeExampleEnrichmentCoverage,
+  type StoredSentenceEnrichmentRecord,
+} from '../example-enrichment-coverage.js';
 import { isOwnerUser } from '../owner-access.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../usage-audit.js';
@@ -180,6 +184,12 @@ for (const row of db.prepare('SELECT analysis FROM sentence_enrichments').iterat
     incompleteDetailedEnrichmentCount++;
   }
 }
+const exampleSentenceCoverage = summarizeExampleEnrichmentCoverage(
+  allItems,
+  db.prepare(`
+    SELECT lookup_hash, analysis, image_content_hash FROM sentence_enrichments
+  `).iterate() as Iterable<StoredSentenceEnrichmentRecord>,
+);
 
 const duplicateGroups = (items: any[], keyOf: (item: any) => string) => {
   const groups = new Map<string, string[]>();
@@ -318,6 +328,7 @@ const report = {
     missingBlobCount: sentenceEnrichmentStats.missing_blobs || 0,
     imageBytes: sentenceEnrichmentStats.image_bytes,
   },
+  exampleSentenceCoverage,
   images: {
     storedCount: imageIds.size,
     orphanReferenceCount: orphanImageIds.length,

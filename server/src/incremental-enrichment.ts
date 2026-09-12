@@ -62,6 +62,52 @@ export function collectIncrementalEnrichmentItems(
     .slice(0, Math.max(0, limit));
 }
 
+export function summarizeIncrementalEnrichmentBacklog(items: any[], prioritySince: number) {
+  const pending = collectIncrementalEnrichmentItems(items, prioritySince, Number.MAX_SAFE_INTEGER);
+  const summary = {
+    items: pending.length,
+    recentItems: 0,
+    historicalItems: 0,
+    byType: { sentence: 0, vocab: 0, phrase: 0 },
+    gaps: {
+      sentenceDetailedAnalysis: 0,
+      sentenceImage: 0,
+      recentVocabContent: 0,
+      vocabImage: 0,
+      phraseImage: 0,
+      nestedVocabImage: 0,
+    },
+  };
+
+  for (const item of pending) {
+    const recent = Number(item?.savedAt) >= prioritySince;
+    if (recent) summary.recentItems++;
+    else summary.historicalItems++;
+
+    if (item.type === 'sentence') {
+      summary.byType.sentence++;
+      if (!hasCompleteSentenceAnalysis(item.data.analysis)) summary.gaps.sentenceDetailedAnalysis++;
+      if (!hasStoredImage(item.data)) summary.gaps.sentenceImage++;
+      continue;
+    }
+    if (item.type === 'vocab') {
+      summary.byType.vocab++;
+      if (recent && !hasCompleteVocabContent(item.data)) summary.gaps.recentVocabContent++;
+      if (item.data.imagePrompt?.trim() && !hasStoredImage(item.data)) summary.gaps.vocabImage++;
+      continue;
+    }
+    if (item.type === 'phrase') {
+      summary.byType.phrase++;
+      if (item.data.imagePrompt?.trim() && !hasStoredImage(item.data)) summary.gaps.phraseImage++;
+      if (Array.isArray(item.data.vocabs)) {
+        summary.gaps.nestedVocabImage += item.data.vocabs.filter((vocab: any) =>
+          !!vocab?.imagePrompt?.trim() && !hasStoredImage(vocab)).length;
+      }
+    }
+  }
+  return summary;
+}
+
 export function incrementalEnrichmentItemKey(item: any): string {
   return `${String(item?.type || '')}:${String(item?.data?.id || '')}`;
 }

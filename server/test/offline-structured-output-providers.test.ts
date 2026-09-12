@@ -238,6 +238,123 @@ process.stdin.on('end', () => {
   }
 });
 
+test('reviewed IPA generation reuses valid sentence checkpoints', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-ipa-resume-'));
+  try {
+    const codex = join(root, 'codex.cjs');
+    const sourcePath = join(root, 'source.json');
+    const outputPath = join(root, 'ipa.json');
+    const workPath = join(root, 'work');
+    const callLog = join(root, 'calls.log');
+    const sentences = [
+      { id: 'sentence-1', text: 'This is a complete test sentence.', sourceWord: 'test' },
+      { id: 'sentence-2', text: 'That is another complete test sentence.', sourceWord: 'test' },
+    ];
+    const ipa = '/ðɪs ɪz ə kəmˈplit ˈtɛst ˈsɛntəns/';
+    writeFileSync(codex, `#!/usr/bin/env node
+const fs = require('node:fs');
+let prompt = '';
+process.stdin.on('data', chunk => { prompt += chunk; });
+process.stdin.on('end', () => {
+  const marker = '\\n\\nINPUT:\\n';
+  const input = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length));
+  fs.appendFileSync(process.env.CALL_LOG, String(input.length) + '\\n');
+  const results = input.map(record => ({
+    itemIndex: record.itemIndex,
+    naturalSpeechIpa: '/ðæt ɪz əˈnʌðɚ kəmˈplit ˈtɛst ˈsɛntəns/'
+  }));
+  const outputIndex = process.argv.indexOf('-o');
+  fs.writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ results }));
+});
+`);
+    chmodSync(codex, 0o700);
+    writeFileSync(sourcePath, JSON.stringify({ version: 1, sentences }));
+    writeFileSync(outputPath, JSON.stringify({
+      version: 1,
+      generatedAt: 10,
+      entries: [{
+        id: sentences[0].id,
+        textHash: createHash('sha256').update(sentences[0].text).digest('hex'),
+        naturalSpeechIpa: ipa,
+        generatedAt: 10,
+      }],
+    }));
+
+    const result = spawnSync(process.execPath, [naturalIpaScript, sourcePath, outputPath, workPath], {
+      encoding: 'utf8',
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        CALL_LOG: callLog,
+        CODEX_BIN: codex,
+        IPA_CODEX_CONCURRENCY: '1',
+        IPA_CLAUDE_CONCURRENCY: '0',
+        IPA_META_CONCURRENCY: '0',
+        IPA_BATCH_SIZE: '2',
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(readFileSync(callLog, 'utf8').trim().split('\n').map(Number), [1, 1]);
+    const output = JSON.parse(readFileSync(outputPath, 'utf8'));
+    assert.deepEqual(output.entries.map((entry: { id: string }) => entry.id), ['sentence-1', 'sentence-2']);
+    assert.match(result.stderr, /Reusing 1\/2 reviewed sentence IPA records; 1 remain/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reviewed IPA generation checkpoints successful batches when a peer fails', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-ipa-partial-'));
+  try {
+    const codex = join(root, 'codex.cjs');
+    const sourcePath = join(root, 'source.json');
+    const outputPath = join(root, 'ipa.json');
+    const workPath = join(root, 'work');
+    const sentences = [
+      { id: 'sentence-fails', text: 'This failing sentence still has six words.', sourceWord: 'fail' },
+      { id: 'sentence-passes', text: 'This passing sentence also has six words.', sourceWord: 'pass' },
+    ];
+    writeFileSync(codex, `#!/usr/bin/env node
+const fs = require('node:fs');
+let prompt = '';
+process.stdin.on('data', chunk => { prompt += chunk; });
+process.stdin.on('end', () => {
+  const marker = '\\n\\nINPUT:\\n';
+  const input = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length));
+  const shouldFail = input[0].sentence.includes('failing');
+  const results = input.map(record => ({
+    itemIndex: record.itemIndex,
+    naturalSpeechIpa: shouldFail ? 'invalid' : '/ðɪs ˈpæsɪŋ ˈsɛntəns ˈɔlsoʊ hæz sɪks wɝdz/'
+  }));
+  const outputIndex = process.argv.indexOf('-o');
+  fs.writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ results }));
+});
+`);
+    chmodSync(codex, 0o700);
+    writeFileSync(sourcePath, JSON.stringify({ version: 1, sentences }));
+
+    const result = spawnSync(process.execPath, [naturalIpaScript, sourcePath, outputPath, workPath], {
+      encoding: 'utf8',
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        CODEX_BIN: codex,
+        IPA_CODEX_CONCURRENCY: '2',
+        IPA_CLAUDE_CONCURRENCY: '0',
+        IPA_META_CONCURRENCY: '0',
+        IPA_BATCH_SIZE: '1',
+        IPA_RETRY_DELAY_MS: '0',
+      },
+    });
+    assert.notEqual(result.status, 0);
+    const output = JSON.parse(readFileSync(outputPath, 'utf8'));
+    assert.deepEqual(output.entries.map((entry: { id: string }) => entry.id), ['sentence-passes']);
+    assert.match(result.stderr, /1 natural IPA batch\(es\) remain incomplete; 1\/2 reviewed records were checkpointed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('reviewed IPA checkpoints preserve completed batches across a larger-batch restart', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-ipa-checkpoint-'));
   try {

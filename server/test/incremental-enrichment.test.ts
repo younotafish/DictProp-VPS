@@ -6,6 +6,7 @@ import {
   incrementalEnrichmentItemKey,
   selectReplacementVocab,
   selectUnattemptedIncrementalItems,
+  summarizeIncrementalEnrichmentBacklog,
 } from '../src/incremental-enrichment.js';
 
 const legacySentenceAnalysis = {
@@ -92,4 +93,32 @@ test('a failed first batch cannot starve newer incremental candidates', () => {
     selectUnattemptedIncrementalItems(pending, attempted, 8).map(item => item.data.id),
     ['sentence-8', 'sentence-9', 'sentence-10', 'sentence-11'],
   );
+});
+
+test('incremental enrichment summarizes actionable gap types', () => {
+  const items = [
+    { type: 'sentence', savedAt: 90, data: { id: 'sentence', text: 'Old.' } },
+    { type: 'vocab', savedAt: 110, data: { id: 'new-word', word: 'new' } },
+    { type: 'vocab', savedAt: 80, data: { id: 'old-image', imagePrompt: 'An icon.' } },
+    { type: 'phrase', savedAt: 70, data: {
+      id: 'phrase',
+      imagePrompt: 'A scene.',
+      vocabs: [{ id: 'nested', imagePrompt: 'An icon.' }],
+    } },
+  ];
+
+  assert.deepEqual(summarizeIncrementalEnrichmentBacklog(items, 100), {
+    items: 4,
+    recentItems: 1,
+    historicalItems: 3,
+    byType: { sentence: 1, vocab: 2, phrase: 1 },
+    gaps: {
+      sentenceDetailedAnalysis: 1,
+      sentenceImage: 1,
+      recentVocabContent: 1,
+      vocabImage: 1,
+      phraseImage: 1,
+      nestedVocabImage: 1,
+    },
+  });
 });

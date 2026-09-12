@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { killCodex, spawnCodex } from './codex-process.mjs';
 import { runClaudeStructured, runMetaStructured } from './structured-output-providers.mjs';
@@ -18,6 +18,10 @@ const requestedTimeoutMinutes = Number(process.env.IPA_TIMEOUT_MINUTES || 30);
 const PROVIDER_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 30) * 60 * 1_000;
+const requestedRetryDelayMs = Number(process.env.IPA_RETRY_DELAY_MS || 1_000);
+const RETRY_DELAY_MS = Number.isFinite(requestedRetryDelayMs)
+  ? Math.max(0, Math.min(60_000, requestedRetryDelayMs))
+  : 1_000;
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'natural-ipa-work'));
@@ -108,8 +112,6 @@ function boundedBatchSize(value, fallback, maximum) {
 const batchSize = boundedBatchSize(process.env.IPA_BATCH_SIZE, 12, 50);
 const claudeRequestBatchSize = boundedBatchSize(process.env.IPA_CLAUDE_REQUEST_BATCH_SIZE, 24, batchSize);
 const metaRequestBatchSize = boundedBatchSize(process.env.IPA_META_REQUEST_BATCH_SIZE, 12, batchSize);
-const batches = [];
-for (let index = 0; index < sentences.length; index += batchSize) batches.push(sentences.slice(index, index + batchSize));
 
 function boundedConcurrency(value, fallback, allowZero = false) {
   const parsed = Number(value ?? fallback);
@@ -173,6 +175,69 @@ function validateIpa(value, sentence, id) {
     throw new Error(`${id}: IPA has implausibly many tokens`);
   }
   return ipa;
+}
+
+// Keep a durable per-sentence checkpoint in the output manifest. A corpus normally grows between
+// runs, and one exhausted provider batch must not force already reviewed transcriptions through the
+// model pipeline again. Stale, malformed, and no-longer-present entries are simply left behind.
+const sourceById = new Map(sentences.map(sentence => [sentence.id, sentence]));
+const entryById = new Map();
+if (existsSync(outputPath)) {
+  try {
+    const previous = JSON.parse(readFileSync(outputPath, 'utf8'));
+    if (previous?.version !== 1 || !Array.isArray(previous.entries)) {
+      throw new Error('manifest shape is invalid');
+    }
+    for (const entry of previous.entries) {
+      const sentence = sourceById.get(entry?.id);
+      if (!sentence || entry.textHash !== sentence.textHash || entryById.has(entry.id)) continue;
+      try {
+        entryById.set(entry.id, {
+          id: entry.id,
+          textHash: entry.textHash,
+          naturalSpeechIpa: validateIpa(entry.naturalSpeechIpa, sentence.text, entry.id),
+          generatedAt: Number(entry.generatedAt) > 0 ? Number(entry.generatedAt) : Date.now(),
+        });
+      } catch {
+        // Regenerate just this entry below.
+      }
+    }
+  } catch (error) {
+    process.stderr.write(
+      `Ignoring unusable IPA checkpoint ${outputPath}: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+}
+const reusedEntryCount = entryById.size;
+const pendingSentences = sentences.filter(sentence => !entryById.has(sentence.id));
+const batches = [];
+for (let index = 0; index < pendingSentences.length; index += batchSize) {
+  batches.push(pendingSentences.slice(index, index + batchSize));
+}
+
+function persistManifest() {
+  const generatedAt = Date.now();
+  const entries = sentences.flatMap(sentence => {
+    const entry = entryById.get(sentence.id);
+    return entry ? [entry] : [];
+  });
+  mkdirSync(dirname(outputPath), { recursive: true });
+  const temporaryPath = `${outputPath}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify({
+    version: 1,
+    model: `cross-reviewed:${enabledProviders.join('+')}`,
+    models: Object.fromEntries(enabledProviders.map(provider => [provider, providerModels[provider]])),
+    draftProviders,
+    generatedAt,
+    entries,
+  }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, outputPath);
+}
+
+if (reusedEntryCount > 0) {
+  process.stderr.write(
+    `Reusing ${reusedEntryCount}/${sentences.length} reviewed sentence IPA records; ${pendingSentences.length} remain\n`,
+  );
 }
 
 function runCodex(args, prompt) {
@@ -353,7 +418,7 @@ async function runStage({ batch, batchIndex, stage, instruction, input, provider
       if (existsSync(resultPath)) unlinkSync(resultPath);
       await new Promise(resolvePromise => setTimeout(
         resolvePromise,
-        (1_000 * (attempt + 1)) + Math.floor(Math.random() * 1_000),
+        (RETRY_DELAY_MS * (attempt + 1)) + (RETRY_DELAY_MS > 0 ? Math.floor(Math.random() * 1_000) : 0),
       ));
     }
   }
@@ -409,7 +474,6 @@ async function runBatch(batch, batchIndex, draftProvider) {
   return reviewAttempt.results;
 }
 
-const results = new Array(batches.length);
 const draftSchedule = draftProviders.flatMap(provider =>
   Array.from({ length: providerLimits[provider] }, () => provider)
 );
@@ -417,6 +481,7 @@ const providerQueues = Object.fromEntries(draftProviders.map(provider => [provid
 for (let index = 0; index < batches.length; index++) {
   providerQueues[draftSchedule[index % draftSchedule.length]].push(index);
 }
+const failures = [];
 async function worker(draftProvider) {
   for (;;) {
     const index = providerQueues[draftProvider].shift();
@@ -425,7 +490,23 @@ async function worker(draftProvider) {
     process.stderr.write(
       `Generating natural IPA batch ${index + 1}/${batches.length} with ${draftProvider}; reviewing with ${reviewer}\n`,
     );
-    results[index] = await runBatch(batches[index], index, draftProvider);
+    try {
+      const batchResults = await runBatch(batches[index], index, draftProvider);
+      for (let itemIndex = 0; itemIndex < batches[index].length; itemIndex++) {
+        const sentence = batches[index][itemIndex];
+        entryById.set(sentence.id, {
+          id: sentence.id,
+          textHash: sentence.textHash,
+          naturalSpeechIpa: batchResults[itemIndex].naturalSpeechIpa,
+          generatedAt: Date.now(),
+        });
+      }
+      persistManifest();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      failures.push({ batch: index + 1, detail });
+      process.stderr.write(`Natural IPA batch ${index + 1} remains incomplete: ${detail}\n`);
+    }
   }
 }
 
@@ -446,28 +527,10 @@ try {
   throw error;
 }
 
-const generatedAt = Date.now();
-const entries = [];
-for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-  for (let itemIndex = 0; itemIndex < batches[batchIndex].length; itemIndex++) {
-    const sentence = batches[batchIndex][itemIndex];
-    entries.push({
-      id: sentence.id,
-      textHash: sentence.textHash,
-      naturalSpeechIpa: results[batchIndex][itemIndex].naturalSpeechIpa,
-      generatedAt,
-    });
-  }
+persistManifest();
+if (failures.length > 0) {
+  throw new Error(
+    `${failures.length} natural IPA batch(es) remain incomplete; ${entryById.size}/${sentences.length} reviewed records were checkpointed`,
+  );
 }
-
-mkdirSync(dirname(outputPath), { recursive: true });
-const models = Object.fromEntries(enabledProviders.map(provider => [provider, providerModels[provider]]));
-writeFileSync(outputPath, `${JSON.stringify({
-  version: 1,
-  model: `cross-reviewed:${enabledProviders.join('+')}`,
-  models,
-  draftProviders,
-  generatedAt,
-  entries,
-}, null, 2)}\n`, { mode: 0o600 });
-process.stderr.write(`Wrote ${entries.length} reviewed sentence IPA records to ${outputPath}\n`);
+process.stderr.write(`Wrote ${entryById.size} reviewed sentence IPA records to ${outputPath}\n`);
