@@ -187,7 +187,13 @@ for (const row of db.prepare('SELECT analysis FROM sentence_enrichments').iterat
 const exampleSentenceCoverage = summarizeExampleEnrichmentCoverage(
   allItems,
   db.prepare(`
-    SELECT lookup_hash, analysis, image_content_hash FROM sentence_enrichments
+    SELECT
+      e.lookup_hash,
+      e.analysis,
+      CASE WHEN b.content_hash IS NOT NULL AND b.byte_length > 0
+        THEN e.image_content_hash ELSE NULL END AS image_content_hash
+    FROM sentence_enrichments e
+    LEFT JOIN image_blobs b ON b.content_hash = e.image_content_hash
   `).iterate() as Iterable<StoredSentenceEnrichmentRecord>,
 );
 

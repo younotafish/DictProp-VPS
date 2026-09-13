@@ -7,6 +7,12 @@ export interface StoredSentenceEnrichmentRecord {
   image_content_hash: string | null;
 }
 
+export interface ExpectedExampleSentence {
+  id: string;
+  text: string;
+  lookupHash: string;
+}
+
 export interface ExampleEnrichmentCoverage {
   expected: number;
   fullyEnriched: number;
@@ -23,7 +29,7 @@ export interface ExampleEnrichmentCoverage {
 const sample = (values: string[], limit = 100): string[] => values.slice(0, limit);
 const enrichmentId = (lookupHash: string): string => `example-${lookupHash.slice(0, 40)}`;
 
-export function collectExpectedExampleSentenceHashes(items: any[]): string[] {
+export function collectExpectedExampleSentences(items: any[]): ExpectedExampleSentence[] {
   const savedSentenceHashes = new Set<string>();
   for (const item of items) {
     if (item?.isDeleted || item?.type !== 'sentence') continue;
@@ -31,14 +37,20 @@ export function collectExpectedExampleSentenceHashes(items: any[]): string[] {
     if (normalizeSentenceLookup(text)) savedSentenceHashes.add(sentenceLookupHash(text));
   }
 
-  const hashes = new Set<string>();
+  const sentences = new Map<string, ExpectedExampleSentence>();
   const addCard = (card: any) => {
     for (const example of Array.isArray(card?.examples) ? card.examples : []) {
       if (typeof example !== 'string' || !normalizeSentenceLookup(example)) continue;
       const lookupHash = sentenceLookupHash(example);
       // A saved sentence owns its analysis and image directly, so it does not also need a shared
       // example-enrichment row.
-      if (!savedSentenceHashes.has(lookupHash)) hashes.add(lookupHash);
+      if (!savedSentenceHashes.has(lookupHash) && !sentences.has(lookupHash)) {
+        sentences.set(lookupHash, {
+          id: enrichmentId(lookupHash),
+          text: example.trim(),
+          lookupHash,
+        });
+      }
     }
   };
 
@@ -49,7 +61,11 @@ export function collectExpectedExampleSentenceHashes(items: any[]): string[] {
       for (const vocab of item.data.vocabs) addCard(vocab);
     }
   }
-  return [...hashes].sort();
+  return [...sentences.values()].sort((left, right) => left.lookupHash.localeCompare(right.lookupHash));
+}
+
+export function collectExpectedExampleSentenceHashes(items: any[]): string[] {
+  return collectExpectedExampleSentences(items).map(sentence => sentence.lookupHash);
 }
 
 export function summarizeExampleEnrichmentCoverage(

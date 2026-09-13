@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   collectExpectedExampleSentenceHashes,
+  collectExpectedExampleSentences,
   summarizeExampleEnrichmentCoverage,
 } from '../src/example-enrichment-coverage.js';
 import { sentenceLookupHash } from '../src/sentence-enrichment.js';
@@ -36,6 +37,11 @@ test('example coverage deduplicates markup variants and excludes saved sentences
   ];
 
   assert.deepEqual(collectExpectedExampleSentenceHashes(items), [sentenceLookupHash('This is a test.')]);
+  assert.deepEqual(collectExpectedExampleSentences(items), [{
+    id: `example-${sentenceLookupHash('This is a test.').slice(0, 40)}`,
+    text: 'This is a {{test}}.',
+    lookupHash: sentenceLookupHash('This is a test.'),
+  }]);
 });
 
 test('example coverage reports missing, incomplete, image, and complete gaps separately', () => {
