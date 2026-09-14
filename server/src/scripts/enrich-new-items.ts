@@ -270,4 +270,5 @@ exampleEnrichment.remaining = exampleSentenceCoverage.expected - exampleSentence
 console.log(JSON.stringify({ prioritySince, ...summary, exampleEnrichment, exampleSentenceCoverage }));
 // A successful run is a hard guarantee that its own eligible queue was drained. This catches
 // malformed records that remain eligible without throwing during an attempted generation.
-if (summary.failures > 0 || summary.remaining > 0 || exampleEnrichment.failures > 0) process.exitCode = 1;
+if (summary.failures > 0 || summary.remaining > 0 || exampleEnrichment.failures > 0 ||
+    exampleEnrichment.remaining > 0) process.exitCode = 1;

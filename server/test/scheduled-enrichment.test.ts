@@ -28,6 +28,7 @@ test('production and local enrichment schedules both run every six hours', () =>
   assert.match(workflow, /Enforce complete enrichment pass/);
   assert.match(productionRunner, /collectExpectedExampleSentences/);
   assert.match(productionRunner, /upsertSentenceEnrichment/);
+  assert.match(productionRunner, /exampleEnrichment\.remaining > 0/);
   assert.match(launchAgent, /<key>StartInterval<\/key>\s*<integer>21600<\/integer>/);
   assert.match(runner, /CODEX_MODEL=gpt-5\.5/);
   assert.match(runner, /IPA_CLAUDE_CONCURRENCY="\$\{IPA_CLAUDE_CONCURRENCY:-2\}"/);
