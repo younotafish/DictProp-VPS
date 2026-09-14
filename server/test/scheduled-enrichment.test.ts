@@ -21,7 +21,8 @@ test('production and local enrichment schedules both run every six hours', () =>
 
   assert.match(workflow, /cron: '23 \*\/6 \* \* \*'/);
   assert.match(workflow, /INCREMENTAL_ENRICHMENT_MAX_RUNTIME_MINUTES=70/);
-  assert.match(workflow, /INCREMENTAL_EXAMPLE_ENRICHMENT_MAX_ITEMS=8/);
+  assert.match(workflow, /INCREMENTAL_EXAMPLE_ENRICHMENT_MAX_ITEMS=50/);
+  assert.match(workflow, /INCREMENTAL_EXAMPLE_ENRICHMENT_CONCURRENCY=4/);
   assert.match(workflow, /capture_stdout: true/);
   assert.match(workflow, /Report content coverage/);
   assert.match(workflow, /Enforce complete enrichment pass/);

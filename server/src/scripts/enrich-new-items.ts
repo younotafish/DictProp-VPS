@@ -44,6 +44,12 @@ const exampleBatchSize = boundedNumber(
   1,
   50,
 );
+const exampleConcurrency = boundedNumber(
+  process.env.INCREMENTAL_EXAMPLE_ENRICHMENT_CONCURRENCY,
+  1,
+  1,
+  8,
+);
 const lookbackHours = boundedNumber(process.env.INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS, 24, 1, 168);
 const maxRuntimeMinutes = boundedNumber(
   process.env.INCREMENTAL_ENRICHMENT_MAX_RUNTIME_MINUTES,
@@ -205,43 +211,53 @@ const exampleEnrichment = {
   deadlineReached: false,
 };
 
-for (const target of exampleCandidates.slice(0, exampleBatchSize)) {
-  if (Date.now() >= deadline) {
-    exampleEnrichment.deadlineReached = true;
-    break;
-  }
-  exampleEnrichment.attempted++;
-  const stored = initialStoredExamplesByHash.get(target.lookupHash);
-  try {
-    let analysis = completeStoredAnalysis(stored);
-    const generatedAt = Math.max(Date.now(), stored?.generated_at ?? 0);
-    const baseEntry = (entryAnalysis: SentenceAnalysis) => ({
-      id: target.id,
-      text: target.text,
-      lookupHash: target.lookupHash,
-      textHash: createHash('sha256').update(target.text).digest('hex'),
-      analysis: entryAnalysis,
-      generatedAt,
-    });
-
-    if (!analysis) {
-      analysis = await generateSentenceAnalysis(target.text);
-      upsertSentenceEnrichment({ entry: baseEntry(analysis) });
-      exampleEnrichment.analysesGenerated++;
+const exampleTargets = exampleCandidates.slice(0, exampleBatchSize);
+let nextExampleIndex = 0;
+const enrichNextExample = async () => {
+  for (;;) {
+    if (Date.now() >= deadline) {
+      exampleEnrichment.deadlineReached = true;
+      return;
     }
+    const target = exampleTargets[nextExampleIndex++];
+    if (!target) return;
+    exampleEnrichment.attempted++;
+    const stored = initialStoredExamplesByHash.get(target.lookupHash);
+    try {
+      let analysis = completeStoredAnalysis(stored);
+      const generatedAt = Math.max(Date.now(), stored?.generated_at ?? 0);
+      const baseEntry = (entryAnalysis: SentenceAnalysis) => ({
+        id: target.id,
+        text: target.text,
+        lookupHash: target.lookupHash,
+        textHash: createHash('sha256').update(target.text).digest('hex'),
+        analysis: entryAnalysis,
+        generatedAt,
+      });
 
-    if (!stored?.image_content_hash) {
-      const prompt = String(analysis.imagePrompt || '').trim();
-      if (!prompt) throw new Error('Generated sentence analysis did not include an image prompt');
-      const image = await generateImage(prompt, '16:9', { style: 'photorealistic', quality: 'high' });
-      upsertSentenceEnrichment({ entry: baseEntry(analysis), image: image.data, mimeType: image.mimeType });
-      exampleEnrichment.imagesGenerated++;
+      if (!analysis) {
+        analysis = await generateSentenceAnalysis(target.text);
+        upsertSentenceEnrichment({ entry: baseEntry(analysis) });
+        exampleEnrichment.analysesGenerated++;
+      }
+
+      if (!stored?.image_content_hash) {
+        const prompt = String(analysis.imagePrompt || '').trim();
+        if (!prompt) throw new Error('Generated sentence analysis did not include an image prompt');
+        const image = await generateImage(prompt, '16:9', { style: 'photorealistic', quality: 'high' });
+        upsertSentenceEnrichment({ entry: baseEntry(analysis), image: image.data, mimeType: image.mimeType });
+        exampleEnrichment.imagesGenerated++;
+      }
+    } catch (error) {
+      exampleEnrichment.failures++;
+      console.error(`Example enrichment failed for ${target.id}:`, error instanceof Error ? error.message : error);
     }
-  } catch (error) {
-    exampleEnrichment.failures++;
-    console.error(`Example enrichment failed for ${target.id}:`, error instanceof Error ? error.message : error);
   }
-}
+};
+await Promise.all(Array.from(
+  { length: Math.min(exampleConcurrency, exampleTargets.length) },
+  enrichNextExample,
+));
 
 initialStoredExamplesByHash.clear();
 initialStoredExamples.length = 0;
