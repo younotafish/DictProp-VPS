@@ -83,12 +83,13 @@ Do not push this fork to the Firebase repository. The production remote is named
 ## Scheduled Enrichment
 
 - GitHub Actions runs `.github/workflows/incremental-enrichment.yml` at minute 23 every six hours. The VPS task is audit-only: it reads SQLite coverage, reports top-level and example-sentence gaps, and fails visibly when local repair work remains. It never invokes a text or image generation provider.
-- macOS `launchd` runs `ops/launchd/com.dictprop.incremental-example-enrichment.plist` every 21,600 seconds. One resumable cycle fetches an encrypted production snapshot, repairs recent/structurally incomplete vocabulary cards and detailed sentence explanations with local MLX Qwen3, generates images with the local ERNIE image model, and judges those images with a local Qwen3-VL model. The recurring path sets Hugging Face offline mode and has no Codex, Claude, DeepInfra, or Replicate inference fallback.
+- macOS `launchd` runs `ops/launchd/com.dictprop.incremental-example-enrichment.plist` every 21,600 seconds. One resumable cycle fetches an encrypted production snapshot, uses the authenticated Codex CLI with `gpt-5.6-sol` for vocabulary completion, detailed sentence explanations, and rejected image-prompt rewrites, generates images with the local ERNIE image model, and judges those images with a local Qwen3-VL model. The recurring path does not use Claude, DeepInfra, or Replicate inference.
 - The encrypted corpus export carries both item image markers and per-example production coverage. The local bridge therefore repairs saved-word, phrase, saved-sentence, and example-sentence gaps without regenerating complete content. It keeps source, model checkpoints, publication waves, and image state under `data/offline-backfill/incremental-example-enrichment/`; optimistic hashes prevent an older local result from overwriting content edited after export.
 
-Install the pinned MLX runtimes and local models once (about 23 GB of model weights):
+Authenticate the Codex CLI once and install the pinned local image-judging runtime (about 5.4 GB of model weights):
 
 ```bash
+codex login
 scripts/offline/bootstrap-local-ai-runtime.sh
 ```
 

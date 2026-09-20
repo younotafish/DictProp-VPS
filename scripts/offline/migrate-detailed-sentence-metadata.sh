@@ -7,7 +7,7 @@ EXAMPLE_SOURCE="${2:?Usage: migrate-detailed-sentence-metadata.sh <saved-sentenc
 OUTPUT_ROOT="${3:-data/offline-backfill/detailed-sentence-metadata}"
 SAVED_BASE="${4:-}"
 EXAMPLE_BASE="${5:-}"
-MODEL="${CODEX_MODEL:-gpt-5.5}"
+MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
 
 run_dataset() {
   local name="$1"

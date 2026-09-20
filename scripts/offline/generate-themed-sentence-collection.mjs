@@ -51,7 +51,7 @@ const schema = {
 const schemaPath = join(workDir, 'output-schema.json');
 writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
 
-const model = process.env.CODEX_MODEL || 'gpt-5.5';
+const model = process.env.CODEX_MODEL || 'gpt-5.6-sol';
 const concurrency = Math.max(1, Math.min(32, Number(process.env.CODEX_CONCURRENCY || 8)));
 const timeoutMinutes = Math.max(5, Math.min(60, Number(process.env.CODEX_TIMEOUT_MINUTES || 30)));
 const timeoutMs = timeoutMinutes * 60 * 1_000;

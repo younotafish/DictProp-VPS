@@ -3,19 +3,22 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
-import { createLocalMlxClient, extractJsonObject } from './local-mlx-client.mjs';
+import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
 
 const [inputArg, outputArg, workArg] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
   throw new Error('Usage: complete-corpus-fields.mjs <corpus-manifest> <completed-manifest> [work-directory]');
 }
 
-const MODEL = process.env.LOCAL_MLX_MODEL_ID || 'mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit';
+const MODEL = process.env.CODEX_MODEL || 'gpt-5.6-sol';
+const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 30);
+const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+  ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
+  : 30) * 60 * 1_000;
+const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
 const REQUIRED_TEXT_FIELDS = ['sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt'];
 const activeChildren = new Set();
 let aborting = false;
-let localClient;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
@@ -196,12 +199,33 @@ const compactTask = (task, itemIndex) => ({
 });
 
 const batches = [];
-const batchSize = Math.max(1, Math.min(4, Number(process.env.LOCAL_MLX_VOCAB_BATCH_SIZE || 1)));
+const batchSize = Math.max(1, Math.min(20, Number(process.env.VOCAB_COMPLETION_BATCH_SIZE || 10)));
 for (let index = 0; index < tasks.length; index += batchSize) batches.push(tasks.slice(index, index + batchSize));
 
-function getLocalClient() {
-  localClient ??= createLocalMlxClient({ timeoutMs: 30 * 60 * 1_000, activeChildren });
-  return localClient;
+function runCodex(args, prompt) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawnCodex(args);
+    activeChildren.add(child);
+    let stderr = '';
+    let hardKillTimeout;
+    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
+    const timeout = setTimeout(() => {
+      killCodex(child, 'SIGTERM');
+      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
+    }, CODEX_TIMEOUT_MS);
+    child.on('error', error => {
+      activeChildren.delete(child);
+      reject(error);
+    });
+    child.on('exit', (code, signal) => {
+      activeChildren.delete(child);
+      clearTimeout(timeout);
+      clearTimeout(hardKillTimeout);
+      if (code === 0) resolvePromise();
+      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
+    });
+    child.stdin.end(prompt);
+  });
 }
 
 function validateCompletion(result, task) {
@@ -249,7 +273,7 @@ function normalizeCompletion(result) {
 async function runBatch(batch, batchIndex) {
   const compact = batch.map(compactTask);
   const fingerprint = createHash('sha256')
-    .update(JSON.stringify({ provider: 'local-mlx-v1', model: MODEL, records: compact }))
+    .update(JSON.stringify({ provider: 'codex-cli-v1', model: MODEL, records: compact }))
     .digest('hex')
     .slice(0, 16);
   const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
@@ -258,11 +282,10 @@ async function runBatch(batch, batchIndex) {
     try {
       if (!existsSync(resultPath)) {
         const prompt = `${instruction}${correction}\n\nCOMPLETE THESE CARDS:\n${JSON.stringify(compact)}`;
-        const response = await getLocalClient().generate(
-          `${prompt}\n\nOUTPUT JSON SCHEMA:\n${JSON.stringify(completionSchema)}`,
-          { maxTokens: 8_192, temperature: attempt === 0 ? 0 : 0.15 },
-        );
-        writeFileSync(resultPath, `${JSON.stringify(extractJsonObject(response))}\n`, { mode: 0o600 });
+        await runCodex([
+          'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
+          '-m', MODEL, '--output-schema', schemaPath, '-o', resultPath, '-',
+        ], prompt);
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) {
@@ -280,7 +303,7 @@ async function runBatch(batch, batchIndex) {
       if (aborting || attempt === 2) throw error;
       correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Return every itemIndex and two natural examples per item, each with the target wrapped in double curly braces.`;
       if (existsSync(resultPath)) unlinkSync(resultPath);
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000 * (attempt + 1)));
+      await new Promise(resolvePromise => setTimeout(resolvePromise, retryDelayMs * (attempt + 1)));
     }
   }
   throw new Error(`Completion batch ${batchIndex + 1} exhausted retries`);
@@ -288,7 +311,7 @@ async function runBatch(batch, batchIndex) {
 
 const batchResults = new Array(batches.length);
 let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(2, Number(process.env.LOCAL_MLX_CONCURRENCY || 1)));
+const concurrency = Math.max(1, Math.min(16, Number(process.env.CODEX_CONCURRENCY || 4)));
 async function worker() {
   for (;;) {
     const index = nextBatch++;
@@ -311,8 +334,6 @@ try {
   await terminateActiveChildren();
   throw error;
 }
-await localClient?.close();
-
 const completionByCard = new Map();
 for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
   for (let itemIndex = 0; itemIndex < batches[batchIndex].length; itemIndex++) {

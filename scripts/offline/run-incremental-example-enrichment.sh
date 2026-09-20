@@ -12,10 +12,14 @@ REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 NODE_BIN="${NODE_BIN:-node}"
 TSX_BIN="${TSX_BIN:-server/node_modules/.bin/tsx}"
-LOCAL_MLX_CONCURRENCY="${LOCAL_MLX_CONCURRENCY:-1}"
+CODEX_MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
+CODEX_CONCURRENCY="${CODEX_CONCURRENCY:-4}"
+SENTENCE_ANALYSIS_BATCH_SIZE="${SENTENCE_ANALYSIS_BATCH_SIZE:-12}"
+VOCAB_COMPLETION_BATCH_SIZE="${VOCAB_COMPLETION_BATCH_SIZE:-10}"
 LOCAL_MLX_VLM_CONCURRENCY="${LOCAL_MLX_VLM_CONCURRENCY:-1}"
-LOCAL_VOCAB_BATCH_SIZE="${LOCAL_VOCAB_BATCH_SIZE:-12}"
-LOCAL_VOCAB_LOOKBACK_HOURS="${LOCAL_VOCAB_LOOKBACK_HOURS:-168}"
+VOCAB_REPAIR_MAX_ITEMS="${VOCAB_REPAIR_MAX_ITEMS:-12}"
+VOCAB_LOOKBACK_HOURS="${VOCAB_LOOKBACK_HOURS:-168}"
+export CODEX_MODEL CODEX_CONCURRENCY
 LOCK_FILE="$ROOT/.cycle.lock"
 CURRENT_CORPUS="$ROOT/current-corpus.json"
 CURRENT_POOL="$ROOT/current-source.json"
@@ -122,15 +126,16 @@ rm -f "$EXPORT_LOG_TMP"
 mkdir -p "$VOCAB_ROOT"
 VOCAB_SOURCE_TMP="$VOCAB_SOURCE.tmp"
 "$NODE_BIN" scripts/offline/prepare-incremental-vocab-source.mjs \
-  "$CURRENT_CORPUS" "$VOCAB_SOURCE_TMP" "$LOCAL_VOCAB_BATCH_SIZE" "$LOCAL_VOCAB_LOOKBACK_HOURS"
+  "$CURRENT_CORPUS" "$VOCAB_SOURCE_TMP" "$VOCAB_REPAIR_MAX_ITEMS" "$VOCAB_LOOKBACK_HOURS"
 mv "$VOCAB_SOURCE_TMP" "$VOCAB_SOURCE"
 VOCAB_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).entries.length)' \
   "$VOCAB_SOURCE")"
 VOCAB_OVERLAY="-"
 if [ "$VOCAB_COUNT" -gt 0 ]; then
-  log "completing $VOCAB_COUNT recent or structurally incomplete vocabulary record(s) with local MLX"
+  log "completing $VOCAB_COUNT recent or structurally incomplete vocabulary record(s) with $CODEX_MODEL"
   rm -f "$VOCAB_COMPLETED"
-  env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" \
+  env CODEX_MODEL="$CODEX_MODEL" CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
+    VOCAB_COMPLETION_BATCH_SIZE="$VOCAB_COMPLETION_BATCH_SIZE" \
     "$NODE_BIN" scripts/offline/complete-corpus-fields.mjs \
       "$VOCAB_SOURCE" "$VOCAB_COMPLETED" "$VOCAB_ROOT/work"
   VOCAB_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
@@ -167,10 +172,11 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
   SAVED_MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
     "$SAVED_RECONCILIATION/report.json")"
   if [ "$SAVED_MISSING_COUNT" -gt 0 ]; then
-    log "generating detailed explanations for $SAVED_MISSING_COUNT saved sentence(s) with local MLX"
+    log "generating detailed explanations for $SAVED_MISSING_COUNT saved sentence(s) with $CODEX_MODEL"
     SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
     rm -f "$SAVED_NEW_ANALYSIS"
-    env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE=1 \
+    env CODEX_MODEL="$CODEX_MODEL" CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
+      SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
       "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
       "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS"
@@ -255,10 +261,11 @@ ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
 MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
   "$RECONCILIATION/report.json")"
 if [ "$MISSING_COUNT" -gt 0 ]; then
-  log "generating explanations for $MISSING_COUNT production gap(s) with local MLX"
+  log "generating explanations for $MISSING_COUNT production gap(s) with $CODEX_MODEL"
   NEW_ANALYSIS="$ROOT/new-analysis.json"
   rm -f "$NEW_ANALYSIS"
-  env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE=1 \
+  env CODEX_MODEL="$CODEX_MODEL" CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
+    SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
     "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
   ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \

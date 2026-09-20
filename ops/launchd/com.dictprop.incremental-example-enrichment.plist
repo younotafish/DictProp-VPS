@@ -18,16 +18,20 @@
   <dict>
     <key>PATH</key>
     <string>/Users/cjs/.local/node/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>LOCAL_MLX_PYTHON</key>
-    <string>/Users/cjs/.cache/dictprop/local-ai/bin/python</string>
-    <key>LOCAL_MLX_MODEL</key>
-    <string>/Users/cjs/.cache/dictprop/local-ai/models/Qwen3-30B-A3B-Instruct-2507-4bit</string>
+    <key>CODEX_HOME</key>
+    <string>/Users/cjs/.codex</string>
+    <key>CODEX_MODEL</key>
+    <string>gpt-5.6-sol</string>
+    <key>CODEX_CONCURRENCY</key>
+    <string>4</string>
+    <key>SENTENCE_ANALYSIS_BATCH_SIZE</key>
+    <string>12</string>
+    <key>VOCAB_COMPLETION_BATCH_SIZE</key>
+    <string>10</string>
     <key>LOCAL_MLX_VLM_MODEL</key>
     <string>/Users/cjs/.cache/dictprop/local-ai/models/Qwen3-VL-8B-Instruct-4bit</string>
     <key>LOCAL_MLX_VLM_PYTHON</key>
     <string>/Users/cjs/.cache/dictprop/local-vlm/bin/python</string>
-    <key>LOCAL_MLX_CONCURRENCY</key>
-    <string>1</string>
     <key>LOCAL_MLX_VLM_CONCURRENCY</key>
     <string>1</string>
     <key>KREA_PYTHON</key>
