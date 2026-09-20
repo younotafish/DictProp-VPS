@@ -12,14 +12,10 @@ REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 NODE_BIN="${NODE_BIN:-node}"
 TSX_BIN="${TSX_BIN:-server/node_modules/.bin/tsx}"
-ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-8}"
-IPA_CODEX_CONCURRENCY="${IPA_CODEX_CONCURRENCY:-4}"
-IPA_CLAUDE_CONCURRENCY="${IPA_CLAUDE_CONCURRENCY:-2}"
-IPA_META_CONCURRENCY="${IPA_META_CONCURRENCY:-2}"
-IPA_BATCH_SIZE="${IPA_BATCH_SIZE:-24}"
-IPA_CLAUDE_REQUEST_BATCH_SIZE="${IPA_CLAUDE_REQUEST_BATCH_SIZE:-24}"
-IPA_META_REQUEST_BATCH_SIZE="${IPA_META_REQUEST_BATCH_SIZE:-12}"
-IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-16}"
+LOCAL_MLX_CONCURRENCY="${LOCAL_MLX_CONCURRENCY:-1}"
+LOCAL_MLX_VLM_CONCURRENCY="${LOCAL_MLX_VLM_CONCURRENCY:-1}"
+LOCAL_VOCAB_BATCH_SIZE="${LOCAL_VOCAB_BATCH_SIZE:-12}"
+LOCAL_VOCAB_LOOKBACK_HOURS="${LOCAL_VOCAB_LOOKBACK_HOURS:-168}"
 LOCK_FILE="$ROOT/.cycle.lock"
 CURRENT_CORPUS="$ROOT/current-corpus.json"
 CURRENT_POOL="$ROOT/current-source.json"
@@ -36,6 +32,10 @@ SAVED_BASE_ANALYSIS="$SAVED_ROOT/current-base-analysis.json"
 SAVED_ANALYSIS_CACHE="$SAVED_ROOT/analysis-cache.json"
 SAVED_RECONCILIATION="$SAVED_ROOT/final-reconciliation"
 SAVED_PUBLISH_STATE="$SAVED_ROOT/publish-state-detailed-v1"
+VOCAB_ROOT="$ROOT/vocabulary"
+VOCAB_SOURCE="$VOCAB_ROOT/source.json"
+VOCAB_COMPLETED="$VOCAB_ROOT/completed.json"
+ITEM_IMAGE_ROOT="$ROOT/item-images"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -61,32 +61,6 @@ download_workflow_log() {
   return 1
 }
 
-if [ "$IPA_META_CONCURRENCY" -gt 0 ] && [ -z "${DEEPINFRA_API_KEY:-}" ] && [ -s .env ]; then
-  DEEPINFRA_API_KEY="$($NODE_BIN -e 'const f=require("fs"),d=require("./server/node_modules/dotenv");process.stdout.write(d.parse(f.readFileSync(".env")).DEEPINFRA_API_KEY||"")')"
-  export DEEPINFRA_API_KEY
-fi
-
-apply_reviewed_ipa() {
-  local source="$1"
-  local analysis="$2"
-  local root="$3"
-  local ipa="$root/natural-ipa.json"
-  local merged="$analysis.reviewed-ipa.tmp"
-  log "generating cross-reviewed connected-speech IPA with GPT, Claude, and Meta workers"
-  env IPA_BATCH_SIZE="$IPA_BATCH_SIZE" \
-    IPA_CODEX_CONCURRENCY="$IPA_CODEX_CONCURRENCY" \
-    IPA_CLAUDE_CONCURRENCY="$IPA_CLAUDE_CONCURRENCY" \
-    IPA_META_CONCURRENCY="$IPA_META_CONCURRENCY" \
-    IPA_CLAUDE_REQUEST_BATCH_SIZE="$IPA_CLAUDE_REQUEST_BATCH_SIZE" \
-    IPA_META_REQUEST_BATCH_SIZE="$IPA_META_REQUEST_BATCH_SIZE" \
-    "$NODE_BIN" scripts/offline/generate-sentence-natural-ipa.mjs \
-      "$source" "$ipa" "$root/natural-ipa-work"
-  "$NODE_BIN" scripts/offline/verify-sentence-natural-ipa.mjs "$source" "$ipa" \
-    "$root/natural-ipa-verification.json"
-  "$NODE_BIN" scripts/offline/apply-reviewed-natural-ipa.mjs "$analysis" "$ipa" "$merged"
-  mv "$merged" "$analysis"
-}
-
 mkdir -p "$ROOT"
 if ! shlock -f "$LOCK_FILE" -p "$$"; then
   log "another incremental enrichment cycle is already running"
@@ -97,7 +71,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if pgrep -f '[n]ode scripts/offline/(enrich-sentences|enrich-sentence-grammar|generate-sentence-natural-ipa)\.mjs' >/dev/null 2>&1; then
+if pgrep -f '[n]ode scripts/offline/(enrich-sentences|complete-corpus-fields|enrich-sentence-grammar)\.mjs' >/dev/null 2>&1; then
   log "another local sentence-analysis job is active; deferring this cycle"
   exit 0
 fi
@@ -145,6 +119,32 @@ download_workflow_log "$EXPORT_RUN_ID" "$EXPORT_LOG_TMP"
 mv "$CORPUS_TMP" "$CURRENT_CORPUS"
 rm -f "$EXPORT_LOG_TMP"
 
+mkdir -p "$VOCAB_ROOT"
+VOCAB_SOURCE_TMP="$VOCAB_SOURCE.tmp"
+"$NODE_BIN" scripts/offline/prepare-incremental-vocab-source.mjs \
+  "$CURRENT_CORPUS" "$VOCAB_SOURCE_TMP" "$LOCAL_VOCAB_BATCH_SIZE" "$LOCAL_VOCAB_LOOKBACK_HOURS"
+mv "$VOCAB_SOURCE_TMP" "$VOCAB_SOURCE"
+VOCAB_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).entries.length)' \
+  "$VOCAB_SOURCE")"
+VOCAB_OVERLAY="-"
+if [ "$VOCAB_COUNT" -gt 0 ]; then
+  log "completing $VOCAB_COUNT recent or structurally incomplete vocabulary record(s) with local MLX"
+  rm -f "$VOCAB_COMPLETED"
+  env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" \
+    "$NODE_BIN" scripts/offline/complete-corpus-fields.mjs \
+      "$VOCAB_SOURCE" "$VOCAB_COMPLETED" "$VOCAB_ROOT/work"
+  VOCAB_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
+    "$VOCAB_COMPLETED")"
+  log "publishing locally completed vocabulary records"
+  CORPUS_AUDIT_WAVE_STATE_ROOT="$VOCAB_ROOT/publish-state/$VOCAB_FINGERPRINT" \
+  CORPUS_AUDIT_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+    scripts/offline/dispatch-staged-corpus-audit.sh \
+      "$VOCAB_COMPLETED" 100 "$REQUIRED_DEPLOY_SHA"
+  VOCAB_OVERLAY="$VOCAB_COMPLETED"
+else
+  log "no recent vocabulary records need structural completion"
+fi
+
 mkdir -p "$SAVED_ROOT"
 SAVED_SOURCE_TMP="$SAVED_SOURCE.tmp"
 if [ -s "$SAVED_SOURCE" ]; then
@@ -167,10 +167,10 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
   SAVED_MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
     "$SAVED_RECONCILIATION/report.json")"
   if [ "$SAVED_MISSING_COUNT" -gt 0 ]; then
-    log "generating detailed local GPT-5.5 explanations for $SAVED_MISSING_COUNT saved sentence(s)"
+    log "generating detailed explanations for $SAVED_MISSING_COUNT saved sentence(s) with local MLX"
     SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
     rm -f "$SAVED_NEW_ANALYSIS"
-    env CODEX_MODEL=gpt-5.5 CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
+    env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE=1 \
       "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
       "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS"
@@ -181,7 +181,6 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
     echo "Incremental saved-sentence analysis reconciliation is incomplete" >&2
     exit 1
   fi
-  apply_reviewed_ipa "$SAVED_SOURCE" "$SAVED_RECONCILIATION/final-analysis.json" "$SAVED_ROOT"
   cp "$SAVED_RECONCILIATION/final-analysis.json" "$SAVED_ANALYSIS_CACHE.tmp"
   mv "$SAVED_ANALYSIS_CACHE.tmp" "$SAVED_ANALYSIS_CACHE"
   log "publishing detailed saved-sentence analyses"
@@ -192,6 +191,37 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
       "$SAVED_ANALYSIS_CACHE" 2000 "$REQUIRED_DEPLOY_SHA"
 else
   log "no saved sentences need detailed analysis"
+fi
+
+mkdir -p "$ITEM_IMAGE_ROOT"
+SAVED_ANALYSIS_INPUT="-"
+if [ -s "$SAVED_ANALYSIS_CACHE" ]; then SAVED_ANALYSIS_INPUT="$SAVED_ANALYSIS_CACHE"; fi
+"$NODE_BIN" scripts/offline/prepare-incremental-item-images.mjs \
+  "$CURRENT_CORPUS" \
+  "$SAVED_ANALYSIS_INPUT" \
+  "$VOCAB_OVERLAY" \
+  "$ITEM_IMAGE_ROOT" \
+  baidu/ERNIE-Image-Turbo
+ITEM_IMAGE_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' \
+  "$ITEM_IMAGE_ROOT/targets.json")"
+if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
+  ITEM_IMAGE_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
+    "$ITEM_IMAGE_ROOT/targets.json")"
+  log "generating and locally judging $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
+  env LOCAL_MLX_VLM_CONCURRENCY="$LOCAL_MLX_VLM_CONCURRENCY" \
+    IMAGE_MODEL=ernie-image-turbo IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
+    bash scripts/offline/run-streaming-image-quality-loop.sh \
+      "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
+      "$ITEM_IMAGE_ROOT/streaming-quality/$ITEM_IMAGE_FINGERPRINT" 1024 576 4 1 64
+  log "publishing locally generated saved-word/phrase/sentence images"
+  WAIT_FOR_SENTENCE_IMPORTS=0 \
+  OFFLINE_IMAGE_CORPUS_MANIFEST=/dev/null \
+  OFFLINE_IMAGE_WAVE_STATE_ROOT="$ITEM_IMAGE_ROOT/publish-state/$ITEM_IMAGE_FINGERPRINT" \
+  OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+    scripts/offline/dispatch-staged-offline-images.sh \
+      "$ITEM_IMAGE_ROOT" 100 "$REQUIRED_DEPLOY_SHA"
+else
+  log "production already covers every saved-word/phrase/sentence image"
 fi
 
 CURRENT_POOL_TMP="$ROOT/current-source.json.tmp"
@@ -225,13 +255,12 @@ ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
 MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
   "$RECONCILIATION/report.json")"
 if [ "$MISSING_COUNT" -gt 0 ]; then
-  log "generating local GPT-5.5 explanations for $MISSING_COUNT production gap(s)"
+  log "generating explanations for $MISSING_COUNT production gap(s) with local MLX"
   NEW_ANALYSIS="$ROOT/new-analysis.json"
   rm -f "$NEW_ANALYSIS"
-  env CODEX_MODEL=gpt-5.5 CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
+  env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE=1 \
     "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
-  apply_reviewed_ipa "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-repair"
   ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
   "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
     "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION" "$NEW_ANALYSIS"
@@ -273,7 +302,7 @@ if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
   TARGET_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
     "$IMAGE_ROOT/targets.json")"
   log "generating and judging $IMAGE_TARGET_COUNT missing example image(s) locally"
-  env CODEX_CONCURRENCY="$IMAGE_QA_CONCURRENCY" IMAGE_MODEL=ernie-image-turbo \
+  env LOCAL_MLX_VLM_CONCURRENCY="$LOCAL_MLX_VLM_CONCURRENCY" IMAGE_MODEL=ernie-image-turbo \
     IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
     "$IMAGE_ROOT/targets.json" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \

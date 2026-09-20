@@ -1,4 +1,4 @@
-name: Incremental Content Enrichment
+name: Content Enrichment Audit
 
 on:
   schedule:
@@ -9,49 +9,45 @@ permissions:
   contents: read
 
 jobs:
-  enrich:
+  audit:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
     steps:
-      - name: Enrich incomplete words and sentences
-        id: enrichment
+      - name: Audit incomplete words and sentences without generation
+        id: audit
         continue-on-error: true
         uses: appleboy/ssh-action@v1
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 80m
+          command_timeout: 15m
           capture_stdout: true
           script: |
             set -e
             cd /opt/dictprop-vps
             docker compose exec -T \
-              -e INCREMENTAL_ENRICHMENT_MAX_ITEMS=8 \
-              -e INCREMENTAL_EXAMPLE_ENRICHMENT_MAX_ITEMS=50 \
-              -e INCREMENTAL_EXAMPLE_ENRICHMENT_CONCURRENCY=4 \
               -e INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS=24 \
-              -e INCREMENTAL_ENRICHMENT_MAX_RUNTIME_MINUTES=70 \
-              app nice -n 10 node server/dist/scripts/enrich-new-items.js
+              app nice -n 10 node server/dist/scripts/audit-enrichment.js
 
       - name: Report content coverage
         if: always()
         env:
-          ENRICHMENT_STDOUT: ${{ steps.enrichment.outputs.stdout }}
-          ENRICHMENT_STDERR: ${{ steps.enrichment.outputs.stderr }}
+          ENRICHMENT_STDOUT: ${{ steps.audit.outputs.stdout }}
+          ENRICHMENT_STDERR: ${{ steps.audit.outputs.stderr }}
         run: |
           printf '%s\n' "$ENRICHMENT_STDOUT"
           printf '%s\n' "$ENRICHMENT_STDERR" >&2
           {
-            echo '### Incremental content enrichment'
+            echo '### Content enrichment audit (no generation)'
             echo '```json'
             printf '%s\n' "$ENRICHMENT_STDOUT" | tail -n 1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Enforce complete enrichment pass
-        if: steps.enrichment.outcome != 'success'
+      - name: Alert when local enrichment has outstanding work
+        if: steps.audit.outcome != 'success'
         run: exit 1

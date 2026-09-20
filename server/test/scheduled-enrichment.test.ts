@@ -8,10 +8,10 @@ const readRepoFile = (relativePath: string): string => readFileSync(
   'utf8',
 );
 
-test('production and local enrichment schedules both run every six hours', () => {
+test('production audits and the fully local enrichment worker both run every six hours', () => {
   const workflow = readRepoFile('.github/workflows/incremental-enrichment.yml');
   const launchAgent = readRepoFile('ops/launchd/com.dictprop.incremental-example-enrichment.plist');
-  const productionRunner = readRepoFile('server/src/scripts/enrich-new-items.ts');
+  const productionAudit = readRepoFile('server/src/scripts/audit-enrichment.ts');
   const runner = readRepoFile('scripts/offline/run-incremental-example-enrichment.sh');
   const recurringPublishers = [
     'scripts/offline/dispatch-staged-example-enrichments.sh',
@@ -20,23 +20,21 @@ test('production and local enrichment schedules both run every six hours', () =>
   ].map(readRepoFile);
 
   assert.match(workflow, /cron: '23 \*\/6 \* \* \*'/);
-  assert.match(workflow, /INCREMENTAL_ENRICHMENT_MAX_RUNTIME_MINUTES=70/);
-  assert.match(workflow, /INCREMENTAL_EXAMPLE_ENRICHMENT_MAX_ITEMS=50/);
-  assert.match(workflow, /INCREMENTAL_EXAMPLE_ENRICHMENT_CONCURRENCY=4/);
+  assert.match(workflow, /audit-enrichment\.js/);
+  assert.doesNotMatch(workflow, /enrich-new-items\.js/);
   assert.match(workflow, /capture_stdout: true/);
   assert.match(workflow, /Report content coverage/);
-  assert.match(workflow, /Enforce complete enrichment pass/);
-  assert.match(productionRunner, /collectExpectedExampleSentences/);
-  assert.match(productionRunner, /upsertSentenceEnrichment/);
-  assert.match(productionRunner, /exampleEnrichment\.remaining > 0/);
+  assert.match(workflow, /Alert when local enrichment has outstanding work/);
+  assert.match(productionAudit, /summarizeExampleEnrichmentCoverage/);
+  assert.match(productionAudit, /mode: 'audit-only'/);
+  assert.doesNotMatch(productionAudit, /generateImage|generateSentenceAnalysis|generateAnalysisData/);
   assert.match(launchAgent, /<key>StartInterval<\/key>\s*<integer>21600<\/integer>/);
-  assert.match(runner, /CODEX_MODEL=gpt-5\.5/);
-  assert.match(runner, /IPA_CLAUDE_CONCURRENCY="\$\{IPA_CLAUDE_CONCURRENCY:-2\}"/);
-  assert.match(runner, /IPA_META_CONCURRENCY="\$\{IPA_META_CONCURRENCY:-2\}"/);
-  assert.match(runner, /IPA_CLAUDE_REQUEST_BATCH_SIZE="\$\{IPA_CLAUDE_REQUEST_BATCH_SIZE:-24\}"/);
-  assert.match(runner, /IPA_META_REQUEST_BATCH_SIZE="\$\{IPA_META_REQUEST_BATCH_SIZE:-12\}"/);
-  assert.match(runner, /generate-sentence-natural-ipa\.mjs/);
-  assert.match(runner, /apply-reviewed-natural-ipa\.mjs/);
+  assert.match(launchAgent, /Qwen3-30B-A3B-Instruct-2507-4bit/);
+  assert.match(launchAgent, /Qwen3-VL-8B-Instruct-4bit/);
+  assert.match(runner, /complete-corpus-fields\.mjs/);
+  assert.match(runner, /prepare-incremental-item-images\.mjs/);
+  assert.match(runner, /LOCAL_MLX_CONCURRENCY/);
+  assert.doesNotMatch(runner, /CODEX_MODEL|IPA_CLAUDE|IPA_META|DEEPINFRA_API_KEY/);
   assert.match(runner, /shlock -f "\$LOCK_FILE" -p "\$\$"/);
   assert.match(runner, /analysis-publish-state-coverage-v2/);
   assert.match(runner, /publish-state-coverage-v2/);

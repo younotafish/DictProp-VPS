@@ -11,6 +11,7 @@ KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop
 STATE_ROOT="${OFFLINE_IMAGE_WAVE_STATE_ROOT:-/tmp/dictprop-staged-offline-images}"
 COOLDOWN_SECONDS="${OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS:-60}"
 SENTENCE_COMPLETE_MARKER="${SENTENCE_WAVE_COMPLETE_MARKER:-/tmp/dictprop-staged-sentence-backfill-v2/complete}"
+WAIT_FOR_SENTENCE_IMPORTS="${WAIT_FOR_SENTENCE_IMPORTS:-1}"
 CORPUS_MANIFEST="${OFFLINE_IMAGE_CORPUS_MANIFEST:-data/offline-backfill/final-reconciliation/usage-adjudicated-corpus-manifest.json}"
 
 log() {
@@ -58,10 +59,12 @@ if [ -s "$CORPUS_MANIFEST" ]; then
     "$CORPUS_MANIFEST"
 fi
 
-log "waiting for staged saved-sentence imports before publishing vocabulary images"
-while [ ! -s "$SENTENCE_COMPLETE_MARKER" ]; do
-  sleep 300
-done
+if [ "$WAIT_FOR_SENTENCE_IMPORTS" = 1 ]; then
+  log "waiting for staged saved-sentence imports before publishing vocabulary images"
+  while [ ! -s "$SENTENCE_COMPLETE_MARKER" ]; do
+    sleep 300
+  done
+fi
 
 # Recover a wave that completed remotely just before a local restart.
 while IFS= read -r tag_file; do

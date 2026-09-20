@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Enrichment is intentionally local-only. A missing model must fail visibly instead of silently
+# downloading or falling back to a hosted provider during a scheduled repair.
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+
 if [[ $# -lt 4 ]]; then
   echo "Usage: run-streaming-image-quality-loop.sh <targets.json> <candidates-dir> <images-dir> <work-dir> [width=768] [height=432] [steps=6] [candidate=1] [chunk-size=128] [first-generation-targets]" >&2
   exit 2
@@ -17,7 +22,7 @@ candidate="${8:-1}"
 chunk_size="${9:-128}"
 first_generation_targets="${10:-}"
 krea_python="${KREA_PYTHON:-${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}}"
-codex_concurrency="${CODEX_CONCURRENCY:-32}"
+local_vlm_concurrency="${LOCAL_MLX_VLM_CONCURRENCY:-1}"
 krea_shard_count="${KREA_SHARD_COUNT:-1}"
 image_model="${IMAGE_MODEL:-krea2}"
 image_model_quantize="${IMAGE_MODEL_QUANTIZE:-${KREA_QUANTIZE:-}}"
@@ -163,7 +168,7 @@ while [[ "$candidate" -le 99 ]]; do
   fi
 
   echo "[$(date -u +%FT%TZ)] streaming judge/refinement for candidate $candidate with $krea_shard_count $image_model shard(s)"
-  env CODEX_CONCURRENCY="$codex_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
+  env LOCAL_MLX_VLM_CONCURRENCY="$local_vlm_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
     "$current" "$candidates" "$images" "$pass_work" "$refined" "$candidate" "$chunk_size" &
   watcher_pid=$!
 
@@ -173,7 +178,7 @@ while [[ "$candidate" -le 99 ]]; do
   wait "$watcher_pid" || watcher_status=$?
   watcher_pid=""
   if [[ "$watcher_status" -ne 0 ]]; then
-    retry env CODEX_CONCURRENCY="$codex_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
+    retry env LOCAL_MLX_VLM_CONCURRENCY="$local_vlm_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
       "$current" "$candidates" "$images" "$pass_work" "$refined" "$candidate" "$chunk_size"
   fi
 

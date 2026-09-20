@@ -3,17 +3,20 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import { createLocalMlxClient, extractJsonObject } from './local-mlx-client.mjs';
 
 const [inputArg, outputArg, workArg] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
   throw new Error('Usage: complete-corpus-fields.mjs <corpus-manifest> <completed-manifest> [work-directory]');
 }
 
-const MODEL = 'gpt-5.6-sol';
-const REQUIRED_TEXT_FIELDS = ['sense', 'definition', 'history', 'register', 'mnemonic'];
+const MODEL = process.env.LOCAL_MLX_MODEL_ID || 'mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit';
+const REQUIRED_TEXT_FIELDS = ['sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt'];
 const activeChildren = new Set();
 let aborting = false;
+let localClient;
+installCodexSignalCleanup(activeChildren, () => { aborting = true; });
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'completion-work'));
@@ -45,12 +48,15 @@ const completionSchema = {
         type: 'object',
         additionalProperties: false,
         required: [
-          'itemIndex', 'sense', 'definition', 'forms', 'wordFamily', 'synonyms', 'antonyms',
-          'confusables', 'examples', 'history', 'register', 'mnemonic',
+          'itemIndex', 'sense', 'chinese', 'ipa', 'definition', 'forms', 'wordFamily',
+          'synonyms', 'antonyms', 'confusables', 'examples', 'history', 'register',
+          'mnemonic', 'imagePrompt', 'usageAudit',
         ],
         properties: {
           itemIndex: { type: 'integer', minimum: 0 },
           sense: { type: 'string', maxLength: 300 },
+          chinese: { type: 'string', maxLength: 1_000 },
+          ipa: { type: 'string', minLength: 3, maxLength: 500 },
           definition: { type: 'string', maxLength: 4_000 },
           forms: { type: 'array', items: { type: 'string', maxLength: 200 }, maxItems: 20 },
           wordFamily: { type: 'array', items: wordFamilySchema, maxItems: 20 },
@@ -61,6 +67,20 @@ const completionSchema = {
           history: { type: 'string', maxLength: 4_000 },
           register: { type: 'string', maxLength: 2_000 },
           mnemonic: { type: 'string', maxLength: 2_000 },
+          imagePrompt: { type: 'string', minLength: 50, maxLength: 1_200 },
+          usageAudit: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['status', 'reason', 'confidence'],
+            properties: {
+              status: {
+                type: 'string',
+                enum: ['modern_american', 'current_general', 'british_only', 'rare_or_dated', 'narrow_specialized'],
+              },
+              reason: { type: 'string', minLength: 1, maxLength: 1_000 },
+              confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            },
+          },
         },
       },
     },
@@ -73,6 +93,8 @@ const instruction = `You are a senior American English lexicographer completing 
 
 For every input:
 - sense: a concise unique label in the form "part of speech: distinguishing meaning". Infer it from the supplied definition, Chinese, IPA, context, image prompt, and usage audit. Do not combine distinct senses.
+- chinese: a concise, context-specific Simplified Chinese equivalent.
+- ipa: the complete headword or fixed expression in rhotic General American IPA, enclosed in exactly one slash pair even when the written headword contains alternatives.
 - definition: a precise original English definition for this exact sense, understandable without the source sentence.
 - forms: useful grammatical forms of the headword. Return an empty array when the fixed expression has no relevant inflection.
 - wordFamily: genuine derived words with part of speech and Simplified Chinese. Do not invent a family for an opaque fixed expression.
@@ -82,17 +104,43 @@ For every input:
 - history: concise, accurate etymology and semantic development. State uncertainty rather than inventing an origin.
 - register: a practical modern-American frequency/register note consistent with the supplied usage classification. For British-only, rare/dated, or specialized senses, state the limitation and normal American alternative when one exists.
 - mnemonic: a short memory aid tied to this exact meaning, not a false etymology.
+- imagePrompt: a production-ready prompt for one realistic photorealistic 16:9 teaching image. Make the exact sense visually inferable and prohibit visible text, logos, watermarks, illustration, animation, collage, and split screen.
+- usageAudit: classify this exact sense as modern_american, current_general, british_only, rare_or_dated, or narrow_specialized; give a concise reason and high, medium, or low confidence. Formal or advanced current English is not rare merely because it is difficult.
 
-Preserve the headword's capitalization only when it is a proper name. Use General American English. Everything must be English except wordFamily.chinese. Copy each itemIndex exactly, return every input once, and output only schema-valid JSON.`;
+Preserve the headword's capitalization only when it is a proper name. Use General American English. Everything must be English except chinese and wordFamily.chinese. Copy each itemIndex exactly, return every input once, and output only schema-valid JSON.`;
 
 function validString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
 function missingFields(card) {
-  const missing = REQUIRED_TEXT_FIELDS.filter(field => !validString(card?.[field]));
-  if (!Array.isArray(card?.examples) || card.examples.length === 0) missing.push('examples');
-  return missing;
+  const missing = [];
+  for (const [field, minimum] of [
+    ['sense', 3], ['chinese', 1], ['definition', 10], ['history', 20],
+    ['register', 10], ['mnemonic', 10], ['imagePrompt', 50],
+  ]) {
+    if (!validString(card?.[field]) || card[field].trim().length < minimum) missing.push(field);
+  }
+  if (validString(card?.chinese) && !/[\u3400-\u9fff]/u.test(card.chinese)) missing.push('chinese');
+  if (!/^\/[^/\n]+\/$/.test(String(card?.ipa || '').trim())) missing.push('ipa');
+  for (const field of ['forms', 'synonyms', 'antonyms', 'confusables']) {
+    if (!Array.isArray(card?.[field]) || card[field].some(value => !validString(value))) missing.push(field);
+  }
+  if (!Array.isArray(card?.wordFamily) || card.wordFamily.some(member =>
+    !validString(member?.word) || !validString(member?.pos) ||
+    !validString(member?.chinese) || !/[\u3400-\u9fff]/u.test(member.chinese))) {
+    missing.push('wordFamily');
+  }
+  if (!Array.isArray(card?.examples) || card.examples.length !== 2 ||
+      card.examples.some(example => !validString(example) || !/\{\{[^{}]+\}\}/.test(example))) {
+    missing.push('examples');
+  }
+  if (!card?.usageAudit || !['modern_american', 'current_general', 'british_only', 'rare_or_dated', 'narrow_specialized']
+    .includes(card.usageAudit.status) || !validString(card.usageAudit.reason) ||
+    !['high', 'medium', 'low'].includes(card.usageAudit.confidence)) {
+    missing.push('usageAudit');
+  }
+  return [...new Set(missing)];
 }
 
 const tasks = [];
@@ -148,38 +196,21 @@ const compactTask = (task, itemIndex) => ({
 });
 
 const batches = [];
-for (let index = 0; index < tasks.length; index += 10) batches.push(tasks.slice(index, index + 10));
+const batchSize = Math.max(1, Math.min(4, Number(process.env.LOCAL_MLX_VOCAB_BATCH_SIZE || 1)));
+for (let index = 0; index < tasks.length; index += batchSize) batches.push(tasks.slice(index, index + batchSize));
 
-function runCodex(args, prompt) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnCodex(args);
-    activeChildren.add(child);
-    let stderr = '';
-    let hardKillTimeout;
-    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
-    const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, 20 * 60 * 1000);
-    child.on('error', error => {
-      activeChildren.delete(child);
-      reject(error);
-    });
-    child.on('exit', (code, signal) => {
-      activeChildren.delete(child);
-      clearTimeout(timeout);
-      clearTimeout(hardKillTimeout);
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
-    });
-    child.stdin.end(prompt);
-  });
+function getLocalClient() {
+  localClient ??= createLocalMlxClient({ timeoutMs: 30 * 60 * 1_000, activeChildren });
+  return localClient;
 }
 
 function validateCompletion(result, task) {
   for (const field of REQUIRED_TEXT_FIELDS) {
     if (!validString(result?.[field])) throw new Error(`${task.cardId}: ${field} is empty`);
   }
+  if (!/^\/[^/\n]+\/$/.test(result.ipa.trim())) throw new Error(`${task.cardId}: IPA is invalid`);
+  if (!/[\u3400-\u9fff]/u.test(result.chinese)) throw new Error(`${task.cardId}: Chinese translation is invalid`);
+  if (result.imagePrompt.trim().length < 50) throw new Error(`${task.cardId}: image prompt is too short`);
   for (const field of ['forms', 'wordFamily', 'synonyms', 'antonyms', 'confusables', 'examples']) {
     if (!Array.isArray(result?.[field])) throw new Error(`${task.cardId}: ${field} is not an array`);
   }
@@ -192,21 +223,46 @@ function validateCompletion(result, task) {
       throw new Error(`${task.cardId}: wordFamily entry is incomplete`);
     }
   }
+  if (!result.usageAudit ||
+      !['modern_american', 'current_general', 'british_only', 'rare_or_dated', 'narrow_specialized']
+        .includes(result.usageAudit.status) ||
+      !validString(result.usageAudit.reason) ||
+      !['high', 'medium', 'low'].includes(result.usageAudit.confidence)) {
+    throw new Error(`${task.cardId}: usage audit is invalid`);
+  }
+}
+
+function normalizeCompletion(result) {
+  if (!result || typeof result !== 'object') return result;
+  const ipa = String(result.ipa || '').trim();
+  const transcriptions = ipa.match(/\/[^/\n]+\//g) || [];
+  const annotations = ipa.replace(/\/[^/\n]+\//g, '').replace(/[\s;,()\[\]–—-]/g, '');
+  if (transcriptions.length > 1 && !annotations) {
+    return {
+      ...result,
+      ipa: `/${transcriptions.map(value => value.slice(1, -1).trim()).join('; ')}/`,
+    };
+  }
+  return result;
 }
 
 async function runBatch(batch, batchIndex) {
   const compact = batch.map(compactTask);
-  const fingerprint = createHash('sha256').update(JSON.stringify(compact)).digest('hex').slice(0, 16);
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ provider: 'local-mlx-v1', model: MODEL, records: compact }))
+    .digest('hex')
+    .slice(0, 16);
   const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
   let correction = '';
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
         const prompt = `${instruction}${correction}\n\nCOMPLETE THESE CARDS:\n${JSON.stringify(compact)}`;
-        await runCodex([
-          'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-          '-m', MODEL, '--output-schema', schemaPath, '-o', resultPath, '-',
-        ], prompt);
+        const response = await getLocalClient().generate(
+          `${prompt}\n\nOUTPUT JSON SCHEMA:\n${JSON.stringify(completionSchema)}`,
+          { maxTokens: 8_192, temperature: attempt === 0 ? 0 : 0.15 },
+        );
+        writeFileSync(resultPath, `${JSON.stringify(extractJsonObject(response))}\n`, { mode: 0o600 });
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) {
@@ -215,7 +271,7 @@ async function runBatch(batch, batchIndex) {
       const byIndex = new Map(parsed.results.map(result => [result.itemIndex, result]));
       if (byIndex.size !== batch.length) throw new Error('Model returned duplicate item indexes');
       return batch.map((task, itemIndex) => {
-        const result = byIndex.get(itemIndex);
+        const result = normalizeCompletion(byIndex.get(itemIndex));
         if (!result) throw new Error(`Model omitted item index ${itemIndex}`);
         validateCompletion(result, task);
         return result;
@@ -232,7 +288,7 @@ async function runBatch(batch, batchIndex) {
 
 const batchResults = new Array(batches.length);
 let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(64, Number(process.env.CODEX_CONCURRENCY || 20)));
+const concurrency = Math.max(1, Math.min(2, Number(process.env.LOCAL_MLX_CONCURRENCY || 1)));
 async function worker() {
   for (;;) {
     const index = nextBatch++;
@@ -255,6 +311,7 @@ try {
   await terminateActiveChildren();
   throw error;
 }
+await localClient?.close();
 
 const completionByCard = new Map();
 for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
@@ -278,13 +335,19 @@ function corpusHash(data) {
 
 function fillCard(card, completion) {
   const next = { ...card };
+  const missing = new Set(missingFields(card));
   for (const field of REQUIRED_TEXT_FIELDS) {
-    if (!validString(next[field])) next[field] = completion[field].trim();
+    if (missing.has(field)) next[field] = completion[field].trim();
   }
   for (const field of ['forms', 'wordFamily', 'synonyms', 'antonyms', 'confusables']) {
-    if (!Array.isArray(next[field])) next[field] = completion[field];
+    if (missing.has(field)) next[field] = completion[field];
   }
-  if (!Array.isArray(next.examples) || next.examples.length === 0) next.examples = completion.examples;
+  if (missing.has('examples')) {
+    next.examples = completion.examples;
+  }
+  if (missing.has('usageAudit')) {
+    next.usageAudit = { ...completion.usageAudit, auditedAt: Date.now() };
+  }
   return next;
 }
 
@@ -309,12 +372,17 @@ const entries = source.entries.map(entry => {
     });
     if (changed) data = { ...originalData, vocabs };
   }
-  return {
+  const nextEntry = {
     ...entry,
     // The previous audited target is the source for this second, resumable completion pass.
     sourceHash: corpusHash(originalData),
     data,
   };
+  if (entry.type === 'vocab' && data.usageAudit) {
+    nextEntry.archiveForUsage = data.usageAudit.confidence !== 'low' &&
+      ['british_only', 'rare_or_dated', 'narrow_specialized'].includes(data.usageAudit.status);
+  }
+  return nextEntry;
 });
 
 if (completedCards !== tasks.length) throw new Error(`Applied ${completedCards}/${tasks.length} completions`);
