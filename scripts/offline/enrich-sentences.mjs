@@ -10,6 +10,7 @@ import {
   detailedSentenceAnalysisSchema,
   isSentenceGrammarAnalysis,
   normalizeDetailedSentenceAnalysis,
+  recoverExactGrammarExcerpt,
   sentenceGrammarExcerptMatchesText,
 } from './sentence-analysis-contract.mjs';
 
@@ -123,7 +124,24 @@ function preservedGrammarFor(sourceRecord) {
 
 function validateAnalysis(candidate, sourceRecord) {
   const id = sourceRecord.id;
-  const analysis = normalizeDetailedSentenceAnalysis(candidate, preservedGrammarFor(sourceRecord), id);
+  const sentenceText = plainSentence(sourceRecord.text);
+  const repairedCandidate = Array.isArray(candidate?.grammar?.points)
+    ? {
+        ...candidate,
+        grammar: {
+          ...candidate.grammar,
+          points: candidate.grammar.points.map(point => ({
+            ...point,
+            excerpt: recoverExactGrammarExcerpt(sentenceText, point?.excerpt),
+          })),
+        },
+      }
+    : candidate;
+  const analysis = normalizeDetailedSentenceAnalysis(
+    repairedCandidate,
+    preservedGrammarFor(sourceRecord),
+    id,
+  );
   if (!/^(?:yes|no)\b/i.test(analysis.americanEnglish.explanation.trim())) {
     throw new Error(`${id}: American English explanation must begin with Yes or No`);
   }
@@ -146,7 +164,6 @@ function validateAnalysis(candidate, sourceRecord) {
     throw new Error(`${id}: placeholder leaked into grammar structure`);
   }
   if (!deferGrammarValidation) {
-    const sentenceText = plainSentence(sourceRecord.text);
     const seenGrammarPoints = new Set();
     for (const point of analysis.grammar.points) {
       if (!point || !validString(point.label) || !validString(point.excerpt) ||

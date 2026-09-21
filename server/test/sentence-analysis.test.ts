@@ -15,8 +15,10 @@ import {
   sentenceAnalysisValidationIssues,
 } from '../src/sentence-analysis.js';
 import {
+  expandAbbreviatedGrammarExcerpt,
   isDetailedSentenceAnalysis,
   isSentenceAnalysis as isOfflineSentenceAnalysis,
+  recoverExactGrammarExcerpt,
   sentenceGrammarExcerptMatchesText as offlineSentenceGrammarExcerptMatchesText,
 } from '../../scripts/offline/sentence-analysis-contract.mjs';
 
@@ -130,6 +132,34 @@ test('grammar excerpts may treat spaced slashes as poetic line breaks', () => {
   assert.equal(sentenceGrammarExcerptMatchesText(text, excerpt), true);
   assert.equal(offlineSentenceGrammarExcerptMatchesText(text, excerpt), true);
   assert.equal(sentenceGrammarExcerptMatchesText(text, 'floated up and silenced all trace'), false);
+});
+
+test('offline generation expands abbreviated grammar excerpts into exact contiguous quotes', () => {
+  const text = 'The promise of easy money turned out to be totally illusive.';
+  assert.equal(
+    expandAbbreviatedGrammarExcerpt(text, 'The promise ... turned out'),
+    'The promise of easy money turned out',
+  );
+  assert.equal(expandAbbreviatedGrammarExcerpt(text, 'easy money'), 'easy money');
+  assert.equal(expandAbbreviatedGrammarExcerpt(text, 'missing ... words'), 'missing ... words');
+});
+
+test('offline generation recovers exact source punctuation and omitted modifiers', () => {
+  assert.equal(
+    recoverExactGrammarExcerpt(
+      'I was seven—it felt like a huge deal.',
+      '— it felt like a huge deal',
+    ),
+    'it felt like a huge deal',
+  );
+  assert.equal(
+    recoverExactGrammarExcerpt("We led, but we couldn't hold onto it.", 'but we couldn’t hold onto it'),
+    "but we couldn't hold onto it",
+  );
+  assert.equal(
+    recoverExactGrammarExcerpt("We're gonna catch the Celtics game tonight.", 'catch the game'),
+    'catch the Celtics game',
+  );
 });
 
 test('full analysis extraction tolerates a JSON string under an empty provider key', () => {
