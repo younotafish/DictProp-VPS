@@ -4,14 +4,30 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-const [corpusArg, outputArg] = process.argv.slice(2);
+const [corpusArg, outputArg, overlayArg] = process.argv.slice(2);
 if (!corpusArg || !outputArg) {
-  throw new Error('Usage: build-example-sentence-pool.mjs <corpus-export-or-manifest.json> <output.json>');
+  throw new Error(
+    'Usage: build-example-sentence-pool.mjs <corpus-export-or-manifest.json> <output.json> [local-vocab-overlay.json|-]',
+  );
 }
 
 const source = JSON.parse(readFileSync(resolve(corpusArg), 'utf8'));
-const records = Array.isArray(source?.items) ? source.items : source?.entries;
-if (!Array.isArray(records) || records.length === 0) throw new Error('Corpus input has no records');
+const sourceRecords = Array.isArray(source?.items) ? source.items : source?.entries;
+if (!Array.isArray(sourceRecords) || sourceRecords.length === 0) throw new Error('Corpus input has no records');
+const overlayById = new Map();
+if (overlayArg && overlayArg !== '-') {
+  const overlay = JSON.parse(readFileSync(resolve(overlayArg), 'utf8'));
+  if (overlay?.version !== 1 || !Array.isArray(overlay.entries)) {
+    throw new Error('Local vocabulary overlay is invalid');
+  }
+  for (const entry of overlay.entries) overlayById.set(entry.id, entry);
+}
+const records = sourceRecords.map(record => {
+  const overlay = overlayById.get(record.id);
+  return overlay
+    ? { ...record, data: overlay.data, archiveForUsage: overlay.archiveForUsage }
+    : record;
+});
 const enrichmentCoverage = new Map(
   (Array.isArray(source?.exampleEnrichmentCoverage) ? source.exampleEnrichmentCoverage : [])
     .filter(entry => typeof entry?.lookupHash === 'string')

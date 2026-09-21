@@ -2,6 +2,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
 
 const [corpusArg, outputArg, limitArg, lookbackHoursArg] = process.argv.slice(2);
 if (!corpusArg || !outputArg) {
@@ -60,7 +61,8 @@ for (const item of corpus.items) {
   if (!item?.data || item.isDeleted || item.isArchived || !['vocab', 'phrase'].includes(item.type)) continue;
   const cards = item.type === 'vocab' ? [item.data] : Array.isArray(item.data.vocabs) ? item.data.vocabs : [];
   const missing = cards.flatMap(card => missingCardFields(card));
-  if (missing.length === 0) continue;
+  const needsAdvancedEnrichment = cards.some(card => !hasCurrentLocalAdvancedEnrichment(card));
+  if (missing.length === 0 && !needsAdvancedEnrichment) continue;
   const recent = Number(item.savedAt || 0) >= recentSince;
   const critical = missing.some(field => field !== 'examples');
   if (!recent && !critical) {
@@ -70,7 +72,7 @@ for (const item of corpus.items) {
   // A phrase-level usage audit is required by the optimistic corpus importer. Vocabulary cards can
   // have their own missing audit generated below, but an unaudited phrase needs the broader audit job.
   if (item.type === 'phrase' && !validUsageAudit(item.data.usageAudit)) continue;
-  candidates.push({ item, recent });
+  candidates.push({ item, recent, needsAdvancedEnrichment });
 }
 
 candidates.sort((left, right) =>
@@ -91,11 +93,13 @@ const output = {
   version: 1,
   generatedAt: Date.now(),
   model: 'local incremental vocabulary completion source',
+  advancedEnrichmentVersion: 1,
   entries: selected,
 };
 writeFileSync(resolve(outputArg), `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
 process.stdout.write(`${JSON.stringify({
   eligible: candidates.length,
+  advancedEligible: candidates.filter(candidate => candidate.needsAdvancedEnrichment).length,
   selected: selected.length,
   ignoredLegacyExampleOnly,
   recentSince,

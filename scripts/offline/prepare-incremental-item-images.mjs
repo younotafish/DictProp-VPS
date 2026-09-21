@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
 
 const [corpusArg, analysisArg, completionArg, outputArg, modelArg] = process.argv.slice(2);
 if (!corpusArg || !outputArg) {
@@ -29,7 +30,6 @@ if (completionArg && completionArg !== '-') {
   }
   for (const entry of completion.entries) completedDataById.set(entry.id, entry.data);
 }
-
 const outputDir = resolve(outputArg);
 mkdirSync(join(outputDir, 'images'), { recursive: true });
 mkdirSync(join(outputDir, 'candidates'), { recursive: true });
@@ -52,19 +52,30 @@ function parentHash(data) {
   return createHash('sha256').update(JSON.stringify(withoutImages(stable))).digest('hex');
 }
 
-function filenameFor(id) {
-  return `${createHash('sha256').update(id).digest('hex').slice(0, 32)}.webp`;
+function filenameFor(id, prompt) {
+  return `${createHash('sha256').update(`${id}\0${prompt}`).digest('hex').slice(0, 32)}.webp`;
+}
+
+function promptHash(prompt) {
+  return createHash('sha256').update(String(prompt || '').trim()).digest('hex');
+}
+
+function hasCurrentLocalImage(data, prompt) {
+  const marker = data?.localImageEnrichment;
+  return marker?.version === 1 && marker?.provider === 'local-ernie' &&
+    marker.promptHash === promptHash(prompt);
 }
 
 function addTarget(parent, imageId, prompt, learningTarget) {
   if (!imageId || !prompt?.trim() || seen.has(imageId)) return;
   seen.add(imageId);
-  const filename = filenameFor(imageId);
+  const filename = filenameFor(imageId, prompt.trim());
   entries.push({
     parentId: parent.data.id,
     imageId,
     parentHash: parentHash(parent.data),
     imageFile: `images/${filename}`,
+    promptHash: promptHash(prompt),
   });
   targets.push({ imageId, filename, prompt: prompt.trim(), learningTarget });
 }
@@ -84,19 +95,26 @@ for (const item of corpus.items) {
       });
     }
   } else if (item.type === 'vocab') {
-    if (!data.imageUrl) {
+    const needsLocalImage = hasCurrentLocalAdvancedEnrichment(data) &&
+      !hasCurrentLocalImage(data, data.imagePrompt);
+    if (!data.imageUrl || needsLocalImage) {
       addTarget(effectiveItem, data.id, data.imagePrompt, {
         kind: 'word sense', text: data.word, sense: data.sense || '', definition: data.definition || '',
       });
     }
   } else if (item.type === 'phrase') {
-    if (!data.imageUrl) {
+    const hasLocallyAdvancedCard = (data.vocabs || []).some(hasCurrentLocalAdvancedEnrichment);
+    const needsLocalPhraseImage = hasLocallyAdvancedCard &&
+      !hasCurrentLocalImage(data, data.imagePrompt);
+    if (!data.imageUrl || needsLocalPhraseImage) {
       addTarget(effectiveItem, data.id, data.imagePrompt, {
         kind: 'phrase', text: data.query, sense: '', definition: data.translation || '',
       });
     }
     for (const card of data.vocabs || []) {
-      if (!card?.imageUrl) {
+      const needsLocalImage = hasCurrentLocalAdvancedEnrichment(card) &&
+        !hasCurrentLocalImage(card, card?.imagePrompt);
+      if (!card?.imageUrl || needsLocalImage) {
         addTarget(effectiveItem, card?.id, card?.imagePrompt, {
           kind: 'word sense', text: card?.word, sense: card?.sense || '', definition: card?.definition || '',
         });
@@ -112,4 +130,4 @@ writeFileSync(join(outputDir, 'manifest.json'), `${JSON.stringify({
 writeFileSync(join(outputDir, 'targets.json'), `${JSON.stringify({
   version: 1, generatedAt, model, targets,
 }, null, 2)}\n`, { mode: 0o600 });
-process.stderr.write(`Prepared ${targets.length} missing top-level/nested item image target(s)\n`);
+process.stderr.write(`Prepared ${targets.length} missing or locally refreshed top-level/nested item image target(s)\n`);

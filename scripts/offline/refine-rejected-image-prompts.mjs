@@ -3,21 +3,19 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import { createLocalMlxClient, extractJsonObject } from './local-mlx-client.mjs';
 
 const [targetsArg, outputArg, workArg] = process.argv.slice(2);
 if (!targetsArg || !outputArg || !workArg) {
   throw new Error('Usage: refine-rejected-image-prompts.mjs <rejected-targets.json> <output.json> <work-directory>');
 }
 
-const MODEL = process.env.CODEX_MODEL || 'gpt-5.6-sol';
-const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 20);
-const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
-  ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
-  : 20) * 60 * 1_000;
-const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
+const MODEL = process.env.LOCAL_MLX_MODEL_ID || 'mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit';
+const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.LOCAL_MLX_RETRY_DELAY_MS || 1_000)));
 const activeChildren = new Set();
 let aborting = false;
+let localClient;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
 if (!Array.isArray(payload.targets)) throw new Error('Rejected target manifest is invalid');
@@ -52,30 +50,9 @@ const schema = {
 const schemaPath = join(workDir, 'refinement-schema.json');
 writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
 
-function runCodex(args, prompt) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnCodex(args);
-    activeChildren.add(child);
-    let stderr = '';
-    let hardKillTimeout;
-    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
-    const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, CODEX_TIMEOUT_MS);
-    child.on('error', error => {
-      activeChildren.delete(child);
-      reject(error);
-    });
-    child.on('exit', (code, signal) => {
-      activeChildren.delete(child);
-      clearTimeout(timeout);
-      clearTimeout(hardKillTimeout);
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
-    });
-    child.stdin.end(prompt);
-  });
+function getLocalClient() {
+  localClient ??= createLocalMlxClient({ timeoutMs: 20 * 60 * 1_000, activeChildren });
+  return localClient;
 }
 
 const PROMPT_POLICY_VERSION = 3;
@@ -99,7 +76,7 @@ async function refineBatch(batch, batchIndex) {
     rejectionReason: target.rejectionReason || 'The previous image did not communicate the exact meaning clearly enough.',
   }));
   const fingerprint = createHash('sha256')
-    .update(JSON.stringify({ provider: 'codex-cli-v1', promptPolicyVersion: PROMPT_POLICY_VERSION, model: MODEL, records }))
+    .update(JSON.stringify({ provider: 'local-mlx-v1', promptPolicyVersion: PROMPT_POLICY_VERSION, model: MODEL, records }))
     .digest('hex')
     .slice(0, 16);
   const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
@@ -107,10 +84,11 @@ async function refineBatch(batch, batchIndex) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
-        await runCodex([
-          'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-          '-m', MODEL, '--output-schema', schemaPath, '-o', resultPath, '-',
-        ], `${instruction}${correction}\n\nREFINE THESE REJECTED TARGETS:\n${JSON.stringify(records)}`);
+        const response = await getLocalClient().generate(
+          `${instruction}${correction}\n\nOUTPUT JSON SCHEMA:\n${JSON.stringify(schema)}\n\nREFINE THESE REJECTED TARGETS:\n${JSON.stringify(records)}`,
+          { maxTokens: 4_000, temperature: attempt === 0 ? 0 : 0.15 },
+        );
+        writeFileSync(resultPath, `${JSON.stringify(extractJsonObject(response))}\n`, { mode: 0o600 });
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) {
@@ -142,7 +120,7 @@ async function refineBatch(batch, batchIndex) {
 
 const results = new Array(batches.length);
 let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(16, Number(process.env.CODEX_CONCURRENCY || 4)));
+const concurrency = Math.max(1, Math.min(2, Number(process.env.LOCAL_MLX_CONCURRENCY || 1)));
 async function worker() {
   for (;;) {
     const index = nextBatch++;
@@ -163,6 +141,8 @@ try {
   await terminateActiveChildren();
   throw error;
 }
+await localClient?.close();
+
 writeFileSync(resolve(outputArg), `${JSON.stringify({
   ...payload,
   targets: results.flat(),

@@ -8,6 +8,7 @@ export interface CorpusExportRecord {
   type: CorpusItemType;
   sourceHash: string;
   wasArchived: boolean;
+  savedAt: number;
   data: Record<string, unknown>;
 }
 

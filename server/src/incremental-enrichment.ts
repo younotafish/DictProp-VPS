@@ -1,5 +1,39 @@
+import { createHash } from 'node:crypto';
 import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
 import { hasCompleteGeneratedVocabMetadata, isValidGeneratedExampleSet } from './ai-response.js';
+
+function canonicalize(value: any): any {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalize(value[key])]));
+}
+
+export function advancedVocabContentHash(data: any): string {
+  if (!data || typeof data !== 'object') return '';
+  const content = Object.fromEntries(Object.entries(data)
+    .filter(([key]) => key !== 'imageUrl' && key !== 'advancedEnrichment' && key !== 'localImageEnrichment'));
+  return createHash('sha256').update(JSON.stringify(canonicalize(content))).digest('hex');
+}
+
+export function hasCurrentLocalAdvancedEnrichment(data: any): boolean {
+  const marker = data?.advancedEnrichment;
+  return marker?.version === 1 && marker?.provider === 'local-mlx' &&
+    typeof marker.model === 'string' && marker.model.length > 0 &&
+    Number.isFinite(marker.generatedAt) && marker.generatedAt > 0 &&
+    typeof marker.contentHash === 'string' && marker.contentHash === advancedVocabContentHash(data);
+}
+
+export function imagePromptHash(prompt: unknown): string {
+  return createHash('sha256').update(String(prompt || '').trim()).digest('hex');
+}
+
+export function hasCurrentLocalImageEnrichment(data: any): boolean {
+  const marker = data?.localImageEnrichment;
+  return marker?.version === 1 && marker?.provider === 'local-ernie' &&
+    typeof marker.model === 'string' && marker.model.length > 0 &&
+    Number.isFinite(marker.generatedAt) && marker.generatedAt > 0 &&
+    marker.promptHash === imagePromptHash(data?.imagePrompt);
+}
 
 export function hasStoredImage(data: any): boolean {
   return typeof data?.imageUrl === 'string' && data.imageUrl.length > 0;
@@ -15,14 +49,23 @@ export function itemNeedsIncrementalEnrichment(item: any): boolean {
     return !hasCompleteSentenceAnalysis(item.data.analysis) || !hasStoredImage(item.data);
   }
   if (item.type === 'vocab') {
-    return !hasCompleteVocabContent(item.data) ||
+    return !hasCompleteVocabContent(item.data) || !hasCurrentLocalAdvancedEnrichment(item.data) ||
+      (!!item.data.imagePrompt?.trim() && hasCurrentLocalAdvancedEnrichment(item.data) &&
+        !hasCurrentLocalImageEnrichment(item.data)) ||
       (!!item.data.imagePrompt?.trim() && !hasStoredImage(item.data));
   }
   if (item.type === 'phrase') {
     const phraseNeedsImage = !!item.data.imagePrompt?.trim() && !hasStoredImage(item.data);
-    const vocabNeedsImage = Array.isArray(item.data.vocabs) && item.data.vocabs.some((vocab: any) =>
-      !!vocab?.imagePrompt?.trim() && !hasStoredImage(vocab));
-    return phraseNeedsImage || vocabNeedsImage;
+    const hasAdvancedCard = Array.isArray(item.data.vocabs) &&
+      item.data.vocabs.some(hasCurrentLocalAdvancedEnrichment);
+    const phraseNeedsLocalImage = !!item.data.imagePrompt?.trim() && hasAdvancedCard &&
+      !hasCurrentLocalImageEnrichment(item.data);
+    const vocabNeedsWork = Array.isArray(item.data.vocabs) && item.data.vocabs.some((vocab: any) =>
+      !hasCompleteVocabContent(vocab) || !hasCurrentLocalAdvancedEnrichment(vocab) ||
+      (!!vocab?.imagePrompt?.trim() && hasCurrentLocalAdvancedEnrichment(vocab) &&
+        !hasCurrentLocalImageEnrichment(vocab)) ||
+      (!!vocab?.imagePrompt?.trim() && !hasStoredImage(vocab)));
+    return phraseNeedsImage || phraseNeedsLocalImage || vocabNeedsWork;
   }
   return false;
 }
@@ -73,6 +116,11 @@ export function summarizeIncrementalEnrichmentBacklog(items: any[], prioritySinc
       sentenceDetailedAnalysis: 0,
       sentenceImage: 0,
       recentVocabContent: 0,
+      recentVocabAdvanced: 0,
+      recentNestedVocabAdvanced: 0,
+      recentVocabLocalImage: 0,
+      recentPhraseLocalImage: 0,
+      recentNestedVocabLocalImage: 0,
       vocabImage: 0,
       phraseImage: 0,
       nestedVocabImage: 0,
@@ -93,6 +141,9 @@ export function summarizeIncrementalEnrichmentBacklog(items: any[], prioritySinc
     if (item.type === 'vocab') {
       summary.byType.vocab++;
       if (recent && !hasCompleteVocabContent(item.data)) summary.gaps.recentVocabContent++;
+      if (recent && !hasCurrentLocalAdvancedEnrichment(item.data)) summary.gaps.recentVocabAdvanced++;
+      if (recent && item.data.imagePrompt?.trim() && hasCurrentLocalAdvancedEnrichment(item.data) &&
+          !hasCurrentLocalImageEnrichment(item.data)) summary.gaps.recentVocabLocalImage++;
       if (item.data.imagePrompt?.trim() && !hasStoredImage(item.data)) summary.gaps.vocabImage++;
       continue;
     }
@@ -100,6 +151,16 @@ export function summarizeIncrementalEnrichmentBacklog(items: any[], prioritySinc
       summary.byType.phrase++;
       if (item.data.imagePrompt?.trim() && !hasStoredImage(item.data)) summary.gaps.phraseImage++;
       if (Array.isArray(item.data.vocabs)) {
+        const hasAdvancedCard = item.data.vocabs.some(hasCurrentLocalAdvancedEnrichment);
+        if (recent && item.data.imagePrompt?.trim() && hasAdvancedCard &&
+            !hasCurrentLocalImageEnrichment(item.data)) summary.gaps.recentPhraseLocalImage++;
+        if (recent) {
+          summary.gaps.recentNestedVocabAdvanced += item.data.vocabs.filter((vocab: any) =>
+            !hasCurrentLocalAdvancedEnrichment(vocab)).length;
+          summary.gaps.recentNestedVocabLocalImage += item.data.vocabs.filter((vocab: any) =>
+            vocab?.imagePrompt?.trim() && hasCurrentLocalAdvancedEnrichment(vocab) &&
+            !hasCurrentLocalImageEnrichment(vocab)).length;
+        }
         summary.gaps.nestedVocabImage += item.data.vocabs.filter((vocab: any) =>
           !!vocab?.imagePrompt?.trim() && !hasStoredImage(vocab)).length;
       }

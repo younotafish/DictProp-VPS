@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { StoredItem, VocabCard } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
-import { detectVocabulary, DetectedWord, analyzeInput, generateIllustration } from '../services/api';
+import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api';
 import { ensureTTS } from '../services/lazyTts';
 import { makeVocabStoredItem } from '../services/items';
 
@@ -80,7 +80,6 @@ interface TextAnalyzerProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (item: StoredItem) => void;
-  onUpdateStoredItem?: (item: StoredItem) => void;
   savedItems: StoredItem[];
   isOnline: boolean;
 }
@@ -89,7 +88,6 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   isOpen,
   onClose,
   onSave,
-  onUpdateStoredItem,
   savedItems,
   isOnline,
 }) => {
@@ -214,19 +212,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
             wordSaved++;
             savedCount++;
 
-            // Fire-and-forget image generation (one at a time, not all at once)
-            if (vocab.imagePrompt && !vocab.imageUrl && onUpdateStoredItem) {
-              generateIllustration(vocab.imagePrompt, '16:9')
-                .then(imageData => {
-                  if (imageData) {
-                    onUpdateStoredItem({
-                      ...storedItem,
-                      data: { ...vocab, imageUrl: imageData },
-                    });
-                  }
-                })
-                .catch(() => {});
-            }
+            // Advanced metadata and imagery are generated later by the Mac-local enrichment cycle.
           }
         }
 
@@ -250,7 +236,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     }
 
     setStep('done');
-  }, [detectedWords, selectedWords, savedItems, onSave, onUpdateStoredItem]);
+  }, [detectedWords, selectedWords, savedItems, onSave]);
 
   // ── Navigation ─────────────────────────────────────────────────────────
 

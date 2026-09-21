@@ -4,12 +4,28 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { killCodex } from './codex-process.mjs';
 
+export const DEFAULT_LOCAL_MLX_PYTHON = join(
+  process.env.XDG_CACHE_HOME || join(homedir(), '.cache'),
+  'dictprop',
+  'local-ai',
+  'bin',
+  'python',
+);
+
 export const DEFAULT_LOCAL_MLX_VLM_PYTHON = join(
   process.env.XDG_CACHE_HOME || join(homedir(), '.cache'),
   'dictprop',
   'local-vlm',
   'bin',
   'python',
+);
+
+export const DEFAULT_LOCAL_MLX_MODEL = join(
+  process.env.XDG_CACHE_HOME || join(homedir(), '.cache'),
+  'dictprop',
+  'local-ai',
+  'models',
+  'Qwen3-30B-A3B-Instruct-2507-4bit',
 );
 
 export const DEFAULT_LOCAL_MLX_VLM_MODEL = join(
@@ -61,9 +77,9 @@ export function extractJsonObject(value) {
 }
 
 export function createLocalMlxClient({
-  python = process.env.LOCAL_MLX_VLM_PYTHON || DEFAULT_LOCAL_MLX_VLM_PYTHON,
-  model = process.env.LOCAL_MLX_VLM_MODEL || DEFAULT_LOCAL_MLX_VLM_MODEL,
-  worker = process.env.LOCAL_MLX_VLM_WORKER || resolve('scripts/offline/local-mlx-vlm-worker.py'),
+  python = process.env.LOCAL_MLX_PYTHON || DEFAULT_LOCAL_MLX_PYTHON,
+  model = process.env.LOCAL_MLX_MODEL || DEFAULT_LOCAL_MLX_MODEL,
+  worker = process.env.LOCAL_MLX_WORKER || resolve('scripts/offline/local-mlx-worker.py'),
   timeoutMs = 40 * 60 * 1_000,
   activeChildren,
 } = {}) {

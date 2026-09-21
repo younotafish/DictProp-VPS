@@ -12,6 +12,20 @@ function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
+function isAdvancedEnrichmentMarker(value: unknown): boolean {
+  return isRecord(value) && value.version === 1 && value.provider === 'local-mlx' &&
+    typeof value.model === 'string' && value.model.length > 0 && value.model.length <= 300 &&
+    isFiniteNonNegative(value.generatedAt) && value.generatedAt > 0 &&
+    typeof value.contentHash === 'string' && /^[a-f0-9]{64}$/.test(value.contentHash);
+}
+
+function isLocalImageEnrichmentMarker(value: unknown): boolean {
+  return isRecord(value) && value.version === 1 && value.provider === 'local-ernie' &&
+    typeof value.model === 'string' && value.model.length > 0 && value.model.length <= 300 &&
+    isFiniteNonNegative(value.generatedAt) && value.generatedAt > 0 &&
+    typeof value.promptHash === 'string' && /^[a-f0-9]{64}$/.test(value.promptHash);
+}
+
 export function validateStoredItem(value: unknown): string | null {
   if (!isRecord(value)) return 'item must be an object';
   if (typeof value.type !== 'string' || !ITEM_TYPES.has(value.type)) return 'item.type is invalid';
@@ -41,6 +55,10 @@ export function validateStoredItem(value: unknown): string | null {
   if (value.type === 'vocab' && (typeof value.data.word !== 'string' || value.data.word.length === 0)) {
     return 'vocab word is required';
   }
+  if (value.type === 'vocab' && value.data.advancedEnrichment !== undefined &&
+      !isAdvancedEnrichmentMarker(value.data.advancedEnrichment)) {
+    return 'vocab advancedEnrichment is invalid';
+  }
   if (value.type === 'phrase' && (
     typeof value.data.query !== 'string' || value.data.query.length === 0 || !Array.isArray(value.data.vocabs)
   )) {
@@ -65,9 +83,20 @@ export function validateStoredItem(value: unknown): string | null {
   if (value.data.usageAudit !== undefined && !isUsageAudit(value.data.usageAudit)) {
     return 'item usageAudit is invalid';
   }
+  if (value.data.localImageEnrichment !== undefined &&
+      !isLocalImageEnrichmentMarker(value.data.localImageEnrichment)) {
+    return 'item localImageEnrichment is invalid';
+  }
   if (value.type === 'phrase') {
     for (let index = 0; index < value.data.vocabs.length; index++) {
       const vocab = value.data.vocabs[index];
+      if (vocab?.advancedEnrichment !== undefined && !isAdvancedEnrichmentMarker(vocab.advancedEnrichment)) {
+        return `phrase vocab ${index} advancedEnrichment is invalid`;
+      }
+      if (vocab?.localImageEnrichment !== undefined &&
+          !isLocalImageEnrichmentMarker(vocab.localImageEnrichment)) {
+        return `phrase vocab ${index} localImageEnrichment is invalid`;
+      }
       if (vocab?.usageAudit !== undefined && !isUsageAudit(vocab.usageAudit)) {
         return `phrase vocab ${index} usageAudit is invalid`;
       }

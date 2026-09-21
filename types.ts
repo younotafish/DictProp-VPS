@@ -22,6 +22,23 @@ export interface UsageAudit {
   originalText?: string;
 }
 
+/** Proves that this card's rich learning metadata was generated and verified locally. */
+export interface AdvancedEnrichmentMarker {
+  version: 1;
+  provider: 'local-mlx';
+  model: string;
+  generatedAt: number;
+  contentHash: string;
+}
+
+export interface LocalImageEnrichmentMarker {
+  version: 1;
+  provider: 'local-ernie';
+  model: string;
+  generatedAt: number;
+  promptHash: string;
+}
+
 export interface VocabCard {
   id: string; // Unique ID
   word: string;
@@ -41,6 +58,8 @@ export interface VocabCard {
   imagePrompt?: string; // To generate specific imagery
   imageUrl?: string; // Generated Base64 image
   usageAudit?: UsageAudit;
+  advancedEnrichment?: AdvancedEnrichmentMarker;
+  localImageEnrichment?: LocalImageEnrichmentMarker;
 }
 
 export interface SearchResult {
@@ -56,6 +75,7 @@ export interface SearchResult {
   imagePrompt?: string; // Photorealistic prompt for the complete phrase
   originalQuery?: string; // Original Chinese input if translated
   usageAudit?: UsageAudit;
+  localImageEnrichment?: LocalImageEnrichmentMarker;
 }
 
 export type AmericanEnglishStatus = 'american' | 'shared' | 'not_american';
@@ -138,6 +158,7 @@ export interface SentenceData {
   analysis?: SentenceAnalysis;
   analysisGeneratedAt?: number;
   usageAudit?: UsageAudit;
+  localImageEnrichment?: LocalImageEnrichmentMarker;
 }
 
 // SRS Data — FSRS v6 with optional fields for lazily migrated legacy rows

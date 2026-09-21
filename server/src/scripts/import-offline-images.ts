@@ -30,6 +30,30 @@ type PreparedEntry = {
 };
 const prepared: PreparedEntry[] = [];
 
+const markLocalImageEnrichment = (parentId: string, imageId: string, promptHash?: string) => {
+  if (!promptHash) return;
+  const parent = parentById.get(parentId) as any;
+  if (!parent) return;
+  const marker = {
+    version: 1,
+    provider: 'local-ernie',
+    model: bundle.model,
+    generatedAt: bundle.generatedAt,
+    promptHash,
+  };
+  let data = parent.data;
+  if (data.id === imageId) {
+    data = { ...data, localImageEnrichment: marker };
+  } else if (Array.isArray(data.vocabs)) {
+    data = {
+      ...data,
+      vocabs: data.vocabs.map((vocab: any) =>
+        vocab?.id === imageId ? { ...vocab, localImageEnrichment: marker } : vocab),
+    };
+  }
+  parentById.set(parentId, { ...parent, data });
+};
+
 // Read and validate every file before taking SQLite's write lock. Applying the prepared wave in a
 // single transaction avoids one durable commit per statement on the resource-constrained VPS.
 for (const entry of bundle.entries) {
@@ -60,6 +84,7 @@ const applyPrepared = db.transaction((entries: PreparedEntry[]) => {
   for (const { entry, image, mimeType } of entries) {
     try {
       if (!upsertItemImageBinary(entry.imageId, image, mimeType, owner.id)) throw new Error('image could not be stored');
+      markLocalImageEnrichment(entry.parentId, entry.imageId, entry.promptHash);
       touchedParentIds.add(entry.parentId);
       result.replaced++;
     } catch (error) {

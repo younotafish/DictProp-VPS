@@ -3,14 +3,13 @@ import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpel
 import { Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
-import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, generateIllustration, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, startImageBackfill, getImageBackfillStatus, cancelImageBackfill, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type ImageBackfillScope, type ImageBackfillStatus, type RevisionCursor } from './services/api';
+import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, startImageBackfill, getImageBackfillStatus, cancelImageBackfill, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type ImageBackfillScope, type ImageBackfillStatus, type RevisionCursor } from './services/api';
 import { stripSentenceMarkers } from './components/HighlightedSentence';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import type { DuplicateClusterView } from './components/DuplicatesModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
-import { mergeGeneratedVocabIntoStoredItem } from './services/items';
 import { AUTH_REQUIRED_EVENT } from './services/http';
 import { enqueuePendingReviewMutation, excludePendingReviewItems, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation, type PendingReviewMutation } from './services/reviewQueue';
 import { useReviewHistory } from './hooks/useReviewHistory';
@@ -1798,10 +1797,6 @@ const App: React.FC = () => {
 
   // Refs for batch import to avoid stale closures
   const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
-  const runImageBackfillRef = useRef<(
-    scope?: ImageBackfillScope,
-    options?: { silent?: boolean },
-  ) => Promise<void>>(async () => {});
 
   const handleBatchImport = useCallback(async (words: string[]) => {
     if (words.length === 0) return;
@@ -1882,9 +1877,7 @@ const App: React.FC = () => {
                 saved++;
                 importedItemIds.push(vocab.id);
 
-                // Image generation runs as a separate phase after text analysis
-                // completes — see runImageBackfillRef call below. Doing it here
-                // floods the server and times out the analyzeInput requests.
+                // Advanced metadata and images are added by the Mac-local enrichment cycle.
               }
             }
             lastError = null;
@@ -1938,16 +1931,13 @@ const App: React.FC = () => {
       cancelText: 'Dismiss',
     });
 
-    // Phase 2: backfill images AND pre-generate sentence audio for the items we just imported. Both
-    // run in the background (after the text analysis is done) so the new words play instantly later.
+    // Persist the new basic cards immediately so the Mac-local enrichment cycle can discover them.
+    // Audio remains safe to pre-generate here; advanced text and images do not use VPS inference.
     if (importedItemIds.length > 0) {
-      // The image job reads its targets from SQLite. Persist these new cards before starting it so a
-      // just-finished import cannot race the normal debounced server save and produce an empty sweep.
       void (async () => {
         const imported = latestItemsRef.current.filter(item => importedItemIds.includes(item.data.id));
         await persistChangedItems(imported, 'Batch import');
-        await runImageBackfillRef.current({ itemIds: importedItemIds }, { silent: true });
-      })().catch(e => warn('Post-batch image backfill failed:', e));
+      })().catch(e => warn('Post-batch persistence failed:', e));
       runSpeechGenerationRef.current(importedItemIds, { silent: true }).catch(e => warn('Post-batch speech generation failed:', e));
     }
   }, []);
@@ -2038,9 +2028,6 @@ const App: React.FC = () => {
     }
     await monitorImageBackfill(status);
   }, [monitorImageBackfill]);
-
-  // Wire up the ref so handleBatchImport (declared earlier with empty deps) can call it
-  runImageBackfillRef.current = runImageBackfill;
 
   // User-initiated backfill: count missing items across the unified notebook, confirm, then run.
   const handleGenerateMissingImages = useCallback(() => {
@@ -2353,10 +2340,6 @@ const App: React.FC = () => {
    * Returns base64 data URI directly (no polling needed).
    * Also saves to IDB for offline access.
    */
-  // Items we've already tried to regenerate a lost image for this session — so a failed regen (or a
-  // promptless item) doesn't re-trigger costly generation on every swipe past it.
-  const regenAttemptedRef = useRef<Set<string>>(new Set());
-
   const handleLazyLoadImage = useCallback(async (itemId: string, imageVersion?: string): Promise<string | null> => {
     // 1) Server has it? loadItemImage THROWS on a transient failure (OfflineImage retries) and returns
     //    null only for a genuine 404 (the image is truly gone). Persist a hit to IDB for instant replay.
@@ -2367,29 +2350,8 @@ const App: React.FC = () => {
       return existing;
     }
 
-    // 2) Truly lost (404) — regenerate ONCE per session from the item's saved prompt, then persist it
-    //    back to the server (so it isn't lost again) + IDB, and return it so the card shows immediately.
-    if (regenAttemptedRef.current.has(itemId)) return null;
-    regenAttemptedRef.current.add(itemId);
-    let prompt: string | undefined;
-    for (const it of latestItemsRef.current) {
-      if (isVocabItem(it)) {
-        if (it.data.id === itemId) { prompt = it.data.imagePrompt; break; }
-      } else if (isPhraseItem(it)) {
-        if (it.data.id === itemId) { prompt = it.data.imagePrompt || it.data.visualKeyword || it.data.query; break; }
-        const v = it.data.vocabs?.find((vv) => vv.id === itemId);
-        if (v) { prompt = v.imagePrompt; break; }
-      }
-    }
-    if (!prompt) return null; // nothing to regenerate from → placeholder
-    log(`🖼️ Image lost for ${itemId} — regenerating from prompt`);
-    const regenerated = await generateIllustration(prompt, '16:9');
-    if (!regenerated) return null;
-    const { optimizeImageDataUri } = await import('./services/imageProcessing');
-    const optimized = await optimizeImageDataUri(regenerated);
-    try { await saveImage(itemId, optimized); } catch { /* best-effort */ }
-    try { await uploadImages({ [itemId]: optimized }); } catch (e) { warn('Failed to persist regenerated image:', e); }
-    return optimized;
+    // A genuine 404 remains empty until the Mac-local enrichment cycle generates and uploads it.
+    return null;
   }, []);
 
   // Attach a user-pasted/picked image to a sentence under review. Mirrors the vocab/phrase image path:
@@ -2675,11 +2637,6 @@ const App: React.FC = () => {
         });
       }
     });
-  }, []);
-
-  const handleGeneratedImage = useCallback((vocab: VocabCard) => {
-    const updated = mergeGeneratedVocabIntoStoredItem(latestItemsRef.current, vocab);
-    if (updated) handleSaveRef.current(updated);
   }, []);
 
   // Search handler - triggers GlobalSearch popup (bottom-right search icon)
@@ -3175,7 +3132,6 @@ const App: React.FC = () => {
             onArchive={handleArchive}
             onUnarchive={handleUnarchive}
             onSave={handleSave}
-            onUpdateStoredItem={handleUpdateStoredItem}
             onCompare={handleCompare}
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
@@ -3250,7 +3206,6 @@ const App: React.FC = () => {
         isOnline={isOnline}
         onLazyLoadImage={handleLazyLoadImage}
         onRefreshReplace={handleRefreshReplace}
-        onGeneratedImage={handleGeneratedImage}
         onSaveSentence={handleSaveSentence}
         isSentenceSaved={isSentenceSaved}
         onCompareReady={handleCompareReady}

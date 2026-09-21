@@ -3,22 +3,29 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import { createLocalMlxClient, extractJsonObject } from './local-mlx-client.mjs';
+import {
+  hasCurrentLocalAdvancedEnrichment,
+  markLocalAdvancedEnrichment,
+} from './local-advanced-enrichment.mjs';
 
 const [inputArg, outputArg, workArg] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
   throw new Error('Usage: complete-corpus-fields.mjs <corpus-manifest> <completed-manifest> [work-directory]');
 }
 
-const MODEL = process.env.CODEX_MODEL || 'gpt-5.6-sol';
-const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 30);
-const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+const MODEL = process.env.LOCAL_MLX_MODEL_ID || 'mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit';
+const requestedTimeoutMinutes = Number(process.env.LOCAL_MLX_TIMEOUT_MINUTES || 40);
+const LOCAL_MLX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
-  : 30) * 60 * 1_000;
-const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
+  : 40) * 60 * 1_000;
+const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.LOCAL_MLX_RETRY_DELAY_MS || 1_000)));
+const maxTokens = Math.max(2_048, Math.min(32_768, Number(process.env.LOCAL_MLX_MAX_TOKENS || 12_000)));
 const REQUIRED_TEXT_FIELDS = ['sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt'];
 const activeChildren = new Set();
 let aborting = false;
+let localClient;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
@@ -92,7 +99,7 @@ const completionSchema = {
 const schemaPath = join(workDir, 'output-schema.json');
 writeFileSync(schemaPath, `${JSON.stringify(completionSchema, null, 2)}\n`, { mode: 0o600 });
 
-const instruction = `You are a senior American English lexicographer completing structurally incomplete legacy vocabulary cards for an advanced Chinese-speaking ESL learner. Work on the EXACT supplied sense. Do not add, remove, merge, or change meanings, and do not replace any existing field in the application; your output is used only where a field is absent.
+const instruction = `You are a senior American English lexicographer creating the advanced local enrichment layer for vocabulary cards used by a Chinese-speaking ESL learner. Work on the EXACT supplied sense. Do not add, remove, merge, or change meanings. Some inputs contain a basic server-generated draft; produce a complete, polished replacement for the learning metadata while preserving the headword, identity, and exact sense.
 
 For every input:
 - sense: a concise unique label in the form "part of speech: distinguishing meaning". Infer it from the supplied definition, Chinese, IPA, context, image prompt, and usage audit. Do not combine distinct senses.
@@ -156,7 +163,8 @@ for (const entry of source.entries) {
   for (let cardIndex = 0; cardIndex < cards.length; cardIndex++) {
     const card = cards[cardIndex];
     const missing = missingFields(card);
-    if (missing.length === 0) continue;
+    const refreshAll = !hasCurrentLocalAdvancedEnrichment(card);
+    if (missing.length === 0 && !refreshAll) continue;
     tasks.push({
       parentId: entry.id,
       parentType: entry.type,
@@ -164,6 +172,7 @@ for (const entry of source.entries) {
       cardIndex,
       cardId: card.id || entry.id,
       missing,
+      refreshAll,
       card,
     });
   }
@@ -180,6 +189,7 @@ const compactTask = (task, itemIndex) => ({
   parentType: task.parentType,
   parentQuery: task.parentQuery,
   missingFields: task.missing,
+  mode: task.refreshAll ? 'advanced_local_rewrite' : 'repair_missing_fields',
   word: task.card.word,
   sense: task.card.sense,
   chinese: task.card.chinese,
@@ -199,33 +209,12 @@ const compactTask = (task, itemIndex) => ({
 });
 
 const batches = [];
-const batchSize = Math.max(1, Math.min(20, Number(process.env.VOCAB_COMPLETION_BATCH_SIZE || 10)));
+const batchSize = Math.max(1, Math.min(4, Number(process.env.LOCAL_MLX_VOCAB_BATCH_SIZE || 1)));
 for (let index = 0; index < tasks.length; index += batchSize) batches.push(tasks.slice(index, index + batchSize));
 
-function runCodex(args, prompt) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnCodex(args);
-    activeChildren.add(child);
-    let stderr = '';
-    let hardKillTimeout;
-    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
-    const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, CODEX_TIMEOUT_MS);
-    child.on('error', error => {
-      activeChildren.delete(child);
-      reject(error);
-    });
-    child.on('exit', (code, signal) => {
-      activeChildren.delete(child);
-      clearTimeout(timeout);
-      clearTimeout(hardKillTimeout);
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
-    });
-    child.stdin.end(prompt);
-  });
+function getLocalClient() {
+  localClient ??= createLocalMlxClient({ timeoutMs: LOCAL_MLX_TIMEOUT_MS, activeChildren });
+  return localClient;
 }
 
 function validateCompletion(result, task) {
@@ -273,7 +262,7 @@ function normalizeCompletion(result) {
 async function runBatch(batch, batchIndex) {
   const compact = batch.map(compactTask);
   const fingerprint = createHash('sha256')
-    .update(JSON.stringify({ provider: 'codex-cli-v1', model: MODEL, records: compact }))
+    .update(JSON.stringify({ provider: 'local-mlx-v2', model: MODEL, records: compact }))
     .digest('hex')
     .slice(0, 16);
   const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
@@ -282,10 +271,11 @@ async function runBatch(batch, batchIndex) {
     try {
       if (!existsSync(resultPath)) {
         const prompt = `${instruction}${correction}\n\nCOMPLETE THESE CARDS:\n${JSON.stringify(compact)}`;
-        await runCodex([
-          'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-          '-m', MODEL, '--output-schema', schemaPath, '-o', resultPath, '-',
-        ], prompt);
+        const response = await getLocalClient().generate(
+          `${prompt}\n\nOUTPUT JSON SCHEMA:\n${JSON.stringify(completionSchema)}`,
+          { maxTokens, temperature: attempt === 0 ? 0 : 0.15 },
+        );
+        writeFileSync(resultPath, `${JSON.stringify(extractJsonObject(response))}\n`, { mode: 0o600 });
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) {
@@ -311,7 +301,7 @@ async function runBatch(batch, batchIndex) {
 
 const batchResults = new Array(batches.length);
 let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(16, Number(process.env.CODEX_CONCURRENCY || 4)));
+const concurrency = Math.max(1, Math.min(2, Number(process.env.LOCAL_MLX_CONCURRENCY || 1)));
 async function worker() {
   for (;;) {
     const index = nextBatch++;
@@ -334,6 +324,9 @@ try {
   await terminateActiveChildren();
   throw error;
 }
+await localClient?.close();
+
+const generatedAt = Date.now();
 const completionByCard = new Map();
 for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
   for (let itemIndex = 0; itemIndex < batches[batchIndex].length; itemIndex++) {
@@ -357,19 +350,20 @@ function corpusHash(data) {
 function fillCard(card, completion) {
   const next = { ...card };
   const missing = new Set(missingFields(card));
+  const refreshAll = !hasCurrentLocalAdvancedEnrichment(card);
   for (const field of REQUIRED_TEXT_FIELDS) {
-    if (missing.has(field)) next[field] = completion[field].trim();
+    if (refreshAll || missing.has(field)) next[field] = completion[field].trim();
   }
   for (const field of ['forms', 'wordFamily', 'synonyms', 'antonyms', 'confusables']) {
-    if (missing.has(field)) next[field] = completion[field];
+    if (refreshAll || missing.has(field)) next[field] = completion[field];
   }
-  if (missing.has('examples')) {
+  if (refreshAll || missing.has('examples')) {
     next.examples = completion.examples;
   }
-  if (missing.has('usageAudit')) {
-    next.usageAudit = { ...completion.usageAudit, auditedAt: Date.now() };
+  if (refreshAll || missing.has('usageAudit')) {
+    next.usageAudit = { ...completion.usageAudit, auditedAt: generatedAt };
   }
-  return next;
+  return markLocalAdvancedEnrichment(next, MODEL, generatedAt);
 }
 
 let completedCards = 0;
@@ -407,11 +401,10 @@ const entries = source.entries.map(entry => {
 });
 
 if (completedCards !== tasks.length) throw new Error(`Applied ${completedCards}/${tasks.length} completions`);
-const generatedAt = Date.now();
 const output = {
   ...source,
   generatedAt,
-  model: `${source.model}; ${MODEL} missing-field completion`,
+  model: `${source.model}; ${MODEL} local advanced enrichment`,
   entries,
 };
 mkdirSync(dirname(outputPath), { recursive: true });
@@ -421,6 +414,7 @@ writeFileSync(join(dirname(outputPath), 'completion-report.json'), `${JSON.strin
   generatedAt,
   model: MODEL,
   completedCards,
+  advancedRewrites: tasks.filter(task => task.refreshAll).length,
   parentItems: new Set(tasks.map(task => task.parentId)).size,
   missingFieldCounts: Object.fromEntries([...new Set(tasks.flatMap(task => task.missing))]
     .sort()

@@ -13,7 +13,7 @@ import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
 import { JSONImport } from '../components/JSONImport';
 import { useWheelNavigation } from '../hooks';
-import { analyzeInput, generateIllustration, transcribeAudio } from '../services/api';
+import { analyzeInput, transcribeAudio } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
 import { sortStoredSensesByUsage } from '../services/usageAudit';
 import { speakWord, ensureTTS } from '../services/lazyTts';
@@ -515,7 +515,6 @@ interface NotebookProps {
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
   onSave?: (item: StoredItem) => void;
-  onUpdateStoredItem?: (item: StoredItem) => void;
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
@@ -535,7 +534,7 @@ interface NotebookProps {
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress, hasSavedVariant, onFindDuplicates, onArchive, onUnarchive, onSave, onUpdateStoredItem, onCompare,
+    onBulkRefresh, bulkRefreshProgress, hasSavedVariant, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
     onGenerateMissingImages, imageBackfillProgress,
@@ -558,7 +557,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchGenerationIdRef = useRef(0); // Incremented on each search to cancel stale image updates
+  const searchGenerationIdRef = useRef(0); // Incremented on each search to discard stale analysis results
   
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
@@ -668,35 +667,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         const wordToSpeak = result.vocabs[0].word || query.trim();
         setTimeout(() => speakWord(wordToSpeak), 100);
 
-        // Generate images with a small concurrency cap — the 1-vCPU VPS chokes if every vocab's
-        // illustration is requested at once (the old forEach fired them all in parallel).
-        const IMG_CONCURRENCY = 2;
-        const vocabList = result.vocabs;
-        let imgCursor = 0;
-        const imgWorker = async () => {
-          while (imgCursor < vocabList.length) {
-            const index = imgCursor++;
-            const vocab = vocabList[index];
-            if (!vocab.imagePrompt || vocab.imageUrl) continue;
-            try {
-              const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
-              if (searchGenerationIdRef.current !== currentGenId) return; // a newer search started
-              if (imageData) {
-                setSearchResults(prev => {
-                  if (!prev || !prev.vocabs) return prev;
-                  const updatedVocabs = [...prev.vocabs];
-                  if (updatedVocabs[index]) {
-                    updatedVocabs[index] = { ...updatedVocabs[index], imageUrl: imageData };
-                  }
-                  return { ...prev, vocabs: updatedVocabs };
-                });
-              }
-            } catch (imgErr) {
-              warn('Image generation failed for vocab:', vocab.word, imgErr);
-            }
-          }
-        };
-        void Promise.all(Array.from({ length: Math.min(IMG_CONCURRENCY, vocabList.length) }, imgWorker));
+        // The immediate result is intentionally text-only. The Mac's local enrichment cycle creates
+        // the advanced metadata and image after the item is saved.
       }
     } catch (err: any) {
       logError('AI Search failed:', err);
@@ -1625,7 +1597,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           isOpen={showTextAnalyzer}
           onClose={() => setShowTextAnalyzer(false)}
           onSave={onSave}
-          onUpdateStoredItem={onUpdateStoredItem}
           savedItems={items}
           isOnline={isOnline}
         />

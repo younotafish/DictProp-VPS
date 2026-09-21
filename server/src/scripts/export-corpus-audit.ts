@@ -14,6 +14,7 @@ const items: CorpusExportRecord[] = getAllItems(true, owner.id)
     type: item.type,
     sourceHash: corpusSourceHash(item.data),
     wasArchived: item.isArchived === true,
+    savedAt: item.savedAt,
     data: item.data,
   }));
 

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue } from 'react';
 import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles, Scale, BookmarkPlus, MessageSquareQuote } from 'lucide-react';
 import { SearchResult, VocabCard, StoredItem, SentenceData, ComparisonResult, comparisonKey } from '../types';
-import { analyzeInput, detectVocabulary, generateIllustration, compareWords } from '../services/api';
+import { analyzeInput, detectVocabulary, compareWords } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { ComparisonBody } from './ComparisonBody';
 import { makeVocabStoredItem } from '../services/items';
@@ -37,8 +37,6 @@ interface Props {
   onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>;
   /** Replace an already-saved word's card(s) with a freshly re-run AI result (refresh). Keeps SRS. */
   onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
-  /** Persist an illustration that completed after the user saved this particular sense. */
-  onGeneratedImage?: (vocab: VocabCard) => void;
   /** Save an example sentence for review (shows the bookmark beside each USAGE megaphone). */
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
@@ -74,7 +72,7 @@ const looksLikeSentence = (text: string): boolean => {
   return startsLikeSentence || hasAuxVerb;
 };
 
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onGeneratedImage, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -86,7 +84,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
-  const savedVocabIdsRef = useRef<Set<string>>(new Set()); // saves that happened while image generation was in flight
   const queueRef = useRef<QueueItem[]>([]); // fresh queue for synchronous dedup/open checks
   const [scanning, setScanning] = useState(false); // sentence → expression scan in flight (pre-enqueue)
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -257,10 +254,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }
   }, [enqueue, showError, showStatus]);
 
-  // Post-process a fresh AI result for queue item `itemId`: prepare its audio, replace the saved card
-  // if this word was already saved (refresh), and stream in illustrations (re-saving so the saved card
-  // keeps its image). Shared by the queue processor and the in-place card refresh below.
-  const finalizeResult = useCallback((itemId: string, queryWord: string, result: SearchResult) => {
+  // Post-process a fresh server result: prepare audio and replace an existing saved card when this is
+  // a refresh. Images are deliberately left empty so the Mac's local enrichment cycle creates them.
+  const finalizeResult = useCallback((_itemId: string, queryWord: string, result: SearchResult) => {
     const liveVocabs = result.vocabs ? [...result.vocabs] : [];
     // Prepare the API audio up front so the first play is instant (generates if not cached yet).
     ensureTTS(liveVocabs.flatMap(v => v.examples || []));
@@ -268,27 +264,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const isReplace = !!(onRefreshReplace && findSavedByWord(queryWord).length > 0);
     if (isReplace && liveVocabs.length) onRefreshReplace!(queryWord, liveVocabs);
 
-    // Start every illustration independently. The provider owns its capacity and reports real quota
-    // failures; interactive searches should never sit behind an artificial browser-side queue.
-    const vocabList = result.vocabs || [];
-    const generateForVocab = async (vocab: VocabCard, index: number) => {
-      if (!vocab.imagePrompt || vocab.imageUrl) return;
-      try {
-        const imageData = await generateIllustration(vocab.imagePrompt, '16:9');
-        if (!imageData) return;
-        if (liveVocabs[index]) liveVocabs[index] = { ...liveVocabs[index], imageUrl: imageData };
-        setQueue(prev => prev.map(q => {
-          if (q.id !== itemId || !q.results?.vocabs) return q;
-          const updated = [...q.results.vocabs];
-          if (updated[index]) updated[index] = { ...updated[index], imageUrl: imageData };
-          return { ...q, results: { ...q.results, vocabs: updated } };
-        }));
-        if (isReplace) onRefreshReplace!(queryWord, [...liveVocabs]);
-        else if (savedVocabIdsRef.current.has(vocab.id)) onGeneratedImage?.(liveVocabs[index]);
-      } catch { /* the text result remains usable when an illustration provider fails */ }
-    };
-    void Promise.all(vocabList.map(generateForVocab));
-  }, [onRefreshReplace, onGeneratedImage, findSavedByWord]);
+  }, [onRefreshReplace, findSavedByWord]);
 
   // Process a single queue item: comparison, saved-card reuse, or a fresh analyze. The id was added to
   // processingIdsRef by the driver effect before this ran; every terminal path calls done().
@@ -492,7 +468,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // Save a single vocab
   const saveOneVocab = useCallback((vocab: VocabCard) => {
     if (isVocabSaved(vocab)) return false; // already saved
-    savedVocabIdsRef.current.add(vocab.id);
     onSave(makeVocabStoredItem(vocab));
     return true;
   }, [onSave, isVocabSaved]);

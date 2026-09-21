@@ -83,13 +83,13 @@ Do not push this fork to the Firebase repository. The production remote is named
 ## Scheduled Enrichment
 
 - GitHub Actions runs `.github/workflows/incremental-enrichment.yml` at minute 23 every six hours. The VPS task is audit-only: it reads SQLite coverage, reports top-level and example-sentence gaps, and fails visibly when local repair work remains. It never invokes a text or image generation provider.
-- macOS `launchd` runs `ops/launchd/com.dictprop.incremental-example-enrichment.plist` every 21,600 seconds. One resumable cycle fetches an encrypted production snapshot, uses the authenticated Codex CLI with `gpt-5.6-sol` for vocabulary completion, detailed sentence explanations, and rejected image-prompt rewrites, generates images with the local ERNIE image model, and judges those images with a local Qwen3-VL model. The recurring path does not use Claude, DeepInfra, or Replicate inference.
-- The encrypted corpus export carries both item image markers and per-example production coverage. The local bridge therefore repairs saved-word, phrase, saved-sentence, and example-sentence gaps without regenerating complete content. It keeps source, model checkpoints, publication waves, and image state under `data/offline-backfill/incremental-example-enrichment/`; optimistic hashes prevent an older local result from overwriting content edited after export.
+- Interactive searches still receive their immediate basic analysis from the VPS. macOS `launchd` then runs `ops/launchd/com.dictprop.incremental-example-enrichment.plist` every 21,600 seconds and fetches an encrypted production snapshot. The Mac uses local MLX Qwen3-30B for the advanced vocabulary rewrite, detailed sentence explanations, and rejected image-prompt rewrites, generates images with local ERNIE, and judges those images with local Qwen3-VL. No recurring enrichment inference uses Codex, Claude, DeepInfra, or Replicate.
+- The encrypted corpus export carries save timestamps, item image markers, and per-example production coverage. The local bridge gives every newly saved word or phrase one advanced local rewrite, repairs incomplete saved sentences and example sentences, and skips content already carrying a matching local-enrichment hash. It keeps source, model checkpoints, publication waves, and image state under `data/offline-backfill/incremental-example-enrichment/`; optimistic hashes prevent an older local result from overwriting content edited after export.
+- Every newly saved vocabulary sense receives an `advancedEnrichment` marker bound to a hash of its locally generated content. That makes the rewrite one-time and resumable while automatically re-queuing a card if its learning metadata is later edited.
 
-Authenticate the Codex CLI once and install the pinned local image-judging runtime (about 5.4 GB of model weights):
+Install the pinned local text and image-judging runtimes once (about 23 GB of model weights):
 
 ```bash
-codex login
 scripts/offline/bootstrap-local-ai-runtime.sh
 ```
 

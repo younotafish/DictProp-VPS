@@ -127,6 +127,49 @@ test('example pool carries encrypted production enrichment coverage into local r
   }
 });
 
+test('example pool uses a same-cycle local vocabulary overlay', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-example-overlay-'));
+  try {
+    const corpusPath = join(root, 'corpus.json');
+    const overlayPath = join(root, 'overlay.json');
+    const outputPath = join(root, 'pool.json');
+    writeFileSync(corpusPath, JSON.stringify({
+      version: 1,
+      items: [{
+        id: 'vocab',
+        type: 'vocab',
+        data: { id: 'vocab', word: 'sample', sense: 'noun: example', examples: ['A basic {{sample}}.'] },
+      }],
+      exampleEnrichmentCoverage: [],
+    }));
+    writeFileSync(overlayPath, JSON.stringify({
+      version: 1,
+      entries: [{
+        id: 'vocab',
+        type: 'vocab',
+        archiveForUsage: false,
+        data: {
+          id: 'vocab', word: 'sample', sense: 'noun: example',
+          examples: [
+            'I brought home a {{sample}} before choosing the paint color.',
+            'The lab tested a {{sample}} from every shipment.',
+          ],
+        },
+      }],
+    }));
+
+    execFileSync(process.execPath, [buildPoolScript, corpusPath, outputPath, overlayPath]);
+
+    const output = JSON.parse(readFileSync(outputPath, 'utf8'));
+    assert.deepEqual(output.sentences.map((entry: any) => entry.text), [
+      'The lab tested a {{sample}} from every shipment.',
+      'I brought home a {{sample}} before choosing the paint color.',
+    ].sort((left, right) => sentenceLookupHash(left).localeCompare(sentenceLookupHash(right))));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('analysis manifest merge prefers the newest reusable entry', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-analysis-merge-'));
   try {

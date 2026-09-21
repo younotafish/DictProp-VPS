@@ -3,6 +3,7 @@ export interface OfflineImageEntry {
   imageId: string;
   parentHash: string;
   imageFile: string;
+  promptHash?: string;
 }
 
 export interface OfflineImageBundle {
@@ -48,6 +49,9 @@ export function validateOfflineImageBundle(value: unknown): string | null {
     }
     if (typeof entry.imageFile !== 'string' || !SAFE_IMAGE_PATH.test(entry.imageFile)) {
       return `entry ${index} imageFile is invalid`;
+    }
+    if (entry.promptHash !== undefined && (typeof entry.promptHash !== 'string' || !SHA256.test(entry.promptHash))) {
+      return `entry ${index} promptHash is invalid`;
     }
   }
   return null;

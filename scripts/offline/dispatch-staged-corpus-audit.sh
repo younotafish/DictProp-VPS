@@ -97,7 +97,7 @@ while :; do
     until "$GH_BIN" release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
       || "$GH_BIN" release create "$RELEASE_TAG" --repo "$REPO" \
         --title "Temporary encrypted corpus metadata $WAVE_NAME" \
-        --notes "Locally generated and verified GPT-5.6 corpus metadata; removed after import." \
+        --notes "Locally generated and verified advanced corpus metadata; removed after import." \
         --latest=false; do
       log "GitHub release creation unavailable for $WAVE_NAME; retrying later"
       sleep 300

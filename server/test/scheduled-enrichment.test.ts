@@ -8,15 +8,21 @@ const readRepoFile = (relativePath: string): string => readFileSync(
   'utf8',
 );
 
-test('production audits and the hybrid Codex/local enrichment worker both run every six hours', () => {
+test('server search stays immediate while fully local enrichment runs every six hours', () => {
   const workflow = readRepoFile('.github/workflows/incremental-enrichment.yml');
   const launchAgent = readRepoFile('ops/launchd/com.dictprop.incremental-example-enrichment.plist');
   const productionAudit = readRepoFile('server/src/scripts/audit-enrichment.ts');
+  const serverAi = readRepoFile('server/src/routes/ai.ts');
   const runner = readRepoFile('scripts/offline/run-incremental-example-enrichment.sh');
   const textGenerators = [
     'scripts/offline/enrich-sentences.mjs',
     'scripts/offline/complete-corpus-fields.mjs',
     'scripts/offline/refine-rejected-image-prompts.mjs',
+  ].map(readRepoFile);
+  const interactiveSearchSurfaces = [
+    'components/GlobalSearch.tsx',
+    'components/TextAnalyzer.tsx',
+    'views/Notebook.tsx',
   ].map(readRepoFile);
   const recurringPublishers = [
     'scripts/offline/dispatch-staged-example-enrichments.sh',
@@ -34,24 +40,29 @@ test('production audits and the hybrid Codex/local enrichment worker both run ev
   assert.match(productionAudit, /mode: 'audit-only'/);
   assert.doesNotMatch(productionAudit, /generateImage|generateSentenceAnalysis|generateAnalysisData/);
   assert.match(launchAgent, /<key>StartInterval<\/key>\s*<integer>21600<\/integer>/);
-  assert.match(launchAgent, /<key>CODEX_MODEL<\/key>\s*<string>gpt-5\.6-sol<\/string>/);
-  assert.match(launchAgent, /<key>CODEX_HOME<\/key>/);
+  assert.match(serverAi, /POST \/api\/analyze/);
+  assert.match(serverAi, /proxyFetch/);
+  assert.match(launchAgent, /Qwen3-30B-A3B-Instruct-2507-4bit/);
   assert.match(launchAgent, /Qwen3-VL-8B-Instruct-4bit/);
-  assert.doesNotMatch(launchAgent, /Qwen3-30B-A3B-Instruct-2507-4bit|LOCAL_MLX_PYTHON/);
+  assert.doesNotMatch(launchAgent, /CODEX_MODEL|CODEX_HOME/);
   assert.match(runner, /complete-corpus-fields\.mjs/);
   assert.match(runner, /prepare-incremental-item-images\.mjs/);
-  assert.match(runner, /CODEX_MODEL="\$\{CODEX_MODEL:-gpt-5\.6-sol\}"/);
+  assert.match(runner, /LOCAL_MLX_CONCURRENCY/);
   assert.match(runner, /LOCAL_MLX_VLM_CONCURRENCY/);
-  assert.doesNotMatch(runner, /LOCAL_MLX_CONCURRENCY|IPA_CLAUDE|IPA_META|DEEPINFRA_API_KEY/);
+  assert.match(runner, /IMAGE_MODEL=ernie-image-turbo/);
+  assert.doesNotMatch(runner, /CODEX_MODEL|IPA_CLAUDE|IPA_META|DEEPINFRA_API_KEY/);
   assert.match(runner, /shlock -f "\$LOCK_FILE" -p "\$\$"/);
   assert.match(runner, /analysis-publish-state-coverage-v2/);
   assert.match(runner, /publish-state-coverage-v2/);
   assert.match(runner, /another local image pipeline is active/);
   assert.match(runner, /continuing with incremental images/);
   for (const generator of textGenerators) {
-    assert.match(generator, /process\.env\.CODEX_MODEL \|\| 'gpt-5\.6-sol'/);
-    assert.match(generator, /spawnCodex/);
-    assert.doesNotMatch(generator, /createLocalMlxClient|Qwen3-30B-A3B-Instruct-2507-4bit/);
+    assert.match(generator, /Qwen3-30B-A3B-Instruct-2507-4bit/);
+    assert.match(generator, /createLocalMlxClient/);
+    assert.doesNotMatch(generator, /spawnCodex|CODEX_MODEL/);
+  }
+  for (const surface of interactiveSearchSurfaces) {
+    assert.doesNotMatch(surface, /generateIllustration/);
   }
   for (const publisher of recurringPublishers) {
     assert.match(publisher, /wait-for-incremental-enrichment\.sh/);
