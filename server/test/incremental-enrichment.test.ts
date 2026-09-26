@@ -17,8 +17,8 @@ const withAdvancedEnrichment = (data: any) => ({
   ...data,
   advancedEnrichment: {
     version: 1,
-    provider: 'local-mlx',
-    model: 'local-test-model',
+    provider: 'codex-harness',
+    model: 'gpt-5.6-sol',
     generatedAt: 1,
     contentHash: advancedVocabContentHash(data),
   },
@@ -110,6 +110,13 @@ test('vocabulary completeness and sense-matched replacement are deterministic', 
   assert.equal(hasCurrentLocalImageEnrichment(locallyImaged), true);
   assert.equal(hasCurrentLocalImageEnrichment({ ...locallyImaged, imagePrompt: 'A changed prompt.' }), false);
   assert.equal(hasCurrentLocalAdvancedEnrichment({ ...enriched, definition: 'Edited later.' }), false);
+  assert.equal(hasCurrentLocalAdvancedEnrichment({
+    ...completeVocab,
+    advancedEnrichment: {
+      ...enriched.advancedEnrichment,
+      provider: 'local-mlx',
+    },
+  }), false);
   assert.equal(hasCompleteVocabContent({ ...completeVocab, examples: ['only one'] }), false);
   const replacement = selectReplacementVocab(
     { word: 'bank', sense: 'verb: rely' },

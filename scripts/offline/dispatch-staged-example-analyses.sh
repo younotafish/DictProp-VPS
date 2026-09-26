@@ -109,7 +109,7 @@ while :; do
     until "$GH_BIN" release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
       || "$GH_BIN" release create "$RELEASE_TAG" --repo "$REPO" \
         --title "Temporary encrypted example analyses $WAVE_NAME" \
-        --notes "Locally generated and verified example-sentence analyses; removed after import." \
+        --notes "Codex-harness-generated and verified example-sentence analyses; removed after import." \
         --latest=false; do
       log "GitHub release creation unavailable for $WAVE_NAME; retrying later"
       sleep 300

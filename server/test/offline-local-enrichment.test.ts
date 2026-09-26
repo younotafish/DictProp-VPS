@@ -52,8 +52,8 @@ const locallyEnriched = (card: any) => {
     ...card,
     advancedEnrichment: {
       version: 1,
-      provider: 'local-mlx',
-      model: 'local-test-model',
+      provider: 'codex-harness',
+      model: 'gpt-5.6-sol',
       generatedAt: 1,
       contentHash,
     },
@@ -70,22 +70,20 @@ const locallyImaged = (card: any) => ({
   },
 });
 
-const fakeLocalVocabWorker = `#!/usr/bin/env node
-import { createInterface } from 'node:readline';
-console.log(JSON.stringify({ type: 'ready', model: 'fake-local-model' }));
-createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line', line => {
-  const request = JSON.parse(line);
+const fakeCodex = `#!/usr/bin/env node
+import { readFileSync, writeFileSync } from 'node:fs';
+let prompt = '';
+process.stdin.on('data', chunk => { prompt += chunk; });
+process.stdin.on('end', () => {
   const marker = 'COMPLETE THESE CARDS:\\n';
-  const schemaMarker = '\\n\\nOUTPUT JSON SCHEMA:';
-  const start = request.prompt.lastIndexOf(marker) + marker.length;
-  const end = request.prompt.indexOf(schemaMarker, start);
-  const items = JSON.parse(request.prompt.slice(start, end));
+  const start = prompt.lastIndexOf(marker) + marker.length;
+  const items = JSON.parse(prompt.slice(start));
   const results = items.map(item => ({
     itemIndex: item.itemIndex,
     sense: item.sense,
-    chinese: '本地高级版本',
+    chinese: 'Codex高级版本',
     ipa: '/ˈsæmpəl/',
-    definition: 'A locally generated advanced definition for this exact sense.',
+    definition: 'A Codex-generated advanced definition for this exact sense.',
     forms: ['sample', 'samples'],
     wordFamily: [{ word: 'sampling', pos: 'noun', chinese: '抽样' }],
     synonyms: ['example'],
@@ -105,7 +103,8 @@ createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line', line =
       confidence: 'high',
     },
   }));
-  console.log(JSON.stringify({ type: 'result', id: request.id, text: JSON.stringify({ results }) }));
+  const outputIndex = process.argv.indexOf('-o');
+  writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ results }));
 });
 `;
 
@@ -228,15 +227,15 @@ test('incremental vocabulary preparation enriches every new card once and repair
   ]);
 });
 
-test('local vocabulary completion rewrites a new basic card once and binds its advanced marker', () => {
-  const root = mkdtempSync(join(tmpdir(), 'dictprop-local-vocab-completion-'));
+test('Codex vocabulary completion rewrites a new basic card once and binds its advanced marker', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-codex-vocab-completion-'));
   const sourcePath = join(root, 'source.json');
   const completedPath = join(root, 'completed.json');
-  const workerPath = join(root, 'fake-local-worker.mjs');
+  const codexPath = join(root, 'fake-codex.mjs');
   const workDir = join(root, 'work');
   const card = completeCard('new-basic-card');
-  writeFileSync(workerPath, fakeLocalVocabWorker);
-  chmodSync(workerPath, 0o700);
+  writeFileSync(codexPath, fakeCodex);
+  chmodSync(codexPath, 0o700);
   writeFileSync(sourcePath, JSON.stringify({
     version: 1,
     model: 'server-basic',
@@ -255,18 +254,17 @@ test('local vocabulary completion rewrites a new basic card once and binds its a
   ], {
     env: {
       ...process.env,
-      LOCAL_MLX_PYTHON: process.execPath,
-      LOCAL_MLX_WORKER: workerPath,
-      LOCAL_MLX_MODEL: root,
-      LOCAL_MLX_CONCURRENCY: '1',
-      LOCAL_MLX_VOCAB_BATCH_SIZE: '1',
+      CODEX_BIN: codexPath,
+      CODEX_MODEL: 'gpt-5.6-sol',
+      CODEX_CONCURRENCY: '1',
+      VOCAB_COMPLETION_BATCH_SIZE: '1',
     },
   });
 
   const completed = JSON.parse(readFileSync(completedPath, 'utf8'));
   const advanced = completed.entries[0].data;
-  assert.equal(advanced.definition, 'A locally generated advanced definition for this exact sense.');
-  assert.equal(advanced.advancedEnrichment.provider, 'local-mlx');
+  assert.equal(advanced.definition, 'A Codex-generated advanced definition for this exact sense.');
+  assert.equal(advanced.advancedEnrichment.provider, 'codex-harness');
   assert.equal(hasCurrentLocalAdvancedEnrichment(advanced), true);
 
   const refreshedCorpusPath = join(root, 'refreshed-corpus.json');

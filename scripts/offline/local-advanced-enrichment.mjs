@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export const LOCAL_ADVANCED_ENRICHMENT_VERSION = 1;
-export const LOCAL_ADVANCED_ENRICHMENT_PROVIDER = 'local-mlx';
+export const LOCAL_ADVANCED_ENRICHMENT_PROVIDER = 'codex-harness';
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);

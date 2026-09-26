@@ -92,7 +92,7 @@ const selected = candidates.slice(0, limit).map(({ item }) => ({
 const output = {
   version: 1,
   generatedAt: Date.now(),
-  model: 'local incremental vocabulary completion source',
+  model: 'Codex harness incremental vocabulary completion source',
   advancedEnrichmentVersion: 1,
   entries: selected,
 };

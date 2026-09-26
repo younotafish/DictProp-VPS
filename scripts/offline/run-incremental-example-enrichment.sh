@@ -12,11 +12,14 @@ REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 NODE_BIN="${NODE_BIN:-node}"
 TSX_BIN="${TSX_BIN:-server/node_modules/.bin/tsx}"
-LOCAL_MLX_CONCURRENCY="${LOCAL_MLX_CONCURRENCY:-1}"
-LOCAL_MLX_VOCAB_BATCH_SIZE="${LOCAL_MLX_VOCAB_BATCH_SIZE:-1}"
-LOCAL_MLX_VLM_CONCURRENCY="${LOCAL_MLX_VLM_CONCURRENCY:-1}"
-LOCAL_VOCAB_BATCH_SIZE="${LOCAL_VOCAB_BATCH_SIZE:-100}"
-LOCAL_VOCAB_LOOKBACK_HOURS="${LOCAL_VOCAB_LOOKBACK_HOURS:-168}"
+CODEX_MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
+CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
+CODEX_CONCURRENCY="${CODEX_CONCURRENCY:-4}"
+CODEX_IMAGE_CONCURRENCY="${CODEX_IMAGE_CONCURRENCY:-4}"
+VOCAB_COMPLETION_BATCH_SIZE="${VOCAB_COMPLETION_BATCH_SIZE:-8}"
+SENTENCE_ANALYSIS_BATCH_SIZE="${SENTENCE_ANALYSIS_BATCH_SIZE:-4}"
+INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-${LOCAL_VOCAB_BATCH_SIZE:-100}}"
+INCREMENTAL_VOCAB_LOOKBACK_HOURS="${INCREMENTAL_VOCAB_LOOKBACK_HOURS:-${LOCAL_VOCAB_LOOKBACK_HOURS:-168}}"
 LOCK_FILE="$ROOT/.cycle.lock"
 CURRENT_CORPUS="$ROOT/current-corpus.json"
 CURRENT_POOL="$ROOT/current-source.json"
@@ -123,16 +126,17 @@ rm -f "$EXPORT_LOG_TMP"
 mkdir -p "$VOCAB_ROOT"
 VOCAB_SOURCE_TMP="$VOCAB_SOURCE.tmp"
 "$NODE_BIN" scripts/offline/prepare-incremental-vocab-source.mjs \
-  "$CURRENT_CORPUS" "$VOCAB_SOURCE_TMP" "$LOCAL_VOCAB_BATCH_SIZE" "$LOCAL_VOCAB_LOOKBACK_HOURS"
+  "$CURRENT_CORPUS" "$VOCAB_SOURCE_TMP" "$INCREMENTAL_VOCAB_BATCH_SIZE" "$INCREMENTAL_VOCAB_LOOKBACK_HOURS"
 mv "$VOCAB_SOURCE_TMP" "$VOCAB_SOURCE"
 VOCAB_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).entries.length)' \
   "$VOCAB_SOURCE")"
 VOCAB_OVERLAY="-"
 if [ "$VOCAB_COUNT" -gt 0 ]; then
-  log "creating advanced local metadata for $VOCAB_COUNT new or incomplete vocabulary record(s)"
+  log "creating advanced Codex metadata for $VOCAB_COUNT new or incomplete vocabulary record(s)"
   rm -f "$VOCAB_COMPLETED"
-  env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" \
-    LOCAL_MLX_VOCAB_BATCH_SIZE="$LOCAL_MLX_VOCAB_BATCH_SIZE" \
+  env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
+    CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
+    VOCAB_COMPLETION_BATCH_SIZE="$VOCAB_COMPLETION_BATCH_SIZE" \
     "$NODE_BIN" scripts/offline/complete-corpus-fields.mjs \
       "$VOCAB_SOURCE" "$VOCAB_COMPLETED" "$VOCAB_ROOT/work"
   VOCAB_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
@@ -169,10 +173,11 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
   SAVED_MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
     "$SAVED_RECONCILIATION/report.json")"
   if [ "$SAVED_MISSING_COUNT" -gt 0 ]; then
-    log "generating detailed local explanations for $SAVED_MISSING_COUNT saved sentence(s)"
+    log "generating detailed Codex explanations for $SAVED_MISSING_COUNT saved sentence(s)"
     SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
     rm -f "$SAVED_NEW_ANALYSIS"
-    env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE=1 \
+    env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
+      CODEX_CONCURRENCY="$CODEX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
       "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
       "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS"
@@ -209,8 +214,9 @@ ITEM_IMAGE_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileS
 if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
   ITEM_IMAGE_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
     "$ITEM_IMAGE_ROOT/targets.json")"
-  log "generating and locally judging $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
-  env LOCAL_MLX_VLM_CONCURRENCY="$LOCAL_MLX_VLM_CONCURRENCY" \
+  log "generating locally and judging with Codex $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
+  env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
+    CODEX_CONCURRENCY="$CODEX_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$CODEX_IMAGE_CONCURRENCY" \
     IMAGE_MODEL=ernie-image-turbo IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
       "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
@@ -258,10 +264,11 @@ ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
 MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
   "$RECONCILIATION/report.json")"
 if [ "$MISSING_COUNT" -gt 0 ]; then
-  log "generating detailed local explanations for $MISSING_COUNT production gap(s)"
+  log "generating detailed Codex explanations for $MISSING_COUNT production gap(s)"
   NEW_ANALYSIS="$ROOT/new-analysis.json"
   rm -f "$NEW_ANALYSIS"
-  env LOCAL_MLX_CONCURRENCY="$LOCAL_MLX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE=1 \
+  env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
+    CODEX_CONCURRENCY="$CODEX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
     "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
   ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
@@ -304,8 +311,10 @@ if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
   fi
   TARGET_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
     "$IMAGE_ROOT/targets.json")"
-  log "generating and judging $IMAGE_TARGET_COUNT missing example image(s) locally"
-  env LOCAL_MLX_VLM_CONCURRENCY="$LOCAL_MLX_VLM_CONCURRENCY" IMAGE_MODEL=ernie-image-turbo \
+  log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with Codex"
+  env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
+    CODEX_CONCURRENCY="$CODEX_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$CODEX_IMAGE_CONCURRENCY" \
+    IMAGE_MODEL=ernie-image-turbo \
     IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
     "$IMAGE_ROOT/targets.json" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \

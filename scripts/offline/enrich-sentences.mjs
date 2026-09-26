@@ -3,8 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
-import { createLocalMlxClient, extractJsonObject } from './local-mlx-client.mjs';
+import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
 import {
   DETAILED_SENTENCE_ANALYSIS_INSTRUCTION,
   detailedSentenceAnalysisSchema,
@@ -21,17 +20,16 @@ if (!inputArg || !outputArg) {
   );
 }
 
-const MODEL = process.env.LOCAL_MLX_MODEL_ID || 'mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit';
+const MODEL = process.env.CODEX_MODEL || 'gpt-5.6-sol';
+const REASONING_EFFORT = process.env.CODEX_REASONING_EFFORT || 'xhigh';
 const deferGrammarValidation = process.env.DEFER_SENTENCE_GRAMMAR_VALIDATION === '1';
-const requestedTimeoutMinutes = Number(process.env.LOCAL_MLX_TIMEOUT_MINUTES || 40);
-const LOCAL_MLX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 40);
+const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 40) * 60 * 1_000;
-const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.LOCAL_MLX_RETRY_DELAY_MS || 1_000)));
-const maxTokens = Math.max(2_048, Math.min(32_768, Number(process.env.LOCAL_MLX_MAX_TOKENS || 12_000)));
+const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
 const activeChildren = new Set();
 let aborting = false;
-let localClient;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
@@ -224,14 +222,40 @@ function compactBatch(batch) {
 
 function batchFingerprint(batch) {
   return createHash('sha256')
-    .update(JSON.stringify({ provider: 'local-mlx-v1', model: MODEL, records: compactBatch(batch) }))
+    .update(JSON.stringify({
+      provider: 'codex-cli-v2',
+      model: MODEL,
+      reasoningEffort: REASONING_EFFORT,
+      records: compactBatch(batch),
+    }))
     .digest('hex')
     .slice(0, 16);
 }
 
-function getLocalClient() {
-  localClient ??= createLocalMlxClient({ timeoutMs: LOCAL_MLX_TIMEOUT_MS, activeChildren });
-  return localClient;
+function runCodex(args, prompt) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawnCodex(args);
+    activeChildren.add(child);
+    let stderr = '';
+    let hardKillTimeout;
+    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-30_000); });
+    const timeout = setTimeout(() => {
+      killCodex(child, 'SIGTERM');
+      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
+    }, CODEX_TIMEOUT_MS);
+    child.on('error', error => {
+      activeChildren.delete(child);
+      reject(error);
+    });
+    child.on('exit', (code, signal) => {
+      activeChildren.delete(child);
+      clearTimeout(timeout);
+      clearTimeout(hardKillTimeout);
+      if (code === 0) resolvePromise();
+      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
+    });
+    child.stdin.end(prompt);
+  });
 }
 
 async function runBatch(batch, index) {
@@ -242,12 +266,12 @@ async function runBatch(batch, index) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
-        const prompt = `${instruction}${correction}\n\nOUTPUT JSON SCHEMA:\n${JSON.stringify(schema)}\n\nANALYZE THESE SENTENCES:\n${JSON.stringify(compact)}`;
-        const response = await getLocalClient().generate(prompt, {
-          maxTokens,
-          temperature: attempt === 0 ? 0 : 0.15,
-        });
-        writeFileSync(resultPath, `${JSON.stringify(extractJsonObject(response))}\n`, { mode: 0o600 });
+        const prompt = `${instruction}${correction}\n\nANALYZE THESE SENTENCES:\n${JSON.stringify(compact)}`;
+        await runCodex([
+          'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
+          '-m', MODEL, '-c', `model_reasoning_effort="${REASONING_EFFORT}"`,
+          '--output-schema', schemaPath, '-o', resultPath, '-',
+        ], prompt);
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) throw new Error('Wrong analysis result count');
@@ -333,7 +357,9 @@ function writeProgress(status) {
   const tempPath = `${progressPath}.tmp`;
   writeFileSync(tempPath, `${JSON.stringify({
     status,
+    provider: 'codex-harness',
     model: MODEL,
+    reasoningEffort: REASONING_EFFORT,
     grammarValidation: deferGrammarValidation ? 'deferred' : 'strict',
     sourceSentences: source.sentences.length,
     baseAnalyses: baseAnalysisById.size,
@@ -347,7 +373,7 @@ function writeProgress(status) {
   renameSync(tempPath, progressPath);
 }
 
-const concurrency = Math.max(1, Math.min(4, Number(process.env.LOCAL_MLX_CONCURRENCY || 1)));
+const concurrency = Math.max(1, Math.min(16, Number(process.env.CODEX_CONCURRENCY || 4)));
 async function analysisWorker() {
   for (;;) {
     const index = nextBatch++;
@@ -375,14 +401,15 @@ try {
   writeProgress('failed');
   throw error;
 }
-await localClient?.close();
 
 if (failures.length > 0) {
   const tempPath = `${failuresPath}.tmp`;
   writeFileSync(tempPath, `${JSON.stringify({
     version: 1,
     generatedAt: Date.now(),
+    provider: 'codex-harness',
     model: MODEL,
+    reasoningEffort: REASONING_EFFORT,
     failures: failures.sort((left, right) => left.id.localeCompare(right.id)),
   }, null, 2)}\n`, { mode: 0o600 });
   renameSync(tempPath, failuresPath);
@@ -408,7 +435,14 @@ for (let index = 0; index < batches.length; index++) {
 
 mkdirSync(dirname(outputPath), { recursive: true });
 const outputTemp = `${outputPath}.tmp`;
-writeFileSync(outputTemp, `${JSON.stringify({ version: 1, generatedAt, entries }, null, 2)}\n`, { mode: 0o600 });
+writeFileSync(outputTemp, `${JSON.stringify({
+  version: 1,
+  generatedAt,
+  provider: 'codex-harness',
+  model: MODEL,
+  reasoningEffort: REASONING_EFFORT,
+  entries,
+}, null, 2)}\n`, { mode: 0o600 });
 renameSync(outputTemp, outputPath);
 writeProgress('complete');
 process.stderr.write(`Wrote ${entries.length} sentence analyses to ${outputPath}\n`);

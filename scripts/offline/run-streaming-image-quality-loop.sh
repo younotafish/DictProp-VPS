@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Enrichment is intentionally local-only. A missing model must fail visibly instead of silently
-# downloading or falling back to a hosted provider during a scheduled repair.
+# Image rendering is intentionally local-only. A missing renderer must fail visibly instead of
+# silently downloading a model during a scheduled repair. Semantic review runs through Codex.
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 
@@ -22,7 +22,7 @@ candidate="${8:-1}"
 chunk_size="${9:-128}"
 first_generation_targets="${10:-}"
 krea_python="${KREA_PYTHON:-${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}}"
-local_vlm_concurrency="${LOCAL_MLX_VLM_CONCURRENCY:-1}"
+codex_image_concurrency="${CODEX_IMAGE_CONCURRENCY:-${CODEX_CONCURRENCY:-4}}"
 krea_shard_count="${KREA_SHARD_COUNT:-1}"
 image_model="${IMAGE_MODEL:-krea2}"
 image_model_quantize="${IMAGE_MODEL_QUANTIZE:-${KREA_QUANTIZE:-}}"
@@ -168,7 +168,7 @@ while [[ "$candidate" -le 99 ]]; do
   fi
 
   echo "[$(date -u +%FT%TZ)] streaming judge/refinement for candidate $candidate with $krea_shard_count $image_model shard(s)"
-  env LOCAL_MLX_VLM_CONCURRENCY="$local_vlm_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
+  env CODEX_IMAGE_CONCURRENCY="$codex_image_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
     "$current" "$candidates" "$images" "$pass_work" "$refined" "$candidate" "$chunk_size" &
   watcher_pid=$!
 
@@ -178,7 +178,7 @@ while [[ "$candidate" -le 99 ]]; do
   wait "$watcher_pid" || watcher_status=$?
   watcher_pid=""
   if [[ "$watcher_status" -ne 0 ]]; then
-    retry env LOCAL_MLX_VLM_CONCURRENCY="$local_vlm_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
+    retry env CODEX_IMAGE_CONCURRENCY="$codex_image_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
       "$current" "$candidates" "$images" "$pass_work" "$refined" "$candidate" "$chunk_size"
   fi
 

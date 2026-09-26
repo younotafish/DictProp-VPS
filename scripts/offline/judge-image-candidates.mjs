@@ -3,13 +3,7 @@
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
-import {
-  createLocalMlxClient,
-  DEFAULT_LOCAL_MLX_VLM_MODEL,
-  DEFAULT_LOCAL_MLX_VLM_PYTHON,
-  extractJsonObject,
-} from './local-mlx-client.mjs';
+import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
 
 const [targetsArg, candidatesArg, imagesArg, workArg, candidateNumberArg] = process.argv.slice(2);
 if (!targetsArg || !candidatesArg || !imagesArg || !workArg) {
@@ -20,11 +14,15 @@ if (!Number.isSafeInteger(candidateNumber) || candidateNumber < 1 || candidateNu
   throw new Error('Candidate number must be an integer from 1 to 99');
 }
 
-const MODEL = process.env.LOCAL_MLX_VLM_MODEL_ID || 'mlx-community/Qwen3-VL-8B-Instruct-4bit';
-const JUDGMENT_POLICY_VERSION = 2;
+const MODEL = process.env.CODEX_MODEL || 'gpt-5.6-sol';
+const REASONING_EFFORT = process.env.CODEX_REASONING_EFFORT || 'xhigh';
+const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 20);
+const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+  ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
+  : 20) * 60 * 1_000;
+const JUDGMENT_POLICY_VERSION = 3;
 const activeChildren = new Set();
 let aborting = false;
-let localClient;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
 if (!Array.isArray(payload.targets)) throw new Error('Target manifest is invalid');
@@ -66,15 +64,30 @@ const pending = payload.targets.filter(target => !existsSync(join(imageDir, targ
 const batches = [];
 for (let index = 0; index < pending.length; index += 8) batches.push(pending.slice(index, index + 8));
 
-function getLocalClient() {
-  localClient ??= createLocalMlxClient({
-    python: process.env.LOCAL_MLX_VLM_PYTHON || DEFAULT_LOCAL_MLX_VLM_PYTHON,
-    model: process.env.LOCAL_MLX_VLM_MODEL || DEFAULT_LOCAL_MLX_VLM_MODEL,
-    worker: process.env.LOCAL_MLX_VLM_WORKER || resolve('scripts/offline/local-mlx-vlm-worker.py'),
-    timeoutMs: 20 * 60 * 1_000,
-    activeChildren,
+function runCodex(args, prompt) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawnCodex(args);
+    activeChildren.add(child);
+    let stderr = '';
+    let hardKillTimeout;
+    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-30_000); });
+    const timeout = setTimeout(() => {
+      killCodex(child, 'SIGTERM');
+      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
+    }, CODEX_TIMEOUT_MS);
+    child.on('error', error => {
+      activeChildren.delete(child);
+      reject(error);
+    });
+    child.on('exit', (code, signal) => {
+      activeChildren.delete(child);
+      clearTimeout(timeout);
+      clearTimeout(hardKillTimeout);
+      if (code === 0) resolvePromise();
+      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
+    });
+    child.stdin.end(prompt);
   });
-  return localClient;
 }
 
 async function judgeBatch(batch, batchIndex) {
@@ -85,7 +98,12 @@ async function judgeBatch(batch, batchIndex) {
     brief: target.prompt,
   }));
   const fingerprint = createHash('sha256')
-    .update(JSON.stringify({ judgmentPolicyVersion: JUDGMENT_POLICY_VERSION, model: MODEL, records }))
+    .update(JSON.stringify({
+      judgmentPolicyVersion: JUDGMENT_POLICY_VERSION,
+      model: MODEL,
+      reasoningEffort: REASONING_EFFORT,
+      records,
+    }))
     .digest('hex')
     .slice(0, 16);
   const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
@@ -98,13 +116,13 @@ async function judgeBatch(batch, batchIndex) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
-        const prompt = `Act as a rigorous but practical visual editor for an American English learning app. Each attached image corresponds, in attachment order, to the itemIndex record below:\n${JSON.stringify(records)}\n\nJudge each image independently against learningTarget.text, learningTarget.sense, and learningTarget.definition. The brief describes one possible composition; it is guidance, not a shot-list contract. Accept when a learner can infer the core contextual meaning at a glance, the image does not contradict that meaning, and the scene is realistic and visually coherent. Semantic usefulness outweighs literal compliance with incidental staging. Do not reject solely because of an omitted secondary action, exact person count, camera angle, accessory, facial micro-expression, or precise body position when the central teaching meaning remains clear. Reject semantic mismatches, genuinely ambiguous generic stock imagery, misleading literal depictions of figurative language, materially broken anatomy or objects, decorative symbolism, animation, illustration, or distracting visible text/logos. A minor cosmetic flaw is not enough to reject an otherwise accurate teaching image. Copy every itemIndex exactly and return only JSON matching this schema:\n${JSON.stringify(schema)}${correction}`;
-        const response = await getLocalClient().generate(prompt, {
-          images: candidates,
-          maxTokens: 1_500,
-          temperature: attempt === 0 ? 0 : 0.1,
-        });
-        writeFileSync(resultPath, `${JSON.stringify(extractJsonObject(response))}\n`, { mode: 0o600 });
+        const prompt = `Act as a rigorous but practical visual editor for an American English learning app. Each attached image corresponds, in attachment order, to the itemIndex record below:\n${JSON.stringify(records)}\n\nJudge each image independently against learningTarget.text, learningTarget.sense, and learningTarget.definition. The brief describes one possible composition; it is guidance, not a shot-list contract. Accept when a learner can infer the core contextual meaning at a glance, the image does not contradict that meaning, and the scene is realistic and visually coherent. Semantic usefulness outweighs literal compliance with incidental staging. Do not reject solely because of an omitted secondary action, exact person count, camera angle, accessory, facial micro-expression, or precise body position when the central teaching meaning remains clear. Reject semantic mismatches, genuinely ambiguous generic stock imagery, misleading literal depictions of figurative language, materially broken anatomy or objects, decorative symbolism, animation, illustration, or distracting visible text/logos. A minor cosmetic flaw is not enough to reject an otherwise accurate teaching image. Copy every itemIndex exactly and return only schema-valid JSON.${correction}`;
+        await runCodex([
+          'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
+          '-m', MODEL, '-c', `model_reasoning_effort="${REASONING_EFFORT}"`,
+          ...candidates.flatMap(path => ['-i', path]),
+          '--output-schema', schemaPath, '-o', resultPath, '-',
+        ], prompt);
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) throw new Error(`Batch ${batchIndex + 1} returned the wrong result count`);
@@ -127,7 +145,9 @@ async function judgeBatch(batch, batchIndex) {
 
 const results = new Array(batches.length);
 let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(2, Number(process.env.LOCAL_MLX_VLM_CONCURRENCY || 1)));
+const concurrency = Math.max(1, Math.min(8, Number(
+  process.env.CODEX_IMAGE_CONCURRENCY || process.env.CODEX_CONCURRENCY || 4,
+)));
 async function worker() {
   for (;;) {
     const index = nextBatch++;
@@ -148,7 +168,6 @@ try {
   await terminateActiveChildren();
   throw error;
 }
-await localClient?.close();
 
 const rejected = [];
 for (const batch of results) {

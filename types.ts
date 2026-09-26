@@ -22,10 +22,10 @@ export interface UsageAudit {
   originalText?: string;
 }
 
-/** Proves that this card's rich learning metadata was generated and verified locally. */
+/** Proves which offline enrichment harness generated this card's rich learning metadata. */
 export interface AdvancedEnrichmentMarker {
   version: 1;
-  provider: 'local-mlx';
+  provider: 'codex-harness' | 'local-mlx';
   model: string;
   generatedAt: number;
   contentHash: string;

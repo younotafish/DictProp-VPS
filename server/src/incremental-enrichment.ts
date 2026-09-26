@@ -17,7 +17,7 @@ export function advancedVocabContentHash(data: any): string {
 
 export function hasCurrentLocalAdvancedEnrichment(data: any): boolean {
   const marker = data?.advancedEnrichment;
-  return marker?.version === 1 && marker?.provider === 'local-mlx' &&
+  return marker?.version === 1 && marker?.provider === 'codex-harness' &&
     typeof marker.model === 'string' && marker.model.length > 0 &&
     Number.isFinite(marker.generatedAt) && marker.generatedAt > 0 &&
     typeof marker.contentHash === 'string' && marker.contentHash === advancedVocabContentHash(data);

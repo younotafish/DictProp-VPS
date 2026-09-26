@@ -12,19 +12,17 @@ const mergeGrammarScript = fileURLToPath(
   new URL('../../scripts/offline/merge-sentence-grammar-manifests.mjs', import.meta.url),
 );
 
-const fakeLocalWorker = `#!/usr/bin/env node
-import { appendFileSync } from 'node:fs';
-import { createInterface } from 'node:readline';
-console.log(JSON.stringify({ type: 'ready', model: 'fake-local-model' }));
-const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-lines.on('line', line => {
-  const request = JSON.parse(line);
-  const prompt = request.prompt;
+const fakeCodex = `#!/usr/bin/env node
+import { appendFileSync, writeFileSync } from 'node:fs';
+let prompt = '';
+process.stdin.on('data', chunk => { prompt += chunk; });
+process.stdin.on('end', () => {
   const marker = 'ANALYZE THESE SENTENCES:\\n';
   const items = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length));
-  appendFileSync(process.env.FAKE_LOCAL_CALLS, items.map(item => item.text).join(' | ') + '\\n');
+  appendFileSync(process.env.FAKE_CODEX_CALLS, items.map(item => item.text).join(' | ') + '\\n');
   if (items.length > 1 || (!process.env.ALLOW_SINGLETON_FAILURE && items[0].text.includes('always fails'))) {
-    console.log(JSON.stringify({ type: 'error', id: request.id, error: 'deliberate fake provider failure' }));
+    process.stderr.write('deliberate fake provider failure\\n');
+    process.exitCode = 1;
     return;
   }
   const results = items.map(item => ({
@@ -56,7 +54,8 @@ lines.on('line', line => {
       imagePrompt: 'A realistic photograph of the described event in natural light, with no visible text.',
     },
   }));
-  console.log(JSON.stringify({ type: 'result', id: request.id, text: JSON.stringify({ results }) }));
+  const outputIndex = process.argv.indexOf('-o');
+  writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ results }));
 });
 `;
 
@@ -65,7 +64,7 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 test('detailed sentence migration splits failures, resumes caches, and preserves prior grammar', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-detailed-sentence-'));
   try {
-    const fakeWorkerPath = join(root, 'fake-local-worker.mjs');
+    const fakeCodexPath = join(root, 'fake-codex.mjs');
     const sourcePath = join(root, 'source.json');
     const basePath = join(root, 'base.json');
     const outputPath = join(root, 'analysis.json');
@@ -80,8 +79,8 @@ test('detailed sentence migration splits failures, resumes caches, and preserves
       structure: 'Preserved 5.6 grammar.',
       points: [{ label: 'Subject', excerpt: 'First', explanation: 'First is the grammatical subject.' }],
     };
-    writeFileSync(fakeWorkerPath, fakeLocalWorker);
-    chmodSync(fakeWorkerPath, 0o700);
+    writeFileSync(fakeCodexPath, fakeCodex);
+    chmodSync(fakeCodexPath, 0o700);
     writeFileSync(sourcePath, JSON.stringify({ version: 1, sentences }));
     writeFileSync(basePath, JSON.stringify({
       version: 1,
@@ -91,13 +90,12 @@ test('detailed sentence migration splits failures, resumes caches, and preserves
     const args = [enrichScript, sourcePath, outputPath, workDir, basePath];
     const env = {
       ...process.env,
-      LOCAL_MLX_PYTHON: process.execPath,
-      LOCAL_MLX_WORKER: fakeWorkerPath,
-      LOCAL_MLX_MODEL: root,
-      LOCAL_MLX_CONCURRENCY: '1',
-      LOCAL_MLX_RETRY_DELAY_MS: '0',
+      CODEX_BIN: fakeCodexPath,
+      CODEX_MODEL: 'gpt-5.6-sol',
+      CODEX_CONCURRENCY: '1',
+      CODEX_RETRY_DELAY_MS: '0',
       SENTENCE_ANALYSIS_BATCH_SIZE: '3',
-      FAKE_LOCAL_CALLS: callsPath,
+      FAKE_CODEX_CALLS: callsPath,
     };
     const first = spawnSync(process.execPath, args, { encoding: 'utf8', env });
     assert.notEqual(first.status, 0);
@@ -130,13 +128,13 @@ test('detailed sentence migration splits failures, resumes caches, and preserves
 test('parallel detail generation can defer grammar checks before a verified grammar merge', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-deferred-sentence-grammar-'));
   try {
-    const fakeWorkerPath = join(root, 'fake-local-worker.mjs');
+    const fakeCodexPath = join(root, 'fake-codex.mjs');
     const sourcePath = join(root, 'source.json');
     const outputPath = join(root, 'analysis.json');
     const workDir = join(root, 'work');
     const callsPath = join(root, 'calls.log');
-    writeFileSync(fakeWorkerPath, fakeLocalWorker);
-    chmodSync(fakeWorkerPath, 0o700);
+    writeFileSync(fakeCodexPath, fakeCodex);
+    chmodSync(fakeCodexPath, 0o700);
     writeFileSync(sourcePath, JSON.stringify({
       version: 1,
       sentences: [{ id: 'one', text: 'It worked.', sourceWord: 'work', textHash: hash('It worked.') }],
@@ -146,13 +144,12 @@ test('parallel detail generation can defer grammar checks before a verified gram
       encoding: 'utf8',
       env: {
         ...process.env,
-        LOCAL_MLX_PYTHON: process.execPath,
-        LOCAL_MLX_WORKER: fakeWorkerPath,
-        LOCAL_MLX_MODEL: root,
-        LOCAL_MLX_CONCURRENCY: '1',
-        LOCAL_MLX_RETRY_DELAY_MS: '0',
+        CODEX_BIN: fakeCodexPath,
+        CODEX_MODEL: 'gpt-5.6-sol',
+        CODEX_CONCURRENCY: '1',
+        CODEX_RETRY_DELAY_MS: '0',
         DEFER_SENTENCE_GRAMMAR_VALIDATION: '1',
-        FAKE_LOCAL_CALLS: callsPath,
+        FAKE_CODEX_CALLS: callsPath,
         FAKE_INVALID_GRAMMAR: '1',
       },
     });
