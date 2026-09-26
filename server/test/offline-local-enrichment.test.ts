@@ -205,8 +205,19 @@ test('incremental vocabulary preparation enriches every new card once and repair
   const recentExampleOnly = { ...completeCard('recent-example'), examples: ['Recent unmarked example.'] };
   const recentComplete = completeCard('recent-complete');
   const recentAlreadyEnriched = locallyEnriched(completeCard('recent-enriched'));
+  const legacyQwen = {
+    ...completeCard('legacy-qwen'),
+    advancedEnrichment: {
+      version: 1,
+      provider: 'local-mlx',
+      model: 'legacy-qwen',
+      generatedAt: 1,
+      contentHash: 'legacy',
+    },
+  };
   const items = [
     { type: 'vocab', savedAt: old, data: legacyExampleOnly, sourceHash: corpusSourceHash(legacyExampleOnly) },
+    { type: 'vocab', savedAt: old, data: legacyQwen, sourceHash: corpusSourceHash(legacyQwen) },
     { type: 'vocab', savedAt: old + 1, data: legacyCritical, sourceHash: corpusSourceHash(legacyCritical) },
     { type: 'vocab', savedAt: now, data: recentExampleOnly, sourceHash: corpusSourceHash(recentExampleOnly) },
     { type: 'vocab', savedAt: now + 1, data: recentComplete, sourceHash: corpusSourceHash(recentComplete) },
@@ -225,6 +236,15 @@ test('incremental vocabulary preparation enriches every new card once and repair
   assert.deepEqual(output.entries.map((entry: any) => entry.id), [
     'recent-example', 'recent-complete', 'legacy-critical',
   ]);
+
+  const providerOutputPath = join(root, 'provider-source.json');
+  execFileSync(process.execPath, [
+    script('prepare-incremental-vocab-source.mjs'), corpusPath, providerOutputPath, '10', '168', 'local-mlx',
+  ]);
+  assert.deepEqual(
+    JSON.parse(readFileSync(providerOutputPath, 'utf8')).entries.map((entry: any) => entry.id),
+    ['legacy-qwen'],
+  );
 });
 
 test('Codex vocabulary completion rewrites a new basic card once and binds its advanced marker', () => {

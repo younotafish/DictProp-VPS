@@ -4,10 +4,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
 
-const [corpusArg, outputArg, limitArg, lookbackHoursArg] = process.argv.slice(2);
+const [corpusArg, outputArg, limitArg, lookbackHoursArg, providerFilterArg] = process.argv.slice(2);
 if (!corpusArg || !outputArg) {
   throw new Error(
-    'Usage: prepare-incremental-vocab-source.mjs <corpus-export.json> <output.json> [limit=8] [lookback-hours=168]',
+    'Usage: prepare-incremental-vocab-source.mjs <corpus-export.json> <output.json> [limit=8] [lookback-hours=168] [provider-filter]',
   );
 }
 
@@ -15,6 +15,7 @@ const corpus = JSON.parse(readFileSync(resolve(corpusArg), 'utf8'));
 if (corpus?.version !== 1 || !Array.isArray(corpus.items)) throw new Error('Corpus export is invalid');
 const limit = Math.max(1, Math.min(100, Number(limitArg || 8)));
 const lookbackHours = Math.max(1, Math.min(24 * 365, Number(lookbackHoursArg || 168)));
+const providerFilter = typeof providerFilterArg === 'string' ? providerFilterArg.trim() : '';
 const recentSince = Date.now() - lookbackHours * 60 * 60 * 1_000;
 
 const validString = value => typeof value === 'string' && value.trim().length > 0;
@@ -60,12 +61,13 @@ let ignoredLegacyExampleOnly = 0;
 for (const item of corpus.items) {
   if (!item?.data || item.isDeleted || item.isArchived || !['vocab', 'phrase'].includes(item.type)) continue;
   const cards = item.type === 'vocab' ? [item.data] : Array.isArray(item.data.vocabs) ? item.data.vocabs : [];
+  if (providerFilter && !cards.some(card => card?.advancedEnrichment?.provider === providerFilter)) continue;
   const missing = cards.flatMap(card => missingCardFields(card));
   const needsAdvancedEnrichment = cards.some(card => !hasCurrentLocalAdvancedEnrichment(card));
   if (missing.length === 0 && !needsAdvancedEnrichment) continue;
   const recent = Number(item.savedAt || 0) >= recentSince;
   const critical = missing.some(field => field !== 'examples');
-  if (!recent && !critical) {
+  if (!providerFilter && !recent && !critical) {
     ignoredLegacyExampleOnly++;
     continue;
   }
@@ -102,5 +104,6 @@ process.stdout.write(`${JSON.stringify({
   advancedEligible: candidates.filter(candidate => candidate.needsAdvancedEnrichment).length,
   selected: selected.length,
   ignoredLegacyExampleOnly,
+  providerFilter: providerFilter || null,
   recentSince,
 })}\n`);
