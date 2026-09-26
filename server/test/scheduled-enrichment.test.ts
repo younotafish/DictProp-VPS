@@ -64,6 +64,8 @@ test('server search stays immediate while Codex enrichment runs every six hours'
     assert.match(generator, /--output-schema/);
     assert.doesNotMatch(generator, /createLocalMlxClient|Qwen3/);
   }
+  assert.match(textGenerators[3], /abstract, rhetorical, figurative, relational, or logical target/);
+  assert.match(textGenerators[3], /do not require the image alone to name the formal concept/);
   for (const surface of interactiveSearchSurfaces) {
     assert.doesNotMatch(surface, /generateIllustration/);
   }
