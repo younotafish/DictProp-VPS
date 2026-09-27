@@ -17,8 +17,10 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-5-5}"
 CLAUDE_REASONING_EFFORT="${CLAUDE_REASONING_EFFORT:-xhigh}"
 CODEX_MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
 CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
-CODEX_CONCURRENCY="${CODEX_CONCURRENCY:-4}"
-CODEX_IMAGE_CONCURRENCY="${CODEX_IMAGE_CONCURRENCY:-4}"
+# Same knob names as the sibling pipelines. The defaults are the scripts' own caps (16 text requests,
+# 8 image judgments); the LaunchAgent leaves them unset so a new default applies without a reload.
+ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-16}"
+IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-8}"
 VOCAB_COMPLETION_BATCH_SIZE="${VOCAB_COMPLETION_BATCH_SIZE:-8}"
 SENTENCE_ANALYSIS_BATCH_SIZE="${SENTENCE_ANALYSIS_BATCH_SIZE:-4}"
 INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-${LOCAL_VOCAB_BATCH_SIZE:-100}}"
@@ -153,7 +155,7 @@ VOCAB_OVERLAY="-"
 if [ "$VOCAB_COUNT" -gt 0 ]; then
   log "creating advanced $MODEL_LABEL metadata for $VOCAB_COUNT new or incomplete vocabulary record(s)"
   rm -f "$VOCAB_COMPLETED"
-  env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
+  env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
     VOCAB_COMPLETION_BATCH_SIZE="$VOCAB_COMPLETION_BATCH_SIZE" \
     "$NODE_BIN" scripts/offline/complete-corpus-fields.mjs \
       "$VOCAB_SOURCE" "$VOCAB_COMPLETED" "$VOCAB_ROOT/work"
@@ -194,7 +196,7 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
     log "generating detailed $MODEL_LABEL explanations for $SAVED_MISSING_COUNT saved sentence(s)"
     SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
     rm -f "$SAVED_NEW_ANALYSIS"
-    env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
+    env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
       "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
       "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS"
@@ -232,7 +234,7 @@ if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
   ITEM_IMAGE_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
     "$ITEM_IMAGE_ROOT/targets.json")"
   log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
-  env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$CODEX_IMAGE_CONCURRENCY" \
+  env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
     IMAGE_MODEL=ernie-image-turbo IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
       "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
@@ -283,7 +285,7 @@ if [ "$MISSING_COUNT" -gt 0 ]; then
   log "generating detailed $MODEL_LABEL explanations for $MISSING_COUNT production gap(s)"
   NEW_ANALYSIS="$ROOT/new-analysis.json"
   rm -f "$NEW_ANALYSIS"
-  env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
+  env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
     "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
   ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
@@ -327,7 +329,7 @@ if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
   TARGET_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
     "$IMAGE_ROOT/targets.json")"
   log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
-  env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$CODEX_IMAGE_CONCURRENCY" \
+  env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
     IMAGE_MODEL=ernie-image-turbo \
     IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
     bash scripts/offline/run-streaming-image-quality-loop.sh \

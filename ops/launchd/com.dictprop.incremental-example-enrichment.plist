@@ -28,10 +28,6 @@
     <string>gpt-5.6-sol</string>
     <key>CODEX_REASONING_EFFORT</key>
     <string>xhigh</string>
-    <key>CODEX_CONCURRENCY</key>
-    <string>4</string>
-    <key>CODEX_IMAGE_CONCURRENCY</key>
-    <string>4</string>
     <key>VOCAB_COMPLETION_BATCH_SIZE</key>
     <string>8</string>
     <key>SENTENCE_ANALYSIS_BATCH_SIZE</key>

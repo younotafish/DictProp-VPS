@@ -44,12 +44,15 @@ test('server search stays immediate while local Claude Opus enrichment runs ever
   assert.match(launchAgent, /<key>CODEX_MODEL<\/key>\s*<string>gpt-5\.6-sol<\/string>/);
   assert.match(launchAgent, /<key>CODEX_REASONING_EFFORT<\/key>\s*<string>xhigh<\/string>/);
   assert.doesNotMatch(launchAgent, /Qwen3-30B|Qwen3-VL|LOCAL_MLX/);
+  // A loaded job keeps its environment until reloaded, so concurrency stays a runner default.
+  assert.doesNotMatch(launchAgent, /CONCURRENCY/);
   assert.match(runner, /complete-corpus-fields\.mjs/);
   assert.match(runner, /prepare-incremental-item-images\.mjs/);
   assert.match(runner, /export ENRICHMENT_MODEL_PROVIDER CLAUDE_MODEL CLAUDE_REASONING_EFFORT CODEX_MODEL/);
   assert.match(runner, /check-structured-model\.mjs/);
-  assert.match(runner, /CODEX_CONCURRENCY/);
-  assert.match(runner, /CODEX_IMAGE_CONCURRENCY/);
+  assert.match(runner, /ANALYSIS_CONCURRENCY="\$\{ANALYSIS_CONCURRENCY:-16\}"/);
+  assert.match(runner, /IMAGE_QA_CONCURRENCY="\$\{IMAGE_QA_CONCURRENCY:-8\}"/);
+  assert.match(runner, /CODEX_IMAGE_CONCURRENCY="\$IMAGE_QA_CONCURRENCY"/);
   assert.match(runner, /IMAGE_MODEL=ernie-image-turbo/);
   assert.doesNotMatch(runner, /LOCAL_MLX|IPA_CLAUDE|IPA_META|DEEPINFRA_API_KEY/);
   assert.match(runner, /shlock -f "\$LOCK_FILE" -p "\$\$"/);
