@@ -165,8 +165,14 @@ async function runClaude(config, { prompt, schema, resultPath, images, timeoutMs
       activeChildren,
       captureStdout: true,
       cwd,
-      // Claude Code lets this variable override --effort, so an inherited session value must not win.
-      env: { ...process.env, CLAUDE_CODE_EFFORT_LEVEL: config.reasoningEffort },
+      env: {
+        ...process.env,
+        // Claude Code lets this variable override --effort, so an inherited session value must not win.
+        CLAUDE_CODE_EFFORT_LEVEL: config.reasoningEffort,
+        // Claude Code restarts a stream after five silent minutes, and xhigh work on a large batch can stay
+        // silent longer, so the restarted request never finishes. The request timeout already bounds the call.
+        CLAUDE_STREAM_IDLE_TIMEOUT_MS: String(timeoutMs),
+      },
       label: 'Claude',
     });
     const result = claudeStructuredResult(output);

@@ -30,6 +30,7 @@ process.stdin.on('end', () => {
     input,
     cwd: process.cwd(),
     effortOverride: process.env.CLAUDE_CODE_EFFORT_LEVEL,
+    streamIdleTimeout: process.env.CLAUDE_STREAM_IDLE_TIMEOUT_MS,
   }));
   const envelope = process.env.FAKE_CLAUDE_FAIL
     ? { type: 'result', subtype: 'error_max_structured_output_retries', is_error: true, result: 'schema retries exhausted' }
@@ -118,6 +119,7 @@ test('Claude text requests use JSON output, no tools, and an isolated working di
     assert.equal(invocation.argv.includes('--bare'), false);
     assert.equal(invocation.input, 'Return a value.');
     assert.equal(invocation.effortOverride, 'xhigh');
+    assert.equal(invocation.streamIdleTimeout, '10000');
     assert.notEqual(invocation.cwd, repoRoot);
     assert.equal(existsSync(invocation.cwd), false);
   },
