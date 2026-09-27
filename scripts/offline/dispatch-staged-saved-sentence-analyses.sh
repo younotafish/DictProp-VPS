@@ -25,7 +25,8 @@ manifest_count() {
   local analysis="$1"
   shift
   if [ "$#" -eq 0 ]; then printf '0\n'; return; fi
-  node -e 'const fs=require("fs"); const key=e=>`${e.id}\0${e.textHash}`; const current=new Set(JSON.parse(fs.readFileSync(process.argv[1])).entries.map(key)); const published=new Set(); for(const path of process.argv.slice(2)) for(const entry of JSON.parse(fs.readFileSync(path)).entries) { const identity=key(entry); if(current.has(identity)) published.add(identity); } console.log(published.size)' "$analysis" "$@"
+  # A publication older than the analysis manifest did not survive in production, so it does not count.
+  node -e 'const fs=require("fs"); const key=e=>`${e.id}\0${e.textHash}`; const analysis=JSON.parse(fs.readFileSync(process.argv[1])); const current=new Set(analysis.entries.map(key)); const published=new Set(); for(const path of process.argv.slice(2)){const manifest=JSON.parse(fs.readFileSync(path)); if(Number(manifest.generatedAt||0)<Number(analysis.generatedAt||0)) continue; for(const entry of manifest.entries) { const identity=key(entry); if(current.has(identity)) published.add(identity); }} console.log(published.size)' "$analysis" "$@"
 }
 
 if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ] || [ "$BATCH_SIZE" -gt 5000 ]; then

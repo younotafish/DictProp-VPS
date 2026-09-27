@@ -30,6 +30,9 @@ for (const excludeArg of excludeArgs) {
   if (published?.version !== 1 || !Array.isArray(published.entries)) {
     throw new Error(`Published manifest is invalid: ${excludeArg}`);
   }
+  // Each cycle rebuilds the analysis manifest from sentences production still lacks, so an older publication
+  // did not survive there (a device can re-save a sentence without its analysis) and is published again.
+  if (Number(published.generatedAt || 0) < Number(analysis.generatedAt || 0)) continue;
   for (const entry of published.entries) {
     if (typeof entry?.id !== 'string' || !entry.id ||
         typeof entry.textHash !== 'string' || entry.textHash.length !== 64) {

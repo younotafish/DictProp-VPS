@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,10 @@ const waveScript = fileURLToPath(new URL(
 ));
 const reconcileScript = fileURLToPath(new URL(
   '../../scripts/offline/reconcile-sentence-analyses.mjs',
+  import.meta.url,
+));
+const dispatchScript = fileURLToPath(new URL(
+  '../../scripts/offline/dispatch-staged-saved-sentence-analyses.sh',
   import.meta.url,
 ));
 
@@ -87,7 +91,7 @@ test('saved-sentence waves republish the same item id when its text hash changes
     writeFileSync(currentPath, JSON.stringify({ version: 1, generatedAt: 10, entries: [entry] }));
     writeFileSync(publishedPath, JSON.stringify({
       version: 1,
-      generatedAt: 5,
+      generatedAt: 15,
       entries: [{ ...entry, textHash: oldHash }],
     }));
 
@@ -97,6 +101,85 @@ test('saved-sentence waves republish the same item id when its text hash changes
     assert.equal(summary.waveEntries, 1);
     const wave = JSON.parse(readFileSync(join(waveDir, 'manifest.json'), 'utf8'));
     assert.equal(wave.entries[0].textHash, newHash);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('saved-sentence waves republish an analysis production lost after an older publication', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-saved-republish-'));
+  try {
+    const currentPath = join(root, 'current.json');
+    const olderPath = join(root, 'older.json');
+    const newerPath = join(root, 'newer.json');
+    const waveDir = join(root, 'wave');
+    const lost = { id: 'lost', textHash: 'a'.repeat(64), analysis: completeAnalysis, generatedAt: 10 };
+    const kept = { id: 'kept', textHash: 'b'.repeat(64), analysis: completeAnalysis, generatedAt: 10 };
+    writeFileSync(currentPath, JSON.stringify({ version: 1, generatedAt: 10, entries: [lost, kept] }));
+    writeFileSync(olderPath, JSON.stringify({ version: 1, generatedAt: 5, entries: [lost] }));
+    writeFileSync(newerPath, JSON.stringify({ version: 1, generatedAt: 15, entries: [kept] }));
+
+    const summary = JSON.parse(execFileSync(process.execPath, [
+      waveScript, currentPath, waveDir, '100', olderPath, newerPath,
+    ], { encoding: 'utf8' }));
+    assert.equal(summary.waveEntries, 1);
+    const wave = JSON.parse(readFileSync(join(waveDir, 'manifest.json'), 'utf8'));
+    assert.deepEqual(wave.entries.map((entry: { id: string }) => entry.id), ['lost']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('saved-sentence publication does not count a publication production has since lost', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-saved-dispatch-'));
+  try {
+    // The publisher resolves its helpers from the working directory; these stand in for the GitHub bridge.
+    const offline = join(root, 'scripts', 'offline');
+    const releases = join(root, 'releases.log');
+    mkdirSync(offline, { recursive: true });
+    mkdirSync(join(root, 'tmp'));
+    symlinkSync(waveScript, join(offline, 'prepare-saved-sentence-analysis-wave.mjs'));
+    writeFileSync(join(offline, 'wait-for-incremental-enrichment.sh'), '#!/bin/sh\nexit 0\n');
+    writeFileSync(join(offline, 'publish-backfill-release.sh'), `#!/bin/sh\necho "$1" >> '${releases}'\n`);
+    writeFileSync(join(root, 'gh'), '#!/bin/sh\nexit 0\n');
+    for (const script of ['scripts/offline/wait-for-incremental-enrichment.sh', 'scripts/offline/publish-backfill-release.sh', 'gh']) {
+      chmodSync(join(root, script), 0o700);
+    }
+    writeFileSync(join(root, 'key'), 'test-key\n');
+
+    const lost = { id: 'lost', textHash: 'a'.repeat(64), analysis: completeAnalysis, generatedAt: 10 };
+    const kept = { id: 'kept', textHash: 'b'.repeat(64), analysis: completeAnalysis, generatedAt: 10 };
+    const analysisPath = join(root, 'analysis.json');
+    writeFileSync(analysisPath, JSON.stringify({ version: 1, generatedAt: 10, entries: [lost, kept] }));
+    // An older cycle published "lost" before production dropped it again; this cycle already published "kept".
+    const state = join(root, 'state');
+    const waves: Array<[string, number, typeof lost]> = [['wave-0001', 5, lost], ['wave-0002', 15, kept]];
+    for (const [wave, generatedAt, entry] of waves) {
+      mkdirSync(join(state, wave), { recursive: true });
+      writeFileSync(join(state, wave, 'manifest.json'), JSON.stringify({ version: 1, generatedAt, entries: [entry] }));
+      writeFileSync(join(state, wave, 'published'), 'published\n');
+    }
+
+    const output = execFileSync('bash', [dispatchScript, analysisPath, '100', 'test-sha'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        GH_BIN: join(root, 'gh'),
+        SENTENCE_BRIDGE_KEY_FILE: join(root, 'key'),
+        SAVED_SENTENCE_ANALYSIS_STATE_ROOT: state,
+        SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS: '0',
+        TMPDIR: join(root, 'tmp'),
+      },
+    });
+
+    assert.match(output, /wave-0003 published \(1 analyses\)/);
+    assert.match(output, /saved sentence analysis publication complete: 2\/2/);
+    const wave = JSON.parse(readFileSync(join(state, 'wave-0003', 'manifest.json'), 'utf8'));
+    assert.deepEqual(wave.entries.map((entry: { id: string }) => entry.id), ['lost']);
+    assert.equal(readFileSync(releases, 'utf8').trim().split('\n').length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
