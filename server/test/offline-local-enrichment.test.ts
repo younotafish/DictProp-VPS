@@ -111,29 +111,33 @@ process.stdin.on('end', () => {
 });
 `;
 
-test('incremental item image preparation emits only missing image records with import-safe hashes', () => {
+test('incremental item image preparation emits only missing unarchived image records with import-safe hashes', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-item-images-'));
   const corpusPath = join(root, 'corpus.json');
   const analysisPath = join(root, 'analysis.json');
   const outputRoot = join(root, 'output');
   const items = [
     {
-      type: 'vocab', savedAt: 1, isArchived: false,
+      type: 'vocab', savedAt: 1, wasArchived: false,
       data: { ...completeCard('missing-word'), imageUrl: undefined },
     },
     {
-      type: 'vocab', savedAt: 2, isArchived: false,
+      type: 'vocab', savedAt: 2, wasArchived: false,
       data: { ...completeCard('covered-word'), imageUrl: 'server:has_image:v1' },
     },
     {
-      type: 'vocab', savedAt: 2.5, isArchived: false,
+      type: 'vocab', savedAt: 2.5, wasArchived: false,
       data: locallyImaged(locallyEnriched({
         ...completeCard('locally-covered-word'), imageUrl: 'server:has_image:v1',
       })),
     },
     {
-      type: 'sentence', savedAt: 3, isArchived: false,
+      type: 'sentence', savedAt: 3, wasArchived: false,
       data: { id: 'sentence', text: 'A sample is ready.', sourceWord: 'sample' },
+    },
+    {
+      type: 'vocab', savedAt: 4, wasArchived: true,
+      data: { ...completeCard('archived-word'), imageUrl: undefined },
     },
   ];
   writeFileSync(corpusPath, JSON.stringify({ version: 1, exportedAt: Date.now(), items }));
@@ -208,6 +212,7 @@ test('incremental vocabulary preparation enriches every new card once and repair
   const recentExampleOnly = { ...completeCard('recent-example'), examples: ['Recent unmarked example.'] };
   const recentComplete = completeCard('recent-complete');
   const recentAlreadyEnriched = locallyEnriched(completeCard('recent-enriched'));
+  const recentArchived = completeCard('recent-archived');
   const legacyQwen = {
     ...completeCard('legacy-qwen'),
     advancedEnrichment: {
@@ -228,6 +233,7 @@ test('incremental vocabulary preparation enriches every new card once and repair
       type: 'vocab', savedAt: now + 2, data: recentAlreadyEnriched,
       sourceHash: corpusSourceHash(recentAlreadyEnriched),
     },
+    { type: 'vocab', savedAt: now + 3, wasArchived: true, data: recentArchived, sourceHash: corpusSourceHash(recentArchived) },
   ];
   writeFileSync(corpusPath, JSON.stringify({ version: 1, exportedAt: now, items }));
 

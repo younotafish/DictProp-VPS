@@ -59,7 +59,7 @@ function shouldArchive(audit) {
 const candidates = [];
 let ignoredLegacyExampleOnly = 0;
 for (const item of corpus.items) {
-  if (!item?.data || item.isDeleted || item.isArchived || !['vocab', 'phrase'].includes(item.type)) continue;
+  if (!item?.data || item.isDeleted || item.wasArchived || !['vocab', 'phrase'].includes(item.type)) continue;
   const cards = item.type === 'vocab' ? [item.data] : Array.isArray(item.data.vocabs) ? item.data.vocabs : [];
   if (providerFilter && !cards.some(card => card?.advancedEnrichment?.provider === providerFilter)) continue;
   const missing = cards.flatMap(card => missingCardFields(card));
@@ -87,7 +87,7 @@ const selected = candidates.slice(0, limit).map(({ item }) => ({
   id: item.data.id,
   type: item.type,
   sourceHash: item.sourceHash,
-  wasArchived: item.isArchived === true,
+  wasArchived: item.wasArchived === true,
   data: item.data,
   archiveForUsage: shouldArchive(item.data.usageAudit),
 }));

@@ -81,7 +81,8 @@ function addTarget(parent, imageId, prompt, learningTarget) {
 }
 
 for (const item of corpus.items) {
-  if (!item?.data || item.isDeleted || item.isArchived) continue;
+  // Production does not count archived items as gaps; the corpus export records them as wasArchived.
+  if (!item?.data || item.isDeleted || item.wasArchived) continue;
   const data = completedDataById.get(item.data.id) || item.data;
   const effectiveItem = data === item.data ? item : { ...item, data };
   if (item.type === 'sentence') {
