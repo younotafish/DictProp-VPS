@@ -149,6 +149,115 @@ test('streaming image QA defers images that exhaust their candidates and keeps a
   assert.deepEqual(readdirSync(candidates).sort(), ['easy-1.webp', 'easy-2.webp']);
 });
 
+function exampleSentence(text: string) {
+  const lookupHash = createHash('sha256').update(text.toLowerCase()).digest('hex');
+  return {
+    id: `example-${lookupHash.slice(0, 40)}`,
+    text,
+    textHash: createHash('sha256').update(text).digest('hex'),
+    lookupHash,
+    provenance: ['test'],
+    hasAnalysis: true,
+  };
+}
+
+const exampleImageFilename = (id: string): string =>
+  `${createHash('sha256').update(id).digest('hex').slice(0, 32)}.webp`;
+
+test('example pool verification accepts a deferred image only when the cycle allows it', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-example-deferred-verify-'));
+  const bundle = join(root, 'final-images');
+  mkdirSync(join(bundle, 'images'), { recursive: true });
+  const sentences = ['The keeper caught it.', 'He fielded at gully.'].map(exampleSentence);
+  const sourcePath = join(root, 'source.json');
+  const analysisPath = join(root, 'analysis.json');
+  writeJson(sourcePath, { version: 1, sentences });
+  writeJson(analysisPath, {
+    version: 1,
+    entries: sentences.map(sentence => ({
+      id: sentence.id,
+      textHash: sentence.textHash,
+      analysis: {
+        translation: sentence.text,
+        imagePrompt: `A photo of this: ${sentence.text}`,
+        americanEnglish: { status: 'shared', explanation: 'Common in every variety.' },
+        terms: [],
+      },
+    })),
+  });
+  writeJson(join(bundle, 'targets.json'), {
+    version: 1,
+    targets: sentences.map(sentence => ({
+      imageId: sentence.id,
+      filename: exampleImageFilename(sentence.id),
+      prompt: `A photo of this: ${sentence.text}`,
+    })),
+  });
+  writeJson(join(bundle, 'manifest.json'), {
+    version: 1,
+    entries: sentences.map(sentence => ({
+      id: sentence.id,
+      textHash: sentence.textHash,
+      imageFile: `images/${exampleImageFilename(sentence.id)}`,
+    })),
+  });
+  // The second image exhausted its candidates.
+  writeFileSync(join(bundle, 'images', exampleImageFilename(sentences[0].id)), 'RIFF\0\0\0\0WEBPVP8 ');
+  const verify = (env: Record<string, string>): string => execFileSync(process.execPath, [
+    resolve('..', 'scripts', 'offline', 'verify-example-sentence-pool.mjs'), sourcePath, analysisPath, bundle,
+  ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
+
+  assert.throws(() => verify({}), /image file is missing/);
+  const result = JSON.parse(verify({ ALLOW_DEFERRED_IMAGES: '1' }));
+  assert.equal(result.images, 1);
+  assert.equal(result.deferredImages, 1);
+});
+
+test('example enrichment publication finishes without waiting for deferred images', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-example-deferred-publish-'));
+  const sentences = ['The keeper caught it.', 'He fielded at gully.'].map(exampleSentence);
+  const imageFile = `images/${exampleImageFilename(sentences[0].id)}`;
+  mkdirSync(join(root, 'final-reconciliation'), { recursive: true });
+  mkdirSync(join(root, 'final-images', 'images'), { recursive: true });
+  writeJson(join(root, 'source.json'), { version: 1, exportedAt: 1, sentences });
+  writeJson(join(root, 'final-reconciliation', 'final-analysis.json'), { version: 1, entries: [] });
+  writeJson(join(root, 'final-images', 'manifest.json'), { version: 1, entries: [] });
+  writeFileSync(join(root, 'final-images', imageFile), 'accepted');
+  // The accepted image is already published, and the other one was deferred.
+  const wave = join(root, 'publish-state', 'wave-0001');
+  mkdirSync(wave, { recursive: true });
+  writeJson(join(wave, 'manifest.json'), {
+    version: 1,
+    generatedAt: 2,
+    entries: [{ id: sentences[0].id, textHash: sentences[0].textHash, imageFile }],
+  });
+  writeFileSync(join(wave, 'published'), 'published\n');
+  const key = join(root, 'key');
+  const python = join(root, 'python');
+  writeFileSync(key, 'test-key\n');
+  writeFileSync(python, '#!/bin/sh\nexit 0\n');
+  chmodSync(python, 0o700);
+
+  const output = execFileSync('bash', [
+    resolve('..', 'scripts', 'offline', 'dispatch-staged-example-enrichments.sh'), root, '100', 'test-sha',
+  ], {
+    cwd: resolve('..'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // Without the deferral, the publisher would keep waiting for the deferred image.
+    timeout: 30_000,
+    env: {
+      ...process.env,
+      ALLOW_DEFERRED_IMAGES: '1',
+      EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT: join(root, 'publish-state'),
+      SENTENCE_BRIDGE_KEY_FILE: key,
+      PYTHON_BIN: python,
+    },
+  });
+
+  assert.match(output, /example-sentence enrichment publication complete: 1\/1/);
+});
+
 test('example enrichment publication excludes published and production-covered images', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-image-publication-'));
   const imageRoot = join(root, 'image-bundle');

@@ -59,6 +59,9 @@ if (analysisById.size !== sourceById.size) {
 
 let imageBytes = 0;
 let imageCount = 0;
+let deferredImages = 0;
+// The incremental cycle holds back images that exhausted their candidates until a later cycle.
+const allowDeferredImages = process.env.ALLOW_DEFERRED_IMAGES === '1';
 if (imageBundleArg) {
   const imageBundleDir = resolve(imageBundleArg);
   const targets = readJson(join(imageBundleDir, 'targets.json'));
@@ -96,7 +99,12 @@ if (imageBundleArg) {
     }
     if (entry.imageFile !== `images/${target.filename}`) throw new Error(`${entry.id}: unsafe image path`);
     const imagePath = join(imageBundleDir, entry.imageFile);
-    if (!existsSync(imagePath)) throw new Error(`${entry.id}: image file is missing`);
+    if (!existsSync(imagePath)) {
+      if (!allowDeferredImages) throw new Error(`${entry.id}: image file is missing`);
+      deferredImages++;
+      manifestById.set(entry.id, entry);
+      continue;
+    }
     const image = readFileSync(imagePath);
     if (image.length < 12 || image.length > 10 * 1024 * 1024 ||
         image.toString('ascii', 0, 4) !== 'RIFF' || image.toString('ascii', 8, 12) !== 'WEBP') {
@@ -119,6 +127,7 @@ process.stdout.write(`${JSON.stringify({
   analysisBytes,
   averageAnalysisBytes: Math.round(analysisBytes / analysisById.size),
   images: imageCount,
+  deferredImages,
   productionCoveredImages: [...sourceById.values()].filter(sentence => sentence.hasImage === true).length,
   imageBytes,
   averageImageBytes: imageCount ? Math.round(imageBytes / imageCount) : 0,

@@ -21,9 +21,9 @@ CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
 # 8 image judgments); the LaunchAgent leaves them unset so a new default applies without a reload.
 ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-16}"
 IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-8}"
-# Saved-item images have converged within six candidates; a longer tail rarely passes and would hold
-# every accepted image, so it waits for the next cycle.
-ITEM_IMAGE_MAX_CANDIDATES="${ITEM_IMAGE_MAX_CANDIDATES:-8}"
+# An image that fails this many candidates waits for the next cycle, which renders fresh ones; a long
+# tail can take dozens of candidates and would hold back every accepted image.
+IMAGE_MAX_CANDIDATES="${IMAGE_MAX_CANDIDATES:-8}"
 VOCAB_COMPLETION_BATCH_SIZE="${VOCAB_COMPLETION_BATCH_SIZE:-8}"
 SENTENCE_ANALYSIS_BATCH_SIZE="${SENTENCE_ANALYSIS_BATCH_SIZE:-4}"
 INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-${LOCAL_VOCAB_BATCH_SIZE:-100}}"
@@ -239,7 +239,7 @@ if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
   log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
   env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
     IMAGE_MODEL=ernie-image-turbo IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
-    IMAGE_QUALITY_DEFER_AFTER="$ITEM_IMAGE_MAX_CANDIDATES" \
+    IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
       "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
       "$ITEM_IMAGE_ROOT/streaming-quality/$ITEM_IMAGE_FINGERPRINT" 1024 576 4 1 64
@@ -342,6 +342,7 @@ if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
   env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
     IMAGE_MODEL=ernie-image-turbo \
     IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
+    IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
     "$IMAGE_ROOT/targets.json" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
     "$IMAGE_ROOT/streaming-quality/$TARGET_FINGERPRINT" 1024 576 4 1 64
@@ -349,9 +350,12 @@ else
   log "production already covers every image in the repair source"
 fi
 
+# Explanations are already published, so a deferred image only delays its own sentence's image.
+ALLOW_DEFERRED_IMAGES=1 \
 "$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
   "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT"
 log "publishing verified incremental explanation-image pairs"
+ALLOW_DEFERRED_IMAGES=1 \
 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT="$PUBLISH_STATE" \
 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
   scripts/offline/dispatch-staged-example-enrichments.sh "$ROOT" 100 "$REQUIRED_DEPLOY_SHA"
