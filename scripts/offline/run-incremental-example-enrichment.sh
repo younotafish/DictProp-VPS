@@ -12,6 +12,9 @@ REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 NODE_BIN="${NODE_BIN:-node}"
 TSX_BIN="${TSX_BIN:-server/node_modules/.bin/tsx}"
+ENRICHMENT_MODEL_PROVIDER="${ENRICHMENT_MODEL_PROVIDER:-claude}"
+CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-5-5}"
+CLAUDE_REASONING_EFFORT="${CLAUDE_REASONING_EFFORT:-xhigh}"
 CODEX_MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
 CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
 CODEX_CONCURRENCY="${CODEX_CONCURRENCY:-4}"
@@ -41,6 +44,17 @@ VOCAB_ROOT="$ROOT/vocabulary"
 VOCAB_SOURCE="$VOCAB_ROOT/source.json"
 VOCAB_COMPLETED="$VOCAB_ROOT/completed.json"
 ITEM_IMAGE_ROOT="$ROOT/item-images"
+
+case "$ENRICHMENT_MODEL_PROVIDER" in
+  claude) MODEL_LABEL="Claude $CLAUDE_MODEL" ;;
+  codex) MODEL_LABEL="Codex $CODEX_MODEL" ;;
+  *)
+    echo "ENRICHMENT_MODEL_PROVIDER must be claude or codex, not $ENRICHMENT_MODEL_PROVIDER" >&2
+    exit 1
+    ;;
+esac
+# Every model-calling stage, including the image loop's judge and prompt refiner, inherits this choice.
+export ENRICHMENT_MODEL_PROVIDER CLAUDE_MODEL CLAUDE_REASONING_EFFORT CODEX_MODEL CODEX_REASONING_EFFORT
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -88,6 +102,9 @@ for required in "$GH_BIN" "$KEY_FILE" "$BASE_SOURCE" "$BASE_ANALYSIS" "$BASE_IMA
   fi
 done
 
+log "checking that local $MODEL_LABEL can answer before exporting production data"
+"$NODE_BIN" scripts/offline/check-structured-model.mjs
+
 PREVIOUS_RUN_ID="$($GH_BIN run list \
   --repo "$REPO" --workflow sentence-backfill.yml --event workflow_dispatch --limit 1 \
   --json databaseId --jq 'if length == 0 then 0 else .[0].databaseId end')"
@@ -134,10 +151,9 @@ VOCAB_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(p
   "$VOCAB_SOURCE")"
 VOCAB_OVERLAY="-"
 if [ "$VOCAB_COUNT" -gt 0 ]; then
-  log "creating advanced Codex metadata for $VOCAB_COUNT new or incomplete vocabulary record(s)"
+  log "creating advanced $MODEL_LABEL metadata for $VOCAB_COUNT new or incomplete vocabulary record(s)"
   rm -f "$VOCAB_COMPLETED"
-  env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
-    CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
+  env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
     VOCAB_COMPLETION_BATCH_SIZE="$VOCAB_COMPLETION_BATCH_SIZE" \
     "$NODE_BIN" scripts/offline/complete-corpus-fields.mjs \
       "$VOCAB_SOURCE" "$VOCAB_COMPLETED" "$VOCAB_ROOT/work"
@@ -175,11 +191,10 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
   SAVED_MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
     "$SAVED_RECONCILIATION/report.json")"
   if [ "$SAVED_MISSING_COUNT" -gt 0 ]; then
-    log "generating detailed Codex explanations for $SAVED_MISSING_COUNT saved sentence(s)"
+    log "generating detailed $MODEL_LABEL explanations for $SAVED_MISSING_COUNT saved sentence(s)"
     SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
     rm -f "$SAVED_NEW_ANALYSIS"
-    env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
-      CODEX_CONCURRENCY="$CODEX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
+    env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
       "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
       "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS"
@@ -216,9 +231,8 @@ ITEM_IMAGE_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileS
 if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
   ITEM_IMAGE_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
     "$ITEM_IMAGE_ROOT/targets.json")"
-  log "generating locally and judging with Codex $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
-  env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
-    CODEX_CONCURRENCY="$CODEX_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$CODEX_IMAGE_CONCURRENCY" \
+  log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
+  env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$CODEX_IMAGE_CONCURRENCY" \
     IMAGE_MODEL=ernie-image-turbo IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
       "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
@@ -266,11 +280,10 @@ ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
 MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
   "$RECONCILIATION/report.json")"
 if [ "$MISSING_COUNT" -gt 0 ]; then
-  log "generating detailed Codex explanations for $MISSING_COUNT production gap(s)"
+  log "generating detailed $MODEL_LABEL explanations for $MISSING_COUNT production gap(s)"
   NEW_ANALYSIS="$ROOT/new-analysis.json"
   rm -f "$NEW_ANALYSIS"
-  env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
-    CODEX_CONCURRENCY="$CODEX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
+  env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
     "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
   ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
@@ -313,9 +326,8 @@ if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
   fi
   TARGET_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
     "$IMAGE_ROOT/targets.json")"
-  log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with Codex"
-  env CODEX_MODEL="$CODEX_MODEL" CODEX_REASONING_EFFORT="$CODEX_REASONING_EFFORT" \
-    CODEX_CONCURRENCY="$CODEX_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$CODEX_IMAGE_CONCURRENCY" \
+  log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
+  env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$CODEX_IMAGE_CONCURRENCY" \
     IMAGE_MODEL=ernie-image-turbo \
     IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
     bash scripts/offline/run-streaming-image-quality-loop.sh \

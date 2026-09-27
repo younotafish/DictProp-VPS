@@ -90,6 +90,7 @@ test('detailed sentence migration splits failures, resumes caches, and preserves
     const args = [enrichScript, sourcePath, outputPath, workDir, basePath];
     const env = {
       ...process.env,
+      ENRICHMENT_MODEL_PROVIDER: 'codex',
       CODEX_BIN: fakeCodexPath,
       CODEX_MODEL: 'gpt-5.6-sol',
       CODEX_CONCURRENCY: '1',
@@ -144,6 +145,7 @@ test('parallel detail generation can defer grammar checks before a verified gram
       encoding: 'utf8',
       env: {
         ...process.env,
+        ENRICHMENT_MODEL_PROVIDER: 'codex',
         CODEX_BIN: fakeCodexPath,
         CODEX_MODEL: 'gpt-5.6-sol',
         CODEX_CONCURRENCY: '1',

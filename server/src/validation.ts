@@ -14,7 +14,7 @@ function isFiniteNonNegative(value: unknown): value is number {
 
 function isAdvancedEnrichmentMarker(value: unknown): boolean {
   return isRecord(value) && value.version === 1 &&
-    (value.provider === 'codex-harness' || value.provider === 'local-mlx') &&
+    (value.provider === 'codex-harness' || value.provider === 'claude-code' || value.provider === 'local-mlx') &&
     typeof value.model === 'string' && value.model.length > 0 && value.model.length <= 300 &&
     isFiniteNonNegative(value.generatedAt) && value.generatedAt > 0 &&
     typeof value.contentHash === 'string' && /^[a-f0-9]{64}$/.test(value.contentHash);

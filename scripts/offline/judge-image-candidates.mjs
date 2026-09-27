@@ -3,7 +3,8 @@
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
 
 const [targetsArg, candidatesArg, imagesArg, workArg, candidateNumberArg] = process.argv.slice(2);
 if (!targetsArg || !candidatesArg || !imagesArg || !workArg) {
@@ -14,10 +15,10 @@ if (!Number.isSafeInteger(candidateNumber) || candidateNumber < 1 || candidateNu
   throw new Error('Candidate number must be an integer from 1 to 99');
 }
 
-const MODEL = process.env.CODEX_MODEL || 'gpt-5.6-sol';
-const REASONING_EFFORT = process.env.CODEX_REASONING_EFFORT || 'xhigh';
+const MODEL_CONFIG = resolveStructuredModel();
+const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
 const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 20);
-const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 20) * 60 * 1_000;
 const JUDGMENT_POLICY_VERSION = 4;
@@ -64,32 +65,6 @@ const pending = payload.targets.filter(target => !existsSync(join(imageDir, targ
 const batches = [];
 for (let index = 0; index < pending.length; index += 8) batches.push(pending.slice(index, index + 8));
 
-function runCodex(args, prompt) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnCodex(args);
-    activeChildren.add(child);
-    let stderr = '';
-    let hardKillTimeout;
-    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-30_000); });
-    const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, CODEX_TIMEOUT_MS);
-    child.on('error', error => {
-      activeChildren.delete(child);
-      reject(error);
-    });
-    child.on('exit', (code, signal) => {
-      activeChildren.delete(child);
-      clearTimeout(timeout);
-      clearTimeout(hardKillTimeout);
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
-    });
-    child.stdin.end(prompt);
-  });
-}
-
 async function judgeBatch(batch, batchIndex) {
   const records = batch.map((target, itemIndex) => ({
     itemIndex,
@@ -117,12 +92,9 @@ async function judgeBatch(batch, batchIndex) {
     try {
       if (!existsSync(resultPath)) {
         const prompt = `Act as a rigorous but practical visual editor for an American English learning app. Each attached image corresponds, in attachment order, to the itemIndex record below:\n${JSON.stringify(records)}\n\nJudge each image independently against learningTarget.text, learningTarget.sense, and learningTarget.definition. The brief describes one possible composition; it is guidance, not a shot-list contract. For a concrete, directly photographable target, accept when a learner can infer the core contextual meaning at a glance, the image does not contradict that meaning, and the scene is realistic and visually coherent. For an abstract, rhetorical, figurative, relational, or logical target that cannot be uniquely photographed, accept a coherent, memorable concrete scenario or visual metaphor that reinforces the intended meaning when shown beside the sentence; do not require the image alone to name the formal concept or encode every logical step without its accompanying sentence. Semantic usefulness outweighs literal compliance with incidental staging. Do not reject solely because of an omitted secondary action, exact person count, camera angle, accessory, facial micro-expression, or precise body position when the central teaching meaning remains clear. Reject semantic mismatches, genuinely ambiguous generic stock imagery, misleading literal depictions of figurative language, materially broken anatomy or objects, empty decorative symbolism, animation, illustration, or distracting visible text/logos. A minor cosmetic flaw is not enough to reject an otherwise accurate teaching image. Copy every itemIndex exactly and return only schema-valid JSON.${correction}`;
-        await runCodex([
-          'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-          '-m', MODEL, '-c', `model_reasoning_effort="${REASONING_EFFORT}"`,
-          ...candidates.flatMap(path => ['-i', path]),
-          '--output-schema', schemaPath, '-o', resultPath, '-',
-        ], prompt);
+        await runStructuredModel(MODEL_CONFIG, {
+          prompt, schema, schemaPath, resultPath, images: candidates, timeoutMs: MODEL_TIMEOUT_MS, activeChildren,
+        });
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) throw new Error(`Batch ${batchIndex + 1} returned the wrong result count`);

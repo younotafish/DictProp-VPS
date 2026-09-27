@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
 import {
   DETAILED_SENTENCE_ANALYSIS_INSTRUCTION,
   detailedSentenceAnalysisSchema,
@@ -12,6 +12,7 @@ import {
   recoverExactGrammarExcerpt,
   sentenceGrammarExcerptMatchesText,
 } from './sentence-analysis-contract.mjs';
+import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
 
 const [inputArg, outputArg, workArg, baseAnalysisArg] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
@@ -20,11 +21,11 @@ if (!inputArg || !outputArg) {
   );
 }
 
-const MODEL = process.env.CODEX_MODEL || 'gpt-5.6-sol';
-const REASONING_EFFORT = process.env.CODEX_REASONING_EFFORT || 'xhigh';
+const MODEL_CONFIG = resolveStructuredModel();
+const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
 const deferGrammarValidation = process.env.DEFER_SENTENCE_GRAMMAR_VALIDATION === '1';
 const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 40);
-const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 40) * 60 * 1_000;
 const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
@@ -223,39 +224,13 @@ function compactBatch(batch) {
 function batchFingerprint(batch) {
   return createHash('sha256')
     .update(JSON.stringify({
-      provider: 'codex-cli-v2',
+      provider: MODEL_CONFIG.cacheKey,
       model: MODEL,
       reasoningEffort: REASONING_EFFORT,
       records: compactBatch(batch),
     }))
     .digest('hex')
     .slice(0, 16);
-}
-
-function runCodex(args, prompt) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnCodex(args);
-    activeChildren.add(child);
-    let stderr = '';
-    let hardKillTimeout;
-    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-30_000); });
-    const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, CODEX_TIMEOUT_MS);
-    child.on('error', error => {
-      activeChildren.delete(child);
-      reject(error);
-    });
-    child.on('exit', (code, signal) => {
-      activeChildren.delete(child);
-      clearTimeout(timeout);
-      clearTimeout(hardKillTimeout);
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
-    });
-    child.stdin.end(prompt);
-  });
 }
 
 async function runBatch(batch, index) {
@@ -267,11 +242,9 @@ async function runBatch(batch, index) {
     try {
       if (!existsSync(resultPath)) {
         const prompt = `${instruction}${correction}\n\nANALYZE THESE SENTENCES:\n${JSON.stringify(compact)}`;
-        await runCodex([
-          'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-          '-m', MODEL, '-c', `model_reasoning_effort="${REASONING_EFFORT}"`,
-          '--output-schema', schemaPath, '-o', resultPath, '-',
-        ], prompt);
+        await runStructuredModel(MODEL_CONFIG, {
+          prompt, schema, schemaPath, resultPath, timeoutMs: MODEL_TIMEOUT_MS, activeChildren,
+        });
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) throw new Error('Wrong analysis result count');
@@ -357,7 +330,7 @@ function writeProgress(status) {
   const tempPath = `${progressPath}.tmp`;
   writeFileSync(tempPath, `${JSON.stringify({
     status,
-    provider: 'codex-harness',
+    provider: MODEL_CONFIG.marker,
     model: MODEL,
     reasoningEffort: REASONING_EFFORT,
     grammarValidation: deferGrammarValidation ? 'deferred' : 'strict',
@@ -407,7 +380,7 @@ if (failures.length > 0) {
   writeFileSync(tempPath, `${JSON.stringify({
     version: 1,
     generatedAt: Date.now(),
-    provider: 'codex-harness',
+    provider: MODEL_CONFIG.marker,
     model: MODEL,
     reasoningEffort: REASONING_EFFORT,
     failures: failures.sort((left, right) => left.id.localeCompare(right.id)),
@@ -438,7 +411,7 @@ const outputTemp = `${outputPath}.tmp`;
 writeFileSync(outputTemp, `${JSON.stringify({
   version: 1,
   generatedAt,
-  provider: 'codex-harness',
+  provider: MODEL_CONFIG.marker,
   model: MODEL,
   reasoningEffort: REASONING_EFFORT,
   entries,

@@ -3,17 +3,18 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
 
 const [targetsArg, outputArg, workArg] = process.argv.slice(2);
 if (!targetsArg || !outputArg || !workArg) {
   throw new Error('Usage: refine-rejected-image-prompts.mjs <rejected-targets.json> <output.json> <work-directory>');
 }
 
-const MODEL = process.env.CODEX_MODEL || 'gpt-5.6-sol';
-const REASONING_EFFORT = process.env.CODEX_REASONING_EFFORT || 'xhigh';
+const MODEL_CONFIG = resolveStructuredModel();
+const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
 const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 20);
-const CODEX_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
+const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 20) * 60 * 1_000;
 const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
@@ -53,32 +54,6 @@ const schema = {
 const schemaPath = join(workDir, 'refinement-schema.json');
 writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
 
-function runCodex(args, prompt) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnCodex(args);
-    activeChildren.add(child);
-    let stderr = '';
-    let hardKillTimeout;
-    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-30_000); });
-    const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, CODEX_TIMEOUT_MS);
-    child.on('error', error => {
-      activeChildren.delete(child);
-      reject(error);
-    });
-    child.on('exit', (code, signal) => {
-      activeChildren.delete(child);
-      clearTimeout(timeout);
-      clearTimeout(hardKillTimeout);
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
-    });
-    child.stdin.end(prompt);
-  });
-}
-
 const PROMPT_POLICY_VERSION = 3;
 
 const instruction = `You are a visual prompt editor for a modern American English learning app. Rewrite each rejected brief for one realistic, photorealistic 16:9 image.
@@ -101,7 +76,7 @@ async function refineBatch(batch, batchIndex) {
   }));
   const fingerprint = createHash('sha256')
     .update(JSON.stringify({
-      provider: 'codex-cli-v2',
+      provider: MODEL_CONFIG.cacheKey,
       promptPolicyVersion: PROMPT_POLICY_VERSION,
       model: MODEL,
       reasoningEffort: REASONING_EFFORT,
@@ -114,11 +89,14 @@ async function refineBatch(batch, batchIndex) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) {
-        await runCodex([
-          'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-          '-m', MODEL, '-c', `model_reasoning_effort="${REASONING_EFFORT}"`,
-          '--output-schema', schemaPath, '-o', resultPath, '-',
-        ], `${instruction}${correction}\n\nREFINE THESE REJECTED TARGETS:\n${JSON.stringify(records)}`);
+        await runStructuredModel(MODEL_CONFIG, {
+          prompt: `${instruction}${correction}\n\nREFINE THESE REJECTED TARGETS:\n${JSON.stringify(records)}`,
+          schema,
+          schemaPath,
+          resultPath,
+          timeoutMs: MODEL_TIMEOUT_MS,
+          activeChildren,
+        });
       }
       const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
       if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) {

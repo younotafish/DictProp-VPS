@@ -132,8 +132,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │   └── routes/
 │   │       ├── auth.ts        # /api/auth/* — Google OAuth login + session
 │   │       ├── items.ts       # GET/PUT/DELETE /api/items, POST /api/import
-│   │       ├── ai.ts          # /api/analyze, /api/compare, /api/extract-vocabulary, /api/transcribe
-│   │       └── images.ts      # /api/generate-image
+│   │       └── ai.ts          # /api/analyze, /api/compare, /api/extract-vocabulary, /api/transcribe
 │   └── package.json
 ├── views/                     # Notebook, StudyEnhanced, SentencesView, DetailView, ComparisonView
 ├── components/                # UI components (incl. UserMenu — Google auth is active)
@@ -199,8 +198,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 ## Environment
 
 - `.env` file at project root (not committed):
-  - `DEEPINFRA_API_KEY` — required for AI analysis and image generation
-  - `REPLICATE_API_TOKEN` — optional fallback for image generation
+  - `DEEPINFRA_API_KEY` — required for immediate AI analysis, speech, and transcription (the VPS never generates images or detailed explanations)
   - `PORT` — server port (default: 3001 local, 3000 in Docker)
   - `DATA_DIR` — SQLite database directory (default: ./data)
   - `PUBLIC_ORIGIN` — optional canonical OAuth origin (production safely defaults to `https://dictprop.online`)

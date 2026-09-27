@@ -1,6 +1,6 @@
 import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent } from '../types';
 import { dataUriToBlob } from './dataUri';
-import { log, warn, error as logError } from './logger';
+import { log, error as logError } from './logger';
 import { HttpError, jsonRequest, requestJson, requestVoid, responseToHttpError } from './http';
 import { publishServerMutation } from './syncSignals';
 import { sortVocabCardsByUsage } from './usageAudit';
@@ -421,88 +421,6 @@ export const saveComparisonApi = async (comparison: StoredComparison): Promise<v
     `${API_BASE}/api/comparisons`,
     jsonRequest('PUT', comparison),
     'Save comparison',
-  );
-};
-
-export const generateIllustration = async (
-  prompt: string,
-  aspectRatio: '16:9' | '9:16' | '4:3' | '1:1' = '1:1'
-): Promise<string | undefined> => {
-  log(`[generateIllustration] Requesting image with aspect ratio: ${aspectRatio}`);
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(`${API_BASE}/api/generate-image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, aspectRatio }),
-      });
-
-      if (!res.ok) {
-        if (attempt === 0 && (res.status === 502 || res.status === 503)) {
-          await res.text().catch(() => '');
-          await new Promise(resolve => setTimeout(resolve, 750));
-          continue;
-        }
-        warn('Image generation failed:', res.status, await res.text().catch(() => ''));
-        return undefined;
-      }
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.startsWith('image/')) return blobToBase64(await res.blob());
-      const data = await res.json();
-      if (data.error === 'QUOTA_EXCEEDED') warn('Image generation skipped: Quota exceeded.');
-      else if (data.error) warn('Image generation skipped:', data.error);
-      return undefined;
-    } catch (error: any) {
-      if (attempt === 0) {
-        await new Promise(resolve => setTimeout(resolve, 750));
-        continue;
-      }
-      warn('Image generation failed', error);
-      return undefined;
-    }
-  }
-  return undefined;
-};
-
-export interface ImageBackfillStatus {
-  running: boolean;
-  total: number;
-  done: number;
-  generated: number;
-  failed: number;
-  startedAt: number;
-  finishedAt: number;
-  stoppedReason?: 'cancelled' | 'quota_exceeded' | 'not_configured' | 'provider_error';
-  lastError?: string;
-}
-
-export interface ImageBackfillScope {
-  itemIds?: string[];
-}
-
-/** Start or reconnect to the user's serialized server-side image backfill. */
-export const startImageBackfill = async (scope: ImageBackfillScope = {}): Promise<ImageBackfillStatus> => {
-  return requestJson<ImageBackfillStatus>(
-    `${API_BASE}/api/image-backfill`,
-    jsonRequest('POST', scope),
-    'Start image backfill',
-  );
-};
-
-export const getImageBackfillStatus = async (): Promise<ImageBackfillStatus> => {
-  return requestJson<ImageBackfillStatus>(
-    `${API_BASE}/api/image-backfill`,
-    undefined,
-    'Load image backfill status',
-  );
-};
-
-export const cancelImageBackfill = async (): Promise<ImageBackfillStatus> => {
-  return requestJson<ImageBackfillStatus>(
-    `${API_BASE}/api/image-backfill`,
-    { method: 'DELETE' },
-    'Cancel image backfill',
   );
 };
 

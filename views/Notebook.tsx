@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, ImagePlus, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
@@ -522,8 +522,6 @@ interface NotebookProps {
   onBatchImport?: (words: string[]) => void;
   batchImportProgress?: { current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean } | null;
   onJSONImported?: () => void;
-  onGenerateMissingImages?: () => void;
-  imageBackfillProgress?: { current: number; total: number; succeeded: number; failed: number; isRunning: boolean } | null;
   onGenerateAllSpeech?: () => void;
   ttsGenProgress?: { current: number; total: number; isRunning: boolean } | null;
   onRestoreImagesToServer?: () => void;
@@ -537,7 +535,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onBulkRefresh, bulkRefreshProgress, hasSavedVariant, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
-    onGenerateMissingImages, imageBackfillProgress,
     onGenerateAllSpeech, ttsGenProgress,
     onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages
 }) => {
@@ -1349,11 +1346,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                       </button>
                     )}
                     <div className="h-px bg-slate-100 my-1" />
-                    {onGenerateMissingImages && (
-                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onGenerateMissingImages(); }} disabled={imageBackfillProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                        {imageBackfillProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <ImagePlus size={17} />} Generate missing images
-                      </button>
-                    )}
                     {onGenerateAllSpeech && (
                       <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onGenerateAllSpeech(); }} disabled={ttsGenProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                         {ttsGenProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <Volume2 size={17} />} Generate speech cache

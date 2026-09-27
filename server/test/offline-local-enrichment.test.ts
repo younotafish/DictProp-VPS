@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,20 +70,22 @@ const locallyImaged = (card: any) => ({
   },
 });
 
-const fakeCodex = `#!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
+// Codex returns structured output through its -o file; Claude returns it in a stdout result envelope.
+const fakeCompletionModel = (provider: 'codex' | 'claude') => `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
 let prompt = '';
 process.stdin.on('data', chunk => { prompt += chunk; });
 process.stdin.on('end', () => {
+  if (process.env.FAKE_MODEL_ARGS) writeFileSync(process.env.FAKE_MODEL_ARGS, JSON.stringify(process.argv.slice(2)));
   const marker = 'COMPLETE THESE CARDS:\\n';
   const start = prompt.lastIndexOf(marker) + marker.length;
   const items = JSON.parse(prompt.slice(start));
   const results = items.map(item => ({
     itemIndex: item.itemIndex,
     sense: item.sense,
-    chinese: 'Codex高级版本',
+    chinese: '本地高级版本',
     ipa: '/ˈsæmpəl/',
-    definition: 'A Codex-generated advanced definition for this exact sense.',
+    definition: 'A locally generated advanced definition for this exact sense.',
     forms: ['sample', 'samples'],
     wordFamily: [{ word: 'sampling', pos: 'noun', chinese: '抽样' }],
     synonyms: ['example'],
@@ -103,8 +105,9 @@ process.stdin.on('end', () => {
       confidence: 'high',
     },
   }));
-  const outputIndex = process.argv.indexOf('-o');
-  writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ results }));
+  ${provider === 'codex'
+    ? "writeFileSync(process.argv[process.argv.indexOf('-o') + 1], JSON.stringify({ results }));"
+    : "process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', structured_output: { results } }));"}
 });
 `;
 
@@ -247,15 +250,16 @@ test('incremental vocabulary preparation enriches every new card once and repair
   );
 });
 
-test('Codex vocabulary completion rewrites a new basic card once and binds its advanced marker', () => {
-  const root = mkdtempSync(join(tmpdir(), 'dictprop-codex-vocab-completion-'));
+function completeNewBasicCardWith(provider: 'codex' | 'claude', env: Record<string, string>) {
+  const root = mkdtempSync(join(tmpdir(), `dictprop-${provider}-vocab-completion-`));
   const sourcePath = join(root, 'source.json');
   const completedPath = join(root, 'completed.json');
-  const codexPath = join(root, 'fake-codex.mjs');
+  const modelPath = join(root, `fake-${provider}.mjs`);
+  const argsPath = join(root, 'model-args.json');
   const workDir = join(root, 'work');
   const card = completeCard('new-basic-card');
-  writeFileSync(codexPath, fakeCodex);
-  chmodSync(codexPath, 0o700);
+  writeFileSync(modelPath, fakeCompletionModel(provider));
+  chmodSync(modelPath, 0o700);
   writeFileSync(sourcePath, JSON.stringify({
     version: 1,
     model: 'server-basic',
@@ -269,32 +273,61 @@ test('Codex vocabulary completion rewrites a new basic card once and binds its a
     }],
   }));
 
-  execFileSync(process.execPath, [
-    script('complete-corpus-fields.mjs'), sourcePath, completedPath, workDir,
-  ], {
-    env: {
-      ...process.env,
-      CODEX_BIN: codexPath,
-      CODEX_MODEL: 'gpt-5.6-sol',
-      CODEX_CONCURRENCY: '1',
-      VOCAB_COMPLETION_BATCH_SIZE: '1',
-    },
+  try {
+    execFileSync(process.execPath, [
+      script('complete-corpus-fields.mjs'), sourcePath, completedPath, workDir,
+    ], {
+      env: {
+        ...process.env,
+        ...env,
+        ENRICHMENT_MODEL_PROVIDER: provider,
+        [provider === 'codex' ? 'CODEX_BIN' : 'CLAUDE_BIN']: modelPath,
+        FAKE_MODEL_ARGS: argsPath,
+        CODEX_CONCURRENCY: '1',
+        VOCAB_COMPLETION_BATCH_SIZE: '1',
+      },
+    });
+
+    const completed = JSON.parse(readFileSync(completedPath, 'utf8'));
+    const advanced = completed.entries[0].data;
+    assert.equal(advanced.definition, 'A locally generated advanced definition for this exact sense.');
+    assert.equal(hasCurrentLocalAdvancedEnrichment(advanced), true);
+
+    const refreshedCorpusPath = join(root, 'refreshed-corpus.json');
+    const secondSourcePath = join(root, 'second-source.json');
+    writeFileSync(refreshedCorpusPath, JSON.stringify({
+      version: 1,
+      items: [{ ...completed.entries[0], savedAt: Date.now() }],
+    }));
+    execFileSync(process.execPath, [
+      script('prepare-incremental-vocab-source.mjs'), refreshedCorpusPath, secondSourcePath, '10', '168',
+    ]);
+    assert.equal(JSON.parse(readFileSync(secondSourcePath, 'utf8')).entries.length, 0);
+    return {
+      marker: advanced.advancedEnrichment,
+      report: JSON.parse(readFileSync(join(root, 'completion-report.json'), 'utf8')),
+      args: JSON.parse(readFileSync(argsPath, 'utf8')) as string[],
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('Codex vocabulary completion rewrites a new basic card once and binds its advanced marker', () => {
+  const { marker, report } = completeNewBasicCardWith('codex', { CODEX_MODEL: 'gpt-5.6-sol' });
+  assert.equal(marker.provider, 'codex-harness');
+  assert.equal(marker.model, 'gpt-5.6-sol');
+  assert.equal(report.provider, 'codex-harness');
+});
+
+test('Claude Opus vocabulary completion binds a claude-code marker that later cycles accept', () => {
+  const { marker, report, args } = completeNewBasicCardWith('claude', {
+    CLAUDE_MODEL: 'claude-opus-5-5',
+    CLAUDE_REASONING_EFFORT: 'xhigh',
   });
-
-  const completed = JSON.parse(readFileSync(completedPath, 'utf8'));
-  const advanced = completed.entries[0].data;
-  assert.equal(advanced.definition, 'A Codex-generated advanced definition for this exact sense.');
-  assert.equal(advanced.advancedEnrichment.provider, 'codex-harness');
-  assert.equal(hasCurrentLocalAdvancedEnrichment(advanced), true);
-
-  const refreshedCorpusPath = join(root, 'refreshed-corpus.json');
-  const secondSourcePath = join(root, 'second-source.json');
-  writeFileSync(refreshedCorpusPath, JSON.stringify({
-    version: 1,
-    items: [{ ...completed.entries[0], savedAt: Date.now() }],
-  }));
-  execFileSync(process.execPath, [
-    script('prepare-incremental-vocab-source.mjs'), refreshedCorpusPath, secondSourcePath, '10', '168',
-  ]);
-  assert.equal(JSON.parse(readFileSync(secondSourcePath, 'utf8')).entries.length, 0);
+  assert.equal(marker.provider, 'claude-code');
+  assert.equal(marker.model, 'claude-opus-5-5');
+  assert.equal(report.provider, 'claude-code');
+  assert.deepEqual(args.slice(0, 5), ['-p', '--model', 'claude-opus-5-5', '--effort', 'xhigh']);
+  assert.equal(args.includes('--bare'), false);
 });

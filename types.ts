@@ -25,7 +25,7 @@ export interface UsageAudit {
 /** Proves which offline enrichment harness generated this card's rich learning metadata. */
 export interface AdvancedEnrichmentMarker {
   version: 1;
-  provider: 'codex-harness' | 'local-mlx';
+  provider: 'codex-harness' | 'claude-code' | 'local-mlx';
   model: string;
   generatedAt: number;
   contentHash: string;

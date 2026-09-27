@@ -18,7 +18,6 @@ function parsePort(value: string | undefined): number {
 export const env = {
   PORT: parsePort(process.env.PORT),
   DEEPINFRA_API_KEY: process.env.DEEPINFRA_API_KEY || '',
-  REPLICATE_API_TOKEN: process.env.REPLICATE_API_TOKEN || '',
   DATA_DIR: process.env.DATA_DIR || resolve(__dirname, '../../data'),
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',

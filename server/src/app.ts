@@ -15,7 +15,6 @@ import { aiRoutes } from './routes/ai.js';
 import { authRoutes } from './routes/auth.js';
 import { comparisonsRoutes } from './routes/comparisons.js';
 import { essaysRoutes } from './routes/essays.js';
-import { imageRoutes } from './routes/images.js';
 import { itemsRoutes } from './routes/items.js';
 import { realLifeRoutes } from './routes/real-life.js';
 import { ttsRoutes } from './routes/tts.js';
@@ -102,8 +101,6 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/analyze', smallJsonLimit);
   app.use('/api/compare', smallJsonLimit);
   app.use('/api/extract-vocabulary', smallJsonLimit);
-  app.use('/api/generate-image', smallJsonLimit);
-  app.use('/api/image-backfill', smallJsonLimit);
   app.use('/api/comparisons', smallJsonLimit);
   app.use('/api/comparisons/*', smallJsonLimit);
   app.use('/api/sentence-enrichments/*', smallJsonLimit);
@@ -138,7 +135,6 @@ export function createApp(options: AppOptions = {}) {
   app.route('/api', essaysRoutes);
   app.route('/api', realLifeRoutes);
   app.route('/api', options.aiRouter ?? aiRoutes);
-  app.route('/api', imageRoutes);
   app.route('/api', ttsRoutes);
   app.route('/api', comparisonsRoutes);
   app.get('/api/health', c => {

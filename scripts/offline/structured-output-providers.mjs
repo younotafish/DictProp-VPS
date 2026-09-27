@@ -60,7 +60,7 @@ function runProcess({ command, args, input, timeoutMs, activeChildren }) {
   });
 }
 
-function parseJsonText(value, label) {
+export function parseJsonText(value, label) {
   if (value && typeof value === 'object') return value;
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} returned no JSON`);
   let text = value.trim();

@@ -180,10 +180,6 @@ export function hasCompleteSentenceAnalysis(value: unknown): value is CompleteSe
   return value.terms.every(term => term.synonyms.length > 0 && term.examples.length === 2);
 }
 
-export function withLegacyNaturalSpeechIpa(analysis: CompleteSentenceAnalysis): CompleteSentenceAnalysis {
-  return { ...analysis, naturalSpeechIpa: analysis.pronunciation.fastIpa };
-}
-
 export function isSentenceAnalysis(value: unknown): value is SentenceAnalysis {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const analysis = value as Record<string, any>;

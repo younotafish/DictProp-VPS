@@ -12,6 +12,7 @@ import {
   selectUnattemptedIncrementalItems,
   summarizeIncrementalEnrichmentBacklog,
 } from '../src/incremental-enrichment.js';
+import { validateStoredItem } from '../src/validation.js';
 
 const withAdvancedEnrichment = (data: any) => ({
   ...data,
@@ -111,6 +112,10 @@ test('vocabulary completeness and sense-matched replacement are deterministic', 
   assert.equal(hasCurrentLocalImageEnrichment({ ...locallyImaged, imagePrompt: 'A changed prompt.' }), false);
   assert.equal(hasCurrentLocalAdvancedEnrichment({ ...enriched, definition: 'Edited later.' }), false);
   assert.equal(hasCurrentLocalAdvancedEnrichment({
+    ...enriched,
+    advancedEnrichment: { ...enriched.advancedEnrichment, provider: 'claude-code', model: 'claude-opus-5-5' },
+  }), true);
+  assert.equal(hasCurrentLocalAdvancedEnrichment({
     ...completeVocab,
     advancedEnrichment: {
       ...enriched.advancedEnrichment,
@@ -126,6 +131,27 @@ test('vocabulary completeness and sense-matched replacement are deterministic', 
     ],
   );
   assert.equal(replacement?.sense, 'verb: rely');
+});
+
+test('production imports accept Codex and Claude advanced-enrichment markers', () => {
+  const srs = {
+    id: 'word', type: 'vocab', nextReview: 0, interval: 0, memoryStrength: 0,
+    lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 0,
+  };
+  const enriched = withAdvancedEnrichment(completeVocab);
+  for (const [provider, model] of [['codex-harness', 'gpt-5.6-sol'], ['claude-code', 'claude-opus-5-5']]) {
+    const data = { ...enriched, advancedEnrichment: { ...enriched.advancedEnrichment, provider, model } };
+    assert.equal(validateStoredItem({ type: 'vocab', data, srs, savedAt: 1 }), null);
+    assert.equal(validateStoredItem({
+      type: 'phrase', data: { id: 'word', query: 'a word', vocabs: [data] }, srs: { ...srs, type: 'phrase' }, savedAt: 1,
+    }), null);
+  }
+  assert.equal(validateStoredItem({
+    type: 'vocab',
+    data: { ...enriched, advancedEnrichment: { ...enriched.advancedEnrichment, provider: 'remote-api' } },
+    srs,
+    savedAt: 1,
+  }), 'vocab advancedEnrichment is invalid');
 });
 
 test('a failed first batch cannot starve newer incremental candidates', () => {

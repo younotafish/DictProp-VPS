@@ -15,9 +15,11 @@ export function advancedVocabContentHash(data: any): string {
   return createHash('sha256').update(JSON.stringify(canonicalize(content))).digest('hex');
 }
 
+const LOCAL_ADVANCED_ENRICHMENT_PROVIDERS = new Set(['codex-harness', 'claude-code']);
+
 export function hasCurrentLocalAdvancedEnrichment(data: any): boolean {
   const marker = data?.advancedEnrichment;
-  return marker?.version === 1 && marker?.provider === 'codex-harness' &&
+  return marker?.version === 1 && LOCAL_ADVANCED_ENRICHMENT_PROVIDERS.has(marker?.provider) &&
     typeof marker.model === 'string' && marker.model.length > 0 &&
     Number.isFinite(marker.generatedAt) && marker.generatedAt > 0 &&
     typeof marker.contentHash === 'string' && marker.contentHash === advancedVocabContentHash(data);

@@ -337,34 +337,23 @@ test('text AI routes do not reject concurrent request bursts locally', async () 
   assert.equal(peakActive, 31);
 });
 
-test('image backfill validates scope and reports an empty job', async () => {
-  let response = await app.request('/api/image-backfill', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{bad-json',
-  });
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: 'Invalid image backfill request' });
-
-  response = await app.request('/api/image-backfill', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ itemIds: [''] }),
-  });
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: 'Invalid item ids' });
-
-  response = await app.request('/api/image-backfill', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ itemIds: ['not-present'] }),
-  });
-  assert.equal(response.status, 200);
-  const status = await response.json() as any;
-  assert.deepEqual(
-    { running: status.running, total: status.total, done: status.done, generated: status.generated, failed: status.failed },
-    { running: false, total: 0, done: 0, generated: 0, failed: 0 },
-  );
-  assert.ok(status.startedAt > 0);
-  assert.equal(status.finishedAt, status.startedAt);
+test('the server does not expose remote image generation routes', async () => {
+  const requests: Array<[string, RequestInit]> = [
+    ['/api/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'A lighthouse at dusk', aspectRatio: '16:9' }),
+    }],
+    ['/api/image-backfill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }],
+    ['/api/image-backfill', { method: 'GET' }],
+    ['/api/image-backfill', { method: 'DELETE' }],
+  ];
+  for (const [path, init] of requests) {
+    const response = await app.request(path, init);
+    assert.equal(response.status, 404, `${init.method} ${path}`);
+  }
 });
