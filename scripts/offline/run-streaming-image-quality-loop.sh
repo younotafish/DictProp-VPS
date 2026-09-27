@@ -28,6 +28,7 @@ image_model="${IMAGE_MODEL:-krea2}"
 image_model_quantize="${IMAGE_MODEL_QUANTIZE:-${KREA_QUANTIZE:-}}"
 krea_image_source_candidate="${KREA_IMAGE_SOURCE_CANDIDATE:-}"
 krea_image_strength="${KREA_IMAGE_STRENGTH:-}"
+defer_after="${IMAGE_QUALITY_DEFER_AFTER:-}"
 current="$targets"
 first_round=1
 watcher_pid=""
@@ -43,6 +44,10 @@ if [[ "$image_model" != "krea2" && "$image_model" != "ernie-image" && "$image_mo
 fi
 if [[ -n "$image_model_quantize" ]] && [[ "$image_model_quantize" != "4" && "$image_model_quantize" != "8" ]]; then
   echo "IMAGE_MODEL_QUANTIZE (or KREA_QUANTIZE) must be 4 or 8" >&2
+  exit 2
+fi
+if [[ -n "$defer_after" ]] && { ! [[ "$defer_after" =~ ^[0-9]+$ ]] || [[ "$defer_after" -lt 1 ]] || [[ "$defer_after" -gt 99 ]]; }; then
+  echo "IMAGE_QUALITY_DEFER_AFTER must be an integer from 1 to 99" >&2
   exit 2
 fi
 if [[ "$image_model" == "qwen-image-edit" ]]; then
@@ -158,7 +163,7 @@ generate_candidates() {
   return "$shard_status"
 }
 
-while [[ "$candidate" -le 99 ]]; do
+while [[ "$candidate" -le "${defer_after:-99}" ]]; do
   round="$(printf '%02d' "$candidate")"
   pass_work="$work_root/pass-$round"
   refined="$work_root/refined-round-$round.json"
@@ -194,6 +199,26 @@ while [[ "$candidate" -le 99 ]]; do
   candidate=$((candidate + 1))
   first_round=0
 done
+
+if [[ -n "$defer_after" ]]; then
+  # A few concepts defeat the local renderer. Holding the cycle for them would also hold every accepted
+  # image, so they wait for a later cycle. Their rejected candidates are removed because the generator
+  # reuses any existing candidate file, and a later cycle must render fresh ones.
+  deferred_count="$(node -e "const p=JSON.parse(require('fs').readFileSync(process.argv[1])); console.log(p.targets.length)" "$current")"
+  node - "$current" "$candidates" <<'NODE'
+const { readdirSync, readFileSync, unlinkSync } = require('node:fs');
+const { join, parse, resolve } = require('node:path');
+const [targetsPath, candidatesPath] = process.argv.slice(2);
+const stems = new Set(JSON.parse(readFileSync(resolve(targetsPath), 'utf8')).targets
+  .map(target => parse(target.filename).name));
+for (const file of readdirSync(resolve(candidatesPath))) {
+  const match = /^(.+)-\d+\.[^.]+$/.exec(file);
+  if (match && stems.has(match[1])) unlinkSync(join(resolve(candidatesPath), file));
+}
+NODE
+  echo "[$(date -u +%FT%TZ)] deferring $deferred_count image(s) that failed $defer_after candidates to a later cycle"
+  exit 0
+fi
 
 echo "Image quality loop exhausted 99 candidates" >&2
 exit 1

@@ -21,6 +21,9 @@ CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
 # 8 image judgments); the LaunchAgent leaves them unset so a new default applies without a reload.
 ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-16}"
 IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-8}"
+# Saved-item images have converged within six candidates; a longer tail rarely passes and would hold
+# every accepted image, so it waits for the next cycle.
+ITEM_IMAGE_MAX_CANDIDATES="${ITEM_IMAGE_MAX_CANDIDATES:-8}"
 VOCAB_COMPLETION_BATCH_SIZE="${VOCAB_COMPLETION_BATCH_SIZE:-8}"
 SENTENCE_ANALYSIS_BATCH_SIZE="${SENTENCE_ANALYSIS_BATCH_SIZE:-4}"
 INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-${LOCAL_VOCAB_BATCH_SIZE:-100}}"
@@ -236,16 +239,23 @@ if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
   log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
   env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
     IMAGE_MODEL=ernie-image-turbo IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
+    IMAGE_QUALITY_DEFER_AFTER="$ITEM_IMAGE_MAX_CANDIDATES" \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
       "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
       "$ITEM_IMAGE_ROOT/streaming-quality/$ITEM_IMAGE_FINGERPRINT" 1024 576 4 1 64
-  log "publishing locally generated saved-word/phrase/sentence images"
-  WAIT_FOR_SENTENCE_IMPORTS=0 \
-  OFFLINE_IMAGE_CORPUS_MANIFEST=/dev/null \
-  OFFLINE_IMAGE_WAVE_STATE_ROOT="$ITEM_IMAGE_ROOT/publish-state/$ITEM_IMAGE_FINGERPRINT" \
-  OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
-    scripts/offline/dispatch-staged-offline-images.sh \
-      "$ITEM_IMAGE_ROOT" 100 "$REQUIRED_DEPLOY_SHA"
+  # The publisher waits for every manifest entry, so deferred images leave the manifest. They are still
+  # missing in production, so the next cycle targets them again.
+  ITEM_IMAGE_READY="$("$NODE_BIN" -e 'const f=require("fs"),p=require("path"),file=p.join(process.argv[1],"manifest.json"),m=JSON.parse(f.readFileSync(file,"utf8"));m.entries=m.entries.filter(e=>f.existsSync(p.join(process.argv[1],e.imageFile)));f.writeFileSync(file,JSON.stringify(m,null,2)+"\n",{mode:0o600});console.log(m.entries.length)' \
+    "$ITEM_IMAGE_ROOT")"
+  if [ "$ITEM_IMAGE_READY" -gt 0 ]; then
+    log "publishing $ITEM_IMAGE_READY locally generated saved-word/phrase/sentence image(s)"
+    WAIT_FOR_SENTENCE_IMPORTS=0 \
+    OFFLINE_IMAGE_CORPUS_MANIFEST=/dev/null \
+    OFFLINE_IMAGE_WAVE_STATE_ROOT="$ITEM_IMAGE_ROOT/publish-state/$ITEM_IMAGE_FINGERPRINT" \
+    OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+      scripts/offline/dispatch-staged-offline-images.sh \
+        "$ITEM_IMAGE_ROOT" 100 "$REQUIRED_DEPLOY_SHA"
+  fi
 else
   log "production already covers every saved-word/phrase/sentence image"
 fi

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
@@ -81,6 +81,72 @@ test('streaming image QA reuses historical rejections accepted by a later candid
   const output = JSON.parse(readFileSync(outputPath, 'utf8'));
   assert.deepEqual(output.targets.map((target: { imageId: string }) => target.imageId),
     historicallyRejected.map(target => target.imageId));
+});
+
+// Answers judge and prompt-refinement requests like `claude -p`: briefs mentioning "unrenderable" always fail.
+const fakeClaude = `#!/usr/bin/env node
+let input = '';
+process.stdin.on('data', chunk => { input += chunk; });
+process.stdin.on('end', () => {
+  const prompt = process.argv.includes('stream-json')
+    ? JSON.parse(input).message.content.filter(block => block.type === 'text').map(block => block.text).join('\\n')
+    : input;
+  const records = JSON.parse(prompt.split('\\n').find(line => line.startsWith('[{"itemIndex"')));
+  const schema = JSON.parse(process.argv[process.argv.indexOf('--json-schema') + 1]);
+  const judging = schema.properties.results.items.required.includes('acceptable');
+  const results = records.map(record => judging
+    ? { itemIndex: record.itemIndex, acceptable: !record.brief.includes('unrenderable'), reason: 'Fake judgment.' }
+    : { itemIndex: record.itemIndex, prompt: record.rejectedBrief + ' Refined.', change: 'Fake refinement.' });
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, structured_output: { results } }) + '\\n');
+});
+`;
+
+test('streaming image QA defers images that exhaust their candidates and keeps accepted ones', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-image-defer-'));
+  const candidates = join(root, 'candidates');
+  const images = join(root, 'images');
+  mkdirSync(candidates, { recursive: true });
+  mkdirSync(images, { recursive: true });
+  const renderer = join(root, 'python');
+  const claude = join(root, 'claude.cjs');
+  // Every candidate already exists, so the renderer has nothing to do.
+  writeFileSync(renderer, '#!/bin/sh\nexit 0\n');
+  writeFileSync(claude, fakeClaude);
+  chmodSync(renderer, 0o700);
+  chmodSync(claude, 0o700);
+  const targets = [
+    { imageId: 'easy', filename: 'easy.webp', prompt: 'A photorealistic dugout with players shouting from the bench.' },
+    { imageId: 'hard', filename: 'hard.webp', prompt: 'A photorealistic but unrenderable cloud chamber full of thin tracks.' },
+  ].map(target => ({ ...target, learningTarget: { kind: 'word sense', text: target.imageId, sense: '', definition: '' } }));
+  for (const target of targets) {
+    for (const candidate of [1, 2]) writeFileSync(join(candidates, `${target.imageId}-${candidate}.webp`), 'candidate');
+  }
+  const targetsPath = join(root, 'targets.json');
+  writeJson(targetsPath, { version: 1, targets });
+
+  const output = execFileSync('bash', [
+    resolve('..', 'scripts', 'offline', 'run-streaming-image-quality-loop.sh'),
+    targetsPath, candidates, images, join(root, 'work'), '1024', '576', '4', '1', '8',
+  ], {
+    cwd: resolve('..'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      KREA_PYTHON: renderer,
+      CLAUDE_BIN: claude,
+      ENRICHMENT_MODEL_PROVIDER: 'claude',
+      IMAGE_MODEL: 'ernie-image-turbo',
+      IMAGE_QUALITY_DEFER_AFTER: '2',
+    },
+  });
+
+  assert.match(output, /candidate 1: accepted=1, rejected=1/);
+  assert.match(output, /deferring 1 image\(s\) that failed 2 candidates to a later cycle/);
+  assert.equal(readFileSync(join(images, 'easy.webp'), 'utf8'), 'candidate');
+  assert.equal(existsSync(join(images, 'hard.webp')), false);
+  // A later cycle must render fresh candidates instead of re-judging the rejected ones.
+  assert.deepEqual(readdirSync(candidates).sort(), ['easy-1.webp', 'easy-2.webp']);
 });
 
 test('example enrichment publication excludes published and production-covered images', () => {

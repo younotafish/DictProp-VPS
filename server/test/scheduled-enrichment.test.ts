@@ -54,6 +54,10 @@ test('server search stays immediate while local Claude Opus enrichment runs ever
   assert.match(runner, /IMAGE_QA_CONCURRENCY="\$\{IMAGE_QA_CONCURRENCY:-8\}"/);
   assert.match(runner, /CODEX_IMAGE_CONCURRENCY="\$IMAGE_QA_CONCURRENCY"/);
   assert.match(runner, /IMAGE_MODEL=ernie-image-turbo/);
+  // A few unrenderable saved-item images must not hold back the accepted ones.
+  assert.match(runner, /ITEM_IMAGE_MAX_CANDIDATES="\$\{ITEM_IMAGE_MAX_CANDIDATES:-8\}"/);
+  assert.match(runner, /IMAGE_QUALITY_DEFER_AFTER="\$ITEM_IMAGE_MAX_CANDIDATES"/);
+  assert.match(runner, /if \[ "\$ITEM_IMAGE_READY" -gt 0 \]/);
   assert.doesNotMatch(runner, /LOCAL_MLX|IPA_CLAUDE|IPA_META|DEEPINFRA_API_KEY/);
   assert.match(runner, /shlock -f "\$LOCK_FILE" -p "\$\$"/);
   assert.match(runner, /analysis-publish-state-coverage-v2/);
