@@ -233,6 +233,10 @@ export interface SyncState {
   items: StoredItem[];
 }
 
+/** Identity of a saved sense: lowercased word plus the exact sense label. */
+export const savedVocabKey = (vocab: VocabCard): string =>
+  `${(vocab.word || '').toLowerCase().trim()}\u0000${vocab.sense || ''}`;
+
 /**
  * Type guard to check if a StoredItem contains vocabulary data.
  * When true, narrows the type to allow direct access to VocabCard properties.

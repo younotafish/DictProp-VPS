@@ -22,6 +22,7 @@ import { loadImage } from '../services/storage';
 import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
 import { log, warn, error as logError } from '../services/logger';
 import { isRealLifeProgressItem } from '../services/realLifeProgress';
+import { normalizeSentenceIdentity } from '../services/sentenceIdentity';
 
 // Helper to format relative time for next review
 const formatRelativeTime = (timestamp: number): string => {
@@ -106,9 +107,6 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
     return false;
   }
 };
-
-const normalizeSentenceIdentity = (text: string): string =>
-  stripSentenceMarkers(text).normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 
 const SENTENCE_PREFETCH_AHEAD = 5;
 
@@ -302,6 +300,21 @@ export const DetailView: React.FC<DetailViewProps> = ({
   useEffect(() => { savedItemsRef.current = savedItems; }, [savedItems]);
   const savedSentenceItemsRef = useRef(savedSentenceItems);
   useEffect(() => { savedSentenceItemsRef.current = savedSentenceItems; }, [savedSentenceItems]);
+  // Preview lookups run on every render, so index saved sentences once instead of re-normalizing all of them.
+  const savedSentenceIndex = useMemo(() => {
+    const byId = new Map<string, StoredItem>();
+    const byIdentity = new Map<string, StoredItem[]>();
+    for (const item of savedSentenceItems) {
+      if (item.type !== 'sentence' || item.isDeleted) continue;
+      byId.set(item.data.id, item);
+      const identity = normalizeSentenceIdentity((item.data as SentenceData).text);
+      if (!identity) continue;
+      const matches = byIdentity.get(identity);
+      if (matches) matches.push(item);
+      else byIdentity.set(identity, [item]);
+    }
+    return { byId, byIdentity };
+  }, [savedSentenceItems]);
   const onSaveRef = useRef(onSave);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
 
@@ -439,11 +452,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
 
   const savedPreviewSentence = exampleSentencePreview
-    ? savedSentenceItems.find(item => item.type === 'sentence' && !isRealLifeProgressItem(item) && (
-      item.data.id === exampleSentencePreview.sentence.data.id ||
-      normalizeSentenceIdentity((item.data as SentenceData).text) ===
-        normalizeSentenceIdentity((exampleSentencePreview.sentence.data as SentenceData).text)
-    ))
+    ? [savedSentenceIndex.byId.get(exampleSentencePreview.sentence.data.id)]
+        .concat(savedSentenceIndex.byIdentity.get(
+          normalizeSentenceIdentity((exampleSentencePreview.sentence.data as SentenceData).text),
+        ) ?? [])
+        .find(item => !!item && !isRealLifeProgressItem(item))
     : undefined;
   const previewSentence = exampleSentencePreview
     ? savedPreviewSentence
@@ -494,9 +507,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             (item.data as SentenceData).catalogCollectionId === currentSentenceData?.catalogCollectionId)
         ))
       : currentSentenceSnapshot.data.id.startsWith('sentence-preview:')
-        ? savedSentenceItems.find(item => item.type === 'sentence' && !item.isDeleted &&
-            normalizeSentenceIdentity((item.data as SentenceData).text) ===
-            normalizeSentenceIdentity(currentSentenceData?.text ?? ''))
+        ? savedSentenceIndex.byIdentity.get(normalizeSentenceIdentity(currentSentenceData?.text ?? ''))?.[0]
         : undefined
     : undefined;
   const readOnlySentencePreview = sentencePreviewOnly || (catalogSentencePreview && !savedCurrentSentence);

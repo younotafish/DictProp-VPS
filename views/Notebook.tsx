@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import Fuse from 'fuse.js';
-import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
+import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, isVocabItem, savedVocabKey } from '../types';
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
@@ -849,16 +849,14 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onSave(makeVocabStoredItem(vocab));
   }, [onSave]);
 
-  // Check if a vocab is already saved
-  const isVocabSaved = useCallback((vocab: VocabCard) => {
-    const vocabWord = (vocab.word || '').toLowerCase().trim();
-    return items.some(i => {
-      if (i.type !== 'vocab') return false;
-      const savedWord = ((i.data as VocabCard).word || '').toLowerCase().trim();
-      const savedSense = (i.data as VocabCard).sense || '';
-      return savedWord === vocabWord && savedSense === (vocab.sense || '');
-    });
-  }, [items]);
+  // Check if a vocab is already saved (runs once per rendered result, so use a prebuilt set)
+  const savedVocabKeys = useMemo(() => new Set(
+    items.filter(isVocabItem).map(item => savedVocabKey(item.data)),
+  ), [items]);
+  const isVocabSaved = useCallback(
+    (vocab: VocabCard) => savedVocabKeys.has(savedVocabKey(vocab)),
+    [savedVocabKeys],
+  );
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const currentScrollY = e.currentTarget.scrollTop;

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
+import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, savedVocabKey, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
 import { Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type RevisionCursor } from './services/api';
-import { stripSentenceMarkers } from './components/HighlightedSentence';
+import { normalizeSentenceIdentity } from './services/sentenceIdentity';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import type { DuplicateClusterView } from './components/DuplicatesModal';
@@ -50,9 +50,6 @@ const RealLifeView = lazy(() => import('./views/RealLifeView').then(module => ({
 const EssaysView = lazy(() => import('./views/EssaysView').then(module => ({ default: module.EssaysView })));
 const loadDetailView = () => import('./views/DetailView').then(module => ({ default: module.DetailView }));
 const DetailView = lazy(loadDetailView);
-
-const normalizeSentenceIdentity = (text: string): string =>
-  stripSentenceMarkers(text).normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 
 interface DetailContext {
   groups: ItemGroup[];
@@ -526,9 +523,8 @@ const App: React.FC = () => {
     return sentenceItems.filter(s => !s.isArchived && ((s.srs?.nextReview ?? 0) <= now)).length;
   }, [sentenceItems]);
   
-  // Start as "loaded" if we have cached items (instant UI)
-  // Full data will be loaded from IndexedDB in background
-  const [isLoaded, setIsLoaded] = useState(() => syncState.items.length > 0);
+  // Becomes true once IndexedDB has been read (or failed), whether or not it held any items.
+  const [isLoaded, setIsLoaded] = useState(false);
   const showNavRef = useRef(true);
   const navRef = useRef<HTMLElement>(null);
   const lastScrollYRef = useRef(0);
@@ -2190,22 +2186,23 @@ const App: React.FC = () => {
     });
   }, []);
 
+  // Both checks run once per rendered sentence or search result, so they look up prebuilt sets.
+  const savedSentenceIdentities = useMemo(
+    () => new Set(sentenceItems.map(s => normalizeSentenceIdentity((s.data as SentenceData).text))),
+    [sentenceItems],
+  );
   const isSentenceSaved = useCallback((text: string) => {
     const identity = normalizeSentenceIdentity(text);
-    return !!identity && sentenceItems.some(s =>
-      normalizeSentenceIdentity((s.data as SentenceData).text) === identity
-    );
-  }, [sentenceItems]);
+    return !!identity && savedSentenceIdentities.has(identity);
+  }, [savedSentenceIdentities]);
 
-  const isVocabSaved = useCallback((vocab: VocabCard) => {
-    const vocabWord = (vocab.word || '').toLowerCase().trim();
-    return activeItems.some(i => {
-      if (i.type !== 'vocab') return false;
-      const savedWord = ((i.data as VocabCard).word || '').toLowerCase().trim();
-      const savedSense = (i.data as VocabCard).sense || '';
-      return savedWord === vocabWord && savedSense === vocab.sense;
-    });
-  }, [activeItems]);
+  const savedVocabKeys = useMemo(() => new Set(
+    activeItems.filter(isVocabItem).map(item => savedVocabKey(item.data)),
+  ), [activeItems]);
+  const isVocabSaved = useCallback(
+    (vocab: VocabCard) => savedVocabKeys.has(savedVocabKey(vocab)),
+    [savedVocabKeys],
+  );
 
   // Global lookup across the whole notebook so searching a saved word
   // — OR any inflected variant of it (running→run, cats→cat, happier→happy) — pops up the
