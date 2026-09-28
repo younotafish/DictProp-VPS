@@ -23,6 +23,6 @@ async function uploadWithRetry(images: Array<{ id: string; base64: string }>): P
 export async function offloadAndUpload(images: Array<{ id: string; base64: string }>): Promise<void> {
   if (images.length === 0) return;
   const optimized = await optimizeImages(images);
-  await saveImagesBatch(optimized);
+  await saveImagesBatch(optimized.map(({ id, base64 }) => ({ id, image: base64 })));
   void uploadWithRetry(optimized);
 }

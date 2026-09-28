@@ -358,13 +358,6 @@ const IMAGE_CACHE_MAX = 50;
 const isStoredImageRecord = (value: unknown): value is StoredImageRecord =>
   !!value && typeof value === 'object' && !(value instanceof Blob) && 'blob' in value;
 
-const blobToDataUri = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result));
-  reader.onerror = () => reject(reader.error);
-  reader.readAsDataURL(blob);
-});
-
 const releaseImage = (entry: CachedImageEntry | undefined) => {
   if (entry?.url.startsWith('blob:')) URL.revokeObjectURL(entry.url);
 };
@@ -391,58 +384,54 @@ export const peekImage = (itemId: string, expectedVersion?: string): string | nu
   return cached.url;
 };
 
-export const saveImage = async (itemId: string, base64: string, version?: string): Promise<void> => {
-  const blob = dataUriToBlob(base64);
-  rememberImage(itemId, URL.createObjectURL(blob), version);
+/** A picture to store: a downloaded file, or a data URI from a paste or an import. */
+export interface ImageToStore {
+  id: string;
+  image: Blob | string;
+  version?: string;
+}
 
-  const idbAvailable = await checkIndexedDBAvailability();
-  if (!idbAvailable) return;
+const toBlob = (image: Blob | string): Blob => typeof image === 'string' ? dataUriToBlob(image) : image;
 
+/** Writes pictures to IDB in one transaction. A failed write only costs the offline copy, so it's logged. */
+const putImages = async (images: Array<{ id: string; blob: Blob; version?: string }>): Promise<void> => {
+  if (!(await checkIndexedDBAvailability())) return;
   try {
     const db = await getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IMAGES_STORE, 'readwrite');
-      const store = tx.objectStore(IMAGES_STORE);
-      store.put(version ? { blob, version } satisfies StoredImageRecord : blob, itemId);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    const tx = db.transaction(IMAGES_STORE, 'readwrite');
+    const store = tx.objectStore(IMAGES_STORE);
+    for (const { id, blob, version } of images) {
+      store.put(version ? { blob, version } satisfies StoredImageRecord : blob, id);
+    }
+    await transactionDone(tx);
   } catch (e) {
-    warn("Failed to save image to IDB", e);
+    warn("Failed to save images to IDB", e);
   }
+};
+
+/**
+ * Caches a picture in memory and stores it in the background. Returns the URL to show it with, so a card
+ * doesn't wait on the IDB write.
+ */
+export const saveImage = (itemId: string, image: Blob | string, version?: string): string => {
+  const blob = toBlob(image);
+  const url = URL.createObjectURL(blob);
+  rememberImage(itemId, url, version);
+  void putImages([{ id: itemId, blob, version }]);
+  return url;
 };
 
 /**
  * Stores pictures in IDB. `remember` also puts them in the memory cache; bulk downloads skip it so they
  * don't push out the pictures of the cards just viewed.
  */
-export const saveImagesBatch = async (
-  images: Array<{ id: string; base64: string; version?: string }>,
-  { remember = true } = {},
-): Promise<void> => {
+export const saveImagesBatch = async (images: ImageToStore[], { remember = true } = {}): Promise<void> => {
   if (images.length === 0) return;
-  const encoded = images.map(image => ({ ...image, blob: dataUriToBlob(image.base64) }));
+  const blobs = images.map(({ id, image, version }) => ({ id, blob: toBlob(image), version }));
   if (remember) {
-    for (const img of encoded) rememberImage(img.id, URL.createObjectURL(img.blob), img.version);
+    for (const { id, blob, version } of blobs) rememberImage(id, URL.createObjectURL(blob), version);
   }
-
-  const idbAvailable = await checkIndexedDBAvailability();
-  if (!idbAvailable) return;
-
-  try {
-    const db = await getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IMAGES_STORE, 'readwrite');
-      const store = tx.objectStore(IMAGES_STORE);
-      for (const img of encoded) {
-        store.put(img.version ? { blob: img.blob, version: img.version } satisfies StoredImageRecord : img.blob, img.id);
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (e) {
-    warn("Failed to batch save images to IDB", e);
-  }
+  await putImages(blobs);
 };
 
 // One IDB read per picture at a time. Two concurrent reads would each mint a blob URL, and caching the
@@ -619,9 +608,9 @@ export const getAllStoredImageIds = async (): Promise<Set<string>> => {
   return found;
 };
 
-/** Batch-load base64 data URIs from IDB for the given ids (missing ids are omitted). */
-export const loadImagesByIds = async (ids: string[]): Promise<Map<string, string>> => {
-  const result = new Map<string, string>();
+/** Batch-load stored pictures (files, or data URIs from older records) for the given ids; missing ids are omitted. */
+export const loadImagesByIds = async (ids: string[]): Promise<Map<string, Blob | string>> => {
+  const result = new Map<string, Blob | string>();
   if (ids.length === 0) return result;
 
   const idbAvailable = await checkIndexedDBAvailability();
@@ -629,28 +618,16 @@ export const loadImagesByIds = async (ids: string[]): Promise<Map<string, string
 
   try {
     const db = await getDB();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(IMAGES_STORE, 'readonly');
-      const store = tx.objectStore(IMAGES_STORE);
-      let pending = ids.length;
-      for (const id of ids) {
-        const req = store.get(id);
-        req.onsuccess = () => {
-          const rawValue = req.result;
-          const value = isStoredImageRecord(rawValue) ? rawValue.blob : rawValue;
-          if (typeof value === 'string') result.set(id, value);
-          if (value instanceof Blob) {
-            blobToDataUri(value).then(dataUri => result.set(id, dataUri)).finally(() => {
-              if (--pending === 0) resolve();
-            });
-            return;
-          }
-          if (--pending === 0) resolve();
-        };
-        req.onerror = () => { if (--pending === 0) resolve(); };
-      }
-      tx.onerror = () => reject(tx.error);
-    });
+    const tx = db.transaction(IMAGES_STORE, 'readonly');
+    const store = tx.objectStore(IMAGES_STORE);
+    for (const id of ids) {
+      const req = store.get(id);
+      req.onsuccess = () => {
+        const value = isStoredImageRecord(req.result) ? req.result.blob : req.result;
+        if (typeof value === 'string' || value instanceof Blob) result.set(id, value);
+      };
+    }
+    await transactionDone(tx);
   } catch (e) {
     warn("Failed to load images by ids", e);
   }

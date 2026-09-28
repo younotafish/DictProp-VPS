@@ -129,36 +129,32 @@ export const undoReviewMutation = async (eventId: string): Promise<UndoReviewRes
 };
 
 /**
- * Fetch a single item's image as a base64 data URI via the binary image endpoint.
+ * Fetch a single item's image file via the binary image endpoint.
  * - 404 → null: the item genuinely has no image (callers should NOT retry).
  * - network error / 5xx → throws: a transient failure (callers MAY retry).
  * This distinction lets OfflineImage retry flaky downloads instead of giving up on the first miss.
  */
-export const loadItemImage = async (itemId: string, imageVersion?: string): Promise<string | null> => {
+export const loadItemImage = async (itemId: string, imageVersion?: string): Promise<Blob | null> => {
   const versionQuery = imageVersion ? `?v=${encodeURIComponent(imageVersion)}` : '';
   const res = await fetch(`${API_BASE}/api/items/${encodeURIComponent(itemId)}/image${versionQuery}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Failed to load image: ${res.status}`);
-  return blobToBase64(await res.blob());
+  return res.blob();
 };
 
-/**
- * Fetch images for multiple item IDs in a single request.
- * Returns a map of { id: base64DataUri }.
- */
+/** Fetch the image files of several items, four at a time. Items without one are omitted. */
 export const loadItemImagesBatch = async (
   ids: string[],
   imageVersions?: ReadonlyMap<string, string>,
-): Promise<Record<string, string>> => {
-  if (ids.length === 0) return {};
-  const result: Record<string, string> = {};
+): Promise<Map<string, Blob>> => {
+  const result = new Map<string, Blob>();
   let cursor = 0;
   const worker = async () => {
     while (cursor < ids.length) {
       const id = ids[cursor++];
       try {
         const image = await loadItemImage(id, imageVersions?.get(id));
-        if (image) result[id] = image;
+        if (image) result.set(id, image);
       } catch { /* a later prefetch can retry transient failures */ }
     }
   };
@@ -180,15 +176,15 @@ export const getServerImageManifest = async (): Promise<Set<string>> => {
 };
 
 /**
- * Upload base64 images to the server (upload-on-create and recovery).
+ * Upload images (files or data URIs) to the server (upload-on-create and recovery).
  * Callers should chunk to <=10 entries per call to keep payloads small.
  */
 export const uploadImages = async (
-  images: Record<string, string>
+  images: Record<string, Blob | string>
 ): Promise<{ ok: boolean; saved: number }> => {
   let saved = 0;
-  for (const [id, dataUri] of Object.entries(images)) {
-    const blob = dataUriToBlob(dataUri);
+  for (const [id, image] of Object.entries(images)) {
+    const blob = typeof image === 'string' ? dataUriToBlob(image) : image;
     const response = await fetch(`${API_BASE}/api/items/${encodeURIComponent(id)}/image`, {
       method: 'PUT', headers: { 'Content-Type': blob.type }, body: blob,
     });
@@ -199,15 +195,6 @@ export const uploadImages = async (
   if (saved > 0) publishServerMutation();
   return { ok: true, saved };
 };
-
-/** Convert a Blob to a base64 data URI string. */
-const blobToBase64 = (blob: Blob): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
 
 // ============================================================================
 // JSON Import API

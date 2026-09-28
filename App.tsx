@@ -76,6 +76,27 @@ const offloadImages = async (images: Array<{ id: string; base64: string }>): Pro
   await offloadAndUpload(images);
 };
 
+// A picture already downloading is shared, so a card and the warm-up around it fetch it once, and a
+// second copy can't replace (and revoke) the URL the card is about to show.
+const imageDownloads = new Map<string, Promise<string | null>>();
+
+/**
+ * Downloads a picture missing locally, caches it, and resolves to the URL to show it with.
+ * loadItemImage THROWS on a transient failure (OfflineImage retries) and returns null only for a
+ * genuine 404, which stays empty until the Mac-local enrichment cycle generates and uploads it.
+ */
+const lazyLoadImage = (itemId: string, imageVersion?: string): Promise<string | null> => {
+  const key = `${itemId}\n${imageVersion ?? ''}`;
+  let download = imageDownloads.get(key);
+  if (!download) {
+    download = loadItemImage(itemId, imageVersion)
+      .then(image => image && saveImage(itemId, image, imageVersion))
+      .finally(() => imageDownloads.delete(key));
+    imageDownloads.set(key, download);
+  }
+  return download;
+};
+
 // Merge variant-duplicate clusters (Phase 2 of the dedup tool). For each merge, every
 // live vocab card whose word is a variant in the cluster is relabeled to the canonical
 // headword and given the UNION of all members' forms (plus the original variant spellings,
@@ -1065,11 +1086,7 @@ const App: React.FC = () => {
       const batch = missing.slice(i, i + BATCH_SIZE);
       try {
         const images = await loadItemImagesBatch(batch, imageVersions);
-        const toSave = Object.entries(images).map(([id, base64]) => ({
-          id,
-          base64,
-          version: imageVersions.get(id),
-        }));
+        const toSave = [...images].map(([id, image]) => ({ id, image, version: imageVersions.get(id) }));
         if (toSave.length > 0) await saveImagesBatch(toSave, { remember: false });
         done += batch.length;
         setImagePrefetchProgress({ done, total: missing.length });
@@ -1123,9 +1140,7 @@ const App: React.FC = () => {
       let done = 0;
       for (let i = 0; i < missing.length; i += BATCH) {
         const batchIds = missing.slice(i, i + BATCH);
-        const imgs = await loadImagesByIds(batchIds);
-        const map: Record<string, string> = {};
-        for (const [id, b64] of imgs) map[id] = b64;
+        const map = Object.fromEntries(await loadImagesByIds(batchIds));
         if (Object.keys(map).length > 0) {
           try { await uploadImages(map); } catch (e) { warn('Restore upload batch failed:', e); }
         }
@@ -1668,25 +1683,6 @@ const App: React.FC = () => {
 
   // Keep batch import refs up to date
   handleSaveRef.current = handleSave;
-
-  /**
-   * Lazy load image from server via dedicated binary endpoint.
-   * Returns base64 data URI directly (no polling needed).
-   * Also saves to IDB for offline access.
-   */
-  const handleLazyLoadImage = useCallback(async (itemId: string, imageVersion?: string): Promise<string | null> => {
-    // 1) Server has it? loadItemImage THROWS on a transient failure (OfflineImage retries) and returns
-    //    null only for a genuine 404 (the image is truly gone). Persist a hit to IDB for instant replay.
-    const existing = await loadItemImage(itemId, imageVersion);
-    if (existing) {
-      try { await saveImage(itemId, existing, imageVersion); } catch { /* cache write is best-effort */ }
-      log(`🖼️ Lazy-loaded image from server for: ${itemId}`);
-      return existing;
-    }
-
-    // A genuine 404 remains empty until the Mac-local enrichment cycle generates and uploads it.
-    return null;
-  }, []);
 
   // Attach a user-pasted/picked image to a sentence under review. Mirrors the vocab/phrase image path:
   // offload the base64 to IDB (awaited, for instant offline display) + upload to the server, then mark
@@ -2245,7 +2241,7 @@ const App: React.FC = () => {
               savedSentenceItems={allSentenceItems}
               onSearch={handleRecursiveSearch}
               onRefresh={handleRefreshViaGlobal}
-              onLazyLoadImage={handleLazyLoadImage}
+              onLazyLoadImage={lazyLoadImage}
               onUpdateSRS={updateSRS}
               onCompare={handleCompare}
               comparisons={comparisons}
@@ -2279,7 +2275,7 @@ const App: React.FC = () => {
               onCompare={handleCompare}
               onSaveSentence={handleSaveSentence}
               isSentenceSaved={isSentenceSaved}
-              onLazyLoadImage={handleLazyLoadImage}
+              onLazyLoadImage={lazyLoadImage}
               onFetchSenses={fetchSensesForWord}
               onSaveVocab={saveVocabSense}
           />
@@ -2377,7 +2373,7 @@ const App: React.FC = () => {
         findSavedByWord={findSavedByWord}
         onSearch={handleRecursiveSearch}
         isOnline={isOnline}
-        onLazyLoadImage={handleLazyLoadImage}
+        onLazyLoadImage={lazyLoadImage}
         onRefreshReplace={handleRefreshReplace}
         onSaveSentence={handleSaveSentence}
         isSentenceSaved={isSentenceSaved}

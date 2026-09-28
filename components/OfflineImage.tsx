@@ -8,7 +8,7 @@ interface Props {
   alt: string;
   className?: string;
   fallbackClassName?: string;
-  onMissing?: (itemId: string, imageVersion?: string) => Promise<string | null>; // Fetch image from server, returns base64
+  onMissing?: (itemId: string, imageVersion?: string) => Promise<string | null>; // Fetch image from server, returns the URL to show
 }
 
 /**
