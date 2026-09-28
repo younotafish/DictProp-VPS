@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useDeferredValue } from 'react';
+import React, { useCallback, useMemo, useState, useDeferredValue } from 'react';
 import { StoredItem, isSentenceItem, SentenceData } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
@@ -11,6 +11,122 @@ import {
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
 import { Virtuoso } from 'react-virtuoso';
+import { useLatest } from '../hooks/useStableValue';
+
+const formatDue = (ts: number) => {
+  const diff = ts - Date.now();
+  if (diff <= 0) return 'due';
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return `in ${days}d`;
+};
+
+const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
+const listComponents = { Footer: () => <div className="h-[calc(5rem+env(safe-area-inset-bottom))]" /> };
+
+interface SentenceRowProps {
+  item: StoredItem;
+  isDue: boolean;
+  confirmingDelete: boolean;
+  onOpen: (item: StoredItem) => void;
+  onUpdateSRS: (itemId: string) => void;
+  onDelete: (itemId: string) => void;
+  onConfirmDelete: (itemId: string | null) => void;
+  onSearch: (term: string) => void;
+  findSaved?: (term: string) => StoredItem | null;
+  onOpenCard?: (item: StoredItem) => void;
+}
+
+/** A saved sentence in the list. Rows re-render only when their own sentence or state changes, not for
+ *  every keystroke in the search box or every change elsewhere in the library. */
+const SentenceRow = React.memo(function SentenceRow({
+  item,
+  isDue,
+  confirmingDelete,
+  onOpen,
+  onUpdateSRS,
+  onDelete,
+  onConfirmDelete,
+  onSearch,
+  findSaved,
+  onOpenCard,
+}: SentenceRowProps) {
+  const d = item.data as SentenceData;
+  const mastery = item.srs ? SRSAlgorithm.getMasteryLevel(item.srs) : null;
+  const barColor = barColorFor(mastery?.percentage);
+
+  return (
+    <div className="px-3 pt-2 w-full max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto">
+      <div
+        onClick={() => onOpen(item)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item); }}
+        title="Open card to study this sentence"
+        className={`relative rounded-xl border p-3 transition-colors cursor-pointer hover:border-indigo-300 hover:shadow-sm ${isDue ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100 bg-white'}`}
+      >
+        <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
+        <div className="pl-3">
+          <p className="text-sm xl:text-base text-slate-700 leading-relaxed mb-2">
+            <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} findSaved={findSaved} onOpenCard={onOpenCard} />
+          </p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {d.sourceWord ? (
+                <span className="text-xs text-indigo-500 font-medium">{d.sourceWord}</span>
+              ) : (
+                <span className="text-xs text-violet-400 font-medium">Saved sentence</span>
+              )}
+              {d.sourceSense && (
+                <span className="text-xs text-slate-400">{d.sourceSense}</span>
+              )}
+              {!isDue && item.srs?.nextReview && (
+                <span className="text-xs text-slate-400">{formatDue(item.srs.nextReview)}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              {isDue && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onUpdateSRS(d.id); }}
+                  className="flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-lg transition-colors"
+                  title="Mark as reviewed"
+                >
+                  <Check size={12} />
+                  Reviewed
+                </button>
+              )}
+              {confirmingDelete ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDelete(d.id); onConfirmDelete(null); }}
+                    className="text-xs text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-lg transition-colors"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onConfirmDelete(null); }}
+                    className="text-xs text-slate-500 bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onConfirmDelete(d.id); }}
+                  className="text-slate-300 hover:text-red-400 p-1 rounded-lg transition-colors"
+                  title="Delete sentence"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 interface SentencesViewProps {
   items: StoredItem[];
@@ -78,14 +194,31 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
     return base.sort(compareSentencesByLearningPriority);
   }, [activeItems, filter, now, deferredQuery, runSentenceSearch]);
 
-  const formatDue = (ts: number) => {
-    const diff = ts - Date.now();
-    if (diff <= 0) return 'due';
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    if (days === 0) return 'today';
-    if (days === 1) return 'tomorrow';
-    return `in ${days}d`;
-  };
+  // Rows open the sentence in the order on screen, read when tapped, so the row callbacks stay the same
+  // while the list changes.
+  const latest = useLatest({ sorted, onOpenSentence });
+  const openSentence = useCallback((item: StoredItem) => {
+    const { sorted, onOpenSentence } = latest.current;
+    onOpenSentence(sorted, sorted.indexOf(item));
+  }, [latest]);
+
+  const renderSentence = useCallback((_index: number, item: StoredItem) => {
+    if (!isSentenceItem(item)) return null;
+    return (
+      <SentenceRow
+        item={item}
+        isDue={(item.srs?.nextReview ?? 0) <= now}
+        confirmingDelete={confirmDeleteId === item.data.id}
+        onOpen={openSentence}
+        onUpdateSRS={onUpdateSRS}
+        onDelete={onDelete}
+        onConfirmDelete={setConfirmDeleteId}
+        onSearch={onSearch}
+        findSaved={findSaved}
+        onOpenCard={onOpenCard}
+      />
+    );
+  }, [now, confirmDeleteId, openSentence, onUpdateSRS, onDelete, onSearch, findSaved, onOpenCard]);
 
   return (
     <div className="h-full min-h-0 flex flex-col">
@@ -187,85 +320,9 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
         data={sorted}
         overscan={400}
         onScroll={onScroll as any}
-        components={{ Footer: () => <div className="h-[calc(5rem+env(safe-area-inset-bottom))]" /> }}
-        itemContent={(index, item) => {
-          if (!isSentenceItem(item)) return null;
-          const d = item.data as SentenceData;
-          const isDue = ((item.srs?.nextReview ?? 0) <= now);
-          const mastery = item.srs ? SRSAlgorithm.getMasteryLevel(item.srs) : null;
-          const barColor = barColorFor(mastery?.percentage);
-
-          return (
-            <div className="px-3 pt-2 w-full max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto">
-            <div
-              key={d.id}
-              onClick={() => onOpenSentence(sorted, index)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter') onOpenSentence(sorted, index); }}
-              title="Open card to study this sentence"
-              className={`relative rounded-xl border p-3 transition-colors cursor-pointer hover:border-indigo-300 hover:shadow-sm ${isDue ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100 bg-white'}`}
-            >
-              <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
-              <div className="pl-3">
-                <p className="text-sm xl:text-base text-slate-700 leading-relaxed mb-2">
-                  <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} findSaved={findSaved} onOpenCard={onOpenCard} />
-                </p>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {d.sourceWord ? (
-                      <span className="text-xs text-indigo-500 font-medium">{d.sourceWord}</span>
-                    ) : (
-                      <span className="text-xs text-violet-400 font-medium">Saved sentence</span>
-                    )}
-                    {d.sourceSense && (
-                      <span className="text-xs text-slate-400">{d.sourceSense}</span>
-                    )}
-                    {!isDue && item.srs?.nextReview && (
-                      <span className="text-xs text-slate-400">{formatDue(item.srs.nextReview)}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {isDue && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onUpdateSRS(d.id); }}
-                        className="flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-lg transition-colors"
-                        title="Mark as reviewed"
-                      >
-                        <Check size={12} />
-                        Reviewed
-                      </button>
-                    )}
-                    {confirmDeleteId === d.id ? (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onDelete(d.id); setConfirmDeleteId(null); }}
-                          className="text-xs text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-lg transition-colors"
-                        >
-                          Delete
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
-                          className="text-xs text-slate-500 bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded-lg transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(d.id); }}
-                        className="text-slate-300 hover:text-red-400 p-1 rounded-lg transition-colors"
-                        title="Delete sentence"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div></div>
-          );
-        }}
+        components={listComponents}
+        computeItemKey={sentenceKey}
+        itemContent={renderSentence}
       />}
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useMemo, useState } from 'react';
+import React, { useCallback, useDeferredValue, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -36,6 +36,7 @@ import {
   type RealLifeCollectionProgress,
 } from '../services/realLifeProgress';
 import type { SentenceReviewFilter } from '../services/sentenceOrdering';
+import { useLatest } from '../hooks/useStableValue';
 
 interface RealLifeViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
@@ -161,6 +162,96 @@ const CollectionTile: React.FC<{
   );
 };
 
+const sentenceKey = (_index: number, sentence: RealLifeSentence) => sentence.id;
+const listComponents = { Footer: () => <div className="h-[calc(6rem+env(safe-area-inset-bottom))]" /> };
+
+interface RealLifeSentenceRowProps {
+  sentence: RealLifeSentence;
+  /** The collection's accent, for the position badge. */
+  softClass: string;
+  saved: boolean;
+  reviewed: boolean;
+  actionable: boolean;
+  masteryPercent: number;
+  onOpen: (sentence: RealLifeSentence) => void;
+  onMarkReviewed: (sentence: RealLifeSentence) => void;
+  findSaved?: (term: string) => StoredItem | null;
+  onOpenCard?: (item: StoredItem) => void;
+}
+
+/** A line of a collection. Rows re-render only when their own sentence or progress changes, not for every
+ *  keystroke in the search box or every change elsewhere in the library. */
+const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
+  sentence,
+  softClass,
+  saved,
+  reviewed,
+  actionable,
+  masteryPercent,
+  onOpen,
+  onMarkReviewed,
+  findSaved,
+  onOpenCard,
+}: RealLifeSentenceRowProps) {
+  return (
+    <div className="mx-auto w-full max-w-5xl px-3 pt-2 sm:px-4">
+      <article
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpen(sentence)}
+        onKeyDown={event => { if (event.key === 'Enter') onOpen(sentence); }}
+        className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md sm:p-4"
+        title="Open the full sentence lesson"
+      >
+        <div className="flex items-start gap-3">
+          <span className={`mt-0.5 flex h-7 min-w-7 shrink-0 items-center justify-center rounded-lg px-1 text-[10px] font-bold tabular-nums ${softClass}`}>
+            {sentence.position}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm leading-relaxed text-slate-800 sm:text-base">
+              <HighlightedSentence
+                text={sentence.markedText}
+                itemWord={sentence.focus}
+                findSaved={findSaved}
+                onOpenCard={onOpenCard}
+              />
+            </p>
+            <div className="mt-2.5 flex items-center gap-2">
+              <span className="truncate text-[11px] font-semibold text-slate-400">{sentence.sectionTitle}</span>
+              {saved && (
+                <span className="flex shrink-0 items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-600">
+                  <BookmarkCheck size={11} /> Saved
+                </span>
+              )}
+              {reviewed ? (
+                <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                  <CheckCircle2 size={11} /> {masteryPercent}%
+                </span>
+              ) : (
+                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Unreviewed</span>
+              )}
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                {actionable && (
+                  <button
+                    type="button"
+                    onClick={event => { event.stopPropagation(); onMarkReviewed(sentence); }}
+                    className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
+                    title="Mark as reviewed"
+                  >
+                    <Check size={12} /> Reviewed
+                  </button>
+                )}
+                <SentenceSpeakerButton text={sentence.text} className="rounded-full p-1.5 hover:bg-indigo-50" iconSize={15} />
+                <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-400" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  );
+});
+
 export const RealLifeView: React.FC<RealLifeViewProps> = ({
   onOpenSentence,
   progressItems,
@@ -235,6 +326,35 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
     });
     openSentence(actionable.length > 0 ? actionable : selectedCollection.sentences, 0);
   };
+
+  // Row callbacks stay stable, so typing in the search box doesn't re-render the rows on screen.
+  const latest = useLatest({ filtered, openSentence });
+  const openFromList = useCallback((sentence: RealLifeSentence) => {
+    const { filtered, openSentence } = latest.current;
+    openSentence(filtered, filtered.indexOf(sentence));
+  }, [latest]);
+  const markReviewed = useCallback((sentence: RealLifeSentence) => {
+    void onUpdateSRS(realLifeProgressItemId(sentence.id), 'good', { seedItem: createRealLifeProgressItem(sentence) });
+  }, [onUpdateSRS]);
+  const softClass = selectedCollection ? collectionStyle[selectedCollection.accent].soft : '';
+  const renderSentence = useCallback((_index: number, sentence: RealLifeSentence) => {
+    const progressItem = progressBySentence.get(sentence.id);
+    const reviews = progressItem?.srs?.totalReviews ?? 0;
+    return (
+      <RealLifeSentenceRow
+        sentence={sentence}
+        softClass={softClass}
+        saved={isSentenceSaved(sentence.text)}
+        reviewed={reviews > 0}
+        actionable={reviews === 0 || (progressItem?.srs?.nextReview ?? 0) <= now}
+        masteryPercent={progressItem?.srs ? Math.round(SRSAlgorithm.getMasteryLevel(progressItem.srs).percentage) : 0}
+        onOpen={openFromList}
+        onMarkReviewed={markReviewed}
+        findSaved={findSaved}
+        onOpenCard={onOpenCard}
+      />
+    );
+  }, [now, progressBySentence, softClass, isSentenceSaved, openFromList, markReviewed, findSaved, onOpenCard]);
 
   if (!selectedCollection) {
     return (
@@ -421,78 +541,9 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
           data={filtered}
           overscan={400}
           onScroll={onScroll as any}
-          components={{ Footer: () => <div className="h-[calc(6rem+env(safe-area-inset-bottom))]" /> }}
-          itemContent={(index, sentence) => {
-            const saved = isSentenceSaved(sentence.text);
-            const progressItem = progressBySentence.get(sentence.id);
-            const reviews = progressItem?.srs?.totalReviews ?? 0;
-            const actionable = reviews === 0 || (progressItem?.srs?.nextReview ?? 0) <= now;
-            const mastery = progressItem?.srs ? SRSAlgorithm.getMasteryLevel(progressItem.srs) : null;
-            return (
-              <div className="mx-auto w-full max-w-5xl px-3 pt-2 sm:px-4">
-                <article
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openSentence(filtered, index)}
-                  onKeyDown={event => { if (event.key === 'Enter') openSentence(filtered, index); }}
-                  className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md sm:p-4"
-                  title="Open the full sentence lesson"
-                >
-                  <div className="flex items-start gap-3">
-                    <span className={`mt-0.5 flex h-7 min-w-7 shrink-0 items-center justify-center rounded-lg px-1 text-[10px] font-bold tabular-nums ${style.soft}`}>
-                      {sentence.position}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm leading-relaxed text-slate-800 sm:text-base">
-                        <HighlightedSentence
-                          text={sentence.markedText}
-                          itemWord={sentence.focus}
-                          findSaved={findSaved}
-                          onOpenCard={onOpenCard}
-                        />
-                      </p>
-                      <div className="mt-2.5 flex items-center gap-2">
-                        <span className="truncate text-[11px] font-semibold text-slate-400">{sentence.sectionTitle}</span>
-                        {saved && (
-                          <span className="flex shrink-0 items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-600">
-                            <BookmarkCheck size={11} /> Saved
-                          </span>
-                        )}
-                        {reviews > 0 ? (
-                          <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                            <CheckCircle2 size={11} /> {Math.round(mastery?.percentage ?? 0)}%
-                          </span>
-                        ) : (
-                          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Unreviewed</span>
-                        )}
-                        <div className="ml-auto flex shrink-0 items-center gap-2">
-                          {actionable && (
-                            <button
-                              type="button"
-                              onClick={event => {
-                                event.stopPropagation();
-                                void onUpdateSRS(
-                                  realLifeProgressItemId(sentence.id),
-                                  'good',
-                                  { seedItem: createRealLifeProgressItem(sentence) },
-                                );
-                              }}
-                              className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
-                              title="Mark as reviewed"
-                            >
-                              <Check size={12} /> Reviewed
-                            </button>
-                          )}
-                          <SentenceSpeakerButton text={sentence.text} className="rounded-full p-1.5 hover:bg-indigo-50" iconSize={15} />
-                          <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-400" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              </div>
-            );
-          }}
+          components={listComponents}
+          computeItemKey={sentenceKey}
+          itemContent={renderSentence}
         />
       )}
     </div>
