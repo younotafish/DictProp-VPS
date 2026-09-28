@@ -188,6 +188,8 @@ interface DetailViewProps {
   onSaveSentence?: (text: string, word: string, sense?: string, prepared?: SentenceData) => void;
   onOpenExampleSentence?: (text: string, word: string, sense?: string) => StoredItem | null | Promise<StoredItem | null>;
   isSentenceSaved?: (text: string) => boolean;
+  /** Whether a word and sense is in the notebook, looked up in a prebuilt set. */
+  isVocabSaved: (vocab: VocabCard) => boolean;
   onRemoveVocabFromPhrase?: (phraseId: string, vocabId: string) => void;
   /** When provided, DetailView enters "sentence mode": aligned 1:1 with `groups`, sentenceItems[i] is
    *  the saved sentence whose source card is groups[i]. Drives the banner, SRS, TTS, autoplay & delete. */
@@ -224,6 +226,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   onSaveSentence,
   onOpenExampleSentence,
   isSentenceSaved,
+  isVocabSaved,
   onRemoveVocabFromPhrase,
   sentenceItems,
   findSaved,
@@ -2819,7 +2822,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                           <VocabCardDisplay
                             data={vocab}
                             onSave={() => handleSaveVocab(vocab)}
-                            isSaved={savedItems.some(i => getItemSpelling(i) === (vocab.word || '').toLowerCase().trim() && getItemSense(i) === vocab.sense)}
+                            isSaved={isVocabSaved(vocab)}
                             onSearch={handleVocabSearch}
                             scrollable={false}
                             showSave={true}
@@ -3215,6 +3218,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             onOpenComparison={onOpenComparison}
             onSaveSentence={onSaveSentence}
             isSentenceSaved={isSentenceSaved}
+            isVocabSaved={isVocabSaved}
             onRemoveVocabFromPhrase={onRemoveVocabFromPhrase}
             findSaved={findSaved}
             onOpenCard={onOpenCard}

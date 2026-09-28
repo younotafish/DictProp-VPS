@@ -2258,6 +2258,7 @@ const App: React.FC = () => {
               onSaveSentence={handleSaveSentence}
               onOpenExampleSentence={prepareExampleSentence}
               isSentenceSaved={isSentenceSaved}
+              isVocabSaved={isVocabSaved}
               onRemoveVocabFromPhrase={handleRemoveVocabFromPhrase}
               findSaved={findSavedItem}
               onOpenCard={openCardPopup}
