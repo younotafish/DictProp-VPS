@@ -2640,122 +2640,128 @@ export const DetailView: React.FC<DetailViewProps> = ({
           </div>
         )}
 
-        {/* Header - combined with progress bar */}
-        <div className={`sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/60 shrink-0 transition-all duration-300 overflow-hidden ${showHeader ? 'max-h-32 opacity-100' : 'max-h-0 opacity-0 border-b-0'}`}>
-          {/* Top row: navigation and actions */}
-          <div className="px-4 py-2 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
-                <ArrowLeft size={20} className="mr-1" /> Close
-              </Button>
-              {/* Meaning position indicator - shows which card in the group */}
-              {currentGroup && currentGroup.items.length > 1 && (
-                <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100">
-                  {currentItemIndex + 1}/{currentGroup.items.length}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => {
-                  const searchText = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
-                  // Use onRefresh if available (forces real AI search), otherwise fall back to onSearch
-                  if (onRefresh) {
-                    onRefresh(searchText);
-                  } else {
-                    onSearch(searchText);
-                  }
-                }}
-                className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
-                title="Refresh with AI"
-              >
-                <RefreshCw size={18} />
-              </Button>
-              {!sentenceMode && isSaved && (
+        {/* Header - combined with progress bar. Opens to its own height when the learner asks for it and
+            closes at once, so a card change never slides the next card up after it appears. */}
+        <div
+          inert={!showHeader}
+          className={`sticky top-0 z-30 grid ${showHeader ? 'grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out' : 'grid-rows-[0fr]'}`}
+        >
+          <div className={`min-h-0 overflow-hidden bg-white/80 backdrop-blur-md border-slate-200/60 ${showHeader ? 'border-b' : ''}`}>
+            {/* Top row: navigation and actions */}
+            <div className="px-4 py-2 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
+                  <ArrowLeft size={20} className="mr-1" /> Close
+                </Button>
+                {/* Meaning position indicator - shows which card in the group */}
+                {currentGroup && currentGroup.items.length > 1 && (
+                  <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100">
+                    {currentItemIndex + 1}/{currentGroup.items.length}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => {
+                    const searchText = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
+                    // Use onRefresh if available (forces real AI search), otherwise fall back to onSearch
+                    if (onRefresh) {
+                      onRefresh(searchText);
+                    } else {
+                      onSearch(searchText);
+                    }
+                  }}
+                  className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                  title="Refresh with AI"
+                >
+                  <RefreshCw size={18} />
+                </Button>
+                {!sentenceMode && isSaved && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleDeleteItem}
+                    className="text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                    title="Delete (D)"
+                  >
+                    <Trash2 size={18} />
+                  </Button>
+                )}
+                {!sentenceMode && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={handleDeleteItem}
-                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                  title="Delete (D)"
+                  onClick={handleToggleSave}
+                  className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
                 >
-                  <Trash2 size={18} />
+                  {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
+                  <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
                 </Button>
-              )}
-              {!sentenceMode && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleToggleSave}
-                className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
-              >
-                {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
-                <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
-              </Button>
-              )}
-              {/* Action menu for saved items */}
-              {!sentenceMode && isSaved && (
-                <div className="relative">
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => setShowActionMenu(!showActionMenu)}
-                    className="text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                    title="More actions"
-                  >
-                    <MoreVertical size={18} />
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-          
-          {/* Bottom row: Progress bar - shown for saved items (word mastery; sentence stats live in the banner) */}
-          {!sentenceMode && isSaved && savedItemMatch && mastery && masteryColors && (
-            <div className="px-4 pb-2">
-              <div className="flex items-center gap-2 text-xs">
-                {/* Mastery badge with percentage */}
-                <span className={`${masteryColors.bg} ${masteryColors.text} px-2 py-0.5 rounded-full font-semibold`}>
-                  {mastery.label} {Math.round(mastery.percentage)}%
-                </span>
-                
-                {/* Progress bar */}
-                <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full ${masteryColors.bar} transition-all duration-300`}
-                    style={{ width: `${mastery.percentage}%` }}
-                  />
-                </div>
-                
-                {/* Stats */}
-                <span className="text-slate-400 whitespace-nowrap">
-                  {savedItemMatch.srs?.totalReviews ?? 0}×
-                </span>
-                {(savedItemMatch.srs?.correctStreak ?? 0) > 0 && (
-                  <span className="text-orange-500 flex items-center gap-0.5">
-                    <Flame size={12} />
-                    {savedItemMatch.srs?.correctStreak}
-                  </span>
                 )}
-                <span className="text-slate-300">•</span>
-                <span className="text-emerald-600 flex items-center gap-0.5">
-                  <CheckCircle2 size={12} />
-                  {memorizedCount}
-                </span>
-                <span className="text-slate-300">•</span>
-                <span className="text-amber-600 flex items-center gap-0.5">
-                  <Clock size={12} />
-                  {dueToday}
-                </span>
-                <span className="text-slate-300">•</span>
-                <span className="text-slate-500">
-                  {(savedItemMatch.srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatRelativeTime(savedItemMatch.srs?.nextReview ?? 0)}
-                </span>
+                {/* Action menu for saved items */}
+                {!sentenceMode && isSaved && (
+                  <div className="relative">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => setShowActionMenu(!showActionMenu)}
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                      title="More actions"
+                    >
+                      <MoreVertical size={18} />
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
-          )}
+          
+            {/* Bottom row: Progress bar - shown for saved items (word mastery; sentence stats live in the banner) */}
+            {!sentenceMode && isSaved && savedItemMatch && mastery && masteryColors && (
+              <div className="px-4 pb-2">
+                <div className="flex items-center gap-2 text-xs">
+                  {/* Mastery badge with percentage */}
+                  <span className={`${masteryColors.bg} ${masteryColors.text} px-2 py-0.5 rounded-full font-semibold`}>
+                    {mastery.label} {Math.round(mastery.percentage)}%
+                  </span>
+                
+                  {/* Progress bar */}
+                  <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full ${masteryColors.bar} transition-all duration-300`}
+                      style={{ width: `${mastery.percentage}%` }}
+                    />
+                  </div>
+                
+                  {/* Stats */}
+                  <span className="text-slate-400 whitespace-nowrap">
+                    {savedItemMatch.srs?.totalReviews ?? 0}×
+                  </span>
+                  {(savedItemMatch.srs?.correctStreak ?? 0) > 0 && (
+                    <span className="text-orange-500 flex items-center gap-0.5">
+                      <Flame size={12} />
+                      {savedItemMatch.srs?.correctStreak}
+                    </span>
+                  )}
+                  <span className="text-slate-300">•</span>
+                  <span className="text-emerald-600 flex items-center gap-0.5">
+                    <CheckCircle2 size={12} />
+                    {memorizedCount}
+                  </span>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-amber-600 flex items-center gap-0.5">
+                    <Clock size={12} />
+                    {dueToday}
+                  </span>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-slate-500">
+                    {(savedItemMatch.srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatRelativeTime(savedItemMatch.srs?.nextReview ?? 0)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="p-4 pb-24 md:pb-8 md:px-6">
