@@ -14,6 +14,7 @@ export interface AuthState {
 
 // Last-known session, cached so the app can render offline (see checkAuth).
 const AUTH_USER_KEY = 'vps_auth_user';
+const AUTH_CHECK_TIMEOUT_MS = 10_000;
 type CachedAuth = { user: AuthUser | null; pending: boolean };
 
 function readCachedAuth(): CachedAuth | null {
@@ -54,8 +55,11 @@ function clearCachedAuth(): void {
  * redeploy) means "can't verify right now", NOT "logged out", so we keep the cache.
  */
 export async function checkAuth(): Promise<{ user: AuthUser | null; pending: boolean; offline?: boolean }> {
+  // A wedged connection counts as offline rather than holding a first sign-in on the spinner.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT_MS);
   try {
-    const res = await fetch('/api/auth/me');
+    const res = await fetch('/api/auth/me', { signal: controller.signal });
     if (res.status === 401 || res.status === 403) {
       clearCachedAuth(); // genuinely signed out
       return { user: null, pending: false };
@@ -73,7 +77,24 @@ export async function checkAuth(): Promise<{ user: AuthUser | null; pending: boo
     // Network failure (offline) — render from the cached session + local data.
     const cached = readCachedAuth();
     return cached ? { ...cached, offline: true } : { user: null, pending: false };
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/**
+ * The session to open with: the last-known one when there is one, so launch reads the library without
+ * waiting on the network while checkAuth confirms it. Only a first sign-in waits for the server.
+ */
+export function initialAuthState(): AuthState {
+  const cached = readCachedAuth();
+  return cached ? { ...cached, loading: false } : { user: null, pending: false, loading: true };
+}
+
+/** Whether two sessions show the same account, so confirming an unchanged session changes nothing. */
+export function isSameAuthUser(a: AuthUser | null, b: AuthUser | null): boolean {
+  return a === b || (!!a && !!b && a.id === b.id && a.email === b.email && a.displayName === b.displayName &&
+    a.photoUrl === b.photoUrl && a.isAdmin === b.isAdmin);
 }
 
 export function loginRedirect(): void {

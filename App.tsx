@@ -6,7 +6,7 @@ import { mergeDatasets, trackServerContent, applyServerSave, dropExpiredTombston
 import { getItemContentHash, isItemDirty } from './services/itemHash';
 import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation } from './services/api';
 import { normalizeSentenceIdentity } from './services/sentenceIdentity';
-import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
+import { checkAuth, initialAuthState, isSameAuthUser, loginRedirect, logout, AuthState, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
@@ -237,23 +237,18 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
 const DETAIL_CONTEXT_KEY = 'app_detail_context';
 
 const App: React.FC = () => {
-  // Auth state
-  const [authState, setAuthState] = useState<AuthState>({ user: null, pending: false, loading: true });
+  // Auth state: opens with the last-known session, which the server check below confirms or ends.
+  const [authState, setAuthState] = useState<AuthState>(initialAuthState);
 
   useEffect(() => {
-    checkAuth().then(({ user, pending }) => {
-      setAuthState({ user, pending, loading: false });
-    }).catch(() => {
-      setAuthState({ user: null, pending: false, loading: false });
-    });
-  }, []);
-
-  useEffect(() => {
-    const handleAuthRequired = () => {
-      void checkAuth().then(({ user, pending }) => {
-        setAuthState({ user, pending, loading: false });
-      });
+    // An unchanged session keeps its state, so confirming it re-renders nothing.
+    const applyAuth = ({ user, pending }: { user: AuthUser | null; pending: boolean }) => {
+      setAuthState(current => !current.loading && current.pending === pending && isSameAuthUser(current.user, user)
+        ? current
+        : { user, pending, loading: false });
     };
+    checkAuth().then(applyAuth).catch(() => applyAuth({ user: null, pending: false }));
+    const handleAuthRequired = () => { void checkAuth().then(applyAuth); };
     window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
   }, []);
