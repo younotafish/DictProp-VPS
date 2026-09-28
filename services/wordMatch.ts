@@ -163,22 +163,26 @@ export function variantKeys(s: string): string[] {
 }
 
 /**
- * Inverted index: variant key → set of normalised base words owning that key.
+ * Inverted index: variant key → the normalised base word owning that key, or the few base words
+ * when several share it (about one key in a thousand), which spares a set per key on each rebuild.
+ */
+export type VariantIndex = Map<string, string | string[]>;
+
+/**
  * Built once per item-set change. The saved `word` is lemmatised (the empty-forms
  * fallback); `forms` are added as exact keys only (the conservative saved side).
  */
-export function buildVariantIndex(items: StoredItem[]): Map<string, Set<string>> {
-  const index = new Map<string, Set<string>>();
+export function buildVariantIndex(items: StoredItem[]): VariantIndex {
+  const index: VariantIndex = new Map();
   for (const item of items) {
     if (!item || item.type !== 'vocab' || item.isDeleted) continue;
     const { base, keys } = cardKeys(item.data as VocabCard);
     for (const key of keys) {
-      let set = index.get(key);
-      if (!set) {
-        set = new Set();
-        index.set(key, set);
-      }
-      set.add(base);
+      const owners = index.get(key);
+      if (owners === undefined) index.set(key, base);
+      else if (typeof owners === 'string') {
+        if (owners !== base) index.set(key, [owners, base]);
+      } else if (!owners.includes(base)) owners.push(base);
     }
   }
   return index;
@@ -198,15 +202,21 @@ function cardKeys(card: VocabCard): { base: string; keys: string[] } {
   return entry;
 }
 
+/** A card's base word, normalizeKey(card.word), from the same per-card cache as the index. */
+export function cardBase(card: VocabCard): string {
+  return cardKeys(card).base;
+}
+
 /**
  * Query-time match: returns the set of saved base words a query maps to (empty = none).
  * Generous on the query side via variantKeys(query).
  */
-export function matchBaseWords(query: string, index: Map<string, Set<string>>): Set<string> {
+export function matchBaseWords(query: string, index: VariantIndex): Set<string> {
   const result = new Set<string>();
   for (const key of variantKeys(query)) {
-    const bases = index.get(key);
-    if (bases) for (const b of bases) result.add(b);
+    const owners = index.get(key);
+    if (typeof owners === 'string') result.add(owners);
+    else if (owners) for (const b of owners) result.add(b);
   }
   return result;
 }
@@ -241,10 +251,9 @@ export function findDuplicateClusters(items: StoredItem[]): string[][] {
     parent.set(find(a), find(b));
   };
 
-  for (const bases of index.values()) {
-    if (bases.size < 2) continue;
-    const arr = [...bases];
-    for (let i = 1; i < arr.length; i++) union(arr[0], arr[i]);
+  for (const owners of index.values()) {
+    if (typeof owners === 'string') continue;
+    for (let i = 1; i < owners.length; i++) union(owners[0], owners[i]);
   }
 
   const groups = new Map<string, Set<string>>();

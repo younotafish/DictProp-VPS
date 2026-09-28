@@ -244,9 +244,19 @@ export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
 export type ViewState = 'notebook' | 'study' | 'sentences' | 'real-life' | 'essays';
 
+// Cached per card: the saved-sense set is rebuilt from every card when the library changes, and cards
+// are replaced rather than mutated, so a rebuild builds keys only for the cards that changed.
+const savedVocabKeyCache = new WeakMap<VocabCard, string>();
+
 /** Identity of a saved sense: lowercased word plus the exact sense label. */
-export const savedVocabKey = (vocab: VocabCard): string =>
-  `${(vocab.word || '').toLowerCase().trim()}\u0000${vocab.sense || ''}`;
+export const savedVocabKey = (vocab: VocabCard): string => {
+  let key = savedVocabKeyCache.get(vocab);
+  if (key === undefined) {
+    key = `${(vocab.word || '').toLowerCase().trim()}\u0000${vocab.sense || ''}`;
+    savedVocabKeyCache.set(vocab, key);
+  }
+  return key;
+};
 
 /**
  * Type guard to check if a StoredItem contains vocabulary data.

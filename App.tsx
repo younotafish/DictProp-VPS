@@ -12,7 +12,7 @@ import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
 import type { DuplicateClusterView } from './components/DuplicatesModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
-import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
+import { buildVariantIndex, cardBase, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
 import { AUTH_REQUIRED_EVENT } from './services/http';
 import { enqueuePendingReviewMutation, excludePendingReviewItems, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation, type PendingReviewMutation } from './services/reviewQueue';
 import { useReviewHistory } from './hooks/useReviewHistory';
@@ -580,7 +580,7 @@ const App: React.FC = () => {
     const m = new Map<string, StoredItem>();
     for (const i of activeContent) {
       if (i.type !== 'vocab') continue;
-      const base = normalizeKey((i.data as VocabCard).word || '');
+      const base = cardBase(i.data as VocabCard);
       if (!base) continue;
       const prev = m.get(base);
       const candidatePriority = getUsagePriority((i.data as VocabCard).usageAudit?.status);
@@ -1814,9 +1814,11 @@ const App: React.FC = () => {
     return !!identity && savedSentenceIdentities.has(identity);
   }, [savedSentenceIdentities]);
 
-  const savedVocabKeys = useMemo(() => new Set(
-    activeContent.filter(isVocabItem).map(item => savedVocabKey(item.data)),
-  ), [activeContent]);
+  const savedVocabKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const item of activeContent) if (isVocabItem(item)) keys.add(savedVocabKey(item.data));
+    return keys;
+  }, [activeContent]);
   const isVocabSaved = useCallback(
     (vocab: VocabCard) => savedVocabKeys.has(savedVocabKey(vocab)),
     [savedVocabKeys],
