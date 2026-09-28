@@ -30,31 +30,64 @@ const searchText = (item: StoredItem): string => {
   return text;
 };
 
-// The fuzzy index only serves typo searches, so it's built on first use and kept per items array.
-const fuzzyIndexes = new WeakMap<StoredItem[], Fuse<StoredItem>>();
+// Spelling per content object, which grouping and search read for every item on each rebuild.
+const spellingCache = new WeakMap<object, string>();
 
-const fuzzyMatches = (items: StoredItem[], query: string): StoredItem[] => {
-  let fuse = fuzzyIndexes.get(items);
-  if (!fuse) {
-    fuse = new Fuse(items, { keys: ['data.word', 'data.query'], threshold: 0.3, ignoreLocation: true });
-    fuzzyIndexes.set(items, fuse);
+const spellingOf = (item: StoredItem): string => {
+  if (!item?.data) return '';
+  let spelling = spellingCache.get(item.data);
+  if (spelling === undefined) {
+    spelling = getItemSpelling(item);
+    spellingCache.set(item.data, spelling);
   }
-  return fuse.search(query).map(result => result.item);
+  return spelling;
+};
+
+// The fuzzy index only serves typo searches, so it's built on first use. It holds the distinct spellings,
+// which reviews and edits leave as they were, so it's rebuilt only when a spelling comes or goes.
+let fuzzyIndex: { spellings: string[]; fuse: Fuse<string> } | null = null;
+
+const sameSpellings = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((spelling, i) => spelling === b[i]);
+
+const fuzzySpellings = (items: StoredItem[], needle: string): string[] => {
+  const distinct = new Set<string>();
+  for (const item of items) distinct.add(spellingOf(item));
+  distinct.delete('');
+  const spellings = [...distinct];
+  if (!fuzzyIndex || !sameSpellings(fuzzyIndex.spellings, spellings)) {
+    fuzzyIndex = { spellings, fuse: new Fuse(spellings, { threshold: 0.3, ignoreLocation: true }) };
+  }
+  return fuzzyIndex.fuse.search(needle).map(result => result.item);
+};
+
+const withAllSenses = (items: StoredItem[], spellings: Iterable<string>): StoredItem[] => {
+  const wanted = new Set(spellings);
+  wanted.delete('');
+  return items.filter(item => wanted.has(spellingOf(item)));
 };
 
 /**
  * Items whose word, phrase or Chinese fields contain the query, plus every other sense of each matched
- * spelling. When nothing contains the query, a fuzzy match on the spelling still finds typos.
+ * spelling; null when nothing contains the query.
  */
-export const findNotebookMatches = (items: StoredItem[], query: string): StoredItem[] => {
+export const findLiteralMatches = (items: StoredItem[], query: string): StoredItem[] | null => {
   const needle = query.trim().toLowerCase();
   if (!needle) return items;
-  let hits = items.filter(item => item?.data && searchText(item).includes(needle));
-  if (hits.length === 0) hits = fuzzyMatches(items, needle);
-  const spellings = new Set(hits.map(getItemSpelling));
-  spellings.delete('');
-  return items.filter(item => item?.data && spellings.has(getItemSpelling(item)));
+  const hits = items.filter(item => item?.data && searchText(item).includes(needle));
+  return hits.length > 0 ? withAllSenses(items, hits.map(spellingOf)) : null;
 };
+
+/**
+ * Items whose spelling fuzzily matches the query, with their other senses, so typos still find their word.
+ * It scans every spelling, tens of ms, so it's the fallback for a query nothing contains.
+ */
+export const findFuzzyMatches = (items: StoredItem[], query: string): StoredItem[] =>
+  withAllSenses(items, fuzzySpellings(items, query.trim().toLowerCase()));
+
+/** The whole search at once: literal matches, else fuzzy ones. The notebook runs the two steps separately. */
+export const findNotebookMatches = (items: StoredItem[], query: string): StoredItem[] =>
+  findLiteralMatches(items, query) ?? findFuzzyMatches(items, query);
 
 const byTitle = (a: StoredItem, b: StoredItem): number => getItemTitle(a).localeCompare(getItemTitle(b));
 
@@ -76,7 +109,7 @@ const byReviewPriority = (now: number) => (a: StoredItem, b: StoredItem): number
 export const groupByTitle = (items: StoredItem[]): ItemGroup[] => {
   const groups = new Map<string, StoredItem[]>();
   for (const item of items) {
-    const title = getItemSpelling(item);
+    const title = spellingOf(item);
     if (!title) continue;
     const group = groups.get(title);
     if (group) group.push(item);

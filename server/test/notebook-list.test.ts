@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildNotebookList, findNotebookMatches, groupByTitle } from '../../services/notebookList.ts';
+import { buildNotebookList, findFuzzyMatches, findLiteralMatches, findNotebookMatches, groupByTitle } from '../../services/notebookList.ts';
 import type { ItemGroup, SearchResult, StoredItem, UsageStatus, VocabCard } from '../../types.ts';
 
 const DAY = 86_400_000;
@@ -139,6 +139,21 @@ test('a search without substring hits falls back to fuzzy spelling so typos stil
   const items = [vocab('accommodate'), vocab('recommend'), vocab('apple')];
   assert.deepEqual(ids(findNotebookMatches(items, 'acommodate')), ['accommodate:']);
   assert.deepEqual(ids(findNotebookMatches(items, 'xyzzy')), []);
+});
+
+test('literal matching reports a query nothing contains as null, so the caller can wait to scan fuzzily', () => {
+  const items = [vocab('accommodate'), vocab('apple')];
+  assert.equal(findLiteralMatches(items, 'acommodate'), null);
+  assert.deepEqual(ids(findLiteralMatches(items, ' APP ') ?? []), ['apple:']);
+});
+
+test('the fuzzy index keeps up with spellings added and removed after it was built', () => {
+  const items = [vocab('accommodate'), vocab('apple')];
+  assert.deepEqual(ids(findFuzzyMatches(items, 'acommodate')), ['accommodate:']);
+  const reviewed = items.map(item => ({ ...item, srs: { ...item.srs!, totalReviews: 1 } }));
+  assert.deepEqual(ids(findFuzzyMatches(reviewed, 'acommodate')), ['accommodate:']);
+  assert.deepEqual(ids(findFuzzyMatches([...items, vocab('necessary')], 'neccessary')), ['necessary:']);
+  assert.deepEqual(ids(findFuzzyMatches(items, 'neccessary')), []);
 });
 
 test('substring hits leave out near misses the fuzzy fallback would find', () => {

@@ -565,8 +565,10 @@ const App: React.FC = () => {
   }, [persistComparisons]);
 
 
-  // Derived state - memoized filtered items
-  const allActiveItems = useMemo(() => savedItems.filter(isActiveLibraryItem), [savedItems]);
+  // Derived state - memoized filtered items. Reviewing a sentence replaces the library array but no word,
+  // so the stable copies keep the notebook, the study queue and the open card from rebuilding.
+  const filteredActiveItems = useMemo(() => savedItems.filter(isActiveLibraryItem), [savedItems]);
+  const allActiveItems = useStableArray(filteredActiveItems);
   // The lookup indexes read only item content. A review replaces an item's wrapper but keeps its data,
   // so they key on this content snapshot and skip the rebuild each review would otherwise cost.
   const activeContent = useStableArray(allActiveItems, sameItemContent);
@@ -595,7 +597,8 @@ const App: React.FC = () => {
     return m;
   }, [activeContent]);
   // Items available for study (excludes archived and sentences)
-  const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
+  const filteredStudyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
+  const studyItems = useStableArray(filteredStudyItems);
   // Ordinary saved sentences, Real Life collections, and Essays deliberately use separate queues.
   // Catalog records have stable namespaced ids, so reviewing one context never changes another
   // context's score or the Sentences tab's due count.

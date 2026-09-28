@@ -14,7 +14,7 @@ import { JSONImport } from '../components/JSONImport';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, transcribeAudio } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
-import { buildNotebookList, findNotebookMatches, type NotebookFilter, type NotebookSort } from '../services/notebookList';
+import { buildNotebookList, findFuzzyMatches, findLiteralMatches, type NotebookFilter, type NotebookList, type NotebookSort } from '../services/notebookList';
 import { speakWord, ensureTTS } from '../services/lazyTts';
 import { warn, error as logError } from '../services/logger';
 
@@ -839,10 +839,27 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   }, [onScroll]);
   
   const searchQuery = deferredSearchQuery.trim();
-  const list = useMemo(
-    () => buildNotebookList(items, searchQuery ? findNotebookMatches(items, searchQuery) : null, sortMode, filterMode),
-    [items, searchQuery, sortMode, filterMode],
+  // A query no word contains, as each keystroke of a word the notebook doesn't have yet is, falls back to a
+  // fuzzy scan of every spelling that takes tens of ms. It waits for typing to pause, and until then the
+  // list keeps its last results rather than flash empty.
+  const [pausedQuery, setPausedQuery] = useState(searchQuery);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setPausedQuery(searchQuery), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+  const literalMatches = useMemo(
+    () => (searchQuery ? findLiteralMatches(items, searchQuery) : null),
+    [items, searchQuery],
   );
+  const fuzzyReady = !!searchQuery && !literalMatches && pausedQuery === searchQuery;
+  const shownList = useRef<NotebookList | null>(null);
+  const list = useMemo(() => {
+    if (!searchQuery) return buildNotebookList(items, null, sortMode, filterMode);
+    const matches = literalMatches ?? (fuzzyReady ? findFuzzyMatches(items, searchQuery) : null);
+    if (!matches && shownList.current) return shownList.current;
+    return buildNotebookList(items, matches ?? [], sortMode, filterMode);
+  }, [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode]);
+  useEffect(() => { shownList.current = list; }, [list]);
 
   // DetailView pages through the section the card was opened from.
   const openGroup = useCallback((section: NotebookSection, groupIndex: number, itemIndex: number) => {
