@@ -1,6 +1,9 @@
 import { StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 import { warn } from './logger';
+import { getItemContentHash } from './itemHash';
+import { isSameJson } from './sameJson';
+import type { SaveItemsResult } from './api';
 
 // Polyfill structuredClone for iOS < 15.4
 const clone = typeof structuredClone === 'function'
@@ -109,7 +112,9 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const localHasContent = hasFullContent(localItem);
       const remoteHasContent = hasFullContent(remoteItem);
 
-      if (revisionsDecide ? localWinsRevision : localTime > remoteTime) {
+      // Equal revisions share a base, so the local copy holds any unsynced edits on top of it.
+      // Timestamps decide only for items that never received a revision.
+      if (revisionsDecide ? localWinsRevision : (localRevision > 0 || localTime > remoteTime)) {
           // Only use local data if it has full content, OR remote also lacks content
           if (localHasContent || !remoteHasContent) {
               mergedItem.data = clone(localItem.data);
@@ -226,9 +231,70 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       // Preserve local sync tracking state through merge
       mergedItem.lastSyncedHash = localItem.lastSyncedHash;
 
-      map.set(remoteItem.data.id, mergedItem);
+      // Keep the local object when the merge changed nothing, so persistence and hash caches skip it.
+      map.set(remoteItem.data.id, isSameJson(mergedItem, localItem) ? localItem : mergedItem);
     }
   });
 
   return Array.from(map.values());
+};
+
+/**
+ * Records the content the server holds, so an item is dirty exactly when it differs from its server
+ * copy. A complete server snapshot also marks the items it lacks as dirty. Returns the same array when
+ * nothing changed, and unchanged items keep their identity.
+ */
+export const trackServerContent = (
+  items: StoredItem[],
+  serverItems: readonly StoredItem[],
+  { complete = false }: { complete?: boolean } = {},
+): StoredItem[] => {
+  const serverCopies = new Map(serverItems.map(item => [item.data.id, item]));
+  let changed = false;
+  const next = items.map(item => {
+    const serverCopy = serverCopies.get(item.data.id);
+    if (!serverCopy && !complete) return item;
+    // A copy older than the item's revision (a review response landed meanwhile) is no longer current.
+    if (serverCopy && (serverCopy.serverRevision ?? 0) < (item.serverRevision ?? 0)) return item;
+    const serverHash = serverCopy ? getItemContentHash(serverCopy) : undefined;
+    if (item.lastSyncedHash === serverHash) return item;
+    changed = true;
+    return { ...item, lastSyncedHash: serverHash };
+  });
+  return changed ? next : items;
+};
+
+/**
+ * Applies a push result without mutating items that React state shares. `pushed` must hold the exact
+ * copies that were sent: an item edited again while its push was in flight keeps the newer content
+ * and stays dirty. Returns the same array when nothing changed.
+ */
+export const applyServerSave = (
+  items: StoredItem[],
+  pushed: readonly StoredItem[],
+  result: SaveItemsResult,
+): StoredItem[] => {
+  const pushedHashes = new Map(pushed.map(item => [item.data.id, getItemContentHash(item)]));
+  let changed = false;
+  const next = items.map(item => {
+    const pushedHash = pushedHashes.get(item.data.id);
+    if (pushedHash === undefined) return item;
+    // Review responses apply outside the sync lane and may already have recorded a newer server copy.
+    const localRevision = item.serverRevision ?? 0;
+    const canonical = result.canonical.get(item.data.id);
+    if (canonical) {
+      // The server kept its own content (a conflict or a server-side enrichment): adopt it like a pull.
+      if ((canonical.serverRevision ?? 0) < localRevision) return item;
+      changed = true;
+      return { ...mergeDatasets([item], [canonical])[0], lastSyncedHash: getItemContentHash(canonical) };
+    }
+    const revision = result.revisions.get(item.data.id);
+    if (revision === undefined || revision < localRevision ||
+        (revision === localRevision && item.lastSyncedHash === pushedHash)) {
+      return item;
+    }
+    changed = true;
+    return { ...item, serverRevision: revision, lastSyncedHash: pushedHash };
+  });
+  return changed ? next : items;
 };

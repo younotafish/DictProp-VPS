@@ -1,6 +1,7 @@
 import { StoredItem } from '../types';
 import { dataUriToBlob } from './dataUri';
 import { log, warn, error as logError } from './logger';
+import { isSameJson } from './sameJson';
 
 const DB_NAME = 'PopDictDB';
 const STORE_NAME = 'library';
@@ -8,19 +9,25 @@ const ITEM_UPDATES_STORE = 'item_updates';
 const ITEM_RECORDS_STORE = 'items_v2';
 const DB_VERSION = 4;
 
-// Base key - will be suffixed with userId
-const BASE_DATA_KEY = 'items';
-
-// Helper to get key for a specific user
-const getStorageKey = (userId: string = 'vps') => `${BASE_DATA_KEY}_${userId}`;
+// Builds before per-item records stored each user's library as one array under this key.
+const getSnapshotKey = (userId: string) => `items_${userId}`;
 
 // Fallback storage for iOS Safari private mode
 let inMemoryStorage: Record<string, StoredItem[]> = {};
 let indexedDBAvailable: boolean | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
-const persistedFingerprints = new Map<string, Map<string, string>>();
 
-const itemFingerprint = (item: StoredItem): string => JSON.stringify(item);
+// The object last written for each item. Items are replaced rather than mutated when they change, so
+// an identity check finds the changed items without serializing the whole library.
+const persistedItems = new Map<string, Map<string, StoredItem>>();
+
+const rememberPersisted = (userId: string, items: readonly StoredItem[]): void => {
+  let persisted = persistedItems.get(userId);
+  if (!persisted) persistedItems.set(userId, persisted = new Map());
+  for (const item of items) persisted.set(item.data.id, item);
+};
+
+const isValidItem = (value: any): value is StoredItem => !!value?.data?.id && !!value.type;
 
 const checkIndexedDBAvailability = async (): Promise<boolean> => {
   if (indexedDBAvailable !== null) return indexedDBAvailable;
@@ -75,18 +82,17 @@ const getDB = (): Promise<IDBDatabase> => {
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
       
-      // Create library store (v1)
+      // Legacy full-library snapshots (v1); emptied by foldLegacyStores.
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
       }
       
-      // Images store (v2) - kept for compatibility but not actively used
+      // Offloaded item images (v2).
       if (!db.objectStoreNames.contains('images')) {
         db.createObjectStore('images');
       }
 
-      // Bounded compatibility journal. One record per item lets a v3 rollback read
-      // changes made after v4 without rewriting the legacy full-array snapshot.
+      // Legacy per-item journal (v3); emptied by foldLegacyStores.
       if (!db.objectStoreNames.contains(ITEM_UPDATES_STORE)) {
         const updates = db.createObjectStore(ITEM_UPDATES_STORE, { keyPath: 'key' });
         updates.createIndex('userId', 'userId');
@@ -103,167 +109,100 @@ const getDB = (): Promise<IDBDatabase> => {
   return dbPromise;
 };
 
-const loadSnapshot = async (userId: string = 'vps'): Promise<StoredItem[]> => {
-  const idbAvailable = await checkIndexedDBAvailability();
-  const storageKey = getStorageKey(userId);
-  
-  if (!idbAvailable) {
+const requestResult = <T>(request: IDBRequest<T>): Promise<T> => new Promise((resolve, reject) => {
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
+const transactionDone = (tx: IDBTransaction): Promise<void> => new Promise((resolve, reject) => {
+  tx.oncomplete = () => resolve();
+  tx.onerror = () => reject(tx.error);
+  tx.onabort = () => reject(tx.error);
+});
+
+const loadItemRecords = async (db: IDBDatabase, userId: string): Promise<StoredItem[]> => {
+  const tx = db.transaction(ITEM_RECORDS_STORE, 'readonly');
+  const records = await requestResult(tx.objectStore(ITEM_RECORDS_STORE).index('userId').getAll(userId));
+  return (records as Array<{ item?: StoredItem }>).map(record => record.item).filter(isValidItem);
+};
+
+const writeItemRecords = async (items: readonly StoredItem[], userId: string): Promise<void> => {
+  if (items.length === 0) return;
+  const db = await getDB();
+  const tx = db.transaction(ITEM_RECORDS_STORE, 'readwrite');
+  const records = tx.objectStore(ITEM_RECORDS_STORE);
+  for (const item of items) records.put({ key: `${userId}:${item.data.id}`, userId, item });
+  await transactionDone(tx);
+};
+
+/**
+ * Older builds kept a full-library snapshot and then a per-item journal beside the records. Fold
+ * whatever they still hold into the records once and clear them, so launch reads the library once
+ * instead of up to three times. Counting is cheap; the legacy values are read only when present.
+ */
+const foldLegacyStores = async (db: IDBDatabase, records: StoredItem[], userId: string): Promise<StoredItem[]> => {
+  const countTx = db.transaction([STORE_NAME, ITEM_UPDATES_STORE], 'readonly');
+  const [snapshotCount, journalCount] = await Promise.all([
+    requestResult(countTx.objectStore(STORE_NAME).count(getSnapshotKey(userId))),
+    requestResult(countTx.objectStore(ITEM_UPDATES_STORE).index('userId').count(userId)),
+  ]);
+  if (snapshotCount === 0 && journalCount === 0) return records;
+
+  const readTx = db.transaction([STORE_NAME, ITEM_UPDATES_STORE], 'readonly');
+  const [snapshot, journal] = await Promise.all([
+    requestResult(readTx.objectStore(STORE_NAME).get(getSnapshotKey(userId))),
+    requestResult(readTx.objectStore(ITEM_UPDATES_STORE).index('userId').getAll(userId)),
+  ]);
+  // Same precedence as when all three were read on every launch: snapshot < records < journal.
+  // Journal writes were paired with record writes, so usually nothing here differs from the records.
+  const recordsById = new Map(records.map(item => [item.data.id, item]));
+  const byId = new Map<string, StoredItem>();
+  for (const item of Array.isArray(snapshot) ? snapshot.filter(isValidItem) : []) byId.set(item.data.id, item);
+  for (const item of records) byId.set(item.data.id, item);
+  for (const { item } of journal as Array<{ item?: StoredItem }>) {
+    if (!isValidItem(item)) continue;
+    const record = recordsById.get(item.data.id);
+    if (!record || !isSameJson(record, item)) byId.set(item.data.id, item);
+  }
+  const folded = Array.from(byId.values()).filter(item => recordsById.get(item.data.id) !== item);
+
+  // One transaction: the legacy copies are removed only once the records hold everything they had.
+  const tx = db.transaction([ITEM_RECORDS_STORE, STORE_NAME, ITEM_UPDATES_STORE], 'readwrite');
+  const recordStore = tx.objectStore(ITEM_RECORDS_STORE);
+  for (const item of folded) recordStore.put({ key: `${userId}:${item.data.id}`, userId, item });
+  tx.objectStore(STORE_NAME).delete(getSnapshotKey(userId));
+  const journalStore = tx.objectStore(ITEM_UPDATES_STORE);
+  const journalKeys = journalStore.index('userId').getAllKeys(userId);
+  journalKeys.onsuccess = () => { for (const key of journalKeys.result) journalStore.delete(key); };
+  await transactionDone(tx);
+  log(`📦 Folded ${folded.length} legacy item copies into per-item storage`);
+  return Array.from(byId.values());
+};
+
+export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> => {
+  if (!(await checkIndexedDBAvailability())) {
     // The library is far larger than localStorage allows; private mode relies on the server copy.
     warn("IndexedDB not available, using in-memory storage (iOS Safari private mode?)");
     return inMemoryStorage[userId] || [];
   }
-  
+
+  let items: StoredItem[];
   try {
     const db = await getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const request = store.get(storageKey);
-      
-      request.onsuccess = () => {
-        const data = request.result;
-        
-        // Validate loaded data
-        if (data && Array.isArray(data)) {
-          const validItems = data.filter((i: any) => 
-            i && i.data && i.data.id && i.type
-          );
-          
-          // MIGRATION: If specific user data not found, check for legacy "user_items"
-          if (validItems.length === 0 && userId === 'guest') {
-            const legacyRequest = store.get('user_items');
-            legacyRequest.onsuccess = () => {
-              if (legacyRequest.result && Array.isArray(legacyRequest.result)) {
-                log("📦 Found legacy data, migrating to guest storage...");
-                const validLegacy = legacyRequest.result.filter((i: any) => 
-                  i && i.data && i.data.id && i.type
-                );
-                resolve(validLegacy);
-              } else {
-                resolve([]);
-              }
-            };
-            legacyRequest.onerror = () => resolve([]);
-            return;
-          }
-          
-          resolve(validItems);
-        } else if (!data && userId === 'guest') {
-          // Try legacy migration
-          const legacyRequest = store.get('user_items');
-          legacyRequest.onsuccess = () => {
-            if (legacyRequest.result && Array.isArray(legacyRequest.result)) {
-              log("📦 Found legacy data, migrating to guest storage...");
-              const validLegacy = legacyRequest.result.filter((i: any) => 
-                i && i.data && i.data.id && i.type
-              );
-              resolve(validLegacy);
-            } else {
-              resolve([]);
-            }
-          };
-          legacyRequest.onerror = () => resolve([]);
-        } else {
-          resolve([]);
-        }
-      };
-      request.onerror = () => reject(request.error);
+    const records = await loadItemRecords(db, userId);
+    items = await foldLegacyStores(db, records, userId).catch(error => {
+      warn('Legacy storage fold will retry on the next launch', error);
+      return records;
     });
   } catch (error) {
     logError("IDB Load Error", error);
-    // Fall back to in-memory storage
     return inMemoryStorage[userId] || [];
   }
+  persistedItems.set(userId, new Map(items.map(item => [item.data.id, item])));
+  return items;
 };
 
-const loadItemUpdates = async (userId: string): Promise<StoredItem[]> => {
-  if (!(await checkIndexedDBAvailability())) return [];
-  try {
-    const db = await getDB();
-    return await new Promise<StoredItem[]>((resolve, reject) => {
-      const tx = db.transaction(ITEM_UPDATES_STORE, 'readonly');
-      const request = tx.objectStore(ITEM_UPDATES_STORE).index('userId').getAll(userId);
-      request.onsuccess = () => resolve(
-        (request.result as Array<{ item?: StoredItem }>).map(record => record.item).filter(Boolean) as StoredItem[],
-      );
-      request.onerror = () => reject(request.error);
-    });
-  } catch (error) {
-    warn('Failed to load pending item updates', error);
-    return [];
-  }
-};
-
-const loadItemRecords = async (userId: string): Promise<StoredItem[]> => {
-  if (!(await checkIndexedDBAvailability())) return [];
-  try {
-    const db = await getDB();
-    return await new Promise<StoredItem[]>((resolve, reject) => {
-      const tx = db.transaction(ITEM_RECORDS_STORE, 'readonly');
-      const request = tx.objectStore(ITEM_RECORDS_STORE).index('userId').getAll(userId);
-      request.onsuccess = () => resolve(
-        (request.result as Array<{ item?: StoredItem }>).map(record => record.item).filter(Boolean) as StoredItem[],
-      );
-      request.onerror = () => reject(request.error);
-    });
-  } catch (error) {
-    warn('Failed to load per-item records', error);
-    return [];
-  }
-};
-
-const writeItemRecords = async (
-  items: readonly StoredItem[],
-  userId: string,
-  includeCompatibilityJournal: boolean,
-): Promise<void> => {
-  if (items.length === 0) return;
-  const db = await getDB();
-  const stores = includeCompatibilityJournal
-    ? [ITEM_RECORDS_STORE, ITEM_UPDATES_STORE]
-    : [ITEM_RECORDS_STORE];
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(stores, 'readwrite');
-    const records = tx.objectStore(ITEM_RECORDS_STORE);
-    const updates = includeCompatibilityJournal ? tx.objectStore(ITEM_UPDATES_STORE) : null;
-    for (const item of items) {
-      const record = { key: `${userId}:${item.data.id}`, userId, item };
-      records.put(record);
-      updates?.put(record);
-    }
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-};
-
-export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> => {
-  const [snapshot, records, updates] = await Promise.all([
-    loadSnapshot(userId),
-    loadItemRecords(userId),
-    loadItemUpdates(userId),
-  ]);
-  const byId = new Map(snapshot.map(item => [item.data.id, item]));
-  for (const item of records) byId.set(item.data.id, item);
-  for (const item of updates) byId.set(item.data.id, item);
-  const merged = Array.from(byId.values());
-
-  // Lazy, idempotent v3 -> v4 migration. A failed migration is retried on the next save/load.
-  const recordFingerprints = new Map(records.map(item => [item.data.id, itemFingerprint(item)]));
-  const missingOrChanged = merged.filter(item => recordFingerprints.get(item.data.id) !== itemFingerprint(item));
-  if (missingOrChanged.length > 0 && await checkIndexedDBAvailability()) {
-    try {
-      await writeItemRecords(missingOrChanged, userId, false);
-      for (const item of missingOrChanged) recordFingerprints.set(item.data.id, itemFingerprint(item));
-    } catch (error) {
-      warn('Per-item storage migration will retry', error);
-    }
-  }
-  persistedFingerprints.set(userId, recordFingerprints);
-  return merged;
-};
-
-/** Persist a small set of changed items immediately without rewriting the full library snapshot. */
+/** Persist a small set of changed items immediately. */
 export const saveItemUpdates = async (
   items: StoredItem[],
   userId: string = 'vps',
@@ -275,12 +214,11 @@ export const saveItemUpdates = async (
     inMemoryStorage[userId] = Array.from(byId.values());
     return;
   }
-  await writeItemRecords(items, userId, true);
-  const fingerprints = persistedFingerprints.get(userId) || new Map<string, string>();
-  for (const item of items) fingerprints.set(item.data.id, itemFingerprint(item));
-  persistedFingerprints.set(userId, fingerprints);
+  await writeItemRecords(items, userId);
+  rememberPersisted(userId, items);
 };
 
+/** Persist the library, writing only the items replaced since they were last written. */
 export const saveData = async (items: StoredItem[], userId: string = 'vps'): Promise<void> => {
   const idbAvailable = await checkIndexedDBAvailability();
   if (!idbAvailable) {
@@ -289,12 +227,11 @@ export const saveData = async (items: StoredItem[], userId: string = 'vps'): Pro
   }
   
   try {
-    const fingerprints = persistedFingerprints.get(userId) || new Map<string, string>();
-    const changed = items.filter(item => fingerprints.get(item.data.id) !== itemFingerprint(item));
+    const persisted = persistedItems.get(userId);
+    const changed = persisted ? items.filter(item => persisted.get(item.data.id) !== item) : items;
     if (changed.length === 0) return;
-    await writeItemRecords(changed, userId, true);
-    for (const item of changed) fingerprints.set(item.data.id, itemFingerprint(item));
-    persistedFingerprints.set(userId, fingerprints);
+    await writeItemRecords(changed, userId);
+    rememberPersisted(userId, changed);
   } catch (error) {
     logError("IDB Save Error", error);
     inMemoryStorage[userId] = items;

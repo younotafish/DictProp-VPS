@@ -37,7 +37,7 @@ const item = (id: string, reviews: number) => ({
   updatedAt: reviews,
 });
 
-test('per-item records and the compatibility journal preserve immediate updates', async () => {
+test('per-item records preserve immediate updates', async () => {
   const userId = 'journal-user';
   await saveData([item('one', 1), item('two', 1)], userId);
   await saveItemUpdates([item('one', 2)], userId);
@@ -86,5 +86,47 @@ test('unchanged full-state saves do not rewrite per-item records', async () => {
   db.close();
 
   assert.equal(record.sentinel, 'keep');
-  assert.equal(journal.item.data.id, 'stable');
+  assert.equal(journal, undefined);
+});
+
+const openDatabase = () => new Promise<IDBDatabase>((resolve, reject) => {
+  const request = indexedDB.open('PopDictDB', 4);
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
+const requestValue = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
+test('legacy snapshots and journal entries fold into the records once', async () => {
+  const userId = 'legacy-user';
+  await loadData(userId); // creates the v4 stores
+
+  const db = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(['items_v2', 'library', 'item_updates'], 'readwrite');
+    tx.objectStore('items_v2').put({ key: `${userId}:recorded`, userId, item: item('recorded', 2) });
+    tx.objectStore('items_v2').put({ key: `${userId}:journaled`, userId, item: item('journaled', 1) });
+    tx.objectStore('library').put([item('snapshot-only', 1), item('recorded', 1)], `items_${userId}`);
+    tx.objectStore('item_updates').put({ key: `${userId}:journaled`, userId, item: item('journaled', 3) });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  const reviews = (items: Awaited<ReturnType<typeof loadData>>) =>
+    Object.fromEntries(items.map(value => [value.data.id, value.srs.totalReviews]));
+  const expected = { 'snapshot-only': 1, recorded: 2, journaled: 3 };
+  assert.deepEqual(reviews(await loadData(userId)), expected);
+
+  const tx = db.transaction(['library', 'item_updates'], 'readonly');
+  const [snapshot, journalCount] = await Promise.all([
+    requestValue(tx.objectStore('library').get(`items_${userId}`)),
+    requestValue(tx.objectStore('item_updates').index('userId').count(userId)),
+  ]);
+  db.close();
+  assert.equal(snapshot, undefined);
+  assert.equal(journalCount, 0);
+  assert.deepEqual(reviews(await loadData(userId)), expected);
 });

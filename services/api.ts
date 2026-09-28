@@ -59,7 +59,14 @@ export const loadItemChanges = async (cursor: RevisionCursor, limit = 200): Prom
   return requestJson<ItemChanges>(`${API_BASE}/api/items?${params}`, undefined, 'Load item changes');
 };
 
-export const saveItems = async (items: StoredItem[]): Promise<void> => {
+/** What the server kept for a push: new revisions, plus its own copy wherever it kept different content. */
+export interface SaveItemsResult {
+  revisions: Map<string, number>;
+  canonical: Map<string, StoredItem>;
+}
+
+export const saveItems = async (items: readonly StoredItem[]): Promise<SaveItemsResult> => {
+  const saved: SaveItemsResult = { revisions: new Map(), canonical: new Map() };
   const batchSize = 200;
   for (let start = 0; start < items.length; start += batchSize) {
     const batch = items.slice(start, start + batchSize);
@@ -70,25 +77,13 @@ export const saveItems = async (items: StoredItem[]): Promise<void> => {
     }>(
       `${API_BASE}/api/items`, jsonRequest('PUT', batch), 'Save items',
     );
-    if (result.revisions) {
-      for (const item of batch) {
-        const revision = result.revisions[item.data.id];
-        if (typeof revision === 'number') item.serverRevision = revision;
-      }
+    for (const [id, revision] of Object.entries(result.revisions ?? {})) {
+      if (typeof revision === 'number') saved.revisions.set(id, revision);
     }
-    if (result.canonical?.length) {
-      const byId = new Map(result.canonical.map(item => [item.data.id, item]));
-      for (const item of batch) {
-        const canonical = byId.get(item.data.id);
-        if (canonical) {
-          const localHash = item.lastSyncedHash;
-          Object.assign(item, canonical, { lastSyncedHash: localHash });
-          hashCache.delete(item);
-        }
-      }
-    }
+    for (const item of result.canonical ?? []) saved.canonical.set(item.data.id, item);
   }
   publishServerMutation();
+  return saved;
 };
 
 export const loadReviewEvents = async (since: number): Promise<ReviewEvent[]> =>
@@ -534,61 +529,4 @@ export const ttsManifest = async (keys: string[]): Promise<Set<string>> => {
   } catch {
     return new Set();
   }
-};
-
-// ============================================================================
-// Content hashing (moved from firebase.ts — needed for dirty tracking)
-// ============================================================================
-
-const hashString = (str: string): string => {
-  let h1 = 5381;
-  let h2 = 52711;
-  for (let i = 0; i < str.length; i++) {
-    const c = str.charCodeAt(i);
-    h1 = ((h1 << 5) + h1) + c;
-    h1 = h1 & h1;
-    h2 = ((h2 << 5) + h2) + c;
-    h2 = h2 & h2;
-  }
-  return Math.abs(h1).toString(36) + Math.abs(h2).toString(36);
-};
-
-const hashCache = new WeakMap<StoredItem, string>();
-
-// Strip image markers/base64 from data before hashing so that
-// items with 'idb:stored' or 'server:has_image' don't hash differently from
-// items with real base64 or no image at all.
-const stripImageForHash = (data: any): any => {
-  if (!data) return data;
-  const cleaned = { ...data };
-  if (cleaned.imageUrl && !cleaned.imageUrl.startsWith('http')) {
-    delete cleaned.imageUrl;
-  }
-  if (Array.isArray(cleaned.vocabs)) {
-    cleaned.vocabs = cleaned.vocabs.map((v: any) => {
-      if (v?.imageUrl && !v.imageUrl.startsWith('http')) {
-        const { imageUrl, ...rest } = v;
-        return rest;
-      }
-      return v;
-    });
-  }
-  return cleaned;
-};
-
-export const getItemContentHash = (item: StoredItem): string => {
-  const cached = hashCache.get(item);
-  if (cached) return cached;
-
-  const contentToHash = {
-    type: item.type,
-    data: stripImageForHash(item.data),
-    srs: item.srs,
-    isDeleted: item.isDeleted,
-    isArchived: item.isArchived,
-  };
-
-  const hash = hashString(JSON.stringify(contentToHash));
-  hashCache.set(item, hash);
-  return hash;
 };

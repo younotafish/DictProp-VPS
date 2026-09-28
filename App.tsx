@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, savedVocabKey, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
+import { StoredItem, ViewState, SyncStatus, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, savedVocabKey, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
 import { Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
-import { mergeDatasets } from './services/sync';
-import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type RevisionCursor } from './services/api';
+import { mergeDatasets, trackServerContent, applyServerSave } from './services/sync';
+import { getItemContentHash, isItemDirty } from './services/itemHash';
+import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type RevisionCursor } from './services/api';
 import { normalizeSentenceIdentity } from './services/sentenceIdentity';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -302,67 +303,96 @@ const App: React.FC = () => {
     try { localStorage.setItem('app_current_view', currentView); } catch { /* storage full or unavailable */ }
   }, [currentView]);
 
-  // Simplified sync state (items only). IndexedDB is the only local copy of the library.
-  const [syncState, setSyncState] = useState<SyncState>(() => {
-    return { items: [] };
-  });
-  const latestItemsRef = useRef<StoredItem[]>(syncState.items);
+  // The library. IndexedDB is the only local copy.
+  const [savedItems, setSavedItems] = useState<StoredItem[]>([]);
+  // The library as of the latest change, for handlers and async work that outlive a render.
+  const latestItemsRef = useRef<StoredItem[]>(savedItems);
   const serverCursorRef = useRef<RevisionCursor>({ revision: 0, id: '' });
+
+  /**
+   * Every library change goes through here. The transform sees the latest items rather than a
+   * render's snapshot, and the ref is current before this returns, so the next handler, IndexedDB
+   * write or server push sees the change. An update that replaces no item keeps the old array, so
+   * derived indexes don't rebuild.
+   */
+  const updateItems = useCallback((transform: (items: StoredItem[]) => StoredItem[]): StoredItem[] => {
+    const current = latestItemsRef.current;
+    const next = transform(current);
+    if (next === current || (next.length === current.length && next.every((item, index) => item === current[index]))) {
+      return current;
+    }
+    latestItemsRef.current = next;
+    setSavedItems(next);
+    return next;
+  }, []);
+
+  /** Replaces one item by id. Returns the new copy, or undefined when the id isn't in the library. */
+  const replaceItem = useCallback((id: string, update: (item: StoredItem) => StoredItem): StoredItem | undefined => {
+    let replaced = undefined as StoredItem | undefined;
+    updateItems(items => {
+      const index = items.findIndex(item => item.data.id === id);
+      if (index < 0) return items;
+      replaced = update(items[index]);
+      const next = items.slice();
+      next[index] = replaced;
+      return next;
+    });
+    return replaced;
+  }, [updateItems]);
 
   // User-scoped saveData wrapper — all saves go through this
   const userSaveData = useCallback((items: StoredItem[]) => {
     return saveData(items, authState.user?.id || 'vps');
   }, [authState.user?.id]);
 
-  // Track when we last saved to avoid redundant saves from event handlers
-  const lastSaveTimeRef = useRef<number>(0);
-
-  // Incremented on every immediate push (SRS/delete/archive) so the debounced save
-  // can detect a concurrent push happened during its async rehydration window.
-  const syncGenerationRef = useRef(0);
   const initialServerSyncDoneRef = useRef(false);
 
   const currentUserIdRef = useRef(authState.user?.id || 'vps');
   currentUserIdRef.current = authState.user?.id || 'vps';
 
-  const markItemsSynced = (ids: Set<string>) => {
-    const revisions = new Map(latestItemsRef.current
-      .filter(item => ids.has(item.data.id))
-      .map(item => [item.data.id, item.serverRevision]));
-    const mark = (items: StoredItem[]): StoredItem[] => items.map(item => ids.has(item.data.id) ? {
-      ...item,
-      serverRevision: revisions.get(item.data.id) ?? item.serverRevision,
-      lastSyncedHash: getItemContentHash(item),
-    } : item);
-    latestItemsRef.current = mark(latestItemsRef.current);
-    setSyncState(prevState => ({ ...prevState, items: mark(prevState.items) }));
-  };
+  // Pulls and pushes run one at a time: a pull merges only after an earlier push's acknowledgement is
+  // recorded, and each push sends the latest copies. Tasks in the lane call pushNow, not pushDirtyItems,
+  // which would wait on the lane itself.
+  const syncLaneRef = useRef<Promise<unknown>>(Promise.resolve());
+  const inSyncLane = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const run = syncLaneRef.current.then(task, task);
+    syncLaneRef.current = run.catch(() => {});
+    return run;
+  }, []);
 
-  // Durable local delta first, then immediate server sync. On network failure the
-  // item stays dirty and the normal debounce retries it later.
-  const persistChangedItems = async (items: StoredItem[], label: string): Promise<void> => {
+  /** Pushes the dirty items (all, or those in `ids`) and records what the server kept. Returns the count. */
+  const pushNow = useCallback(async (ids?: ReadonlySet<string>): Promise<number> => {
+    const dirty = latestItemsRef.current.filter(item => (!ids || ids.has(item.data.id)) && isItemDirty(item));
+    // Items with an unsent review wait for the review outbox, which applies the review atomically.
+    const toPush = excludePendingReviewItems(dirty, currentUserIdRef.current);
+    if (toPush.length === 0) return 0;
+    const result = await saveItems(toPush);
+    const next = updateItems(items => applyServerSave(items, toPush, result));
+    await saveData(next, currentUserIdRef.current);
+    return toPush.length;
+  }, [updateItems]);
+
+  const pushDirtyItems = useCallback(
+    (ids?: ReadonlySet<string>) => inSyncLane(() => pushNow(ids)),
+    [inSyncLane, pushNow],
+  );
+
+  // Durable local write first, then an immediate push. A failed push leaves the items dirty, and the
+  // debounced save retries them.
+  const persistChangedItems = useCallback(async (items: StoredItem[], label: string): Promise<void> => {
     if (items.length === 0) return;
     try {
       await saveItemUpdates(items, currentUserIdRef.current);
     } catch (error) {
-      logError(`${label}: failed to journal local update`, error);
+      logError(`${label}: failed to save the local update`, error);
     }
 
     try {
-      const serverItems = excludePendingReviewItems(items, currentUserIdRef.current);
-      if (serverItems.length === 0) return;
-      syncGenerationRef.current++;
-      await saveItems(serverItems);
-      markItemsSynced(new Set(serverItems.map(item => item.data.id)));
+      await pushDirtyItems(new Set(items.map(item => item.data.id)));
     } catch (error) {
       logError(`${label}: immediate server sync failed`, error);
     }
-  };
-
-  // Keep latestItemsRef in sync with state (synchronously, so event handlers always have current data)
-  useEffect(() => {
-    latestItemsRef.current = syncState.items;
-  }, [syncState.items]);
+  }, [pushDirtyItems]);
 
   // ── Word comparisons (persisted server + local, keyed by the word-set) ──────
   // The GENERATION queue lives in GlobalSearch (the bottom-right search queue) so comparisons behave
@@ -376,30 +406,25 @@ const App: React.FC = () => {
   const reconcileAppliedReview = useCallback(async (serverItems: StoredItem[]) => {
     if (serverItems.length === 0) return;
     const byId = new Map(serverItems.map(item => [item.data.id, item]));
-    const apply = (items: StoredItem[]): StoredItem[] => items.map(local => {
+    const nextItems = updateItems(items => items.map(local => {
       const serverItem = byId.get(local.data.id);
       if (!serverItem) return local;
-      const reconciled: StoredItem = {
-        ...local,
-        srs: serverItem.srs,
-        serverRevision: serverItem.serverRevision,
-        updatedAt: Math.max(local.updatedAt || 0, serverItem.updatedAt || 0),
-      };
-      if (getItemContentHash(reconciled) === getItemContentHash(serverItem)) {
-        reconciled.lastSyncedHash = getItemContentHash(reconciled);
-      }
-      return reconciled;
-    });
-
-    const nextItems = apply(latestItemsRef.current);
-    latestItemsRef.current = nextItems;
-    serverCursorRef.current = latestRevisionCursor([...nextItems, ...serverItems]);
-    setSyncState(prevState => ({ ...prevState, items: apply(prevState.items) }));
+      // The server's schedule is authoritative, since an undo moves it backwards. Its content is too,
+      // and may carry another device's edits, unless this device has unsynced edits to push on top.
+      const reconciled = isItemDirty(local)
+        ? {
+            ...local,
+            serverRevision: serverItem.serverRevision,
+            updatedAt: Math.max(local.updatedAt || 0, serverItem.updatedAt || 0),
+          }
+        : mergeDatasets([local], [serverItem])[0];
+      return { ...reconciled, srs: serverItem.srs, lastSyncedHash: getItemContentHash(serverItem) };
+    }));
     await saveItemUpdates(
       nextItems.filter(item => byId.has(item.data.id)),
       currentUserIdRef.current,
     );
-  }, []);
+  }, [updateItems]);
 
   const flushPendingReviews = useCallback(async () => {
     const userId = authState.user?.id;
@@ -467,7 +492,6 @@ const App: React.FC = () => {
 
 
   // Derived state - memoized filtered items
-  const savedItems = syncState.items;
   const allActiveItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
   // Variant-aware lookup index (base word + each inflected form → base word), rebuilt
   // only when items change. Powers "search a variant → pop up the saved card, skip AI".
@@ -720,67 +744,34 @@ const App: React.FC = () => {
 
     try {
       await flushPendingReviews();
-      // 1. Pull latest items from server
-      const remoteItems = await loadAllItems();
-      serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
-
-      // 2. Merge with latest state, strip images, then set state
-      let mergedItems = cleanupOldDeletedItems(mergeDatasets(latestItemsRef.current, remoteItems));
-      mergedItems = await stripAndStoreImages(mergedItems);
-      latestItemsRef.current = mergedItems;
-      setSyncState({ items: mergedItems });
-
-      // 3. Push items that differ from remote
-      const remoteHashMap = new Map<string, string>();
-      remoteItems.forEach(item => {
-        if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
+      await inSyncLane(async () => {
+        const remoteItems = await loadAllItems();
+        serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
+        // A complete snapshot also marks the items the server lacks as dirty, so they upload too.
+        const merged = updateItems(items => trackServerContent(
+          cleanupOldDeletedItems(mergeDatasets(items, remoteItems)), remoteItems, { complete: true },
+        ));
+        await saveData(merged, currentUserIdRef.current);
+        const pushed = await pushNow();
+        if (pushed > 0) log(`Server: Force sync uploaded ${pushed} changed items`);
       });
-      const changedItems: StoredItem[] = [];
-      for (const item of mergedItems) {
-        const mergedHash = getItemContentHash(item);
-        const remoteHash = remoteHashMap.get(item.data.id);
-        if (mergedHash === remoteHash) {
-          item.lastSyncedHash = mergedHash;
-        } else {
-          changedItems.push(item);
-        }
-      }
-      const forceSyncItems = excludePendingReviewItems(changedItems, currentUserIdRef.current);
-      if (forceSyncItems.length > 0) {
-        log(`Server: Force sync uploading ${forceSyncItems.length} changed items`);
-        // Images are uploaded separately via the image endpoint; item PUTs carry no base64.
-        await saveItems(forceSyncItems);
-        for (const item of forceSyncItems) {
-          item.lastSyncedHash = getItemContentHash(item);
-        }
-      }
-
       setSyncStatus('saved');
-
     } catch (e) {
       logError("Force Sync Failed:", e);
       setSyncStatus('error');
     } finally {
       forceSyncInProgressRef.current = false;
     }
-  }, [flushPendingReviews]);
+  }, [flushPendingReviews, inSyncLane, updateItems, pushNow]);
 
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
   useEffect(() => {
     const handleBeforeUnload = () => {
-      // Use ref to get latest items (avoids stale closure)
       const currentItems = latestItemsRef.current;
-      
       if (isLoaded && currentItems.length > 0) {
-        // Skip if we just saved (within last 500ms) to avoid redundant writes
-        const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
-        if (timeSinceLastSave < 500) {
-          log("💾 Skipping beforeunload save (recently saved)");
-          return;
-        }
-
         // Reviews are already in the synchronous outbox; IndexedDB may not finish but is worth trying.
+        // Only items replaced since their last write are written, so this is cheap when nothing changed.
         userSaveData(currentItems).catch(e => warn("Failed to save on beforeunload:", e));
       }
     };
@@ -805,37 +796,14 @@ const App: React.FC = () => {
               lastHiddenAtRef.current = Date.now();
 
               const currentItems = latestItemsRef.current;
-
-              const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
-              if (timeSinceLastSave < 500) {
-                  log("💾 Skipping visibility change save (recently saved)");
-                  return;
-              }
-
               if (isLoaded && currentItems.length > 0) {
-                  log("💾 App going to background, saving data immediately...");
                   userSaveData(currentItems).catch(e => {
                       warn("Failed to save on visibility change:", e);
                   });
-                  // Best-effort server push
-                  const changedItems: StoredItem[] = [];
-                  for (const item of currentItems) {
-                    const currentHash = getItemContentHash(item);
-                    if (currentHash !== item.lastSyncedHash) {
-                      changedItems.push(item);
-                    }
-                  }
-                  const backgroundItems = excludePendingReviewItems(changedItems, currentUserIdRef.current);
-                  if (backgroundItems.length > 0) {
-                    log(`Server: Pushing ${backgroundItems.length} changed items on background...`);
-                    saveItems(backgroundItems).then(() => {
-                      for (const item of backgroundItems) {
-                        item.lastSyncedHash = getItemContentHash(item);
-                      }
-                    }).catch(e => {
+                  // Best-effort server push before the OS suspends the page
+                  pushDirtyItems().catch(e => {
                       warn("Server push on background failed:", e);
-                    });
-                  }
+                  });
               }
           }
       };
@@ -865,69 +833,50 @@ const App: React.FC = () => {
         try {
             clearLegacyLibraryCaches();
             // IndexedDB is the only local copy of the library; the server sync fills anything it lacks.
-            let processedItems = (await loadData(userId)).filter(item =>
+            const loadedItems = (await loadData(userId)).filter(item =>
                 item && item.data && item.data.id && item.srs && item.type
             );
-            log(`📦 Loaded ${processedItems.length} items from IndexedDB`);
+            log(`📦 Loaded ${loadedItems.length} items from IndexedDB`);
 
-            let hasChanges = false;
+            // Each migration replaces only the items it changes, so the save below writes just those.
+            const now = Date.now();
+            let processedItems = loadedItems.map(item => {
+                let migrated = item;
+                // 1. SRS migration
+                if (typeof migrated.srs?.memoryStrength !== 'number' ||
+                    (migrated.type === 'sentence' && (migrated.srs?.totalReviews ?? 0) === 0 &&
+                        ((migrated.srs?.memoryStrength ?? 0) !== 0 || (migrated.srs?.stability ?? 0.5) !== 0.5))) {
+                    migrated = { ...migrated, srs: SRSAlgorithm.migrate(migrated.srs) };
+                }
+                // 2. Timestamp fix (for sync)
+                if (!migrated.updatedAt && !migrated.savedAt) {
+                    migrated = { ...migrated, savedAt: now, updatedAt: now };
+                }
+                // 3. Merge every legacy project into the one notebook without touching card content or SRS.
+                if (migrated.project !== undefined) {
+                    const { project: _legacyProject, ...withoutProject } = migrated;
+                    migrated = withoutProject;
+                }
+                return migrated;
+            });
 
-            // 1. SRS Migration
-            const needsSRSMigration = processedItems.some(item =>
-                typeof item.srs?.memoryStrength !== 'number' ||
-                (item.type === 'sentence' && (item.srs?.totalReviews ?? 0) === 0 &&
-                    ((item.srs?.memoryStrength ?? 0) !== 0 || (item.srs?.stability ?? 0.5) !== 0.5))
-            );
-            if (needsSRSMigration && processedItems.length > 0) {
-                processedItems = processedItems.map(item => ({
-                    ...item,
-                    srs: SRSAlgorithm.migrate(item.srs)
-                }));
-                hasChanges = true;
-            }
-
-            // 2. Timestamp Fix (for Sync)
-            const needsTimestampFix = processedItems.some(item => !item.updatedAt && !item.savedAt);
-            if (needsTimestampFix) {
-                const now = Date.now();
-                processedItems = processedItems.map(item => {
-                    if (!item.updatedAt && !item.savedAt) {
-                        return { ...item, savedAt: now, updatedAt: now };
-                    }
-                    return item;
-                });
-                hasChanges = true;
-            }
-
-            // 3. Merge every legacy project into the one notebook without touching card content or SRS.
-            if (processedItems.some(item => item.project !== undefined)) {
-                processedItems = processedItems.map(item => {
-                    const { project: _legacyProject, ...withoutProject } = item;
-                    return withoutProject;
-                });
-                hasChanges = true;
-            }
-
-            // 4. A review mutation is written synchronously before the async IndexedDB journal. Reapply
-            // those tiny patches here so an immediate refresh cannot roll progress back.
-            processedItems = overlayPendingReviews(processedItems, readPendingReviewMutations(userId));
+            // 4. A review mutation is written synchronously before the async IndexedDB write. Reapply
+            // those tiny patches here so an immediate refresh cannot roll progress back. The review
+            // outbox delivers them, so a clean item stays clean, as in updateSRS.
+            const beforeOverlay = processedItems;
+            processedItems = overlayPendingReviews(beforeOverlay, readPendingReviewMutations(userId))
+                .map((item, index) => item !== beforeOverlay[index] && !isItemDirty(beforeOverlay[index])
+                    ? { ...item, lastSyncedHash: getItemContentHash(item) }
+                    : item);
 
             // 5. Strip images from items → IDB (keep ~143MB out of React state)
             processedItems = await stripAndStoreImages(processedItems);
 
-            // 6. Initialize sync state with merged data
-            setSyncState({
-                items: processedItems
-            });
-
-            // Also update the ref
-            latestItemsRef.current = processedItems;
+            updateItems(() => processedItems);
             serverCursorRef.current = latestRevisionCursor(processedItems);
-            
-            // 7. Save migrated items back to IndexedDB
-            if (hasChanges) {
-                await saveData(processedItems, userId);
-            }
+
+            // 6. Write back the items the steps above replaced
+            await saveData(processedItems, userId);
         } catch (e) {
             logError("Failed to initialize storage", e);
         } finally {
@@ -1154,50 +1103,21 @@ const App: React.FC = () => {
     const syncFromServer = async () => {
       try {
         await flushPendingReviews();
-        const remoteItems = await loadAllItems();
-        serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
-        if (remoteItems.length === 0) return;
+        await inSyncLane(async () => {
+          const remoteItems = await loadAllItems();
+          serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
+          if (remoteItems.length === 0) return;
 
-        let mergedItems = mergeDatasets(latestItemsRef.current, remoteItems);
-        mergedItems = cleanupOldDeletedItems(mergedItems);
-
-        // Strip images before putting into React state
-        mergedItems = await stripAndStoreImages(mergedItems);
-
-        latestItemsRef.current = mergedItems;
-
-        // Mark items matching remote as synced
-        const remoteHashMap = new Map<string, string>();
-        remoteItems.forEach(item => {
-          if (item.data?.id) remoteHashMap.set(item.data.id, getItemContentHash(item));
+          // A complete snapshot also marks the items the server lacks as dirty, so they upload too.
+          // Server items carry image markers, never base64, so there is nothing to strip.
+          const merged = updateItems(items => trackServerContent(
+            cleanupOldDeletedItems(mergeDatasets(items, remoteItems)), remoteItems, { complete: true },
+          ));
+          void prefetchImages(merged);
+          await saveData(merged, currentUserIdRef.current);
+          const pushed = await pushNow();
+          if (pushed > 0) log(`Server: uploaded ${pushed} items that differed from the server`);
         });
-        const catchUpItems: StoredItem[] = [];
-        mergedItems.forEach(item => {
-          const mergedHash = getItemContentHash(item);
-          const remoteHash = remoteHashMap.get(item.data.id);
-          if (mergedHash === remoteHash) {
-            item.lastSyncedHash = mergedHash;
-          } else {
-            catchUpItems.push(item);
-          }
-        });
-
-        // Push items that differ from server
-        const initialCatchUpItems = excludePendingReviewItems(catchUpItems, currentUserIdRef.current);
-        if (initialCatchUpItems.length > 0) {
-          log(`Server: ${initialCatchUpItems.length} items differ, uploading...`);
-          // Images sync separately via the image endpoint; item PUTs carry no base64.
-          saveItems(initialCatchUpItems).then(() => {
-            for (const item of initialCatchUpItems) {
-              item.lastSyncedHash = getItemContentHash(item);
-            }
-          }).catch(e => logError("Catch-up sync failed:", e));
-        }
-
-        setSyncState({ items: mergedItems });
-
-        // Start background image pre-fetch after sync
-        prefetchImages(mergedItems);
       } catch (error) {
         logError("Initial server sync failed:", error);
       } finally {
@@ -1209,7 +1129,7 @@ const App: React.FC = () => {
     if (isLoaded) {
       syncFromServer();
     }
-  }, [isLoaded, flushPendingReviews]);
+  }, [isLoaded, flushPendingReviews, inSyncLane, updateItems, pushNow]);
 
   const deltaPullInProgressRef = useRef(false);
   const pullServerChanges = useCallback(async () => {
@@ -1218,42 +1138,30 @@ const App: React.FC = () => {
     deltaPullInProgressRef.current = true;
     try {
       await flushPendingReviews();
-      let cursor = serverCursorRef.current;
-      const remoteItems: StoredItem[] = [];
-      for (;;) {
-        const page = await loadItemChanges(cursor);
-        remoteItems.push(...page.items);
-        const advanced = page.cursor.revision > cursor.revision ||
-          (page.cursor.revision === cursor.revision && page.cursor.id > cursor.id);
-        cursor = page.cursor;
-        if (!page.hasMore || !advanced) break;
-      }
-      serverCursorRef.current = cursor;
-      if (remoteItems.length === 0) return;
+      await inSyncLane(async () => {
+        let cursor = serverCursorRef.current;
+        const remoteItems: StoredItem[] = [];
+        for (;;) {
+          const page = await loadItemChanges(cursor);
+          remoteItems.push(...page.items);
+          const advanced = page.cursor.revision > cursor.revision ||
+            (page.cursor.revision === cursor.revision && page.cursor.id > cursor.id);
+          cursor = page.cursor;
+          if (!page.hasMore || !advanced) break;
+        }
+        serverCursorRef.current = cursor;
+        if (remoteItems.length === 0) return;
 
-      const remoteById = new Map(remoteItems.map(item => [item.data.id, item]));
-      const mergeChanges = (base: StoredItem[]): StoredItem[] => {
-        const merged = mergeDatasets(base, remoteItems);
-        return merged.map(item => {
-          const remote = remoteById.get(item.data.id);
-          if (!remote || getItemContentHash(item) !== getItemContentHash(remote)) return item;
-          return { ...item, lastSyncedHash: getItemContentHash(item) };
-        });
-      };
-      const nextItems = mergeChanges(latestItemsRef.current);
-      latestItemsRef.current = nextItems;
-      setSyncState(prevState => ({ ...prevState, items: mergeChanges(prevState.items) }));
-      await saveItemUpdates(
-        nextItems.filter(item => remoteById.has(item.data.id)),
-        authState.user.id,
-      );
-      log(`Server: pulled ${remoteItems.length} changed item(s)`);
+        const merged = updateItems(items => trackServerContent(mergeDatasets(items, remoteItems), remoteItems));
+        await saveData(merged, currentUserIdRef.current);
+        log(`Server: pulled ${remoteItems.length} changed item(s)`);
+      });
     } catch (error) {
       warn('Background sync will retry:', error);
     } finally {
       deltaPullInProgressRef.current = false;
     }
-  }, [authState.user?.id, flushPendingReviews]);
+  }, [authState.user?.id, flushPendingReviews, inSyncLane, updateItems]);
 
   useEffect(() => {
     if (!isLoaded || !authState.user) return;
@@ -1281,72 +1189,25 @@ const App: React.FC = () => {
     if (!isLoaded) return;
 
     const timer = setTimeout(async () => {
-      const myGeneration = syncGenerationRef.current;
-      const currentItems = latestItemsRef.current;
-
-      // 1. Save to Local IDB
-      const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
-      if (timeSinceLastSave < 2000) {
-        log("💾 Skipping debounced IDB save (recent immediate save)");
-      } else {
-        await userSaveData(currentItems);
-      }
-
-      // 2. Push dirty items to server
-      const itemsWithHashes: { item: StoredItem; hash: string }[] = [];
-      currentItems.forEach(item => {
-        const currentHash = getItemContentHash(item);
-        if (currentHash === item.lastSyncedHash) return;
-        itemsWithHashes.push({ item, hash: currentHash });
-      });
-
-      if (itemsWithHashes.length === 0) {
-        setSyncStatus('saved');
-        return;
-      }
-
-      setSyncStatus('syncing');
-      log(`Server: ${itemsWithHashes.length} items changed, pushing...`);
-
       try {
-        // Images sync separately via the image endpoint; item PUTs carry no base64.
-        const itemsToSync = excludePendingReviewItems(
-          itemsWithHashes.map(i => i.item),
-          currentUserIdRef.current,
-        );
-        const syncedIds = new Set(itemsToSync.map(item => item.data.id));
-        if (itemsToSync.length === 0) {
-          setSyncStatus('idle');
-          return;
-        }
-
-        // If an immediate sync (SRS/delete/archive) happened, our data is stale —
-        // skip this push. Next debounce cycle will pick up.
-        if (syncGenerationRef.current !== myGeneration) {
-          log("⏭️ Skipping debounced push (immediate sync happened, next cycle will handle)");
+        // Writes only the items replaced since their last write.
+        await userSaveData(latestItemsRef.current);
+        if (!latestItemsRef.current.some(isItemDirty)) {
           setSyncStatus('saved');
           return;
         }
-
-        await saveItems(itemsToSync);
-
-        for (const { item, hash } of itemsWithHashes) {
-          if (syncedIds.has(item.data.id)) item.lastSyncedHash = hash;
-        }
-
-        lastSaveTimeRef.current = Date.now();
-        await userSaveData(currentItems);
-
-        setSyncStatus('saved');
+        setSyncStatus('syncing');
+        // Items waiting on the review outbox are skipped, which leaves nothing pushed.
+        const pushed = await pushDirtyItems();
+        setSyncStatus(pushed > 0 ? 'saved' : 'idle');
       } catch (e) {
         logError("Sync error:", e);
         setSyncStatus('error');
       }
-
     }, 5000);
 
     return () => clearTimeout(timer);
-  }, [syncState, isLoaded]);
+  }, [savedItems, isLoaded, userSaveData, pushDirtyItems]);
 
   // Bulk refresh - actual execution
   const executeBulkRefresh = useCallback(async () => {
@@ -1393,20 +1254,7 @@ const App: React.FC = () => {
           }
 
           // Update the item while preserving SRS data
-          setSyncState(prevState => {
-            const index = prevState.items.findIndex(i => i.data.id === item.data.id);
-            if (index >= 0) {
-              const newItems = [...prevState.items];
-              newItems[index] = {
-                ...newItems[index],
-                data: newData,
-                type: item.type,
-                updatedAt: Date.now()
-              };
-              return { ...prevState, items: newItems };
-            }
-            return prevState;
-          });
+          replaceItem(item.data.id, current => ({ ...current, data: newData, type: item.type, updatedAt: Date.now() }));
         }
 
         processed++;
@@ -1541,27 +1389,13 @@ const App: React.FC = () => {
     setDuplicateClusters(null);
     if (!merges || merges.length === 0) return;
 
-    const before = new Map(latestItemsRef.current.map(it => [it.data.id, getItemContentHash(it)]));
-    const newItems = applyMerges(latestItemsRef.current, merges);
-    latestItemsRef.current = newItems;
-    setSyncState(prev => ({ ...prev, items: applyMerges(prev.items, merges) }));
-
-    const changed = excludePendingReviewItems(
-      newItems.filter(it => before.get(it.data.id) !== getItemContentHash(it)),
-      currentUserIdRef.current,
-    );
+    // applyMerges replaces items in place in a copy, so an index-wise identity check finds the changes.
+    const before = latestItemsRef.current;
+    const after = updateItems(items => applyMerges(items, merges));
+    const changed = after.filter((item, index) => item !== before[index]);
     log(`🔀 Merge: ${changed.length} item(s) changed across ${merges.length} cluster(s)`);
-
-    try {
-      if (changed.length > 0) {
-        syncGenerationRef.current++; // make any in-flight debounced push skip (data is now stale)
-        await saveItems(changed);
-        for (const it of changed) it.lastSyncedHash = getItemContentHash(it);
-      }
-    } catch (e) {
-      logError('🔀 Merge: failed to sync to server:', e);
-    }
-  }, []);
+    await persistChangedItems(changed, '🔀 Merge');
+  }, [updateItems, persistChangedItems]);
 
   // ── Batch Import (background processing) ──────────────────────────────────
 
@@ -1729,16 +1563,20 @@ const App: React.FC = () => {
       }
       log('⭐ handleSave: saving', incomingTitle, 'type:', item.type, 'id:', item.data.id);
 
-      // Resolve title-based duplicates before offloading images. The saved item's
-      // stable id is also the image key, so uploading under a transient AI id would
+      // The saved copy of this item: the same id, else the same title and type, and for vocab the same
+      // sense, so each meaning of a word keeps its own card. Resolve it before offloading images: the
+      // saved item's stable id is also the image key, so uploading under a transient AI id would
       // orphan the new image when the content is merged into an existing card.
       const incomingSense = isVocabItem(item) ? (item.data.sense || '') : '';
-      const canonicalExisting = latestItemsRef.current.find(existing => {
-        if (existing.data.id === item.data.id) return true;
-        if (existing.type !== item.type || getItemSpelling(existing) !== incomingTitle) return false;
-        return !isVocabItem(item) || (isVocabItem(existing) && (existing.data.sense || '') === incomingSense);
-      });
-      const canonicalItemId = canonicalExisting?.data.id || item.data.id;
+      const findExistingIndex = (items: StoredItem[]): number => {
+        const byId = items.findIndex(existing => existing.data.id === item.data.id);
+        if (byId >= 0) return byId;
+        return items.findIndex(existing => {
+          if (existing.type !== item.type || getItemSpelling(existing) !== incomingTitle) return false;
+          return !isVocabItem(item) || (isVocabItem(existing) && (existing.data.sense || '') === incomingSense);
+        });
+      };
+      const canonicalItemId = latestItemsRef.current[findExistingIndex(latestItemsRef.current)]?.data.id || item.data.id;
 
       // Offload any base64 images to IDB before putting into state
       const imagesToSave: Array<{ id: string; base64: string }> = [];
@@ -1777,91 +1615,34 @@ const App: React.FC = () => {
         isDeleted: false
       };
 
-      // Use functional update to avoid stale closure issues when saving multiple items quickly
-      setSyncState(prevState => {
-        // Check if item already exists
-        // PRIORITY: Check by ID first
-        let existingIndex = prevState.items.findIndex(i => i.data.id === item.data.id);
-        
-        // If not found by ID, check by Title AND Sense (for vocab items with multiple meanings)
-        if (existingIndex === -1 && incomingTitle) {
-            const incomingSense = isVocabItem(item) ? (item.data.sense || '') : '';
-            
-            existingIndex = prevState.items.findIndex(i => {
-              if (i.type !== item.type) return false;
-              const titleMatch = getItemSpelling(i) === incomingTitle;
-              if (!titleMatch) return false;
-              
-              // For vocab items, also check if the sense matches
-              // This allows saving multiple meanings of the same word
-              if (isVocabItem(item) && isVocabItem(i)) {
-                const existingSense = i.data.sense || '';
-                return existingSense === incomingSense;
-              }
-              
-              return true;
-            });
-        }
-
-        if (existingIndex >= 0) {
-          // Update existing item
-          const existingItem = prevState.items[existingIndex];
-          
-          // FORCE keeping the existing ID to ensure consistency
-          const idToUse = existingItem.data.id;
-
-          // Merge SRS data
-          // PRIORITY: Use the incoming SRS (itemToSave.srs) if available, as it likely contains updates (e.g. from DetailView)
-          // Fallback to existing SRS only if incoming is missing
-          const srsSource = itemToSave.srs || existingItem.srs;
-          
-          const mergedSrs = SRSAlgorithm.ensure(
-            srsSource,
-            idToUse,
-            existingItem.type
-          );
-          // Ensure SRS has correct ID
-          mergedSrs.id = idToUse;
-          
-          const mergedItem: StoredItem = {
-            ...itemToSave,
-            data: { ...itemToSave.data, id: idToUse }, // Keep existing ID
-            savedAt: existingItem.savedAt || now,
-            updatedAt: now,
-            srs: mergedSrs
-          };
-          
-          // Update items array directly
-          const newItems = [...prevState.items];
-          newItems[existingIndex] = mergedItem;
-          
-          const nextState = {
-            ...prevState,
-            items: newItems
-          };
-          latestItemsRef.current = newItems;
-          return nextState;
-        } else {
-          // New item
-          
+      updateItems(items => {
+        const existingIndex = findExistingIndex(items);
+        if (existingIndex < 0) {
           // Each meaning owns its own FSRS card. A newly saved sense must not inherit another
           // sense's difficulty, lapses, or due date just because the spelling matches.
           const normalizedSRS = SRSAlgorithm.ensure(itemToSave.srs, itemToSave.data.id, itemToSave.type);
-          const finalItem = { 
-            ...itemToSave, 
-            srs: normalizedSRS,
-            savedAt: now,
-            updatedAt: now
-          };
-          
-          const newItems = [finalItem, ...prevState.items];
-          const nextState = {
-            ...prevState,
-            items: newItems
-          };
-          latestItemsRef.current = newItems;
-          return nextState;
+          return [{ ...itemToSave, srs: normalizedSRS, savedAt: now, updatedAt: now }, ...items];
         }
+
+        const existingItem = items[existingIndex];
+        // FORCE keeping the existing ID to ensure consistency
+        const idToUse = existingItem.data.id;
+        // Prefer the incoming SRS, which likely carries updates (e.g. from DetailView)
+        const mergedSrs = SRSAlgorithm.ensure(itemToSave.srs || existingItem.srs, idToUse, existingItem.type);
+        mergedSrs.id = idToUse;
+        const next = items.slice();
+        next[existingIndex] = {
+          ...itemToSave,
+          data: { ...itemToSave.data, id: idToUse },
+          savedAt: existingItem.savedAt || now,
+          updatedAt: now,
+          srs: mergedSrs,
+          // A fresh AI result carries no revision, so it builds on the saved copy's. What the server
+          // holds is known from the saved copy, whatever the incoming copy last saw.
+          serverRevision: itemToSave.serverRevision ?? existingItem.serverRevision,
+          lastSyncedHash: existingItem.lastSyncedHash,
+        };
+        return next;
       });
     } catch (err) {
       logError("Error during save operation:", err);
@@ -1888,74 +1669,46 @@ const App: React.FC = () => {
     }
     if (incomingImages.length > 0) void offloadImages(incomingImages);
 
-    // Use functional update to avoid stale closure issues
-    setSyncState(prevState => {
+    updateItems(items => {
       const itemId = item.data.id;
 
       // Case 1: Direct match by ID (top-level items)
-      const index = prevState.items.findIndex(i => i.data.id === itemId);
+      const index = items.findIndex(i => i.data.id === itemId);
       if (index >= 0) {
-        const existingItem = prevState.items[index];
-        const newItems = [...prevState.items];
-
+        const existingItem = items[index];
         // Merge: keep existing fields, update with new data
         // Replace base64 imageUrl with marker (actual data is in IDB)
         const mergedData = { ...existingItem.data, ...item.data };
         if ((mergedData as any).imageUrl?.startsWith('data:image/')) {
           (mergedData as any).imageUrl = IMAGE_IDB_MARKER;
         }
-        newItems[index] = {
-          ...existingItem,
-          data: mergedData,
-          updatedAt: Date.now()
-        };
-
-        return {
-          ...prevState,
-          items: newItems
-        };
+        const next = items.slice();
+        next[index] = { ...existingItem, data: mergedData, updatedAt: Date.now() };
+        return next;
       }
 
       // Case 2: Check if this is a vocab inside a phrase item
       // Vocab images are generated separately and need to update the parent phrase
-      if (item.type === 'vocab') {
-        const vocabData = item.data as VocabCard;
+      if (item.type !== 'vocab') return items;
+      const vocabData = item.data as VocabCard;
+      for (let i = 0; i < items.length; i++) {
+        const stored = items[i];
+        if (stored.type !== 'phrase') continue;
+        const phraseData = stored.data as SearchResult;
+        const vocabIndex = (phraseData.vocabs || []).findIndex(v => v.id === itemId);
+        if (vocabIndex < 0) continue;
 
-        for (let i = 0; i < prevState.items.length; i++) {
-          const stored = prevState.items[i];
-          if (stored.type === 'phrase') {
-            const phraseData = stored.data as SearchResult;
-            const vocabIndex = (phraseData.vocabs || []).findIndex(v => v.id === itemId);
-
-            if (vocabIndex >= 0) {
-              // Found the vocab inside this phrase - update it
-              const newVocabs = [...(phraseData.vocabs || [])];
-              const mergedVocab = { ...newVocabs[vocabIndex], ...vocabData };
-              if (mergedVocab.imageUrl?.startsWith('data:image/')) {
-                mergedVocab.imageUrl = IMAGE_IDB_MARKER;
-              }
-              newVocabs[vocabIndex] = mergedVocab;
-
-              const newItems = [...prevState.items];
-              newItems[i] = {
-                ...stored,
-                data: {
-                  ...phraseData,
-                  vocabs: newVocabs
-                },
-                updatedAt: Date.now()
-              };
-
-              return {
-                ...prevState,
-                items: newItems
-              };
-            }
-          }
+        const newVocabs = [...(phraseData.vocabs || [])];
+        const mergedVocab = { ...newVocabs[vocabIndex], ...vocabData };
+        if (mergedVocab.imageUrl?.startsWith('data:image/')) {
+          mergedVocab.imageUrl = IMAGE_IDB_MARKER;
         }
+        newVocabs[vocabIndex] = mergedVocab;
+        const next = items.slice();
+        next[i] = { ...stored, data: { ...phraseData, vocabs: newVocabs }, updatedAt: Date.now() };
+        return next;
       }
-
-      return prevState;
+      return items;
     });
   };
 
@@ -1993,159 +1746,52 @@ const App: React.FC = () => {
 
   const handleDelete = useCallback(async (id: string) => {
     log('🗑️ App: Deleting item', id);
-
-    const now = Date.now();
-
-    // Update latestItemsRef IMMEDIATELY (before state update settles) so the
-    // debounced IDB save and any concurrent reads see the deletion right away.
-    // This prevents the bug where IDB saves the non-deleted version, which then
-    // resurrects the item on next app load via merge.
-    const refIndex = latestItemsRef.current.findIndex(i => i.data.id === id);
-    let itemWithDelete: StoredItem | null = null;
-    if (refIndex >= 0) {
-      const newItems = [...latestItemsRef.current];
-      itemWithDelete = { ...newItems[refIndex], isDeleted: true, updatedAt: now };
-      newItems[refIndex] = itemWithDelete;
-      latestItemsRef.current = newItems;
-    }
-
-    // Also update React state
-    setSyncState(prevState => {
-      const index = prevState.items.findIndex(i => i.data.id === id);
-      if (index >= 0) {
-        const newItems = [...prevState.items];
-        newItems[index] = {
-          ...newItems[index],
-          isDeleted: true,
-          updatedAt: now
-        };
-
-        return {
-          ...prevState,
-          items: newItems
-        };
-      }
-      warn('🗑️ App: Item not found for deletion:', id);
-      return prevState;
-    });
+    const deleted = replaceItem(id, item => ({ ...item, isDeleted: true, updatedAt: Date.now() }));
+    if (!deleted) warn('🗑️ App: Item not found for deletion:', id);
 
     // Update carousel immediately so card disappears instantly. Call both removers — each is a
     // no-op for the other mode (word id vs sentence id), so handleDelete stays mode-agnostic.
     removeItemFromDetailContext(id);
     removeSentenceFromDetailContext(id);
 
-    // Immediately sync deletion to server (don't wait for 5s debounce)
-    if (itemWithDelete) {
-      log('🗑️ App: Immediately persisting deletion');
-      await persistChangedItems([itemWithDelete], 'Delete');
-    }
-  }, []);
+    // Persist and push the deletion now rather than after the debounce
+    if (deleted) await persistChangedItems([deleted], 'Delete');
+  }, [replaceItem, persistChangedItems]);
 
   const handleArchive = useCallback(async (id: string) => {
     log('📦 App: Archiving item', id);
-    
-    const now = Date.now();
-    
-    setSyncState(prevState => {
-      const index = prevState.items.findIndex(i => i.data.id === id);
-      if (index >= 0) {
-        const newItems = [...prevState.items];
-        newItems[index] = {
-          ...newItems[index],
-          isArchived: true,
-          updatedAt: now
-        };
-        
-        return {
-          ...prevState,
-          items: newItems
-        };
-      }
-      warn('📦 App: Item not found for archiving:', id);
-      return prevState;
-    });
+    const archived = replaceItem(id, item => ({ ...item, isArchived: true, updatedAt: Date.now() }));
+    if (!archived) warn('📦 App: Item not found for archiving:', id);
 
     // Update the carousel immediately, before the server sync finishes.
     removeItemFromDetailContext(id);
 
-    // Immediately sync archive to server
-    const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
-    if (itemToSync) {
-      const itemWithArchive = { ...itemToSync, isArchived: true, updatedAt: now };
-      await persistChangedItems([itemWithArchive], 'Archive');
-    }
-  }, []);
+    if (archived) await persistChangedItems([archived], 'Archive');
+  }, [replaceItem, persistChangedItems]);
 
   const handleRemoveVocabFromPhrase = useCallback(async (phraseId: string, vocabId: string) => {
     log('🗑️ App: Removing vocab', vocabId, 'from phrase', phraseId);
+    // A phrase keeps at least one vocab.
+    const phrase = latestItemsRef.current.find(i => i.data.id === phraseId);
+    const vocabs = phrase && isPhraseItem(phrase) ? phrase.data.vocabs : undefined;
+    if (!Array.isArray(vocabs) || vocabs.length <= 1) return;
 
-    const now = Date.now();
-
-    // Update ref immediately
-    const refIndex = latestItemsRef.current.findIndex(i => i.data.id === phraseId);
-    let updatedItem: StoredItem | null = null;
-    if (refIndex >= 0) {
-      const phrase = latestItemsRef.current[refIndex];
-      const phraseData = phrase.data as any;
-      if (Array.isArray(phraseData.vocabs) && phraseData.vocabs.length > 1) {
-        const newVocabs = phraseData.vocabs.filter((v: any) => v.id !== vocabId);
-        updatedItem = {
-          ...phrase,
-          data: { ...phraseData, vocabs: newVocabs },
-          updatedAt: now,
-        };
-        const newItems = [...latestItemsRef.current];
-        newItems[refIndex] = updatedItem;
-        latestItemsRef.current = newItems;
-      }
-    }
-
-    if (!updatedItem) return;
-
-    setSyncState(prevState => {
-      const index = prevState.items.findIndex(i => i.data.id === phraseId);
-      if (index >= 0) {
-        const newItems = [...prevState.items];
-        newItems[index] = updatedItem!;
-        return { ...prevState, items: newItems };
-      }
-      return prevState;
+    const updated = replaceItem(phraseId, item => {
+      const phraseData = item.data as SearchResult;
+      return {
+        ...item,
+        data: { ...phraseData, vocabs: (phraseData.vocabs || []).filter(v => v.id !== vocabId) },
+        updatedAt: Date.now(),
+      };
     });
-
-    // Sync to server
-    await persistChangedItems([updatedItem], 'Remove vocab');
-  }, []);
+    if (updated) await persistChangedItems([updated], 'Remove vocab');
+  }, [replaceItem, persistChangedItems]);
 
   const handleUnarchive = useCallback(async (id: string) => {
     log('📦 App: Unarchiving item', id);
-    
-    const now = Date.now();
-    
-    setSyncState(prevState => {
-      const index = prevState.items.findIndex(i => i.data.id === id);
-      if (index >= 0) {
-        const newItems = [...prevState.items];
-        newItems[index] = {
-          ...newItems[index],
-          isArchived: false,
-          updatedAt: now
-        };
-        
-        return {
-          ...prevState,
-          items: newItems
-        };
-      }
-      return prevState;
-    });
-    
-    // Immediately sync unarchive to server
-    const itemToSync = latestItemsRef.current.find(i => i.data.id === id);
-    if (itemToSync) {
-      const itemWithUnarchive = { ...itemToSync, isArchived: false, updatedAt: now };
-      await persistChangedItems([itemWithUnarchive], 'Unarchive');
-    }
-  }, []);
+    const unarchived = replaceItem(id, item => ({ ...item, isArchived: false, updatedAt: Date.now() }));
+    if (unarchived) await persistChangedItems([unarchived], 'Unarchive');
+  }, [replaceItem, persistChangedItems]);
 
   // Word comparison handler (used by EVERY Compare button — synonyms + confusables). Non-blocking:
   // if we already have this comparison, open it instantly; otherwise enqueue it for background
@@ -2389,16 +2035,8 @@ const App: React.FC = () => {
 
   // SRS update for one sense/item. The server applies the same FSRS transition atomically.
   //
-  // The update is computed OUTSIDE setSyncState, from latestItemsRef.current (the app's
-  // synchronously-maintained source of truth), so the immediate IndexedDB save + server push always
-  // use the freshly-computed result. The previous version computed the result INSIDE the setState
-  // updater and read it back through a ref on the next line — but React only runs that updater
-  // synchronously via its "eager state" optimization, which it SKIPS whenever a syncState update is
-  // already pending (a background sync, image streaming in, a prior review still committing…). In that
-  // case the post-setState read got STALE data: the review landed in memory (the UI showed it) but the
-  // immediate IDB/server writes missed it, so progress vanished on refresh or on another device. This
-  // structure (compute → apply to ref → apply the same pure transform inside setState) removes the race
-  // and mirrors handleMergeDuplicates above.
+  // The reviewed copy is computed from latestItemsRef.current before any state update, so the review
+  // outbox, the immediate IndexedDB write and the rendered library all hold the same copy.
   const updateSRS = async (
     itemId: string,
     rating: ReviewRating = 'good',
@@ -2412,22 +2050,18 @@ const App: React.FC = () => {
     },
   ): Promise<boolean> => {
     const now = Date.now();
+    const userId = authState.user?.id || 'vps';
 
-    let baseItems = latestItemsRef.current;
-    let targetItem = baseItems.find(i => i.data.id === itemId);
+    const savedItem = latestItemsRef.current.find(i => i.data.id === itemId);
     const requestedSeed = context?.seedItem;
-    const seedItem = !targetItem && requestedSeed?.data.id === itemId &&
+    const seedItem = !savedItem && requestedSeed?.data.id === itemId &&
       (isRealLifeProgressItem(requestedSeed) || isEssayProgressItem(requestedSeed))
       ? requestedSeed
       : undefined;
-    if (!targetItem && seedItem) {
-      targetItem = seedItem;
-      baseItems = [...baseItems, seedItem];
-    }
+    const targetItem = savedItem ?? seedItem;
     if (!targetItem) return false;
 
     const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
-    const idsToUpdate = new Set<string>([itemId]);
     const baseSRS = SRSAlgorithm.ensure(targetItem.srs, targetItem.data.id, targetItem.type);
     const updatedSRS = SRSAlgorithm.updateAfterRating(baseSRS, rating, now);
     const reviewEvent: ReviewEvent = {
@@ -2441,50 +2075,41 @@ const App: React.FC = () => {
 
     log(`🧠 FSRS Update: ${targetTitle} - ${rating}, stability=${updatedSRS.stability.toFixed(1)}d, next review in ${updatedSRS.interval}m`);
 
-    // Pure transform, applied to BOTH the ref (fresh source for concurrent handlers) and — defensively —
-    // to prevState inside setSyncState, so a concurrent update can't drop the change.
-    const applySrs = (items: StoredItem[]): StoredItem[] => {
-      let foundTarget = false;
-      const updated = items.map(item => {
-        if (!idsToUpdate.has(item.data.id)) return item;
-        foundTarget = true;
-        return { ...item, srs: { ...updatedSRS, id: item.data.id }, updatedAt: now };
-      });
-      if (!foundTarget && seedItem) {
-        updated.push({ ...seedItem, srs: { ...updatedSRS, id: seedItem.data.id }, updatedAt: now });
-      }
-      return updated;
-    };
-
-    const newItems = applySrs(baseItems);
-    const itemsToSync = newItems.filter(item => idsToUpdate.has(item.data.id));
+    // The review outbox, not the item push, carries the new schedule (and a seed item) to the server.
+    // A copy that matched the server before the review stays clean, so reconciling the applied review
+    // adopts the server's content instead of mistaking the new schedule for an unsynced edit.
+    const reviewed: StoredItem = { ...targetItem, srs: { ...updatedSRS, id: itemId }, updatedAt: now };
+    const reviewedItem = seedItem || !isItemDirty(targetItem)
+      ? { ...reviewed, lastSyncedHash: getItemContentHash(reviewed) }
+      : reviewed;
     const reviewMutation: PendingReviewMutation = {
       event: reviewEvent,
-      itemIds: [...idsToUpdate],
-      optimisticSrs: Object.fromEntries(itemsToSync.map(item => [item.data.id, item.srs])),
+      itemIds: [itemId],
+      optimisticSrs: { [itemId]: reviewedItem.srs },
       ...(seedItem ? { seedItem } : {}),
     };
 
     // The small localStorage outbox is synchronous and lands before React or IndexedDB work. Its
     // idempotent event id is the crash/reload boundary for offline and rapid reviews.
-    enqueuePendingReviewMutation(authState.user?.id || 'vps', reviewMutation);
+    enqueuePendingReviewMutation(userId, reviewMutation);
     recordReview(reviewEvent, { persist: false });
-    syncGenerationRef.current++;
-    latestItemsRef.current = newItems;
-    setSyncState(prevState => ({ ...prevState, items: applySrs(prevState.items) }));
+    updateItems(items => {
+      const index = items.findIndex(item => item.data.id === itemId);
+      if (index < 0) return seedItem ? [...items, reviewedItem] : items;
+      const next = items.slice();
+      next[index] = reviewedItem;
+      return next;
+    });
 
     // CRITICAL: save to IndexedDB immediately (primary persistence — never lose progress on a quick
     // refresh / app switch).
     try {
-      await saveItemUpdates(itemsToSync, authState.user?.id || 'vps');
-      lastSaveTimeRef.current = Date.now();
-      log(`💾 Immediately journaled ${itemsToSync.length} SRS update(s) to IndexedDB`);
+      await saveItemUpdates([reviewedItem], userId);
     } catch (e) {
       logError('💾 Failed to save SRS update to IndexedDB:', e);
     }
 
     await flushPendingReviews();
-    const userId = authState.user?.id || 'vps';
     return !readPendingReviewMutations(userId).some(mutation => mutation.event.id === reviewEvent.id);
   };
 

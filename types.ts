@@ -228,11 +228,6 @@ export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
 export type ViewState = 'notebook' | 'study' | 'sentences' | 'real-life' | 'essays';
 
-// In-memory library state; durable mutation journals live in the storage/sync services.
-export interface SyncState {
-  items: StoredItem[];
-}
-
 /** Identity of a saved sense: lowercased word plus the exact sense label. */
 export const savedVocabKey = (vocab: VocabCard): string =>
   `${(vocab.word || '').toLowerCase().trim()}\u0000${vocab.sense || ''}`;

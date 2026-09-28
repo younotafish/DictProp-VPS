@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getItemContentHash } from '../../services/api.ts';
-import { mergeDatasets } from '../../services/sync.ts';
+import { getItemContentHash, isItemDirty } from '../../services/itemHash.ts';
+import { applyServerSave, mergeDatasets, trackServerContent } from '../../services/sync.ts';
 import type { StoredItem, VocabCard } from '../../types.ts';
 
 function vocab(id: string, imageUrl?: string): VocabCard {
@@ -154,4 +154,83 @@ test('legacy passive strength is removed when an unreviewed sentence returns fro
   assert.equal(merged.srs.totalReviews, 0);
   assert.equal(merged.srs.memoryStrength, 0);
   assert.equal(merged.srs.stability, 0.5);
+});
+
+test('equal revisions keep unsynced local edits over the server echo', () => {
+  const local = { ...phrase([], 1), serverRevision: 5 };
+  const remote = { ...phrase([], 9), serverRevision: 5 };
+  (local.data as any).translation = 'edited after the push';
+  (remote.data as any).translation = 'echo of the push';
+  const merged = mergeDatasets([local], [remote])[0];
+  assert.equal((merged.data as any).translation, 'edited after the push');
+});
+
+test('a merge that changes nothing returns the local object', () => {
+  const local = { ...phrase([], 1), serverRevision: 3, lastSyncedHash: 'synced' };
+  const remote = structuredClone({ ...local, lastSyncedHash: undefined });
+  assert.equal(mergeDatasets([local], [remote])[0], local);
+});
+
+test('server content tracking marks items clean or dirty against the server copy', () => {
+  const matching = { ...phrase([], 1), serverRevision: 2 };
+  const localOnly: StoredItem = { ...phrase([], 1), data: { ...phrase([], 1).data, id: 'local-only' } };
+  const items = [matching, localOnly];
+
+  const tracked = trackServerContent(items, [structuredClone(matching)]);
+  assert.equal(isItemDirty(tracked[0]), false);
+  assert.equal(tracked[1], localOnly);
+  assert.equal(trackServerContent(tracked, [structuredClone(matching)]), tracked);
+
+  // A complete snapshot also marks what the server lacks as dirty.
+  const complete = trackServerContent([...tracked, { ...localOnly, lastSyncedHash: 'stale' }], [matching], { complete: true });
+  assert.equal(complete[2].lastSyncedHash, undefined);
+  assert.equal(isItemDirty(complete[2]), true);
+});
+
+test('server content tracking ignores a copy older than the item', () => {
+  const item = { ...phrase([], 1), serverRevision: 7, lastSyncedHash: 'from-review' };
+  const olderCopy = { ...phrase([], 1), serverRevision: 6 };
+  const items = [item];
+  assert.equal(trackServerContent(items, [olderCopy]), items);
+});
+
+test('a push acknowledgement marks the sent copy clean and keeps later edits dirty', () => {
+  const sent = { ...phrase([], 1), serverRevision: 4 };
+  const editedMeanwhile = { ...sent, updatedAt: 2, data: { ...sent.data, translation: 'edited later' } };
+  const result = { revisions: new Map([['phrase', 5]]), canonical: new Map<string, StoredItem>() };
+
+  const [clean] = applyServerSave([sent], [sent], result);
+  assert.equal(clean.serverRevision, 5);
+  assert.equal(isItemDirty(clean), false);
+
+  const [dirty] = applyServerSave([editedMeanwhile], [sent], result);
+  assert.equal(dirty.serverRevision, 5);
+  assert.equal((dirty.data as any).translation, 'edited later');
+  assert.equal(isItemDirty(dirty), true);
+});
+
+test('a push acknowledgement adopts the copy the server kept', () => {
+  const sent = { ...phrase([], 1), serverRevision: 3 };
+  (sent.data as any).translation = 'stale edit';
+  const kept = { ...phrase([], 1), serverRevision: 6 };
+  (kept.data as any).translation = 'server copy';
+  const result = { revisions: new Map<string, number>(), canonical: new Map([['phrase', kept]]) };
+
+  const [adopted] = applyServerSave([sent], [sent], result);
+  assert.equal((adopted.data as any).translation, 'server copy');
+  assert.equal(adopted.serverRevision, 6);
+  assert.equal(isItemDirty(adopted), false);
+});
+
+test('an outdated push acknowledgement changes nothing', () => {
+  const sent = { ...phrase([], 1), serverRevision: 4 };
+  // A review response recorded revision 7 while the push was in flight.
+  const reviewed = { ...sent, serverRevision: 7, lastSyncedHash: 'from-review' };
+  const items = [reviewed];
+  const stale = { revisions: new Map([['phrase', 5]]), canonical: new Map<string, StoredItem>() };
+  assert.equal(applyServerSave(items, [sent], stale), items);
+
+  const recorded = { ...sent, serverRevision: 5, lastSyncedHash: getItemContentHash(sent) };
+  const repeated = [recorded];
+  assert.equal(applyServerSave(repeated, [sent], stale), repeated);
 });
