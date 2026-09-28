@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -356,4 +356,26 @@ test('the server does not expose remote image generation routes', async () => {
     const response = await app.request(path, init);
     assert.equal(response.status, 404, `${init.method} ${path}`);
   }
+});
+
+test('a missing build file is a 404, while app routes still get the shell', async () => {
+  const dist = mkdtempSync(join(tmpdir(), 'dictprop-static-test-'));
+  mkdirSync(join(dist, 'assets'));
+  writeFileSync(join(dist, 'index.html'), '<!doctype html><script type="module" src="/assets/index-new.js"></script>');
+  writeFileSync(join(dist, 'assets', 'index-new.js'), 'export {};');
+  writeFileSync(join(dist, 'sw.js'), "const VERSION = 'new';");
+  const staticApp = createApp({ logging: false, staticDir: dist });
+
+  const asset = await staticApp.request('/assets/index-new.js');
+  assert.equal(asset.status, 200);
+  assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  // A page still running a replaced build asks for its files; HTML there would be loaded as code.
+  assert.equal((await staticApp.request('/assets/index-old.js')).status, 404);
+
+  for (const path of ['/', '/study', '/sw.js']) {
+    const response = await staticApp.request(path);
+    assert.equal(response.status, 200, path);
+    assert.equal(response.headers.get('cache-control'), 'no-cache', path);
+  }
+  assert.match((await staticApp.request('/study')).headers.get('content-type') ?? '', /text\/html/);
 });

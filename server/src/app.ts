@@ -22,6 +22,8 @@ import { ttsRoutes } from './routes/tts.js';
 export interface AppOptions {
   logging?: boolean;
   serveStaticFiles?: boolean;
+  /** The built client; defaults to the repository's dist/. */
+  staticDir?: string;
   aiRouter?: Hono;
 }
 
@@ -146,8 +148,7 @@ export function createApp(options: AppOptions = {}) {
   });
 
   if (options.serveStaticFiles !== false) {
-    const currentDir = dirname(fileURLToPath(import.meta.url));
-    const distDir = resolve(currentDir, '../../dist');
+    const distDir = options.staticDir ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../dist');
     app.use('/*', serveStatic({
       root: distDir,
       onFound: (_path, c) => {
@@ -158,6 +159,9 @@ export function createApp(options: AppOptions = {}) {
         }
       },
     }));
+    // A build file that isn't here belongs to a replaced build. Answer 404 rather than the app shell, so the
+    // page asking for it fails fast and reloads, and no cache stores HTML under a script's name.
+    app.get('/assets/*', c => c.notFound());
     app.get('*', serveStatic({
       root: distDir,
       path: 'index.html',
