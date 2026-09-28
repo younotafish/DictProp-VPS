@@ -615,7 +615,8 @@ const App: React.FC = () => {
   const [isLoaded, setIsLoaded] = useState(false);
   const showNavRef = useRef(true);
   const navRef = useRef<HTMLElement>(null);
-  const lastScrollYRef = useRef(0);
+  // Per scroller: tabs keep their scroll positions, so one tab's position says nothing about another's.
+  const lastScrollYs = useRef(new WeakMap<Element, number>());
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [imagePrefetchProgress, setImagePrefetchProgress] = useState<{ done: number; total: number } | null>(null);
@@ -2075,14 +2076,16 @@ const App: React.FC = () => {
 
   // Handle scroll to hide/show nav bar — uses direct DOM mutation to avoid re-rendering App
   const handleScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
-    const currentScrollY = e.currentTarget.scrollTop;
+    const scroller = e.currentTarget;
+    const currentScrollY = scroller.scrollTop;
+    const lastScrollY = lastScrollYs.current.get(scroller) ?? currentScrollY;
     let shouldShow = showNavRef.current;
 
     if (currentScrollY < 10) {
       shouldShow = true;
-    } else if (currentScrollY > lastScrollYRef.current && currentScrollY > 100) {
+    } else if (currentScrollY > lastScrollY && currentScrollY > 100) {
       shouldShow = false;
-    } else if (currentScrollY < lastScrollYRef.current) {
+    } else if (currentScrollY < lastScrollY) {
       shouldShow = true;
     }
 
@@ -2094,7 +2097,7 @@ const App: React.FC = () => {
       }
     }
 
-    lastScrollYRef.current = currentScrollY;
+    lastScrollYs.current.set(scroller, currentScrollY);
   }, []);
 
   // Auth gate: show login/pending/loading before the main app
