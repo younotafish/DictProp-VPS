@@ -30,7 +30,7 @@ if (!owner) throw new Error('Owner account not found');
 
 const bundleRoot = dirname(resolvedManifest);
 const imageIds = new Set(getImageManifest(owner.id));
-const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
+const currentById = new Map(getAllItems(owner.id).map(item => [item.data.id, item]));
 const result = {
   total: bundle.entries.length,
   analysesUpdated: 0,

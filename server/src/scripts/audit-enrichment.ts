@@ -17,7 +17,7 @@ const prioritySince = Date.now() - lookbackHours * HOUR_MS;
 const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
 if (!owner) throw new Error('Owner account not found');
 
-const items = getAllItems(true, owner.id);
+const items = getAllItems(owner.id);
 const topLevel = summarizeIncrementalEnrichmentBacklog(items, prioritySince);
 const storedExamples = [...db.prepare(`
   SELECT

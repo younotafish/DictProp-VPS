@@ -1,4 +1,4 @@
-import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent } from '../types';
+import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent, RevisionCursor } from '../types';
 import { dataUriToBlob } from './dataUri';
 import { log, error as logError } from './logger';
 import { HttpError, jsonRequest, requestJson, requestVoid, responseToHttpError } from './http';
@@ -24,13 +24,16 @@ const generateId = (): string => {
 // Items API (replaces firebase.ts data functions)
 // ============================================================================
 
-export const loadAllItems = async (): Promise<StoredItem[]> => {
+export type { RevisionCursor };
+
+/** The whole library, plus the cursor after its last change, where the next delta pull starts. */
+export const loadAllItems = async (): Promise<{ items: StoredItem[]; cursor: RevisionCursor }> => {
   const items: StoredItem[] = [];
   let cursor: RevisionCursor = { revision: 0, id: '' };
   for (let pageNumber = 0; pageNumber < 100_000; pageNumber++) {
-    const page = await loadItemChanges(cursor, 200);
+    const page = await loadItemChanges(cursor);
     items.push(...page.items);
-    if (!page.hasMore) return items;
+    if (!page.hasMore) return { items, cursor: page.cursor };
     if (page.cursor.revision === cursor.revision && page.cursor.id === cursor.id) {
       throw new Error('Load items cursor did not advance');
     }
@@ -39,18 +42,15 @@ export const loadAllItems = async (): Promise<StoredItem[]> => {
   throw new Error('Load items exceeded its page limit');
 };
 
-export interface RevisionCursor {
-  revision: number;
-  id: string;
-}
-
 export interface ItemChanges {
   items: StoredItem[];
   cursor: RevisionCursor;
   hasMore: boolean;
+  /** Newest revision the server has issued; older servers omit it. */
+  headRevision?: number;
 }
 
-export const loadItemChanges = async (cursor: RevisionCursor, limit = 200): Promise<ItemChanges> => {
+export const loadItemChanges = async (cursor: RevisionCursor, limit = 500): Promise<ItemChanges> => {
   const params = new URLSearchParams({
     afterRevision: String(cursor.revision),
     afterId: cursor.id,
@@ -195,6 +195,8 @@ export const uploadImages = async (
     if (!response.ok) throw new Error(`Upload image failed (${response.status})`);
     saved++;
   }
+  // Each upload bumps the revision of the items showing the image, so other tabs pull the new marker.
+  if (saved > 0) publishServerMutation();
   return { ok: true, saved };
 };
 

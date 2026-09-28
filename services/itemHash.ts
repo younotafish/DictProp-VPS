@@ -3,6 +3,9 @@ import { StoredItem } from '../types';
 // Content hashing for dirty tracking. Stored lastSyncedHash values depend on this exact output, so
 // changing the hash marks every item dirty and re-uploads the library.
 
+/** Version of the hash output. Local records store their hash with it; bump it when the output changes. */
+export const ITEM_HASH_VERSION = 1;
+
 const hashString = (str: string): string => {
   let h1 = 5381;
   let h2 = 52711;
@@ -55,6 +58,11 @@ export const getItemContentHash = (item: StoredItem): string => {
   const hash = hashString(JSON.stringify(contentToHash));
   hashCache.set(item, hash);
   return hash;
+};
+
+/** Records a hash computed earlier for the same content, such as one stored with a local record. */
+export const seedItemContentHash = (item: StoredItem, hash: string): void => {
+  if (!hashCache.has(item)) hashCache.set(item, hash);
 };
 
 /** True when the item differs from the content the server last acknowledged. */

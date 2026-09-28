@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { StoredItem, ViewState, SyncStatus, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, savedVocabKey, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
+import { StoredItem, RevisionCursor, ViewState, SyncStatus, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, savedVocabKey, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
 import { Loader2, X } from 'lucide-react';
-import { loadData, saveData, saveItemUpdates, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
-import { mergeDatasets, trackServerContent, applyServerSave } from './services/sync';
+import { loadData, saveData, saveItemUpdates, deleteItemRecords, storeMissingItemHashes, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
+import { mergeDatasets, trackServerContent, applyServerSave, dropExpiredTombstones } from './services/sync';
 import { getItemContentHash, isItemDirty } from './services/itemHash';
-import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type RevisionCursor } from './services/api';
+import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation } from './services/api';
 import { normalizeSentenceIdentity } from './services/sentenceIdentity';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -76,16 +76,6 @@ const offloadImages = async (images: Array<{ id: string; base64: string }>): Pro
   const { offloadAndUpload } = await import('./services/imagePipeline');
   await offloadAndUpload(images);
 };
-
-function latestRevisionCursor(items: readonly StoredItem[]): RevisionCursor {
-  return items.reduce<RevisionCursor>((cursor, item) => {
-    const revision = item.serverRevision || 0;
-    if (revision > cursor.revision || (revision === cursor.revision && item.data.id > cursor.id)) {
-      return { revision, id: item.data.id };
-    }
-    return cursor;
-  }, { revision: 0, id: '' });
-}
 
 // Merge variant-duplicate clusters (Phase 2 of the dedup tool). For each merge, every
 // live vocab card whose word is a variant in the cluster is relabeled to the canonical
@@ -307,7 +297,9 @@ const App: React.FC = () => {
   const [savedItems, setSavedItems] = useState<StoredItem[]>([]);
   // The library as of the latest change, for handlers and async work that outlive a render.
   const latestItemsRef = useRef<StoredItem[]>(savedItems);
-  const serverCursorRef = useRef<RevisionCursor>({ revision: 0, id: '' });
+  // The server change the library is current to, stored with it; pulls resume after it. Null until a
+  // full snapshot establishes one.
+  const serverCursorRef = useRef<RevisionCursor | null>(null);
 
   /**
    * Every library change goes through here. The transform sees the latest items rather than a
@@ -376,6 +368,70 @@ const App: React.FC = () => {
     (ids?: ReadonlySet<string>) => inSyncLane(() => pushNow(ids)),
     [inSyncLane, pushNow],
   );
+
+  // The pulls below run in the sync lane.
+
+  /** Merges server copies and stores the result together with the cursor they bring it up to. */
+  const mergeServerItems = useCallback(async (
+    remoteItems: StoredItem[],
+    cursor: RevisionCursor,
+    { complete = false }: { complete?: boolean } = {},
+  ): Promise<void> => {
+    let droppedIds: string[] = [];
+    const merged = updateItems(items => {
+      const next = trackServerContent(mergeDatasets(items, remoteItems), remoteItems, { complete });
+      if (!complete) return next;
+      // A snapshot brings back the expired tombstones the server still keeps.
+      const pruned = dropExpiredTombstones(next);
+      droppedIds = pruned.droppedIds;
+      return pruned.items;
+    });
+    serverCursorRef.current = cursor;
+    await deleteItemRecords(droppedIds, currentUserIdRef.current)
+      .catch(error => warn('Expired deletions stay stored until the next launch:', error));
+    await saveData(merged, currentUserIdRef.current, cursor);
+  }, [updateItems]);
+
+  /**
+   * Merges the server changes after `from`. False when the server is behind the cursor: its database
+   * was replaced, so only a full snapshot can reconcile.
+   */
+  const pullChanges = useCallback(async (from: RevisionCursor): Promise<boolean> => {
+    let cursor = from;
+    const remoteItems: StoredItem[] = [];
+    for (;;) {
+      const page = await loadItemChanges(cursor);
+      if (page.headRevision !== undefined && page.headRevision < from.revision) return false;
+      remoteItems.push(...page.items);
+      const advanced = page.cursor.revision > cursor.revision ||
+        (page.cursor.revision === cursor.revision && page.cursor.id > cursor.id);
+      cursor = page.cursor;
+      if (!page.hasMore || !advanced) break;
+    }
+    if (remoteItems.length === 0) return true;
+    await mergeServerItems(remoteItems, cursor);
+    log(`Server: pulled ${remoteItems.length} changed item(s)`);
+    return true;
+  }, [mergeServerItems]);
+
+  /** Merges a complete snapshot. Local items the server lacks turn dirty, so they upload. */
+  const syncFullSnapshot = useCallback(async (): Promise<void> => {
+    const { items: remoteItems, cursor } = await loadAllItems();
+    // An empty server isn't authoritative: merging it would re-upload the whole library.
+    if (remoteItems.length === 0) {
+      serverCursorRef.current = cursor;
+      return;
+    }
+    await mergeServerItems(remoteItems, cursor, { complete: true });
+    log(`Server: merged a full snapshot of ${remoteItems.length} items`);
+  }, [mergeServerItems]);
+
+  /** Pulls what changed since the stored cursor, or a full snapshot when there is no usable cursor. */
+  const syncWithServer = useCallback(async (): Promise<void> => {
+    const cursor = serverCursorRef.current;
+    if (cursor && await pullChanges(cursor)) return;
+    await syncFullSnapshot();
+  }, [pullChanges, syncFullSnapshot]);
 
   // Durable local write first, then an immediate push. A failed push leaves the items dirty, and the
   // debounced save retries them.
@@ -745,13 +801,7 @@ const App: React.FC = () => {
     try {
       await flushPendingReviews();
       await inSyncLane(async () => {
-        const remoteItems = await loadAllItems();
-        serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
-        // A complete snapshot also marks the items the server lacks as dirty, so they upload too.
-        const merged = updateItems(items => trackServerContent(
-          cleanupOldDeletedItems(mergeDatasets(items, remoteItems)), remoteItems, { complete: true },
-        ));
-        await saveData(merged, currentUserIdRef.current);
+        await syncFullSnapshot();
         const pushed = await pushNow();
         if (pushed > 0) log(`Server: Force sync uploaded ${pushed} changed items`);
       });
@@ -762,7 +812,7 @@ const App: React.FC = () => {
     } finally {
       forceSyncInProgressRef.current = false;
     }
-  }, [flushPendingReviews, inSyncLane, updateItems, pushNow]);
+  }, [flushPendingReviews, inSyncLane, syncFullSnapshot, pushNow]);
 
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
@@ -780,21 +830,12 @@ const App: React.FC = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isLoaded]);
 
-  // Save data when app goes to background / returns from background
-  const lastHiddenAtRef = useRef<number | null>(null);
+  // Save data when app goes to background. Returning triggers the delta pull below.
   useEffect(() => {
-      const handleVisibilityChange = async () => {
+      const handleVisibilityChange = () => {
           if (document.visibilityState === 'visible') {
               window.speechSynthesis?.cancel();
-              const lastHidden = lastHiddenAtRef.current;
-              lastHiddenAtRef.current = null;
-              if (lastHidden !== null && Date.now() - lastHidden > 30 * 1000) {
-                  log("🔄 App was backgrounded for >30s, syncing...");
-                  handleForceSync();
-              }
           } else {
-              lastHiddenAtRef.current = Date.now();
-
               const currentItems = latestItemsRef.current;
               if (isLoaded && currentItems.length > 0) {
                   userSaveData(currentItems).catch(e => {
@@ -823,7 +864,7 @@ const App: React.FC = () => {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('dictprop:before-external-nav', handleBeforeExternalNav);
       };
-  }, [isLoaded, handleForceSync]);
+  }, [isLoaded, userSaveData, pushDirtyItems]);
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
@@ -833,9 +874,12 @@ const App: React.FC = () => {
         try {
             clearLegacyLibraryCaches();
             // IndexedDB is the only local copy of the library; the server sync fills anything it lacks.
-            const loadedItems = (await loadData(userId)).filter(item =>
+            const stored = await loadData(userId);
+            const loadedItems = stored.items.filter(item =>
                 item && item.data && item.data.id && item.srs && item.type
             );
+            // The server won't resend a skipped record's changes, so a skipped record needs a full sync.
+            const cursor = loadedItems.length === stored.items.length ? stored.cursor : null;
             log(`📦 Loaded ${loadedItems.length} items from IndexedDB`);
 
             // Each migration replaces only the items it changes, so the save below writes just those.
@@ -872,10 +916,16 @@ const App: React.FC = () => {
             // 5. Strip images from items → IDB (keep ~143MB out of React state)
             processedItems = await stripAndStoreImages(processedItems);
 
-            updateItems(() => processedItems);
-            serverCursorRef.current = latestRevisionCursor(processedItems);
+            // 6. Tombstones past retention have reached every device
+            const pruned = dropExpiredTombstones(processedItems);
+            processedItems = pruned.items;
+            await deleteItemRecords(pruned.droppedIds, userId)
+                .catch(error => warn('Expired deletions stay stored until the next launch:', error));
 
-            // 6. Write back the items the steps above replaced
+            updateItems(() => processedItems);
+            serverCursorRef.current = cursor;
+
+            // 7. Write back the items the steps above replaced
             await saveData(processedItems, userId);
         } catch (e) {
             logError("Failed to initialize storage", e);
@@ -885,28 +935,6 @@ const App: React.FC = () => {
     };
     initStorage();
   }, [authState.user?.id]);
-
-  // Cleanup old deleted items (hard delete after retention period)
-  const cleanupOldDeletedItems = (items: StoredItem[]): StoredItem[] => {
-    const DELETION_RETENTION_DAYS = 30; // Keep deleted items for 30 days for sync
-    const retentionMs = DELETION_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    
-    const cleaned = items.filter(item => {
-      if (!item.isDeleted) return true; // Keep all active items
-      
-      const deletedAt = item.updatedAt || 0;
-      const age = now - deletedAt;
-      
-      if (age > retentionMs) {
-        return false; // Hard delete
-      }
-      
-      return true; // Keep within retention period
-    });
-    
-    return cleaned;
-  };
 
   // Helper to remove an item from detailContext groups and adjust indices
   const removeItemFromDetailContext = (id: string) => {
@@ -1098,38 +1126,29 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // 2. SERVER SYNC — pull from server on mount, merge with local
+  // 2. SERVER SYNC — once local data is loaded, pull what changed since it was stored
   useEffect(() => {
+    if (!isLoaded) return;
     const syncFromServer = async () => {
       try {
         await flushPendingReviews();
         await inSyncLane(async () => {
-          const remoteItems = await loadAllItems();
-          serverCursorRef.current = latestRevisionCursor([...latestItemsRef.current, ...remoteItems]);
-          if (remoteItems.length === 0) return;
-
-          // A complete snapshot also marks the items the server lacks as dirty, so they upload too.
           // Server items carry image markers, never base64, so there is nothing to strip.
-          const merged = updateItems(items => trackServerContent(
-            cleanupOldDeletedItems(mergeDatasets(items, remoteItems)), remoteItems, { complete: true },
-          ));
-          void prefetchImages(merged);
-          await saveData(merged, currentUserIdRef.current);
+          await syncWithServer();
           const pushed = await pushNow();
           if (pushed > 0) log(`Server: uploaded ${pushed} items that differed from the server`);
         });
+        void prefetchImages(latestItemsRef.current);
       } catch (error) {
         logError("Initial server sync failed:", error);
       } finally {
         initialServerSyncDoneRef.current = true;
       }
+      storeMissingItemHashes(currentUserIdRef.current)
+        .catch(error => warn('Storing item hashes will retry on the next launch:', error));
     };
-
-    // Only sync after local data is loaded
-    if (isLoaded) {
-      syncFromServer();
-    }
-  }, [isLoaded, flushPendingReviews, inSyncLane, updateItems, pushNow]);
+    void syncFromServer();
+  }, [isLoaded, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages]);
 
   const deltaPullInProgressRef = useRef(false);
   const pullServerChanges = useCallback(async () => {
@@ -1138,30 +1157,13 @@ const App: React.FC = () => {
     deltaPullInProgressRef.current = true;
     try {
       await flushPendingReviews();
-      await inSyncLane(async () => {
-        let cursor = serverCursorRef.current;
-        const remoteItems: StoredItem[] = [];
-        for (;;) {
-          const page = await loadItemChanges(cursor);
-          remoteItems.push(...page.items);
-          const advanced = page.cursor.revision > cursor.revision ||
-            (page.cursor.revision === cursor.revision && page.cursor.id > cursor.id);
-          cursor = page.cursor;
-          if (!page.hasMore || !advanced) break;
-        }
-        serverCursorRef.current = cursor;
-        if (remoteItems.length === 0) return;
-
-        const merged = updateItems(items => trackServerContent(mergeDatasets(items, remoteItems), remoteItems));
-        await saveData(merged, currentUserIdRef.current);
-        log(`Server: pulled ${remoteItems.length} changed item(s)`);
-      });
+      await inSyncLane(syncWithServer);
     } catch (error) {
       warn('Background sync will retry:', error);
     } finally {
       deltaPullInProgressRef.current = false;
     }
-  }, [authState.user?.id, flushPendingReviews, inSyncLane, updateItems]);
+  }, [authState.user?.id, flushPendingReviews, inSyncLane, syncWithServer]);
 
   useEffect(() => {
     if (!isLoaded || !authState.user) return;

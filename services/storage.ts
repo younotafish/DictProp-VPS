@@ -1,5 +1,6 @@
-import { StoredItem } from '../types';
+import { RevisionCursor, StoredItem } from '../types';
 import { dataUriToBlob } from './dataUri';
+import { getItemContentHash, ITEM_HASH_VERSION, seedItemContentHash } from './itemHash';
 import { log, warn, error as logError } from './logger';
 import { isSameJson } from './sameJson';
 
@@ -11,15 +12,21 @@ const DB_VERSION = 4;
 
 // Builds before per-item records stored each user's library as one array under this key.
 const getSnapshotKey = (userId: string) => `items_${userId}`;
+// The server revision cursor the stored library is current to, kept beside the snapshot key.
+const getCursorKey = (userId: string) => `cursor_${userId}`;
 
 // Fallback storage for iOS Safari private mode
 let inMemoryStorage: Record<string, StoredItem[]> = {};
+const inMemoryCursors: Record<string, RevisionCursor> = {};
 let indexedDBAvailable: boolean | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 // The object last written for each item. Items are replaced rather than mutated when they change, so
 // an identity check finds the changed items without serializing the whole library.
 const persistedItems = new Map<string, Map<string, StoredItem>>();
+
+// Items loaded from records written before records carried their hash; storeMissingItemHashes adds it.
+const unhashedItems = new Map<string, StoredItem[]>();
 
 const rememberPersisted = (userId: string, items: readonly StoredItem[]): void => {
   let persisted = persistedItems.get(userId);
@@ -28,6 +35,34 @@ const rememberPersisted = (userId: string, items: readonly StoredItem[]): void =
 };
 
 const isValidItem = (value: any): value is StoredItem => !!value?.data?.id && !!value.type;
+
+const isRevisionCursor = (value: any): value is RevisionCursor =>
+  Number.isSafeInteger(value?.revision) && value.revision >= 0 && typeof value.id === 'string';
+
+interface ItemRecord {
+  key: string;
+  userId: string;
+  item: StoredItem;
+  /** Content hash of `item` under hashVersion, so launch doesn't rehash the library. */
+  hash?: string;
+  hashVersion?: number;
+}
+
+const toRecord = (item: StoredItem, userId: string): ItemRecord => ({
+  key: `${userId}:${item.data.id}`,
+  userId,
+  item,
+  hash: getItemContentHash(item),
+  hashVersion: ITEM_HASH_VERSION,
+});
+
+// Record writes run one at a time, so each sees what the writes before it stored.
+let writeQueue: Promise<unknown> = Promise.resolve();
+const queueWrite = <T,>(write: () => Promise<T>): Promise<T> => {
+  const run = writeQueue.then(write, write);
+  writeQueue = run.catch(() => {});
+  return run;
+};
 
 const checkIndexedDBAvailability = async (): Promise<boolean> => {
   if (indexedDBAvailable !== null) return indexedDBAvailable;
@@ -120,10 +155,27 @@ const transactionDone = (tx: IDBTransaction): Promise<void> => new Promise((reso
   tx.onabort = () => reject(tx.error);
 });
 
-const loadItemRecords = async (db: IDBDatabase, userId: string): Promise<StoredItem[]> => {
-  const tx = db.transaction(ITEM_RECORDS_STORE, 'readonly');
-  const records = await requestResult(tx.objectStore(ITEM_RECORDS_STORE).index('userId').getAll(userId));
-  return (records as Array<{ item?: StoredItem }>).map(record => record.item).filter(isValidItem);
+const loadItemRecords = async (
+  db: IDBDatabase,
+  userId: string,
+): Promise<{ items: StoredItem[]; unhashed: StoredItem[]; cursor: RevisionCursor | null }> => {
+  const tx = db.transaction([ITEM_RECORDS_STORE, STORE_NAME], 'readonly');
+  const [records, cursor] = await Promise.all([
+    requestResult(tx.objectStore(ITEM_RECORDS_STORE).index('userId').getAll(userId)),
+    requestResult(tx.objectStore(STORE_NAME).get(getCursorKey(userId))),
+  ]);
+  const items: StoredItem[] = [];
+  const unhashed: StoredItem[] = [];
+  for (const record of records as Array<Partial<ItemRecord>>) {
+    if (!isValidItem(record.item)) continue;
+    items.push(record.item);
+    if (record.hashVersion === ITEM_HASH_VERSION && typeof record.hash === 'string') {
+      seedItemContentHash(record.item, record.hash);
+    } else {
+      unhashed.push(record.item);
+    }
+  }
+  return { items, unhashed, cursor: isRevisionCursor(cursor) ? cursor : null };
 };
 
 const writeItemRecords = async (items: readonly StoredItem[], userId: string): Promise<void> => {
@@ -131,7 +183,7 @@ const writeItemRecords = async (items: readonly StoredItem[], userId: string): P
   const db = await getDB();
   const tx = db.transaction(ITEM_RECORDS_STORE, 'readwrite');
   const records = tx.objectStore(ITEM_RECORDS_STORE);
-  for (const item of items) records.put({ key: `${userId}:${item.data.id}`, userId, item });
+  for (const item of items) records.put(toRecord(item, userId));
   await transactionDone(tx);
 };
 
@@ -169,7 +221,7 @@ const foldLegacyStores = async (db: IDBDatabase, records: StoredItem[], userId: 
   // One transaction: the legacy copies are removed only once the records hold everything they had.
   const tx = db.transaction([ITEM_RECORDS_STORE, STORE_NAME, ITEM_UPDATES_STORE], 'readwrite');
   const recordStore = tx.objectStore(ITEM_RECORDS_STORE);
-  for (const item of folded) recordStore.put({ key: `${userId}:${item.data.id}`, userId, item });
+  for (const item of folded) recordStore.put(toRecord(item, userId));
   tx.objectStore(STORE_NAME).delete(getSnapshotKey(userId));
   const journalStore = tx.objectStore(ITEM_UPDATES_STORE);
   const journalKeys = journalStore.index('userId').getAllKeys(userId);
@@ -179,27 +231,35 @@ const foldLegacyStores = async (db: IDBDatabase, records: StoredItem[], userId: 
   return Array.from(byId.values());
 };
 
-export const loadData = async (userId: string = 'vps'): Promise<StoredItem[]> => {
+/** The stored library, and the server cursor it is current to (null when a full sync is needed). */
+export const loadData = async (
+  userId: string = 'vps',
+): Promise<{ items: StoredItem[]; cursor: RevisionCursor | null }> => {
+  const inMemory = () => ({ items: inMemoryStorage[userId] || [], cursor: inMemoryCursors[userId] ?? null });
   if (!(await checkIndexedDBAvailability())) {
     // The library is far larger than localStorage allows; private mode relies on the server copy.
     warn("IndexedDB not available, using in-memory storage (iOS Safari private mode?)");
-    return inMemoryStorage[userId] || [];
+    return inMemory();
   }
 
   let items: StoredItem[];
+  let unhashed: StoredItem[];
+  let cursor: RevisionCursor | null;
   try {
     const db = await getDB();
     const records = await loadItemRecords(db, userId);
-    items = await foldLegacyStores(db, records, userId).catch(error => {
+    ({ unhashed, cursor } = records);
+    items = await foldLegacyStores(db, records.items, userId).catch(error => {
       warn('Legacy storage fold will retry on the next launch', error);
-      return records;
+      return records.items;
     });
   } catch (error) {
     logError("IDB Load Error", error);
-    return inMemoryStorage[userId] || [];
+    return inMemory();
   }
   persistedItems.set(userId, new Map(items.map(item => [item.data.id, item])));
-  return items;
+  unhashedItems.set(userId, unhashed);
+  return { items, cursor };
 };
 
 /** Persist a small set of changed items immediately. */
@@ -214,27 +274,83 @@ export const saveItemUpdates = async (
     inMemoryStorage[userId] = Array.from(byId.values());
     return;
   }
-  await writeItemRecords(items, userId);
-  rememberPersisted(userId, items);
+  await queueWrite(async () => {
+    await writeItemRecords(items, userId);
+    rememberPersisted(userId, items);
+  });
 };
 
-/** Persist the library, writing only the items replaced since they were last written. */
-export const saveData = async (items: StoredItem[], userId: string = 'vps'): Promise<void> => {
+/**
+ * Persist the library, writing only the items replaced since they were last written. A cursor is
+ * stored in the same transaction, so the stored library is never behind the cursor it claims.
+ */
+export const saveData = async (
+  items: StoredItem[],
+  userId: string = 'vps',
+  cursor?: RevisionCursor,
+): Promise<void> => {
   const idbAvailable = await checkIndexedDBAvailability();
   if (!idbAvailable) {
     inMemoryStorage[userId] = items;
+    if (cursor) inMemoryCursors[userId] = cursor;
     return;
   }
-  
+
   try {
-    const persisted = persistedItems.get(userId);
-    const changed = persisted ? items.filter(item => persisted.get(item.data.id) !== item) : items;
-    if (changed.length === 0) return;
-    await writeItemRecords(changed, userId);
-    rememberPersisted(userId, changed);
+    await queueWrite(async () => {
+      const persisted = persistedItems.get(userId);
+      const changed = persisted ? items.filter(item => persisted.get(item.data.id) !== item) : items;
+      if (changed.length === 0 && !cursor) return;
+      const db = await getDB();
+      const tx = db.transaction(cursor ? [ITEM_RECORDS_STORE, STORE_NAME] : ITEM_RECORDS_STORE, 'readwrite');
+      const records = tx.objectStore(ITEM_RECORDS_STORE);
+      for (const item of changed) records.put(toRecord(item, userId));
+      if (cursor) tx.objectStore(STORE_NAME).put(cursor, getCursorKey(userId));
+      await transactionDone(tx);
+      rememberPersisted(userId, changed);
+    });
   } catch (error) {
     logError("IDB Save Error", error);
     inMemoryStorage[userId] = items;
+  }
+};
+
+/** Removes items from local storage, such as tombstones past their retention. */
+export const deleteItemRecords = async (ids: readonly string[], userId: string = 'vps'): Promise<void> => {
+  if (ids.length === 0) return;
+  if (!(await checkIndexedDBAvailability())) {
+    const removed = new Set(ids);
+    inMemoryStorage[userId] = (inMemoryStorage[userId] || []).filter(item => !removed.has(item.data.id));
+    return;
+  }
+  await queueWrite(async () => {
+    const db = await getDB();
+    const tx = db.transaction(ITEM_RECORDS_STORE, 'readwrite');
+    const records = tx.objectStore(ITEM_RECORDS_STORE);
+    for (const id of ids) records.delete(`${userId}:${id}`);
+    await transactionDone(tx);
+    const persisted = persistedItems.get(userId);
+    for (const id of ids) persisted?.delete(id);
+  });
+};
+
+/**
+ * Adds the content hash to records loaded without one, a chunk at a time between other work, so
+ * later launches seed hashes instead of rehashing the whole library.
+ */
+export const storeMissingItemHashes = async (userId: string = 'vps'): Promise<void> => {
+  const pending = unhashedItems.get(userId) ?? [];
+  unhashedItems.delete(userId);
+  if (pending.length === 0 || !(await checkIndexedDBAvailability())) return;
+  const CHUNK = 200;
+  for (let start = 0; start < pending.length; start += CHUNK) {
+    await queueWrite(async () => {
+      // An item replaced since launch was written with its hash already.
+      const persisted = persistedItems.get(userId);
+      const current = pending.slice(start, start + CHUNK).filter(item => persisted?.get(item.data.id) === item);
+      await writeItemRecords(current, userId);
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
 };
 

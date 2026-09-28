@@ -202,6 +202,12 @@ export interface StoredItem {
   serverRevision?: number; // Server-issued monotonic content revision for conflict ordering
 }
 
+/** Position in the server's (revision, id) change order; a pull resumes after it. */
+export interface RevisionCursor {
+  revision: number;
+  id: string;
+}
+
 export type ReviewRating = 'again' | 'hard' | 'good' | 'easy';
 export type ReviewTaskType = 'meaning' | 'production' | 'cloze' | 'listening' | 'quick';
 

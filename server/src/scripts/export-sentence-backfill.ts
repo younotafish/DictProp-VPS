@@ -8,7 +8,7 @@ import type { SentenceExportRecord } from '../sentence-backfill.js';
 const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
 if (!owner) throw new Error('Owner account not found');
 
-const sentences: SentenceExportRecord[] = getAllItems(true, owner.id)
+const sentences: SentenceExportRecord[] = getAllItems(owner.id)
   .filter(item => item.type === 'sentence' && !item.isDeleted)
   .map(item => {
     const data = item.data as any;

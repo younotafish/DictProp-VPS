@@ -15,7 +15,7 @@ const users = listAllUsers();
 const owner = users.find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
 if (!owner) throw new Error('Owner account not found');
 
-const allItems = getAllItems(true, owner.id) as any[];
+const allItems = getAllItems(owner.id) as any[];
 const liveItems = allItems.filter(item => !item.isDeleted);
 const sample = (values: string[], limit = 100) => values.slice(0, limit);
 const normalize = (value: unknown) => String(value || '').toLowerCase().trim().replace(/\s+/g, ' ');

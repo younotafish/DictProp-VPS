@@ -7,7 +7,7 @@ import test from 'node:test';
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-db-test-'));
 
-const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
+const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, touchItemRevisions, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const makeItem = (
@@ -323,11 +323,47 @@ test('revision cursor returns every row when revisions are tied', () => {
   const revision = 999_999;
   db.prepare(`UPDATE items SET revision = ? WHERE user_id = ?`).run(revision, 'cursor-user');
 
-  const first = getItemsAfterRevision({ revision: 0, id: '' }, 1, true, 'cursor-user');
-  const second = getItemsAfterRevision(first.cursor, 1, true, 'cursor-user');
+  const first = getItemsAfterRevision({ revision: 0, id: '' }, 1, 'cursor-user');
+  const second = getItemsAfterRevision(first.cursor, 1, 'cursor-user');
   assert.equal(first.items.length, 1);
   assert.equal(second.items.length, 1);
   assert.notEqual(first.items[0].data.id, second.items[0].data.id);
+});
+
+test('revision pages report the newest revision the server has issued', () => {
+  upsertItem(makeItem('head-a', 'a', 1, 0, 0), 'head-user');
+  upsertItem(makeItem('head-b', 'b', 1, 0, 0), 'head-user');
+  const page = getItemsAfterRevision({ revision: 0, id: '' }, 500, 'head-user');
+  const issued = db.prepare(`SELECT value FROM sync_meta WHERE key = 'item_revision'`).get() as { value: number };
+  assert.equal(page.headRevision, issued.value);
+  assert.equal(page.items.length, 2);
+  assert.ok(page.items.every(item => item.serverRevision <= page.headRevision));
+});
+
+test('storing an image bumps the revision of every item that shows it', () => {
+  const userId = 'touch-user';
+  const phrase = (id: string, data: Record<string, unknown>) =>
+    ({ ...makeItem(id, '', 1, 0, 0), type: 'phrase', data: { id, query: id, ...data } });
+  upsertItem(makeItem('touch-card', 'card', 1, 0, 0), userId);
+  upsertItem(makeItem('touch-other', 'other', 1, 0, 0), userId);
+  upsertItem(phrase('touch-phrase', { vocabs: [{ id: 'touch-vocab', word: 'vocab' }] }), userId);
+  // Names the id outside its vocabs, so it passes the text prefilter but shows no such image.
+  upsertItem(phrase('touch-decoy', { vocabs: [], terms: [{ id: 'touch-vocab' }] }), userId);
+  const revisionOf = (id: string) =>
+    (db.prepare('SELECT revision FROM items WHERE id = ? AND user_id = ?').get(id, userId) as { revision: number }).revision;
+  const ids = ['touch-card', 'touch-other', 'touch-phrase', 'touch-decoy'];
+  const before = new Map(ids.map(id => [id, revisionOf(id)]));
+
+  touchItemRevisions(['touch-card', 'touch-vocab'], userId);
+  assert.ok(revisionOf('touch-card') > before.get('touch-card')!);
+  assert.ok(revisionOf('touch-phrase') > before.get('touch-phrase')!);
+  assert.equal(revisionOf('touch-other'), before.get('touch-other'));
+  assert.equal(revisionOf('touch-decoy'), before.get('touch-decoy'));
+  // Another user's copy of the id is untouched.
+  upsertItem(makeItem('touch-foreign', 'foreign', 1, 0, 0), 'touch-other-user');
+  const foreign = (db.prepare('SELECT revision FROM items WHERE id = ?').get('touch-foreign') as { revision: number }).revision;
+  touchItemRevisions(['touch-foreign'], userId);
+  assert.equal((db.prepare('SELECT revision FROM items WHERE id = ?').get('touch-foreign') as { revision: number }).revision, foreign);
 });
 
 test('session bearer tokens are hashed at rest and remain revocable', () => {

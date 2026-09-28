@@ -7,7 +7,7 @@ import { hasCompleteSentenceAnalysis } from '../sentence-analysis.js';
 const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
 if (!owner) throw new Error('Owner account not found');
 
-const items: CorpusExportRecord[] = getAllItems(true, owner.id)
+const items: CorpusExportRecord[] = getAllItems(owner.id)
   .filter(item => !item.isDeleted)
   .map(item => ({
     id: item.data.id,

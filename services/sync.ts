@@ -1,7 +1,7 @@
 import { StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 import { warn } from './logger';
-import { getItemContentHash } from './itemHash';
+import { getItemContentHash, isItemDirty } from './itemHash';
 import { isSameJson } from './sameJson';
 import type { SaveItemsResult } from './api';
 
@@ -42,8 +42,12 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const remoteRevision = remoteItem.serverRevision ?? 0;
       const revisionsDecide = localRevision !== remoteRevision;
       const localWinsRevision = localRevision > remoteRevision;
-      
-      if (remoteItem.isDeleted && !localItem.isDeleted) {
+      // A newer revision whose content is what this device last synced (an image upload bumps the
+      // revision, for one) doesn't conflict with unsynced local edits: rebase them onto it.
+      const rebasesLocalEdits = revisionsDecide && !localWinsRevision && isItemDirty(localItem) &&
+        getItemContentHash(remoteItem) === localItem.lastSyncedHash;
+
+      if (remoteItem.isDeleted && !localItem.isDeleted && !rebasesLocalEdits) {
            const remoteTime = remoteItem.updatedAt || 0;
            const localTime = localItem.updatedAt || 0;
            // Deletion wins if remote is newer OR within grace period
@@ -57,7 +61,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
            warn(`⚠️ Deletion conflict: Remote deleted at ${remoteTime}, but local updated at ${localTime}. Keeping local update.`);
       }
       
-      if (localItem.isDeleted && !remoteItem.isDeleted) {
+      if (localItem.isDeleted && !remoteItem.isDeleted && !rebasesLocalEdits) {
            const remoteTime = remoteItem.updatedAt || 0;
            const localTime = localItem.updatedAt || 0;
            // Deletion wins if local is newer OR within grace period
@@ -114,7 +118,7 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
 
       // Equal revisions share a base, so the local copy holds any unsynced edits on top of it.
       // Timestamps decide only for items that never received a revision.
-      if (revisionsDecide ? localWinsRevision : (localRevision > 0 || localTime > remoteTime)) {
+      if (rebasesLocalEdits || (revisionsDecide ? localWinsRevision : (localRevision > 0 || localTime > remoteTime))) {
           // Only use local data if it has full content, OR remote also lacks content
           if (localHasContent || !remoteHasContent) {
               mergedItem.data = clone(localItem.data);
@@ -122,8 +126,9 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
           // else: local is stripped cache data but remote has full content — keep remote data
           mergedItem.updatedAt = localTime;
           mergedItem.savedAt = localItem.savedAt;
+          mergedItem.isDeleted = localItem.isDeleted;
           mergedItem.isArchived = localItem.isArchived;
-          mergedItem.serverRevision = localItem.serverRevision;
+          mergedItem.serverRevision = rebasesLocalEdits ? remoteItem.serverRevision : localItem.serverRevision;
       }
 
       // B. SRS MERGE (Learning Progress)
@@ -237,6 +242,25 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
   });
 
   return Array.from(map.values());
+};
+
+const TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Drops deletions older than the retention period, which every device has long since pulled. Unsynced
+ * deletions stay until pushed. Returns the same array when nothing expired.
+ */
+export const dropExpiredTombstones = (
+  items: StoredItem[],
+  now = Date.now(),
+): { items: StoredItem[]; droppedIds: string[] } => {
+  const droppedIds: string[] = [];
+  const kept = items.filter(item => {
+    if (!item.isDeleted || now - (item.updatedAt || 0) <= TOMBSTONE_RETENTION_MS || isItemDirty(item)) return true;
+    droppedIds.push(item.data.id);
+    return false;
+  });
+  return { items: droppedIds.length > 0 ? kept : items, droppedIds };
 };
 
 /**

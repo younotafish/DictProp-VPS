@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getItemContentHash, isItemDirty } from '../../services/itemHash.ts';
-import { applyServerSave, mergeDatasets, trackServerContent } from '../../services/sync.ts';
+import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../../services/sync.ts';
 import type { StoredItem, VocabCard } from '../../types.ts';
 
 function vocab(id: string, imageUrl?: string): VocabCard {
@@ -163,6 +163,58 @@ test('equal revisions keep unsynced local edits over the server echo', () => {
   (remote.data as any).translation = 'echo of the push';
   const merged = mergeDatasets([local], [remote])[0];
   assert.equal((merged.data as any).translation, 'edited after the push');
+});
+
+test('a revision bump that kept the synced content rebases unsynced local edits', () => {
+  const synced = { ...phrase([vocab('alpha', 'idb:stored')], 1), serverRevision: 4 };
+  const local: StoredItem = {
+    ...synced,
+    updatedAt: 2,
+    data: { ...synced.data, translation: 'unsynced edit' },
+    lastSyncedHash: getItemContentHash(synced),
+  };
+  // An image upload bumped the revision and versioned the marker, but the content is as synced.
+  const bumped: StoredItem = {
+    ...structuredClone(synced),
+    serverRevision: 9,
+    data: { ...structuredClone(synced.data), vocabs: [vocab('alpha', 'server:has_image:aaaaaaaaaaaaaaaaaaaa')] },
+  };
+  const merged = mergeDatasets([local], [bumped])[0];
+  assert.equal((merged.data as any).translation, 'unsynced edit');
+  assert.equal((merged.data as any).vocabs[0].imageUrl, 'server:has_image:aaaaaaaaaaaaaaaaaaaa');
+  assert.equal(merged.serverRevision, 9);
+  assert.equal(isItemDirty(merged), true);
+
+  // Content this device never synced still wins by revision.
+  const edited: StoredItem = { ...bumped, data: { ...bumped.data, translation: 'server edit' } };
+  assert.equal((mergeDatasets([local], [edited])[0].data as any).translation, 'server edit');
+});
+
+test('an unsynced deletion survives a revision bump that kept the synced content', () => {
+  const synced = { ...phrase([], 1), serverRevision: 4 };
+  const deleted: StoredItem = { ...synced, isDeleted: true, updatedAt: 2, lastSyncedHash: getItemContentHash(synced) };
+  const merged = mergeDatasets([deleted], [{ ...structuredClone(synced), serverRevision: 9 }])[0];
+  assert.equal(merged.isDeleted, true);
+  assert.equal(merged.serverRevision, 9);
+});
+
+test('expired tombstones drop unless their deletion is unsynced', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const now = 100 * day;
+  const tombstone = (id: string, updatedAt: number, synced: boolean): StoredItem => {
+    const item: StoredItem = { ...phrase([], updatedAt), data: { ...phrase([], 1).data, id }, isDeleted: true };
+    return synced ? { ...item, lastSyncedHash: getItemContentHash(item) } : item;
+  };
+  const live = phrase([], 1);
+  const recent = tombstone('recent', now - day, true);
+  const { items, droppedIds } = dropExpiredTombstones([
+    live, recent, tombstone('expired', now - 31 * day, true), tombstone('unsynced', now - 31 * day, false),
+  ], now);
+  assert.deepEqual(droppedIds, ['expired']);
+  assert.deepEqual(items.map(item => item.data.id), ['phrase', 'recent', 'unsynced']);
+
+  const unexpired = [live, recent];
+  assert.equal(dropExpiredTombstones(unexpired, now).items, unexpired);
 });
 
 test('a merge that changes nothing returns the local object', () => {

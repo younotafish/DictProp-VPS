@@ -310,7 +310,8 @@ const imageStmts = {
     FROM item_images i LEFT JOIN image_blobs b ON b.content_hash = i.content_hash
     WHERE i.id = ? AND i.user_id = ?`),
   manifest: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
-  allIdsForUser: db.prepare(`SELECT id, content_hash, updated_at FROM item_images WHERE user_id = ?`),
+  versionsForIds: db.prepare(`SELECT id, content_hash, updated_at FROM item_images
+    WHERE user_id = ? AND id IN (SELECT value FROM json_each(?))`),
   owner: db.prepare(`SELECT user_id, content_hash FROM item_images WHERE id = ?`),
   deleteUnreferencedBlob: db.prepare(`DELETE FROM image_blobs
     WHERE content_hash = ? AND NOT EXISTS (
@@ -365,8 +366,6 @@ const sentenceEnrichmentStmts = {
     WHERE excluded.generated_at >= sentence_enrichments.generated_at
   `),
 };
-const imageVersionCache = new Map<string, { expiresAt: number; versions: Map<string, string> }>();
-
 function parseImageDataUri(dataUri: string): { data: Buffer; mimeType: string } | null {
   const match = dataUri.match(/^data:(image\/(?:avif|gif|jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
   if (!match) return null;
@@ -389,7 +388,6 @@ function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeT
   if (reference.changes > 0 && owner?.content_hash && owner.content_hash !== contentHash) {
     imageStmts.deleteUnreferencedBlob.run(owner.content_hash);
   }
-  if (reference.changes > 0 && userId) imageVersionCache.delete(userId);
   return reference.changes > 0;
 }
 
@@ -566,7 +564,6 @@ function linkSentenceEnrichmentImage(
     mime_type: mimeType,
     content_hash: contentHash,
   });
-  if (reference.changes > 0) imageVersionCache.delete(userId);
   return reference.changes > 0;
 }
 
@@ -726,30 +723,7 @@ export interface UserRow {
   created_at: number;
 }
 
-function rowToItem(row: ItemRow, stripImages = false, imageVersions?: Map<string, string>) {
-  const data = JSON.parse(row.data);
-  if (stripImages) {
-    // An image exists if it's in item_images (post-migration) OR still inline (transition).
-    // Include a content version so clients can invalidate an older IndexedDB image after replacement.
-    const markerFor = (id: string, url: any): string | null => {
-      const version = imageVersions?.get(id);
-      if (version) return `server:has_image:${version}`;
-      return typeof url === 'string' && url.startsWith('data:image/') ? 'server:has_image:inline' : null;
-    };
-    const topMarker = markerFor(data.id, data.imageUrl);
-    if (topMarker) {
-      data.imageUrl = topMarker;
-    }
-    if (Array.isArray(data.vocabs)) {
-      data.vocabs = data.vocabs.map((v: any) => {
-        const marker = markerFor(v.id, v.imageUrl);
-        if (marker) {
-          return { ...v, imageUrl: marker };
-        }
-        return v;
-      });
-    }
-  }
+function rowToItem(row: ItemRow, data: any = JSON.parse(row.data)) {
   return {
     type: row.type,
     data,
@@ -764,62 +738,54 @@ function rowToItem(row: ItemRow, stripImages = false, imageVersions?: Map<string
 
 // ─── Item CRUD (all scoped by userId) ───
 
-/** Image ids and compact content versions used in stripped response markers. */
-function getImageVersionMap(userId: string): Map<string, string> {
-  const cached = imageVersionCache.get(userId);
-  if (cached && cached.expiresAt > Date.now()) return cached.versions;
-  const rows = imageStmts.allIdsForUser.all(userId) as Array<{
-    id: string;
-    content_hash: string | null;
-    updated_at: number;
-  }>;
-  const versions = new Map(rows.map(row => [
-    row.id,
-    (row.content_hash || `legacy-${row.updated_at}`).slice(0, 20),
-  ]));
-  imageVersionCache.set(userId, { expiresAt: Date.now() + 60_000, versions });
-  return versions;
-}
-
-/** Inject base64 from item_images back into already-parsed items (the ?images=true path). */
-function rehydrateImages(items: any[], userId: string) {
-  const rows = db.prepare(`SELECT i.id, COALESCE(b.data, i.data) AS data, i.mime_type
-    FROM item_images i LEFT JOIN image_blobs b ON b.content_hash = i.content_hash WHERE i.user_id = ?`)
-    .all(userId) as Array<{ id: string; data: Buffer | string; mime_type: string | null }>;
-  if (rows.length === 0) return;
-  const map = new Map(rows.map(r => [r.id, storedImageToDataUri(r)]));
-  for (const item of items) {
-    const d = item.data as any;
-    const top = map.get(d.id);
-    if (top) d.imageUrl = top;
-    if (Array.isArray(d.vocabs)) {
-      for (const v of d.vocabs) {
-        const vi = map.get(v.id);
-        if (vi) v.imageUrl = vi;
-      }
+/**
+ * Rows → StoredItem JSON without image bytes. An image in item_images (post-migration) or still
+ * inline (transition) becomes a marker with a content version, so clients can invalidate an older
+ * IndexedDB copy after a replacement. One indexed lookup covers every image on the page.
+ */
+function rowsToItems(rows: ItemRow[], userId: string) {
+  const parsed = rows.map(row => ({ row, data: JSON.parse(row.data) }));
+  const imageIds = parsed.flatMap(({ data }) => [
+    data.id,
+    ...(Array.isArray(data.vocabs) ? data.vocabs.map((vocab: any) => vocab?.id) : []),
+  ]).filter((id): id is string => typeof id === 'string');
+  const versions = new Map<string, string>();
+  if (imageIds.length > 0) {
+    const images = imageStmts.versionsForIds.all(userId, JSON.stringify(imageIds)) as Array<{
+      id: string;
+      content_hash: string | null;
+      updated_at: number;
+    }>;
+    for (const image of images) {
+      versions.set(image.id, (image.content_hash || `legacy-${image.updated_at}`).slice(0, 20));
     }
   }
+  const markerFor = (id: unknown, url: unknown): string | null => {
+    const version = typeof id === 'string' ? versions.get(id) : undefined;
+    if (version) return `server:has_image:${version}`;
+    return typeof url === 'string' && url.startsWith('data:image/') ? 'server:has_image:inline' : null;
+  };
+  return parsed.map(({ row, data }) => {
+    const topMarker = markerFor(data.id, data.imageUrl);
+    if (topMarker) data.imageUrl = topMarker;
+    if (Array.isArray(data.vocabs)) {
+      data.vocabs = data.vocabs.map((vocab: any) => {
+        const marker = markerFor(vocab?.id, vocab?.imageUrl);
+        return marker ? { ...vocab, imageUrl: marker } : vocab;
+      });
+    }
+    return rowToItem(row, data);
+  });
 }
 
-export function getAllItems(stripImages = false, userId: string) {
-  if (!stripImages) {
-    // Full load (?images=true) — rehydrate base64 from item_images back into the data.
-    const items = (stmts.getAll.all(userId) as ItemRow[]).map(r => rowToItem(r, false));
-    rehydrateImages(items, userId);
-    return items;
-  }
-  // Stripped list path: images live in item_images, so items.data is now tiny.
-  // One cheap id-only query tells us which items/vocabs to mark as having an image.
-  const imageVersions = getImageVersionMap(userId);
-  const CHUNK = 200;
+export function getAllItems(userId: string) {
+  const CHUNK = 500;
   const items: any[] = [];
   let lastRowId = 0;
   for (;;) {
     const rows = stmts.getAllChunk.all(userId, lastRowId, CHUNK) as Array<ItemRow & { _rowid: number }>;
     if (rows.length === 0) break;
-    for (const row of rows) {
-      items.push(rowToItem(row, true, imageVersions));
-    }
+    for (const item of rowsToItems(rows, userId)) items.push(item);
     lastRowId = rows[rows.length - 1]._rowid;
   }
   return items;
@@ -844,14 +810,8 @@ export function getAllSentenceTexts(): string[] {
   return [...texts];
 }
 
-export function getItemsSince(since: number, stripImages = false, userId: string) {
-  const imageVersions = stripImages ? getImageVersionMap(userId) : undefined;
-  const items: any[] = [];
-  for (const row of stmts.getSince.iterate(userId, since, since) as Iterable<ItemRow>) {
-    items.push(rowToItem(row, stripImages, imageVersions));
-  }
-  if (!stripImages) rehydrateImages(items, userId);
-  return items;
+export function getItemsSince(since: number, userId: string) {
+  return rowsToItems(stmts.getSince.all(userId, since, since) as ItemRow[], userId);
 }
 
 export interface RevisionCursor {
@@ -859,12 +819,17 @@ export interface RevisionCursor {
   id: string;
 }
 
+const currentRevision = db.prepare(`SELECT value FROM sync_meta WHERE key = 'item_revision'`);
+
+/**
+ * One page of the user's items in revision order after the cursor. headRevision is the newest revision
+ * the server has issued, so a cursor past it came from a database that has since been replaced.
+ */
 export function getItemsAfterRevision(
   cursor: RevisionCursor,
   limit: number,
-  stripImages: boolean,
   userId: string,
-): { items: any[]; cursor: RevisionCursor; hasMore: boolean } {
+): { items: any[]; cursor: RevisionCursor; hasMore: boolean; headRevision: number } {
   const cappedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
   const rows = stmts.getAfterRevision.all(
     userId,
@@ -875,14 +840,12 @@ export function getItemsAfterRevision(
   ) as ItemRow[];
   const hasMore = rows.length > cappedLimit;
   const page = hasMore ? rows.slice(0, cappedLimit) : rows;
-  const imageVersions = stripImages ? getImageVersionMap(userId) : undefined;
-  const items = page.map(row => rowToItem(row, stripImages, imageVersions));
-  if (!stripImages) rehydrateImages(items, userId);
   const last = page[page.length - 1];
   return {
-    items,
+    items: rowsToItems(page, userId),
     cursor: last ? { revision: last.revision, id: last.id } : cursor,
     hasMore,
+    headRevision: (currentRevision.get() as { value: number } | undefined)?.value ?? 0,
   };
 }
 
@@ -1228,7 +1191,7 @@ export function softDeleteItem(id: string, userId: string) {
 export function getItemById(id: string, userId: string, includeImages = true) {
   const row = stmts.getByIdScoped.get(id, userId) as ItemRow | undefined;
   if (!row) return null;
-  if (!includeImages) return rowToItem(row, true, getImageVersionMap(userId));
+  if (!includeImages) return rowsToItems([row], userId)[0];
   const item = rowToItem(row);
   // Re-inject base64 from item_images for this single item.
   const d = item.data as any;
@@ -1324,6 +1287,31 @@ export const upsertItemImages = db.transaction((images: Array<{ id: string; data
   return count;
 });
 
+const touchStmts = {
+  exists: db.prepare(`SELECT 1 FROM items WHERE id = ? AND user_id = ?`),
+  phrasesMentioning: db.prepare(`SELECT id, data FROM items WHERE user_id = ? AND type = 'phrase' AND data LIKE ?`),
+  bump: db.prepare(`UPDATE items SET revision = ? WHERE id = ? AND user_id = ?`),
+};
+
+/**
+ * Image bytes live outside item rows, so storing one changes no revision. Bump every item that shows
+ * one of these images, itself or as a phrase vocab, so revision-delta clients pick up its new marker.
+ */
+export const touchItemRevisions = db.transaction((imageIds: readonly string[], userId: string): void => {
+  const owners = new Set<string>();
+  for (const imageId of new Set(imageIds)) {
+    if (touchStmts.exists.get(imageId, userId)) owners.add(imageId);
+    const phrases = touchStmts.phrasesMentioning.all(userId, `%"id":"${imageId}"%`) as Array<{ id: string; data: string }>;
+    for (const phrase of phrases) {
+      try {
+        const vocabs = JSON.parse(phrase.data).vocabs;
+        if (Array.isArray(vocabs) && vocabs.some((vocab: any) => vocab?.id === imageId)) owners.add(phrase.id);
+      } catch { /* an unparseable row shows no images */ }
+    }
+  }
+  for (const id of owners) touchStmts.bump.run((nextRevision.get() as { value: number }).value, id, userId);
+});
+
 // ─── User CRUD ───
 
 export function findUserByGoogleId(googleId: string): UserRow | null {
@@ -1355,7 +1343,6 @@ export const createUserAndClaimItems = db.transaction((opts: {
   if (isFirstUser) {
     stmts.assignOrphanItems.run(user.id);
     imageStmts.assignOrphan.run(user.id);
-    imageVersionCache.delete(user.id);
   }
   return user;
 });

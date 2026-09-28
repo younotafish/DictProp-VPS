@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
+import { getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
@@ -138,7 +138,7 @@ function streamAllItems(c: Context<ItemsEnv>, userId: string) {
     let pageCount = 0;
     await output.write('[');
     for (;;) {
-      const page = getItemsAfterRevision(cursor, 200, true, userId);
+      const page = getItemsAfterRevision(cursor, 200, userId);
       if (page.items.length > 0) {
         const body = JSON.stringify(page.items).slice(1, -1);
         if (body) {
@@ -173,13 +173,13 @@ itemsRoutes.get('/items', (c) => {
         !Number.isSafeInteger(limit) || limit < 1) {
       return c.json({ error: 'Invalid revision cursor' }, 400);
     }
-    return c.json(getItemsAfterRevision({ revision, id: afterId }, limit, true, userId));
+    return c.json(getItemsAfterRevision({ revision, id: afterId }, limit, userId));
   }
   const since = c.req.query('since');
   if (since) {
     const ts = parseInt(since, 10);
     if (isNaN(ts)) return c.json({ error: 'Invalid since parameter' }, 400);
-    return c.json(getItemsSince(ts, true, userId));
+    return c.json(getItemsSince(ts, userId));
   }
   // Keep the legacy array response contract, but serialize bounded pages into a stream. A large
   // regenerated corpus must not monopolize the single Node event loop during JSON conversion.
@@ -249,6 +249,7 @@ itemsRoutes.put('/items/images', async (c) => {
   }
   if (images.length === 0) return c.json({ error: 'No valid images' }, 400);
   const saved = upsertItemImages(images, userId);
+  if (saved > 0) touchItemRevisions(images.map(image => image.id), userId);
   return c.json({ ok: true, saved });
 });
 
@@ -266,9 +267,11 @@ itemsRoutes.put('/items/:id/image', async (c) => {
   if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
     return c.json({ error: 'Invalid image size' }, 413);
   }
-  if (!upsertItemImageBinary(c.req.param('id'), bytes, mimeType, userId)) {
+  const id = c.req.param('id');
+  if (!upsertItemImageBinary(id, bytes, mimeType, userId)) {
     return c.json({ error: 'Image could not be stored' }, 400);
   }
+  touchItemRevisions([id], userId);
   return c.json({ ok: true });
 });
 

@@ -19,7 +19,7 @@ const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMA
 if (!owner) throw new Error('Owner account not found');
 
 const bundleRoot = dirname(resolvedManifest);
-const parentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
+const parentById = new Map(getAllItems(owner.id).map(item => [item.data.id, item]));
 const touchedParentIds = new Set<string>();
 const result = { total: bundle.entries.length, replaced: 0, skipped: 0, errors: [] as Array<{ id: string; error: string }> };
 

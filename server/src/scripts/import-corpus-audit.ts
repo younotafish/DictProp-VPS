@@ -30,7 +30,7 @@ const result = {
 const pending: any[] = [];
 const archivedById = new Set<string>();
 const unarchivedById = new Set<string>();
-const currentById = new Map(getAllItems(true, owner.id).map(item => [item.data.id, item]));
+const currentById = new Map(getAllItems(owner.id).map(item => [item.data.id, item]));
 const finiteNonNegative = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
 for (const entry of bundle.entries) {
