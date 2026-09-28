@@ -161,6 +161,48 @@ const GrammarNotes = React.memo(function GrammarNotes({ markdown }: { markdown: 
   return <ReactMarkdown components={grammarMarkdownComponents}>{markdown}</ReactMarkdown>;
 });
 
+/** The header's library-wide counts. They scan the whole library, so the header renders them only while
+ *  it's open, rather than on every card change and review. */
+const LibraryCounts = React.memo(function LibraryCounts({ savedItems }: { savedItems: StoredItem[] }) {
+  const { memorizedCount, dueToday } = useMemo(() => {
+    const activeItems = savedItems.filter(i => !i.isDeleted && !i.isArchived);
+    const memorized = activeItems.filter(i => (i.srs?.memoryStrength ?? 0) >= 70).length;
+    const dueSpellings = new Set<string>();
+    const now = Date.now();
+    activeItems.forEach(i => {
+      if ((i.srs?.nextReview ?? 0) <= now) {
+        const spelling = (i.type === 'phrase' ? (i.data as any).query : (i.data as any).word || '').toLowerCase().trim();
+        if (spelling) dueSpellings.add(spelling);
+      }
+    });
+    return { memorizedCount: memorized, dueToday: dueSpellings.size };
+  }, [savedItems]);
+  return (
+    <>
+      <span className="text-slate-300">•</span>
+      <span className="text-emerald-600 flex items-center gap-0.5">
+        <CheckCircle2 size={12} />
+        {memorizedCount}
+      </span>
+      <span className="text-slate-300">•</span>
+      <span className="text-amber-600 flex items-center gap-0.5">
+        <Clock size={12} />
+        {dueToday}
+      </span>
+    </>
+  );
+});
+
+/** A phrase's key-vocabulary card. Its save toggle is bound to the word here, so the memoized card isn't
+ *  handed a new function, and rendered again, every time the detail view renders. */
+function PhraseVocabCard({ vocab, onSaveVocab, ...cardProps }: Omit<React.ComponentProps<typeof VocabCardDisplay>, 'data' | 'onSave'> & {
+  vocab: VocabCard;
+  onSaveVocab: (vocab: VocabCard) => void;
+}) {
+  const onSave = useCallback(() => onSaveVocab(vocab), [onSaveVocab, vocab]);
+  return <VocabCardDisplay {...cardProps} data={vocab} onSave={onSave} />;
+}
+
 interface DetailViewProps {
   groups?: ItemGroup[];
   initialGroupIndex?: number;
@@ -363,7 +405,9 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }
   
   // Reset item index and scroll when user navigates to a different group (not on groups rebuild). Every
-  // way of moving between words lands here, and the layout effect paints the new one from its top.
+  // way of moving between words lands here, and the layout effect paints the new one from its top. The
+  // resets are skipped when already in place: setting a state to its current value right after a render
+  // still runs this whole component again.
   const prevGroupIndexRef = useRef(currentGroupIndex);
   useLayoutEffect(() => {
     if (prevGroupIndexRef.current !== currentGroupIndex) {
@@ -374,21 +418,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (sentenceItems?.length) {
         const analysisScroller = document.querySelector<HTMLElement>('[data-sentence-analysis]');
         if (analysisScroller) analysisScroller.scrollTop = 0;
-      } else {
+      } else if (sentencePage !== 'sentence') {
         setSentencePage('sentence');
       }
-      setCurrentItemIndex(0);
+      if (currentItemIndex !== 0) setCurrentItemIndex(0);
     }
-  }, [currentGroupIndex, sentenceItems]);
+  }, [currentGroupIndex, sentenceItems, sentencePage, currentItemIndex]);
 
-  if (!currentItem) {
-    return null;
-  }
-  
-  const data = currentItem.data;
-  const type = currentItem.type;
-
-  const openExampleSentencePreview = (text: string, word: string, sense?: string) => {
+  // These handlers go to the memoized word cards, so they keep one identity across renders and a card
+  // renders again only when something it shows changes.
+  const openExampleSentencePreview = useCallback((text: string, word: string, sense?: string) => {
     if (!onOpenExampleSentence) return;
     const requestId = ++exampleSentenceRequestRef.current;
     const previewId = `sentence-preview:${crypto.randomUUID()}`;
@@ -441,7 +480,38 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }).catch(error => {
       logError('Failed to open prepared example sentence:', error);
     });
-  };
+  }, [onOpenExampleSentence]);
+
+  const handleSaveVocab = useCallback((vocab: VocabCard) => {
+    const vocabSpelling = (vocab.word || '').toLowerCase().trim();
+    const items = savedItemsRef.current;
+    const isAlreadySaved = items.some(i =>
+      getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
+    );
+
+    if (isAlreadySaved) {
+      const existingItem = items.find(i =>
+        getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
+      );
+      if (existingItem) {
+        onDelete(existingItem.data.id);
+      }
+    } else {
+      onSave({
+        data: vocab,
+        type: 'vocab',
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
+      });
+    }
+  }, [onDelete, onSave]);
+
+  if (!currentItem) {
+    return null;
+  }
+  
+  const data = currentItem.data;
+  const type = currentItem.type;
 
   const savedPreviewSentence = exampleSentencePreview
     ? [savedSentenceIndex.byId.get(exampleSentencePreview.sentence.data.id)]
@@ -1194,21 +1264,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   );
   const isSaved = !!savedItemMatch;
 
-  // Calculate global stats for saved items (memoized to avoid O(n) scans on every render)
-  const { memorizedCount, dueToday } = useMemo(() => {
-    const activeItems = savedItems.filter(i => !i.isDeleted && !i.isArchived);
-    const memorized = activeItems.filter(i => (i.srs?.memoryStrength ?? 0) >= 70).length;
-    const dueSpellings = new Set<string>();
-    const now = Date.now();
-    activeItems.forEach(i => {
-      if ((i.srs?.nextReview ?? 0) <= now) {
-        const spelling = (i.type === 'phrase' ? (i.data as any).query : (i.data as any).word || '').toLowerCase().trim();
-        if (spelling) dueSpellings.add(spelling);
-      }
-    });
-    return { memorizedCount: memorized, dueToday: dueSpellings.size };
-  }, [savedItems]);
-  
   // Get mastery info for current item
   const mastery = savedItemMatch?.srs ? SRSAlgorithm.getMasteryLevel(savedItemMatch.srs) : null;
   const masteryColors = mastery ? getMasteryColors(mastery.color) : null;
@@ -1313,7 +1368,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
   // Counts displays of the current group during auto-play. Single-meaning words
   // need a second display to satisfy "play each word at least twice".
   const [groupPlayCount, setGroupPlayCount] = useState(1);
-  useEffect(() => { setGroupPlayCount(1); }, [currentGroupIndex, isAutoPlaying]);
+  // Reads the count from the render that moved, and resets it only when needed (see the group reset above).
+  useEffect(() => { if (groupPlayCount !== 1) setGroupPlayCount(1); }, [currentGroupIndex, isAutoPlaying]);
 
   useEffect(() => {
     if (!isAutoPlaying || !groups) return;
@@ -1884,10 +1940,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     enabled: !detailInteractionLocked && !!(currentGroup && currentGroup.items.length >= 1),
   });
 
-  const handleVocabSearch = (term: string) => {
-    onSearch(term);
-  };
-
   // Mobile sentence words have fixed gestures: one finger uses the normal lookup action rendered by
   // HighlightedSentence; holding a finger anywhere and touching a word with another plays from its offset.
   const handleMobileWordTouchStart = (e: React.TouchEvent<HTMLElement>) => {
@@ -1928,30 +1980,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     e.preventDefault();
     e.stopPropagation();
     void playFromWordOffset(offset);
-  };
-
-  const handleSaveVocab = (vocab: VocabCard) => {
-    const vocabSpelling = (vocab.word || '').toLowerCase().trim();
-    const items = savedItemsRef.current;
-    const isAlreadySaved = items.some(i =>
-      getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
-    );
-
-    if (isAlreadySaved) {
-      const existingItem = items.find(i =>
-        getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
-      );
-      if (existingItem) {
-        onDelete(existingItem.data.id);
-      }
-    } else {
-      onSave({
-        data: vocab,
-        type: 'vocab',
-        savedAt: Date.now(),
-        srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
-      });
-    }
   };
 
   const handleDeleteItem = () => {
@@ -2400,7 +2428,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                           itemWord={(currentSentence.data as SentenceData).sourceWord}
                           findSaved={findSaved}
                           onOpenCard={onOpenCard}
-                          {...(isMobile || !tapToPlay ? { onSearchWord: handleVocabSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
+                          {...(isMobile || !tapToPlay ? { onSearchWord: onSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
                         />
                       </p>
                       <div className="mt-5 flex flex-wrap items-center justify-center md:justify-start gap-3">
@@ -2434,7 +2462,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                         itemWord={(currentSentence.data as SentenceData).sourceWord}
                         findSaved={findSaved}
                         onOpenCard={onOpenCard}
-                        {...(isMobile || !tapToPlay ? { onSearchWord: handleVocabSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
+                        {...(isMobile || !tapToPlay ? { onSearchWord: onSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
                       />
                     </p>
                     <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
@@ -2522,7 +2550,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           total={sentenceItems?.length ?? 0}
           visible={sentencePage === 'analysis'}
           onBack={() => setSentencePage('sentence')}
-          onSearch={(term) => { setSentencePage('sentence'); handleVocabSearch(term); }}
+          onSearch={(term) => { setSentencePage('sentence'); onSearch(term); }}
           onTouchStart={onContentTouchStart}
           onTouchEnd={onContentTouchEnd}
           onClick={handleSentenceSurfaceClick}
@@ -2666,16 +2694,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                       {savedItemMatch.srs?.correctStreak}
                     </span>
                   )}
-                  <span className="text-slate-300">•</span>
-                  <span className="text-emerald-600 flex items-center gap-0.5">
-                    <CheckCircle2 size={12} />
-                    {memorizedCount}
-                  </span>
-                  <span className="text-slate-300">•</span>
-                  <span className="text-amber-600 flex items-center gap-0.5">
-                    <Clock size={12} />
-                    {dueToday}
-                  </span>
+                  {showHeader && <LibraryCounts savedItems={savedItems} />}
                   <span className="text-slate-300">•</span>
                   <span className="text-slate-500">
                     {(savedItemMatch.srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatRelativeTime(savedItemMatch.srs?.nextReview ?? 0)}
@@ -2696,7 +2715,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 onSave={handleToggleSave}
                 showSave={false}
                 onExpand={undefined}
-                onSearch={handleVocabSearch}
+                onSearch={onSearch}
                 scrollable={false}
                 className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto"
                 showRefresh={false}
@@ -2823,11 +2842,11 @@ export const DetailView: React.FC<DetailViewProps> = ({
                               <X size={14} />
                             </button>
                           )}
-                          <VocabCardDisplay
-                            data={vocab}
-                            onSave={() => handleSaveVocab(vocab)}
+                          <PhraseVocabCard
+                            vocab={vocab}
+                            onSaveVocab={handleSaveVocab}
                             isSaved={isVocabSaved(vocab)}
-                            onSearch={handleVocabSearch}
+                            onSearch={onSearch}
                             scrollable={false}
                             showSave={true}
                             className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"

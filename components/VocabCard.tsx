@@ -109,13 +109,14 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   const [showYouGlishInline, setShowYouGlishInline] = useState(false);
   const [showUsageReason, setShowUsageReason] = useState(false);
 
-  // Reset compare-pick state when the card changes (e.g., navigating in DetailView)
+  // Reset compare-pick state when the card changes (e.g., navigating in DetailView). Only what is open gets
+  // reset: any state set here, even to its current value, renders the whole card again.
   React.useEffect(() => {
-    setComparePicking(null);
-    setCompareSelected(new Set());
-    setShowYouGlishInline(false);
-    setShowYouGlishModal(false);
-    setShowUsageReason(false);
+    if (comparePicking !== null) setComparePicking(null);
+    if (compareSelected.size > 0) setCompareSelected(new Set());
+    if (showYouGlishInline) setShowYouGlishInline(false);
+    if (showYouGlishModal) setShowYouGlishModal(false);
+    if (showUsageReason) setShowUsageReason(false);
   }, [data.id]);
 
   // Robust helper to ensure we always map over an array of strings
