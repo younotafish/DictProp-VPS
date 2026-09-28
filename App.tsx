@@ -668,9 +668,9 @@ const App: React.FC = () => {
       : []),
     [cardPopup, allActiveItems],
   );
-  // The notebook sits under DetailView and the card popup, so it skips the reviews made there and
-  // catches up once uncovered.
-  const notebookItems = useFrozenWhile(allActiveItems, !!detailContext || !!cardPopup);
+  // The notebook sits under DetailView and the card popup, so it skips the reviews made there as they
+  // happen. It catches up a second after they stop, while hidden, so closing them doesn't have to.
+  const notebookItems = useFrozenWhile(allActiveItems, !!detailContext || !!cardPopup, 1_000);
   const closeDetail = useCallback(() => setDetailContext(null), []);
   const closeCardPopup = useCallback(() => setCardPopup(null), []);
   const notebookUser = useMemo(() => {
