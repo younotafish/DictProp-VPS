@@ -12,13 +12,14 @@ import { HighlightedSentence, stripSentenceMarkers } from '../components/Highlig
 import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import { SentenceAnalysisView } from '../components/SentenceAnalysisView';
 import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
+import { AutoPlayCountdown } from '../components/AutoPlayCountdown';
+import { SessionPreload, type PreloadSession } from '../components/SessionPreload';
 import { getMasteryColors } from '../components/mastery';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation, useWarmImages } from '../hooks';
 import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap, type SpeakHandle } from '../services/lazyTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
-import { getStoredImageIds } from '../services/storage';
 import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
 import { log, warn, error as logError } from '../services/logger';
 import { isRealLifeProgressItem } from '../services/realLifeProgress';
@@ -273,7 +274,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
   const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(20);
   const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
-  const [, setAutoPlayNowTick] = useState(0);
   const [isSentenceAutoPlaying, setIsSentenceAutoPlaying] = useState(false);
   const isSentenceAutoPlayingRef = useRef(isSentenceAutoPlaying);
   useEffect(() => { isSentenceAutoPlayingRef.current = isSentenceAutoPlaying; }, [isSentenceAutoPlaying]);
@@ -282,9 +282,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
   const [prefetchSpeechStyle, setPrefetchSpeechStyle] = useState(getTtsStyle);
   useEffect(() => subscribeTtsStyle(setPrefetchSpeechStyle), []);
-  // Whole-session preload progress (audio clips + images), null when idle/done. See the preload effect below.
-  const [preloadProgress, setPreloadProgress] = useState<{ done: number; total: number } | null>(null);
-  const sessionPreloadStartedRef = useRef(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [rememberInfo, setRememberInfo] = useState<{
     intervalDays: number;
@@ -1435,84 +1432,22 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return (Array.isArray(ex) ? ex.slice(0, 2) : []).map(stripSentenceMarkers).filter(Boolean);
   };
 
-  // Once auto-play is requested, preload the WHOLE session so a poor/unstable network can't interrupt
-  // review: warm every example/saved sentence's audio + timings, and pull every picture it shows into IDB.
-  // Best-effort and cancellable; per-item failures still advance the progress so it always completes.
-  useEffect(() => {
-    if (!isSentenceAutoPlaying) {
-      setPreloadProgress(null);
-      sessionPreloadStartedRef.current = false;
-      return;
-    }
-    if (sessionPreloadStartedRef.current) return;
-    sessionPreloadStartedRef.current = true;
-    let cancelled = false;
-
-    // Audio: saved sentences in sentence mode, else every card's example sentences across the session.
+  // The session to preload once sentence auto-play starts (see SessionPreload): the saved sentences in
+  // sentence mode, else every card's example sentences, and the pictures the session shows.
+  const getPreloadSession = (): PreloadSession => {
+    const sessionItems = sentenceMode ? (sentenceItems ?? []) : (groups ?? []).flatMap(g => g.items);
     const texts = sentenceMode
-      ? (sentenceItems ?? []).map(s => (s.data as SentenceData).text || '')
-      : (groups ?? []).flatMap(g => g.items.flatMap(it => examplesOf(it)));
-    // Images: the pictures the session shows, the sentences' own in sentence mode and the cards' otherwise.
-    const imageVersions = new Map<string, string | undefined>();
-    for (const item of sentenceMode ? (sentenceItems ?? []) : (groups ?? []).flatMap(g => g.items)) {
+      ? sessionItems.map(s => (s.data as SentenceData).text || '')
+      : sessionItems.flatMap(item => examplesOf(item));
+    const images = new Map<string, string | undefined>();
+    for (const item of sessionItems) {
       const imageUrl = getItemImageUrl(item);
       if (imageUrl === 'idb:stored' || imageUrl?.startsWith('server:has_image:')) {
-        imageVersions.set(item.data.id, serverImageVersion(imageUrl));
+        images.set(item.data.id, serverImageVersion(imageUrl));
       }
     }
-    const ids = [...imageVersions.keys()];
-
-    const audioTotal = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean))).length;
-    const imageTotal = onLazyLoadImage ? ids.length : 0;
-    const grandTotal = audioTotal + imageTotal;
-    if (grandTotal === 0) return;
-
-    let audioDone = 0;
-    let imageDone = 0;
-    const report = () => {
-      if (cancelled) return;
-      const done = audioDone + imageDone;
-      setPreloadProgress(done >= grandTotal ? null : { done, total: grandTotal });
-    };
-    report();
-
-    // Audio — one progress-reporting batch (de-dupes + generates missing internally).
-    preloadAudio(texts, (d) => { audioDone = d; report(); }).catch(() => {});
-
-    // Images — pictures already in IDB only need an existence check (opening each would churn the memory
-    // cache); the rest download with bounded concurrency.
-    (async () => {
-      if (!onLazyLoadImage || ids.length === 0) return;
-      const expected = new Map<string, string>();
-      for (const [id, version] of imageVersions) if (version) expected.set(id, version);
-      const stored = await getStoredImageIds(ids, expected);
-      if (cancelled) return;
-      const missing = ids.filter(id => !stored.has(id));
-      imageDone = ids.length - missing.length;
-      report();
-      const CONCURRENCY = 4;
-      let i = 0;
-      const worker = async () => {
-        while (i < missing.length && !cancelled) {
-          const id = missing[i++];
-          try {
-            await onLazyLoadImage(id, imageVersions.get(id));
-          } catch { /* best-effort */ }
-          imageDone++;
-          report();
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, missing.length) }, worker));
-    })();
-
-    return () => {
-      cancelled = true;
-      // A quick stop may cancel the workers before the session is warm. Allow the next start to resume.
-      sessionPreloadStartedRef.current = false;
-    };
-    // Deliberately begins only when auto-play is requested; normal sentence opening stays render-first.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSentenceAutoPlaying]);
+    return { texts, images };
+  };
 
   const sentenceGapRef = useRef(sentenceGap);
   useEffect(() => { sentenceGapRef.current = sentenceGap; }, [sentenceGap]);
@@ -1651,31 +1586,20 @@ export const DetailView: React.FC<DetailViewProps> = ({
     setAutoPlayStartedAt((isAutoPlaying || isSentenceAutoPlaying) ? Date.now() : null);
   }, [isAutoPlaying, isSentenceAutoPlaying]);
 
-  // Tick once a second while playing, and stop auto-play when the timer expires
+  // Stop auto-play when the timer expires. The check sets no state until then, so the card doesn't
+  // re-render every second; AutoPlayCountdown shows the time left.
   useEffect(() => {
     if ((!isAutoPlaying && !isSentenceAutoPlaying) || autoPlayStartedAt === null) return;
     const interval = setInterval(() => {
-      const elapsed = Date.now() - autoPlayStartedAt;
-      if (elapsed >= autoPlayTimerMinutes * 60 * 1000) {
+      if (Date.now() - autoPlayStartedAt >= autoPlayTimerMinutes * 60_000) {
         setIsAutoPlaying(false);
         setIsSentenceAutoPlaying(false);
-      } else {
-        setAutoPlayNowTick(t => t + 1);
       }
     }, 1000);
     return () => clearInterval(interval);
   }, [isAutoPlaying, isSentenceAutoPlaying, autoPlayStartedAt, autoPlayTimerMinutes]);
 
-  const timerDisplay = (() => {
-    if ((!isAutoPlaying && !isSentenceAutoPlaying) || autoPlayStartedAt === null) {
-      return `${autoPlayTimerMinutes}m`;
-    }
-    const remainingMs = Math.max(0, autoPlayStartedAt + autoPlayTimerMinutes * 60_000 - Date.now());
-    const remainingSec = Math.ceil(remainingMs / 1000);
-    const mm = Math.floor(remainingSec / 60);
-    const ss = remainingSec % 60;
-    return `${mm}:${String(ss).padStart(2, '0')}`;
-  })();
+  const countdownStartedAt = isAutoPlaying || isSentenceAutoPlaying ? autoPlayStartedAt : null;
 
   // Fresh ref to the on-screen card so the keyboard readers below read current data without re-subscribing.
   const currentItemRef = useRef(currentItem);
@@ -2997,12 +2921,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       )}
 
       {/* Whole-session preload indicator (audio + images), bottom-left so it clears the autoplay cluster. */}
-      {preloadProgress && (
-        <div className="fixed bottom-6 left-6 z-[60] flex items-center gap-2 bg-white/90 backdrop-blur-sm text-slate-600 text-xs font-medium px-3 py-2 rounded-full shadow-lg border border-slate-200 fade-in">
-          <Loader2 size={14} className="animate-spin text-indigo-500" />
-          <span>Preloading {preloadProgress.done}/{preloadProgress.total}</span>
-        </div>
-      )}
+      <SessionPreload active={isSentenceAutoPlaying} getSession={getPreloadSession} onLazyLoadImage={onLazyLoadImage} />
 
       {/* Sentence playback controls. Keep speech style on the primary surface; only Auto-play-specific
           settings belong in the secondary panel. */}
@@ -3027,7 +2946,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                 <div className="grid grid-cols-3 gap-2">
                   <button type="button" onClick={cycleTimerDuration} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Auto-play duration">
                     <span className="block text-[10px] font-medium text-slate-400">Duration</span>
-                    {timerDisplay}
+                    <AutoPlayCountdown startedAt={countdownStartedAt} minutes={autoPlayTimerMinutes} />
                   </button>
                   <button type="button" onClick={cycleRepeats} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Times each sentence is read">
                     <span className="block text-[10px] font-medium text-slate-400">Repeats</span>
@@ -3072,7 +2991,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
           title="Auto-play duration"
         >
-          {timerDisplay}
+          <AutoPlayCountdown startedAt={countdownStartedAt} minutes={autoPlayTimerMinutes} />
         </button>
         {isAutoPlaying && (
           <button
