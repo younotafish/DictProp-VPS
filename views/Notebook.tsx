@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import Fuse from 'fuse.js';
-import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, isVocabItem, savedVocabKey } from '../types';
+import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
@@ -15,27 +14,34 @@ import { JSONImport } from '../components/JSONImport';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, transcribeAudio } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
-import { sortStoredSensesByUsage } from '../services/usageAudit';
+import { buildNotebookList, findNotebookMatches, type NotebookFilter, type NotebookSort } from '../services/notebookList';
 import { speakWord, ensureTTS } from '../services/lazyTts';
 import { warn, error as logError } from '../services/logger';
 
+type NotebookSection = 'main' | 'due' | 'archived';
+
+// The notebook list flattened for virtualization. `key` keeps each row's state with its group.
+type VirtualRow =
+  | { key: string; type: 'group'; group: ItemGroup; groupIndex: number; section: NotebookSection }
+  | { key: string; type: 'due-header'; count: number }
+  | { key: string; type: 'archived-toggle'; count: number }
+  | { key: string; type: 'compare-banner' };
+
+const virtualRowKey = (_index: number, row: VirtualRow) => row.key;
+const noop = () => {};
+
 interface NotebookItemProps {
   item: StoredItem;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
   onDelete: (id: string) => void;
-  onSearch: (text: string) => void;
   onViewDetail: () => void;
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
-  // For carousel mode
+  // Senses sharing this spelling; with more than one, the sense label shows
   totalInGroup?: number;
-  indexInGroup?: number;
 }
 
 const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
-  item, isOpen, onOpen, onClose, onDelete, onSearch, onViewDetail, onArchive, onUnarchive, totalInGroup = 1, indexInGroup = 0
+  item, onDelete, onViewDetail, onArchive, onUnarchive, totalInGroup = 1
 }) => {
   const [showActions, setShowActions] = useState(false);
   const longPressTimer = useRef<number | null>(null);
@@ -85,8 +91,7 @@ const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
   const history = !isPhrase ? (item.data as any).history : null;
   const sense = !isPhrase ? (item.data as any).sense : null;
 
-  const nextReview = item.srs?.nextReview ?? Date.now();
-  const isDue = nextReview <= Date.now();
+  const isDue = (item.srs?.nextReview ?? 0) <= Date.now();
   const intervalDays = Math.round((item.srs?.interval ?? 0) / (24 * 60));
 
   return (
@@ -191,19 +196,16 @@ const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
 // Carousel wrapper for grouped items with same spelling
 interface NotebookGroupProps {
   group: ItemGroup;
-  groups: ItemGroup[]; // Full list of groups for DetailView navigation
+  section: NotebookSection;
   groupIndex: number;
-  openItemId: string | null;
-  setOpenItemId: (id: string | null) => void;
+  onViewDetail: (section: NotebookSection, groupIndex: number, itemIndex: number) => void;
   onDelete: (id: string) => void;
-  onSearch: (text: string) => void;
-  onViewDetail: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
 }
 
 const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
-  group, groups, groupIndex, openItemId, setOpenItemId, onDelete, onSearch, onViewDetail, onArchive, onUnarchive
+  group, section, groupIndex, onViewDetail, onDelete, onArchive, onUnarchive
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const totalItems = group.items.length;
@@ -223,27 +225,20 @@ const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
   
   // Single item - no carousel needed
   if (totalItems === 1) {
-    const item = group.items[0];
     return (
-      <NotebookItem 
-        item={item}
-        isOpen={openItemId === item.data.id}
-        onOpen={() => setOpenItemId(item.data.id)}
-        onClose={() => setOpenItemId(null)}
+      <NotebookItem
+        item={group.items[0]}
         onDelete={onDelete}
-        onSearch={onSearch}
-        onViewDetail={() => {
-          setOpenItemId(null);
-          onViewDetail(groups, groupIndex, 0);
-        }}
+        onViewDetail={() => onViewDetail(section, groupIndex, 0)}
         onArchive={onArchive}
         onUnarchive={onUnarchive}
       />
     );
   }
   
-  // Multiple items - carousel mode
-  const currentItem = group.items[currentIndex];
+  // Multiple items - carousel mode. Deleting a sense can leave the index past the end.
+  const index = Math.min(currentIndex, totalItems - 1);
+  const currentItem = group.items[index];
   
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -276,18 +271,18 @@ const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
   return (
     <div ref={carouselRef} className="relative" style={{ touchAction: 'pan-y' }}>
       {/* Navigation arrows for desktop */}
-      {currentIndex > 0 && (
+      {index > 0 && (
         <button
-          onClick={(e) => { e.stopPropagation(); setCurrentIndex(prev => prev - 1); }}
+          onClick={(e) => { e.stopPropagation(); setCurrentIndex(index - 1); }}
           className="absolute -left-2 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-violet-600 rounded-full flex items-center justify-center shadow-md hover:bg-violet-50 transition-colors hidden md:flex"
           aria-label="Previous meaning"
         >
           <ChevronLeft size={16} />
         </button>
       )}
-      {currentIndex < totalItems - 1 && (
+      {index < totalItems - 1 && (
         <button
-          onClick={(e) => { e.stopPropagation(); setCurrentIndex(prev => prev + 1); }}
+          onClick={(e) => { e.stopPropagation(); setCurrentIndex(index + 1); }}
           className="absolute -right-2 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-violet-600 rounded-full flex items-center justify-center shadow-md hover:bg-violet-50 transition-colors hidden md:flex"
           aria-label="Next meaning"
         >
@@ -296,21 +291,13 @@ const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
       )}
       {/* Card */}
       <div className="w-full" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-        <NotebookItem 
+        <NotebookItem
           item={currentItem}
-          isOpen={openItemId === currentItem.data.id}
-          onOpen={() => setOpenItemId(currentItem.data.id)}
-          onClose={() => setOpenItemId(null)}
           onDelete={onDelete}
-          onSearch={onSearch}
-          onViewDetail={() => {
-            setOpenItemId(null);
-            onViewDetail(groups, groupIndex, currentIndex);
-          }}
+          onViewDetail={() => onViewDetail(section, groupIndex, index)}
           onArchive={onArchive}
           onUnarchive={onUnarchive}
           totalInGroup={totalItems}
-          indexInGroup={currentIndex}
         />
       </div>
       
@@ -321,7 +308,7 @@ const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
             key={idx}
             onClick={(e) => { e.stopPropagation(); setCurrentIndex(idx); }}
             className={`w-2 h-2 rounded-full transition-all ${
-              idx === currentIndex 
+              idx === index
                 ? 'bg-violet-500 w-4' 
                 : 'bg-slate-300 hover:bg-slate-400'
             }`}
@@ -510,7 +497,8 @@ interface NotebookProps {
   isOnline?: boolean;
   onBulkRefresh?: () => void;
   bulkRefreshProgress?: { current: number; total: number; isRunning: boolean } | null;
-  hasSavedVariant?: (query: string) => boolean;
+  hasSavedVariant: (query: string) => boolean;
+  isVocabSaved: (vocab: VocabCard) => boolean;
   onFindDuplicates?: () => void;
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
@@ -532,19 +520,18 @@ interface NotebookProps {
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress, hasSavedVariant, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
+    onBulkRefresh, bulkRefreshProgress, hasSavedVariant, isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
     onGenerateAllSpeech, ttsGenProgress,
     onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages
 }) => {
-  const [sortMode, setSortMode] = useState<'familiarity' | 'alphabetical'>('familiarity');
-  const [filterMode, setFilterMode] = useState<'all' | 'vocab' | 'phrase'>('vocab'); // Default to vocab only
+  const [sortMode, setSortMode] = useState<NotebookSort>('familiarity');
+  const [filterMode, setFilterMode] = useState<NotebookFilter>('vocab'); // Default to vocab only
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   // Defer the heavy grouping/search pipeline so typing stays responsive on large libraries: the input
   // updates immediately (localSearchQuery) while the filtered/grouped list catches up a tick behind.
   const deferredSearchQuery = React.useDeferredValue(localSearchQuery);
-  const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [showHeader, setShowHeader] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const lastScrollY = useRef(0);
@@ -778,29 +765,16 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       setLocalSearchQuery(query);
       if (forceAI && query.trim()) {
         performAISearch(query);
-      } else if (autoAIIfNoMatch && query.trim()) {
+      } else if (autoAIIfNoMatch && query.trim() && !hasSavedVariant(query)) {
         // Skip the AI call if a saved item matches the query OR any inflected variant
-        // of it (running→run, cats→cat). Falls back to a local exact check if the
-        // shared variant matcher isn't wired in.
-        const queryLower = query.toLowerCase().trim();
-        const hasMatch = hasSavedVariant
-          ? hasSavedVariant(query)
-          : items.some(item => {
-              const title = item.type === 'phrase'
-                ? (item.data as SearchResult).query
-                : (item.data as VocabCard).word;
-              return (title || '').toLowerCase().trim() === queryLower;
-            });
-
-        if (!hasMatch) {
-          performAISearch(query);
-        }
+        // of it (running→run, cats→cat).
+        performAISearch(query);
       }
     };
 
     window.addEventListener('notebook-search', handleNotebookSearch as EventListener);
     return () => window.removeEventListener('notebook-search', handleNotebookSearch as EventListener);
-  }, [performAISearch, items, hasSavedVariant]);
+  }, [performAISearch, hasSavedVariant]);
 
   // Escape key to exit compare mode
   useEffect(() => {
@@ -849,15 +823,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onSave(makeVocabStoredItem(vocab));
   }, [onSave]);
 
-  // Check if a vocab is already saved (runs once per rendered result, so use a prebuilt set)
-  const savedVocabKeys = useMemo(() => new Set(
-    items.filter(isVocabItem).map(item => savedVocabKey(item.data)),
-  ), [items]);
-  const isVocabSaved = useCallback(
-    (vocab: VocabCard) => savedVocabKeys.has(savedVocabKey(vocab)),
-    [savedVocabKeys],
-  );
-
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const currentScrollY = e.currentTarget.scrollTop;
     
@@ -872,242 +837,39 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onScroll?.(e);
   };
   
-  // Memoize Fuse index separately - only rebuild when items change, not on every keystroke
-  const fuseIndex = React.useMemo(() => {
-    return new Fuse(items, {
-      keys: [
-        'data.word',
-        'data.query',
-        'data.chinese',
-        'data.translation'
-      ],
-      threshold: 0.3,
-      ignoreLocation: true
-    });
-  }, [items]);
+  const searchQuery = deferredSearchQuery.trim();
+  const list = useMemo(
+    () => buildNotebookList(items, searchQuery ? findNotebookMatches(items, searchQuery) : null, sortMode, filterMode),
+    [items, searchQuery, sortMode, filterMode],
+  );
 
-  const { displayItems, groupedItems, archivedItems, archivedGroups, dueForReviewGroups } = React.useMemo(() => {
-    // 1. Fuzzy Search
-    let processedItems = items;
-    
-    if (deferredSearchQuery.trim()) {
-      const fuseResults = fuseIndex.search(deferredSearchQuery).map(result => result.item);
-
-      // Chinese input: Fuse.js Bitap algorithm doesn't work well with CJK characters.
-      // Fall back to substring matching against chinese/translation fields.
-      const containsChinese = /[\u4e00-\u9fff]/.test(deferredSearchQuery);
-      if (containsChinese) {
-        const query = deferredSearchQuery.trim();
-        const fuseIds = new Set(fuseResults.map(i => i.data.id));
-        const chineseMatches = items.filter(item => {
-          if (fuseIds.has(item.data.id)) return false; // Already in Fuse results
-          const chinese = (item.data as any).chinese || '';
-          const translation = (item.data as any).translation || '';
-          return chinese.includes(query) || translation.includes(query);
-        });
-        processedItems = [...fuseResults, ...chineseMatches];
-      } else {
-        processedItems = fuseResults;
-      }
-
-      // Expand fuzzy results to include all sibling items (same word, different senses)
-      const matchedTitles = new Set<string>();
-      processedItems.forEach(item => {
-        const title = item.type === 'phrase'
-          ? (item.data as any).query?.toLowerCase().trim()
-          : (item.data as any).word?.toLowerCase().trim();
-        if (title) matchedTitles.add(title);
-      });
-
-      const matchedIds = new Set(processedItems.map(i => i.data.id));
-      const siblings = items.filter(item => {
-        if (matchedIds.has(item.data.id)) return false;
-        const title = item.type === 'phrase'
-          ? (item.data as any).query?.toLowerCase().trim()
-          : (item.data as any).word?.toLowerCase().trim();
-        return title ? matchedTitles.has(title) : false;
-      });
-
-      processedItems = [...processedItems, ...siblings];
-    }
-
-    // Separate active and archived items
-    const activeFiltered = processedItems
-      .filter(i => {
-        const isValid = i && i.data && i.data.id && !i.isDeleted && !i.isArchived;
-        if (!isValid) return false;
-        
-        if (filterMode === 'vocab') return i.type === 'vocab';
-        if (filterMode === 'phrase') return i.type === 'phrase';
-        
-        return true;
-      })
-      .sort((a, b) => {
-        if (sortMode === 'alphabetical') {
-          const titleA = a.type === 'phrase' ? (a.data as any).query : (a.data as any).word;
-          const titleB = b.type === 'phrase' ? (b.data as any).query : (b.data as any).word;
-          return (titleA || '').localeCompare(titleB || '');
-        }
-
-        // Sort by Priority (Due/Overdue first, then by Strength)
-        const now = Date.now();
-        const dueA = a.srs?.nextReview || 0;
-        const dueB = b.srs?.nextReview || 0;
-        const isDueA = dueA <= now;
-        const isDueB = dueB <= now;
-
-        // 1. Due items always come before non-due items
-        if (isDueA !== isDueB) {
-          return isDueA ? -1 : 1;
-        }
-
-        // 2. If both are Due: Sort by Strength ASC (weakest first), then by Overdue amount
-        if (isDueA && isDueB) {
-            const strengthA = a.srs?.memoryStrength || 0;
-            const strengthB = b.srs?.memoryStrength || 0;
-            if (strengthA !== strengthB) return strengthA - strengthB;
-            return dueA - dueB; // Oldest due date first
-        }
-
-        // 3. If neither is Due (Future): Sort by Next Review Date ASC (soonest first)
-        return dueA - dueB;
-      });
-    
-    // Archived items
-    const archivedFiltered = processedItems
-      .filter(i => {
-        const isValid = i && i.data && i.data.id && !i.isDeleted && i.isArchived;
-        if (!isValid) return false;
-        
-        if (filterMode === 'vocab') return i.type === 'vocab';
-        if (filterMode === 'phrase') return i.type === 'phrase';
-        
-        return true;
-      })
-      .sort((a, b) => {
-        const titleA = a.type === 'phrase' ? (a.data as any).query : (a.data as any).word;
-        const titleB = b.type === 'phrase' ? (b.data as any).query : (b.data as any).word;
-        return (titleA || '').localeCompare(titleB || '');
-      });
-    
-    // Helper to group items by title
-    const groupByTitle = (itemList: StoredItem[]): ItemGroup[] => {
-      const groupMap = new Map<string, StoredItem[]>();
-      itemList.forEach(item => {
-        const title = item.type === 'phrase' 
-          ? (item.data as any).query?.toLowerCase().trim()
-          : (item.data as any).word?.toLowerCase().trim();
-        
-        if (!title) return;
-        
-        if (!groupMap.has(title)) {
-          groupMap.set(title, []);
-        }
-        groupMap.get(title)!.push(item);
-      });
-      
-      const groups: ItemGroup[] = [];
-      const seenTitles = new Set<string>();
-      
-      itemList.forEach(item => {
-        const title = item.type === 'phrase' 
-          ? (item.data as any).query?.toLowerCase().trim()
-          : (item.data as any).word?.toLowerCase().trim();
-        
-        if (!title || seenTitles.has(title)) return;
-        seenTitles.add(title);
-        
-        const groupItems = sortStoredSensesByUsage(groupMap.get(title) || []);
-        groups.push({
-          title: title,
-          items: groupItems
-        });
-      });
-      
-      return groups;
-    };
-    
-    // "Due for Review" backfill: when searching, show all due items
-    // so user can review while waiting for AI search results
-    let dueForReview: ItemGroup[] = [];
-    if (deferredSearchQuery.trim()) {
-      const now = Date.now();
-      const fuzzyIds = new Set(activeFiltered.map(i => i.data.id));
-
-      const dueItems = items
-        .filter(i => {
-          if (!i || !i.data || !i.data.id || i.isDeleted || i.isArchived) return false;
-          if (fuzzyIds.has(i.data.id)) return false; // Already shown in fuzzy results
-          if ((i.srs?.nextReview || 0) > now) return false; // Not due yet
-          if (filterMode === 'vocab' && i.type !== 'vocab') return false;
-          if (filterMode === 'phrase' && i.type !== 'phrase') return false;
-          return true;
-        })
-        .sort((a, b) => {
-          // Weakest memory first, then oldest due date
-          const strengthA = a.srs?.memoryStrength || 0;
-          const strengthB = b.srs?.memoryStrength || 0;
-          if (strengthA !== strengthB) return strengthA - strengthB;
-          return (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0);
-        });
-
-      dueForReview = groupByTitle(dueItems);
-    }
-
-    return { 
-      displayItems: activeFiltered, 
-      groupedItems: groupByTitle(activeFiltered),
-      archivedItems: archivedFiltered,
-      archivedGroups: groupByTitle(archivedFiltered),
-      dueForReviewGroups: dueForReview
-    };
-  }, [items, sortMode, filterMode, deferredSearchQuery, fuseIndex]);
-
-  // Flatten groups into a single list for virtualization
-  type VirtualRow =
-    | { type: 'group'; group: ItemGroup; groups: ItemGroup[]; groupIndex: number; section: 'main' | 'due' | 'archived' }
-    | { type: 'due-header'; count: number }
-    | { type: 'archived-toggle'; count: number }
-    | { type: 'compare-banner' };
+  // DetailView pages through the section the card was opened from.
+  const openGroup = useCallback((section: NotebookSection, groupIndex: number, itemIndex: number) => {
+    const groups = section === 'due' ? list.dueGroups : section === 'archived' ? list.archivedGroups : list.groups;
+    onViewDetail(groups, groupIndex, itemIndex);
+  }, [list, onViewDetail]);
 
   const virtualRows = useMemo((): VirtualRow[] => {
     const rows: VirtualRow[] = [];
-
-    // Compare mode banner
-    if (compareMode) {
-      rows.push({ type: 'compare-banner' });
-    }
-
-    // Main items
-    groupedItems.forEach((group, index) => {
-      rows.push({ type: 'group', group, groups: groupedItems, groupIndex: index, section: 'main' });
+    const addGroups = (groups: ItemGroup[], section: NotebookSection) => groups.forEach((group, groupIndex) => {
+      rows.push({ key: `${section}:${group.title}`, type: 'group', group, groupIndex, section });
     });
 
-    // Due for review section
-    if (dueForReviewGroups.length > 0) {
-      rows.push({ type: 'due-header', count: dueForReviewGroups.length });
-      dueForReviewGroups.forEach((group, index) => {
-        rows.push({ type: 'group', group, groups: dueForReviewGroups, groupIndex: index, section: 'due' });
-      });
+    if (compareMode) rows.push({ key: 'compare-banner', type: 'compare-banner' });
+    addGroups(list.groups, 'main');
+    // While searching, the due items outside the results follow them
+    if (list.dueGroups.length > 0) {
+      rows.push({ key: 'due-header', type: 'due-header', count: list.dueGroups.length });
+      addGroups(list.dueGroups, 'due');
     }
-
-    // Archived toggle
-    if (archivedItems.length > 0) {
-      rows.push({ type: 'archived-toggle', count: archivedItems.length });
-      if (showArchived) {
-        archivedGroups.forEach((group, index) => {
-          rows.push({ type: 'group', group, groups: archivedGroups, groupIndex: index, section: 'archived' });
-        });
-      }
+    if (list.archived.length > 0) {
+      rows.push({ key: 'archived-toggle', type: 'archived-toggle', count: list.archived.length });
+      if (showArchived) addGroups(list.archivedGroups, 'archived');
     }
-
     return rows;
-  }, [groupedItems, dueForReviewGroups, archivedItems.length, archivedGroups, showArchived, compareMode]);
+  }, [list, showArchived, compareMode]);
 
-  const renderVirtualRow = useCallback((index: number) => {
-    const row = virtualRows[index];
-    if (!row) return null;
-
+  const renderVirtualRow = useCallback((_index: number, row: VirtualRow) => {
     if (row.type === 'compare-banner') {
       return (
         <div className="px-3 pt-3">
@@ -1150,7 +912,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       return (
         <div className="px-3 mt-6 pt-4 border-t-2 border-slate-200">
           <button
-            onClick={() => setShowArchived(!showArchived)}
+            onClick={() => setShowArchived(open => !open)}
             className="w-full flex items-center justify-between px-4 py-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
           >
             <div className="flex items-center gap-3">
@@ -1171,8 +933,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     }
 
     // row.type === 'group'
-    const { group, groups, groupIndex, section } = row;
-    const keyPrefix = section === 'due' ? 'due-' : section === 'archived' ? 'archived-' : '';
+    const { group, groupIndex, section } = row;
 
     if (compareMode && section === 'main') {
       const firstItem = group.items[0];
@@ -1208,13 +969,10 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             <div className="pointer-events-none">
               <NotebookGroup
                 group={group}
-                groups={groups}
+                section={section}
                 groupIndex={groupIndex}
-                openItemId={null}
-                setOpenItemId={() => {}}
-                onDelete={() => {}}
-                onSearch={() => {}}
-                onViewDetail={() => {}}
+                onViewDetail={noop}
+                onDelete={noop}
               />
             </div>
           </div>
@@ -1225,21 +983,17 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     return (
       <div className="px-3 py-1.5">
         <NotebookGroup
-          key={`${keyPrefix}${group.title}`}
           group={group}
-          groups={groups}
+          section={section}
           groupIndex={groupIndex}
-          openItemId={openItemId}
-          setOpenItemId={setOpenItemId}
+          onViewDetail={openGroup}
           onDelete={onDelete}
-          onSearch={onSearch}
-          onViewDetail={onViewDetail}
           onArchive={onArchive}
           onUnarchive={onUnarchive}
         />
       </div>
     );
-  }, [virtualRows, compareMode, selectedForCompare, openItemId, onDelete, onSearch, onViewDetail, onArchive, onUnarchive, showArchived]);
+  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive]);
 
   const { reviewedToday, dueCount } = useMemo(() => {
     const now = Date.now();
@@ -1258,7 +1012,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
 
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
 
-  if (displayItems.length === 0 && !localSearchQuery) {
+  if (list.active.length === 0 && !localSearchQuery) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50">
         <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
@@ -1298,7 +1052,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         <div className="px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
           <div className="min-w-0">
             <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-            <p className="text-xs text-slate-500 font-medium truncate">{groupedItems.length} saved · {reviewedToday} reviewed today · {dueCount} due</p>
+            <p className="text-xs text-slate-500 font-medium truncate">{list.groups.length} saved · {reviewedToday} reviewed today · {dueCount} due</p>
           </div>
           <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 min-w-0">
             {isOnline && (
@@ -1574,8 +1328,9 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         {scrollParent && (
           <Virtuoso
             customScrollParent={scrollParent}
-            totalCount={virtualRows.length}
+            data={virtualRows}
             overscan={400}
+            computeItemKey={virtualRowKey}
             itemContent={renderVirtualRow}
           />
         )}

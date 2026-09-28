@@ -40,3 +40,9 @@ export const mergeGeneratedVocabIntoStoredItem = (
     savedAt: existing.savedAt,
   };
 };
+
+/**
+ * True when two copies share their content object. Reviews and archiving replace only the wrapper,
+ * so indexes built from content can skip those changes.
+ */
+export const sameItemContent = (a: StoredItem, b: StoredItem): boolean => a.data === b.data;

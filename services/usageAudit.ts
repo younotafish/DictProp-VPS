@@ -11,21 +11,14 @@ const USAGE_PRIORITY: Record<UsageStatus, number> = {
 export const getUsagePriority = (status?: UsageStatus): number =>
   status ? USAGE_PRIORITY[status] : 1;
 
+const senseUsagePriority = (item: StoredItem): number =>
+  getUsagePriority(item.type === 'vocab' ? (item.data as VocabCard).usageAudit?.status : undefined);
+
+// Both sorts are stable, so senses of equal priority keep their order. A single sense returns as is.
 export const sortVocabCardsByUsage = (vocabs: VocabCard[]): VocabCard[] =>
-  vocabs
-    .map((vocab, index) => ({ vocab, index }))
-    .sort((a, b) =>
-      getUsagePriority(a.vocab.usageAudit?.status) - getUsagePriority(b.vocab.usageAudit?.status) ||
-      a.index - b.index,
-    )
-    .map(entry => entry.vocab);
+  vocabs.length < 2
+    ? vocabs
+    : [...vocabs].sort((a, b) => getUsagePriority(a.usageAudit?.status) - getUsagePriority(b.usageAudit?.status));
 
 export const sortStoredSensesByUsage = (items: StoredItem[]): StoredItem[] =>
-  items
-    .map((item, index) => ({ item, index }))
-    .sort((a, b) => {
-      const aStatus = a.item.type === 'vocab' ? (a.item.data as VocabCard).usageAudit?.status : undefined;
-      const bStatus = b.item.type === 'vocab' ? (b.item.data as VocabCard).usageAudit?.status : undefined;
-      return getUsagePriority(aStatus) - getUsagePriority(bStatus) || a.index - b.index;
-    })
-    .map(entry => entry.item);
+  items.length < 2 ? items : [...items].sort((a, b) => senseUsagePriority(a) - senseUsagePriority(b));

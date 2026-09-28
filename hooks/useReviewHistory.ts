@@ -48,6 +48,11 @@ export function useReviewHistory(userId?: string) {
 
   const record = useCallback((event: ReviewEvent, options?: { persist?: boolean }) => {
     setEvents(current => {
+      // A new review normally belongs at the end, so it appends without rebuilding the history.
+      const last = current[current.length - 1];
+      if (!last || (event.reviewedAt >= last.reviewedAt && !current.some(item => item.id === event.id))) {
+        return [...current, event];
+      }
       const merged = new Map(current.map(item => [item.id, item]));
       merged.set(event.id, event);
       return [...merged.values()].sort((a, b) => a.reviewedAt - b.reviewedAt);

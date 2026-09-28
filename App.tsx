@@ -14,6 +14,8 @@ import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters 
 import { AUTH_REQUIRED_EVENT } from './services/http';
 import { enqueuePendingReviewMutation, excludePendingReviewItems, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation, type PendingReviewMutation } from './services/reviewQueue';
 import { useReviewHistory } from './hooks/useReviewHistory';
+import { useFrozenWhile, useStableArray } from './hooks/useStableValue';
+import { sameItemContent } from './services/items';
 import { useGlobalNavigation } from './hooks';
 import { log, warn, error as logError } from './services/logger';
 import { subscribeToServerMutations } from './services/syncSignals';
@@ -21,20 +23,22 @@ import { getUsagePriority, sortStoredSensesByUsage, sortVocabCardsByUsage } from
 import { isRealLifeProgressItem } from './services/realLifeProgressIdentity';
 import { isEssayProgressItem } from './services/essayProgressIdentity';
 
+// App re-renders on every library change and progress tick, so the screens and overlays are memoized
+// and re-render only when their own props change.
 const NotebookView = lazy(() => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
-const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(module => ({ default: module.GlobalSearch })));
+const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(module => ({ default: React.memo(module.GlobalSearch) })));
 const ConfirmModal = lazy(() => import('./components/ConfirmModal').then(module => ({ default: module.ConfirmModal })));
 const DuplicatesModal = lazy(() => import('./components/DuplicatesModal').then(module => ({ default: module.DuplicatesModal })));
-const CardReviewPopup = lazy(() => import('./components/CardReviewPopup').then(module => ({ default: module.CardReviewPopup })));
+const CardReviewPopup = lazy(() => import('./components/CardReviewPopup').then(module => ({ default: React.memo(module.CardReviewPopup) })));
 const KeyboardHelpModal = lazy(() => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
-const StudyEnhanced = lazy(() => import('./views/StudyEnhanced').then(module => ({ default: module.StudyEnhanced })));
-const AppNavigation = lazy(() => import('./components/AppNavigation'));
+const StudyEnhanced = lazy(() => import('./views/StudyEnhanced').then(module => ({ default: React.memo(module.StudyEnhanced) })));
+const AppNavigation = lazy(() => import('./components/AppNavigation').then(module => ({ default: React.memo(module.default) })));
 const SENTENCE_CHUNK_RELOAD_KEY = 'sentence_chunk_reload_attempted';
 const loadSentencesView = async () => {
   try {
     const module = await import('./views/SentencesView');
     try { sessionStorage.removeItem(SENTENCE_CHUNK_RELOAD_KEY); } catch { /* private browsing */ }
-    return { default: module.SentencesView };
+    return { default: React.memo(module.SentencesView) };
   } catch (error) {
     try {
       if (!sessionStorage.getItem(SENTENCE_CHUNK_RELOAD_KEY)) {
@@ -47,9 +51,9 @@ const loadSentencesView = async () => {
   }
 };
 const SentencesView = lazy(loadSentencesView);
-const RealLifeView = lazy(() => import('./views/RealLifeView').then(module => ({ default: module.RealLifeView })));
-const EssaysView = lazy(() => import('./views/EssaysView').then(module => ({ default: module.EssaysView })));
-const loadDetailView = () => import('./views/DetailView').then(module => ({ default: module.DetailView }));
+const RealLifeView = lazy(() => import('./views/RealLifeView').then(module => ({ default: React.memo(module.RealLifeView) })));
+const EssaysView = lazy(() => import('./views/EssaysView').then(module => ({ default: React.memo(module.EssaysView) })));
+const loadDetailView = () => import('./views/DetailView').then(module => ({ default: React.memo(module.DetailView) }));
 const DetailView = lazy(loadDetailView);
 
 interface DetailContext {
@@ -71,6 +75,9 @@ const clearLegacyLibraryCaches = (): void => {
     }
   } catch { /* storage unavailable */ }
 };
+
+// Words and phrases still in the library, archived or not. Sentences have their own lists.
+const isActiveLibraryItem = (item: StoredItem): boolean => !item.isDeleted && item.type !== 'sentence';
 
 const offloadImages = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
   const { offloadAndUpload } = await import('./services/imagePipeline');
@@ -548,15 +555,19 @@ const App: React.FC = () => {
 
 
   // Derived state - memoized filtered items
-  const allActiveItems = useMemo(() => savedItems.filter(i => !i.isDeleted && i.type !== 'sentence'), [savedItems]);
+  const allActiveItems = useMemo(() => savedItems.filter(isActiveLibraryItem), [savedItems]);
+  // The lookup indexes read only item content. A review replaces an item's wrapper but keeps its data,
+  // so they key on this content snapshot and skip the rebuild each review would otherwise cost.
+  const activeContent = useStableArray(allActiveItems, sameItemContent);
   // Variant-aware lookup index (base word + each inflected form → base word), rebuilt
-  // only when items change. Powers "search a variant → pop up the saved card, skip AI".
-  const variantIndex = useMemo(() => buildVariantIndex(allActiveItems), [allActiveItems]);
+  // only when content changes. Powers "search a variant → pop up the saved card, skip AI".
+  const variantIndex = useMemo(() => buildVariantIndex(activeContent), [activeContent]);
   // base word → its most useful saved vocab item, so footnote lookup is O(1) per word
   // instead of an O(n) scan over the whole library on every rendered token. See findSavedItem.
+  // The review-count tie-break reads the snapshot's counts, which is close enough for a tie-break.
   const savedVocabByBase = useMemo(() => {
     const m = new Map<string, StoredItem>();
-    for (const i of allActiveItems) {
+    for (const i of activeContent) {
       if (i.type !== 'vocab') continue;
       const base = normalizeKey((i.data as VocabCard).word || '');
       if (!base) continue;
@@ -571,17 +582,19 @@ const App: React.FC = () => {
       }
     }
     return m;
-  }, [allActiveItems]);
-  const activeItems = allActiveItems;
+  }, [activeContent]);
   // Items available for study (excludes archived and sentences)
   const studyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
   // Ordinary saved sentences, Real Life collections, and Essays deliberately use separate queues.
   // Catalog records have stable namespaced ids, so reviewing one context never changes another
   // context's score or the Sentences tab's due count.
-  const allSentenceItems = useMemo(
+  // Reviewing a word replaces the library array but no sentence, so the stable copy keeps the sentence
+  // lists below, and the screens they feed, from rebuilding.
+  const filteredSentenceItems = useMemo(
     () => savedItems.filter(i => !i.isDeleted && i.type === 'sentence'),
     [savedItems],
   );
+  const allSentenceItems = useStableArray(filteredSentenceItems);
   const realLifeProgressItems = useMemo(
     () => allSentenceItems.filter(isRealLifeProgressItem),
     [allSentenceItems],
@@ -640,6 +653,15 @@ const App: React.FC = () => {
       : []),
     [cardPopup, allActiveItems],
   );
+  // The notebook sits under DetailView and the card popup, so it skips the reviews made there and
+  // catches up once uncovered.
+  const notebookItems = useFrozenWhile(allActiveItems, !!detailContext || !!cardPopup);
+  const closeDetail = useCallback(() => setDetailContext(null), []);
+  const closeCardPopup = useCallback(() => setCardPopup(null), []);
+  const notebookUser = useMemo(() => {
+    const user = authState.user;
+    return user ? { uid: user.id, displayName: user.displayName, photoURL: user.photoUrl, email: user.email } : null;
+  }, [authState.user]);
   // Footnote popup: fetch a word's full set of AI senses (cached per session) so the popup can page
   // through saved + not-yet-saved meanings; and save a chosen sense.
   const senseCacheRef = useRef<Map<string, VocabCard[]>>(new Map());
@@ -724,6 +746,7 @@ const App: React.FC = () => {
 
   // Keyboard shortcuts help modal
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+  const openKeyboardHelp = useCallback(() => setShowKeyboardHelp(true), []);
 
   // Global keyboard navigation for tab switching (1, 2, 3 keys)
   useGlobalNavigation({
@@ -1213,11 +1236,9 @@ const App: React.FC = () => {
 
   // Bulk refresh - actual execution
   const executeBulkRefresh = useCallback(async () => {
-    setBulkRefreshProgress({ current: 0, total: activeItems.length, isRunning: true });
-
     // Group items by their title to avoid duplicate searches
     const titleMap = new Map<string, StoredItem[]>();
-    activeItems.forEach(item => {
+    latestItemsRef.current.filter(isActiveLibraryItem).forEach(item => {
       const title = getItemTitle(item).toLowerCase().trim();
       if (!titleMap.has(title)) {
         titleMap.set(title, []);
@@ -1228,6 +1249,7 @@ const App: React.FC = () => {
     const uniqueTitles = Array.from(titleMap.keys());
     let processed = 0;
     let errors = 0;
+    setBulkRefreshProgress({ current: 0, total: uniqueTitles.length, isRunning: true });
 
     for (const title of uniqueTitles) {
       const itemsWithTitle = titleMap.get(title)!;
@@ -1283,11 +1305,12 @@ const App: React.FC = () => {
       onConfirm: () => setConfirmModal(null),
       showCancel: false
     });
-  }, [activeItems]);
+  }, [replaceItem]);
 
   // Bulk refresh - show confirmation first
   const handleBulkRefresh = useCallback(() => {
-    if (activeItems.length === 0) {
+    const itemCount = latestItemsRef.current.filter(isActiveLibraryItem).length;
+    if (itemCount === 0) {
       setConfirmModal({
         isOpen: true,
         title: 'No Items',
@@ -1303,7 +1326,7 @@ const App: React.FC = () => {
     setConfirmModal({
       isOpen: true,
       title: 'Refresh All Items?',
-      message: `This will re-search all ${activeItems.length} items in your notebook with the latest AI analysis.\n\nThis may take a while and use API quota.`,
+      message: `This will re-search all ${itemCount} items in your notebook with the latest AI analysis.\n\nThis may take a while and use API quota.`,
       confirmText: 'Refresh All',
       cancelText: 'Cancel',
       variant: 'warning',
@@ -1312,7 +1335,7 @@ const App: React.FC = () => {
         executeBulkRefresh();
       }
     });
-  }, [activeItems, executeBulkRefresh]);
+  }, [executeBulkRefresh]);
 
   // ── "Generate sentence speech" — server-side background backfill ───────────
   // Triggers the server to generate MiMo audio + whisper word-timings for EVERY saved sentence,
@@ -1358,11 +1381,12 @@ const App: React.FC = () => {
   // Detection is read-only: cluster base words that are variants of one another
   // (run/running/ran), then open the review modal. Scans the whole notebook.
   const handleFindDuplicates = useCallback(() => {
-    const clusters = findDuplicateClusters(allActiveItems);
+    const activeItems = latestItemsRef.current.filter(isActiveLibraryItem);
+    const clusters = findDuplicateClusters(activeItems);
     const detailed: DuplicateClusterView[] = clusters
       .map((baseWords, i) => {
         const set = new Set(baseWords);
-        const clusterItems = allActiveItems.filter(
+        const clusterItems = activeItems.filter(
           it => it.type === 'vocab' && set.has(normalizeKey((it.data as VocabCard).word || ''))
         );
         const suggestedCanonical = [...baseWords].sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
@@ -1383,7 +1407,7 @@ const App: React.FC = () => {
       return;
     }
     setDuplicateClusters(detailed);
-  }, [allActiveItems]);
+  }, []);
 
   // Apply the user-confirmed merges: relabel to canonical, union forms, dedupe senses,
   // and push the changed items immediately (like delete/SRS paths).
@@ -1550,7 +1574,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleSave = (item: StoredItem) => {
+  const handleSave = useCallback((item: StoredItem) => {
     try {
       if (!item || !item.data || !item.data.id) {
         warn('⭐ handleSave: early return - missing item/data/id', item?.data?.id);
@@ -1649,70 +1673,7 @@ const App: React.FC = () => {
     } catch (err) {
       logError("Error during save operation:", err);
     }
-  };
-
-  const handleUpdateStoredItem = (item: StoredItem) => {
-    const rawTitle = getItemTitle(item);
-    const incomingTitle = String(rawTitle || '').toLowerCase().trim();
-    if (!incomingTitle) return;
-
-    // Offload any incoming images to IDB + server before updating state
-    const incomingImages: Array<{ id: string; base64: string }> = [];
-    const incomingImageUrl = getItemImageUrl(item);
-    if (incomingImageUrl?.startsWith('data:image/')) {
-      incomingImages.push({ id: item.data.id, base64: incomingImageUrl });
-    }
-    if (isPhraseItem(item) && item.data.vocabs) {
-      for (const v of item.data.vocabs) {
-        if (v.imageUrl?.startsWith('data:image/')) {
-          incomingImages.push({ id: v.id, base64: v.imageUrl });
-        }
-      }
-    }
-    if (incomingImages.length > 0) void offloadImages(incomingImages);
-
-    updateItems(items => {
-      const itemId = item.data.id;
-
-      // Case 1: Direct match by ID (top-level items)
-      const index = items.findIndex(i => i.data.id === itemId);
-      if (index >= 0) {
-        const existingItem = items[index];
-        // Merge: keep existing fields, update with new data
-        // Replace base64 imageUrl with marker (actual data is in IDB)
-        const mergedData = { ...existingItem.data, ...item.data };
-        if ((mergedData as any).imageUrl?.startsWith('data:image/')) {
-          (mergedData as any).imageUrl = IMAGE_IDB_MARKER;
-        }
-        const next = items.slice();
-        next[index] = { ...existingItem, data: mergedData, updatedAt: Date.now() };
-        return next;
-      }
-
-      // Case 2: Check if this is a vocab inside a phrase item
-      // Vocab images are generated separately and need to update the parent phrase
-      if (item.type !== 'vocab') return items;
-      const vocabData = item.data as VocabCard;
-      for (let i = 0; i < items.length; i++) {
-        const stored = items[i];
-        if (stored.type !== 'phrase') continue;
-        const phraseData = stored.data as SearchResult;
-        const vocabIndex = (phraseData.vocabs || []).findIndex(v => v.id === itemId);
-        if (vocabIndex < 0) continue;
-
-        const newVocabs = [...(phraseData.vocabs || [])];
-        const mergedVocab = { ...newVocabs[vocabIndex], ...vocabData };
-        if (mergedVocab.imageUrl?.startsWith('data:image/')) {
-          mergedVocab.imageUrl = IMAGE_IDB_MARKER;
-        }
-        newVocabs[vocabIndex] = mergedVocab;
-        const next = items.slice();
-        next[i] = { ...stored, data: { ...phraseData, vocabs: newVocabs }, updatedAt: Date.now() };
-        return next;
-      }
-      return items;
-    });
-  };
+  }, [updateItems]);
 
   // Keep batch import refs up to date
   handleSaveRef.current = handleSave;
@@ -1834,10 +1795,12 @@ const App: React.FC = () => {
     });
   }, []);
 
-  // Both checks run once per rendered sentence or search result, so they look up prebuilt sets.
+  // Both checks run once per rendered sentence or search result, so they look up prebuilt sets. They
+  // read content only, so sentence reviews don't rebuild them.
+  const sentenceContent = useStableArray(sentenceItems, sameItemContent);
   const savedSentenceIdentities = useMemo(
-    () => new Set(sentenceItems.map(s => normalizeSentenceIdentity((s.data as SentenceData).text))),
-    [sentenceItems],
+    () => new Set(sentenceContent.map(s => normalizeSentenceIdentity((s.data as SentenceData).text))),
+    [sentenceContent],
   );
   const isSentenceSaved = useCallback((text: string) => {
     const identity = normalizeSentenceIdentity(text);
@@ -1845,8 +1808,8 @@ const App: React.FC = () => {
   }, [savedSentenceIdentities]);
 
   const savedVocabKeys = useMemo(() => new Set(
-    activeItems.filter(isVocabItem).map(item => savedVocabKey(item.data)),
-  ), [activeItems]);
+    activeContent.filter(isVocabItem).map(item => savedVocabKey(item.data)),
+  ), [activeContent]);
   const isVocabSaved = useCallback(
     (vocab: VocabCard) => savedVocabKeys.has(savedVocabKey(vocab)),
     [savedVocabKeys],
@@ -1859,10 +1822,10 @@ const App: React.FC = () => {
   const findSavedByWord = useCallback((word: string): VocabCard[] => {
     const bases = matchBaseWords(word, variantIndex);
     if (bases.size === 0) return [];
-    return sortVocabCardsByUsage(allActiveItems
+    return sortVocabCardsByUsage(activeContent
       .filter(i => i.type === 'vocab' && bases.has(normalizeKey((i.data as VocabCard).word || '')))
       .map(i => i.data as VocabCard));
-  }, [allActiveItems, variantIndex]);
+  }, [activeContent, variantIndex]);
 
   // Footnote lookup: the saved item (vocab or phrase) a sentence term maps to, or null. Variant-aware
   // for vocab (running→run etc.) via variantIndex; exact normalized match for phrases. Picks the
@@ -1944,13 +1907,13 @@ const App: React.FC = () => {
   // Open a saved sentence's source card in DetailView (sentence mode). `ordered` is the on-screen
   // (due-first) order from SentencesView, so swipe/arrow order matches the list exactly. Each sentence
   // maps to one group whose single item is its resolved source vocab card — matched by word + sense
-  // across the whole notebook (allActiveItems), falling back to a synthetic minimal card (showing the
+  // across the whole notebook, falling back to a synthetic minimal card (showing the
   // sentence as its sole example) when the source word no longer exists.
   const handleViewSentence = useCallback((ordered: StoredItem[], index: number) => {
     if (ordered.length === 0) return;
     const vocabBySpelling = new Map<string, StoredItem[]>();
-    for (const item of allActiveItems) {
-      if (item.type !== 'vocab') continue;
+    for (const item of latestItemsRef.current) {
+      if (item.isDeleted || item.type !== 'vocab') continue;
       const spelling = getItemSpelling(item);
       const matches = vocabBySpelling.get(spelling);
       if (matches) matches.push(item);
@@ -1986,7 +1949,7 @@ const App: React.FC = () => {
     });
     const safeIndex = Math.min(Math.max(0, index), groups.length - 1);
     setDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered });
-  }, [allActiveItems]);
+  }, []);
 
   // Resolve an example to a sentence card without changing the notebook. Prepared analysis and its
   // image are global source material, so previewing can read them before the user explicitly saves.
@@ -2039,7 +2002,7 @@ const App: React.FC = () => {
   //
   // The reviewed copy is computed from latestItemsRef.current before any state update, so the review
   // outbox, the immediate IndexedDB write and the rendered library all hold the same copy.
-  const updateSRS = async (
+  const updateSRS = useCallback(async (
     itemId: string,
     rating: ReviewRating = 'good',
     context?: {
@@ -2113,7 +2076,7 @@ const App: React.FC = () => {
 
     await flushPendingReviews();
     return !readPendingReviewMutations(userId).some(mutation => mutation.event.id === reviewEvent.id);
-  };
+  }, [authState.user?.id, recordReview, updateItems, flushPendingReviews]);
 
   // Handle scroll to hide/show nav bar — uses direct DOM mutation to avoid re-rendering App
   const handleScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
@@ -2273,7 +2236,7 @@ const App: React.FC = () => {
       {detailContext && (
         <Suspense fallback={<div className="fixed inset-0 z-[54] grid place-items-center bg-white"><Loader2 className="animate-spin text-indigo-500" /></div>}>
         <ErrorBoundary
-          onReset={() => setDetailContext(null)}
+          onReset={closeDetail}
           fallbackMessage="Something went wrong displaying this card. Your data is safe — returning to notebook."
         >
           <DetailView
@@ -2281,11 +2244,11 @@ const App: React.FC = () => {
               initialGroupIndex={detailContext.groupIndex}
               initialItemIndex={detailContext.itemIndex}
               sentenceItems={liveDetailSentenceItems}
-              onClose={() => setDetailContext(null)}
+              onClose={closeDetail}
               onSave={handleSave}
               onDelete={handleDelete}
               onArchive={handleArchive}
-              savedItems={activeItems}
+              savedItems={allActiveItems}
               savedSentenceItems={allSentenceItems}
               onSearch={handleRecursiveSearch}
               onRefresh={handleRefreshViaGlobal}
@@ -2313,7 +2276,7 @@ const App: React.FC = () => {
               key={cardPopup.spelling}
               items={popupItems}
               initialId={cardPopup.initialId}
-              onClose={() => setCardPopup(null)}
+              onClose={closeCardPopup}
               onUpdateSRS={updateSRS}
               onResetSRS={resetSRS}
               onDelete={handleDelete}
@@ -2334,11 +2297,11 @@ const App: React.FC = () => {
         <Suspense fallback={<div className="h-full grid place-items-center"><Loader2 className="animate-spin text-indigo-500" /></div>}>
         {currentView === 'notebook' && (
           <NotebookView
-            items={activeItems}
+            items={notebookItems}
             onDelete={handleDelete}
             onSearch={handleRecursiveSearch}
             onViewDetail={handleViewStoredItem}
-            user={authState.user ? { uid: authState.user.id, displayName: authState.user.displayName, photoURL: authState.user.photoUrl, email: authState.user.email } : null}
+            user={notebookUser}
             onSignIn={loginRedirect}
             onSignOut={logout}
             syncStatus={syncStatus}
@@ -2348,6 +2311,7 @@ const App: React.FC = () => {
             onBulkRefresh={handleBulkRefresh}
             bulkRefreshProgress={bulkRefreshProgress}
             hasSavedVariant={hasSavedVariant}
+            isVocabSaved={isVocabSaved}
             onFindDuplicates={handleFindDuplicates}
             onArchive={handleArchive}
             onUnarchive={handleUnarchive}
@@ -2439,7 +2403,7 @@ const App: React.FC = () => {
           currentView={currentView}
           onNavigate={setCurrentView}
           sentenceDueCount={sentenceDueCount}
-          onKeyboardHelp={() => setShowKeyboardHelp(true)}
+          onKeyboardHelp={openKeyboardHelp}
         />
       </Suspense>
 
