@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import { BarChart3, Clock, Flame, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
 import { getItemTitle, type ReviewEvent, type StoredItem } from '../types';
 import { buildReviewQueue } from '../services/studySession';
@@ -32,17 +32,13 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
     unsavedScrollRef.current = null;
   };
 
-  // Return to the saved scroll position on mount. When the dashboard goes away (a session starts or
-  // another tab shows), save a position still waiting on its timer, so coming back doesn't jump.
-  useEffect(() => {
-    const savedScroll = localStorage.getItem(SCROLL_KEY);
-    const restore = savedScroll ? setTimeout(() => {
-      dashboardScrollRef.current?.scrollTo(0, parseInt(savedScroll, 10));
-    }, 100) : undefined;
-    return () => {
-      clearTimeout(restore);
-      saveScroll();
-    };
+  // Open at the saved scroll position before the first paint, instead of at the top and then jumping.
+  // When the dashboard goes away (a session starts or another tab shows), save a position still waiting
+  // on its timer, so coming back doesn't jump.
+  useLayoutEffect(() => {
+    const savedScroll = Number(localStorage.getItem(SCROLL_KEY));
+    if (savedScroll > 0 && dashboardScrollRef.current) dashboardScrollRef.current.scrollTop = savedScroll;
+    return saveScroll;
   }, []);
 
   // Mastery breakdown data for stacked bar
