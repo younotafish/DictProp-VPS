@@ -18,7 +18,7 @@ export const Button: React.FC<ButtonProps> = ({
     primary: "bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700",
     secondary: "bg-white text-slate-700 border border-slate-200 shadow-sm hover:bg-slate-50",
     ghost: "bg-transparent text-slate-600 hover:bg-slate-100",
-    icon: "p-2 bg-white/80 backdrop-blur text-slate-700 hover:bg-white shadow-sm rounded-full"
+    icon: "p-2 bg-white text-slate-700 hover:bg-slate-50 shadow-sm rounded-full"
   };
 
   const sizes = {
