@@ -107,6 +107,35 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   assert.deepEqual(await response.json(), []);
 });
 
+test('review history sends recent reviews in full and older ones as times and a count', async () => {
+  // Long before the other tests' reviews, which happen now.
+  const at = (days: number) => 1_700_000_000_000 + days * 86_400_000;
+  for (const [id, days] of [['history-400', -400], ['history-30', -30], ['history-9', -9], ['history-1', -1]] as const) {
+    const response = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id, itemId: item.data.id, itemType: 'vocab', reviewedAt: at(days), previousStep: 0, nextStep: 1, rating: 'good',
+      }),
+    });
+    assert.equal(response.status, 201);
+  }
+
+  let response = await app.request(`/api/reviews/history?recentSince=${at(-8)}`);
+  assert.equal(response.status, 200);
+  const history = await response.json() as any;
+  assert.deepEqual(
+    history.recent.map((event: any) => event.id).filter((id: string) => id.startsWith('history-')),
+    ['history-1'],
+  );
+  assert.equal(history.recent[0].rating, 'good');
+  assert.deepEqual(history.olderTimes, [at(-30), at(-9)]); // 400 days back is beyond a streak's reach
+  assert.equal(history.olderCount, 3);
+
+  response = await app.request('/api/reviews/history');
+  assert.equal(response.status, 400);
+});
+
 test('review route validates mutations before touching the database', async () => {
   const response = await app.request('/api/reviews/apply', {
     method: 'POST',

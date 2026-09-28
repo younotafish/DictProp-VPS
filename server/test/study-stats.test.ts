@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { ReviewEvent, ReviewRating, StoredItem } from '../../types.ts';
+import type { ReviewEvent, ReviewHistory, ReviewRating, StoredItem } from '../../types.ts';
 import { computeStudyStats } from '../../services/studyStats.ts';
 
 const HOUR = 3_600_000;
@@ -36,6 +36,7 @@ let nextEventId = 0;
 const review = (reviewedAt: number, rating: ReviewRating = 'good'): ReviewEvent => ({
   id: String(nextEventId++), itemId: 'x', itemType: 'vocab', reviewedAt, previousStep: 0, nextStep: 0, rating,
 });
+const recentOnly = (recent: ReviewEvent[]): ReviewHistory => ({ recent, olderTimes: [], olderCount: 0 });
 
 test('study stats bucket items by memory strength and count due spellings once', () => {
   const items = [
@@ -46,7 +47,7 @@ test('study stats bucket items by memory strength and count due spellings once',
     vocab('d', 'skip', { strength: 12 }),
     vocab('e', 'hop', { strength: 0 }),
   ];
-  const stats = computeStudyStats(items, [], NOW);
+  const stats = computeStudyStats(items, recentOnly([]), NOW);
   assert.deepEqual(
     [stats.grandmaster, stats.mastered, stats.proficient, stats.learning, stats.struggling, stats.newItems],
     [1, 1, 1, 1, 1, 1],
@@ -64,7 +65,7 @@ test('study stats pick the three most reviewed items, earlier items first on tie
     vocab('d', 'd', { reviews: 4 }),
     vocab('e', 'e', { reviews: 12, streak: 7 }),
   ];
-  const stats = computeStudyStats(items, [], NOW);
+  const stats = computeStudyStats(items, recentOnly([]), NOW);
   assert.deepEqual(stats.mostReviewed.map(item => item.data.id), ['e', 'b', 'a']);
   assert.equal(stats.longestStreak, 7);
   assert.equal(stats.totalLifetimeReviews, 33); // no history yet, so the per-item counts stand in
@@ -72,7 +73,7 @@ test('study stats pick the three most reviewed items, earlier items first on tie
 
 test('study streak counts back from today, or from yesterday before today is studied', () => {
   const streakOf = (daysAgo: number[]) =>
-    computeStudyStats([], daysAgo.map(days => review(midnight(days) + HOUR)), NOW).streak;
+    computeStudyStats([], recentOnly(daysAgo.map(days => review(midnight(days) + HOUR))), NOW).streak;
   assert.equal(streakOf([0, 1, 2, 4]), 3);
   assert.equal(streakOf([1, 2]), 2);
   assert.equal(streakOf([0]), 1);
@@ -88,7 +89,7 @@ test('study stats bucket reviews by local calendar day, oldest first', () => {
     review(midnight(7) + 5 * HOUR), // outside the chart
     review(midnight(0) + DAY + HOUR), // tomorrow, from a skewed clock
   ];
-  const stats = computeStudyStats([], events, NOW);
+  const stats = computeStudyStats([], recentOnly(events), NOW);
   assert.deepEqual(stats.last7Days.map(entry => entry.reviews), [1, 0, 0, 0, 0, 1, 1]);
   assert.deepEqual(stats.last7Days.map(entry => entry.day), [6, 5, 4, 3, 2, 1, 0].map(midnight));
   // Each entry names its own weekday in local time.
@@ -103,7 +104,7 @@ test('weekly stats cover the last seven days and the share not rated again', () 
     review(NOW - HOUR, 'hard'),
     review(NOW - HOUR, 'easy'),
   ];
-  const stats = computeStudyStats([vocab('a', 'a', { reviews: 1 })], events, NOW);
+  const stats = computeStudyStats([vocab('a', 'a', { reviews: 1 })], recentOnly(events), NOW);
   assert.equal(stats.weeklyReviews, 4);
   assert.equal(stats.weeklyRecallRate, 75);
   assert.equal(stats.totalLifetimeReviews, 5);
@@ -134,7 +135,26 @@ test('study stats match the per-event date formatting they replace', () => {
     return events.filter(event => dateKey(event.reviewedAt) === dateKey(day.getTime())).length;
   });
 
-  const stats = computeStudyStats([], events, NOW);
+  // The server sends reviews older than the recent ones as bare times.
+  const recentSince = NOW - 8 * DAY;
+  const older = events.filter(event => event.reviewedAt < recentSince);
+  const stats = computeStudyStats([], {
+    recent: events.filter(event => event.reviewedAt >= recentSince),
+    olderTimes: older.map(event => event.reviewedAt).sort((a, b) => a - b),
+    olderCount: older.length,
+  }, NOW);
   assert.equal(stats.streak, streak);
   assert.deepEqual(stats.last7Days.map(entry => entry.reviews), last7);
+  assert.equal(stats.totalLifetimeReviews, events.length);
+});
+
+test('older reviews, known only by when they happened, extend the streak and the lifetime total', () => {
+  const recent = [0, 1, 2, 3, 4, 5, 6, 7].map(days => review(midnight(days) + HOUR, days === 0 ? 'again' : 'good'));
+  const olderTimes = [8, 9, 9, 10].map(days => midnight(days) + HOUR);
+  const stats = computeStudyStats([], { recent, olderTimes, olderCount: 1_000 }, NOW);
+  assert.equal(stats.streak, 11);
+  // A week before 15:30 today is after that day's 01:00 review.
+  assert.equal(stats.weeklyReviews, 7);
+  assert.equal(stats.weeklyRecallRate, 86);
+  assert.equal(stats.totalLifetimeReviews, 1_008); // most older reviews are beyond a streak's reach
 });

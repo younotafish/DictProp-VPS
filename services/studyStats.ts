@@ -1,4 +1,4 @@
-import { getItemSpelling, type ReviewEvent, type StoredItem } from '../types';
+import { getItemSpelling, type ReviewHistory, type StoredItem } from '../types';
 
 export interface StudyStats {
   /** Distinct due spellings: the review session buries same-spelling senses, so the count follows it. */
@@ -29,12 +29,12 @@ const reviewsOf = (item: StoredItem) => item.srs?.totalReviews ?? 0;
 
 /**
  * The study dashboard's numbers, from one pass over the items and one over the review history. Review
- * days are found against precomputed local midnights rather than by formatting a date per event, which
+ * days are found against precomputed local midnights rather than by formatting a date per review, which
  * mattered once the history grew to tens of thousands of reviews.
  */
 export function computeStudyStats(
   items: readonly StoredItem[],
-  reviewEvents: readonly ReviewEvent[],
+  history: ReviewHistory,
   now = Date.now(),
 ): StudyStats {
   const dueSpellings = new Set<string>();
@@ -93,9 +93,14 @@ export function computeStudyStats(
   const weekAgoTime = weekAgo.getTime();
 
   const reviewsByDay = new Array<number>(STREAK_DAYS).fill(0);
+  for (const time of history.olderTimes) {
+    const day = dayOf(time);
+    if (day >= 0) reviewsByDay[day]++;
+  }
+  // Only the recent reviews carry ratings, and they cover the week.
   let weeklyReviews = 0;
   let weeklyRecalled = 0;
-  for (const event of reviewEvents) {
+  for (const event of history.recent) {
     const day = dayOf(event.reviewedAt);
     if (day >= 0) reviewsByDay[day]++;
     if (event.reviewedAt >= weekAgoTime) {
@@ -123,7 +128,7 @@ export function computeStudyStats(
     streak,
     weeklyReviews,
     weeklyRecallRate: weeklyReviews > 0 ? Math.round((weeklyRecalled / weeklyReviews) * 100) : 0,
-    totalLifetimeReviews: Math.max(reviewEvents.length, legacyReviewFloor),
+    totalLifetimeReviews: Math.max(history.olderCount + history.recent.length, legacyReviewFloor),
     longestStreak,
     mostReviewed,
     last7Days: Array.from({ length: 7 }, (_, i) => {

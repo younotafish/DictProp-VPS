@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
+import { getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
@@ -430,6 +430,13 @@ itemsRoutes.get('/reviews', (c) => {
   const since = Number(c.req.query('since') || Date.now() - 366 * 24 * 60 * 60 * 1000);
   if (!Number.isFinite(since) || since < 0) return c.json({ error: 'Invalid since parameter' }, 400);
   return c.json(getReviewEvents(userId, since));
+});
+
+itemsRoutes.get('/reviews/history', (c) => {
+  const userId = c.get('user').id;
+  const recentSince = Number(c.req.query('recentSince'));
+  if (!Number.isFinite(recentSince) || recentSince < 0) return c.json({ error: 'Invalid recentSince parameter' }, 400);
+  return c.json(getReviewHistory(userId, recentSince));
 });
 
 itemsRoutes.post('/reviews', async (c) => {

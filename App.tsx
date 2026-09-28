@@ -474,7 +474,7 @@ const App: React.FC = () => {
   const [comparisons, setComparisons] = useState<StoredComparison[]>([]);
   const comparisonsRef = useRef<StoredComparison[]>([]);
   useEffect(() => { comparisonsRef.current = comparisons; }, [comparisons]);
-  const { reviewEvents, recordReview, removeReview } = useReviewHistory(authState.user?.id);
+  const { reviewHistory, recordReview, removeReview } = useReviewHistory(authState.user?.id);
   const reviewFlushPromiseRef = useRef<Promise<void> | null>(null);
 
   const reconcileAppliedReview = useCallback(async (serverItems: StoredItem[]) => {
@@ -2052,7 +2052,7 @@ const App: React.FC = () => {
     // The small localStorage outbox is synchronous and lands before React or IndexedDB work. Its
     // idempotent event id is the crash/reload boundary for offline and rapid reviews.
     enqueuePendingReviewMutation(userId, reviewMutation);
-    recordReview(reviewEvent, { persist: false });
+    recordReview(reviewEvent);
     updateItems(items => {
       const index = items.findIndex(item => item.data.id === itemId);
       if (index < 0) return seedItem ? [...items, reviewedItem] : items;
@@ -2338,7 +2338,7 @@ const App: React.FC = () => {
         <TabScreen shown={currentView === 'study'}>
           <StudyEnhanced
             items={studyItems}
-            reviewEvents={reviewEvents}
+            reviewHistory={reviewHistory}
             onReview={updateSRS}
             onUndoReview={undoSRSReview}
             onOpenExampleSentence={handleOpenStudyExample}

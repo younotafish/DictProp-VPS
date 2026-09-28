@@ -224,6 +224,16 @@ export interface ReviewEvent {
   sessionId?: string;
 }
 
+/** The review history the study dashboard draws from: recent reviews in full, older ones in brief. */
+export interface ReviewHistory {
+  /** Every review in the last week or so, oldest first, including this device's unsynced ones. */
+  recent: ReviewEvent[];
+  /** When the older reviews happened, oldest first, as far back as a streak can reach. */
+  olderTimes: number[];
+  /** How many older reviews there are, however far back. */
+  olderCount: number;
+}
+
 // Group type for items with same spelling - Shared across views
 export interface ItemGroup {
   title: string;

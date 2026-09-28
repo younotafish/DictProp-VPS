@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { StoredItem, getItemSense, ReviewEvent, type ReviewRating, type ReviewTaskType } from '../types';
+import { StoredItem, getItemSense, type ReviewHistory, type ReviewRating, type ReviewTaskType } from '../types';
 import { 
   BrainCircuit, 
   Eye,
@@ -21,7 +21,7 @@ import { StudyDashboard } from '../components/StudyDashboard';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
-  reviewEvents: ReviewEvent[];
+  reviewHistory: ReviewHistory;
   onReview: (
     itemId: string,
     rating: ReviewRating,
@@ -65,7 +65,7 @@ const keyboardRatings: Partial<Record<string, ReviewRating>> = {
 
 export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({ 
   items, 
-  reviewEvents,
+  reviewHistory,
   onReview,
   onUndoReview,
   onOpenExampleSentence,
@@ -359,5 +359,5 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     );
   }
 
-  return <StudyDashboard items={items} reviewEvents={reviewEvents} onStart={startSession} onScroll={onScroll} />;
+  return <StudyDashboard items={items} reviewHistory={reviewHistory} onStart={startSession} onScroll={onScroll} />;
 };

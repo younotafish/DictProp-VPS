@@ -1,74 +1,81 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ReviewEvent } from '../types';
-import { loadReviewEvents, saveReviewEvent } from '../services/api';
+import type { ReviewEvent, ReviewHistory } from '../types';
+import { loadReviewHistory, saveReviewEvent } from '../services/api';
 import { warn } from '../services/logger';
 import { readPendingReviewMutations } from '../services/reviewQueue';
 
+const DAY = 24 * 60 * 60 * 1000;
+/** Reviews come in full for the week the dashboard's weekly numbers cover, plus a day. */
+const RECENT_DAYS = 8;
+const EMPTY_HISTORY: ReviewHistory = { recent: [], olderTimes: [], olderCount: 0 };
+
+const byTime = (a: ReviewEvent, b: ReviewEvent) => a.reviewedAt - b.reviewedAt;
+
+/** Reviews saved before the review outbox existed, which may still be waiting to upload. */
+function readLegacyPending(key: string): ReviewEvent[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function writeLegacyPending(key: string, pending: ReviewEvent[]): void {
+  try {
+    if (pending.length) localStorage.setItem(key, JSON.stringify(pending));
+    else localStorage.removeItem(key);
+  } catch { /* best effort */ }
+}
+
 export function useReviewHistory(userId?: string) {
-  const [events, setEvents] = useState<ReviewEvent[]>([]);
-  const pendingKey = userId ? `review_events_pending_${userId}` : '';
-
-  const readPending = useCallback((): ReviewEvent[] => {
-    if (!pendingKey) return [];
-    try {
-      const parsed = JSON.parse(localStorage.getItem(pendingKey) || '[]');
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
-  }, [pendingKey]);
-
-  const writePending = useCallback((pending: ReviewEvent[]) => {
-    if (!pendingKey) return;
-    try {
-      if (pending.length) localStorage.setItem(pendingKey, JSON.stringify(pending));
-      else localStorage.removeItem(pendingKey);
-    } catch { /* best effort */ }
-  }, [pendingKey]);
+  const [history, setHistory] = useState<ReviewHistory>(EMPTY_HISTORY);
 
   useEffect(() => {
-    if (!userId) { setEvents([]); return; }
-    const pending = readPending();
-    const pendingMutations = readPendingReviewMutations(userId);
-    const local = new Map(pending.map(event => [event.id, event]));
-    pendingMutations.forEach(mutation => local.set(mutation.event.id, mutation.event));
-    setEvents([...local.values()].sort((a, b) => a.reviewedAt - b.reviewedAt));
-    loadReviewEvents(0)
+    if (!userId) { setHistory(EMPTY_HISTORY); return; }
+    const legacyKey = `review_events_pending_${userId}`;
+    const legacyPending = readLegacyPending(legacyKey);
+    const unsynced = new Map(legacyPending.map(event => [event.id, event]));
+    readPendingReviewMutations(userId).forEach(mutation => unsynced.set(mutation.event.id, mutation.event));
+    setHistory({ ...EMPTY_HISTORY, recent: [...unsynced.values()].sort(byTime) });
+
+    // The recent reviews reach back to the oldest unsynced one, so a review the outbox did deliver
+    // can't come back as an older review as well.
+    let recentSince = Date.now() - RECENT_DAYS * DAY;
+    unsynced.forEach(event => { if (event.reviewedAt < recentSince) recentSince = event.reviewedAt; });
+    let cancelled = false;
+    loadReviewHistory(recentSince)
       .then(async remote => {
-        const merged = new Map(remote.map(event => [event.id, event]));
-        pending.forEach(event => merged.set(event.id, event));
-        pendingMutations.forEach(mutation => merged.set(mutation.event.id, mutation.event));
-        setEvents([...merged.values()].sort((a, b) => a.reviewedAt - b.reviewedAt));
+        if (cancelled) return;
+        // Reviews recorded while the history loaded stay.
+        setHistory(current => {
+          const recent = new Map(remote.recent.map(event => [event.id, event]));
+          current.recent.forEach(event => recent.set(event.id, event));
+          return { recent: [...recent.values()].sort(byTime), olderTimes: remote.olderTimes, olderCount: remote.olderCount };
+        });
         const failed: ReviewEvent[] = [];
-        for (const event of pending) {
+        for (const event of legacyPending) {
           try { await saveReviewEvent(event); } catch { failed.push(event); }
         }
-        writePending(failed);
+        writeLegacyPending(legacyKey, failed);
       })
       .catch(error => warn('Failed to load review history:', error));
-  }, [userId, readPending, writePending]);
+    return () => { cancelled = true; };
+  }, [userId]);
 
-  const record = useCallback((event: ReviewEvent, options?: { persist?: boolean }) => {
-    setEvents(current => {
-      // A new review normally belongs at the end, so it appends without rebuilding the history.
-      const last = current[current.length - 1];
-      if (!last || (event.reviewedAt >= last.reviewedAt && !current.some(item => item.id === event.id))) {
-        return [...current, event];
-      }
-      const merged = new Map(current.map(item => [item.id, item]));
-      merged.set(event.id, event);
-      return [...merged.values()].sort((a, b) => a.reviewedAt - b.reviewedAt);
+  /** Adds a review this device just made; the review outbox, not this history, delivers it. */
+  const record = useCallback((event: ReviewEvent) => {
+    setHistory(current => {
+      const last = current.recent[current.recent.length - 1];
+      // A new review normally belongs at the end, so it appends without re-sorting.
+      const recent = !last || (event.reviewedAt >= last.reviewedAt && !current.recent.some(item => item.id === event.id))
+        ? [...current.recent, event]
+        : [...current.recent.filter(item => item.id !== event.id), event].sort(byTime);
+      return { ...current, recent };
     });
-    if (options?.persist === false) return;
-    const pending = [...readPending().filter(item => item.id !== event.id), event];
-    writePending(pending);
-    saveReviewEvent(event).then(() => {
-      writePending(readPending().filter(item => item.id !== event.id));
-    }).catch(error => warn('Failed to persist review history:', error));
-  }, [readPending, writePending]);
+  }, []);
 
   const remove = useCallback((eventId: string) => {
-    setEvents(current => current.filter(event => event.id !== eventId));
-    writePending(readPending().filter(event => event.id !== eventId));
-  }, [readPending, writePending]);
+    setHistory(current => ({ ...current, recent: current.recent.filter(event => event.id !== eventId) }));
+  }, []);
 
-  return { reviewEvents: events, recordReview: record, removeReview: remove };
+  return { reviewHistory: history, recordReview: record, removeReview: remove };
 }

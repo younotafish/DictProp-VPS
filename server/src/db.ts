@@ -1005,6 +1005,10 @@ const reviewStmts = {
     VALUES (@id, @user_id, @item_id, @item_type, @reviewed_at, @previous_step, @next_step, @rating, @task_type, @duration_ms, @session_id)`),
   recent: db.prepare(`SELECT id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id
     FROM review_events WHERE user_id = ? AND reviewed_at >= ? AND undone_at IS NULL ORDER BY reviewed_at`),
+  timesBetween: db.prepare(`SELECT reviewed_at FROM review_events
+    WHERE user_id = ? AND reviewed_at >= ? AND reviewed_at < ? AND undone_at IS NULL ORDER BY reviewed_at`).pluck(),
+  countBefore: db.prepare(`SELECT COUNT(*) FROM review_events
+    WHERE user_id = ? AND reviewed_at < ? AND undone_at IS NULL`).pluck(),
   byId: db.prepare(`SELECT id, user_id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id, undone_at
     FROM review_events WHERE id = ?`),
   insertItemSnapshot: db.prepare(`INSERT INTO review_event_items (event_id, item_id, previous_srs, applied_srs)
@@ -1031,6 +1035,28 @@ export function getReviewEvents(userId: string, since: number): ReviewEventRow[]
     ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
     ...(row.session_id ? { sessionId: row.session_id } : {}),
   }));
+}
+
+/** A year and a day: as far back as the study dashboard's streak can reach. */
+const REVIEW_TIMES_REACH = 366 * 24 * 60 * 60 * 1000;
+
+export interface ReviewHistoryRows {
+  recent: ReviewEventRow[];
+  olderTimes: number[];
+  olderCount: number;
+}
+
+/**
+ * The review history the study dashboard needs: every review since `recentSince` in full, and for older
+ * ones only when they happened (the year before, all a streak can use) and how many there are. The full
+ * history runs to tens of thousands of reviews, too much to download on every launch.
+ */
+export function getReviewHistory(userId: string, recentSince: number): ReviewHistoryRows {
+  return {
+    recent: getReviewEvents(userId, recentSince),
+    olderTimes: reviewStmts.timesBetween.all(userId, recentSince - REVIEW_TIMES_REACH, recentSince) as number[],
+    olderCount: reviewStmts.countBefore.get(userId, recentSince) as number,
+  };
 }
 
 export interface AppliedReviewResult {

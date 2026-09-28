@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import { BarChart3, Clock, Flame, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
-import { getItemTitle, type ReviewEvent, type StoredItem } from '../types';
+import { getItemTitle, type ReviewHistory, type StoredItem } from '../types';
 import { buildReviewQueue } from '../services/studySession';
 import { computeStudyStats } from '../services/studyStats';
 
@@ -8,7 +8,7 @@ const SCROLL_KEY = 'study_dashboard_scroll';
 
 interface StudyDashboardProps {
   items: StoredItem[];
-  reviewEvents: ReviewEvent[];
+  reviewHistory: ReviewHistory;
   onStart: (queue: StoredItem[]) => void;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
@@ -17,13 +17,13 @@ interface StudyDashboardProps {
  * The study tab between sessions: what's ready, and progress so far. It's only mounted while no session
  * runs, so grading a card never recomputes these numbers, and it returns to where it was scrolled.
  */
-export const StudyDashboard = React.memo(function StudyDashboard({ items, reviewEvents, onStart, onScroll }: StudyDashboardProps) {
+export const StudyDashboard = React.memo(function StudyDashboard({ items, reviewHistory, onStart, onScroll }: StudyDashboardProps) {
   const dashboardScrollRef = useRef<HTMLDivElement>(null);
   // The latest scroll position not yet saved, and the timer that saves it.
   const unsavedScrollRef = useRef<number | null>(null);
   const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const reviewQueue = useMemo(() => buildReviewQueue(items), [items]);
-  const stats = useMemo(() => computeStudyStats(items, reviewEvents), [items, reviewEvents]);
+  const stats = useMemo(() => computeStudyStats(items, reviewHistory), [items, reviewHistory]);
 
   const saveScroll = () => {
     clearTimeout(scrollSaveTimerRef.current);

@@ -1,4 +1,4 @@
-import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent, RevisionCursor } from '../types';
+import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent, ReviewHistory, RevisionCursor } from '../types';
 import { dataUriToBlob } from './dataUri';
 import { log, error as logError } from './logger';
 import { HttpError, jsonRequest, requestJson, requestVoid, responseToHttpError } from './http';
@@ -86,8 +86,8 @@ export const saveItems = async (items: readonly StoredItem[]): Promise<SaveItems
   return saved;
 };
 
-export const loadReviewEvents = async (since: number): Promise<ReviewEvent[]> =>
-  requestJson(`${API_BASE}/api/reviews?since=${since}`, undefined, 'Load review history');
+export const loadReviewHistory = async (recentSince: number): Promise<ReviewHistory> =>
+  requestJson(`${API_BASE}/api/reviews/history?recentSince=${recentSince}`, undefined, 'Load review history');
 
 export const saveReviewEvent = async (event: ReviewEvent): Promise<void> =>
   requestVoid(`${API_BASE}/api/reviews`, jsonRequest('POST', event), 'Save review event');
