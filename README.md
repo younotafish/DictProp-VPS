@@ -22,7 +22,7 @@ Production: [dictprop.online](https://dictprop.online)
 - SQLite via `better-sqlite3`
 - `ts-fsrs` for deterministic FSRS v6 scheduling
 - DeepInfra for immediate text analysis, speech, and transcription
-- Local Claude Opus 5.5 and ERNIE-Image-Turbo for scheduled enrichment and illustrations
+- Local Claude Opus 5.5 and Krea-2-Turbo for scheduled enrichment and illustrations
 - Docker Compose behind Caddy in production
 
 ## Local Development
@@ -84,12 +84,12 @@ Do not push this fork to the Firebase repository. The production remote is named
 ## Scheduled Enrichment
 
 - GitHub Actions runs `.github/workflows/incremental-enrichment.yml` at minute 23 every six hours. The VPS task is audit-only: it reads SQLite coverage, reports top-level and example-sentence gaps, and fails visibly when local repair work remains. It never invokes a text or image generation provider.
-- Interactive searches still receive their immediate basic analysis from the VPS, but the VPS no longer generates images or detailed explanations. macOS `launchd` runs `ops/launchd/com.dictprop.incremental-example-enrichment.plist` every 21,600 seconds and fetches an encrypted production snapshot. The local Claude Code CLI runs `claude-opus-5-5` at xhigh effort for advanced vocabulary, detailed sentence explanations, prompt refinement, and visual review. Images are rendered locally with ERNIE-Image-Turbo; recurring enrichment does not use DeepInfra or Replicate.
+- Interactive searches still receive their immediate basic analysis from the VPS, but the VPS no longer generates images or detailed explanations. macOS `launchd` runs `ops/launchd/com.dictprop.incremental-example-enrichment.plist` every 21,600 seconds and fetches an encrypted production snapshot. The local Claude Code CLI runs `claude-opus-5-5` at xhigh effort for advanced vocabulary, detailed sentence explanations, prompt refinement, and visual review. Images are rendered locally with Krea-2-Turbo (`IMAGE_MODEL`, `IMAGE_MODEL_LABEL`, `IMAGE_MODEL_QUANTIZE`, and `IMAGE_STEPS` select another mflux model); recurring enrichment does not use DeepInfra or Replicate.
 - `ENRICHMENT_MODEL_PROVIDER` selects the local text and review model: `claude` (default, tuned with `CLAUDE_MODEL` and `CLAUDE_REASONING_EFFORT`) or `codex` (`CODEX_MODEL` and `CODEX_REASONING_EFFORT`, pinned to `gpt-5.6-sol`). Each cycle first sends one small image-bearing request through `scripts/offline/check-structured-model.mjs` and stops before exporting production data if the model cannot answer.
 - The encrypted corpus export carries save timestamps, item image markers, and per-example production coverage. The local bridge gives every newly saved word or phrase one advanced local rewrite, repairs incomplete saved sentences and example sentences, and skips content already carrying a matching local-enrichment hash. It keeps source, model checkpoints, publication waves, and image state under `data/offline-backfill/incremental-example-enrichment/`; optimistic hashes prevent an older local result from overwriting content edited after export.
 - Every newly saved vocabulary sense receives an `advancedEnrichment` marker (`claude-code` or `codex-harness`) bound to a hash of its locally generated content. That makes the rewrite one-time and resumable while automatically re-queuing a card if its learning metadata is later edited.
 
-The cycle needs a signed-in Claude Code CLI at `/usr/local/bin/claude` (override with `CLAUDE_BIN`) and the pinned mflux runtime for ERNIE-Image-Turbo. Install the image runtime once with:
+The cycle needs a signed-in Claude Code CLI at `/usr/local/bin/claude` (override with `CLAUDE_BIN`) and the pinned mflux runtime with Krea-2-Turbo weights in the Hugging Face cache. The cycle renders offline, so download the gated `krea/Krea-2-Turbo` weights once after accepting its license. Install the image runtime once with:
 
 ```bash
 scripts/offline/bootstrap-mflux-runtime.sh

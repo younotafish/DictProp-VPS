@@ -53,7 +53,9 @@ test('server search stays immediate while local Claude Opus enrichment runs ever
   assert.match(runner, /ANALYSIS_CONCURRENCY="\$\{ANALYSIS_CONCURRENCY:-16\}"/);
   assert.match(runner, /IMAGE_QA_CONCURRENCY="\$\{IMAGE_QA_CONCURRENCY:-8\}"/);
   assert.match(runner, /CODEX_IMAGE_CONCURRENCY="\$IMAGE_QA_CONCURRENCY"/);
-  assert.match(runner, /IMAGE_MODEL=ernie-image-turbo/);
+  assert.match(runner, /IMAGE_MODEL="\$\{IMAGE_MODEL:-krea2\}"/);
+  assert.equal(runner.match(/IMAGE_MODEL="\$IMAGE_MODEL"/g)?.length, 2);
+  assert.equal(runner.match(/1024 576 "\$IMAGE_STEPS" 1 64/g)?.length, 2);
   // A few unrenderable images must not hold back the accepted ones in either image stage.
   assert.match(runner, /IMAGE_MAX_CANDIDATES="\$\{IMAGE_MAX_CANDIDATES:-8\}"/);
   assert.equal(runner.match(/IMAGE_QUALITY_DEFER_AFTER="\$IMAGE_MAX_CANDIDATES"/g)?.length, 2);

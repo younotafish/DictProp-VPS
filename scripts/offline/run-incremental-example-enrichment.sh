@@ -24,6 +24,13 @@ IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-8}"
 # An image that fails this many candidates waits for the next cycle, which renders fresh ones; a long
 # tail can take dozens of candidates and would hold back every accepted image.
 IMAGE_MAX_CANDIDATES="${IMAGE_MAX_CANDIDATES:-8}"
+# Local renderer for both image stages. In a side-by-side test on this Mac, Krea-2-Turbo drew the intended
+# meaning far more often than ERNIE-Image-Turbo, at about 37 s instead of 8 s per image. A cycle renders
+# tens of images, so accuracy outweighs speed. The bulk backfill keeps ERNIE for throughput.
+IMAGE_MODEL="${IMAGE_MODEL:-krea2}"
+IMAGE_MODEL_LABEL="${IMAGE_MODEL_LABEL:-krea/Krea-2-Turbo}"
+IMAGE_MODEL_QUANTIZE="${IMAGE_MODEL_QUANTIZE:-}"
+IMAGE_STEPS="${IMAGE_STEPS:-8}"
 VOCAB_COMPLETION_BATCH_SIZE="${VOCAB_COMPLETION_BATCH_SIZE:-8}"
 SENTENCE_ANALYSIS_BATCH_SIZE="${SENTENCE_ANALYSIS_BATCH_SIZE:-4}"
 INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-${LOCAL_VOCAB_BATCH_SIZE:-100}}"
@@ -230,7 +237,7 @@ if [ -s "$SAVED_ANALYSIS_CACHE" ]; then SAVED_ANALYSIS_INPUT="$SAVED_ANALYSIS_CA
   "$SAVED_ANALYSIS_INPUT" \
   "$VOCAB_OVERLAY" \
   "$ITEM_IMAGE_ROOT" \
-  baidu/ERNIE-Image-Turbo
+  "$IMAGE_MODEL_LABEL"
 ITEM_IMAGE_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' \
   "$ITEM_IMAGE_ROOT/targets.json")"
 if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
@@ -238,11 +245,11 @@ if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
     "$ITEM_IMAGE_ROOT/targets.json")"
   log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
   env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-    IMAGE_MODEL=ernie-image-turbo IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
+    IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
     IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
       "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
-      "$ITEM_IMAGE_ROOT/streaming-quality/$ITEM_IMAGE_FINGERPRINT" 1024 576 4 1 64
+      "$ITEM_IMAGE_ROOT/streaming-quality/$ITEM_IMAGE_FINGERPRINT" 1024 576 "$IMAGE_STEPS" 1 64
   # The publisher waits for every manifest entry, so deferred images leave the manifest. They are still
   # missing in production, so the next cycle targets them again.
   ITEM_IMAGE_READY="$("$NODE_BIN" -e 'const f=require("fs"),p=require("path"),file=p.join(process.argv[1],"manifest.json"),m=JSON.parse(f.readFileSync(file,"utf8"));m.entries=m.entries.filter(e=>f.existsSync(p.join(process.argv[1],e.imageFile)));f.writeFileSync(file,JSON.stringify(m,null,2)+"\n",{mode:0o600});console.log(m.entries.length)' \
@@ -318,7 +325,7 @@ EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
   scripts/offline/dispatch-staged-example-analyses.sh "$ROOT" 2000 "$REQUIRED_DEPLOY_SHA"
 
 "$NODE_BIN" scripts/offline/prepare-sentence-images.mjs \
-  "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT" baidu/ERNIE-Image-Turbo \
+  "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT" "$IMAGE_MODEL_LABEL" \
   "$BASE_IMAGE_ROOT/images"
 IMAGE_TARGET_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' \
   "$IMAGE_ROOT/targets.json")"
@@ -340,12 +347,12 @@ if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
     "$IMAGE_ROOT/targets.json")"
   log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
   env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-    IMAGE_MODEL=ernie-image-turbo \
-    IMAGE_MODEL_QUANTIZE=8 KREA_SHARD_COUNT=1 \
+    IMAGE_MODEL="$IMAGE_MODEL" \
+    IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
     IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
     "$IMAGE_ROOT/targets.json" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
-    "$IMAGE_ROOT/streaming-quality/$TARGET_FINGERPRINT" 1024 576 4 1 64
+    "$IMAGE_ROOT/streaming-quality/$TARGET_FINGERPRINT" 1024 576 "$IMAGE_STEPS" 1 64
 else
   log "production already covers every image in the repair source"
 fi

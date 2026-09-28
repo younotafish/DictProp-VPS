@@ -1065,7 +1065,7 @@ Create separate cards for each relevant meaning.
 
 ## 8. AI Image Generation
 
-> **VPS fork:** the dictprop.online server does not generate images or detailed explanations. A local macOS LaunchAgent renders missing illustrations with ERNIE-Image-Turbo every six hours, has Claude Opus 5.5 review them and write the detailed text, and publishes the results through GitHub Actions. The FLUX Schnell description below applies to the Firebase version.
+> **VPS fork:** the dictprop.online server does not generate images or detailed explanations. A local macOS LaunchAgent renders missing illustrations with Krea-2-Turbo every six hours, has Claude Opus 5.5 review them and write the detailed text, and publishes the results through GitHub Actions. The FLUX Schnell description below applies to the Firebase version.
 
 ### How Illustrations Are Created
 
