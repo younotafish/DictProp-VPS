@@ -828,6 +828,18 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // The banner waits out a brief drop, so a phone losing its signal for a moment doesn't push the page
+  // down and back up.
+  const [showOfflineBanner, setShowOfflineBanner] = useState(!navigator.onLine);
+  useEffect(() => {
+    if (isOnline) {
+      setShowOfflineBanner(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowOfflineBanner(true), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [isOnline]);
+
   // Force sync — uploads changed items, pulls remote, merges
   const forceSyncInProgressRef = useRef(false);
   const handleForceSync = useCallback(async () => {
@@ -2157,13 +2169,13 @@ const App: React.FC = () => {
       ) : (
       <>
       {/* Offline banner */}
-      {!isOnline && (
+      {showOfflineBanner && (
         <div className="bg-amber-500 text-white text-center py-2 text-sm font-medium flex items-center justify-center gap-2 shrink-0">
           <span className="inline-block w-2 h-2 bg-white rounded-full animate-pulse" />
           Offline mode — changes will sync when connected
         </div>
       )}
-      
+
       <Suspense fallback={null}>
       {confirmModal && (
         <ConfirmModal
