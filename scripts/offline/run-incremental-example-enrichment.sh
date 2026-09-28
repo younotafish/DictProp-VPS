@@ -92,6 +92,16 @@ download_workflow_log() {
   return 1
 }
 
+# The slowest request sets a text stage's wall time, so each stage spreads its sentences over every worker:
+# one sentence per request until they outnumber the workers, then up to SENTENCE_ANALYSIS_BATCH_SIZE.
+sentence_batch_size() {
+  local size="$(( ($1 + ANALYSIS_CONCURRENCY - 1) / ANALYSIS_CONCURRENCY ))"
+  if [ "$size" -gt "$SENTENCE_ANALYSIS_BATCH_SIZE" ]; then
+    size="$SENTENCE_ANALYSIS_BATCH_SIZE"
+  fi
+  echo "$size"
+}
+
 mkdir -p "$ROOT"
 if ! shlock -f "$LOCK_FILE" -p "$$"; then
   log "another incremental enrichment cycle is already running"
@@ -206,7 +216,7 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
     log "generating detailed $MODEL_LABEL explanations for $SAVED_MISSING_COUNT saved sentence(s)"
     SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
     rm -f "$SAVED_NEW_ANALYSIS"
-    env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
+    env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$SAVED_MISSING_COUNT")" \
       "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
       "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS"
@@ -302,7 +312,7 @@ if [ "$MISSING_COUNT" -gt 0 ]; then
   log "generating detailed $MODEL_LABEL explanations for $MISSING_COUNT production gap(s)"
   NEW_ANALYSIS="$ROOT/new-analysis.json"
   rm -f "$NEW_ANALYSIS"
-  env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$SENTENCE_ANALYSIS_BATCH_SIZE" \
+  env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$MISSING_COUNT")" \
     "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
       "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE"
   ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -82,4 +83,18 @@ test('server search stays immediate while local Claude Opus enrichment runs ever
   for (const publisher of recurringPublishers) {
     assert.match(publisher, /wait-for-incremental-enrichment\.sh/);
   }
+});
+
+test('scheduled sentence analysis spreads each stage over every worker', () => {
+  const runner = readRepoFile('scripts/offline/run-incremental-example-enrichment.sh');
+  const helper = runner.match(/^sentence_batch_size\(\) \{\n[\s\S]*?\n\}$/m)?.[0];
+  assert.ok(helper);
+  const sizes = execFileSync('bash', ['-c', `${helper}\nfor count in 1 2 16 17 30 48 49 500; do sentence_batch_size "$count"; done`], {
+    encoding: 'utf8',
+    env: { ...process.env, ANALYSIS_CONCURRENCY: '16', SENTENCE_ANALYSIS_BATCH_SIZE: '4' },
+  }).trim().split('\n').map(Number);
+
+  // A small stage sends one sentence per request; a large one still amortizes the prompt over four.
+  assert.deepEqual(sizes, [1, 1, 1, 2, 2, 3, 4, 4]);
+  assert.equal(runner.match(/SENTENCE_ANALYSIS_BATCH_SIZE="\$\(sentence_batch_size "\$(?:SAVED_)?MISSING_COUNT"\)"/g)?.length, 2);
 });
