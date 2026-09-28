@@ -702,23 +702,33 @@ const lruSetVal = <V>(map: Map<string, V>, key: string, val: V, cap: number): vo
 // blob is valid forever). The returned object URL is inserted into the existing bounded-LRU `ttsUrlCache`
 // (which revokes evicted URLs), so in-session memory management is unchanged — IDB is purely a durable
 // layer beneath it. Both are best-effort: an unavailable IDB (private mode) just falls through to network.
+// A lookup already under way is shared, so tapping a sentence whose clip is still prefetching joins that
+// download instead of starting a second one from scratch.
+const clipLoads = new Map<string, Promise<string | null>>();
+const timingsLoads = new Map<string, Promise<WordTiming[] | null>>();
 
 /** Ready-to-play object URL for clip `key` (memory → IDB → server, write-through). Null on a true miss. */
-const loadClipUrl = async (key: string): Promise<string | null> => {
+const loadClipUrl = (key: string): Promise<string | null> => {
   const mem = ttsUrlCache.get(key);
-  if (mem) { lruTouch(ttsUrlCache, key); return mem; }
-  const stored = await getAudioBlob(key);
-  if (stored) {
-    const url = URL.createObjectURL(stored);
+  if (mem) { lruTouch(ttsUrlCache, key); return Promise.resolve(mem); }
+  const pending = clipLoads.get(key);
+  if (pending) return pending;
+  const load = (async () => {
+    const stored = await getAudioBlob(key);
+    if (stored) {
+      const url = URL.createObjectURL(stored);
+      lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
+      return url;
+    }
+    const blob = await fetchCachedTTS(key);
+    if (!blob) return null;
+    void putAudioBlob(key, blob); // write-through (fire-and-forget; never blocks playback)
+    const url = URL.createObjectURL(blob);
     lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
     return url;
-  }
-  const blob = await fetchCachedTTS(key);
-  if (!blob) return null;
-  void putAudioBlob(key, blob); // write-through (fire-and-forget; never blocks playback)
-  const url = URL.createObjectURL(blob);
-  lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
-  return url;
+  })().finally(() => clipLoads.delete(key));
+  clipLoads.set(key, load);
+  return load;
 };
 
 const legacyTokenFor = (token: string): string =>
@@ -743,14 +753,20 @@ const resolveCachedClip = async (text: string, token: string): Promise<ResolvedC
 };
 
 /** Per-word timings for clip `key` (memory → IDB → server, write-through). Null when none exist. */
-const loadTimingsCached = async (key: string): Promise<WordTiming[] | null> => {
+const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => {
   const mem = ttsTimingsCache.get(key);
-  if (mem) return mem;
-  const stored = await getTimings(key);
-  if (stored && stored.length) { lruSetVal(ttsTimingsCache, key, stored, MAX_TIMINGS); return stored; }
-  const t = await fetchCachedTTSTimings(key);
-  if (t && t.length) { void putTimings(key, t); lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
-  return null;
+  if (mem) return Promise.resolve(mem);
+  const pending = timingsLoads.get(key);
+  if (pending) return pending;
+  const load = (async () => {
+    const stored = await getTimings(key);
+    if (stored && stored.length) { lruSetVal(ttsTimingsCache, key, stored, MAX_TIMINGS); return stored; }
+    const t = await fetchCachedTTSTimings(key);
+    if (t && t.length) { void putTimings(key, t); lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
+    return null;
+  })().finally(() => timingsLoads.delete(key));
+  timingsLoads.set(key, load);
+  return load;
 };
 
 
@@ -975,14 +991,10 @@ const resolveTimingsForPlayback = async (
   if (cached) return cached;
   // memory missed → look up IDB (fast, local) then the server; the whole lookup is raced against a short
   // budget so a slow NETWORK fetch never holds up playback. onGenuineMiss fires only on a true server miss.
-  const lookupP = (async (): Promise<WordTiming[] | null> => {
-    const stored = await getTimings(key);
-    if (stored && stored.length) { lruSetVal(ttsTimingsCache, key, stored, MAX_TIMINGS); return stored; }
-    const t = await fetchCachedTTSTimings(key).catch(() => null);
-    if (t && t.length) { void putTimings(key, t); lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
-    onGenuineMiss(); // server has no timings yet → backfill for next time (runs even if we didn't wait)
-    return null;
-  })();
+  const lookupP = loadTimingsCached(key).catch(() => null).then((t) => {
+    if (!t) onGenuineMiss(); // server has no timings yet → backfill for next time (runs even if we didn't wait)
+    return t;
+  });
   const winner = await Promise.race([
     lookupP,
     new Promise<WordTiming[] | null>((r) => setTimeout(() => r(null), TIMINGS_WAIT_MS)),

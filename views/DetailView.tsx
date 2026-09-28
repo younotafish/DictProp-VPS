@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison, type ReviewRating } from '../types';
+import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, isVocabItem, StoredComparison, type ReviewRating } from '../types';
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText, Lock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
@@ -1135,14 +1135,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return () => clearTimeout(timer);
   }, [title, currentGroupIndex, currentItemIndex, isSentenceAutoPlaying, sentenceMode]);
 
-  // Warm the TTS cache for the visible card's example SENTENCES (the word itself uses the system
-  // voice) so sentence taps/auto-play are instant and play through the iOS-unlocked <audio> element.
-  useEffect(() => {
-    const card = type === 'vocab' ? (data as VocabCard) : null;
-    const sentences = (card?.examples || []).filter(Boolean) as string[];
-    if (sentences.length) prefetchTTS(sentences);
-  }, [currentGroupIndex, currentItemIndex, type, data]);
-
   // In sentence review, warm the CURRENT sentence's audio + word timings so a double-click / Enter seek
   // is reliable. ensureTimings also kicks off background generation if this sentence has no timings yet
   // (whisper cold-start is ~a minute) so they're ready by the time the user goes to seek.
@@ -1166,15 +1158,27 @@ export const DetailView: React.FC<DetailViewProps> = ({
     return () => window.removeEventListener('online', warm);
   }, [sentenceMode, sentencePreloadWindow, prefetchSpeechStyle]);
 
-  // Decode the pictures of the cards the learner can move to next, so each paints on its first frame: the
-  // next five sentences in sentence review; this word's other meanings and the words either side otherwise.
-  const upcomingPictureItems = useMemo(() => {
+  // The cards the learner can move to next: the next five sentences in sentence review; this word's other
+  // meanings and the words either side otherwise. Their pictures are decoded ahead, so each paints on its
+  // first frame.
+  const upcomingItems = useMemo(() => {
     if (sentenceMode) return sentencePreloadWindow.slice(1);
     if (!groups?.length) return [];
     const index = Math.min(currentGroupIndex, groups.length - 1);
     return [groups[index], groups[index + 1], groups[index - 1]].flatMap(group => group?.items ?? []);
   }, [sentenceMode, sentencePreloadWindow, groups, currentGroupIndex]);
-  useWarmImages(upcomingPictureItems, onLazyLoadImage);
+  useWarmImages(upcomingItems, onLazyLoadImage);
+
+  // Warm the TTS cache for the example SENTENCES of this word and the words either side (the word itself
+  // uses the system voice), so tapping one or auto-play right after moving a card plays at once, through
+  // the iOS-unlocked <audio> element. Sentence review stages its own audio above.
+  useEffect(() => {
+    if (sentenceMode) return;
+    const sentences = upcomingItems.flatMap(item => isVocabItem(item)
+      ? item.data.examples ?? []
+      : isPhraseItem(item) ? (item.data.vocabs ?? []).flatMap(vocab => vocab.examples ?? []) : []).filter(Boolean);
+    if (sentences.length) prefetchTTS(sentences);
+  }, [sentenceMode, upcomingItems, prefetchSpeechStyle]);
 
   // P key to pronounce current word
   // Moved to bottom to access handlers
