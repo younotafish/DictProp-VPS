@@ -102,10 +102,10 @@ const CollectionTile: React.FC<{
       <div className="absolute -bottom-16 -left-10 h-44 w-44 rounded-full border border-white/10 bg-black/5" />
       <div className="relative flex h-full flex-col">
         <div className="flex items-start justify-between gap-2">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/20 bg-white/15 backdrop-blur-sm sm:h-12 sm:w-12">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/20 bg-white/15 sm:h-12 sm:w-12">
             <Icon size={23} />
           </span>
-          <span className="rounded-full border border-white/20 bg-white/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider backdrop-blur-sm sm:text-xs">
+          <span className="rounded-full border border-white/20 bg-white/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider sm:text-xs">
             {collection.level}
           </span>
         </div>
@@ -402,7 +402,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-50">
-      <header className="z-10 shrink-0 border-b border-slate-200 bg-white/95 px-3 pb-3 pt-3 backdrop-blur-sm sm:px-4">
+      <header className="z-10 shrink-0 border-b border-slate-200 bg-white px-3 pb-3 pt-3 sm:px-4">
         <div className="mx-auto max-w-5xl">
           <div className="flex items-center gap-3">
             <button

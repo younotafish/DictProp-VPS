@@ -53,7 +53,7 @@ class YouGlishErrorBoundary extends React.Component<
       }
       return (
         <div
-          className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4"
           onClick={this.props.onClose}
         >
           <div
@@ -266,7 +266,7 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' })
   // Modal mode: fixed overlay
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4 fade-in"
+      className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4 fade-in"
       onClick={onClose}
     >
       <div

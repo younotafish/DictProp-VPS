@@ -284,7 +284,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   return (
     <div className="fixed inset-0 z-50 bg-white flex flex-col">
       {/* ─── Header ──────────────────────────────────────────────── */}
-      <div className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white/90 backdrop-blur-md flex items-center gap-3">
+      <div className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white flex items-center gap-3">
         {step === 'selecting' ? (
           <button
             onClick={handleBackToInput}

@@ -72,7 +72,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
-      <header className="shrink-0 border-b border-slate-200 bg-white/95 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 backdrop-blur-sm">
+      <header className="shrink-0 border-b border-slate-200 bg-white px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
           <button
             type="button"

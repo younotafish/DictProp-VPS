@@ -42,7 +42,7 @@ export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-center justify-center p-4 fade-in"
+      className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4 fade-in"
       onClick={onClose}
     >
       <div

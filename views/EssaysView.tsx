@@ -77,10 +77,10 @@ const EssayTile: React.FC<{
       <Quote className="absolute right-5 top-16 text-white/10" size={86} strokeWidth={1.25} />
       <div className="relative flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/20 bg-white/10 backdrop-blur-sm">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/20 bg-white/10">
             <Feather size={21} />
           </span>
-          <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider backdrop-blur-sm">
+          <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider">
             {essay.level}
           </span>
         </div>
@@ -265,7 +265,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#f8f7f3]">
-      <header className="z-10 shrink-0 border-b border-stone-200 bg-[#fdfcf8]/95 px-3 py-3 backdrop-blur-sm sm:px-5">
+      <header className="z-10 shrink-0 border-b border-stone-200 bg-[#fdfcf8] px-3 py-3 sm:px-5">
         <div className="mx-auto flex max-w-4xl items-center gap-3">
           <button
             type="button"

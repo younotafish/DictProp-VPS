@@ -412,7 +412,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:px-16 sm:py-4 fade-in"
+      className="fixed inset-0 z-[100] bg-black/40 flex items-end sm:items-center justify-center sm:px-16 sm:py-4 fade-in"
       onClick={onBackdrop}
     >
       <div

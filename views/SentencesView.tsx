@@ -222,7 +222,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <div className="z-10 shrink-0 bg-white/95 backdrop-blur-sm border-b border-slate-100 px-4 py-3">
+      <div className="z-10 shrink-0 bg-white border-b border-slate-100 px-4 py-3">
         <div className="max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">

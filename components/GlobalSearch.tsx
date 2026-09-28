@@ -812,7 +812,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         <>
           {/* Backdrop */}
           <div
-            className="fixed inset-0 z-[54] bg-black/30 backdrop-blur-[2px] fade-in"
+            className="fixed inset-0 z-[54] bg-black/30 fade-in"
             onClick={handleClose}
           />
           {/* Popup */}
