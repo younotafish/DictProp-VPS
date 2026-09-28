@@ -11,7 +11,8 @@
  * - 1/2: Switch between tabs (Notebook/Study)
  */
 
-import { useEffect, useCallback, RefObject } from 'react';
+import { useEffect, RefObject } from 'react';
+import { useLatest } from './useStableValue';
 
 interface KeyboardNavigationOptions {
   onEscape?: () => void;
@@ -31,115 +32,116 @@ interface KeyboardNavigationOptions {
 }
 
 export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
-  const {
-    onEscape,
-    onArrowLeft,
-    onArrowRight,
-    onArrowUp,
-    onArrowDown,
-    onEnter,
-    onSpace,
-    onTab,
-    onSave,
-    onSearch,
-    enabled = true,
-    trapFocus = false,
-    containerRef,
-  } = options;
-
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!enabled) return;
-
-    // Don't intercept if user is typing in an input/textarea
-    const target = e.target as HTMLElement;
-    const isInputElement = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-    
-    // Cmd+S - Save (works even in input fields)
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-      e.preventDefault();
-      onSave?.();
-      return;
-    }
-    
-    // Cmd+F - Focus search (works everywhere)
-    if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-      e.preventDefault();
-      onSearch?.();
-      return;
-    }
-
-    // Skip most handlers when in input fields (except Escape)
-    if (isInputElement && e.key !== 'Escape') {
-      return;
-    }
-
-    switch (e.key) {
-      case 'Escape':
-        e.preventDefault();
-        onEscape?.();
-        break;
-      
-      case 'ArrowLeft':
-        if (!isInputElement && onArrowLeft) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          onArrowLeft();
-        }
-        break;
-
-      case 'ArrowRight':
-        if (!isInputElement && onArrowRight) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          onArrowRight();
-        }
-        break;
-
-      case 'ArrowUp':
-        if (!isInputElement && onArrowUp) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          onArrowUp();
-        }
-        break;
-
-      case 'ArrowDown':
-        if (!isInputElement && onArrowDown) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          onArrowDown();
-        }
-        break;
-      
-      case 'Enter':
-        if (!isInputElement) {
-          e.preventDefault();
-          onEnter?.();
-        }
-        break;
-      
-      case ' ':
-        if (!isInputElement) {
-          e.preventDefault();
-          onSpace?.();
-        }
-        break;
-      
-      case 'Tab':
-        if (trapFocus && containerRef?.current) {
-          handleFocusTrap(e, containerRef.current);
-        }
-        onTab?.(e.shiftKey);
-        break;
-    }
-  }, [enabled, onEscape, onArrowLeft, onArrowRight, onArrowUp, onArrowDown, onEnter, onSpace, onTab, onSave, onSearch, trapFocus, containerRef]);
+  const enabled = options.enabled ?? true;
+  // Callers pass fresh handlers on most renders; reading them through a ref registers the listener once.
+  const optionsRef = useLatest(options);
 
   useEffect(() => {
     if (!enabled) return;
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const {
+        onEscape,
+        onArrowLeft,
+        onArrowRight,
+        onArrowUp,
+        onArrowDown,
+        onEnter,
+        onSpace,
+        onTab,
+        onSave,
+        onSearch,
+        trapFocus = false,
+        containerRef,
+      } = optionsRef.current;
+
+      // Don't intercept if user is typing in an input/textarea
+      const target = e.target as HTMLElement;
+      const isInputElement = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+      // Cmd+S - Save (works even in input fields)
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        onSave?.();
+        return;
+      }
+
+      // Cmd+F - Focus search (works everywhere)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        onSearch?.();
+        return;
+      }
+
+      // Skip most handlers when in input fields (except Escape)
+      if (isInputElement && e.key !== 'Escape') {
+        return;
+      }
+
+      switch (e.key) {
+        case 'Escape':
+          e.preventDefault();
+          onEscape?.();
+          break;
+
+        case 'ArrowLeft':
+          if (!isInputElement && onArrowLeft) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            onArrowLeft();
+          }
+          break;
+
+        case 'ArrowRight':
+          if (!isInputElement && onArrowRight) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            onArrowRight();
+          }
+          break;
+
+        case 'ArrowUp':
+          if (!isInputElement && onArrowUp) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            onArrowUp();
+          }
+          break;
+
+        case 'ArrowDown':
+          if (!isInputElement && onArrowDown) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            onArrowDown();
+          }
+          break;
+
+        case 'Enter':
+          if (!isInputElement) {
+            e.preventDefault();
+            onEnter?.();
+          }
+          break;
+
+        case ' ':
+          if (!isInputElement) {
+            e.preventDefault();
+            onSpace?.();
+          }
+          break;
+
+        case 'Tab':
+          if (trapFocus && containerRef?.current) {
+            handleFocusTrap(e, containerRef.current);
+          }
+          onTab?.(e.shiftKey);
+          break;
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown, enabled]);
+  }, [enabled, optionsRef]);
 };
 
 /**
@@ -175,12 +177,8 @@ interface GlobalNavigationOptions {
 }
 
 export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
-  const {
-    onNavigateToNotebook,
-    onNavigateToSentences,
-    onNavigateToStudy,
-    enabled = true,
-  } = options;
+  const enabled = options.enabled ?? true;
+  const optionsRef = useLatest(options);
 
   useEffect(() => {
     if (!enabled) return;
@@ -195,6 +193,7 @@ export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
       // Only respond to number keys without modifiers
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
+      const { onNavigateToNotebook, onNavigateToSentences, onNavigateToStudy } = optionsRef.current;
       switch (e.key) {
         case '1':
           e.preventDefault();
@@ -213,7 +212,7 @@ export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [enabled, onNavigateToNotebook, onNavigateToSentences, onNavigateToStudy]);
+  }, [enabled, optionsRef]);
 };
 
 /**
@@ -228,52 +227,48 @@ interface WheelNavigationOptions {
   enabled?: boolean;
 }
 
+// A pause this long between wheel events ends a swipe.
+const SWIPE_GAP_MS = 200;
+// Once momentum has slowed to this, the rest of it can't travel far enough to navigate again.
+const MOMENTUM_SPENT = 4;
+
 export const useWheelNavigation = (options: WheelNavigationOptions) => {
-  const {
-    onScrollLeft,
-    onScrollRight,
-    containerRef,
-    threshold = 50,
-    enabled = true,
-  } = options;
+  const { containerRef, threshold = 50, enabled = true } = options;
+  const optionsRef = useLatest(options);
 
   useEffect(() => {
-    if (!enabled || !containerRef.current) return;
+    const element = containerRef.current;
+    if (!enabled || !element) return;
 
+    // One navigation per swipe. macOS keeps sending wheel events for the momentum after the fingers
+    // lift, so once a swipe has navigated, it's ignored until it pauses or its momentum is spent.
     let accumulatedDelta = 0;
-    let timeoutId: number;
+    let navigated = false;
+    let lastEventAt = -Infinity;
 
     const handleWheel = (e: WheelEvent) => {
       // Only handle horizontal scroll (trackpad two-finger swipe)
-      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 5) {
-        e.preventDefault();
-        
-        accumulatedDelta += e.deltaX;
-        
-        // Clear timeout to reset accumulation
-        clearTimeout(timeoutId);
-        timeoutId = window.setTimeout(() => {
-          accumulatedDelta = 0;
-        }, 200);
-        
-        if (accumulatedDelta > threshold) {
-          onScrollRight?.();
-          accumulatedDelta = 0;
-        } else if (accumulatedDelta < -threshold) {
-          onScrollLeft?.();
-          accumulatedDelta = 0;
-        }
+      const delta = Math.abs(e.deltaX);
+      if (delta <= Math.abs(e.deltaY)) return;
+      if (e.timeStamp - lastEventAt > SWIPE_GAP_MS || (navigated && delta < MOMENTUM_SPENT)) {
+        accumulatedDelta = 0;
+        navigated = false;
+      }
+      lastEventAt = e.timeStamp;
+      if (delta <= 5) return;
+      e.preventDefault();
+      if (navigated) return;
+
+      accumulatedDelta += e.deltaX;
+      if (Math.abs(accumulatedDelta) > threshold) {
+        navigated = true;
+        const { onScrollLeft, onScrollRight } = optionsRef.current;
+        if (accumulatedDelta > 0) onScrollRight?.();
+        else onScrollLeft?.();
       }
     };
 
-    const element = containerRef.current;
     element.addEventListener('wheel', handleWheel, { passive: false });
-    
-    return () => {
-      element.removeEventListener('wheel', handleWheel);
-      clearTimeout(timeoutId);
-    };
-  }, [enabled, onScrollLeft, onScrollRight, containerRef, threshold]);
+    return () => element.removeEventListener('wheel', handleWheel);
+  }, [enabled, containerRef, threshold, optionsRef]);
 };
-
-

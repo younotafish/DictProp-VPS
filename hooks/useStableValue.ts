@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 
 /**
  * Returns the previous array while every element still matches its counterpart under `same` (by default,
@@ -18,4 +18,11 @@ export function useFrozenWhile<T>(value: T, frozen: boolean): T {
   const ref = useRef(value);
   if (!frozen) ref.current = value;
   return ref.current;
+}
+
+/** A ref to the latest value, so a listener registered once can still call the current callbacks. */
+export function useLatest<T>(value: T): { readonly current: T } {
+  const ref = useRef(value);
+  useLayoutEffect(() => { ref.current = value; });
+  return ref;
 }

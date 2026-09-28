@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, StoredComparison, type ReviewRating } from '../types';
 import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, Archive, MoreVertical, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw, Sparkles, Flame, CheckCircle2, Clock, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText, Lock } from 'lucide-react';
 import { Button } from '../components/Button';
@@ -235,7 +235,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
   const [currentGroupIndex, setCurrentGroupIndex] = useState(initialGroupIndex);
   const [currentItemIndex, setCurrentItemIndex] = useState(initialItemIndex);
   
-  const [isAnimating, setIsAnimating] = useState(false);
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [sentencePage, setSentencePage] = useState<'sentence' | 'analysis'>('sentence');
@@ -354,11 +353,13 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   }
   
-  // Reset item index when user navigates to a different group (not on groups rebuild)
+  // Reset item index and scroll when user navigates to a different group (not on groups rebuild). Every
+  // way of moving between words lands here, and the layout effect paints the new one from its top.
   const prevGroupIndexRef = useRef(currentGroupIndex);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (prevGroupIndexRef.current !== currentGroupIndex) {
       prevGroupIndexRef.current = currentGroupIndex;
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       // Keep the analysis page open while moving between saved sentences. Word review still resets to
       // its primary page when changing groups.
       if (sentenceItems?.length) {
@@ -914,7 +915,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       touchStartY.current = null;
       return;
     }
-    if (touchStartX.current === null || touchStartY.current === null || isAnimating) return;
+    if (touchStartX.current === null || touchStartY.current === null) return;
     
     // Check if user is selecting text - don't interfere with text selection on iOS
     const selection = window.getSelection();
@@ -1072,21 +1073,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (diffY < -longSwipeMin && hasNextGroup && (isAtBottom || scrollHeight <= clientHeight)) {
         setIsAutoPlaying(false);
         setShowHeader(false); // Hide header on navigation
-        setIsAnimating(true);
         setCurrentGroupIndex(prev => prev + 1);
         setCurrentItemIndex(0); // Reset to first meaning
-        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-        setTimeout(() => setIsAnimating(false), 300);
       }
       // Swipe DOWN -> Previous Group (Word) - only when at top
       else if (diffY > longSwipeMin && hasPrevGroup && isAtTop) {
         setIsAutoPlaying(false);
         setShowHeader(false); // Hide header on navigation
-        setIsAnimating(true);
         setCurrentGroupIndex(prev => prev - 1);
         setCurrentItemIndex(0); // Reset to first meaning
-        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-        setTimeout(() => setIsAnimating(false), 300);
       }
     }
     else if (isHorizontalSwipe) {
@@ -1105,9 +1100,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           }
         } else {
           setShowHeader(false);
-          setIsAnimating(true);
           setCurrentItemIndex(prev => (prev + 1) % totalItems);
-          setTimeout(() => setIsAnimating(false), 300);
         }
       }
       
@@ -1116,9 +1109,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         setIsAutoPlaying(false);
         if (hasPrevItem) {
           setShowHeader(false); // Hide header on navigation
-          setIsAnimating(true);
           setCurrentItemIndex(prev => prev - 1);
-          setTimeout(() => setIsAnimating(false), 300);
         } else {
           // Close view if swiping right with no previous item
           onClose();
@@ -1267,17 +1258,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   // Navigation handlers for keyboard
   const handlePrevItem = useCallback(() => {
-    if (hasPrevItem && !isAnimating) {
+    if (hasPrevItem) {
       setIsAutoPlaying(false);
-      setIsAnimating(true);
       setCurrentItemIndex(prev => prev - 1);
-      setTimeout(() => setIsAnimating(false), 300);
     }
-  }, [hasPrevItem, isAnimating]);
+  }, [hasPrevItem]);
 
   const handleNextItem = useCallback(() => {
     const totalItems = currentGroup ? currentGroup.items.length : 0;
-    if (totalItems >= 1 && !isAnimating) {
+    if (totalItems >= 1) {
       setIsAutoPlaying(false);
       if (totalItems === 1) {
         // Single meaning: just pronounce
@@ -1288,34 +1277,26 @@ export const DetailView: React.FC<DetailViewProps> = ({
           if (wordToSpeak) speakWord(wordToSpeak);
         }
       } else {
-        setIsAnimating(true);
         setCurrentItemIndex(prev => (prev + 1) % totalItems);
-        setTimeout(() => setIsAnimating(false), 300);
       }
     }
-  }, [currentGroup, isAnimating, currentItem]);
+  }, [currentGroup, currentItem]);
 
   const handlePrevGroup = useCallback(() => {
-    if (hasPrevGroup && !isAnimating && groups) {
+    if (hasPrevGroup && groups) {
       setIsAutoPlaying(false);
-      setIsAnimating(true);
       setCurrentGroupIndex(prev => prev - 1);
       setCurrentItemIndex(0);
-      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-      setTimeout(() => setIsAnimating(false), 300);
     }
-  }, [hasPrevGroup, isAnimating, groups]);
+  }, [hasPrevGroup, groups]);
 
   const handleNextGroup = useCallback(() => {
-    if (hasNextGroup && !isAnimating && groups) {
+    if (hasNextGroup && groups) {
       setIsAutoPlaying(false);
-      setIsAnimating(true);
       setCurrentGroupIndex(prev => prev + 1);
       setCurrentItemIndex(0);
-      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-      setTimeout(() => setIsAnimating(false), 300);
     }
-  }, [hasNextGroup, isAnimating, groups]);
+  }, [hasNextGroup, groups]);
 
   // Keep the screen awake while EITHER auto-play mode is active, so the phone doesn't
   // auto-dim/lock and pause playback. Wake lock auto-releases when the tab is hidden, so we
@@ -1377,23 +1358,16 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
       if (!isLastItem) {
         // Advance to next meaning within current group
-        setIsAnimating(true);
         setCurrentItemIndex(prev => prev + 1);
         setGroupPlayCount(prev => prev + 1);
-        setTimeout(() => setIsAnimating(false), 300);
       } else if (needsRepeat) {
-        // Single-meaning word: replay it once with a fade and re-pronounce
-        setIsAnimating(true);
+        // Single-meaning word: show it for another turn and re-pronounce
         setGroupPlayCount(prev => prev + 1);
         if (title) speakWord(title);
-        setTimeout(() => setIsAnimating(false), 300);
       } else if (!isLastGroup) {
         // Advance to next group (word)
-        setIsAnimating(true);
         setCurrentGroupIndex(prev => prev + 1);
         setCurrentItemIndex(0);
-        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-        setTimeout(() => setIsAnimating(false), 300);
       } else {
         // Reached the end
         setIsAutoPlaying(false);
@@ -1602,15 +1576,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
       const isLastItem = safeItemIdx >= group.items.length - 1;
       const isLastGroup = safeGroupIdx >= groups.length - 1;
       if (!isLastItem) {
-        setIsAnimating(true);
         setCurrentItemIndex(p => p + 1);
-        setTimeout(() => setIsAnimating(false), 300);
       } else if (!isLastGroup) {
-        setIsAnimating(true);
         setCurrentGroupIndex(p => p + 1);
         setCurrentItemIndex(0);
-        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-        setTimeout(() => setIsAnimating(false), 300);
       } else {
         setIsSentenceAutoPlaying(false); // played the last card → stop
       }
@@ -1905,13 +1874,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
     setIsAutoPlaying(false);
     setShowHeader(false);
-    setIsAnimating(true);
     setCurrentGroupIndex(clamped);
     setCurrentItemIndex(0);
-    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-    const analysisScroller = document.querySelector<HTMLElement>('[data-sentence-analysis]');
-    if (analysisScroller) analysisScroller.scrollTop = 0;
-    setTimeout(() => setIsAnimating(false), 300);
     const next = list[clamped];
     const sentence = next ? stripSentenceMarkers((next.data as SentenceData).text || '').trim() : '';
     const nextSpeechStyle = next ? (next.data as SentenceData).preferredSpeechStyle : undefined;
@@ -1958,11 +1922,8 @@ export const DetailView: React.FC<DetailViewProps> = ({
       if (nextIdx === cur) return;
       autoPlayPausedRef.current = false;   // a next/prev while paused resumes playback at the new sentence
       resumeChainRef.current = null;
-      setIsAnimating(true);
       setCurrentGroupIndex(nextIdx);
       setCurrentItemIndex(0);
-      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-      setTimeout(() => setIsAnimating(false), 300);
     };
     setMediaSessionHandlers({
       onPlay: () => {
@@ -2662,7 +2623,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       <div
         ref={scrollContainerRef}
         data-word-card-scroll
-        className={`flex-1 min-h-0 overflow-y-auto no-scrollbar transition-opacity duration-300 ${isAnimating ? 'opacity-50' : 'opacity-100'}`}
+        className="flex-1 min-h-0 overflow-y-auto no-scrollbar"
         style={{ touchAction: 'pan-y pinch-zoom' }}
         onScroll={handleScroll}
         onTouchStart={onContentTouchStart}
