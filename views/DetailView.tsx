@@ -378,24 +378,6 @@ export const DetailView: React.FC<DetailViewProps> = ({
     }
   }, [currentGroupIndex, sentenceItems]);
 
-  // Lazy-load the image from the server if it is missing locally.
-  useEffect(() => {
-    if (!currentItem || !onLazyLoadImage) return;
-    
-    const itemId = currentItem.data.id;
-    const imageUrl = getItemImageUrl(currentItem);
-    
-    // Check if this item is saved and missing an image
-    const isSaved = savedItemsRef.current.some(i => i.data.id === itemId);
-    const hasImage = imageUrl && (imageUrl.startsWith('data:image/') || imageUrl === 'idb:stored' || imageUrl.startsWith('server:has_image'));
-
-    if (isSaved && !hasImage) {
-      // Trigger the server-backed lazy load.
-      onLazyLoadImage(itemId);
-    }
-  }, [currentItem?.data.id, onLazyLoadImage]);
-
-
   if (!currentItem) {
     return null;
   }
