@@ -1010,7 +1010,12 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     return { reviewedToday: reviewed, dueCount: due };
   }, [items]);
 
+  // The list scrolls inside this container. React detaches refs while the tab is hidden, and letting go of
+  // the container then would unmount the list and lose its place, so only a new container replaces it.
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const attachScrollParent = useCallback((element: HTMLDivElement | null) => {
+    if (element) setScrollParent(element);
+  }, []);
 
   if (list.active.length === 0 && !localSearchQuery) {
     return (
@@ -1043,7 +1048,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
 
   return (
     <div
-      ref={setScrollParent}
+      ref={attachScrollParent}
       className="h-full overflow-y-auto overflow-x-hidden bg-slate-50"
       onScroll={handleScroll}
     >

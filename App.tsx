@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import { StoredItem, RevisionCursor, ViewState, SyncStatus, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, savedVocabKey, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
 import { Loader2, X } from 'lucide-react';
 import { loadData, saveData, saveItemUpdates, deleteItemRecords, storeMissingItemHashes, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
@@ -8,6 +8,8 @@ import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImages
 import { normalizeSentenceIdentity } from './services/sentenceIdentity';
 import { checkAuth, loginRedirect, logout, AuthState } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { lazyScreen } from './components/lazyScreen';
+import { TabScreen } from './components/TabScreen';
 import type { DuplicateClusterView } from './components/DuplicatesModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { buildVariantIndex, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
@@ -24,37 +26,27 @@ import { isRealLifeProgressItem } from './services/realLifeProgressIdentity';
 import { isEssayProgressItem } from './services/essayProgressIdentity';
 
 // App re-renders on every library change and progress tick, so the screens and overlays are memoized
-// and re-render only when their own props change.
-const NotebookView = lazy(() => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
-const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(module => ({ default: React.memo(module.GlobalSearch) })));
-const ConfirmModal = lazy(() => import('./components/ConfirmModal').then(module => ({ default: module.ConfirmModal })));
-const DuplicatesModal = lazy(() => import('./components/DuplicatesModal').then(module => ({ default: module.DuplicatesModal })));
-const CardReviewPopup = lazy(() => import('./components/CardReviewPopup').then(module => ({ default: React.memo(module.CardReviewPopup) })));
-const KeyboardHelpModal = lazy(() => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
-const StudyEnhanced = lazy(() => import('./views/StudyEnhanced').then(module => ({ default: React.memo(module.StudyEnhanced) })));
-const AppNavigation = lazy(() => import('./components/AppNavigation').then(module => ({ default: React.memo(module.default) })));
-const SENTENCE_CHUNK_RELOAD_KEY = 'sentence_chunk_reload_attempted';
-const loadSentencesView = async () => {
-  try {
-    const module = await import('./views/SentencesView');
-    try { sessionStorage.removeItem(SENTENCE_CHUNK_RELOAD_KEY); } catch { /* private browsing */ }
-    return { default: React.memo(module.SentencesView) };
-  } catch (error) {
-    try {
-      if (!sessionStorage.getItem(SENTENCE_CHUNK_RELOAD_KEY)) {
-        sessionStorage.setItem(SENTENCE_CHUNK_RELOAD_KEY, '1');
-        window.location.reload();
-        return await new Promise<never>(() => {});
-      }
-    } catch { /* session storage can be unavailable in private browsing */ }
-    throw error;
-  }
-};
-const SentencesView = lazy(loadSentencesView);
-const RealLifeView = lazy(() => import('./views/RealLifeView').then(module => ({ default: React.memo(module.RealLifeView) })));
-const EssaysView = lazy(() => import('./views/EssaysView').then(module => ({ default: React.memo(module.EssaysView) })));
-const loadDetailView = () => import('./views/DetailView').then(module => ({ default: React.memo(module.DetailView) }));
-const DetailView = lazy(loadDetailView);
+// and re-render only when their own props change. Their code loads on first use, and the ones a tap can
+// open are fetched once the first screen is up (see the preload effect in App).
+const NotebookView = lazyScreen('notebook', () => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
+const GlobalSearch = lazyScreen('global-search', () => import('./components/GlobalSearch').then(module => ({ default: React.memo(module.GlobalSearch) })));
+const ConfirmModal = lazyScreen('confirm-modal', () => import('./components/ConfirmModal').then(module => ({ default: module.ConfirmModal })));
+const DuplicatesModal = lazyScreen('duplicates-modal', () => import('./components/DuplicatesModal').then(module => ({ default: module.DuplicatesModal })));
+const CardReviewPopup = lazyScreen('card-review-popup', () => import('./components/CardReviewPopup').then(module => ({ default: React.memo(module.CardReviewPopup) })));
+const KeyboardHelpModal = lazyScreen('keyboard-help', () => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
+const StudyEnhanced = lazyScreen('study', () => import('./views/StudyEnhanced').then(module => ({ default: React.memo(module.StudyEnhanced) })));
+const AppNavigation = lazyScreen('navigation', () => import('./components/AppNavigation').then(module => ({ default: React.memo(module.default) })));
+const SentencesView = lazyScreen('sentences', () => import('./views/SentencesView').then(module => ({ default: React.memo(module.SentencesView) })));
+const RealLifeView = lazyScreen('real-life', () => import('./views/RealLifeView').then(module => ({ default: React.memo(module.RealLifeView) })));
+const EssaysView = lazyScreen('essays', () => import('./views/EssaysView').then(module => ({ default: React.memo(module.EssaysView) })));
+const DetailView = lazyScreen('detail', () => import('./views/DetailView').then(module => ({ default: React.memo(module.DetailView) })));
+const TAB_SCREENS = {
+  notebook: NotebookView,
+  study: StudyEnhanced,
+  sentences: SentencesView,
+  'real-life': RealLifeView,
+  essays: EssaysView,
+} satisfies Record<ViewState, { preload: () => void }>;
 
 interface DetailContext {
   groups: ItemGroup[];
@@ -270,12 +262,6 @@ const App: React.FC = () => {
     void import('./services/audioCache').then(({ requestPersistentStorage }) => requestPersistentStorage());
   }, []);
 
-  // Sentence mode is a primary tab. Warm its small lazy chunk immediately, and reload once if a
-  // long-lived PWA tab still references an asset hash removed by a newer deployment.
-  useEffect(() => {
-    void loadSentencesView().catch(() => {});
-  }, []);
-
   const [currentView, setCurrentView] = useState<ViewState>(() => {
     const saved = localStorage.getItem('app_current_view');
     // Default to notebook, and handle legacy 'search' value from old localStorage
@@ -285,13 +271,22 @@ const App: React.FC = () => {
     return saved as ViewState;
   });
 
-  // Sentence detail is a substantial lazy chunk. Start fetching it as soon as the list is visible so
-  // tapping a sentence never pays the network/module-parse cost before the full-screen view can mount.
+  // Fetch screen code ahead of use. A screen whose code isn't in yet shows its fallback for at least 300 ms
+  // (React holds a fallback that long once it's shown), so the first screen's code is fetched while the
+  // library loads, and the code of everything a tap can open once the first screen is up. That's what lets
+  // the app, a card, a tab or a popup appear on the first frame.
   useEffect(() => {
-    if (currentView === 'sentences' || currentView === 'real-life' || currentView === 'essays') void loadDetailView().catch(() => {});
-  }, [currentView]);
-  useEffect(() => {
-    const timer = window.setTimeout(() => { void loadDetailView().catch(() => {}); }, 2_000);
+    for (const screen of [TAB_SCREENS[currentView], AppNavigation, GlobalSearch]) screen.preload();
+    const preloadRest = () => {
+      for (const screen of [DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal]) {
+        screen.preload();
+      }
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const handle = window.requestIdleCallback(preloadRest, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(preloadRest, 1_000);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -2294,8 +2289,7 @@ const App: React.FC = () => {
       </Suspense>
 
       <main className="flex-1 relative w-full min-h-0 overflow-hidden">
-        <Suspense fallback={<div className="h-full grid place-items-center"><Loader2 className="animate-spin text-indigo-500" /></div>}>
-        {currentView === 'notebook' && (
+        <TabScreen shown={currentView === 'notebook'}>
           <NotebookView
             items={notebookItems}
             onDelete={handleDelete}
@@ -2329,9 +2323,9 @@ const App: React.FC = () => {
             imageRestoreRunning={imageRestoreProgress !== null}
             onDownloadOfflineImages={handleDownloadOfflineImages}
           />
-        )}
+        </TabScreen>
 
-        {currentView === 'study' && (
+        <TabScreen shown={currentView === 'study'}>
           <StudyEnhanced
             items={studyItems}
             reviewEvents={reviewEvents}
@@ -2341,9 +2335,9 @@ const App: React.FC = () => {
             interactionLocked={!!detailContext}
             onScroll={handleScroll}
           />
-        )}
+        </TabScreen>
 
-        {currentView === 'sentences' && (
+        <TabScreen shown={currentView === 'sentences'}>
           <SentencesView
             items={sentenceItems}
             onUpdateSRS={updateSRS}
@@ -2354,9 +2348,9 @@ const App: React.FC = () => {
             findSaved={findSavedItem}
             onOpenCard={openCardPopup}
           />
-        )}
+        </TabScreen>
 
-        {currentView === 'real-life' && (
+        <TabScreen shown={currentView === 'real-life'}>
           <RealLifeView
             onOpenSentence={handleViewSentence}
             progressItems={realLifeProgressItems}
@@ -2366,17 +2360,15 @@ const App: React.FC = () => {
             findSaved={findSavedItem}
             onOpenCard={openCardPopup}
           />
-        )}
+        </TabScreen>
 
-        {currentView === 'essays' && (
+        <TabScreen shown={currentView === 'essays'}>
           <EssaysView
             onOpenSentence={handleViewSentence}
             progressItems={essayProgressItems}
             onScroll={handleScroll}
           />
-        )}
-
-        </Suspense>
+        </TabScreen>
       </main>
 
       <Suspense fallback={null}>
