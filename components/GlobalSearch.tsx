@@ -677,22 +677,34 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           {statusToast}
         </div>
       )}
-      {/* Error toast — failures surface here instead of vanishing. Tappable: retry the failed query
-          (force-refresh bypasses the saved-card reuse + dedup) and dismiss the toast. */}
+      {/* Error toast — failures surface here instead of vanishing. Tapping the message retries the failed
+          query (force-refresh bypasses the saved-card reuse + dedup); the X closes the toast without one. */}
       {error && (
-        <button
-          aria-live="assertive"
-          onClick={() => {
-            const q = error.query; const mode = error.analyzeMode; setError(null);
-            if (!q) return;
-            // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
-            // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
-            if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else void submitQuery(q);
-          }}
-          className="fixed bottom-44 right-4 z-[56] max-w-[18rem] text-left bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg fade-in duration-200 hover:bg-red-100 transition-colors"
+        <div
+          role="alert"
+          className="fixed bottom-44 right-4 z-[56] max-w-[18rem] flex bg-red-50 text-red-600 text-xs font-medium rounded-lg shadow-lg fade-in duration-200"
         >
-          {error.msg}{error.query ? ' · Tap to retry' : ''}
-        </button>
+          <button
+            onClick={() => {
+              const q = error.query; const mode = error.analyzeMode; setError(null);
+              if (!q) return;
+              // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
+              // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
+              if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else void submitQuery(q);
+            }}
+            className="min-w-0 flex-1 text-left pl-3 pr-1 py-2 rounded-l-lg hover:bg-red-100 transition-colors"
+          >
+            {error.msg}{error.query ? ' · Tap to retry' : ''}
+          </button>
+          <button
+            onClick={() => setError(null)}
+            aria-label="Dismiss error"
+            title="Dismiss"
+            className="shrink-0 flex items-center px-2.5 rounded-r-lg text-red-400 hover:text-red-600 hover:bg-red-100 transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
       )}
 
       {/* Input overlay */}
