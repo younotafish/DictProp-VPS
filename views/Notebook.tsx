@@ -873,7 +873,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (row.type === 'compare-banner') {
       return (
         <div className="px-3 pt-3">
-          <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 animate-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
             <div className="flex items-center gap-2">
               <Scale size={16} className="text-indigo-500" />
               <span className="text-sm font-medium text-indigo-700">
@@ -1379,7 +1379,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               setCompareMode(false);
               setSelectedForCompare([]);
             }}
-            className="pointer-events-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-full shadow-lg hover:shadow-xl transition-all flex items-center gap-2 animate-in zoom-in-95 duration-200"
+            className="pointer-events-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-full shadow-lg hover:shadow-xl transition-all flex items-center gap-2 duration-200"
           >
             <Scale size={18} />
             Compare {selectedForCompare.length} Words

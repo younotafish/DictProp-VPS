@@ -412,13 +412,13 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:px-16 sm:py-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:px-16 sm:py-4 fade-in"
       onClick={onBackdrop}
     >
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="bg-white w-full h-[90vh] rounded-t-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-4xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none animate-in slide-in-from-bottom sm:zoom-in-95 duration-200"
+        className="bg-white w-full h-[90vh] rounded-t-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-4xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none"
         onClick={e => e.stopPropagation()}
         onTouchStart={onPanelTouchStart}
         onTouchEnd={onPanelTouchEnd}
@@ -495,7 +495,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
             </div>
           )}
           {flash && (
-            <div className="mt-1.5 text-center text-[11px] font-semibold text-emerald-600 animate-in fade-in duration-200">
+            <div className="mt-1.5 text-center text-[11px] font-semibold text-emerald-600 fade-in">
               {flash}
             </div>
           )}

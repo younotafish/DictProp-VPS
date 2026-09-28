@@ -266,11 +266,11 @@ const YouGlishPlayerInner: React.FC<Props> = ({ word, onClose, mode = 'modal' })
   // Modal mode: fixed overlay
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4 fade-in"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-3 px-4 flex justify-between items-center border-b border-slate-100">

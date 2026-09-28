@@ -2201,7 +2201,7 @@ const App: React.FC = () => {
 
       {/* Global background-job progress — remains visible across tabs/views. */}
       {ttsGenProgress?.isRunning && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[80] bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[80] bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
           <Loader2 size={16} className="animate-spin shrink-0" />
           <span className="text-sm font-medium whitespace-nowrap">
             Generating sentence audio · {ttsGenProgress.current}/{ttsGenProgress.total}

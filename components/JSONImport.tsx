@@ -97,7 +97,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+    <div className="fixed inset-0 z-50 bg-white flex flex-col">
       {/* Header */}
       <div className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white/90 backdrop-blur-md flex items-center gap-3">
         <button

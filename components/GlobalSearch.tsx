@@ -667,13 +667,13 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     <>
       {/* Save toast */}
       {saveToast && (
-        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-full shadow-lg animate-in fade-in zoom-in-95 duration-200">
+        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-full shadow-lg fade-in">
           {saveToast}
         </div>
       )}
       {/* Status toast — neutral notices (sentence scanning / found N expressions) */}
       {statusToast && (
-        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-[90vw] text-center bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-full shadow-lg animate-in fade-in zoom-in-95 duration-200">
+        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-[90vw] text-center bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-full shadow-lg fade-in">
           {statusToast}
         </div>
       )}
@@ -689,7 +689,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
             // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
             if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else void submitQuery(q);
           }}
-          className="fixed bottom-44 right-4 z-[56] max-w-[18rem] text-left bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg animate-in fade-in duration-200 hover:bg-red-100 transition-colors"
+          className="fixed bottom-44 right-4 z-[56] max-w-[18rem] text-left bg-red-50 text-red-600 text-xs font-medium px-3 py-2 rounded-lg shadow-lg fade-in duration-200 hover:bg-red-100 transition-colors"
         >
           {error.msg}{error.query ? ' · Tap to retry' : ''}
         </button>
@@ -697,10 +697,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
       {/* Input overlay */}
       {mode === 'input' && (
-        <div className="fixed bottom-20 right-4 left-4 z-[56] animate-in slide-in-from-bottom-2 duration-200">
+        <div className="fixed bottom-20 right-4 left-4 z-[56]">
           {/* Saved-sentence suggestions (fuzzy). ↑/↓ or hover to highlight; Enter/click opens the card. */}
           {suggestions.length > 0 && (
-            <div className="max-w-md ml-auto mb-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-1 duration-150">
+            <div className="max-w-md ml-auto mb-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden fade-in">
               <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
                 Saved sentences
               </div>
@@ -812,11 +812,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         <>
           {/* Backdrop */}
           <div
-            className="fixed inset-0 z-[54] bg-black/30 backdrop-blur-[2px] animate-in fade-in duration-150"
+            className="fixed inset-0 z-[54] bg-black/30 backdrop-blur-[2px] fade-in"
             onClick={handleClose}
           />
           {/* Popup */}
-          <div className="fixed inset-x-0 bottom-0 z-[55] animate-in slide-in-from-bottom duration-300">
+          <div className="fixed inset-x-0 bottom-0 z-[55]">
             <div className="bg-white rounded-t-3xl shadow-2xl max-h-[85vh] flex flex-col">
               {/* Header */}
               <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100">

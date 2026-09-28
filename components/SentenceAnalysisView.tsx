@@ -64,7 +64,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   return (
     <div
       className={visible
-        ? 'fixed inset-0 z-[70] flex flex-col bg-white animate-in slide-in-from-right duration-200'
+        ? 'fixed inset-0 z-[70] flex flex-col bg-white'
         : 'hidden'}
       aria-hidden={!visible}
       onTouchStart={onTouchStart}

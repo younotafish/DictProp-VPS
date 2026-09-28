@@ -282,7 +282,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+    <div className="fixed inset-0 z-50 bg-white flex flex-col">
       {/* ─── Header ──────────────────────────────────────────────── */}
       <div className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white/90 backdrop-blur-md flex items-center gap-3">
         {step === 'selecting' ? (
@@ -514,7 +514,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
               {analyzedResults.map((result, i) => (
                 <div
                   key={i}
-                  className={`flex items-center gap-3 p-3 rounded-xl border animate-in slide-in-from-left duration-200 ${
+                  className={`flex items-center gap-3 p-3 rounded-xl border ${
                     result.error
                       ? 'bg-rose-50 border-rose-200'
                       : 'bg-emerald-50 border-emerald-200'

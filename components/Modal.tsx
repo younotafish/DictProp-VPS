@@ -42,7 +42,7 @@ export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-[2px] flex items-center justify-center p-4 fade-in"
       onClick={onClose}
     >
       <div
@@ -51,7 +51,7 @@ export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}
-        className={`bg-white rounded-2xl shadow-2xl w-full ${maxWidth} overflow-hidden outline-none animate-in zoom-in-95 duration-200 ${panelClassName}`}
+        className={`bg-white rounded-2xl shadow-2xl w-full ${maxWidth} overflow-hidden outline-none ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
       >
         {children}

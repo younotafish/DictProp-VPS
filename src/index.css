@@ -75,8 +75,8 @@ body {
 }
 
 /* Overlays, menus and toasts fade in. Opacity only: several are full-screen backdrops, which a slide
-   would leave uncovered at one edge. (No animation plugin is installed, so the animate-in, zoom-in and
-   slide-in-from utilities next to this class do nothing.) */
+   would leave uncovered at one edge. (No animation plugin is installed, so this is the only entrance
+   animation; tailwindcss-animate names like animate-in or slide-in-from-* would do nothing.) */
 .fade-in {
   animation: fadeIn 0.15s ease-out;
 }

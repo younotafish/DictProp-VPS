@@ -2365,7 +2365,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-50 flex flex-col animate-in slide-in-from-right duration-300 shadow-2xl"
+      className="fixed inset-0 z-50 bg-slate-50 flex flex-col shadow-2xl"
     >
       {/* Eyes-free read-zone guides (word/phrase view) — touch-only, since the screen-zone taps that
           drive them fire from a tap, not a mouse click. */}
@@ -2998,7 +2998,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
 
       {/* Whole-session preload indicator (audio + images), bottom-left so it clears the autoplay cluster. */}
       {preloadProgress && (
-        <div className="fixed bottom-6 left-6 z-[60] flex items-center gap-2 bg-white/90 backdrop-blur-sm text-slate-600 text-xs font-medium px-3 py-2 rounded-full shadow-lg border border-slate-200 animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div className="fixed bottom-6 left-6 z-[60] flex items-center gap-2 bg-white/90 backdrop-blur-sm text-slate-600 text-xs font-medium px-3 py-2 rounded-full shadow-lg border border-slate-200 fade-in">
           <Loader2 size={14} className="animate-spin text-indigo-500" />
           <span>Preloading {preloadProgress.done}/{preloadProgress.total}</span>
         </div>
@@ -3131,7 +3131,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {/* Success Animation Overlay */}
       {showSuccessAnim && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
-          <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center gap-1 animate-in zoom-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center gap-1 fade-in">
             <div className="flex items-center gap-3">
               <Sparkles className="text-amber-500 w-6 h-6 animate-pulse" />
               <span className="text-slate-800 font-bold text-lg">Remembered!</span>
@@ -3159,7 +3159,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
             className="fixed inset-0 z-[55]" 
             onClick={() => setShowActionMenu(false)}
           />
-          <div className="fixed right-4 top-12 z-[56] bg-white rounded-xl shadow-xl border border-slate-200 py-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-150">
+          <div className="fixed right-4 top-12 z-[56] bg-white rounded-xl shadow-xl border border-slate-200 py-1 min-w-[180px] fade-in">
             {onArchive && (
               <button
                 onClick={handleArchiveItem}
@@ -3205,7 +3205,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           focusable + data-image-panel so an in-panel ⌘V lands on onPaste (the window listener is the
           primary path). */}
       {sentenceMode && currentSentence && !isSentencePreview && showImagePanel && (
-        <div className="fixed bottom-28 right-4 left-4 z-[58] animate-in slide-in-from-bottom-2 duration-200">
+        <div className="fixed bottom-28 right-4 left-4 z-[58]">
           <div
             data-image-panel
             tabIndex={-1}
