@@ -18,7 +18,7 @@
     "typecheck:server": "cd server && npm run typecheck",
     "test:server": "cd server && npm test",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
-    "check:sw": "node --check public/sw.js",
+    "check:sw": "node --check public/sw.js && node --check dist/sw.js",
     "check": "npm run typecheck && npm run typecheck:server && npm run test:server && npm run build:all && npm run check:bundle && npm run check:sw",
     "deploy": "./deploy.sh"
   },

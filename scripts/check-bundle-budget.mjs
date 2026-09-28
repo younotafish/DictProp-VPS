@@ -48,4 +48,14 @@ while (queue.length > 0 && precached.size < 80) {
   }
 }
 if (queue.length > 0) throw new Error('Core service-worker asset graph exceeds 80 files');
-console.log(`Offline core graph: ${precached.size} hashed assets (optional media excluded)`);
+
+// The build stamps its file list into the service worker; it must cover the whole core graph, and every file
+// it lists must exist.
+const stamped = readFileSync(resolve(dist, 'sw.js'), 'utf8').match(/^const PRECACHE = (\[.*\]);$/m);
+if (!stamped) throw new Error('dist/sw.js has no stamped precache list');
+const workerPrecache = new Set(JSON.parse(stamped[1]));
+for (const url of precached) {
+  if (!workerPrecache.has(url)) throw new Error(`dist/sw.js does not precache ${url}`);
+}
+for (const url of workerPrecache) readFileSync(resolve(dist, url.slice(1)));
+console.log(`Offline core graph: ${precached.size} hashed assets, all precached by the service worker (optional media excluded)`);

@@ -19,5 +19,14 @@ root.render(
 );
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
+  navigator.serviceWorker.register('/sw.js').then(registration => {
+    // Browsers look for a new worker on navigations, but an installed app can stay open for days without
+    // one, so look when it comes back to the foreground too (at most every ten minutes).
+    let lastCheck = Date.now();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || Date.now() - lastCheck < 10 * 60_000) return;
+      lastCheck = Date.now();
+      registration.update().catch(() => {});
+    });
+  }).catch(() => {});
 }
