@@ -5,7 +5,7 @@
  * one-time model download (fetched from the Hugging Face CDN into the browser's Cache
  * Storage, so it works offline afterward and never touches our server).
  *
- * Engine policy (see pickEngines / speakNatural) — always fp32, the only clean precision:
+ * Engine policy (see pickDevices / speakNatural) — always fp32, the only clean precision:
  *  - Chromium + WebGPU -> Kokoro on the WebGPU backend (fp32). Fast.
  *  - Everything else   -> Kokoro on the WASM/CPU backend (fp32). Works on Safari, iOS/iPadOS,
  *                         and any browser with WebAssembly — CPU-bound so slower (seconds per
@@ -15,6 +15,9 @@
  *
  * Why not WebGPU on Safari/iOS? Safari exposes navigator.gpu (iOS/iPadOS/macOS 26+) but
  * onnxruntime-web's WebGPU backend is unreliable there, so Apple devices use WASM.
+ *
+ * The model loads and runs in a worker (services/kokoroWorker.ts), so the seconds it takes never
+ * freeze the page.
  *
  * The model is only ever downloaded on a *deliberate* speaker-button click
  * (allowDownload: true). Automatic/navigation speech passes allowDownload: false, so it
@@ -35,24 +38,11 @@ import {
   type WordTiming,
 } from './api';
 import { getAudioBlob, putAudioBlob, getTimings, putTimings } from './audioCache';
+import type { KokoroDevice, KokoroRequest, KokoroResponse } from './kokoroWorker';
 import { log, warn } from './logger';
 import { getTtsStyle, getTtsStyleToken, getPlaybackRate, subscribePlaybackRate, subscribeTtsStyle } from './ttsSettings';
 export { getTtsStyle, setTtsStyle, subscribeTtsStyle, getPlaybackRate, setPlaybackRate, subscribePlaybackRate, RATE_PRESETS } from './ttsSettings';
 export type { TtsStyle } from './ttsSettings';
-
-const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
-
-// An execution backend. dtype is fp32 on BOTH — it's the only precision that produces clean audio
-// for this model. Hard-won, confirmed on real devices: q8 → "radio static"/garbled and fp16 → static
-// on *every* backend (the int8/fp16 weights are lossy for Kokoro), not just on WebGPU. fp32 costs a
-// ~326 MB download (vs ~86 MB for q8) and is CPU-bound on WASM, but a correct slow voice beats a
-// fast broken one.
-interface Engine {
-  device: 'webgpu' | 'wasm';
-  dtype: 'fp32'; // fp32 only — q8/fp16 sound like radio static on every backend (see above).
-}
-const WEBGPU_ENGINE: Engine = { device: 'webgpu', dtype: 'fp32' };
-const WASM_ENGINE: Engine = { device: 'wasm', dtype: 'fp32' };
 
 export const DEFAULT_VOICE = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
 // Production voice tokens and any rollout fallbacks come from api.ts.
@@ -80,22 +70,9 @@ const SILENT_WAV =
 
 const CONSENT_KEY = 'tts_neural_consent'; // mobile one-time download consent
 
-type KokoroModule = typeof import('kokoro-js');
-type KokoroInstance = InstanceType<KokoroModule['KokoroTTS']>;
-
-// ---------------------------------------------------------------------------
-// Status (internal model-load state — gates the preload retry loop)
-// ---------------------------------------------------------------------------
-type TtsStatus = 'idle' | 'loading' | 'ready' | 'error';
-let status: TtsStatus = 'idle';
-let progress = 0; // 0..1 during the one-time download
-
-const setStatus = (s: TtsStatus, p?: number) => {
-  status = s;
-  if (p !== undefined) progress = p;
-};
-
-const isModelReady = (): boolean => status === 'ready';
+// Whether the worker has the model loaded, so speech can use it without starting a download.
+let modelReady = false;
+const isModelReady = (): boolean => modelReady;
 
 // ---------------------------------------------------------------------------
 // Capability gate
@@ -111,8 +88,8 @@ const isChromium = (): boolean =>
 const canUseWebGPU = (): boolean =>
   typeof navigator !== 'undefined' && !!(navigator as any).gpu && isChromium();
 
-/** Engines to try, best-first. WebGPU-capable devices fall back to WASM if WebGPU load fails. */
-const pickEngines = (): Engine[] => (canUseWebGPU() ? [WEBGPU_ENGINE, WASM_ENGINE] : [WASM_ENGINE]);
+/** Devices to try, best-first. WebGPU-capable devices fall back to WASM if WebGPU load fails. */
+const pickDevices = (): KokoroDevice[] => (canUseWebGPU() ? ['webgpu', 'wasm'] : ['wasm']);
 
 /**
  * True when the device can run Kokoro at all. WASM runs anywhere with WebAssembly (every modern
@@ -164,98 +141,39 @@ const confirmDownloadIfNeeded = (): boolean => {
 };
 
 // ---------------------------------------------------------------------------
-// Model + synthesis
+// Model + synthesis, in the worker
 // ---------------------------------------------------------------------------
-let modelPromise: Promise<KokoroInstance> | null = null;
+let worker: Worker | null = null;
+let nextRequestId = 0;
+const pendingClips = new Map<number, { resolve: (audio: Blob) => void; reject: (error: Error) => void }>();
 
-const loadModel = async (engine: Engine): Promise<KokoroInstance> => {
-  const { KokoroTTS } = await import('kokoro-js');
-  // Skip the local /models/* lookup (404s) — load straight from the HF Hub + browser cache.
-  // Non-fatal: a direct import of the (transitive) transformers dep shouldn't fail the load.
-  try {
-    const transformers: any = await import('@huggingface/transformers');
-    transformers.env.allowLocalModels = false;
-  } catch {
-    /* ignore */
-  }
-  return KokoroTTS.from_pretrained(MODEL_ID, {
-    dtype: engine.dtype as any,
-    device: engine.device as any,
-    progress_callback: (p: any) => {
-      if (p && p.status === 'progress' && typeof p.progress === 'number') {
-        setStatus('loading', Math.max(0, Math.min(1, p.progress / 100)));
-      }
-    },
-  });
-};
-
-// Try each engine once (WebGPU then WASM on Chromium; WASM on Apple). We deliberately DON'T retry
-// in a tight loop here: the fp32 model is ~326 MB and a failed fetch isn't cached, so an immediate
-// retry just re-downloads it — wasteful, especially on mobile. Transient flakes are instead healed
-// by spaced, backed-off retries in preloadNeural() (and by the next deliberate play). On failure we
-// reset modelPromise so the next attempt starts clean — no session lockout, no hard-refresh needed.
-// A fully-downloaded file is cached, so any later attempt loads from cache instantly.
-const ensureModel = (): Promise<KokoroInstance> => {
-  if (modelPromise) return modelPromise;
-  setStatus('loading', 0);
-  modelPromise = (async () => {
-    let lastErr: unknown;
-    for (const engine of pickEngines()) {
-      try {
-        const tts = await loadModel(engine);
-        log(`🔊 Neural TTS: Kokoro model ready (${engine.dtype}, ${engine.device})`);
-        setStatus('ready', 1);
-        return tts;
-      } catch (e) {
-        lastErr = e;
-        warn(`🔊 Neural TTS: ${engine.device} load failed`, e);
-        setStatus('loading', 0);
-      }
+const getWorker = (): Worker => {
+  if (worker) return worker;
+  const created = new Worker(new URL('./kokoroWorker.ts', import.meta.url), { type: 'module' });
+  created.onmessage = ({ data }: MessageEvent<KokoroResponse>) => {
+    if (data.type === 'ready') {
+      modelReady = true;
+      log(`🔊 Neural TTS: Kokoro model ready (fp32, ${data.device})`);
+    } else if (data.type === 'loadFailed') {
+      warn(`🔊 Neural TTS: ${data.device} load failed`, data.message);
+    } else if (data.type === 'audio') {
+      pendingClips.get(data.id)?.resolve(data.audio);
+    } else {
+      pendingClips.get(data.id)?.reject(new Error(data.message));
     }
-    throw lastErr;
-  })();
-  modelPromise.catch(() => {
-    modelPromise = null; // allow a fresh attempt on the next play / preload retry
-    setStatus('error');
-  });
-  return modelPromise;
+  };
+  // The worker's code couldn't load or crashed: drop it, so the next play starts a fresh one.
+  created.onerror = event => {
+    event.preventDefault();
+    warn('🔊 Neural TTS: worker failed', event.message);
+    created.terminate();
+    if (worker === created) worker = null;
+    modelReady = false;
+    for (const { reject } of pendingClips.values()) reject(new Error(event.message || 'Kokoro worker failed'));
+  };
+  worker = created;
+  return created;
 };
-
-/**
- * Proactively download + initialize the model in the background so the first play (or autoplay) is
- * instant. Because the ~326 MB fp32 fetch can fail partway on a flaky link, this RETRIES with
- * backoff instead of giving up for the session — giving up was what used to force a manual
- * hard-refresh to get the natural voice. A successful load clears the budget; an `online` event
- * starts a fresh round. No-ops without WebAssembly, while a load is in flight / already done, once
- * the retry budget is spent, or (on mobile) before the one-time download is consented to.
- */
-const MAX_WARM_ROUNDS = 3;
-let warmRounds = 0;
-let warmTimer: ReturnType<typeof setTimeout> | null = null;
-
-export const preloadNeural = (): void => {
-  if (!isNeuralSupported()) return;                       // no WebAssembly at all → system-voice path
-  if (isIOS()) return;                                    // iPhone/iPad use cached MiMo + Web Speech; never download Kokoro
-  if (isMobile() && !hasConsent()) return;                // wait for consent before a big mobile download
-  if (status === 'loading' || status === 'ready') return; // in flight or already warm
-  if (warmRounds >= MAX_WARM_ROUNDS) return;              // spent the budget; wait for `online` to reset
-  if (warmTimer) { clearTimeout(warmTimer); warmTimer = null; }
-  log(`🔊 Neural TTS: warming model in the background (round ${warmRounds + 1}/${MAX_WARM_ROUNDS})`);
-  ensureModel().then(
-    () => { warmRounds = 0; },
-    () => {
-      warmRounds++;
-      if (warmRounds >= MAX_WARM_ROUNDS) return;
-      const delay = Math.min(30000, 4000 * 2 ** (warmRounds - 1)); // 4s, 8s, 16s
-      warmTimer = setTimeout(() => { warmTimer = null; preloadNeural(); }, delay);
-    },
-  );
-};
-
-// A restored connection is the best moment to try again from scratch — reset the budget and re-warm.
-if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => { warmRounds = 0; preloadNeural(); });
-}
 
 const audioCache = new Map<string, string>(); // `${voice}:${text}` -> object URL
 
@@ -263,9 +181,12 @@ const synthesize = async (text: string, voice: string): Promise<string> => {
   const key = `${voice}:${text}`;
   const cached = audioCache.get(key);
   if (cached) return cached;
-  const tts = await ensureModel();
-  const audio = await tts.generate(text, { voice: voice as any });
-  const url = URL.createObjectURL(audio.toBlob());
+  const request: KokoroRequest = { id: ++nextRequestId, text, voice, devices: pickDevices() };
+  const audio = await new Promise<Blob>((resolve, reject) => {
+    pendingClips.set(request.id, { resolve, reject });
+    getWorker().postMessage(request);
+  }).finally(() => pendingClips.delete(request.id));
+  const url = URL.createObjectURL(audio);
   lruSetUrl(audioCache, key, url, MAX_KOKORO_URLS);
   return url;
 };

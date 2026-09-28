@@ -71,6 +71,10 @@ export default defineConfig({
     // main bundle either way; excluding them here avoids dev-server pre-bundle errors.
     exclude: ['kokoro-js', '@huggingface/transformers'],
   },
+  // The Kokoro worker is a module worker, so its code can be split like the page's.
+  worker: {
+    format: 'es',
+  },
   build: {
     rollupOptions: {
       output: {

@@ -56,7 +56,6 @@ function deferredSpeak(method: 'speakNatural' | 'speakWord', text: string, optio
 
 export const speakNatural = (text: string, options: SpeakOptions = {}) => deferredSpeak('speakNatural', text, options);
 export const speakWord = (text: string) => deferredSpeak('speakWord', text);
-export const preloadNeural = () => { void loadEngine().then(module => module.preloadNeural()); };
 export const isNeuralSupported = () => typeof navigator !== 'undefined' && typeof WebAssembly !== 'undefined';
 export const getPlaybackState = () => engine?.getPlaybackState() ?? playbackState;
 export const subscribePlayback = (listener: (state: PlaybackState) => void) => {
