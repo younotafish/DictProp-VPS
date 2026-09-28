@@ -382,24 +382,35 @@ const blobToDataUri = (blob: Blob): Promise<string> => new Promise((resolve, rej
   reader.readAsDataURL(blob);
 });
 
-const evictImageCache = () => {
-  if (imageCache.size <= IMAGE_CACHE_MAX) return;
-  // Delete oldest entry (first key)
-  const firstKey = imageCache.keys().next().value;
-  if (firstKey) {
-    const value = imageCache.get(firstKey);
-    if (value?.url.startsWith('blob:')) URL.revokeObjectURL(value.url);
-    imageCache.delete(firstKey);
+const releaseImage = (entry: CachedImageEntry | undefined) => {
+  if (entry?.url.startsWith('blob:')) URL.revokeObjectURL(entry.url);
+};
+
+/** Caches an item's picture as the most recently used, evicting the oldest past the limit. */
+const rememberImage = (itemId: string, url: string, version?: string) => {
+  const previous = imageCache.get(itemId);
+  if (previous?.url !== url) releaseImage(previous);
+  imageCache.delete(itemId);
+  imageCache.set(itemId, { url, version });
+  while (imageCache.size > IMAGE_CACHE_MAX) {
+    const [oldestId, oldest] = imageCache.entries().next().value!;
+    releaseImage(oldest);
+    imageCache.delete(oldestId);
   }
+};
+
+/** The item's picture if it's already in memory, so a view can show it on its first frame. */
+export const peekImage = (itemId: string, expectedVersion?: string): string | null => {
+  const cached = imageCache.get(itemId);
+  if (!cached || (expectedVersion && cached.version !== expectedVersion)) return null;
+  imageCache.delete(itemId);
+  imageCache.set(itemId, cached);
+  return cached.url;
 };
 
 export const saveImage = async (itemId: string, base64: string, version?: string): Promise<void> => {
   const blob = dataUriToBlob(base64);
-  const cachedUrl = URL.createObjectURL(blob);
-  const previous = imageCache.get(itemId);
-  if (previous?.url.startsWith('blob:')) URL.revokeObjectURL(previous.url);
-  imageCache.set(itemId, { url: cachedUrl, version });
-  evictImageCache();
+  rememberImage(itemId, URL.createObjectURL(blob), version);
 
   const idbAvailable = await checkIndexedDBAvailability();
   if (!idbAvailable) return;
@@ -418,24 +429,18 @@ export const saveImage = async (itemId: string, base64: string, version?: string
   }
 };
 
-export const saveImagesBatch = async (images: Array<{ id: string; base64: string; version?: string }>): Promise<void> => {
+/**
+ * Stores pictures in IDB. `remember` also puts them in the memory cache; bulk downloads skip it so they
+ * don't push out the pictures of the cards just viewed.
+ */
+export const saveImagesBatch = async (
+  images: Array<{ id: string; base64: string; version?: string }>,
+  { remember = true } = {},
+): Promise<void> => {
   if (images.length === 0) return;
   const encoded = images.map(image => ({ ...image, blob: dataUriToBlob(image.base64) }));
-
-  // Populate cache
-  for (const img of encoded) {
-    const previous = imageCache.get(img.id);
-    if (previous?.url.startsWith('blob:')) URL.revokeObjectURL(previous.url);
-    imageCache.set(img.id, { url: URL.createObjectURL(img.blob), version: img.version });
-  }
-  // Trim cache to limit
-  while (imageCache.size > IMAGE_CACHE_MAX) {
-    const firstKey = imageCache.keys().next().value;
-    if (firstKey) {
-      const value = imageCache.get(firstKey);
-      if (value?.url.startsWith('blob:')) URL.revokeObjectURL(value.url);
-      imageCache.delete(firstKey);
-    }
+  if (remember) {
+    for (const img of encoded) rememberImage(img.id, URL.createObjectURL(img.blob), img.version);
   }
 
   const idbAvailable = await checkIndexedDBAvailability();
@@ -457,17 +462,26 @@ export const saveImagesBatch = async (images: Array<{ id: string; base64: string
   }
 };
 
-export const loadImage = async (itemId: string, expectedVersion?: string): Promise<string | null> => {
-  // Check in-memory cache first
-  const cached = imageCache.get(itemId);
-  if (cached && (!expectedVersion || cached.version === expectedVersion)) {
-    // Move to end (most recently used)
-    imageCache.delete(itemId);
-    imageCache.set(itemId, cached);
-    return cached.url;
+// One IDB read per picture at a time. Two concurrent reads would each mint a blob URL, and caching the
+// second revokes the first while a view may still be about to show it.
+const pendingImageLoads = new Map<string, Promise<string | null>>();
+
+export const loadImage = (itemId: string, expectedVersion?: string): Promise<string | null> => {
+  const cached = peekImage(itemId, expectedVersion);
+  if (cached) return Promise.resolve(cached);
+  const key = `${itemId}\n${expectedVersion ?? ''}`;
+  let pending = pendingImageLoads.get(key);
+  if (!pending) {
+    pending = readStoredImage(itemId, expectedVersion).finally(() => pendingImageLoads.delete(key));
+    pendingImageLoads.set(key, pending);
   }
-  if (cached) {
-    if (cached.url.startsWith('blob:')) URL.revokeObjectURL(cached.url);
+  return pending;
+};
+
+const readStoredImage = async (itemId: string, expectedVersion?: string): Promise<string | null> => {
+  const stale = imageCache.get(itemId);
+  if (stale) {
+    releaseImage(stale);
     imageCache.delete(itemId);
   }
 
@@ -476,7 +490,7 @@ export const loadImage = async (itemId: string, expectedVersion?: string): Promi
 
   try {
     const db = await getDB();
-    return new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       const tx = db.transaction(IMAGES_STORE, 'readonly');
       const store = tx.objectStore(IMAGES_STORE);
       const request = store.get(itemId);
@@ -487,11 +501,16 @@ export const loadImage = async (itemId: string, expectedVersion?: string): Promi
           resolve(null);
           return;
         }
+        // A download may have cached the picture while this read was in flight.
+        const saved = peekImage(itemId, expectedVersion);
+        if (saved) {
+          resolve(saved);
+          return;
+        }
         const stored = isStoredImageRecord(result) ? result.blob : result;
         if (stored) {
           const url = stored instanceof Blob ? URL.createObjectURL(stored) : stored;
-          imageCache.set(itemId, { url, version });
-          evictImageCache();
+          rememberImage(itemId, url, version);
           resolve(url);
           return;
         }
@@ -503,6 +522,41 @@ export const loadImage = async (itemId: string, expectedVersion?: string): Promi
     warn("Failed to load image from IDB", e);
     return null;
   }
+};
+
+// Pictures decoded ahead of the cards they belong to. Holding the elements keeps the browser from
+// dropping them before those cards are shown.
+const decodedImages = new Map<string, HTMLImageElement>();
+const DECODED_IMAGES_MAX = 12;
+
+/**
+ * Has the browser fetch and decode a picture ahead of time, so an <img> showing it later is complete as
+ * soon as it's attached. Resolves false if the picture can't be loaded.
+ */
+export const decodeImage = async (url: string): Promise<boolean> => {
+  if (decodedImages.has(url)) return true;
+  const img = new Image();
+  img.src = url;
+  decodedImages.set(url, img);
+  if (decodedImages.size > DECODED_IMAGES_MAX) decodedImages.delete(decodedImages.keys().next().value!);
+  try {
+    await img.decode();
+    return true;
+  } catch {
+    if (decodedImages.get(url) === img) decodedImages.delete(url);
+    return false;
+  }
+};
+
+/**
+ * Loads an item's stored picture into memory and decodes it, so moving to its card shows the picture on
+ * the first frame. Resolves false when the picture isn't stored locally.
+ */
+export const warmImage = async (itemId: string, expectedVersion?: string): Promise<boolean> => {
+  const url = await loadImage(itemId, expectedVersion);
+  if (!url) return false;
+  await decodeImage(url);
+  return true;
 };
 
 /**

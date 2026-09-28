@@ -74,13 +74,19 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Smooth page transitions */
+/* Overlays, menus and toasts fade in. Opacity only: several are full-screen backdrops, which a slide
+   would leave uncovered at one edge. (No animation plugin is installed, so the animate-in, zoom-in and
+   slide-in-from utilities next to this class do nothing.) */
 .fade-in {
-  animation: fadeIn 0.3s ease-in-out;
+  animation: fadeIn 0.15s ease-out;
 }
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+}
+
+/* A picture that arrives after its card is already on screen eases in instead of popping. */
+.image-fade-in {
+  animation: fadeIn 0.2s ease-out;
 }
 
 /* Eyes-free read-zone tap confirmation — a quick fade-out tint over the tapped band */

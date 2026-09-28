@@ -1079,7 +1079,7 @@ const App: React.FC = () => {
           base64,
           version: imageVersions.get(id),
         }));
-        if (toSave.length > 0) await saveImagesBatch(toSave);
+        if (toSave.length > 0) await saveImagesBatch(toSave, { remember: false });
         done += batch.length;
         setImagePrefetchProgress({ done, total: missing.length });
       } catch (e) {

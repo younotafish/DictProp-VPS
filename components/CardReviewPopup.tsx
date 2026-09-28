@@ -8,6 +8,7 @@ import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
+import { useWarmImages } from '../hooks/useWarmImages';
 
 const formatRelative = (ts: number): string => {
   const diff = ts - Date.now();
@@ -92,6 +93,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   }, []);
 
   const word = (items[0]?.data as VocabCard)?.word || '';
+  // Paging to another saved meaning shows its picture at once.
+  useWarmImages(items, onLazyLoadImage);
 
   // Fetch the word's other AI senses on open (cached per session in App) so we can page saved + unsaved.
   const [aiVocabs, setAiVocabs] = useState<VocabCard[]>([]);

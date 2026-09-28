@@ -15,10 +15,10 @@ import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
 import { getMasteryColors } from '../components/mastery';
 import ReactMarkdown from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { useKeyboardNavigation, useWheelNavigation } from '../hooks';
+import { useKeyboardNavigation, useWheelNavigation, useWarmImages } from '../hooks';
 import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap, type SpeakHandle } from '../services/lazyTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../services/ttsAlignment';
-import { loadImage } from '../services/storage';
+import { getStoredImageIds } from '../services/storage';
 import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
 import { log, warn, error as logError } from '../services/logger';
 import { isRealLifeProgressItem } from '../services/realLifeProgress';
@@ -1163,50 +1163,27 @@ export const DetailView: React.FC<DetailViewProps> = ({
   }, [sentenceMode, currentSentenceText, prefetchSpeechStyle]);
 
   // Aggressively stage the next five sentence cards while the learner is reading the current one.
-  // Audio (including word timings) is persisted in the dedicated IDB cache; item images are persisted
-  // in the image IDB cache. Prepared catalog-image URLs use the authenticated browser HTTP cache.
-  const warmedSentenceImagesRef = useRef(new Set<string>());
+  // Audio (including word timings) is persisted in the dedicated IDB cache; their pictures are warmed below.
   useEffect(() => {
     if (!sentenceMode || sentencePreloadWindow.length <= 1) return;
-    const upcoming = sentencePreloadWindow.slice(1, SENTENCE_PREFETCH_AHEAD + 1);
-    const texts = upcoming.map(item => (item.data as SentenceData).text).filter(Boolean);
-
-    const warm = () => {
-      void preloadAudio(texts);
-      for (const item of upcoming) {
-        const imageUrl = getItemImageUrl(item);
-        if (!imageUrl || imageUrl.startsWith('data:image/')) continue;
-
-        if (imageUrl.startsWith('/api/')) {
-          const cacheKey = `url:${imageUrl}`;
-          if (warmedSentenceImagesRef.current.has(cacheKey)) continue;
-          warmedSentenceImagesRef.current.add(cacheKey);
-          void fetch(imageUrl, { cache: 'force-cache' }).then(async response => {
-            if (!response.ok) throw new Error(`Image preload failed (${response.status})`);
-            await response.blob(); // consume the full body before considering it warm
-          }).catch(() => warmedSentenceImagesRef.current.delete(cacheKey));
-          continue;
-        }
-
-        if (!onLazyLoadImage || (imageUrl !== 'idb:stored' && !imageUrl.startsWith('server:has_image'))) continue;
-        const version = serverImageVersion(imageUrl);
-        const cacheKey = `item:${item.data.id}:${version ?? 'local'}`;
-        if (warmedSentenceImagesRef.current.has(cacheKey)) continue;
-        warmedSentenceImagesRef.current.add(cacheKey);
-        void loadImage(item.data.id, version).then(cached =>
-          cached ? cached : onLazyLoadImage(item.data.id, version)
-        ).then(loaded => {
-          if (!loaded) warmedSentenceImagesRef.current.delete(cacheKey);
-        }).catch(() => warmedSentenceImagesRef.current.delete(cacheKey));
-      }
-    };
-
+    const texts = sentencePreloadWindow.slice(1).map(item => (item.data as SentenceData).text).filter(Boolean);
+    const warm = () => { void preloadAudio(texts); };
     warm();
     // A failed warm-up is retried as soon as a flaky connection comes back, even if the learner has
     // stayed on the same sentence throughout the outage.
     window.addEventListener('online', warm);
     return () => window.removeEventListener('online', warm);
-  }, [sentenceMode, sentencePreloadWindow, onLazyLoadImage, prefetchSpeechStyle]);
+  }, [sentenceMode, sentencePreloadWindow, prefetchSpeechStyle]);
+
+  // Decode the pictures of the cards the learner can move to next, so each paints on its first frame: the
+  // next five sentences in sentence review; this word's other meanings and the words either side otherwise.
+  const upcomingPictureItems = useMemo(() => {
+    if (sentenceMode) return sentencePreloadWindow.slice(1);
+    if (!groups?.length) return [];
+    const index = Math.min(currentGroupIndex, groups.length - 1);
+    return [groups[index], groups[index + 1], groups[index - 1]].flatMap(group => group?.items ?? []);
+  }, [sentenceMode, sentencePreloadWindow, groups, currentGroupIndex]);
+  useWarmImages(upcomingPictureItems, onLazyLoadImage);
 
   // P key to pronounce current word
   // Moved to bottom to access handlers
@@ -1459,7 +1436,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
   };
 
   // Once auto-play is requested, preload the WHOLE session so a poor/unstable network can't interrupt
-  // review: warm every example/saved sentence's audio + timings, and pull every card's image into IDB.
+  // review: warm every example/saved sentence's audio + timings, and pull every picture it shows into IDB.
   // Best-effort and cancellable; per-item failures still advance the progress so it always completes.
   useEffect(() => {
     if (!isSentenceAutoPlaying) {
@@ -1475,8 +1452,15 @@ export const DetailView: React.FC<DetailViewProps> = ({
     const texts = sentenceMode
       ? (sentenceItems ?? []).map(s => (s.data as SentenceData).text || '')
       : (groups ?? []).flatMap(g => g.items.flatMap(it => examplesOf(it)));
-    // Images: the displayed word/phrase cards (in sentence mode these are the sentences' source cards).
-    const ids = Array.from(new Set((groups ?? []).flatMap(g => g.items.map(it => it.data.id))));
+    // Images: the pictures the session shows, the sentences' own in sentence mode and the cards' otherwise.
+    const imageVersions = new Map<string, string | undefined>();
+    for (const item of sentenceMode ? (sentenceItems ?? []) : (groups ?? []).flatMap(g => g.items)) {
+      const imageUrl = getItemImageUrl(item);
+      if (imageUrl === 'idb:stored' || imageUrl?.startsWith('server:has_image:')) {
+        imageVersions.set(item.data.id, serverImageVersion(imageUrl));
+      }
+    }
+    const ids = [...imageVersions.keys()];
 
     const audioTotal = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean))).length;
     const imageTotal = onLazyLoadImage ? ids.length : 0;
@@ -1495,23 +1479,30 @@ export const DetailView: React.FC<DetailViewProps> = ({
     // Audio — one progress-reporting batch (de-dupes + generates missing internally).
     preloadAudio(texts, (d) => { audioDone = d; report(); }).catch(() => {});
 
-    // Images — bounded concurrency; skip any already in IDB so repeat sessions don't re-download.
+    // Images — pictures already in IDB only need an existence check (opening each would churn the memory
+    // cache); the rest download with bounded concurrency.
     (async () => {
       if (!onLazyLoadImage || ids.length === 0) return;
+      const expected = new Map<string, string>();
+      for (const [id, version] of imageVersions) if (version) expected.set(id, version);
+      const stored = await getStoredImageIds(ids, expected);
+      if (cancelled) return;
+      const missing = ids.filter(id => !stored.has(id));
+      imageDone = ids.length - missing.length;
+      report();
       const CONCURRENCY = 4;
       let i = 0;
       const worker = async () => {
-        while (i < ids.length && !cancelled) {
-          const id = ids[i++];
+        while (i < missing.length && !cancelled) {
+          const id = missing[i++];
           try {
-            const cached = await loadImage(id);
-            if (!cached && !cancelled) await onLazyLoadImage(id);
+            await onLazyLoadImage(id, imageVersions.get(id));
           } catch { /* best-effort */ }
           imageDone++;
           report();
         }
       };
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, missing.length) }, worker));
     })();
 
     return () => {
@@ -2463,7 +2454,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                           itemId={currentSentence.data.id}
                           alt="Attached image for this sentence"
                           onMissing={onLazyLoadImage}
-                          className="w-full h-auto max-h-[32vh] md:max-h-[52vh] lg:max-h-[70vh] object-contain fade-in"
+                          className="w-full h-auto max-h-[32vh] md:max-h-[52vh] lg:max-h-[70vh] object-contain"
                           fallbackClassName="w-full aspect-[4/3]"
                         />
                       </div>
@@ -2826,9 +2817,10 @@ export const DetailView: React.FC<DetailViewProps> = ({
             <div className="space-y-6 max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto">
               <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="md:flex">
-                  <div className="bg-slate-100 relative overflow-hidden flex items-center justify-center group max-h-48 md:max-h-none md:w-2/5 md:shrink-0">
+                  {/* With a picture, a fixed height on phones so the text below doesn't move when it arrives. */}
+                  <div className={`bg-slate-100 relative overflow-hidden flex items-center justify-center group md:w-2/5 md:shrink-0 ${(data as SearchResult).imageUrl ? 'h-48 md:h-auto' : ''}`}>
                     {(data as SearchResult).imageUrl ? (
-                      <OfflineImage src={(data as SearchResult).imageUrl} itemId={(data as SearchResult).id} alt="Visual context" className="w-full h-full object-cover fade-in transition-transform duration-700 group-hover:scale-105" onMissing={onLazyLoadImage} />
+                      <OfflineImage src={(data as SearchResult).imageUrl} itemId={(data as SearchResult).id} alt="Visual context" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" onMissing={onLazyLoadImage} />
                     ) : (
                       <div className="flex flex-col items-center text-slate-400 py-8">
                         <SearchIcon className="mb-2 opacity-30" size={32}/>

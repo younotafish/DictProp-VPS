@@ -1,6 +1,6 @@
-import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ImageOff, Loader2 } from 'lucide-react';
-import { loadImage } from '../services/storage';
+import { loadImage, peekImage } from '../services/storage';
 
 interface Props {
   src?: string;
@@ -14,11 +14,11 @@ interface Props {
 /**
  * Image component with offline support.
  * - If `src` is a base64 data URI or authenticated same-origin API URL, renders it directly.
- * - Else if `itemId` is provided, lazy-loads base64 from the IDB images store, then (on a miss)
- *   from the server via `onMissing`.
+ * - Else if `itemId` is provided, shows the picture straight from the memory cache when it's there, and
+ *   otherwise lazy-loads it from the IDB images store, then (on a miss) from the server via `onMissing`.
  *
  * Everything is keyed to the CURRENT image identity (`idKey`): on a fast swipe/scroll to another
- * item the displayed image is reset before paint, and a miss / failed download shows a placeholder —
+ * item the displayed image is reset in the same render, and a miss / failed download shows a placeholder —
  * so the previous item's picture is NEVER left on screen (the stale-image bug). A cancellation guard
  * stops a late resolution from a prior item landing on the current one.
  */
@@ -36,23 +36,23 @@ export const OfflineImage: React.FC<Props> = ({
     : undefined;
   // Identity of the image to show. Changes when we switch items → triggers the reset below.
   const idKey = directSrc ?? (itemId ? `id:${itemId}:${serverVersion || 'local'}` : '');
+  // A picture already in memory shows on the first frame instead of after a storage round trip.
+  const immediateSrc = () => directSrc ?? (itemId ? peekImage(itemId, serverVersion) ?? undefined : undefined);
 
-  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(directSrc);
-  const [loading, setLoading] = useState<boolean>(!directSrc && !!itemId);
+  const [shownKey, setShownKey] = useState(idKey);
+  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(immediateSrc);
+  const [loading, setLoading] = useState<boolean>(!resolvedSrc && !!itemId);
   const [hasError, setHasError] = useState(false);
-  const [isLoaded, setIsLoaded] = useState(false);
 
-  // Reset BEFORE paint when the image identity changes, so a previous item's picture is never shown
-  // during the gap before the new one loads (or if it never does).
-  const prevIdKey = useRef(idKey);
-  useLayoutEffect(() => {
-    if (prevIdKey.current === idKey) return;
-    prevIdKey.current = idKey;
-    setResolvedSrc(directSrc);            // direct base64 → show now; lazy (itemId) → undefined → skeleton
-    setLoading(!directSrc && !!itemId);
+  // Reset in the same render when the image identity changes, so a previous item's picture is never
+  // shown during the gap before the new one loads (or if it never does).
+  if (shownKey !== idKey) {
+    const next = immediateSrc();
+    setShownKey(idKey);
+    setResolvedSrc(next);
+    setLoading(!next && !!itemId);
     setHasError(false);
-    setIsLoaded(false);
-  }, [idKey, directSrc, itemId]);
+  }
 
   // Lazy-load by itemId: IDB first, then the server WITH RETRY. `onMissing` returning null means the
   // item genuinely has no image (→ placeholder, stop); `onMissing` THROWING means a transient failure
@@ -61,13 +61,12 @@ export const OfflineImage: React.FC<Props> = ({
   useEffect(() => {
     if (directSrc || !itemId) return;
     let cancelled = false;
-    setLoading(true);
 
     const BACKOFFS = [500, 1500, 4000]; // ms before retries 2, 3, 4 (transient failures only)
     const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
     (async () => {
-      // 1) IDB cache — fast, no retry needed.
+      // 1) Memory or IDB cache — fast, no retry needed. A picture shown from memory resolves to itself.
       try {
         const cached = await loadImage(itemId, serverVersion);
         if (cancelled) return;
@@ -120,18 +119,48 @@ export const OfflineImage: React.FC<Props> = ({
   }
 
   return (
+    <Picture
+      key={resolvedSrc}
+      src={resolvedSrc}
+      alt={alt}
+      className={className}
+      overlayClassName={fallbackClassName}
+      onError={() => setHasError(true)}
+    />
+  );
+};
+
+interface PictureProps {
+  src: string;
+  alt: string;
+  className: string;
+  overlayClassName: string;
+  onError: () => void;
+}
+
+/**
+ * One picture, remounted per src so no previously decoded frame lingers under a new one. A picture the
+ * browser already has is complete as soon as it's attached and paints on the first frame; one that
+ * arrives later eases in.
+ */
+const Picture: React.FC<PictureProps> = ({ src, alt, className, overlayClassName, onError }) => {
+  const [shown, setShown] = useState<'pending' | 'ready' | 'fade'>('pending');
+  const showIfComplete = useCallback((img: HTMLImageElement | null) => {
+    if (img?.complete && img.naturalWidth > 0) setShown(state => state === 'pending' ? 'ready' : state);
+  }, []);
+
+  return (
     <div className="relative w-full h-full">
-      {!isLoaded && (
-        <div className={`flex items-center justify-center bg-slate-100 animate-pulse absolute inset-0 ${fallbackClassName}`} />
+      {shown === 'pending' && (
+        <div className={`bg-slate-100 animate-pulse absolute inset-0 ${overlayClassName}`} />
       )}
-      {/* key forces a fresh element per image so no previously-decoded frame lingers under a new src. */}
       <img
-        key={resolvedSrc}
-        src={resolvedSrc}
+        ref={showIfComplete}
+        src={src}
         alt={alt}
-        className={`${className} ${isLoaded ? 'opacity-100' : 'opacity-0'} transition-opacity duration-200`}
-        onError={() => setHasError(true)}
-        onLoad={() => setIsLoaded(true)}
+        className={shown === 'fade' ? `${className} image-fade-in` : className}
+        onError={onError}
+        onLoad={() => setShown(state => state === 'pending' ? 'fade' : state)}
       />
     </div>
   );
