@@ -532,9 +532,10 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   // Defer the heavy grouping/search pipeline so typing stays responsive on large libraries: the input
   // updates immediately (localSearchQuery) while the filtered/grouped list catches up a tick behind.
   const deferredSearchQuery = React.useDeferredValue(localSearchQuery);
-  const [showHeader, setShowHeader] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const lastScrollY = useRef(0);
+  // Hidden and shown by class, so scrolling never re-renders the notebook.
+  const headerRef = useRef<HTMLDivElement>(null);
   
   // AI Search state
   const [isSearching, setIsSearching] = useState(false);
@@ -823,19 +824,19 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onSave(makeVocabStoredItem(vocab));
   }, [onSave]);
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const currentScrollY = e.currentTarget.scrollTop;
-    
+
     // Top buffer zone
     if (currentScrollY < 50) {
-      if (!showHeader) setShowHeader(true);
+      headerRef.current?.classList.remove('-translate-y-full');
     } else if (Math.abs(currentScrollY - lastScrollY.current) > 10) {
-      setShowHeader(currentScrollY < lastScrollY.current);
+      headerRef.current?.classList.toggle('-translate-y-full', currentScrollY > lastScrollY.current);
     }
-    
+
     lastScrollY.current = currentScrollY;
     onScroll?.(e);
-  };
+  }, [onScroll]);
   
   const searchQuery = deferredSearchQuery.trim();
   const list = useMemo(
@@ -1053,7 +1054,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       onScroll={handleScroll}
     >
       {/* Header */}
-      <div className={`sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md border-b border-slate-200/50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
+      <div ref={headerRef} className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200/50 transition-transform duration-300">
         <div className="px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
           <div className="min-w-0">
             <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
