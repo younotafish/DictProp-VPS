@@ -108,24 +108,8 @@ const loadSnapshot = async (userId: string = 'vps'): Promise<StoredItem[]> => {
   const storageKey = getStorageKey(userId);
   
   if (!idbAvailable) {
+    // The library is far larger than localStorage allows; private mode relies on the server copy.
     warn("IndexedDB not available, using in-memory storage (iOS Safari private mode?)");
-    // Try to load from localStorage as fallback
-    try {
-      const localData = localStorage.getItem(`popdict_items_fallback_${userId}`);
-      if (localData) {
-        const parsed = JSON.parse(localData);
-        if (Array.isArray(parsed)) {
-          // Validate items have required properties
-          const validItems = parsed.filter((i: any) => 
-            i && i.data && i.data.id && i.type
-          );
-          inMemoryStorage[userId] = validItems;
-          return validItems;
-        }
-      }
-    } catch (e) {
-      warn("Failed to load from localStorage fallback", e);
-    }
     return inMemoryStorage[userId] || [];
   }
   
@@ -300,14 +284,7 @@ export const saveItemUpdates = async (
 export const saveData = async (items: StoredItem[], userId: string = 'vps'): Promise<void> => {
   const idbAvailable = await checkIndexedDBAvailability();
   if (!idbAvailable) {
-    warn("IndexedDB not available, saving to in-memory storage");
     inMemoryStorage[userId] = items;
-    // Also try to save to localStorage as a fallback persistence layer
-    try {
-      localStorage.setItem(`popdict_items_fallback_${userId}`, JSON.stringify(items));
-    } catch (e) {
-      warn("Failed to save to localStorage fallback (quota exceeded?)", e);
-    }
     return;
   }
   
@@ -320,13 +297,7 @@ export const saveData = async (items: StoredItem[], userId: string = 'vps'): Pro
     persistedFingerprints.set(userId, fingerprints);
   } catch (error) {
     logError("IDB Save Error", error);
-    // Fall back to in-memory storage
     inMemoryStorage[userId] = items;
-    try {
-      localStorage.setItem(`popdict_items_fallback_${userId}`, JSON.stringify(items));
-    } catch (e) {
-      warn("Failed to save to localStorage fallback", e);
-    }
   }
 };
 
@@ -594,23 +565,4 @@ export const loadImagesByIds = async (ids: string[]): Promise<Map<string, string
     warn("Failed to load images by ids", e);
   }
   return result;
-};
-
-// Legacy Migration: Check if old localStorage data exists and move it to IDB
-export const migrateFromLocalStorage = async (): Promise<StoredItem[] | null> => {
-    const localData = localStorage.getItem('popdict_items');
-    if (localData) {
-        try {
-            const parsed = JSON.parse(localData);
-            if (Array.isArray(parsed)) {
-                log("Migrating data from LocalStorage to IndexedDB...");
-                await saveData(parsed);
-                localStorage.removeItem('popdict_items'); // Clear old storage
-                return parsed;
-            }
-        } catch (e) {
-            warn("Migration failed", e);
-        }
-    }
-    return null;
 };

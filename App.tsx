@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { StoredItem, ViewState, SyncStatus, SyncState, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
 import { Loader2, X } from 'lucide-react';
-import { loadData, saveData, saveItemUpdates, migrateFromLocalStorage, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
+import { loadData, saveData, saveItemUpdates, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
 import { mergeDatasets } from './services/sync';
 import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, getItemContentHash, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type RevisionCursor } from './services/api';
 import { stripSentenceMarkers } from './components/HighlightedSentence';
@@ -61,53 +61,18 @@ interface DetailContext {
   sentenceItems?: StoredItem[];
 }
 
-// Create lightweight cache for localStorage (target: <1MB for 3000+ items)
-// Only includes fields needed for list display + SRS scheduling
-// Full data loads from IndexedDB after initial render
-const createLightweightCache = (items: StoredItem[]): any[] =>
-  items.map(item => {
-    const entry: any = {
-      type: item.type,
-      srs: item.srs,
-      savedAt: item.savedAt,
-      updatedAt: item.updatedAt,
-      serverRevision: item.serverRevision,
-    };
-    if (item.isDeleted) entry.isDeleted = true;
-    if (item.isArchived) entry.isArchived = true;
-
-    if (isPhraseItem(item)) {
-      entry.data = {
-        id: item.data.id,
-        query: item.data.query,
-        translation: item.data.translation,
-        pronunciation: item.data.pronunciation,
-        vocabs: (item.data.vocabs || []).map((v: VocabCard) => ({
-          id: v.id, word: v.word, sense: v.sense, chinese: v.chinese, ipa: v.ipa,
-        })),
-        timestamp: item.data.timestamp,
-      };
-    } else if (isSentenceItem(item)) {
-      entry.data = {
-        id: item.data.id,
-        text: item.data.text,
-        sourceWord: item.data.sourceWord,
-        sourceSense: item.data.sourceSense,
-        preferredSpeechStyle: item.data.preferredSpeechStyle,
-        catalogKind: item.data.catalogKind,
-        catalogSentenceId: item.data.catalogSentenceId,
-        catalogCollectionId: item.data.catalogCollectionId,
-        catalogTitle: item.data.catalogTitle,
-      };
-    } else {
-      const vocab = item.data as VocabCard;
-      entry.data = {
-        id: vocab.id, word: vocab.word, sense: vocab.sense,
-        chinese: vocab.chinese, ipa: vocab.ipa,
-      };
+// Older builds mirrored the library into localStorage. It never fit, and its stripped copies could
+// overwrite full items, so drop them and leave the quota to the synchronous review outbox.
+const clearLegacyLibraryCaches = (): void => {
+  try {
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index);
+      if (key?.startsWith('vps_items_cache') || key?.startsWith('popdict_items') || key === 'app_last_hidden') {
+        localStorage.removeItem(key);
+      }
     }
-    return entry;
-  });
+  } catch { /* storage unavailable */ }
+};
 
 const offloadImages = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
   const { offloadAndUpload } = await import('./services/imagePipeline');
@@ -337,38 +302,15 @@ const App: React.FC = () => {
 
   // Persist current view
   useEffect(() => {
-    localStorage.setItem('app_current_view', currentView);
+    try { localStorage.setItem('app_current_view', currentView); } catch { /* storage full or unavailable */ }
   }, [currentView]);
-  
-  // Cache key is per-user to isolate data between accounts
-  const cacheKey = authState.user ? `vps_items_cache_${authState.user.id}` : 'vps_items_cache';
 
-  // Simplified sync state (items only)
-  // Restore instantly from lightweight localStorage cache for fast perceived load
+  // Simplified sync state (items only). IndexedDB is the only local copy of the library.
   const [syncState, setSyncState] = useState<SyncState>(() => {
     return { items: [] };
   });
   const latestItemsRef = useRef<StoredItem[]>(syncState.items);
   const serverCursorRef = useRef<RevisionCursor>({ revision: 0, id: '' });
-  
-  // Restore from localStorage cache once auth is resolved
-  useEffect(() => {
-    if (authState.loading || !authState.user) return;
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const items = JSON.parse(cached);
-        if (Array.isArray(items) && items.length > 0) {
-          log(`⚡ Instant restore: ${items.length} items from cache`);
-          latestItemsRef.current = items;
-          serverCursorRef.current = latestRevisionCursor(items);
-          setSyncState({ items });
-        }
-      }
-    } catch (e) {
-      warn("Failed to restore items from cache", e);
-    }
-  }, [authState.loading, authState.user?.id]);
 
   // User-scoped saveData wrapper — all saves go through this
   const userSaveData = useCallback((items: StoredItem[]) => {
@@ -420,11 +362,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Throttle localStorage writes during rapid SRS updates (e.g. reviewing 20+ cards)
-  const srsSavePendingRef = useRef(false);
-  const srsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  
   // Keep latestItemsRef in sync with state (synchronously, so event handlers always have current data)
   useEffect(() => {
     latestItemsRef.current = syncState.items;
@@ -847,14 +784,7 @@ const App: React.FC = () => {
           return;
         }
 
-        // Use synchronous localStorage as a backup (IndexedDB is async and may not complete)
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(currentItems)));
-          log("💾 Saved items cache on beforeunload");
-        } catch (e) {
-          warn("Failed to save cache on beforeunload:", e);
-        }
-        // Also try IndexedDB (may not complete but worth trying)
+        // Reviews are already in the synchronous outbox; IndexedDB may not finish but is worth trying.
         userSaveData(currentItems).catch(e => warn("Failed to save on beforeunload:", e));
       }
     };
@@ -864,30 +794,21 @@ const App: React.FC = () => {
   }, [isLoaded]);
 
   // Save data when app goes to background / returns from background
+  const lastHiddenAtRef = useRef<number | null>(null);
   useEffect(() => {
       const handleVisibilityChange = async () => {
           if (document.visibilityState === 'visible') {
               window.speechSynthesis?.cancel();
-              const lastHiddenStr = localStorage.getItem('app_last_hidden');
-              if (lastHiddenStr) {
-                  const lastHidden = parseInt(lastHiddenStr, 10);
-                  const now = Date.now();
-                  if (now - lastHidden > 30 * 1000) {
-                      log("🔄 App was backgrounded for >30s, syncing...");
-                      handleForceSync();
-                  }
+              const lastHidden = lastHiddenAtRef.current;
+              lastHiddenAtRef.current = null;
+              if (lastHidden !== null && Date.now() - lastHidden > 30 * 1000) {
+                  log("🔄 App was backgrounded for >30s, syncing...");
+                  handleForceSync();
               }
-              localStorage.removeItem('app_last_hidden');
           } else {
-              localStorage.setItem('app_last_hidden', Date.now().toString());
+              lastHiddenAtRef.current = Date.now();
 
               const currentItems = latestItemsRef.current;
-
-              if (srsSaveTimerRef.current) {
-                clearTimeout(srsSaveTimerRef.current);
-                srsSaveTimerRef.current = null;
-                srsSavePendingRef.current = false;
-              }
 
               const timeSinceLastSave = Date.now() - lastSaveTimeRef.current;
               if (timeSinceLastSave < 500) {
@@ -897,11 +818,6 @@ const App: React.FC = () => {
 
               if (isLoaded && currentItems.length > 0) {
                   log("💾 App going to background, saving data immediately...");
-                  try {
-                    localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(currentItems)));
-                  } catch (e) {
-                    warn("Failed to save cache on visibility change:", e);
-                  }
                   userSaveData(currentItems).catch(e => {
                       warn("Failed to save on visibility change:", e);
                   });
@@ -932,11 +848,6 @@ const App: React.FC = () => {
         const currentItems = latestItemsRef.current;
         if (!isLoaded || currentItems.length === 0) return;
         log("💾 Saving state before external navigation...");
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(currentItems)));
-        } catch (e) {
-          warn("Failed to save cache before external nav:", e);
-        }
         userSaveData(currentItems).catch(e => {
           warn("Failed to save to IDB before external nav:", e);
         });
@@ -956,44 +867,13 @@ const App: React.FC = () => {
     const userId = authState.user.id;
     const initStorage = async () => {
         try {
-            const migrated = await migrateFromLocalStorage();
-            let itemsFromIDB: StoredItem[] = [];
+            clearLegacyLibraryCaches();
+            // IndexedDB is the only local copy of the library; the server sync fills anything it lacks.
+            let processedItems = (await loadData(userId)).filter(item =>
+                item && item.data && item.data.id && item.srs && item.type
+            );
+            log(`📦 Loaded ${processedItems.length} items from IndexedDB`);
 
-            if (migrated && migrated.length > 0) {
-                itemsFromIDB = migrated;
-            } else {
-                const items = await loadData(userId);
-                if (items && Array.isArray(items)) {
-                    itemsFromIDB = items.filter((i: any) =>
-                        i && i.data && i.data.id && i.srs && i.type
-                    );
-                }
-            }
-            
-            // IndexedDB is the source of truth (has full item data)
-            // localStorage cache is now lightweight (titles + SRS only) for instant UI
-            const cachedItems = latestItemsRef.current;
-            let processedItems: StoredItem[];
-            let needsSaveToIDB = false;
-
-            if (itemsFromIDB.length > 0) {
-                // The cache can contain a review written just before a reload while IndexedDB owns
-                // full content. Merge both: cache learning timestamps win, IDB definitions remain.
-                processedItems = cachedItems.length > 0
-                    ? mergeDatasets(cachedItems, itemsFromIDB)
-                    : itemsFromIDB;
-                needsSaveToIDB = cachedItems.length > 0;
-                log(`📦 Loaded ${processedItems.length} items from IndexedDB`);
-            } else if (cachedItems.length > 0) {
-                // IndexedDB empty, fall back to cache (lightweight, but better than nothing)
-                // Save cache items to IDB so auth effect and future loads find them
-                processedItems = cachedItems;
-                needsSaveToIDB = true;
-                log(`📦 IndexedDB empty, using cache: ${processedItems.length} items`);
-            } else {
-                processedItems = [];
-            }
-            
             let hasChanges = false;
 
             // 1. SRS Migration
@@ -1048,9 +928,8 @@ const App: React.FC = () => {
             latestItemsRef.current = processedItems;
             serverCursorRef.current = latestRevisionCursor(processedItems);
             
-            // 7. Save merged result back to IndexedDB if we merged or made changes
-            // This ensures IndexedDB is up-to-date with any fresher data from cache
-            if (hasChanges || needsSaveToIDB) {
+            // 7. Save migrated items back to IndexedDB
+            if (hasChanges) {
                 await saveData(processedItems, userId);
             }
         } catch (e) {
@@ -1401,89 +1280,6 @@ const App: React.FC = () => {
     };
   }, [isLoaded, authState.user?.id, pullServerChanges]);
 
-  // Cache items to localStorage for instant restoration on iOS PWA reload
-  // Strip images to stay within 5MB localStorage limit
-  // If full cache doesn't fit, progressively shrink: drop vocabs from phrases,
-  // then truncate to most recently updated items
-  useEffect(() => {
-    if (!isLoaded || syncState.items.length === 0) return;
-
-    // Skip if a throttled SRS save is pending (Fix 1A handles localStorage for SRS updates)
-    if (srsSavePendingRef.current) return;
-
-    // Debounce localStorage cache writes — localStorage is only an optimization for fast reload,
-    // IDB is the real persistence layer, so a 5-second delay is safe
-    const debounceTimer = setTimeout(() => {
-      // Re-check in case SRS save started during the delay
-      if (srsSavePendingRef.current) return;
-
-      const fullCache = createLightweightCache(syncState.items);
-
-    // Try full cache first
-    try {
-      localStorage.setItem(cacheKey, JSON.stringify(fullCache));
-      return;
-    } catch {
-      // Full cache too large — try shrinking
-    }
-
-    // Strategy 1: Strip vocabs[] from phrase items (biggest payload)
-    const slimCache = fullCache.map((entry: any) => {
-      if (entry.type === 'phrase' && entry.data?.vocabs) {
-        return { ...entry, data: { ...entry.data, vocabs: entry.data.vocabs.map((v: any) => ({ id: v.id, word: v.word, sense: v.sense })) } };
-      }
-      return entry;
-    });
-    try {
-      localStorage.setItem(cacheKey, JSON.stringify(slimCache));
-      return;
-    } catch {
-      // Still too large
-    }
-
-    // Strategy 2: Keep only SRS-essential fields, sorted by most recently updated
-    const essentialCache = syncState.items
-      .slice()
-      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-      .map(item => ({
-        type: item.type,
-        srs: item.srs,
-        isDeleted: item.isDeleted || undefined,
-        isArchived: item.isArchived || undefined,
-        data: {
-          id: item.data.id,
-          ...(isPhraseItem(item)
-            ? { query: item.data.query }
-            : isSentenceItem(item)
-              ? { text: item.data.text, sourceWord: item.data.sourceWord, sourceSense: item.data.sourceSense }
-              : { word: getItemTitle(item), sense: getItemSense(item) }),
-        },
-      }));
-
-    // Binary search for max items that fit
-    let lo = 0, hi = essentialCache.length;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(essentialCache.slice(0, mid)));
-        lo = mid;
-      } catch {
-        hi = mid - 1;
-      }
-    }
-    if (lo > 0) {
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(essentialCache.slice(0, lo)));
-      } catch {
-        // Give up — keep whatever was in cache before
-      }
-    }
-    warn(`localStorage cache truncated to ${lo}/${syncState.items.length} items`);
-    }, 5000); // 5s debounce
-
-    return () => clearTimeout(debounceTimer);
-  }, [syncState.items, isLoaded]);
-
   // 3. SAVE EFFECTS (Persistence + Server Sync)
   useEffect(() => {
     if (!isLoaded) return;
@@ -1501,19 +1297,6 @@ const App: React.FC = () => {
       }
 
       // 2. Push dirty items to server
-      // SAFETY: Never push skeleton cache items (missing content fields) to server.
-      // The lightweight localStorage cache strips definition/history/examples to save space.
-      // If these skeleton items end up in state, pushing them would overwrite full data on server.
-      const hasFullContent = currentItems.some(item => {
-        if (item.type === 'sentence') return true;
-        const d = item.data as any;
-        return !!(d.definition || d.history || d.grammar || (Array.isArray(d.examples) && d.examples.length > 0));
-      });
-      if (!hasFullContent && currentItems.length > 10) {
-        log("⚠️ Skipping server sync — items appear to be skeleton cache data");
-        return;
-      }
-
       const itemsWithHashes: { item: StoredItem; hash: string }[] = [];
       currentItems.forEach(item => {
         const currentHash = getItemContentHash(item);
@@ -2694,19 +2477,7 @@ const App: React.FC = () => {
     setSyncState(prevState => ({ ...prevState, items: applySrs(prevState.items) }));
 
     // CRITICAL: save to IndexedDB immediately (primary persistence — never lose progress on a quick
-    // refresh / app switch). Throttle the lightweight localStorage cache write during rapid reviews.
-    srsSavePendingRef.current = true;
-    if (!srsSaveTimerRef.current) {
-      srsSaveTimerRef.current = setTimeout(() => {
-        srsSaveTimerRef.current = null;
-        srsSavePendingRef.current = false;
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify(createLightweightCache(latestItemsRef.current)));
-        } catch (e) {
-          warn("Failed to update cache after SRS:", e);
-        }
-      }, 3000);
-    }
+    // refresh / app switch).
     try {
       await saveItemUpdates(itemsToSync, authState.user?.id || 'vps');
       lastSaveTimeRef.current = Date.now();

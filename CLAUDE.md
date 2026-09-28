@@ -181,7 +181,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 
 ### Storage Keys (per-origin)
 - IndexedDB: `PopDictDB` v4 → `items_v2` per-item records; `item_updates` is the rollback-compatible journal
-- localStorage cache: `vps_items_cache`
+- localStorage holds only small state (the `review_mutations_pending_*` outbox, settings); never mirror the library there — it doesn't fit, and stripped copies once overwrote full items on the server
 - **Each domain/origin has separate browser storage** — data on `localhost:3000` is separate from `dictprop.online` and `107.152.47.101:3000`
 
 ### Docker Build Pitfalls

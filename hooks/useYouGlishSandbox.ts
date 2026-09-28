@@ -10,6 +10,11 @@ let cookieSnapshot: Set<string> | null = null;
 let lsSnapshot: Set<string> | null = null;
 let ssSnapshot: Set<string> | null = null;
 
+// The app creates its own keys (review outboxes, auth, settings) while the widget is open, and
+// deleting them would drop unsynced reviews.
+const APP_STORAGE_PREFIXES = ['review_', 'vps_', 'app_', 'tts_', 'dictprop_', 'study_', 'sentence_'];
+const isAppStorageKey = (key: string): boolean => APP_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix));
+
 /** Parse cookie string into a Set of cookie names. */
 function parseCookieNames(): Set<string> {
   const names = new Set<string>();
@@ -84,7 +89,7 @@ export function useYouGlishSandbox(): void {
       try {
         const currentKeys = new Set(Object.keys(localStorage));
         for (const key of currentKeys) {
-          if (lsSnapshot && !lsSnapshot.has(key)) {
+          if (lsSnapshot && !lsSnapshot.has(key) && !isAppStorageKey(key)) {
             localStorage.removeItem(key);
           }
         }
@@ -94,7 +99,7 @@ export function useYouGlishSandbox(): void {
       try {
         const currentKeys = new Set(Object.keys(sessionStorage));
         for (const key of currentKeys) {
-          if (ssSnapshot && !ssSnapshot.has(key)) {
+          if (ssSnapshot && !ssSnapshot.has(key) && !isAppStorageKey(key)) {
             sessionStorage.removeItem(key);
           }
         }
