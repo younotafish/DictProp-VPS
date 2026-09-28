@@ -169,25 +169,33 @@ export function variantKeys(s: string): string[] {
  */
 export function buildVariantIndex(items: StoredItem[]): Map<string, Set<string>> {
   const index = new Map<string, Set<string>>();
-  const addKey = (key: string, base: string) => {
-    if (!key || !base) return;
-    let set = index.get(key);
-    if (!set) {
-      set = new Set();
-      index.set(key, set);
-    }
-    set.add(base);
-  };
-
   for (const item of items) {
     if (!item || item.type !== 'vocab' || item.isDeleted) continue;
-    const card = item.data as VocabCard;
-    const base = normalizeKey(card.word || '');
-    if (!base) continue;
-    for (const k of variantKeys(base)) addKey(k, base);
-    for (const f of splitForms(card.forms)) addKey(f, base);
+    const { base, keys } = cardKeys(item.data as VocabCard);
+    for (const key of keys) {
+      let set = index.get(key);
+      if (!set) {
+        set = new Set();
+        index.set(key, set);
+      }
+      set.add(base);
+    }
   }
   return index;
+}
+
+// Deriving the keys is most of the index's cost, so they're cached per card. Cards are replaced rather
+// than mutated, so a rebuild after a save or a sync derives keys only for the cards that changed.
+const cardKeyCache = new WeakMap<VocabCard, { base: string; keys: string[] }>();
+
+function cardKeys(card: VocabCard): { base: string; keys: string[] } {
+  let entry = cardKeyCache.get(card);
+  if (!entry) {
+    const base = normalizeKey(card.word || '');
+    entry = { base, keys: base ? [...variantKeys(base), ...splitForms(card.forms)] : [] };
+    cardKeyCache.set(card, entry);
+  }
+  return entry;
 }
 
 /**
