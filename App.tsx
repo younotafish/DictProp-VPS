@@ -635,9 +635,12 @@ const App: React.FC = () => {
   const lastScrollYs = useRef(new WeakMap<Element, number>());
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  // Progress of the explicit offline-image download; the automatic caching of study pictures is silent.
   const [imagePrefetchProgress, setImagePrefetchProgress] = useState<{ done: number; total: number } | null>(null);
   const [imageRestoreProgress, setImageRestoreProgress] = useState<{ done: number; total: number } | null>(null);
-  const prefetchAbortRef = useRef(false);
+  // Starting the offline download, or stopping it, ends the image downloads under way. The new one fetches
+  // whatever is still missing.
+  const prefetchRunRef = useRef(0);
 
   // Auth is required — app gates on authState below
 
@@ -1062,7 +1065,7 @@ const App: React.FC = () => {
 
     // Sort by SRS nextReview (soonest first) so study-relevant images load first
     const srsMap = new Map<string, number>();
-    for (const item of items) {
+    for (const item of candidates) {
       const nrd = (item.srs as any)?.nextReview;
       if (nrd) {
         srsMap.set(item.data.id, nrd);
@@ -1076,31 +1079,36 @@ const App: React.FC = () => {
     missing.sort((a, b) => (srsMap.get(a) || Infinity) - (srsMap.get(b) || Infinity));
 
     log(`🖼️ Caching ${missing.length} ${mode === 'all' ? 'offline' : 'priority'} images...`);
-    prefetchAbortRef.current = false;
-    setImagePrefetchProgress({ done: 0, total: missing.length });
+    // Only the offline download supersedes others, so the pill it shows is always its own to clear.
+    const run = mode === 'all' ? ++prefetchRunRef.current : prefetchRunRef.current;
+    const report = mode === 'all' ? setImagePrefetchProgress : () => {};
+    report({ done: 0, total: missing.length });
 
     const BATCH_SIZE = 20;
     let done = 0;
     for (let i = 0; i < missing.length; i += BATCH_SIZE) {
-      if (prefetchAbortRef.current) break;
+      if (prefetchRunRef.current !== run) return;
       const batch = missing.slice(i, i + BATCH_SIZE);
       try {
         const images = await loadItemImagesBatch(batch, imageVersions);
         const toSave = [...images].map(([id, image]) => ({ id, image, version: imageVersions.get(id) }));
         if (toSave.length > 0) await saveImagesBatch(toSave, { remember: false });
-        done += batch.length;
-        setImagePrefetchProgress({ done, total: missing.length });
       } catch (e) {
         warn("Image pre-fetch batch failed:", e);
-        done += batch.length;
-        setImagePrefetchProgress({ done, total: missing.length });
       }
+      done += batch.length;
+      report({ done, total: missing.length });
       // Yield to main thread between batches
       await new Promise(r => setTimeout(r, 100));
     }
     log(`🖼️ Pre-fetch complete: ${done}/${missing.length} images`);
     // Clear progress after a short delay
-    setTimeout(() => setImagePrefetchProgress(null), 3000);
+    setTimeout(() => { if (prefetchRunRef.current === run) report(null); }, 3000);
+  }, []);
+
+  const stopImageDownload = useCallback(() => {
+    prefetchRunRef.current++;
+    setImagePrefetchProgress(null);
   }, []);
 
   const handleDownloadOfflineImages = useCallback(() => {
@@ -2156,20 +2164,6 @@ const App: React.FC = () => {
         </div>
       )}
       
-      {imagePrefetchProgress && (
-        <div className="bg-indigo-50 text-indigo-600 text-center py-1 text-xs font-medium shrink-0">
-          Loading images: {imagePrefetchProgress.done}/{imagePrefetchProgress.total}
-        </div>
-      )}
-
-      {imageRestoreProgress && (
-        <div className="bg-emerald-50 text-emerald-700 text-center py-1 text-xs font-medium shrink-0">
-          {imageRestoreProgress.total === 0
-            ? 'All images already on the server ✓'
-            : `Restoring images to server: ${imageRestoreProgress.done}/${imageRestoreProgress.total}`}
-        </div>
-      )}
-
       <Suspense fallback={null}>
       {confirmModal && (
         <ConfirmModal
@@ -2193,9 +2187,29 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Global background-job progress — remains visible across tabs/views. */}
+      {/* Global background-job progress — remains visible across tabs/views. It floats above the nav, so a
+          job starting or finishing never moves the page. */}
+      <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[80] flex flex-col items-center gap-2 pointer-events-none">
+      {imagePrefetchProgress && (
+        <div className="pointer-events-auto bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
+          {imagePrefetchProgress.done < imagePrefetchProgress.total && <Loader2 size={16} className="animate-spin shrink-0" />}
+          <span className="text-sm font-medium whitespace-nowrap">
+            Offline images · {imagePrefetchProgress.done}/{imagePrefetchProgress.total}
+          </span>
+          <button onClick={stopImageDownload} className="ml-1 shrink-0 text-indigo-200 hover:text-white" title="Stop downloading">
+            <X size={15} />
+          </button>
+        </div>
+      )}
+      {imageRestoreProgress && (
+        <div className="pointer-events-auto bg-emerald-600 text-white rounded-full shadow-xl px-4 py-2 text-sm font-medium whitespace-nowrap fade-in">
+          {imageRestoreProgress.total === 0
+            ? 'All images already on the server ✓'
+            : `Restoring images to server: ${imageRestoreProgress.done}/${imageRestoreProgress.total}`}
+        </div>
+      )}
       {ttsGenProgress?.isRunning && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[80] bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
+        <div className="pointer-events-auto bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
           <Loader2 size={16} className="animate-spin shrink-0" />
           <span className="text-sm font-medium whitespace-nowrap">
             Generating sentence audio · {ttsGenProgress.current}/{ttsGenProgress.total}
@@ -2221,6 +2235,7 @@ const App: React.FC = () => {
           </button>
         </div>
       )}
+      </div>
 
       {detailContext && (
         <Suspense fallback={<div className="fixed inset-0 z-[54] grid place-items-center bg-white"><Loader2 className="animate-spin text-indigo-500" /></div>}>
