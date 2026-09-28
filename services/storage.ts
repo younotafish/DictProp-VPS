@@ -18,8 +18,9 @@ const getCursorKey = (userId: string) => `cursor_${userId}`;
 // Fallback storage for iOS Safari private mode
 let inMemoryStorage: Record<string, StoredItem[]> = {};
 const inMemoryCursors: Record<string, RevisionCursor> = {};
-let indexedDBAvailable: boolean | null = null;
+let indexedDBCheck: Promise<boolean> | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
+const UPGRADE_BLOCKED = 'IndexedDB upgrade blocked by another tab';
 
 // The object last written for each item. Items are replaced rather than mutated when they change, so
 // an identity check finds the changed items without serializing the whole library.
@@ -64,33 +65,15 @@ const queueWrite = <T,>(write: () => Promise<T>): Promise<T> => {
   return run;
 };
 
-const checkIndexedDBAvailability = async (): Promise<boolean> => {
-  if (indexedDBAvailable !== null) return indexedDBAvailable;
-  
-  if (typeof indexedDB === 'undefined') {
-    indexedDBAvailable = false;
-    return false;
-  }
-  
-  try {
-    // Try to open a test database to check if IndexedDB actually works
-    // (it may be disabled in iOS Safari private mode)
-    const testDB = await new Promise<boolean>((resolve) => {
-      const request = indexedDB.open('__test__');
-      request.onsuccess = () => {
-        request.result.close();
-        indexedDB.deleteDatabase('__test__');
-        resolve(true);
-      };
-      request.onerror = () => resolve(false);
-      request.onblocked = () => resolve(false);
-    });
-    indexedDBAvailable = testDB;
-    return testDB;
-  } catch {
-    indexedDBAvailable = false;
-    return false;
-  }
+// Whether IndexedDB works here (iOS Safari private mode once refused it). Opening the library's own
+// database answers that, instead of creating and deleting a throwaway one on every launch. An upgrade
+// blocked by another tab says nothing about support, and later opens retry it.
+const checkIndexedDBAvailability = (): Promise<boolean> => {
+  indexedDBCheck ??= getDB().then(
+    () => true,
+    error => error instanceof Error && error.message === UPGRADE_BLOCKED,
+  );
+  return indexedDBCheck;
 };
 
 const getDB = (): Promise<IDBDatabase> => {
@@ -105,7 +88,7 @@ const getDB = (): Promise<IDBDatabase> => {
       warn("IndexedDB open failed, will use in-memory fallback");
       reject(request.error);
     };
-    request.onblocked = () => reject(new Error('IndexedDB upgrade blocked by another tab'));
+    request.onblocked = () => reject(new Error(UPGRADE_BLOCKED));
     request.onsuccess = () => {
       const db = request.result;
       db.onversionchange = () => {
