@@ -15,7 +15,7 @@ import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
 import { AutoPlayCountdown } from '../components/AutoPlayCountdown';
 import { SessionPreload, type PreloadSession } from '../components/SessionPreload';
 import { getMasteryColors } from '../components/mastery';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation, useWarmImages } from '../hooks';
 import { speakNatural, speakWord, prefetchTTS, preloadAudio, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, stopCurrent, seekCurrent, getTimingsFor, ensureTimings, setMediaMetadata, setMediaSessionHandlers, primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap, type SpeakHandle } from '../services/lazyTts';
@@ -151,6 +151,15 @@ const serverImageVersion = (imageUrl: string | undefined): string | undefined =>
     ? imageUrl.slice('server:has_image:'.length)
     : undefined;
 
+const grammarMarkdownComponents: Components = {
+  strong: ({ node: _node, ...props }) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />,
+};
+
+/** A phrase's grammar notes, bold terms highlighted. Parsed only when the notes change, not on every render
+ *  of the card. */
+const GrammarNotes = React.memo(function GrammarNotes({ markdown }: { markdown: string }) {
+  return <ReactMarkdown components={grammarMarkdownComponents}>{markdown}</ReactMarkdown>;
+});
 
 interface DetailViewProps {
   groups?: ItemGroup[];
@@ -2800,13 +2809,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
                   </div>
 
                   <div className="prose prose-indigo prose-sm sm:prose-base xl:text-lg max-w-none text-slate-600">
-                    <ReactMarkdown
-                      components={{
-                        strong: (props) => <span className="font-bold text-indigo-700 bg-indigo-50 px-1 rounded" {...props} />
-                      }}
-                    >
-                      {(data as SearchResult).grammar}
-                    </ReactMarkdown>
+                    <GrammarNotes markdown={(data as SearchResult).grammar} />
                   </div>
                 </div>
               </div>{/* close md:flex */}
