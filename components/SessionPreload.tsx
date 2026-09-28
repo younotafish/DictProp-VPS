@@ -89,7 +89,7 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
 
   if (!progress) return null;
   return (
-    <div className="fixed bottom-6 left-6 z-[60] flex items-center gap-2 bg-white/90 backdrop-blur-sm text-slate-600 text-xs font-medium px-3 py-2 rounded-full shadow-lg border border-slate-200 fade-in">
+    <div className="fixed bottom-6 left-6 z-[60] flex items-center gap-2 bg-white text-slate-600 text-xs font-medium px-3 py-2 rounded-full shadow-lg border border-slate-200 fade-in">
       <Loader2 size={14} className="animate-spin text-indigo-500" />
       <span>Preloading {progress.done}/{progress.total}</span>
     </div>

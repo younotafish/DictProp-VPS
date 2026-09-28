@@ -2561,7 +2561,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           inert={!showHeader}
           className={`sticky top-0 z-30 grid ${showHeader ? 'grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out' : 'grid-rows-[0fr]'}`}
         >
-          <div className={`min-h-0 overflow-hidden bg-white/80 backdrop-blur-md border-slate-200/60 ${showHeader ? 'border-b' : ''}`}>
+          <div className={`min-h-0 overflow-hidden bg-white border-slate-200/60 ${showHeader ? 'border-b' : ''}`}>
             {/* Top row: navigation and actions */}
             <div className="px-4 py-2 flex justify-between items-center">
               <div className="flex items-center gap-2">
@@ -2840,7 +2840,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           )}
 
           {/* Desktop navigation buttons — hidden; use keyboard arrows instead */}
-          <div className="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-40 items-center gap-2 bg-white/90 backdrop-blur-sm rounded-full px-4 py-2 shadow-lg border border-slate-200">
+          <div className="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-40 items-center gap-2 bg-white rounded-full px-4 py-2 shadow-lg border border-slate-200">
             {/* Previous word */}
             {hasPrevGroup && (
               <button
@@ -2913,7 +2913,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {sentenceMode ? (
         <div className="fixed bottom-6 right-4 z-[80] flex items-center gap-2">
           <SpeechStyleToggle
-            className="shrink-0 bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200"
+            className="shrink-0 bg-white shadow-lg border border-slate-200"
             onChange={rememberCurrentSentenceSpeechStyle}
           />
           <div className="relative shrink-0">
@@ -2956,7 +2956,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
               className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
                 isSentenceAutoPlaying
                   ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                  : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
               }`}
               title={isSentenceAutoPlaying ? 'Auto-play settings' : 'Start sentence auto-play'}
               aria-label={isSentenceAutoPlaying ? 'Open sentence auto-play settings' : 'Start sentence auto-play'}
@@ -2968,12 +2968,12 @@ export const DetailView: React.FC<DetailViewProps> = ({
       ) : (
       <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2">
         {/* Clear ⇄ Casual speech style (global) — sits with the playback controls. */}
-        <SpeechStyleToggle className="bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200" />
+        <SpeechStyleToggle className="bg-white shadow-lg border border-slate-200" />
         {/* Voice speed (global): default 1.1×, up to 2×. Distinct from the "Speed per slide" pill below. */}
-        <PlaybackSpeedToggle className="bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200" />
+        <PlaybackSpeedToggle className="bg-white shadow-lg border border-slate-200" />
         <button
           onClick={cycleTimerDuration}
-          className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+          className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
           title="Auto-play duration"
         >
           <AutoPlayCountdown startedAt={countdownStartedAt} minutes={autoPlayTimerMinutes} />
@@ -2981,7 +2981,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         {isAutoPlaying && (
           <button
             onClick={cycleSpeed}
-            className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
             title="Speed per slide"
           >
             {autoPlaySpeed / 1000}s
@@ -2990,7 +2990,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         {isSentenceAutoPlaying && (
           <button
             onClick={cycleRepeats}
-            className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
             title="Times each sentence is read"
           >
             ×{sentenceRepeats}
@@ -2999,7 +2999,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
         {isSentenceAutoPlaying && (
           <button
             onClick={cycleGap}
-            className="bg-white/90 backdrop-blur-sm text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
             title="Gap between reads"
           >
             {sentenceGap / 1000}s gap
@@ -3010,7 +3010,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
             isSentenceAutoPlaying
               ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-              : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
+              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
           }`}
           title={isSentenceAutoPlaying ? 'Stop auto-play (Space)' : (sentenceMode ? 'Auto-play saved sentences · natural voice (Space)' : 'Auto-play first sentence of each card')}
         >
@@ -3022,7 +3022,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
           className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
             isAutoPlaying
               ? 'bg-violet-500 text-white hover:bg-violet-600'
-              : 'bg-white/90 backdrop-blur-sm text-slate-600 border border-slate-200 hover:bg-slate-50'
+              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
           }`}
           title={isAutoPlaying ? 'Pause (Space)' : 'Auto-play (Space)'}
         >
@@ -3035,7 +3035,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {/* Success Animation Overlay */}
       {showSuccessAnim && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
-          <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center gap-1 fade-in">
+          <div className="bg-white px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center gap-1 fade-in">
             <div className="flex items-center gap-3">
               <Sparkles className="text-amber-500 w-6 h-6 animate-pulse" />
               <span className="text-slate-800 font-bold text-lg">Remembered!</span>
@@ -3097,7 +3097,7 @@ export const DetailView: React.FC<DetailViewProps> = ({
       {sentenceMode && currentSentence && !isSentencePreview && !showImagePanel && (
         <button
           onClick={handleImageFabTap}
-          className="fixed bottom-40 right-4 z-[57] w-12 h-12 touch-manipulation rounded-full flex items-center justify-center shadow-lg bg-white/90 backdrop-blur-sm text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
+          className="fixed bottom-40 right-4 z-[57] w-12 h-12 touch-manipulation rounded-full flex items-center justify-center shadow-lg bg-white text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
           aria-label={hasSentenceImage ? 'Replace image; double-tap to paste' : 'Attach image; double-tap to paste'}
           title={hasSentenceImage ? 'Replace image; double-tap to paste' : 'Attach image; double-tap to paste'}
         >
