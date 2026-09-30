@@ -1,35 +1,15 @@
 /**
- * FSRS v6 scheduling with lazy migration from the legacy fixed schedule.
+ * Learning-progress records: new, migrated and reset schedules, passive exposure, and mastery display.
+ * Scheduling a review with FSRS v6 lives in fsrsScheduler.ts, which loads only where reviews happen.
  *
- * Design:
- * - Again / Hard / Good / Easy are deterministic (fuzz disabled)
- * - Existing fixed-schedule rows become FSRS rows on their next review
- * - The legacy "remember" action maps to Good
  * - memoryStrength is display-only, derived from stability
  * - Passive listening records recency for queue rotation without changing mastery
  */
 
-import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
-import { SRSData, type ReviewRating } from '../types';
+import { SRSData } from '../types';
 
 // Fixed review schedule (days). Each "remember" tap advances one step.
 const SCHEDULE = [1, 2, 3, 5, 7, 12, 20, 25, 47, 84, 143, 180];
-const DAY_MS = 86_400_000;
-const scheduler = fsrs({
-  request_retention: 0.9,
-  maximum_interval: 3650,
-  enable_fuzz: false,
-  enable_short_term: true,
-  learning_steps: ['10m'],
-  relearning_steps: ['10m'],
-});
-
-const ratingMap: Record<ReviewRating, Grade> = {
-  again: Rating.Again,
-  hard: Rating.Hard,
-  good: Rating.Good,
-  easy: Rating.Easy,
-};
 
 export class SRSAlgorithm {
   /**
@@ -89,70 +69,19 @@ export class SRSAlgorithm {
       scheduler: 'fsrs-v6',
       difficulty: 0,
       lapses: 0,
-      fsrsState: State.New,
+      fsrsState: 0, // State.New in ts-fsrs
       learningSteps: 0,
       scheduledDays: 0,
     };
   }
 
-  private static toFsrsCard(srs: SRSData, now: number): CardInput {
-    if ((srs.totalReviews || 0) === 0) {
-      const empty = createEmptyCard(new Date(srs.nextReview || now));
-      return { ...empty, due: new Date(srs.nextReview || now) };
-    }
-    const lastReview = srs.lastReviewDate || Math.max(0, now - Math.max(1, srs.interval) * 60_000);
-    return {
-      due: new Date(srs.nextReview || now),
-      stability: Math.max(0.1, Number(srs.stability) || 0.5),
-      difficulty: Math.min(10, Math.max(1, Number(srs.difficulty) || 5)),
-      elapsed_days: Math.max(0, Math.round((now - lastReview) / DAY_MS)),
-      scheduled_days: Math.max(0, srs.scheduledDays ?? Math.round((srs.interval || 0) / 1440)),
-      learning_steps: Math.max(0, srs.learningSteps || 0),
-      reps: Math.max(1, srs.totalReviews || 0),
-      lapses: Math.max(0, srs.lapses || 0),
-      state: srs.fsrsState ?? State.Review,
-      last_review: new Date(lastReview),
-    };
-  }
-
-  private static fromFsrsCard(
-    previous: SRSData,
-    card: Card,
-    rating: ReviewRating,
-    reviewedAt: number,
-  ): SRSData {
-    const interval = Math.max(1, Math.round((card.due.getTime() - reviewedAt) / 60_000));
-    return {
-      ...previous,
-      nextReview: card.due.getTime(),
-      interval,
-      memoryStrength: this.stabilityToDisplayStrength(card.stability),
-      lastReviewDate: reviewedAt,
-      totalReviews: card.reps,
-      correctStreak: rating === 'again' ? 0 : (previous.correctStreak || 0) + 1,
-      stability: card.stability,
-      scheduler: 'fsrs-v6',
-      difficulty: card.difficulty,
-      lapses: card.lapses,
-      fsrsState: card.state,
-      learningSteps: card.learning_steps,
-      scheduledDays: card.scheduled_days,
-    };
-  }
-
-  static updateAfterRating(srs: SRSData, rating: ReviewRating, now = Date.now()): SRSData {
-    const card = this.toFsrsCard(srs, now);
-    const result = scheduler.next(card, new Date(now), ratingMap[rating]);
-    return this.fromFsrsCard(srs, result.card, rating, now);
-  }
-
-  static previewRatings(srs: SRSData, now = Date.now()): Record<ReviewRating, SRSData> {
-    return {
-      again: this.updateAfterRating(srs, 'again', now),
-      hard: this.updateAfterRating(srs, 'hard', now),
-      good: this.updateAfterRating(srs, 'good', now),
-      easy: this.updateAfterRating(srs, 'easy', now),
-    };
+  /**
+   * Fresh progress for an item the user resets. Its review clock is the moment of the reset: the merges on
+   * each device and on the server keep the schedule with the newest review, so they keep the reset too.
+   * FSRS never reads that clock for a card with no reviews.
+   */
+  static reset(id: string, type: 'vocab' | 'phrase' | 'sentence', now = Date.now()): SRSData {
+    return { ...this.createNew(id, type), nextReview: now, lastReviewDate: now };
   }
 
   /**
@@ -177,14 +106,6 @@ export class SRSAlgorithm {
     return 0;
   }
 
-  /**
-   * Update SRS data after the user taps "remember".
-   * Advances one step in the schedule, minus any overdue penalty.
-   */
-  static updateAfterRemember(srs: SRSData, now = Date.now()): SRSData {
-    return this.updateAfterRating(srs, 'good', now);
-  }
-
   /** Record a completed passive listen without changing any memorization or FSRS state. */
   static updateAfterExposure(srs: SRSData, now = Date.now()): SRSData {
     return {
@@ -207,7 +128,7 @@ export class SRSAlgorithm {
    *   stability143d → 90  (Grandmaster)
    *   stability180d → 94  (Grandmaster)
    */
-  private static stabilityToDisplayStrength(stability: number): number {
+  static stabilityToDisplayStrength(stability: number): number {
     if (stability <= 0) return 0;
     return Math.min(100, Math.round(18 * Math.log(1 + stability)));
   }

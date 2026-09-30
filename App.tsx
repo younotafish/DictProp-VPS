@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import { StoredItem, RevisionCursor, ViewState, SyncStatus, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, VocabCard, SearchResult, SentenceData, ItemGroup, isPhraseItem, isVocabItem, isSentenceItem, savedVocabKey, StoredComparison, ComparisonResult, comparisonKey, ReviewEvent, type ReviewRating, type ReviewTaskType } from './types';
 import { Loader2, X } from 'lucide-react';
-import { loadData, saveData, saveItemUpdates, deleteItemRecords, storeMissingItemHashes, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds } from './services/storage';
-import { mergeDatasets, trackServerContent, applyServerSave, dropExpiredTombstones } from './services/sync';
+import { loadData, saveData, saveItemUpdates, deleteItemRecords, storeMissingItemHashes, saveImagesBatch, saveImage, getStoredImageIds, getAllStoredImageIds, loadImagesByIds, subscribeLibraryWriteFailures } from './services/storage';
+import { mergeDatasets, trackServerContent, applyServerSave, dropExpiredTombstones, reconcileReviewedItem } from './services/sync';
 import { getItemContentHash, isItemDirty } from './services/itemHash';
-import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation } from './services/api';
+import { loadAllItems, loadItemChanges, saveItems, loadItemImage, loadItemImagesBatch, analyzeInput, uploadImages, getServerImageManifest, startTtsBackfill, getTtsBackfillStatus, loadComparisons, saveComparisonApi, applyReviewMutation, undoReviewMutation, type AppliedReviewResponse } from './services/api';
 import { normalizeSentenceIdentity } from './services/sentenceIdentity';
 import { checkAuth, initialAuthState, isSameAuthUser, loginRedirect, logout, AuthState, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -14,11 +14,11 @@ import type { DuplicateClusterView } from './components/DuplicatesModal';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { buildVariantIndex, cardBase, matchBaseWords, normalizeKey, findDuplicateClusters } from './services/wordMatch';
 import { AUTH_REQUIRED_EVENT } from './services/http';
-import { enqueuePendingReviewMutation, excludePendingReviewItems, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation, type PendingReviewMutation } from './services/reviewQueue';
+import { enqueuePendingReviewMutation, excludePendingReviewItems, isRefusedReviewMutation, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation, type PendingReviewMutation } from './services/reviewQueue';
 import { useReviewHistory } from './hooks/useReviewHistory';
-import { useFrozenWhile, useStableArray } from './hooks/useStableValue';
-import { sameItemContent } from './services/items';
-import { useGlobalNavigation } from './hooks';
+import { useFrozenWhile, useLatest, useStableArray } from './hooks/useStableValue';
+import { sameItemContent, saveOverExisting } from './services/items';
+import { useGlobalNavigation } from './hooks/useGlobalNavigation';
 import { log, warn, error as logError } from './services/logger';
 import { subscribeToServerMutations } from './services/syncSignals';
 import { getUsagePriority, sortStoredSensesByUsage, sortVocabCardsByUsage } from './services/usageAudit';
@@ -56,12 +56,13 @@ interface DetailContext {
 }
 
 // Older builds mirrored the library into localStorage. It never fit, and its stripped copies could
-// overwrite full items, so drop them and leave the quota to the synchronous review outbox.
+// overwrite full items, so drop them and leave the quota to the synchronous review outbox. The open card's
+// saved context goes too: restoring it crashed DetailView on stale items, so it's no longer read.
 const clearLegacyLibraryCaches = (): void => {
   try {
     for (let index = localStorage.length - 1; index >= 0; index--) {
       const key = localStorage.key(index);
-      if (key?.startsWith('vps_items_cache') || key?.startsWith('popdict_items') || key === 'app_last_hidden') {
+      if (key?.startsWith('vps_items_cache') || key?.startsWith('popdict_items') || key === 'app_last_hidden' || key === 'app_detail_context') {
         localStorage.removeItem(key);
       }
     }
@@ -70,6 +71,22 @@ const clearLegacyLibraryCaches = (): void => {
 
 // Words and phrases still in the library, archived or not. Sentences have their own lists.
 const isActiveLibraryItem = (item: StoredItem): boolean => !item.isDeleted && item.type !== 'sentence';
+
+/** A delete, archive or reset the user can take back for a few seconds. `undo` restores the item if the change still holds. */
+interface UndoOffer { id: string; message: string; undo: (item: StoredItem) => StoredItem }
+
+interface ImageRestoreProgress { phase: 'checking' | 'uploading' | 'done' | 'failed'; done: number; total: number; failed: number }
+const describeImageRestore = ({ phase, done, total, failed }: ImageRestoreProgress): string => {
+  if (phase === 'checking') return 'Checking which images the server is missing…';
+  if (phase === 'uploading') return `Restoring images to server: ${done}/${total}`;
+  if (phase === 'failed') return 'Couldn\u2019t restore images. Try again later.';
+  if (total === 0) return 'All images already on the server ✓';
+  return failed ? `Restored ${total - failed} of ${total} images; ${failed} failed` : `Restored ${total} images to the server ✓`;
+};
+
+const NO_GROUPS: ItemGroup[] = [];
+const sameGroupItems = (a: ItemGroup, b: ItemGroup): boolean => a === b ||
+  (a.title === b.title && a.items.length === b.items.length && a.items.every((item, index) => item === b.items[index]));
 
 const offloadImages = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
   const { offloadAndUpload } = await import('./services/imagePipeline');
@@ -96,6 +113,11 @@ const lazyLoadImage = (itemId: string, imageVersion?: string): Promise<string | 
   }
   return download;
 };
+
+// The FSRS scheduler stays out of the first code the app loads. It's fetched with the other screens once the
+// first one is up, so a review normally finds it here.
+let fsrsScheduler: typeof import('./services/fsrsScheduler') | undefined;
+const loadFsrsScheduler = () => import('./services/fsrsScheduler').then(module => (fsrsScheduler = module));
 
 // Merge variant-duplicate clusters (Phase 2 of the dedup tool). For each merge, every
 // live vocab card whose word is a variant in the cluster is relabeled to the canonical
@@ -186,6 +208,8 @@ function applyMerges(
 // Sentinel value replacing base64 in React state — tells OfflineImage to load from IDB
 const IMAGE_IDB_MARKER = 'idb:stored';
 const SERVER_IMAGE_MARKER = 'server:has_image';
+// How long signing out waits for this device's unsent changes before it goes ahead anyway.
+const SIGN_OUT_FLUSH_MS = 10_000;
 
 const getServerImageVersion = (url: string | undefined): string | undefined =>
   url?.startsWith(`${SERVER_IMAGE_MARKER}:`)
@@ -255,7 +279,16 @@ async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
   return stripped;
 }
 
-const DETAIL_CONTEXT_KEY = 'app_detail_context';
+/** Puts images back inline where their offload failed, so no marker points at an image that was never stored. */
+function restoreInlineImages(item: StoredItem, images: ReadonlyMap<string, string>): StoredItem {
+  const inline = <T extends { id: string; imageUrl?: string }>(card: T): T =>
+    card.imageUrl === IMAGE_IDB_MARKER && images.has(card.id) ? { ...card, imageUrl: images.get(card.id) } : card;
+  let data = inline(item.data);
+  if (isPhraseItem(item) && item.data.vocabs?.length) {
+    data = { ...data, vocabs: item.data.vocabs.map(inline) } as SearchResult;
+  }
+  return data === item.data ? item : { ...item, data } as StoredItem;
+}
 
 const App: React.FC = () => {
   // Auth state: opens with the last-known session, which the server check below confirms or ends.
@@ -279,7 +312,8 @@ const App: React.FC = () => {
   }, []);
 
   const [currentView, setCurrentView] = useState<ViewState>(() => {
-    const saved = localStorage.getItem('app_current_view');
+    let saved: string | null = null;
+    try { saved = localStorage.getItem('app_current_view'); } catch { /* storage unavailable */ }
     // Default to notebook, and handle legacy 'search' value from old localStorage
     if (!saved || saved === 'search' || !['notebook', 'study', 'sentences', 'real-life', 'essays'].includes(saved)) {
       return 'notebook';
@@ -297,6 +331,7 @@ const App: React.FC = () => {
       for (const screen of [DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal]) {
         screen.preload();
       }
+      loadFsrsScheduler().catch(error => warn('The review scheduler will load with the first review:', error));
     };
     if (typeof window.requestIdleCallback === 'function') {
       const handle = window.requestIdleCallback(preloadRest, { timeout: 2_000 });
@@ -350,15 +385,18 @@ const App: React.FC = () => {
     return replaced;
   }, [updateItems]);
 
+  // The account whose library is in memory. A session that lapses keeps it, so the library is never saved
+  // under another name while the sign-in screen shows.
+  const currentUserIdRef = useRef(authState.user?.id || 'vps');
+  if (authState.user) currentUserIdRef.current = authState.user.id;
+
   // User-scoped saveData wrapper — all saves go through this
-  const userSaveData = useCallback((items: StoredItem[]) => {
-    return saveData(items, authState.user?.id || 'vps');
-  }, [authState.user?.id]);
+  const userSaveData = useCallback((items: StoredItem[]) => saveData(items, currentUserIdRef.current), []);
 
   const initialServerSyncDoneRef = useRef(false);
-
-  const currentUserIdRef = useRef(authState.user?.id || 'vps');
-  currentUserIdRef.current = authState.user?.id || 'vps';
+  // A launch whose first sync failed (offline, say) leaves the push of changes made before it, and the
+  // image download, to the first background pull that gets through.
+  const initialSyncIncompleteRef = useRef(false);
 
   // Pulls and pushes run one at a time: a pull merges only after an earlier push's acknowledgement is
   // recorded, and each push sends the latest copies. Tasks in the lane call pushNow, not pushDirtyItems,
@@ -370,15 +408,30 @@ const App: React.FC = () => {
     return run;
   }, []);
 
+  // Items the server refused, with the content it refused: sending that again would be refused again.
+  const refusedPushesRef = useRef(new Map<string, string>());
+  // A change the user can still undo stays on this device until the offer closes, so an undone change never
+  // reaches the server or another device.
+  const undoOfferRef = useRef<UndoOffer | null>(null);
+
   /** Pushes the dirty items (all, or those in `ids`) and records what the server kept. Returns the count. */
   const pushNow = useCallback(async (ids?: ReadonlySet<string>): Promise<number> => {
-    const dirty = latestItemsRef.current.filter(item => (!ids || ids.has(item.data.id)) && isItemDirty(item));
+    const refused = refusedPushesRef.current;
+    const held = undoOfferRef.current?.id;
+    const dirty = latestItemsRef.current.filter(item => (!ids || ids.has(item.data.id)) && item.data.id !== held &&
+      isItemDirty(item) && refused.get(item.data.id) !== getItemContentHash(item));
     // Items with an unsent review wait for the review outbox, which applies the review atomically.
     const toPush = excludePendingReviewItems(dirty, currentUserIdRef.current);
     if (toPush.length === 0) return 0;
     const result = await saveItems(toPush);
     const next = updateItems(items => applyServerSave(items, toPush, result));
     await saveData(next, currentUserIdRef.current);
+    for (const [id, reason] of result.rejected ?? []) {
+      const item = toPush.find(candidate => candidate.data.id === id);
+      if (item) refused.set(id, getItemContentHash(item));
+      logError(`The server refused item ${id}, which stays on this device until it changes: ${reason}`);
+    }
+    if (result.error) throw result.error;
     return toPush.length;
   }, [updateItems]);
 
@@ -468,6 +521,40 @@ const App: React.FC = () => {
     }
   }, [pushDirtyItems]);
 
+  const [undoMessage, setUndoMessage] = useState<string | null>(null);
+  const undoTimerRef = useRef(0);
+
+  /** Ends the undo offer and sends its change on. */
+  const closeUndoOffer = useCallback(() => {
+    const offer = undoOfferRef.current;
+    if (!offer) return;
+    undoOfferRef.current = null;
+    window.clearTimeout(undoTimerRef.current);
+    setUndoMessage(null);
+    pushDirtyItems(new Set([offer.id])).catch(error => logError('Push after the undo offer failed', error));
+  }, [pushDirtyItems]);
+
+  /** Offers to undo the change just made to `before`'s item. Call it before that change's push. */
+  const offerUndo = useCallback((verb: string, before: StoredItem, undo: UndoOffer['undo']) => {
+    closeUndoOffer();
+    const message = `${verb} “${getItemTitle(before)}”`;
+    undoOfferRef.current = { id: before.data.id, message, undo };
+    setUndoMessage(message);
+    undoTimerRef.current = window.setTimeout(closeUndoOffer, 6_000);
+  }, [closeUndoOffer]);
+
+  const undoLastChange = useCallback(async () => {
+    const offer = undoOfferRef.current;
+    if (!offer) return;
+    const restored = replaceItem(offer.id, offer.undo);
+    // Undone, the item usually matches the server copy again, so closing the offer finds nothing to push.
+    closeUndoOffer();
+    if (restored) {
+      await saveItemUpdates([restored], currentUserIdRef.current)
+        .catch(error => logError('Undo: failed to save the local update', error));
+    }
+  }, [replaceItem, closeUndoOffer]);
+
   // ── Word comparisons (persisted server + local, keyed by the word-set) ──────
   // The GENERATION queue lives in GlobalSearch (the bottom-right search queue) so comparisons behave
   // exactly like word searches. App just owns the persisted store + the save/lookup callbacks.
@@ -477,27 +564,28 @@ const App: React.FC = () => {
   const { reviewHistory, recordReview, removeReview } = useReviewHistory(authState.user?.id);
   const reviewFlushPromiseRef = useRef<Promise<void> | null>(null);
 
-  const reconcileAppliedReview = useCallback(async (serverItems: StoredItem[]) => {
+  const reconcileAppliedReview = useCallback(async (
+    serverItems: StoredItem[],
+    baseRevisions: Record<string, number> = {},
+  ) => {
     if (serverItems.length === 0) return;
     const byId = new Map(serverItems.map(item => [item.data.id, item]));
     const nextItems = updateItems(items => items.map(local => {
       const serverItem = byId.get(local.data.id);
-      if (!serverItem) return local;
-      // The server's schedule is authoritative, since an undo moves it backwards. Its content is too,
-      // and may carry another device's edits, unless this device has unsynced edits to push on top.
-      const reconciled = isItemDirty(local)
-        ? {
-            ...local,
-            serverRevision: serverItem.serverRevision,
-            updatedAt: Math.max(local.updatedAt || 0, serverItem.updatedAt || 0),
-          }
-        : mergeDatasets([local], [serverItem])[0];
-      return { ...reconciled, srs: serverItem.srs, lastSyncedHash: getItemContentHash(serverItem) };
+      return serverItem ? reconcileReviewedItem(local, serverItem, baseRevisions[local.data.id]) : local;
     }));
     await saveItemUpdates(
       nextItems.filter(item => byId.has(item.data.id)),
       currentUserIdRef.current,
     );
+  }, [updateItems]);
+
+  const markItemsUnsynced = useCallback(async (itemIds: readonly string[]) => {
+    const ids = new Set(itemIds);
+    const nextItems = updateItems(items => items.map(item =>
+      ids.has(item.data.id) && item.lastSyncedHash !== undefined ? { ...item, lastSyncedHash: undefined } : item,
+    ));
+    await saveItemUpdates(nextItems.filter(item => ids.has(item.data.id)), currentUserIdRef.current);
   }, [updateItems]);
 
   const flushPendingReviews = useCallback(async () => {
@@ -509,8 +597,19 @@ const App: React.FC = () => {
         for (;;) {
           const mutation = readPendingReviewMutations(userId)[0];
           if (!mutation) break;
-          const response = await applyReviewMutation(mutation.event, mutation.itemIds, mutation.seedItem);
-          await reconcileAppliedReview(response.items);
+          let response: AppliedReviewResponse;
+          try {
+            response = await applyReviewMutation(mutation.event, mutation.itemIds, mutation.seedItem);
+          } catch (error) {
+            if (!isRefusedReviewMutation(error)) throw error;
+            // A retry would be refused the same way and hold back every review queued behind this one. The
+            // reviewed copies already hold the new schedule, so the item push delivers it instead.
+            warn('Review was refused; its schedule will sync with the item:', error);
+            removePendingReviewMutation(userId, mutation.event.id);
+            await markItemsUnsynced(mutation.itemIds);
+            continue;
+          }
+          await reconcileAppliedReview(response.items, response.baseRevisions);
           removePendingReviewMutation(userId, mutation.event.id);
         }
       } catch (error) {
@@ -526,7 +625,7 @@ const App: React.FC = () => {
     } finally {
       if (reviewFlushPromiseRef.current === flush) reviewFlushPromiseRef.current = null;
     }
-  }, [authState.user?.id, reconcileAppliedReview]);
+  }, [authState.user?.id, markItemsUnsynced, reconcileAppliedReview]);
 
   const undoSRSReview = useCallback(async (eventId: string): Promise<void> => {
     const userId = authState.user?.id;
@@ -536,7 +635,7 @@ const App: React.FC = () => {
       throw new Error(navigator.onLine ? 'This review is still syncing. Try undo again.' : 'Reconnect to undo this review.');
     }
     const response = await undoReviewMutation(eventId);
-    await reconcileAppliedReview(response.items);
+    await reconcileAppliedReview(response.items, response.baseRevisions);
     removeReview(eventId);
   }, [authState.user?.id, flushPendingReviews, reconcileAppliedReview, removeReview]);
 
@@ -625,22 +724,57 @@ const App: React.FC = () => {
     () => new Map(allSentenceItems.map(item => [item.data.id, item])),
     [allSentenceItems],
   );
+  // The badge counts the sentences due now, so it counts again when the next one falls due, and when the
+  // page comes back after sleeping through some. The clock only says when; the count reads the time itself.
+  const [sentenceDueClock, setSentenceDueClock] = useState(0);
   const sentenceDueCount = useMemo(() => {
     const now = Date.now();
     return sentenceItems.filter(s => !s.isArchived && ((s.srs?.nextReview ?? 0) <= now)).length;
-  }, [sentenceItems]);
-  
+  }, [sentenceItems, sentenceDueClock]);
+  useEffect(() => {
+    const now = Date.now();
+    let nextDue = Infinity;
+    for (const s of sentenceItems) {
+      const due = s.srs?.nextReview ?? 0;
+      if (!s.isArchived && due > now && due < nextDue) nextDue = due;
+    }
+    const recount = () => setSentenceDueClock(Date.now());
+    const onVisible = () => { if (document.visibilityState === 'visible') recount(); };
+    document.addEventListener('visibilitychange', onVisible);
+    // A timer holds at most 2^31 - 1 ms (about 24.8 days); a later one just counts again then.
+    const timer = nextDue === Infinity ? undefined : window.setTimeout(recount, Math.min(nextDue - now + 50, 2 ** 31 - 1));
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.clearTimeout(timer);
+    };
+  }, [sentenceItems, sentenceDueClock]);
+
   // Becomes true once IndexedDB has been read (or failed), whether or not it held any items.
   const [isLoaded, setIsLoaded] = useState(false);
+  // This device's library couldn't be read; the launch waits for a retry or an explicit choice of the
+  // server copy, so the server's copy doesn't overwrite unsynced changes still stored here.
+  const [libraryReadFailed, setLibraryReadFailed] = useState(false);
+  const [libraryLoadAttempt, setLibraryLoadAttempt] = useState(0);
   const showNavRef = useRef(true);
   const navRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   // Per scroller: tabs keep their scroll positions, so one tab's position says nothing about another's.
   const lastScrollYs = useRef(new WeakMap<Element, number>());
+  // Direct DOM mutation, so hiding the nav bar on scroll doesn't re-render App.
+  const setNavShown = useCallback((shown: boolean) => {
+    if (shown === showNavRef.current) return;
+    showNavRef.current = shown;
+    navRef.current?.classList.toggle('translate-y-full', !shown);
+    navRef.current?.classList.toggle('translate-y-0', shown);
+  }, []);
+  const revealNav = useCallback(() => setNavShown(true), [setNavShown]);
+  // The next tab has a scroll position of its own, so the bar a scroll hid on the last one comes back.
+  useEffect(revealNav, [currentView, revealNav]);
   
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   // Progress of the explicit offline-image download; the automatic caching of study pictures is silent.
   const [imagePrefetchProgress, setImagePrefetchProgress] = useState<{ done: number; total: number } | null>(null);
-  const [imageRestoreProgress, setImageRestoreProgress] = useState<{ done: number; total: number } | null>(null);
+  const [imageRestoreProgress, setImageRestoreProgress] = useState<ImageRestoreProgress | null>(null);
   // Starting the offline download, or stopping it, ends the image downloads under way. The new one fetches
   // whatever is still missing.
   const prefetchRunRef = useRef(0);
@@ -659,6 +793,24 @@ const App: React.FC = () => {
     () => detailContext?.sentenceItems?.map(snapshot => sentenceItemsById.get(snapshot.data.id) ?? snapshot),
     [detailContext?.sentenceItems, sentenceItemsById],
   );
+  // The open cards follow the library too: a sync or an edit made elsewhere shows at once, and an edit made
+  // on a card builds on its current copy rather than the one the view opened with.
+  const detailGroupIds = useMemo(
+    () => new Set(detailContext?.groups.flatMap(group => group.items.map(item => item.data.id))),
+    [detailContext?.groups],
+  );
+  const resolvedDetailGroups = useMemo(() => {
+    const groups = detailContext?.groups;
+    if (!groups?.length) return NO_GROUPS;
+    const live = new Map<string, StoredItem>();
+    for (const item of allActiveItems) if (detailGroupIds.has(item.data.id)) live.set(item.data.id, item);
+    return groups.map(group => {
+      const items = group.items.map(item => live.get(item.data.id) ?? item);
+      return items.every((item, index) => item === group.items[index]) ? group : { ...group, items };
+    });
+  }, [detailContext?.groups, detailGroupIds, allActiveItems]);
+  // A change to a card that isn't open leaves them as they were, so the view's autoplay keeps its beat.
+  const liveDetailGroups = useStableArray(resolvedDetailGroups, sameGroupItems);
 
   // Footnote card popup — keyed by the word's SPELLING (so deleting one sense doesn't lose the rest)
   // plus the sense to open on. popupItems = every saved sense of that word, for in-popup paging; it's
@@ -675,6 +827,24 @@ const App: React.FC = () => {
   // happen. It catches up a second after they stop, while hidden, so closing them doesn't have to.
   const notebookItems = useFrozenWhile(allActiveItems, !!detailContext || !!cardPopup, 1_000);
   const closeDetail = useCallback(() => setDetailContext(null), []);
+  // An open card covers the tabs and the nav bar, which leave the tab order and the accessibility tree
+  // meanwhile; closing the card gives focus back to the control that had it.
+  const detailOpen = detailContext !== null;
+  const focusBeforeDetailRef = useRef<Element | null>(null);
+  const rememberFocusBeforeDetail = useCallback(() => {
+    const active = document.activeElement;
+    if (active && (mainRef.current?.contains(active) || navRef.current?.contains(active))) focusBeforeDetailRef.current = active;
+  }, []);
+  useEffect(() => {
+    if (detailOpen) return;
+    const previous = focusBeforeDetailRef.current;
+    focusBeforeDetailRef.current = null;
+    // Not into a text field, where focus would bring up the on-screen keyboard, nor away from anything else.
+    if (previous instanceof HTMLElement && previous.isConnected && !previous.matches('input, textarea, select, [contenteditable]')
+      && (document.activeElement === null || document.activeElement === document.body)) {
+      previous.focus({ preventScroll: true });
+    }
+  }, [detailOpen]);
   const closeCardPopup = useCallback(() => setCardPopup(null), []);
   const notebookUser = useMemo(() => {
     const user = authState.user;
@@ -689,7 +859,8 @@ const App: React.FC = () => {
     const cached = senseCacheRef.current.get(key);
     if (cached) return cached;
     try {
-      const r = await analyzeInput(word);
+      // A marked term is one expression, even when it's several words long.
+      const r = await analyzeInput(word, { mode: 'batch' });
       const vocabs = Array.isArray(r?.vocabs) ? (r.vocabs as VocabCard[]) : [];
       senseCacheRef.current.set(key, vocabs);
       return vocabs;
@@ -699,17 +870,6 @@ const App: React.FC = () => {
     const v: VocabCard = { ...vocab, id: vocab.id || crypto.randomUUID() };
     handleSaveRef.current({ data: v, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(v.id, 'vocab') });
   }, []);
-
-  // Persist detailContext (only group/item indices for potential future use)
-  useEffect(() => {
-    try {
-      if (!detailContext) {
-        localStorage.removeItem(DETAIL_CONTEXT_KEY);
-      }
-    } catch (e) {
-      warn("Failed to clear detail context", e);
-    }
-  }, [detailContext]);
 
   // Debug: expose item inspector for diagnosing per-item sync/SRS issues
   // Call from browser console: __debugItems('atlas') or __debugItems('first half')
@@ -736,8 +896,6 @@ const App: React.FC = () => {
   // Network status detection for offline support
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  // Bulk refresh state
-  const [bulkRefreshProgress, setBulkRefreshProgress] = useState<{ current: number; total: number; isRunning: boolean } | null>(null);
   // Phase 2 dedup tool: variant-duplicate clusters under review (null = modal closed).
   const [duplicateClusters, setDuplicateClusters] = useState<DuplicateClusterView[] | null>(null);
   // Bulk TTS pre-generation sweep progress (null = not running).
@@ -777,12 +935,14 @@ const App: React.FC = () => {
     onNavigateToStudy: () => {
       setCurrentView('study');
     },
-    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !cardPopup, // Disable when modals are open
+    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !cardPopup && !duplicateClusters, // Disable when modals are open
   });
 
   // Global Escape key to close modals or go back
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // A layer or view already used this key (Escape that closed a menu).
+      if (e.defaultPrevented) return;
       if (e.key === 'Escape') {
         if (showKeyboardHelp) {
           setShowKeyboardHelp(false);
@@ -794,21 +954,14 @@ const App: React.FC = () => {
           setDetailContext(null);
         }
       }
-      
-      // Cmd+F to focus notebook search
-      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-        e.preventDefault();
-        setCurrentView('notebook');
-        // Focus notebook search input
-        setTimeout(() => {
-          const input = document.querySelector('input[placeholder*="Search or look up"]') as HTMLInputElement;
-          input?.focus();
-          input?.select();
-        }, 100);
-      }
-      
-      // ? key to show keyboard shortcuts (works even from input fields)
-      if (e.key === '?' && !e.metaKey && !e.ctrlKey) {
+
+      // Cmd+F belongs to GlobalSearch, which opens its search box.
+
+      // ? shows the keyboard shortcuts, except where it is being typed.
+      const target = e.target as HTMLElement | null;
+      const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' || target.isContentEditable);
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !typing) {
         e.preventDefault();
         setShowKeyboardHelp(true);
       }
@@ -843,6 +996,13 @@ const App: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [isOnline]);
 
+  // Saving the library on this device keeps failing (storage full, say): unsynced changes then live only in
+  // this tab until they reach the server.
+  const [libraryWriteFailed, setLibraryWriteFailed] = useState(false);
+  useEffect(() => subscribeLibraryWriteFailures(setLibraryWriteFailed), []);
+  // Signing out from the pending-approval screen needs the server; offline it says so instead of doing nothing.
+  const [signOutFailed, setSignOutFailed] = useState(false);
+
   // Force sync — uploads changed items, pulls remote, merges
   const forceSyncInProgressRef = useRef(false);
   const handleForceSync = useCallback(async () => {
@@ -867,6 +1027,21 @@ const App: React.FC = () => {
     }
   }, [flushPendingReviews, inSyncLane, syncFullSnapshot, pushNow]);
 
+  // Signing out ends the server session, so anything this device hasn't sent would wait here for the next
+  // sign-in. Send it first, without letting a slow server hold the sign-out for long.
+  const handleSignOut = useCallback(async (): Promise<boolean> => {
+    closeUndoOffer();
+    const flush = (async () => {
+      if (isLoaded && latestItemsRef.current.length > 0) await userSaveData(latestItemsRef.current);
+      await flushPendingReviews();
+      await pushDirtyItems();
+    })().catch(error => warn('Unsent changes stay on this device until the next sign-in:', error));
+    let timer = 0;
+    await Promise.race([flush, new Promise<void>(resolve => { timer = window.setTimeout(resolve, SIGN_OUT_FLUSH_MS); })]);
+    window.clearTimeout(timer);
+    return logout();
+  }, [closeUndoOffer, isLoaded, userSaveData, flushPendingReviews, pushDirtyItems]);
+
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
   useEffect(() => {
@@ -879,9 +1054,14 @@ const App: React.FC = () => {
       }
     };
 
+    // iOS Safari often skips beforeunload; pagehide fires there as the page goes away.
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isLoaded]);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+    };
+  }, [isLoaded, userSaveData]);
 
   // Save data when app goes to background. Returning triggers the delta pull below.
   useEffect(() => {
@@ -966,8 +1146,12 @@ const App: React.FC = () => {
                     ? { ...item, lastSyncedHash: getItemContentHash(item) }
                     : item);
 
-            // 5. Strip images from items → IDB (keep ~143MB out of React state)
-            processedItems = await stripAndStoreImages(processedItems);
+            // 5. Strip images from items → IDB (keep ~143MB out of React state). If they can't be stored,
+            // they stay inline for now and the next launch tries again.
+            processedItems = await stripAndStoreImages(processedItems).catch(error => {
+                warn('Inline images stay in memory until the next launch:', error);
+                return processedItems;
+            });
 
             // 6. Tombstones past retention have reached every device
             const pruned = dropExpiredTombstones(processedItems);
@@ -980,14 +1164,14 @@ const App: React.FC = () => {
 
             // 7. Write back the items the steps above replaced
             await saveData(processedItems, userId);
+            setIsLoaded(true);
         } catch (e) {
             logError("Failed to initialize storage", e);
-        } finally {
-            setIsLoaded(true);
+            setLibraryReadFailed(true);
         }
     };
     initStorage();
-  }, [authState.user?.id]);
+  }, [authState.user?.id, libraryLoadAttempt]);
 
   // Helper to remove an item from detailContext groups and adjust indices
   const removeItemFromDetailContext = (id: string) => {
@@ -1134,8 +1318,13 @@ const App: React.FC = () => {
   // the server (e.g. images corrupted by the old marker-clobber bug). Run from a device
   // that still has the images cached. No-op on a fresh device (empty IDB).
   const handleRestoreImagesToServer = useCallback(async () => {
+    // The last word stays up a little longer when something went wrong.
+    const finish = (progress: ImageRestoreProgress) => {
+      setImageRestoreProgress(progress);
+      setTimeout(() => setImageRestoreProgress(null), progress.phase === 'failed' || progress.failed ? 6000 : 3000);
+    };
     try {
-      setImageRestoreProgress({ done: 0, total: 0 });
+      setImageRestoreProgress({ phase: 'checking', done: 0, total: 0, failed: 0 });
       const [manifest, localIds] = await Promise.all([
         getServerImageManifest(),
         getAllStoredImageIds(),
@@ -1153,28 +1342,31 @@ const App: React.FC = () => {
       const missing = [...localIds].filter(id => !manifest.has(id) && liveIds.has(id));
       log(`🖼️ Restore: ${localIds.size} local, ${manifest.size} on server, ${missing.length} to upload`);
       if (missing.length === 0) {
-        setImageRestoreProgress({ done: 0, total: 0 });
-        setTimeout(() => setImageRestoreProgress(null), 3000);
+        finish({ phase: 'done', done: 0, total: 0, failed: 0 });
         return;
       }
 
-      setImageRestoreProgress({ done: 0, total: missing.length });
+      setImageRestoreProgress({ phase: 'uploading', done: 0, total: missing.length, failed: 0 });
       const BATCH = 8;
       let done = 0;
+      let failed = 0;
       for (let i = 0; i < missing.length; i += BATCH) {
         const batchIds = missing.slice(i, i + BATCH);
         const map = Object.fromEntries(await loadImagesByIds(batchIds));
-        if (Object.keys(map).length > 0) {
-          try { await uploadImages(map); } catch (e) { warn('Restore upload batch failed:', e); }
+        const found = Object.keys(map).length;
+        // An image this device lists but can't read is one it can't restore either.
+        failed += batchIds.length - found;
+        if (found > 0) {
+          try { await uploadImages(map); } catch (e) { failed += found; warn('Restore upload batch failed:', e); }
         }
         done += batchIds.length;
-        setImageRestoreProgress({ done, total: missing.length });
+        setImageRestoreProgress({ phase: 'uploading', done, total: missing.length, failed });
       }
-      log(`🖼️ Restore complete: uploaded ${done}/${missing.length}`);
-      setTimeout(() => setImageRestoreProgress(null), 3000);
+      log(`🖼️ Restore complete: ${done - failed}/${missing.length} uploaded`);
+      finish({ phase: 'done', done, total: missing.length, failed });
     } catch (e) {
       warn('Restore images to server failed:', e);
-      setImageRestoreProgress(null);
+      finish({ phase: 'failed', done: 0, total: 0, failed: 0 });
     }
   }, []);
 
@@ -1193,6 +1385,7 @@ const App: React.FC = () => {
         void prefetchImages(latestItemsRef.current);
       } catch (error) {
         logError("Initial server sync failed:", error);
+        initialSyncIncompleteRef.current = true;
       } finally {
         initialServerSyncDoneRef.current = true;
       }
@@ -1209,13 +1402,19 @@ const App: React.FC = () => {
     deltaPullInProgressRef.current = true;
     try {
       await flushPendingReviews();
-      await inSyncLane(syncWithServer);
+      await inSyncLane(async () => {
+        await syncWithServer();
+        if (!initialSyncIncompleteRef.current) return;
+        await pushNow();
+        initialSyncIncompleteRef.current = false;
+        void prefetchImages(latestItemsRef.current);
+      });
     } catch (error) {
       warn('Background sync will retry:', error);
     } finally {
       deltaPullInProgressRef.current = false;
     }
-  }, [authState.user?.id, flushPendingReviews, inSyncLane, syncWithServer]);
+  }, [authState.user?.id, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages]);
 
   useEffect(() => {
     if (!isLoaded || !authState.user) return;
@@ -1239,10 +1438,33 @@ const App: React.FC = () => {
   }, [isLoaded, authState.user?.id, pullServerChanges]);
 
   // 3. SAVE EFFECTS (Persistence + Server Sync)
+  // Changes reach this device's storage a moment after they settle, so closing the page, a crash or the OS
+  // discarding a background tab loses at most that moment. Only items replaced since their last write are
+  // written. Unmounting (the app-wide error screen) writes what's pending instead of dropping it.
+  const userSaveDataRef = useLatest(userSaveData);
+  useEffect(() => {
+    if (!isLoaded) return;
+    const timer = setTimeout(() => {
+      userSaveData(latestItemsRef.current).catch(e => logError("Local save error:", e));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [savedItems, isLoaded, userSaveData]);
+  useEffect(() => () => {
+    if (latestItemsRef.current.length > 0) {
+      userSaveDataRef.current(latestItemsRef.current).catch(e => logError("Local save on unmount failed:", e));
+    }
+  }, [userSaveDataRef]);
+
+  // The server push waits for changes to pause for 5 s, but a steady stream of changes (a study session)
+  // holds it back for at most 30 s.
+  const pushDeadlineRef = useRef<number | null>(null);
   useEffect(() => {
     if (!isLoaded) return;
 
+    const now = Date.now();
+    pushDeadlineRef.current ??= now + 30_000;
     const timer = setTimeout(async () => {
+      pushDeadlineRef.current = null;
       try {
         // Writes only the items replaced since their last write.
         await userSaveData(latestItemsRef.current);
@@ -1258,113 +1480,10 @@ const App: React.FC = () => {
         logError("Sync error:", e);
         setSyncStatus('error');
       }
-    }, 5000);
+    }, Math.max(0, Math.min(5_000, pushDeadlineRef.current - now)));
 
     return () => clearTimeout(timer);
   }, [savedItems, isLoaded, userSaveData, pushDirtyItems]);
-
-  // Bulk refresh - actual execution
-  const executeBulkRefresh = useCallback(async () => {
-    // Group items by their title to avoid duplicate searches
-    const titleMap = new Map<string, StoredItem[]>();
-    latestItemsRef.current.filter(isActiveLibraryItem).forEach(item => {
-      const title = getItemTitle(item).toLowerCase().trim();
-      if (!titleMap.has(title)) {
-        titleMap.set(title, []);
-      }
-      titleMap.get(title)!.push(item);
-    });
-
-    const uniqueTitles = Array.from(titleMap.keys());
-    let processed = 0;
-    let errors = 0;
-    setBulkRefreshProgress({ current: 0, total: uniqueTitles.length, isRunning: true });
-
-    for (const title of uniqueTitles) {
-      const itemsWithTitle = titleMap.get(title)!;
-      const originalItem = itemsWithTitle[0];
-      const searchQuery = getItemTitle(originalItem);
-
-      try {
-        // Re-search with AI
-        const newResult = await analyzeInput(searchQuery);
-        
-        // Update each item with matching title
-        for (const item of itemsWithTitle) {
-          // Find the matching vocab from the new result (by sense if available)
-          let newData: any = newResult;
-          
-          if (item.type === 'vocab' && newResult.vocabs && newResult.vocabs.length > 0) {
-            // Try to find matching sense
-            const oldSense = (item.data as VocabCard).sense;
-            const matchingVocab = oldSense 
-              ? newResult.vocabs.find(v => v.sense === oldSense) || newResult.vocabs[0]
-              : newResult.vocabs[0];
-            newData = { ...matchingVocab, id: item.data.id };
-          } else {
-            // For phrases, use the full result
-            newData = { ...newResult, id: item.data.id };
-          }
-
-          // Update the item while preserving SRS data
-          replaceItem(item.data.id, current => ({ ...current, data: newData, type: item.type, updatedAt: Date.now() }));
-        }
-
-        processed++;
-        setBulkRefreshProgress({ current: processed, total: uniqueTitles.length, isRunning: true });
-
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-      } catch (error) {
-        logError(`Failed to refresh "${searchQuery}":`, error);
-        errors++;
-        processed++;
-        setBulkRefreshProgress({ current: processed, total: uniqueTitles.length, isRunning: true });
-      }
-    }
-
-    setBulkRefreshProgress(null);
-    setConfirmModal({
-      isOpen: true,
-      title: 'Refresh Complete',
-      message: `Processed: ${processed} unique words/phrases\nErrors: ${errors}`,
-      confirmText: 'OK',
-      variant: errors > 0 ? 'warning' : 'success',
-      onConfirm: () => setConfirmModal(null),
-      showCancel: false
-    });
-  }, [replaceItem]);
-
-  // Bulk refresh - show confirmation first
-  const handleBulkRefresh = useCallback(() => {
-    const itemCount = latestItemsRef.current.filter(isActiveLibraryItem).length;
-    if (itemCount === 0) {
-      setConfirmModal({
-        isOpen: true,
-        title: 'No Items',
-        message: 'Your notebook is empty. Add some items first!',
-        confirmText: 'OK',
-        variant: 'info',
-        onConfirm: () => setConfirmModal(null),
-        showCancel: false
-      });
-      return;
-    }
-
-    setConfirmModal({
-      isOpen: true,
-      title: 'Refresh All Items?',
-      message: `This will re-search all ${itemCount} items in your notebook with the latest AI analysis.\n\nThis may take a while and use API quota.`,
-      confirmText: 'Refresh All',
-      cancelText: 'Cancel',
-      variant: 'warning',
-      onConfirm: () => {
-        setConfirmModal(null);
-        executeBulkRefresh();
-      }
-    });
-  }, [executeBulkRefresh]);
 
   // ── "Generate sentence speech" — server-side background backfill ───────────
   // Triggers the server to generate MiMo audio + whisper word-timings for EVERY saved sentence,
@@ -1462,28 +1581,31 @@ const App: React.FC = () => {
   const handleBatchImport = useCallback(async (words: string[]) => {
     if (words.length === 0) return;
 
-    // Deduplicate against existing items
-    const currentItems = latestItemsRef.current;
+    // The saved words and senses, looked up once rather than scanned per word, and kept current as this import
+    // saves more, so a sense that two listed words both produce is saved once.
+    const savedWords = new Set<string>();
+    const savedSenses = new Set<string>();
+    for (const item of latestItemsRef.current) {
+      if (item.isDeleted || !isVocabItem(item)) continue;
+      savedWords.add((item.data.word || '').toLowerCase().trim());
+      savedSenses.add(savedVocabKey(item.data));
+    }
+    const listed = new Set<string>();
     const newWords: string[] = [];
     let skipped = 0;
     for (const word of words) {
       const w = word.toLowerCase().trim();
-      const exists = currentItems.some(item => {
-        if (item.isDeleted || item.type !== 'vocab') return false;
-        return ((item.data as VocabCard).word || '').toLowerCase().trim() === w;
-      });
-      if (exists) {
-        skipped++;
-      } else {
-        newWords.push(word);
-      }
+      if (listed.has(w)) continue;
+      listed.add(w);
+      if (savedWords.has(w)) skipped++;
+      else newWords.push(word);
     }
 
     if (newWords.length === 0) {
       setConfirmModal({
         isOpen: true,
         title: 'All Already Saved',
-        message: `All ${words.length} words are already in your notebook.`,
+        message: `All ${listed.size} words are already in your notebook.`,
         confirmText: 'OK',
         variant: 'info',
         onConfirm: () => setConfirmModal(null),
@@ -1519,15 +1641,9 @@ const App: React.FC = () => {
             const result = await analyzeInput(word, { mode: 'batch' });
 
             for (const vocab of result.vocabs || []) {
-              const vocabWord = (vocab.word || '').toLowerCase().trim();
-              const alreadySaved = latestItemsRef.current.some(item => {
-                if (item.type !== 'vocab') return false;
-                const sw = ((item.data as VocabCard).word || '').toLowerCase().trim();
-                const ss = (item.data as VocabCard).sense || '';
-                return sw === vocabWord && ss === vocab.sense;
-              });
-
-              if (!alreadySaved) {
+              const senseKey = savedVocabKey(vocab);
+              if (!savedSenses.has(senseKey)) {
+                savedSenses.add(senseKey);
                 const storedItem: StoredItem = {
                   data: vocab,
                   type: 'vocab',
@@ -1596,7 +1712,8 @@ const App: React.FC = () => {
     // Audio remains safe to pre-generate here; advanced text and images do not use VPS inference.
     if (importedItemIds.length > 0) {
       void (async () => {
-        const imported = latestItemsRef.current.filter(item => importedItemIds.includes(item.data.id));
+        const importedIds = new Set(importedItemIds);
+        const imported = latestItemsRef.current.filter(item => importedIds.has(item.data.id));
         await persistChangedItems(imported, 'Batch import');
       })().catch(e => warn('Post-batch persistence failed:', e));
       runSpeechGenerationRef.current(importedItemIds, { silent: true }).catch(e => warn('Post-batch speech generation failed:', e));
@@ -1659,7 +1776,14 @@ const App: React.FC = () => {
           if (vc) data = { ...data, vocabs: nv } as SearchResult;
         }
       }
-      if (imagesToSave.length > 0) void offloadImages(imagesToSave);
+      if (imagesToSave.length > 0) {
+        offloadImages(imagesToSave).catch(error => {
+          // The images never reached this device's store. Put them back inline, where the next push
+          // carries them to the server, instead of leaving markers that point at nothing.
+          logError('Image offload failed; keeping the image inline:', error);
+          replaceItem(canonicalItemId, current => restoreInlineImages(current, new Map(imagesToSave.map(image => [image.id, image.base64]))));
+        });
+      }
 
       const now = Date.now();
       const itemToSave = {
@@ -1667,7 +1791,8 @@ const App: React.FC = () => {
         data,
         updatedAt: now,
         savedAt: item.savedAt || now,
-        isDeleted: false
+        // Cleared flags are absent, as the server echoes them.
+        isDeleted: undefined,
       };
 
       updateItems(items => {
@@ -1679,30 +1804,14 @@ const App: React.FC = () => {
           return [{ ...itemToSave, srs: normalizedSRS, savedAt: now, updatedAt: now }, ...items];
         }
 
-        const existingItem = items[existingIndex];
-        // FORCE keeping the existing ID to ensure consistency
-        const idToUse = existingItem.data.id;
-        // Prefer the incoming SRS, which likely carries updates (e.g. from DetailView)
-        const mergedSrs = SRSAlgorithm.ensure(itemToSave.srs || existingItem.srs, idToUse, existingItem.type);
-        mergedSrs.id = idToUse;
         const next = items.slice();
-        next[existingIndex] = {
-          ...itemToSave,
-          data: { ...itemToSave.data, id: idToUse },
-          savedAt: existingItem.savedAt || now,
-          updatedAt: now,
-          srs: mergedSrs,
-          // A fresh AI result carries no revision, so it builds on the saved copy's. What the server
-          // holds is known from the saved copy, whatever the incoming copy last saw.
-          serverRevision: itemToSave.serverRevision ?? existingItem.serverRevision,
-          lastSyncedHash: existingItem.lastSyncedHash,
-        };
+        next[existingIndex] = saveOverExisting(items[existingIndex], itemToSave, now);
         return next;
       });
     } catch (err) {
       logError("Error during save operation:", err);
     }
-  }, [updateItems]);
+  }, [updateItems, replaceItem]);
 
   // Keep batch import refs up to date
   handleSaveRef.current = handleSave;
@@ -1714,11 +1823,15 @@ const App: React.FC = () => {
   const handleAttachSentenceImage = useCallback(async (item: StoredItem, base64: string) => {
     if (!item?.data?.id || !base64.startsWith('data:image/')) return;
     await offloadImages([{ id: item.data.id, base64 }]);
-    handleSaveRef.current({ ...item, data: { ...item.data, imageUrl: IMAGE_IDB_MARKER } });
+    // A review or a sync can have replaced the sentence during the upload, so mark the current copy.
+    const current = latestItemsRef.current.find(saved => saved.data.id === item.data.id) ?? item;
+    if (current.isDeleted) return;
+    handleSaveRef.current({ ...current, data: { ...current.data, imageUrl: IMAGE_IDB_MARKER } });
   }, []);
 
   const handleDelete = useCallback(async (id: string) => {
     log('🗑️ App: Deleting item', id);
+    const before = latestItemsRef.current.find(item => item.data.id === id);
     const deleted = replaceItem(id, item => ({ ...item, isDeleted: true, updatedAt: Date.now() }));
     if (!deleted) warn('🗑️ App: Item not found for deletion:', id);
 
@@ -1727,20 +1840,29 @@ const App: React.FC = () => {
     removeItemFromDetailContext(id);
     removeSentenceFromDetailContext(id);
 
-    // Persist and push the deletion now rather than after the debounce
-    if (deleted) await persistChangedItems([deleted], 'Delete');
-  }, [replaceItem, persistChangedItems]);
+    if (!deleted || !before) return;
+    if (!before.isDeleted) {
+      offerUndo('Deleted', before, item => item.isDeleted ? { ...item, isDeleted: undefined, updatedAt: before.updatedAt } : item);
+    }
+    // Store the deletion now; it's pushed when the undo offer closes.
+    await persistChangedItems([deleted], 'Delete');
+  }, [replaceItem, persistChangedItems, offerUndo]);
 
   const handleArchive = useCallback(async (id: string) => {
     log('📦 App: Archiving item', id);
+    const before = latestItemsRef.current.find(item => item.data.id === id);
     const archived = replaceItem(id, item => ({ ...item, isArchived: true, updatedAt: Date.now() }));
     if (!archived) warn('📦 App: Item not found for archiving:', id);
 
     // Update the carousel immediately, before the server sync finishes.
     removeItemFromDetailContext(id);
 
-    if (archived) await persistChangedItems([archived], 'Archive');
-  }, [replaceItem, persistChangedItems]);
+    if (!archived || !before) return;
+    if (!before.isArchived) {
+      offerUndo('Archived', before, item => item.isArchived ? { ...item, isArchived: undefined, updatedAt: before.updatedAt } : item);
+    }
+    await persistChangedItems([archived], 'Archive');
+  }, [replaceItem, persistChangedItems, offerUndo]);
 
   const handleRemoveVocabFromPhrase = useCallback(async (phraseId: string, vocabId: string) => {
     log('🗑️ App: Removing vocab', vocabId, 'from phrase', phraseId);
@@ -1762,7 +1884,7 @@ const App: React.FC = () => {
 
   const handleUnarchive = useCallback(async (id: string) => {
     log('📦 App: Unarchiving item', id);
-    const unarchived = replaceItem(id, item => ({ ...item, isArchived: false, updatedAt: Date.now() }));
+    const unarchived = replaceItem(id, item => ({ ...item, isArchived: undefined, updatedAt: Date.now() }));
     if (unarchived) await persistChangedItems([unarchived], 'Unarchive');
   }, [replaceItem, persistChangedItems]);
 
@@ -1772,7 +1894,7 @@ const App: React.FC = () => {
   // Trigger a comparison through the SAME bottom-right queue as word search (background, non-blocking).
   // If it's already saved, pass the cached result so the popup opens instantly; else it generates.
   const handleCompare = useCallback((words: string[]) => {
-    if (words.length < 2) return; // no upper bound — compare against any number of words
+    if (words.length < 2) return; // the pickers stop at MAX_COMPARE_WORDS, and compareWords enforces it
     const key = comparisonKey(words);
     if (!key) return;
     const existing = comparisonsRef.current.find((c) => c.key === key);
@@ -1913,8 +2035,9 @@ const App: React.FC = () => {
 
   // Updated handler to support groups
   const handleViewStoredItem = useCallback((groups: ItemGroup[], groupIndex: number, itemIndex: number) => {
+      rememberFocusBeforeDetail();
       setDetailContext({ groups, groupIndex, itemIndex });
-  }, []);
+  }, [rememberFocusBeforeDetail]);
 
   // Open a saved sentence's source card in DetailView (sentence mode). `ordered` is the on-screen
   // (due-first) order from SentencesView, so swipe/arrow order matches the list exactly. Each sentence
@@ -1960,8 +2083,9 @@ const App: React.FC = () => {
       return { title: getItemTitle(resolved), items: [resolved] };
     });
     const safeIndex = Math.min(Math.max(0, index), groups.length - 1);
+    rememberFocusBeforeDetail();
     setDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered });
-  }, []);
+  }, [rememberFocusBeforeDetail]);
 
   // Resolve an example to a sentence card without changing the notebook. Prepared analysis and its
   // image are global source material, so previewing can read them before the user explicitly saves.
@@ -2003,12 +2127,18 @@ const App: React.FC = () => {
     if (sentence) handleViewSentence([sentence], 0);
   }, [handleViewSentence, prepareExampleSentence]);
 
-  // Reset only this sense/item. Different meanings now keep independent FSRS schedules.
-  const resetSRS = useCallback((id: string) => {
+  // Reset only this sense/item. Different meanings now keep independent FSRS schedules. False when the
+  // item isn't in the library.
+  const resetSRS = useCallback((id: string): boolean => {
     const target = latestItemsRef.current.find(i => i.data.id === id);
-    if (!target) return;
-    handleSaveRef.current({ ...target, srs: SRSAlgorithm.createNew(target.data.id, target.type) });
-  }, []);
+    if (!target) return false;
+    const srs = SRSAlgorithm.reset(target.data.id, target.type);
+    handleSaveRef.current({ ...target, srs });
+    offerUndo('Reset', target, item => item.srs?.lastReviewDate === srs.lastReviewDate && !item.srs.totalReviews
+      ? { ...item, srs: target.srs, updatedAt: target.updatedAt }
+      : item);
+    return true;
+  }, [offerUndo]);
 
   // SRS update for one sense/item. The server applies the same FSRS transition atomically.
   //
@@ -2026,21 +2156,28 @@ const App: React.FC = () => {
       seedItem?: StoredItem;
     },
   ): Promise<boolean> => {
+    const { updateAfterRating } = fsrsScheduler ?? await loadFsrsScheduler();
     const now = Date.now();
-    const userId = authState.user?.id || 'vps';
+    const userId = currentUserIdRef.current;
 
     const savedItem = latestItemsRef.current.find(i => i.data.id === itemId);
     const requestedSeed = context?.seedItem;
-    const seedItem = !savedItem && requestedSeed?.data.id === itemId &&
+    const catalogSeed = !savedItem && requestedSeed?.data.id === itemId &&
       (isRealLifeProgressItem(requestedSeed) || isEssayProgressItem(requestedSeed))
       ? requestedSeed
       : undefined;
-    const targetItem = savedItem ?? seedItem;
+    const targetItem = savedItem ?? catalogSeed;
     if (!targetItem) return false;
 
     const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
     const baseSRS = SRSAlgorithm.ensure(targetItem.srs, targetItem.data.id, targetItem.type);
-    const updatedSRS = SRSAlgorithm.updateAfterRating(baseSRS, rating, now);
+    const updatedSRS = updateAfterRating(baseSRS, rating, now);
+    // An item the server has never stored (saved offline, or its first push still pending) travels with its
+    // review as a seed, since the item push waits for the review: without one, the server has nothing to apply
+    // the review to, and the two would wait on each other forever.
+    const seedItem = catalogSeed ?? (targetItem.serverRevision === undefined
+      ? { ...targetItem, srs: { ...baseSRS, id: itemId } }
+      : undefined);
     const reviewEvent: ReviewEvent = {
       id: context?.eventId || crypto.randomUUID(), itemId, itemType: targetItem.type, reviewedAt: now,
       previousStep: baseSRS.totalReviews, nextStep: updatedSRS.totalReviews,
@@ -2052,27 +2189,28 @@ const App: React.FC = () => {
 
     log(`🧠 FSRS Update: ${targetTitle} - ${rating}, stability=${updatedSRS.stability.toFixed(1)}d, next review in ${updatedSRS.interval}m`);
 
-    // The review outbox, not the item push, carries the new schedule (and a seed item) to the server.
-    // A copy that matched the server before the review stays clean, so reconciling the applied review
-    // adopts the server's content instead of mistaking the new schedule for an unsynced edit.
     const reviewed: StoredItem = { ...targetItem, srs: { ...updatedSRS, id: itemId }, updatedAt: now };
-    const reviewedItem = seedItem || !isItemDirty(targetItem)
-      ? { ...reviewed, lastSyncedHash: getItemContentHash(reviewed) }
-      : reviewed;
     const reviewMutation: PendingReviewMutation = {
       event: reviewEvent,
       itemIds: [itemId],
-      optimisticSrs: { [itemId]: reviewedItem.srs },
+      optimisticSrs: { [itemId]: reviewed.srs },
       ...(seedItem ? { seedItem } : {}),
     };
 
     // The small localStorage outbox is synchronous and lands before React or IndexedDB work. Its
     // idempotent event id is the crash/reload boundary for offline and rapid reviews.
-    enqueuePendingReviewMutation(userId, reviewMutation);
+    const queued = enqueuePendingReviewMutation(userId, reviewMutation);
+    // The review outbox, not the item push, carries the new schedule (and a seed item) to the server.
+    // A copy that matched the server before the review stays clean, so reconciling the applied review
+    // adopts the server's content instead of mistaking the new schedule for an unsynced edit. When the
+    // outbox can't hold the review (storage full or unavailable), the copy stays dirty for the push to carry.
+    const reviewedItem = queued && (seedItem || !isItemDirty(targetItem))
+      ? { ...reviewed, lastSyncedHash: getItemContentHash(reviewed) }
+      : reviewed;
     recordReview(reviewEvent);
     updateItems(items => {
       const index = items.findIndex(item => item.data.id === itemId);
-      if (index < 0) return seedItem ? [...items, reviewedItem] : items;
+      if (index < 0) return catalogSeed ? [...items, reviewedItem] : items;
       const next = items.slice();
       next[index] = reviewedItem;
       return next;
@@ -2090,7 +2228,7 @@ const App: React.FC = () => {
     return !readPendingReviewMutations(userId).some(mutation => mutation.event.id === reviewEvent.id);
   }, [authState.user?.id, recordReview, updateItems, flushPendingReviews]);
 
-  // Handle scroll to hide/show nav bar — uses direct DOM mutation to avoid re-rendering App
+  // Hide the nav bar while scrolling down a tab, and show it again on the way back up.
   const handleScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
     const scroller = e.currentTarget;
     const currentScrollY = scroller.scrollTop;
@@ -2105,16 +2243,9 @@ const App: React.FC = () => {
       shouldShow = true;
     }
 
-    if (shouldShow !== showNavRef.current) {
-      showNavRef.current = shouldShow;
-      if (navRef.current) {
-        navRef.current.classList.toggle('translate-y-full', !shouldShow);
-        navRef.current.classList.toggle('translate-y-0', shouldShow);
-      }
-    }
-
+    setNavShown(shouldShow);
     lastScrollYs.current.set(scroller, currentScrollY);
-  }, []);
+  }, [setNavShown]);
 
   // Auth gate: show login/pending/loading before the main app
   if (authState.loading) {
@@ -2159,7 +2290,44 @@ const App: React.FC = () => {
           </div>
           <h2 className="text-xl font-semibold text-slate-800">Pending Approval</h2>
           <p className="text-slate-500 max-w-sm">Your account is awaiting admin approval. Please check back later.</p>
-          <button onClick={logout} className="text-sm text-slate-400 hover:text-slate-600 underline">Sign out</button>
+          <button onClick={async () => setSignOutFailed(!(await logout()))} className="text-sm text-slate-400 hover:text-slate-600 underline">Sign out</button>
+          {signOutFailed && (
+            <p role="alert" className="text-sm text-rose-600">Couldn{'\u2019'}t reach the server, so you{'\u2019'}re still signed in.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (libraryReadFailed) {
+    return (
+      <div className="fixed inset-0 bg-slate-50 flex items-center justify-center p-6">
+        <div role="alert" className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 max-w-sm w-full text-center">
+          <h2 className="text-xl font-bold text-slate-800 mb-2">Couldn&rsquo;t open your library</h2>
+          <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+            This device&rsquo;s copy couldn&rsquo;t be read. Trying again usually works. Using the server copy
+            instead may lose changes made on this device that haven&rsquo;t synced yet.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => { setLibraryReadFailed(false); setLibraryLoadAttempt(attempt => attempt + 1); }}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition-colors"
+            >
+              Try again
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl transition-colors"
+            >
+              Reload app
+            </button>
+            <button
+              onClick={() => { setLibraryReadFailed(false); setIsLoaded(true); }}
+              className="w-full py-2 text-sm text-slate-500 hover:text-slate-700 underline"
+            >
+              Use the server copy
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -2180,9 +2348,18 @@ const App: React.FC = () => {
           Offline mode — changes will sync when connected
         </div>
       )}
+      {libraryWriteFailed && (
+        <div role="alert" className="bg-rose-600 text-white text-center px-4 py-2 text-sm font-medium shrink-0">
+          {isOnline
+            ? 'Couldn\u2019t save on this device (storage may be full). Your changes still sync to your account.'
+            : 'Couldn\u2019t save on this device (storage may be full). Keep this tab open until you\u2019re back online.'}
+        </div>
+      )}
 
-      <Suspense fallback={null}>
+      {/* Each lazy overlay has a boundary of its own, so one whose code is still arriving doesn't hide the
+          card or the progress pills already on screen. */}
       {confirmModal && (
+        <Suspense fallback={null}>
         <ConfirmModal
           isOpen={confirmModal.isOpen}
           title={confirmModal.title}
@@ -2194,39 +2371,42 @@ const App: React.FC = () => {
           onCancel={() => setConfirmModal(null)}
           showCancel={confirmModal.showCancel}
         />
+        </Suspense>
       )}
 
       {duplicateClusters && (
+        <Suspense fallback={null}>
         <DuplicatesModal
           clusters={duplicateClusters}
           onClose={() => setDuplicateClusters(null)}
           onMerge={handleMergeDuplicates}
         />
+        </Suspense>
       )}
 
       {/* Global background-job progress — remains visible across tabs/views. It floats above the nav, so a
-          job starting or finishing never moves the page. */}
-      <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[80] flex flex-col items-center gap-2 pointer-events-none">
+          job starting or finishing never moves the page. An undo offer lifts it above the card popup. */}
+      <div className={`fixed bottom-20 left-1/2 -translate-x-1/2 ${undoMessage ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
       {imagePrefetchProgress && (
-        <div className="pointer-events-auto bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
+        <div role="status" className="pointer-events-auto bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
           {imagePrefetchProgress.done < imagePrefetchProgress.total && <Loader2 size={16} className="animate-spin shrink-0" />}
           <span className="text-sm font-medium whitespace-nowrap">
             Offline images · {imagePrefetchProgress.done}/{imagePrefetchProgress.total}
           </span>
-          <button onClick={stopImageDownload} className="ml-1 shrink-0 text-indigo-200 hover:text-white" title="Stop downloading">
+          <button onClick={stopImageDownload} className="ml-1 shrink-0 text-indigo-200 hover:text-white" title="Stop downloading" aria-label="Stop downloading offline images">
             <X size={15} />
           </button>
         </div>
       )}
       {imageRestoreProgress && (
-        <div className="pointer-events-auto bg-emerald-600 text-white rounded-full shadow-xl px-4 py-2 text-sm font-medium whitespace-nowrap fade-in">
-          {imageRestoreProgress.total === 0
-            ? 'All images already on the server ✓'
-            : `Restoring images to server: ${imageRestoreProgress.done}/${imageRestoreProgress.total}`}
+        <div role="status" className={`pointer-events-auto text-white rounded-full shadow-xl px-4 py-2 text-sm font-medium whitespace-nowrap fade-in ${
+          imageRestoreProgress.phase === 'failed' || imageRestoreProgress.failed ? 'bg-rose-600' : 'bg-emerald-600'
+        }`}>
+          {describeImageRestore(imageRestoreProgress)}
         </div>
       )}
       {ttsGenProgress?.isRunning && (
-        <div className="pointer-events-auto bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
+        <div role="status" className="pointer-events-auto bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
           <Loader2 size={16} className="animate-spin shrink-0" />
           <span className="text-sm font-medium whitespace-nowrap">
             Generating sentence audio · {ttsGenProgress.current}/{ttsGenProgress.total}
@@ -2247,8 +2427,17 @@ const App: React.FC = () => {
             onClick={() => { ttsGenAbortRef.current = true; }}
             className="ml-1 shrink-0 text-indigo-200 hover:text-white"
             title="Stop generating"
+            aria-label="Stop generating sentence audio"
           >
             <X size={15} />
+          </button>
+        </div>
+      )}
+      {undoMessage && (
+        <div role="status" className="pointer-events-auto max-w-[calc(100vw-2rem)] bg-slate-800 text-white rounded-full shadow-xl pl-4 pr-1.5 py-1.5 flex items-center gap-2 text-sm font-medium fade-in">
+          <span className="truncate">{undoMessage}</span>
+          <button onClick={undoLastChange} className="shrink-0 rounded-full px-3 py-1 font-semibold text-indigo-300 hover:bg-white/10">
+            Undo
           </button>
         </div>
       )}
@@ -2261,7 +2450,7 @@ const App: React.FC = () => {
           fallbackMessage="Something went wrong displaying this card. Your data is safe — returning to notebook."
         >
           <DetailView
-              groups={detailContext.groups}
+              groups={liveDetailGroups}
               initialGroupIndex={detailContext.groupIndex}
               initialItemIndex={detailContext.itemIndex}
               sentenceItems={liveDetailSentenceItems}
@@ -2269,6 +2458,8 @@ const App: React.FC = () => {
               onSave={handleSave}
               onDelete={handleDelete}
               onArchive={handleArchive}
+              onUnarchive={handleUnarchive}
+              onResetSRS={resetSRS}
               savedItems={allActiveItems}
               savedSentenceItems={allSentenceItems}
               onSearch={handleRecursiveSearch}
@@ -2285,7 +2476,7 @@ const App: React.FC = () => {
               onRemoveVocabFromPhrase={handleRemoveVocabFromPhrase}
               findSaved={findSavedItem}
               onOpenCard={openCardPopup}
-              interactionLocked={!!cardPopup}
+              interactionLocked={!!cardPopup || showKeyboardHelp || !!confirmModal}
               onAttachImage={handleAttachSentenceImage}
           />
         </ErrorBoundary>
@@ -2313,9 +2504,8 @@ const App: React.FC = () => {
           />
         </Suspense>
       )}
-      </Suspense>
 
-      <main className="flex-1 relative w-full min-h-0 overflow-hidden">
+      <main ref={mainRef} inert={detailOpen} className="flex-1 relative w-full min-h-0 overflow-hidden">
         <TabScreen shown={currentView === 'notebook'}>
           <NotebookView
             items={notebookItems}
@@ -2324,13 +2514,11 @@ const App: React.FC = () => {
             onViewDetail={handleViewStoredItem}
             user={notebookUser}
             onSignIn={loginRedirect}
-            onSignOut={logout}
+            onSignOut={handleSignOut}
             syncStatus={syncStatus}
             onScroll={handleScroll}
             onForceSync={handleForceSync}
             isOnline={isOnline}
-            onBulkRefresh={handleBulkRefresh}
-            bulkRefreshProgress={bulkRefreshProgress}
             hasSavedVariant={hasSavedVariant}
             isVocabSaved={isVocabSaved}
             onFindDuplicates={handleFindDuplicates}
@@ -2423,6 +2611,8 @@ const App: React.FC = () => {
           onNavigate={setCurrentView}
           sentenceDueCount={sentenceDueCount}
           onKeyboardHelp={openKeyboardHelp}
+          covered={detailOpen}
+          onFocus={revealNav}
         />
       </Suspense>
 

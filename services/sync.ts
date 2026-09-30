@@ -10,6 +10,57 @@ const clone = typeof structuredClone === 'function'
   ? structuredClone
   : <T>(obj: T): T => JSON.parse(JSON.stringify(obj));
 
+// MIRRORS keepServerOwnedData in server/src/db.ts. Only server-side jobs write these fields, and the server
+// keeps them when a save leaves them out (a fresh AI result saved over the card, say).
+const SERVER_OWNED_FIELDS = ['usageAudit', 'advancedEnrichment', 'localImageEnrichment'] as const;
+
+const withServerOwnedFields = (target: any, server: any): any => {
+  if (!target || typeof target !== 'object' || !server || typeof server !== 'object') return target;
+  let result = target;
+  for (const field of SERVER_OWNED_FIELDS) {
+    if (result[field] === undefined && server[field] !== undefined) {
+      if (result === target) result = { ...target };
+      result[field] = server[field];
+    }
+  }
+  return result;
+};
+
+/**
+ * `data` with the server-owned fields it lacks taken from `server`, the server's copy of the item: the item's
+ * own, each phrase vocab's by id, and a sentence's analysis while its text is unchanged.
+ */
+const withServerOwnedData = (data: any, server: any, type: StoredItem['type']): any => {
+  let result = withServerOwnedFields(data, server);
+  if (type === 'sentence' && result.analysis === undefined && server.analysis !== undefined && result.text === server.text) {
+    result = { ...result, analysis: server.analysis, analysisGeneratedAt: server.analysisGeneratedAt };
+  }
+  if (type === 'phrase' && Array.isArray(result.vocabs) && Array.isArray(server.vocabs)) {
+    const serverVocabs = new Map<string, any>();
+    for (const vocab of server.vocabs) if (typeof vocab?.id === 'string') serverVocabs.set(vocab.id, vocab);
+    let changed = false;
+    const vocabs = result.vocabs.map((vocab: any) => {
+      if (typeof vocab?.id !== 'string') return vocab;
+      const kept = withServerOwnedFields(vocab, serverVocabs.get(vocab.id));
+      if (kept !== vocab) changed = true;
+      return kept;
+    });
+    if (changed) result = { ...result, vocabs };
+  }
+  return result;
+};
+
+/** The flags this device last synced, found when the local copy differs from that sync only in its flags. */
+const lastSyncedFlags = (item: StoredItem): { isDeleted?: true; isArchived?: true } | undefined => {
+  if (!item.lastSyncedHash) return undefined;
+  for (const isDeleted of [undefined, true] as const) {
+    for (const isArchived of [undefined, true] as const) {
+      if (getItemContentHash({ ...item, isDeleted, isArchived }) === item.lastSyncedHash) return { isDeleted, isArchived };
+    }
+  }
+  return undefined;
+};
+
 // Smart Merge: Combines Local and Remote data
 export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): StoredItem[] => {
   const map = new Map<string, StoredItem>();
@@ -43,9 +94,19 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const revisionsDecide = localRevision !== remoteRevision;
       const localWinsRevision = localRevision > remoteRevision;
       // A newer revision whose content is what this device last synced (an image upload bumps the
-      // revision, for one) doesn't conflict with unsynced local edits: rebase them onto it.
+      // revision, for one) doesn't conflict with unsynced local edits: rebase them onto it. A review on
+      // another device changes only the schedule, which the SRS merge below takes on its own, so a remote
+      // copy that matches once given the local schedule rebases too.
       const rebasesLocalEdits = revisionsDecide && !localWinsRevision && isItemDirty(localItem) &&
-        getItemContentHash(remoteItem) === localItem.lastSyncedHash;
+        (getItemContentHash(remoteItem) === localItem.lastSyncedHash ||
+          getItemContentHash({ ...remoteItem, srs: localItem.srs }) === localItem.lastSyncedHash);
+      // Deleting or archiving changes only a flag. When the server's copy moved on meanwhile without touching
+      // that flag (the enrichment cycle rewrote the card, say), the change made here still applies on top.
+      const syncedFlags = revisionsDecide && !localWinsRevision && !rebasesLocalEdits && isItemDirty(localItem)
+        ? lastSyncedFlags(localItem)
+        : undefined;
+      const keepsLocalFlag = (flag: 'isDeleted' | 'isArchived'): boolean => !!syncedFlags &&
+        (localItem[flag] || undefined) !== syncedFlags[flag] && (remoteItem[flag] || undefined) === syncedFlags[flag];
 
       if (remoteItem.isDeleted && !localItem.isDeleted && !rebasesLocalEdits) {
            const remoteTime = remoteItem.updatedAt || 0;
@@ -69,6 +130,11 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
                (revisionsDecide && localWinsRevision)) {
                // Keep local deletion
                map.set(localItem.data.id, localItem);
+               return;
+           }
+           if (keepsLocalFlag('isDeleted')) {
+               // On top of the server's revision, so the push that carries the deletion is accepted.
+               map.set(localItem.data.id, { ...clone(remoteItem), isDeleted: true, updatedAt: localTime, lastSyncedHash: localItem.lastSyncedHash });
                return;
            }
            // If remote update is SIGNIFICANTLY newer, keep the remote update
@@ -121,7 +187,12 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       if (rebasesLocalEdits || (revisionsDecide ? localWinsRevision : (localRevision > 0 || localTime > remoteTime))) {
           // Only use local data if it has full content, OR remote also lacks content
           if (localHasContent || !remoteHasContent) {
+              const remoteData = mergedItem.data;
               mergedItem.data = clone(localItem.data);
+              // The server's copy of the same base kept the server-owned fields a save here left out.
+              if (!localWinsRevision && remoteRevision > 0 && localItem.type === remoteItem.type) {
+                  mergedItem.data = withServerOwnedData(mergedItem.data, remoteData, remoteItem.type);
+              }
           }
           // else: local is stripped cache data but remote has full content — keep remote data
           mergedItem.updatedAt = localTime;
@@ -130,10 +201,13 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
           mergedItem.isArchived = localItem.isArchived;
           mergedItem.serverRevision = rebasesLocalEdits ? remoteItem.serverRevision : localItem.serverRevision;
       }
+      if (keepsLocalFlag('isArchived')) mergedItem.isArchived = localItem.isArchived || undefined;
 
       // B. SRS MERGE (Learning Progress)
-      // Priority: most recent lastReviewDate wins.
-      // Rationale: lastReviewDate is set to Date.now() on each review, so a more
+      // A copy with no unsynced change holds only what the server sent or accepted, so the server's schedule
+      // at the same or a newer revision replaces it, even an older one: another device undid a review.
+      // Otherwise, priority: most recent lastReviewDate wins.
+      // Rationale: lastReviewDate is set to Date.now() on each review and reset, so a more
       // recent value definitively means "this device studied more recently."
       // The overdue penalty can DECREASE totalReviews (e.g., 4→2 after 90+ days),
       // so using totalReviews as primary key would cause old remote data (higher
@@ -142,7 +216,9 @@ export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): Stored
       const localReview = localItem.srs?.lastReviewDate || 0;
       const remoteReview = remoteItem.srs?.lastReviewDate || 0;
 
-      if (localReview > remoteReview) {
+      if (remoteRevision > 0 && remoteRevision >= localRevision && !isItemDirty(localItem)) {
+          // The server's schedule is already in mergedItem.
+      } else if (localReview > remoteReview) {
           // Local was reviewed more recently — local SRS wins
           mergedItem.srs = clone(localItem.srs);
       } else if (localReview === remoteReview) {
@@ -286,6 +362,29 @@ export const trackServerContent = (
     return { ...item, lastSyncedHash: serverHash };
   });
   return changed ? next : items;
+};
+
+/**
+ * A local item after the server applied or undid a review of it. The server's schedule is authoritative,
+ * since an undo moves it backwards. Its content is too, and may carry another device's edits, unless this
+ * device has unsynced edits to push on top and the server changed nothing but the schedule since this
+ * device's copy: `baseRevision`, the item's revision before the review, is the one the copy holds.
+ * Otherwise the edits meet the server's copy in an ordinary merge, as a pull would: adopting only its
+ * revision would hide its changes, and the next push would overwrite them.
+ */
+export const reconcileReviewedItem = (
+  local: StoredItem,
+  serverItem: StoredItem,
+  baseRevision: number | undefined,
+): StoredItem => {
+  const reconciled = isItemDirty(local) && baseRevision !== undefined && baseRevision === (local.serverRevision ?? 0)
+    ? {
+        ...local,
+        serverRevision: serverItem.serverRevision,
+        updatedAt: Math.max(local.updatedAt || 0, serverItem.updatedAt || 0),
+      }
+    : mergeDatasets([local], [serverItem])[0];
+  return { ...reconciled, srs: serverItem.srs, lastSyncedHash: getItemContentHash(serverItem) };
 };
 
 /**

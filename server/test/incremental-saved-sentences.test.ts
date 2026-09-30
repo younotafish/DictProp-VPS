@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -234,5 +244,97 @@ test('recurring reconciliation does not reuse a legacy incomplete analysis cache
     assert.equal(coveredReport.complete, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function savedSentenceDispatchFixture(prefix: string) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  const offline = join(root, 'scripts', 'offline');
+  const releases = join(root, 'releases.log');
+  const state = join(root, 'state');
+  mkdirSync(offline, { recursive: true });
+  mkdirSync(join(root, 'tmp'));
+  symlinkSync(waveScript, join(offline, 'prepare-saved-sentence-analysis-wave.mjs'));
+  writeFileSync(join(offline, 'wait-for-incremental-enrichment.sh'), '#!/bin/sh\nexit 0\n');
+  // Like the real publisher, a transient failure leaves its state alone and a terminal one marks it failed.
+  writeFileSync(join(offline, 'publish-backfill-release.sh'), `#!/bin/sh
+echo "$1" >> '${releases}'
+case "$FAKE_PUBLISH_MODE" in
+  transient) exit 1 ;;
+  fail) mkdir -p "$PUBLISH_STATE_DIR" && date > "$PUBLISH_STATE_DIR/failed"; exit 1 ;;
+esac
+`);
+  writeFileSync(join(root, 'gh'), '#!/bin/sh\nexit "${FAKE_GH_STATUS:-0}"\n');
+  for (const script of ['scripts/offline/wait-for-incremental-enrichment.sh', 'scripts/offline/publish-backfill-release.sh', 'gh']) {
+    chmodSync(join(root, script), 0o700);
+  }
+  writeFileSync(join(root, 'key'), 'test-key\n');
+  const analysisPath = join(root, 'analysis.json');
+  writeFileSync(analysisPath, JSON.stringify({
+    version: 1,
+    generatedAt: 10,
+    entries: [{ id: 'saved', textHash: 'c'.repeat(64), analysis: completeAnalysis, generatedAt: 10 }],
+  }));
+  const dispatch = (env: Record<string, string> = {}) => spawnSync('bash', [dispatchScript, analysisPath, '100', 'test-sha'], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 30_000,
+    env: {
+      ...process.env,
+      FAKE_GH_STATUS: '0',
+      FAKE_PUBLISH_MODE: '',
+      GH_BIN: join(root, 'gh'),
+      SENTENCE_BRIDGE_KEY_FILE: join(root, 'key'),
+      SAVED_SENTENCE_ANALYSIS_STATE_ROOT: state,
+      SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS: '0',
+      TMPDIR: join(root, 'tmp'),
+      ...env,
+    },
+  });
+  const waves = () => readdirSync(state).filter(name => name.startsWith('wave-')).sort();
+  return { root, releases, dispatch, waves };
+}
+
+test('saved-sentence publication sets a failed wave aside so the next run starts a fresh one', () => {
+  const fixture = savedSentenceDispatchFixture('dictprop-saved-set-aside-');
+  try {
+    // A transient failure keeps the wave, and its release, for the next run.
+    const transient = fixture.dispatch({ FAKE_PUBLISH_MODE: 'transient' });
+    assert.equal(transient.status, 1, transient.stderr);
+    assert.deepEqual(fixture.waves(), ['wave-0001']);
+
+    const failed = fixture.dispatch({ FAKE_PUBLISH_MODE: 'fail' });
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.match(failed.stdout,
+      /publication of wave-0001 failed; set it aside as wave-0001\.failed so the next run starts a fresh wave/);
+    assert.deepEqual(fixture.waves(), ['wave-0001.failed']);
+
+    const failedAgain = fixture.dispatch({ FAKE_PUBLISH_MODE: 'fail' });
+    assert.equal(failedAgain.status, 1, failedAgain.stderr);
+    const [first, second, ...rest] = fixture.waves();
+    assert.equal(first, 'wave-0001.failed');
+    assert.match(second, /^wave-0001\.failed-\d{8}T\d{6}Z$/);
+    assert.deepEqual(rest, []);
+
+    const published = fixture.dispatch();
+    assert.equal(published.status, 0, published.stderr);
+    assert.match(published.stdout, /wave-0001 published \(1 analyses\)/);
+    assert.match(published.stdout, /saved sentence analysis publication complete: 1\/1/);
+    assert.equal(readFileSync(fixture.releases, 'utf8').trim().split('\n').length, 4);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('saved-sentence publication stops after its release-creation attempts', () => {
+  const fixture = savedSentenceDispatchFixture('dictprop-saved-release-create-');
+  try {
+    const result = fixture.dispatch({ FAKE_GH_STATUS: '1', RELEASE_CREATE_ATTEMPTS: '1' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /GitHub release creation for wave-0001 failed 1 times; giving up for this run/);
+    assert.equal(existsSync(fixture.releases), false);
+    assert.deepEqual(fixture.waves(), ['wave-0001']);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
   }
 });

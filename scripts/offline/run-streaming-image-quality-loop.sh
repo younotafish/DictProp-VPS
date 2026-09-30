@@ -29,6 +29,8 @@ image_model_quantize="${IMAGE_MODEL_QUANTIZE:-${KREA_QUANTIZE:-}}"
 krea_image_source_candidate="${KREA_IMAGE_SOURCE_CANDIDATE:-}"
 krea_image_strength="${KREA_IMAGE_STRENGTH:-}"
 defer_after="${IMAGE_QUALITY_DEFER_AFTER:-}"
+retry_limit="${IMAGE_QUALITY_RETRY_LIMIT:-3}"
+retry_delay="${IMAGE_QUALITY_RETRY_DELAY_SECONDS:-60}"
 current="$targets"
 first_round=1
 watcher_pid=""
@@ -48,6 +50,14 @@ if [[ -n "$image_model_quantize" ]] && [[ "$image_model_quantize" != "4" && "$im
 fi
 if [[ -n "$defer_after" ]] && { ! [[ "$defer_after" =~ ^[0-9]+$ ]] || [[ "$defer_after" -lt 1 ]] || [[ "$defer_after" -gt 99 ]]; }; then
   echo "IMAGE_QUALITY_DEFER_AFTER must be an integer from 1 to 99" >&2
+  exit 2
+fi
+if ! [[ "$retry_limit" =~ ^[0-9]+$ ]] || [[ "$retry_limit" -lt 1 ]] || [[ "$retry_limit" -gt 99 ]]; then
+  echo "IMAGE_QUALITY_RETRY_LIMIT must be an integer from 1 to 99" >&2
+  exit 2
+fi
+if ! [[ "$retry_delay" =~ ^[0-9]+$ ]]; then
+  echo "IMAGE_QUALITY_RETRY_DELAY_SECONDS must be a non-negative integer" >&2
   exit 2
 fi
 if [[ "$image_model" == "qwen-image-edit" ]]; then
@@ -91,12 +101,17 @@ then
   exit 0
 fi
 
+# Capped, so a renderer or reviewer that keeps failing ends the loop instead of holding the cycle lock.
 retry() {
   local attempt=0
   until "$@"; do
     attempt=$((attempt + 1))
-    echo "[$(date -u +%FT%TZ)] command failed (attempt ${attempt}); retrying in 60s: $*" >&2
-    sleep 60
+    if [[ "$attempt" -ge "$retry_limit" ]]; then
+      echo "[$(date -u +%FT%TZ)] command failed ${attempt} time(s); giving up: $*" >&2
+      return 1
+    fi
+    echo "[$(date -u +%FT%TZ)] command failed (attempt ${attempt}); retrying in ${retry_delay}s: $*" >&2
+    sleep "$retry_delay"
   done
 }
 
@@ -183,7 +198,9 @@ while [[ "$candidate" -le "${defer_after:-99}" ]]; do
   wait "$watcher_pid" || watcher_status=$?
   watcher_pid=""
   if [[ "$watcher_status" -ne 0 ]]; then
-    retry env CODEX_IMAGE_CONCURRENCY="$codex_image_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
+    # Generation has finished, so an image still missing now will never appear.
+    retry env CODEX_IMAGE_CONCURRENCY="$codex_image_concurrency" IMAGE_QUALITY_STALL_MINUTES=1 \
+      node scripts/offline/stream-image-quality-pass.mjs \
       "$current" "$candidates" "$images" "$pass_work" "$refined" "$candidate" "$chunk_size"
   fi
 

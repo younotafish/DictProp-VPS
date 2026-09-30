@@ -6,9 +6,10 @@
 //
 // Design principle: GENEROUS on the query side, CONSERVATIVE on the saved side.
 // Every VocabCard carries an AI-populated `forms` array (incl. irregulars like
-// ran / children / went), so that is the primary, accurate signal. The rule-based
-// lemmatiser below is only a fallback for cards whose `forms` is empty/missing,
-// and it deliberately avoids the most collision-prone rules (no bare -er/-est).
+// ran / children / went), so that is the primary, accurate signal: a card that lists
+// its forms is reached only by its word and those forms (cares never reaches car, nor
+// hoped hop). The rule-based lemmatiser below is only a fallback for cards whose `forms`
+// is empty/missing, and it deliberately avoids the most collision-prone rules (no bare -er/-est).
 //
 // A generated candidate only causes a wrong pop-up if it collides with a *different*
 // real saved base word; over-generation that hits nothing simply falls through to AI.
@@ -29,25 +30,55 @@ const INVARIANT_STOPLIST = new Set<string>([
   'beloved', 'rigid', 'embed',
 ]);
 
+// Short function words a rule must never reduce a word to (herring is not her + -ing, noted not not + -ed).
+const CLOSED_CLASS = new Set<string>([
+  'her', 'hers', 'his', 'its', 'our', 'ours', 'she', 'him', 'you', 'who', 'the', 'and', 'but', 'nor',
+  'not', 'yet', 'for', 'was', 'are', 'has', 'had',
+]);
+
+// Here 's is "is" or "us", not a possessive: let's must not match let, nor it's it.
+const CONTRACTED_S = new Set<string>(['let', 'it', 'he', 'she', 'that', 'what', 'there', 'here', 'who', 'where', 'how']);
+
 const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
 const isConsonant = (ch: string): boolean => /^[a-z]$/.test(ch) && !VOWELS.has(ch);
 
 /**
  * Normalise a raw string to a comparison key: NFC, lowercase, trimmed, internal
- * whitespace collapsed, possessive 's removed, surrounding punctuation/quotes stripped.
+ * whitespace collapsed, curly apostrophes straightened, possessive 's removed (contractions
+ * like let's keep theirs), surrounding punctuation/quotes stripped.
  * Leaves CJK and internal apostrophes intact (so Chinese queries fall through to AI).
  */
 export function normalizeKey(s: string): string {
   if (!s) return '';
-  let t = s.normalize('NFC').toLowerCase().trim().replace(/\s+/g, ' ');
-  t = t.replace(/['’]s\b/g, ''); // teacher's -> teacher
+  let t = s.normalize('NFC').toLowerCase().trim().replace(/\s+/g, ' ').replace(/[‘’]/g, "'");
+  t = t.replace(/(\p{L}*)'s\b/gu, (m, w: string) => (CONTRACTED_S.has(w) ? m : w)); // teacher's -> teacher
   t = t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''); // strip edge quotes/punctuation (incl. dogs')
   return t;
 }
 
 /**
+ * Keys for a string with brackets in it. "break in(to)" and "catch up (with)" mark an optional particle, and
+ * AI forms often carry a label, as in "abhors (verb)": each is keyed without the brackets and what's in them,
+ * and, when they pair up, as written and with only the brackets dropped. So "break in" and "break into" both
+ * reach "break in(to)", while a fragment like "present)" left by splitting "(3rd person, present)" keys nothing.
+ */
+function bracketKeys(raw: string): string[] {
+  const keys: string[] = [];
+  const add = (k: string) => {
+    if (k && !keys.includes(k)) keys.push(k);
+  };
+  add(normalizeKey(raw.replace(/\([^()]*\)/g, ' ').replace(/\(.*$/, '').replace(/^.*\)/, '')));
+  if (/^[^()]*(?:\([^()]*\)[^()]*)*$/.test(raw)) {
+    add(normalizeKey(raw));
+    add(normalizeKey(raw.replace(/[()]/g, '')));
+  }
+  return keys;
+}
+
+/**
  * Flatten + split a (possibly messy) AI `forms` array into normalised keys.
- * Splits each entry on , / → -> ; | so "runs, running / ran" yields three keys.
+ * Splits each entry on , / → -> ; | so "runs, running / ran" yields three keys, and drops the labels the AI
+ * sometimes adds, so "plural: compasses" and "abhors (verb)" key as compasses and abhors.
  */
 export function splitForms(forms?: string[]): string[] {
   if (!Array.isArray(forms)) return [];
@@ -55,7 +86,12 @@ export function splitForms(forms?: string[]): string[] {
   for (const entry of forms) {
     if (typeof entry !== 'string') continue;
     for (const part of entry.split(/\s*(?:,|\/|→|->|;|\|)\s*/)) {
-      const k = normalizeKey(part);
+      const text = part.replace(/^[^:()]*:\s*/, ''); // "plural: compasses" -> "compasses"
+      if (/[()]/.test(text)) {
+        for (const k of bracketKeys(text)) out.add(k);
+        continue;
+      }
+      const k = normalizeKey(text);
       if (k) out.add(k);
     }
   }
@@ -82,7 +118,7 @@ export function tokenCandidates(token: string): string[] {
   if (w.length < 4 || INVARIANT_STOPLIST.has(w)) return [...cands];
 
   const add = (c: string | null | undefined) => {
-    if (c && c.length >= 3) cands.add(c);
+    if (c && c.length >= 3 && !CLOSED_CLASS.has(c)) cands.add(c);
   };
 
   // -ies / -ied -> -y   (parties->party, studied->study)
@@ -108,32 +144,29 @@ export function tokenCandidates(token: string): string[] {
     add(undouble(stem));
   }
 
-  // -ed    (jumped->jump, used->use, stopped->stop)
+  // -ed    (jumped->jump, used->use, stopped->stop, freed->free)
   if (w.endsWith('ed')) {
     const stem = w.slice(0, -2);
     add(stem);
-    add(stem + 'e');
+    if (stem.length >= 3 || !stem.endsWith('e')) add(stem + 'e'); // but seed, need, weed aren't see, nee, wee
     add(undouble(stem));
   }
 
-  // -s / -es plural & 3rd-person   (cats->cat, boxes->box, makes->make, goes->go)
+  // -s / -es plural & 3rd-person   (cats->cat, boxes->box, makes->make, heroes->hero)
   // Guards: never strip after ss / us / is (miss, bus, basis).
   if (w.endsWith('s') && !w.endsWith('ss') && !w.endsWith('us') && !w.endsWith('is')) {
-    if (w.endsWith('es')) {
-      add(w.slice(0, -2)); // boxes->box, goes->go
-      add(w.slice(0, -1)); // makes->make, uses->use
-    } else {
-      add(w.slice(0, -1)); // cats->cat, runs->run
-    }
+    // -es is a suffix only after a sibilant or o (boxes, wishes, heroes); cares, notes, planes just add -s.
+    if (/(?:[sxzo]|ch|sh)es$/.test(w)) add(w.slice(0, -2));
+    add(w.slice(0, -1)); // cats->cat, makes->make, uses->use
   }
 
   return [...cands];
 }
 
 /**
- * Candidate keys for a (possibly multi-word) string. Always includes the plain
- * normalised string. For phrases it is the cross-product of per-token candidates,
- * capped (≤4 tokens, ≤3 candidates/token) to avoid combinatorial blow-up.
+ * Candidate keys for a (possibly multi-word) string. The plain normalised string always
+ * comes first. For phrases it is the cross-product of per-token candidates, capped
+ * (≤4 tokens, ≤64 combinations) to avoid combinatorial blow-up.
  */
 export function variantKeys(s: string): string[] {
   const norm = normalizeKey(s);
@@ -150,7 +183,7 @@ export function variantKeys(s: string): string[] {
 
   let combos: string[][] = [[]];
   for (const tok of tokens) {
-    const cands = tokenCandidates(tok).slice(0, 3);
+    const cands = tokenCandidates(tok);
     const next: string[][] = [];
     for (const combo of combos) {
       for (const c of cands) next.push([...combo, c]);
@@ -165,12 +198,18 @@ export function variantKeys(s: string): string[] {
 /**
  * Inverted index: variant key → the normalised base word owning that key, or the few base words
  * when several share it (about one key in a thousand), which spares a set per key on each rebuild.
+ * A card is keyed by its word and its listed forms; a card without forms is also keyed by the
+ * lemmatiser's variants of its word, under RULE + key.
  */
 export type VariantIndex = Map<string, string | string[]>;
 
+// Marks the keys only a lemmatised query looks up. No normalised key can start with it, since
+// normalizeKey strips leading punctuation.
+const RULE = '~';
+
 /**
- * Built once per item-set change. The saved `word` is lemmatised (the empty-forms
- * fallback); `forms` are added as exact keys only (the conservative saved side).
+ * Built once per item-set change. The saved `word` and `forms` are exact keys (the conservative
+ * saved side); the word is lemmatised only for cards without forms (the fallback).
  */
 export function buildVariantIndex(items: StoredItem[]): VariantIndex {
   const index: VariantIndex = new Map();
@@ -196,7 +235,15 @@ function cardKeys(card: VocabCard): { base: string; keys: string[] } {
   let entry = cardKeyCache.get(card);
   if (!entry) {
     const base = normalizeKey(card.word || '');
-    entry = { base, keys: base ? [...variantKeys(base), ...splitForms(card.forms)] : [] };
+    const keys = new Set<string>();
+    if (base) {
+      const words = [base, ...(/[()]/.test(card.word) ? bracketKeys(card.word) : [])];
+      const forms = splitForms(card.forms);
+      for (const k of words) keys.add(k);
+      for (const k of forms) keys.add(k);
+      if (forms.length === 0) for (const w of words) for (const k of variantKeys(w)) keys.add(RULE + k);
+    }
+    entry = { base, keys: [...keys] };
     cardKeyCache.set(card, entry);
   }
   return entry;
@@ -207,16 +254,21 @@ export function cardBase(card: VocabCard): string {
   return cardKeys(card).base;
 }
 
+const ownerList = (owners: string | string[] | undefined): string[] =>
+  owners === undefined ? [] : typeof owners === 'string' ? [owners] : owners;
+
 /**
  * Query-time match: returns the set of saved base words a query maps to (empty = none).
- * Generous on the query side via variantKeys(query).
+ * Generous on the query side via variantKeys(query): the query as typed reaches any card by
+ * its word or a listed form, while its lemmatised variants reach only cards without forms.
  */
 export function matchBaseWords(query: string, index: VariantIndex): Set<string> {
   const result = new Set<string>();
+  let asTyped = true;
   for (const key of variantKeys(query)) {
-    const owners = index.get(key);
-    if (typeof owners === 'string') result.add(owners);
-    else if (owners) for (const b of owners) result.add(b);
+    if (asTyped) for (const b of ownerList(index.get(key))) result.add(b);
+    for (const b of ownerList(index.get(RULE + key))) result.add(b);
+    asTyped = false;
   }
   return result;
 }
@@ -224,7 +276,8 @@ export function matchBaseWords(query: string, index: VariantIndex): Set<string> 
 /**
  * Phase 2 detection: cluster base words that are variants of one another.
  * Returns groups of ≥2 normalised base words (e.g. ["run", "running"]).
- * Reuses buildVariantIndex so detection and search matching stay consistent.
+ * Reuses buildVariantIndex so detection and search matching stay consistent: two words
+ * cluster when typing some key would pop up both.
  */
 export function findDuplicateClusters(items: StoredItem[]): string[][] {
   const index = buildVariantIndex(items);
@@ -251,9 +304,12 @@ export function findDuplicateClusters(items: StoredItem[]): string[][] {
     parent.set(find(a), find(b));
   };
 
-  for (const owners of index.values()) {
-    if (typeof owners === 'string') continue;
-    for (let i = 1; i < owners.length; i++) union(owners[0], owners[i]);
+  for (const [key, owners] of index) {
+    const isRule = key.startsWith(RULE);
+    // Typing a plain key also reaches the cards that lemmatise to it, so a key and its RULE twin count together.
+    if (isRule && index.has(key.slice(RULE.length))) continue;
+    const group = isRule ? ownerList(owners) : [...ownerList(owners), ...ownerList(index.get(RULE + key))];
+    for (let i = 1; i < group.length; i++) if (group[i] !== group[0]) union(group[0], group[i]);
   }
 
   const groups = new Map<string, Set<string>>();

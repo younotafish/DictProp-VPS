@@ -1,6 +1,21 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { X, ClipboardPaste, Trash2, ListPlus, Sparkles } from 'lucide-react';
 
+// Lines first, so a phrase with a comma in it ("easy come, easy go") stays whole: in a list of several
+// lines, commas split a line only when it's a run of single words ("apple, pear"). Pasted as one line,
+// the list splits at every comma. Semicolons always split.
+export const parseWordList = (text: string): string[] => {
+  const lines = text.split('\n').filter(line => line.trim());
+  return lines
+    .flatMap(line => line.split(';'))
+    .flatMap(entry => {
+      const parts = entry.split(',');
+      return lines.length === 1 || parts.every(part => !/\s/.test(part.trim())) ? parts : [entry];
+    })
+    .map(w => w.trim())
+    .filter(w => w.length > 0);
+};
+
 interface BatchImportProps {
   isOpen: boolean;
   onClose: () => void;
@@ -22,22 +37,15 @@ export const BatchImport: React.FC<BatchImportProps> = ({
     }
   }, [isOpen]);
 
-  const parseWords = useCallback((text: string): string[] => {
-    return text
-      .split(/[\n,;]+/)
-      .map(w => w.trim())
-      .filter(w => w.length > 0);
-  }, []);
-
-  const wordCount = inputText.trim() ? parseWords(inputText).length : 0;
+  const wordCount = inputText.trim() ? parseWordList(inputText).length : 0;
 
   const handleSubmit = useCallback(() => {
-    const words = parseWords(inputText);
+    const words = parseWordList(inputText);
     if (words.length === 0) return;
     onSubmit(words);
     setInputText('');
     onClose();
-  }, [inputText, parseWords, onSubmit, onClose]);
+  }, [inputText, onSubmit, onClose]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -136,7 +144,7 @@ run the gamut"
             </p>
             <div className="mt-6 space-y-1.5 text-left w-full max-w-xs">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Separators:</p>
-              {['One word/phrase per line', 'Comma-separated: word1, word2', 'Semicolons also work'].map((hint, i) => (
+              {['One word/phrase per line (phrases keep their commas)', 'Or on one line, comma-separated: word1, word2', 'Semicolons also work'].map((hint, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs text-slate-500">
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-300 shrink-0" />
                   {hint}

@@ -17,6 +17,19 @@ if (!Number.isSafeInteger(candidateNumber) || candidateNumber < 1 || candidateNu
 if (!Number.isSafeInteger(chunkSize) || chunkSize < 8 || chunkSize > 2_048) {
   throw new Error('Chunk size must be an integer from 8 to 2048');
 }
+const retryLimit = Number(process.env.IMAGE_QUALITY_RETRY_LIMIT || 3);
+const retryDelaySeconds = Number(process.env.IMAGE_QUALITY_RETRY_DELAY_SECONDS || 60);
+const stallMinutes = Number(process.env.IMAGE_QUALITY_STALL_MINUTES || 60);
+if (!Number.isSafeInteger(retryLimit) || retryLimit < 1 || retryLimit > 99) {
+  throw new Error('IMAGE_QUALITY_RETRY_LIMIT must be an integer from 1 to 99');
+}
+if (!Number.isSafeInteger(retryDelaySeconds) || retryDelaySeconds < 0) {
+  throw new Error('IMAGE_QUALITY_RETRY_DELAY_SECONDS must be a non-negative integer');
+}
+if (!Number.isFinite(stallMinutes) || stallMinutes <= 0) {
+  throw new Error('IMAGE_QUALITY_STALL_MINUTES must be a positive number');
+}
+const stallMilliseconds = stallMinutes * 60_000;
 
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
 if (!Array.isArray(payload.targets)) throw new Error('Target manifest is invalid');
@@ -131,8 +144,12 @@ async function retry(command, args) {
       return;
     } catch (error) {
       attempt += 1;
-      process.stderr.write(`[${new Date().toISOString()}] quality command failed (attempt ${attempt}); retrying in 60s: ${error instanceof Error ? error.message : String(error)}\n`);
-      await sleep(60_000);
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt >= retryLimit) {
+        throw new Error(`quality command failed ${attempt} time(s); giving up: ${message}`);
+      }
+      process.stderr.write(`[${new Date().toISOString()}] quality command failed (attempt ${attempt}); retrying in ${retryDelaySeconds}s: ${message}\n`);
+      await sleep(retryDelaySeconds * 1_000);
     }
   }
 }
@@ -162,14 +179,19 @@ for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
   }
 
   let lastMissing = -1;
+  let stallDeadline = 0;
   for (;;) {
     const missing = targets.reduce((count, target) => count + (targetReady(target) ? 0 : 1), 0);
     if (missing === 0) break;
     if (missing !== lastMissing) {
       process.stderr.write(`Candidate ${candidateNumber}, chunk ${chunkIndex + 1}/${chunks.length}: waiting for ${missing}/${targets.length} image(s)\n`);
       lastMissing = missing;
+      stallDeadline = Date.now() + stallMilliseconds;
+    } else if (Date.now() >= stallDeadline) {
+      // The renderer runs beside this pass. Once it stops producing images, waiting only holds the cycle lock.
+      throw new Error(`Candidate ${candidateNumber}, chunk ${chunkIndex + 1}/${chunks.length}: no new image for ${stallMinutes} minute(s) with ${missing}/${targets.length} still missing; giving up`);
     }
-    await sleep(15_000);
+    await sleep(Math.min(15_000, stallMilliseconds / 4));
   }
 
   mkdirSync(chunkDir, { recursive: true });

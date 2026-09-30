@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
+import { IDBDatabase as FakeIDBDatabase, IDBKeyRange, forceCloseDatabase, indexedDB } from 'fake-indexeddb';
 
 Object.assign(globalThis, { indexedDB, IDBKeyRange });
 
-const { loadData, saveData, saveItemUpdates, deleteItemRecords, storeMissingItemHashes } = await import('../../services/storage.ts');
+const { loadData, saveData, saveItemUpdates, deleteItemRecords, storeMissingItemHashes, subscribeLibraryWriteFailures } = await import('../../services/storage.ts');
 const { getItemContentHash, ITEM_HASH_VERSION } = await import('../../services/itemHash.ts');
 
 const item = (id: string, reviews: number) => ({
@@ -193,4 +193,60 @@ test('deleted records are gone from storage and written again if the item return
 
   await saveData([kept, dropped], userId);
   assert.deepEqual((await loadData(userId)).items.map(value => value.data.id).sort(), ['dropped', 'kept']);
+});
+
+/** Runs `run` with IDBDatabase#transaction replaced by `transaction`, which gets the original to call. */
+const withTransactionHook = async (
+  transaction: (db: IDBDatabase, original: IDBDatabase['transaction'], args: Parameters<IDBDatabase['transaction']>) => IDBTransaction,
+  run: () => Promise<void>,
+): Promise<void> => {
+  const prototype = FakeIDBDatabase.prototype as unknown as IDBDatabase;
+  const original = prototype.transaction;
+  prototype.transaction = function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+    return transaction(this, original, args);
+  } as IDBDatabase['transaction'];
+  try {
+    await run();
+  } finally {
+    prototype.transaction = original;
+  }
+};
+
+test('a failed save is reported, and the next save stores what it missed', async () => {
+  const userId = 'full-storage-user';
+  const reports: boolean[] = [];
+  const unsubscribe = subscribeLibraryWriteFailures(failed => reports.push(failed));
+  try {
+    await withTransactionHook(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    }, () => saveData([item('missed', 1)], userId));
+    assert.deepEqual(reports, [false, true]);
+
+    await saveData([item('missed', 1), item('next', 1)], userId);
+    assert.deepEqual(reports, [false, true, false]);
+    assert.deepEqual((await loadData(userId)).items.map(value => value.data.id).sort(), ['missed', 'next']);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test('a save on a connection the browser dropped goes through on a new one', async () => {
+  const userId = 'dropped-connection-user';
+  const reports: boolean[] = [];
+  const unsubscribe = subscribeLibraryWriteFailures(failed => reports.push(failed));
+  let dropped: IDBDatabase | undefined;
+  try {
+    await withTransactionHook((db, original, args) => {
+      if (!dropped) {
+        dropped = db;
+        forceCloseDatabase(db as never);
+      }
+      return original.apply(db, args);
+    }, () => saveData([item('saved', 1)], userId));
+    assert.ok(dropped, 'the save used the connection that was then dropped');
+    assert.deepEqual(reports, [false]);
+    assert.deepEqual((await loadData(userId)).items.map(value => value.data.id), ['saved']);
+  } finally {
+    unsubscribe();
+  }
 });

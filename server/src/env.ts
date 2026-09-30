@@ -15,7 +15,14 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const DEV_AUTH_BYPASS = process.env.DEV_AUTH_BYPASS === '1';
+if (DEV_AUTH_BYPASS && IS_PRODUCTION) {
+  throw new Error('DEV_AUTH_BYPASS=1 would make every visitor an admin; it is refused when NODE_ENV=production');
+}
+
 export const env = {
+  IS_PRODUCTION,
   PORT: parsePort(process.env.PORT),
   DEEPINFRA_API_KEY: process.env.DEEPINFRA_API_KEY || '',
   DATA_DIR: process.env.DATA_DIR || resolve(__dirname, '../../data'),
@@ -23,6 +30,7 @@ export const env = {
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
   OWNER_GOOGLE_EMAIL: process.env.OWNER_GOOGLE_EMAIL || '',
   PUBLIC_ORIGIN: (process.env.PUBLIC_ORIGIN || '').replace(/\/$/, ''),
-  // Local dev only: when '1', skip Google auth and use a synthetic admin user. Never set in prod.
-  DEV_AUTH_BYPASS: process.env.DEV_AUTH_BYPASS === '1',
+  // Local dev only: when '1', skip Google auth and use a synthetic admin user. Refused in production, and the
+  // server then listens on loopback only, so the no-auth API isn't reachable from the local network.
+  DEV_AUTH_BYPASS,
 };

@@ -5,6 +5,14 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { dirname, join, resolve } from 'node:path';
 import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
 import {
+  NOTHING_SUCCEEDED_EXIT_CODE,
+  ledgerFromEnvironment,
+  recordFailure,
+  recordSuccess,
+  sentenceHash,
+  updateLedger,
+} from './failure-ledger.mjs';
+import {
   DETAILED_SENTENCE_ANALYSIS_INSTRUCTION,
   detailedSentenceAnalysisSchema,
   isSentenceGrammarAnalysis,
@@ -29,6 +37,7 @@ const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 40) * 60 * 1_000;
 const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
+const failureLedger = ledgerFromEnvironment('sentence-analysis');
 const activeChildren = new Set();
 let aborting = false;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
@@ -253,7 +262,7 @@ async function runBatch(batch, index) {
       return batch.map((sourceRecord, itemIndex) => {
         const result = byIndex.get(itemIndex);
         if (!result) throw new Error(`Missing sentence index ${itemIndex}`);
-        return { ...result, analysis: validateAnalysis(result.analysis, sourceRecord) };
+        return { sourceRecord, analysis: validateAnalysis(result.analysis, sourceRecord) };
       });
     } catch (error) {
       if (aborting || attempt === 2) throw error;
@@ -386,23 +395,36 @@ if (failures.length > 0) {
     failures: failures.sort((left, right) => left.id.localeCompare(right.id)),
   }, null, 2)}\n`, { mode: 0o600 });
   renameSync(tempPath, failuresPath);
-  writeProgress('incomplete');
-  throw new Error(
-    `${failures.length} sentence analysis singleton(s) remain incomplete; see ${failuresPath}. Successful batches remain cached.`,
-  );
-}
-if (existsSync(failuresPath)) unlinkSync(failuresPath);
+  // Without a ledger the caller needs every sentence, so stop here; successful batches stay cached.
+  if (!failureLedger) {
+    writeProgress('incomplete');
+    throw new Error(
+      `${failures.length} sentence analysis singleton(s) remain incomplete; see ${failuresPath}. Successful batches remain cached.`,
+    );
+  }
+} else if (existsSync(failuresPath)) unlinkSync(failuresPath);
 
-for (let index = 0; index < batches.length; index++) {
-  const results = batchResults[index];
-  for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
-    const sourceRecord = batches[index][resultIndex];
-    entries.push({
-      id: sourceRecord.id,
-      textHash: sourceRecord.textHash,
-      analysis: results[resultIndex].analysis,
-      generatedAt,
-    });
+// A split batch returns only its successful sentences, so each result names its own source record.
+for (const results of batchResults) {
+  for (const { sourceRecord, analysis } of results) {
+    entries.push({ id: sourceRecord.id, textHash: sourceRecord.textHash, analysis, generatedAt });
+  }
+}
+
+if (failureLedger) {
+  const sourceById = new Map(source.sentences.map(sentence => [sentence.id, sentence]));
+  updateLedger(failureLedger.path, ledger => {
+    for (const failure of failures) {
+      recordFailure(ledger, failureLedger.stage, failure.id, sentenceHash(sourceById.get(failure.id)), failure.error);
+    }
+    for (const entry of entries) recordSuccess(ledger, failureLedger.stage, entry.id);
+  });
+  if (entries.length === 0) {
+    writeProgress('incomplete');
+    process.stderr.write(
+      `No sentence analysis succeeded; ${failures.length} sentence(s) recorded in ${failureLedger.path}\n`,
+    );
+    process.exit(NOTHING_SUCCEEDED_EXIT_CODE);
   }
 }
 
@@ -417,5 +439,8 @@ writeFileSync(outputTemp, `${JSON.stringify({
   entries,
 }, null, 2)}\n`, { mode: 0o600 });
 renameSync(outputTemp, outputPath);
-writeProgress('complete');
-process.stderr.write(`Wrote ${entries.length} sentence analyses to ${outputPath}\n`);
+writeProgress(failures.length > 0 ? 'partial' : 'complete');
+process.stderr.write(
+  `Wrote ${entries.length} sentence analyses to ${outputPath}` +
+  `${failures.length > 0 ? `; ${failures.length} sentence(s) deferred to a later cycle (see ${failuresPath})` : ''}\n`,
+);

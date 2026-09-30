@@ -1,10 +1,14 @@
 import type { ReviewEvent, SRSData, StoredItem } from '../types';
+import { HttpError } from './http';
 
 export interface PendingReviewMutation {
   event: ReviewEvent;
   itemIds: string[];
   optimisticSrs: Record<string, SRSData>;
-  /** Base item used when the first review materializes an implicit catalog sentence. */
+  /**
+   * The reviewed item as it was before the review, for a server that has never stored it: an implicit
+   * catalog sentence on its first review, or an item whose first push hasn't landed yet.
+   */
   seedItem?: StoredItem;
 }
 
@@ -38,31 +42,42 @@ export function readPendingReviewMutations(
   }
 }
 
+/** Returns whether the outbox now holds `mutations`: localStorage may be unavailable or full. */
 function writePendingReviewMutations(
   userId: string,
   mutations: PendingReviewMutation[],
   storage: StorageLike | null,
-): void {
-  if (!storage || !userId) return;
+): boolean {
+  if (!storage || !userId) return false;
   try {
     if (mutations.length === 0) storage.removeItem(pendingKey(userId));
     else storage.setItem(pendingKey(userId), JSON.stringify(mutations));
+    return true;
   } catch {
-    // IndexedDB journaling remains the fallback when localStorage is unavailable/full.
+    return false;
   }
 }
 
+/** Returns false when the outbox couldn't store the mutation, so the caller syncs the review another way. */
 export function enqueuePendingReviewMutation(
   userId: string,
   mutation: PendingReviewMutation,
   storage: StorageLike | null = defaultStorage(),
-): void {
-  if (!storage) return;
+): boolean {
+  if (!storage) return false;
   const pending = readPendingReviewMutations(userId, storage)
     .filter(current => current.event.id !== mutation.event.id);
   pending.push(mutation);
-  writePendingReviewMutations(userId, pending, storage);
+  return writePendingReviewMutations(userId, pending, storage);
 }
+
+// The answers /reviews/apply gives a mutation it will refuse on every retry: malformed, its item gone or
+// someone else's, or too large. A failed sign-in, a timeout, rate limiting or a server error can pass.
+const REFUSED_REVIEW_STATUSES = new Set([400, 404, 409, 410, 413, 422]);
+
+/** Whether the server refused a review mutation for good, so retrying it would only hold back the rest. */
+export const isRefusedReviewMutation = (error: unknown): boolean =>
+  error instanceof HttpError && REFUSED_REVIEW_STATUSES.has(error.status);
 
 export function removePendingReviewMutation(
   userId: string,

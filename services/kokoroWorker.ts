@@ -8,6 +8,8 @@
  */
 import { KokoroTTS } from 'kokoro-js';
 import { env } from '@huggingface/transformers';
+// The only runtime file the default onnxruntime-web build fetches (its JS glue is bundled into it).
+import ortWasmUrl from '../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm?url';
 
 export type KokoroDevice = 'webgpu' | 'wasm';
 /** Synthesize `text`, loading the model on the first of `devices` that works if it isn't loaded yet. */
@@ -16,7 +18,9 @@ export type KokoroResponse =
   | { type: 'ready'; device: KokoroDevice }
   | { type: 'loadFailed'; device: KokoroDevice; message: string }
   | { type: 'audio'; id: number; audio: Blob }
-  | { type: 'error'; id: number; message: string };
+  | { type: 'error'; id: number; message: string }
+  /** Every device failed to load: nothing this session will make Kokoro speak. */
+  | { type: 'unavailable'; message: string };
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 // fp32 on every device: it's the only precision that produces clean audio for this model. Hard-won,
@@ -27,6 +31,10 @@ const DTYPE = 'fp32';
 
 // Skip the local /models/* lookup (404s): load straight from the HF Hub and the browser cache.
 env.allowLocalModels = false;
+// transformers.js points the WASM runtime at cdn.jsdelivr.net, which the page's CSP blocks. Load it from
+// our own origin instead: a file (not a URL prefix) keeps the glue bundled, and the hashed /assets/ copy is
+// cached by the service worker like the other optional voice files.
+env.backends.onnx.wasm!.wasmPaths = { wasm: ortWasmUrl };
 
 // The project type-checks against the DOM library, which types `self` as a window.
 const scope = self as unknown as Worker;
@@ -49,6 +57,7 @@ const loadModel = (devices: KokoroDevice[]): Promise<KokoroTTS> => {
         post({ type: 'loadFailed', device, message: String(error) });
       }
     }
+    post({ type: 'unavailable', message: String(lastError) });
     throw lastError;
   })();
   model.catch(() => { model = null; });

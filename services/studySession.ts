@@ -1,4 +1,5 @@
 import {
+  type ReviewRating,
   type ReviewTaskType,
   type StoredItem,
   getItemSpelling,
@@ -82,6 +83,11 @@ export function buildReviewQueue(
     return true;
   }).slice(0, limit);
   return [...burySiblings(due, dueLimit), ...burySiblings(fresh, newLimit)];
+}
+
+/** A card rated Again comes back at the end of the session, as a further prompt after the rest. */
+export function requeueLapse(itemIds: string[], index: number, rating: ReviewRating): string[] {
+  return rating === 'again' && index < itemIds.length ? [...itemIds, itemIds[index]] : itemIds;
 }
 
 export function formatReviewInterval(minutes: number): string {

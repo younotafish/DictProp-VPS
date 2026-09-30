@@ -2,7 +2,9 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { isDeferred, ledgerFromEnvironment, parentHash, readLedger } from './failure-ledger.mjs';
 import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
+import { missingCardFields, validString, validUsageAudit } from './vocab-card-contract.mjs';
 
 const [corpusArg, outputArg, limitArg, lookbackHoursArg, providerFilterArg] = process.argv.slice(2);
 if (!corpusArg || !outputArg) {
@@ -18,38 +20,9 @@ const lookbackHours = Math.max(1, Math.min(24 * 365, Number(lookbackHoursArg || 
 const providerFilter = typeof providerFilterArg === 'string' ? providerFilterArg.trim() : '';
 const recentSince = Date.now() - lookbackHours * 60 * 60 * 1_000;
 
-const validString = value => typeof value === 'string' && value.trim().length > 0;
-const validUsageAudit = value => value && typeof value === 'object' &&
-  ['modern_american', 'current_general', 'british_only', 'rare_or_dated', 'narrow_specialized']
-    .includes(value.status) && validString(value.reason) &&
-  ['high', 'medium', 'low'].includes(value.confidence) && Number(value.auditedAt) > 0;
-const validExample = value => validString(value) && value.trim().length >= 20 &&
-  value.length <= 1_000 && (value.match(/\{\{([^{}]+)\}\}/g) || []).length === 1;
-
-function missingCardFields(card) {
-  const missing = [];
-  for (const [field, minimum] of [
-    ['word', 1], ['sense', 3], ['chinese', 1], ['definition', 10], ['history', 20],
-    ['register', 10], ['mnemonic', 10], ['imagePrompt', 50],
-  ]) {
-    if (!validString(card?.[field]) || card[field].trim().length < minimum) missing.push(field);
-  }
-  if (validString(card?.chinese) && !/[\u3400-\u9fff]/u.test(card.chinese)) missing.push('chinese');
-  if (!/^\/[^/\n]+\/$/.test(String(card?.ipa || '').trim())) missing.push('ipa');
-  for (const field of ['forms', 'synonyms', 'antonyms', 'confusables']) {
-    if (!Array.isArray(card?.[field]) || card[field].some(value => !validString(value))) missing.push(field);
-  }
-  if (!Array.isArray(card?.wordFamily) || card.wordFamily.some(member =>
-    !validString(member?.word) || !validString(member?.pos) ||
-    !validString(member?.chinese) || !/[\u3400-\u9fff]/u.test(member.chinese))) {
-    missing.push('wordFamily');
-  }
-  if (!Array.isArray(card?.examples) || card.examples.length !== 2 || !card.examples.every(validExample)) {
-    missing.push('examples');
-  }
-  if (!validUsageAudit(card?.usageAudit)) missing.push('usageAudit');
-  return [...new Set(missing)];
-}
+const failureLedger = ledgerFromEnvironment('vocab');
+const deferredEntries = failureLedger ? readLedger(failureLedger.path).stages[failureLedger.stage] || {} : {};
+const now = Date.now();
 
 function shouldArchive(audit) {
   return audit?.confidence !== 'low' &&
@@ -58,10 +31,17 @@ function shouldArchive(audit) {
 
 const candidates = [];
 let ignoredLegacyExampleOnly = 0;
+let missingHeadword = 0;
+let deferred = 0;
 for (const item of corpus.items) {
   if (!item?.data || item.isDeleted || item.wasArchived || !['vocab', 'phrase'].includes(item.type)) continue;
   const cards = item.type === 'vocab' ? [item.data] : Array.isArray(item.data.vocabs) ? item.data.vocabs : [];
   if (providerFilter && !cards.some(card => card?.advancedEnrichment?.provider === providerFilter)) continue;
+  // The completion stage never writes a headword, so selecting such a card would repeat every cycle.
+  if (cards.some(card => !validString(card?.word))) {
+    missingHeadword++;
+    continue;
+  }
   const missing = cards.flatMap(card => missingCardFields(card));
   const needsAdvancedEnrichment = cards.some(card => !hasCurrentLocalAdvancedEnrichment(card));
   if (missing.length === 0 && !needsAdvancedEnrichment) continue;
@@ -74,6 +54,10 @@ for (const item of corpus.items) {
   // A phrase-level usage audit is required by the optimistic corpus importer. Vocabulary cards can
   // have their own missing audit generated below, but an unaudited phrase needs the broader audit job.
   if (item.type === 'phrase' && !validUsageAudit(item.data.usageAudit)) continue;
+  if (isDeferred(deferredEntries[item.data.id], parentHash(item), now)) {
+    deferred++;
+    continue;
+  }
   candidates.push({ item, recent, needsAdvancedEnrichment });
 }
 
@@ -104,6 +88,8 @@ process.stdout.write(`${JSON.stringify({
   advancedEligible: candidates.filter(candidate => candidate.needsAdvancedEnrichment).length,
   selected: selected.length,
   ignoredLegacyExampleOnly,
+  missingHeadword,
+  deferred,
   providerFilter: providerFilter || null,
   recentSince,
 })}\n`);

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
-import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, RotateCcw, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
+import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, getItemSpelling } from '../types';
+import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
 import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
@@ -17,6 +17,7 @@ import { makeVocabStoredItem } from '../services/items';
 import { buildNotebookList, findFuzzyMatches, findLiteralMatches, type NotebookFilter, type NotebookList, type NotebookSort } from '../services/notebookList';
 import { speakWord, ensureTTS } from '../services/lazyTts';
 import { warn, error as logError } from '../services/logger';
+import { isDialogOpenOutside, isTypingTarget } from './keyboardTarget';
 
 type NotebookSection = 'main' | 'due' | 'archived';
 
@@ -25,7 +26,8 @@ type VirtualRow =
   | { key: string; type: 'group'; group: ItemGroup; groupIndex: number; section: NotebookSection }
   | { key: string; type: 'due-header'; count: number }
   | { key: string; type: 'archived-toggle'; count: number }
-  | { key: string; type: 'compare-banner' };
+  | { key: string; type: 'compare-banner' }
+  | { key: string; type: 'list-note' };
 
 const virtualRowKey = (_index: number, row: VirtualRow) => row.key;
 const noop = () => {};
@@ -45,11 +47,23 @@ const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
 }) => {
   const [showActions, setShowActions] = useState(false);
   const longPressTimer = useRef<number | null>(null);
+  const pressStart = useRef<{ x: number; y: number } | null>(null);
+  const longPressFired = useRef(false);
+  // A mouse press held long enough to open the actions ends in a click, which would close them again.
+  const ignoreClicksUntil = useRef(0);
   const LONG_PRESS_MS = 500;
+  const MOVE_TOLERANCE_PX = 10;
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const focusActionsOnOpen = useRef(false);
 
-  const handlePressStart = () => {
+  const handlePressStart = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    pressStart.current = { x: e.clientX, y: e.clientY };
+    longPressFired.current = false;
     longPressTimer.current = window.setTimeout(() => {
+      longPressTimer.current = null;
+      longPressFired.current = true;
       setShowActions(true);
     }, LONG_PRESS_MS);
   };
@@ -59,6 +73,24 @@ const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
       window.clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
+    if (longPressFired.current) ignoreClicksUntil.current = Date.now() + 400;
+    longPressFired.current = false;
+    pressStart.current = null;
+  };
+
+  // A finger that moves is scrolling or swiping to another meaning, not holding.
+  const handlePressMove = (e: React.PointerEvent) => {
+    const start = pressStart.current;
+    if (start && longPressTimer.current && Math.hypot(e.clientX - start.x, e.clientY - start.y) > MOVE_TOLERANCE_PX) {
+      handlePressEnd();
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    // A touch long press can raise the context menu before the timer runs out.
+    if (pressStart.current) longPressFired.current = true;
+    setShowActions(true);
   };
 
   // Clean up timer on unmount
@@ -70,12 +102,28 @@ const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
     };
   }, []);
 
+  // The more button goes away as the actions open, so the keyboard's focus moves on to the first of them.
+  useEffect(() => {
+    if (!showActions || !focusActionsOnOpen.current) return;
+    focusActionsOnOpen.current = false;
+    actionsRef.current?.querySelector('button')?.focus();
+  }, [showActions]);
+
   const handleClick = () => {
+    if (Date.now() < ignoreClicksUntil.current) return;
     if (showActions) {
       setShowActions(false);
       return;
     }
     onViewDetail();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ') || e.repeat) return;
+    e.preventDefault();
+    // The card this opens listens for Enter and Space on window too; it mustn't take this press as well.
+    e.stopPropagation();
+    handleClick();
   };
 
   const isPhrase = item.type === 'phrase';
@@ -96,22 +144,26 @@ const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
 
   return (
     <div className="relative overflow-hidden rounded-2xl shadow-sm border border-slate-100 bg-slate-50">
-      {/* Main Card */}
+      {/* Main Card — tap or Enter opens it; a long press, right-click or the more button shows its actions */}
       <div
+        role="button"
+        tabIndex={0}
         onClick={handleClick}
-        onMouseDown={handlePressStart}
-        onMouseUp={handlePressEnd}
-        onMouseLeave={handlePressEnd}
-        onTouchStart={(e) => { handlePressStart(); }}
-        onTouchEnd={handlePressEnd}
-        className="bg-white p-4 relative cursor-pointer"
+        onKeyDown={handleKeyDown}
+        onPointerDown={handlePressStart}
+        onPointerMove={handlePressMove}
+        onPointerUp={handlePressEnd}
+        onPointerLeave={handlePressEnd}
+        onPointerCancel={handlePressEnd}
+        onContextMenu={handleContextMenu}
+        className="bg-white p-4 relative cursor-pointer select-none [-webkit-touch-callout:none]"
         style={{ touchAction: 'pan-y' }}
       >
         {/* SRS Indicator Strip */}
         <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${isDue ? 'bg-orange-400' : (intervalDays > 21 ? 'bg-emerald-400' : 'bg-slate-200')}`}></div>
 
         <div className="pl-3 pr-2">
-          <div className="mb-2">
+          <div className="mb-2 pr-8">
             <h4 className="font-bold text-slate-900 text-lg leading-tight line-clamp-2" title={title}>{title}</h4>
             <div className="flex flex-wrap items-center gap-2 mt-1.5">
               {ipa && (
@@ -149,9 +201,20 @@ const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
         </div>
       </div>
 
+      {!showActions && (
+        <button
+          onClick={() => { focusActionsOnOpen.current = true; setShowActions(true); }}
+          className="absolute top-2 right-2 z-10 w-9 h-9 flex items-center justify-center rounded-full text-slate-300 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          aria-label={`More actions for ${title}`}
+          title="More actions"
+        >
+          <MoreHorizontal size={18} />
+        </button>
+      )}
+
       {/* Long-press actions */}
       {showActions && (
-        <div className="absolute top-3 right-3 flex flex-col gap-2 z-20">
+        <div ref={actionsRef} className="absolute top-3 right-3 flex flex-col gap-2 z-20">
           <button
             onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('global-search', { detail: { query: title, forceAI: true } })); setShowActions(false); }}
             className="p-2 bg-white text-indigo-500 shadow rounded-full hover:bg-indigo-50 active:scale-95 transition-all"
@@ -301,18 +364,22 @@ const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
         />
       </div>
       
-      {/* Dot indicators */}
-      <div className="flex justify-center gap-1.5 mt-2">
+      {/* Dot indicators — each button is taller and wider than the dot it draws, so it's easier to hit */}
+      <div className="flex justify-center">
         {group.items.map((_, idx) => (
           <button
             key={idx}
             onClick={(e) => { e.stopPropagation(); setCurrentIndex(idx); }}
-            className={`w-2 h-2 rounded-full transition-all ${
+            className="group/dot h-6 px-[3px] flex items-center"
+            aria-label={`Meaning ${idx + 1} of ${totalItems}`}
+            aria-current={idx === index ? 'true' : undefined}
+          >
+            <span className={`block w-2 h-2 rounded-full transition-all ${
               idx === index
                 ? 'bg-violet-500 w-4' 
-                : 'bg-slate-300 hover:bg-slate-400'
-            }`}
-          />
+                : 'bg-slate-300 group-hover/dot:bg-slate-400'
+            }`} />
+          </button>
         ))}
       </div>
     </div>
@@ -327,10 +394,12 @@ interface SearchResultsCarouselProps {
   onSearch: (text: string) => void;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
+  /** False while a card or dialog is open over the notebook, whose arrow keys are its own. */
+  keyboardEnabled: boolean;
 }
 
 const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
-  vocabs, onSave, isVocabSaved, onSearch, onSaveSentence, isSentenceSaved
+  vocabs, onSave, isVocabSaved, onSearch, onSaveSentence, isSentenceSaved, keyboardEnabled
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const carouselRef = useRef<HTMLDivElement>(null);
@@ -360,10 +429,11 @@ const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
 
   // Keyboard arrow navigation
   React.useEffect(() => {
-    if (totalItems <= 1) return;
+    if (totalItems <= 1 || !keyboardEnabled) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return;
+      // A dialog the notebook opened itself (text analyzer, imports) or the search sheet has the keys.
+      if (isDialogOpenOutside(null)) return;
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         if (currentIndex > 0) navigateTo(currentIndex - 1);
@@ -374,7 +444,7 @@ const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [totalItems, currentIndex, navigateTo]);
+  }, [totalItems, currentIndex, navigateTo, keyboardEnabled]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -462,17 +532,21 @@ const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
         
         {/* Dot indicators */}
         {totalItems > 1 && (
-          <div className="flex justify-center gap-1.5 mt-3">
+          <div className="flex justify-center mt-1">
             {vocabs.map((_, idx) => (
               <button
                 key={idx}
                 onClick={(e) => { e.stopPropagation(); navigateTo(idx); }}
-                className={`w-2 h-2 rounded-full transition-all ${
+                className="group/dot h-6 px-[3px] flex items-center"
+                aria-label={`Meaning ${idx + 1} of ${totalItems}`}
+                aria-current={idx === currentIndex ? 'true' : undefined}
+              >
+                <span className={`block w-2 h-2 rounded-full transition-all ${
                   idx === currentIndex 
                     ? 'bg-violet-500 w-4' 
-                    : 'bg-slate-300 hover:bg-slate-400'
-                }`}
-              />
+                    : 'bg-slate-300 group-hover/dot:bg-slate-400'
+                }`} />
+              </button>
             ))}
           </div>
         )}
@@ -495,8 +569,6 @@ interface NotebookProps {
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
   onForceSync?: () => void;
   isOnline?: boolean;
-  onBulkRefresh?: () => void;
-  bulkRefreshProgress?: { current: number; total: number; isRunning: boolean } | null;
   hasSavedVariant: (query: string) => boolean;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onFindDuplicates?: () => void;
@@ -520,7 +592,7 @@ interface NotebookProps {
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    onBulkRefresh, bulkRefreshProgress, hasSavedVariant, isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
+    hasSavedVariant, isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
     onGenerateAllSpeech, ttsGenProgress,
@@ -560,6 +632,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     };
     const handleKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault(); // closing the menu is all this Escape does
       setShowMaintenanceMenu(false);
       maintenanceMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
     };
@@ -777,24 +850,13 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     return () => window.removeEventListener('notebook-search', handleNotebookSearch as EventListener);
   }, [performAISearch, hasSavedVariant]);
 
-  // Escape key to exit compare mode
+  // Global Escape (works even when the input is not focused) clears the search, and a second one leaves compare
+  // mode. It's the notebook's own Escape, so it stands down while an overlay (DetailView, a modal) is open and
+  // for an Escape something else already used, such as closing the tools menu.
   useEffect(() => {
-    if (!compareMode) return;
+    if (hasOverlay) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setCompareMode(false);
-        setSelectedForCompare([]);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [compareMode]);
-
-  // Global Escape to clear search (works even when input is not focused)
-  useEffect(() => {
-    if (hasOverlay) return; // Don't clear search when an overlay (DetailView, modal) is open
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
       if (localSearchQuery || searchResults) {
@@ -803,11 +865,15 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         setLocalSearchQuery('');
         setSearchResults(null);
         setSearchError(null);
+      } else if (compareMode) {
+        e.preventDefault();
+        setCompareMode(false);
+        setSelectedForCompare([]);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [localSearchQuery, searchResults, hasOverlay]);
+  }, [localSearchQuery, searchResults, compareMode, hasOverlay]);
 
   // Clear search results when query is cleared
   useEffect(() => {
@@ -860,6 +926,62 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     return buildNotebookList(items, matches ?? [], sortMode, filterMode);
   }, [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode]);
   useEffect(() => { shownList.current = list; }, [list]);
+  // The list shows this query's results, not the last query's kept on screen while the fuzzy scan waits.
+  const searchSettled = !!searchQuery && (!!literalMatches || fuzzyReady);
+
+  // "N saved" counts the notebook's spellings under the current filter, not the search results. Outside a
+  // search they're the listed groups; during one they're counted apart, once per search rather than per key.
+  const searching = !!searchQuery;
+  const savedWhileSearching = useMemo(() => {
+    if (!searching) return 0;
+    const spellings = new Set<string>();
+    for (const item of items) {
+      if (!item?.data?.id || item.isDeleted || item.isArchived) continue;
+      if (filterMode === 'all' || item.type === filterMode) spellings.add(getItemSpelling(item));
+    }
+    spellings.delete('');
+    return spellings.size;
+  }, [items, filterMode, searching]);
+  const savedCount = searching ? savedWhileSearching : list.groups.length;
+  // The empty-notebook screen is for a notebook with nothing in it, not one the filter or the archive hides.
+  const hasSavedItems = useMemo(() => items.some(item => !!item?.data?.id && !item.isDeleted), [items]);
+
+  // With nothing listed above the due and archived sections, the list says why and offers the way out.
+  const canLookUp = isOnline && !searchResults && !isSearching && !isTranscribing && !!localSearchQuery.trim();
+  const listNote = useMemo(() => {
+    if (list.groups.length > 0) return null;
+    if (searchQuery ? !searchSettled : list.archived.length === 0 && filterMode === 'all') return null;
+    const noun = filterMode === 'phrase' ? 'phrases' : filterMode === 'vocab' ? 'words' : 'items';
+    const message = searchQuery
+      ? (list.archived.length > 0 ? `Only archived ${noun} match “${searchQuery}”.` : `No saved ${noun} match “${searchQuery}”.`)
+      : (list.archived.length > 0 ? `All your ${noun} are archived.` : `No ${noun} saved yet.`);
+    return (
+      <div className="mx-3 mt-3 px-4 py-5 bg-white border border-dashed border-slate-200 rounded-2xl text-center">
+        <p className="text-sm text-slate-500">{message}</p>
+        {((searchQuery && canLookUp) || filterMode !== 'all') && (
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            {searchQuery && canLookUp && (
+              <button
+                onClick={() => performAISearch(localSearchQuery)}
+                className="min-h-11 px-4 inline-flex items-center gap-2 rounded-xl bg-violet-50 text-violet-700 text-sm font-semibold hover:bg-violet-100 transition-colors"
+              >
+                <Wand2 size={16} /> Look it up with AI
+              </button>
+            )}
+            {filterMode !== 'all' && (
+              <button
+                onClick={() => setFilterMode('all')}
+                className="min-h-11 px-4 inline-flex items-center gap-2 rounded-xl bg-indigo-50 text-indigo-700 text-sm font-semibold hover:bg-indigo-100 transition-colors"
+              >
+                <Filter size={16} /> Show all items
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }, [list, searchSettled, searchQuery, filterMode, canLookUp, performAISearch, localSearchQuery]);
+  const showListNote = listNote !== null;
 
   // DetailView pages through the section the card was opened from.
   const openGroup = useCallback((section: NotebookSection, groupIndex: number, itemIndex: number) => {
@@ -874,6 +996,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     });
 
     if (compareMode) rows.push({ key: 'compare-banner', type: 'compare-banner' });
+    if (showListNote) rows.push({ key: 'list-note', type: 'list-note' });
     addGroups(list.groups, 'main');
     // While searching, the due items outside the results follow them
     if (list.dueGroups.length > 0) {
@@ -885,9 +1008,11 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       if (showArchived) addGroups(list.archivedGroups, 'archived');
     }
     return rows;
-  }, [list, showArchived, compareMode]);
+  }, [list, showArchived, compareMode, showListNote]);
 
   const renderVirtualRow = useCallback((_index: number, row: VirtualRow) => {
+    if (row.type === 'list-note') return listNote;
+
     if (row.type === 'compare-banner') {
       return (
         <div className="px-3 pt-3">
@@ -962,16 +1087,28 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         : group.title;
       const isSelected = selectedForCompare.includes(displayWord);
       const canSelect = selectedForCompare.length < 3 || isSelected;
+      const toggleSelected = () => {
+        if (isSelected) {
+          setSelectedForCompare(prev => prev.filter(w => w !== displayWord));
+        } else if (canSelect) {
+          setSelectedForCompare(prev => [...prev, displayWord]);
+        }
+      };
 
       return (
         <div className="px-3 py-1.5">
           <div
+            role="checkbox"
+            tabIndex={0}
+            aria-checked={isSelected}
+            aria-disabled={!canSelect}
+            aria-label={displayWord}
             className={`relative cursor-pointer transition-all ${isSelected ? 'ring-2 ring-indigo-400 rounded-2xl' : ''}`}
-            onClick={() => {
-              if (isSelected) {
-                setSelectedForCompare(prev => prev.filter(w => w !== displayWord));
-              } else if (canSelect) {
-                setSelectedForCompare(prev => [...prev, displayWord]);
+            onClick={toggleSelected}
+            onKeyDown={(e) => {
+              if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) {
+                e.preventDefault();
+                toggleSelected();
               }
             }}
           >
@@ -984,7 +1121,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             }`}>
               {isSelected && <Check size={14} />}
             </div>
-            <div className="pointer-events-none">
+            <div className="pointer-events-none" inert>
               <NotebookGroup
                 group={group}
                 section={section}
@@ -1011,7 +1148,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         />
       </div>
     );
-  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive]);
+  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive, listNote]);
 
   const { reviewedToday, dueCount } = useMemo(() => {
     const now = Date.now();
@@ -1022,7 +1159,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     let due = 0;
     for (const item of items) {
       if (item.isDeleted || item.isArchived || !item.srs) continue;
-      if (item.srs.lastReviewDate >= todayTs) reviewed++;
+      // A reset stamps lastReviewDate as well, and leaves no reviews.
+      if (item.srs.totalReviews > 0 && item.srs.lastReviewDate >= todayTs) reviewed++;
       if (item.srs.nextReview <= now) due++;
     }
     return { reviewedToday: reviewed, dueCount: due };
@@ -1035,7 +1173,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (element) setScrollParent(element);
   }, []);
 
-  if (list.active.length === 0 && !localSearchQuery) {
+  if (!hasSavedItems && !localSearchQuery) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50">
         <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
@@ -1075,7 +1213,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         <div className="px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
           <div className="min-w-0">
             <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-            <p className="text-xs text-slate-500 font-medium truncate">{list.groups.length} saved · {reviewedToday} reviewed today · {dueCount} due</p>
+            <p className="text-xs text-slate-500 font-medium truncate">{savedCount} saved · {reviewedToday} reviewed today · {dueCount} due</p>
           </div>
           <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 min-w-0">
             {isOnline && (
@@ -1129,11 +1267,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                     {onRestoreImagesToServer && (
                       <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onRestoreImagesToServer(); }} disabled={imageRestoreRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                         {imageRestoreRunning ? <Loader2 size={17} className="animate-spin" /> : <UploadCloud size={17} />} Restore server images
-                      </button>
-                    )}
-                    {onBulkRefresh && (
-                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onBulkRefresh(); }} disabled={bulkRefreshProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                        {bulkRefreshProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <RotateCcw size={17} />} Refresh analyses
                       </button>
                     )}
                     {onFindDuplicates && (
@@ -1218,19 +1351,21 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               onChange={(e) => setLocalSearchQuery(e.target.value)}
               onKeyDown={handleSearchKeyDown}
               placeholder={isRecording ? "Listening..." : "Search or look up new word"}
-              className="w-full pl-10 pr-20 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
+              aria-label="Search the notebook, or look up a new word"
+              className="w-full pl-10 pr-24 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
             />
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
               {/* Voice recording button */}
               {!localSearchQuery && !isSearching && !isTranscribing && (
                 <button 
                   onClick={toggleRecording}
-                  className={`p-1.5 rounded-lg transition-all ${
+                  className={`w-9 h-9 flex items-center justify-center rounded-lg transition-all ${
                     isRecording 
                       ? 'text-rose-500 bg-rose-50 animate-pulse' 
                       : 'text-slate-400 hover:text-violet-600 hover:bg-violet-50'
                   }`}
                   title={isRecording ? 'Stop recording' : 'Voice search'}
+                  aria-label={isRecording ? 'Stop recording' : 'Voice search'}
                   disabled={!isOnline}
                 >
                   {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
@@ -1245,15 +1380,18 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               {localSearchQuery && !isSearching && !isTranscribing && (
                 <button 
                   onClick={() => performAISearch(localSearchQuery)}
-                  className="text-violet-500 hover:text-violet-700 p-1.5 rounded-lg hover:bg-violet-50 transition-colors"
+                  className="w-9 h-9 flex items-center justify-center text-violet-500 hover:text-violet-700 rounded-lg hover:bg-violet-50 transition-colors"
                   title="Search with AI (Enter)"
+                  aria-label="Search with AI"
                   disabled={!isOnline}
                 >
                   <Wand2 size={16} />
                 </button>
               )}
               {isSearching && (
-                <Loader2 className="animate-spin text-violet-500" size={16} />
+                <div className="w-9 h-9 flex items-center justify-center">
+                  <Loader2 className="animate-spin text-violet-500" size={16} />
+                </div>
               )}
               {localSearchQuery && !isSearching && !isTranscribing && (
                 <button 
@@ -1262,39 +1400,17 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                     setSearchResults(null);
                     setSearchError(null);
                   }}
-                  className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100 transition-colors"
+                  className="w-9 h-9 flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors"
                   title="Clear search"
+                  aria-label="Clear search"
                 >
-                  <X size={14} />
+                  <X size={16} />
                 </button>
               )}
             </div>
           </div>
         </div>
       </div>
-
-      {/* Bulk Refresh Progress Banner */}
-      {bulkRefreshProgress?.isRunning && (
-        <div className="sticky top-[72px] z-[9] bg-violet-500 text-white px-4 py-3 shadow-md">
-          <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Loader2 className="animate-spin" size={18} />
-              <div>
-                <p className="font-medium text-sm">Refreshing all items...</p>
-                <p className="text-xs text-violet-200">
-                  {bulkRefreshProgress.current} / {bulkRefreshProgress.total} words processed
-                </p>
-              </div>
-            </div>
-            <div className="w-24 h-2 bg-violet-400 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-white transition-all duration-300"
-                style={{ width: `${(bulkRefreshProgress.current / bulkRefreshProgress.total) * 100}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Batch Import Progress Banner */}
       {batchImportProgress?.isRunning && (
@@ -1344,6 +1460,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           onSearch={onSearch}
           onSaveSentence={onSaveSentence}
           isSentenceSaved={isSentenceSaved}
+          keyboardEnabled={!hasOverlay}
         />
       )}
 

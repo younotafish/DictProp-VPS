@@ -64,17 +64,47 @@ async function alignOnce(audio: Buffer): Promise<WordTiming[]> {
       '-ng',
     ]);
     const parsed = JSON.parse(await readFile(`${outputPrefix}.json`, 'utf8'));
+    // No words is a real answer (a silent clip) and gets stored; output without a transcription is not.
+    if (!Array.isArray(parsed?.transcription)) throw new Error('whisper output has no transcription');
     return parseWhisperCppTimings(parsed);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 }
 
+export type AlignmentPriority = 'interactive' | 'background';
+
+// Runs one task at a time; an interactive task (a clip someone is waiting on) is taken before any
+// queued background work, so a live request never waits behind a backfill run.
+export function createPriorityQueue() {
+  const waiting: Record<AlignmentPriority, Array<() => void>> = { interactive: [], background: [] };
+  let running = false;
+  const next = () => {
+    if (running) return;
+    const start = waiting.interactive.shift() ?? waiting.background.shift();
+    if (!start) return;
+    running = true;
+    start();
+  };
+  return function schedule<T>(task: () => Promise<T>, priority: AlignmentPriority = 'background'): Promise<T> {
+    return new Promise<T>((resolvePromise, reject) => {
+      waiting[priority].push(() => {
+        Promise.resolve()
+          .then(task)
+          .then(resolvePromise, reject)
+          .finally(() => { running = false; next(); });
+      });
+      next();
+    });
+  };
+}
+
 // A tiny model still uses a meaningful amount of memory. Serialize alignment so two backfill workers
 // can synthesize concurrently without loading two model copies on the 2 GB VPS.
-let alignmentQueue: Promise<void> = Promise.resolve();
-export function alignAudioLocally(audio: Buffer): Promise<WordTiming[]> {
-  const job = alignmentQueue.then(() => alignOnce(audio));
-  alignmentQueue = job.then(() => undefined, () => undefined);
-  return job;
+const alignmentQueue = createPriorityQueue();
+export function alignAudioLocally(
+  audio: Buffer,
+  options: { priority?: AlignmentPriority } = {},
+): Promise<WordTiming[]> {
+  return alignmentQueue(() => alignOnce(audio), options.priority ?? 'background');
 }

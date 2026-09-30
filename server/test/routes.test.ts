@@ -180,12 +180,15 @@ test('a first catalog review atomically seeds its isolated sentence item', async
   assert.equal(result.applied, true);
   assert.equal(result.items[0].data.catalogCollectionId, 'career-conversations');
   assert.equal(result.items[0].srs.totalReviews, 1);
+  // The seed was the client's own copy, which holds no revision yet.
+  assert.deepEqual(result.baseRevisions, { [id]: 0 });
 
   response = await apply({ event, itemIds: [id], seedItem });
   assert.equal(response.status, 200);
   result = await response.json() as any;
   assert.equal(result.applied, false);
   assert.equal(result.items[0].srs.totalReviews, 1);
+  assert.deepEqual(result.baseRevisions, { [id]: 0 });
 
   response = await apply({
     event: { ...event, id: 'catalog-bad-seed', itemId: `${id}-other` },
@@ -194,6 +197,41 @@ test('a first catalog review atomically seeds its isolated sentence item', async
   });
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: 'Review seed does not match event' });
+});
+
+test('a review of an item the server has not stored yet seeds it instead of failing', async () => {
+  const id = 'route-unsynced-item';
+  const seedItem = { ...item, data: { ...item.data, id, word: 'fresh' }, srs: { ...item.srs, id } };
+  const event = {
+    id: 'route-unsynced-review', itemId: id, itemType: 'vocab',
+    reviewedAt: Date.now(), previousStep: 0, nextStep: 1, rating: 'good',
+  };
+  const apply = (body: unknown) => app.request('/api/reviews/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  // Without a seed there is nothing to apply the review to, on this try or any other.
+  let response = await apply({ event, itemIds: [id] });
+  assert.equal(response.status, 404);
+
+  response = await apply({ event, itemIds: [id], seedItem });
+  assert.equal(response.status, 201);
+  const result = await response.json() as any;
+  assert.equal(result.items[0].data.word, 'fresh');
+  assert.equal(result.items[0].srs.totalReviews, 1);
+  assert.deepEqual(result.baseRevisions, { [id]: 0 });
+
+  // The item's first push, landing late, keeps the review's schedule.
+  response = await app.request('/api/items', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([seedItem]),
+  });
+  assert.equal(response.status, 200);
+  response = await app.request(`/api/items/${id}`);
+  assert.equal((await response.json() as any).srs.totalReviews, 1);
 });
 
 test('item routes reject malformed records and oversized batches', async () => {
@@ -407,4 +445,23 @@ test('a missing build file is a 404, while app routes still get the shell', asyn
     assert.equal(response.headers.get('cache-control'), 'no-cache', path);
   }
   assert.match((await staticApp.request('/study')).headers.get('content-type') ?? '', /text\/html/);
+});
+
+test('CORS preflight answers a fixed header list and unknown API paths are JSON 404s', async () => {
+  const preflight = await app.request('/api/items', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://dictprop.online',
+      'Access-Control-Request-Method': 'PUT',
+      // Echoing or splitting a client-sized list is what made preflights a pre-auth CPU sink.
+      'Access-Control-Request-Headers': `a${' '.repeat(4096)}a`,
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-headers'), 'Content-Type');
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://dictprop.online');
+
+  const unknown = await app.request('/api/no-such-route');
+  assert.equal(unknown.status, 404);
+  assert.deepEqual(await unknown.json(), { error: 'Not found' });
 });

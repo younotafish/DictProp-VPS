@@ -1,4 +1,6 @@
 name: Sentence Backfill Bridge
+# A publisher recognizes its own import run by the release tag in the title.
+run-name: ${{ inputs.operation }} ${{ inputs.release_tag }}
 
 on:
   workflow_dispatch:
@@ -18,19 +20,42 @@ on:
           - essay-import
           - audit
           - repair
+          - repair-apply
       release_tag:
         description: Temporary release tag containing the encrypted import asset
         required: false
         type: string
+      confirm:
+        description: For repair-apply only, type apply-production-repair to write the previewed repairs
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
 
 jobs:
   repair:
-    if: inputs.operation == 'repair'
+    if: inputs.operation == 'repair' || inputs.operation == 'repair-apply'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # A group holds one running and one pending job, and a newly queued job cancels the pending one. Jobs
+    # that only read production queue apart, so they never cancel a waiting deploy or import.
     concurrency:
-      group: dictprop-production
+      group: ${{ inputs.operation == 'repair-apply' && 'dictprop-production' || 'dictprop-production-read' }}
       cancel-in-progress: false
     steps:
+      # A plain repair run only previews. Writing needs its own choice plus the typed confirmation.
+      - name: Validate repair confirmation
+        if: inputs.operation == 'repair-apply'
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "apply-production-repair" ]; then
+            echo "repair-apply writes production data: set confirm to apply-production-repair" >&2
+            exit 1
+          fi
+
       - name: Preview production repairs
         id: repair_preview
         uses: appleboy/ssh-action@v1
@@ -51,22 +76,24 @@ jobs:
         run: printf '%s\n' "$REPAIR_PREVIEW"
 
       - name: Apply production repairs
+        if: inputs.operation == 'repair-apply'
         id: repair_apply
         uses: appleboy/ssh-action@v1
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 15m
+          command_timeout: 30m
           capture_stdout: true
           script: |
             set -e
             cd /opt/dictprop-vps
-            # The deploy workflow keeps a verified SQLite snapshot. This repair is additionally one
-            # transaction, so a failure cannot leave a partially consolidated library.
+            # The script first copies the database to data/backups/pre-repair-<time>.db. The repair is
+            # one transaction, so a failure cannot leave a partially consolidated library.
             docker compose exec -T app node server/dist/scripts/repair-production-data.js --apply
 
       - name: Report applied repairs
+        if: inputs.operation == 'repair-apply'
         env:
           REPAIR_OUTPUT: ${{ steps.repair_apply.outputs.stdout }}
         run: printf '%s\n' "$REPAIR_OUTPUT"
@@ -74,8 +101,9 @@ jobs:
   audit:
     if: inputs.operation == 'audit'
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     concurrency:
-      group: dictprop-production
+      group: dictprop-production-read
       cancel-in-progress: false
     steps:
       - name: Audit production data
@@ -100,8 +128,9 @@ jobs:
   export:
     if: inputs.operation == 'export'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     concurrency:
-      group: dictprop-production
+      group: dictprop-production-read
       cancel-in-progress: false
     steps:
       - name: Export encrypted sentence records
@@ -115,7 +144,7 @@ jobs:
           envs: SENTENCE_BRIDGE_KEY
           command_timeout: 15m
           script: |
-            set -e
+            set -eo pipefail
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
             echo SENTENCE_EXPORT_BEGIN
@@ -129,6 +158,7 @@ jobs:
   import:
     if: inputs.operation == 'import'
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
@@ -156,7 +186,7 @@ jobs:
           command_timeout: 60m
           capture_stdout: true
           script: |
-            set -e
+            set -eo pipefail
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
             rm -rf /tmp/dictprop-sentence-bridge
@@ -195,6 +225,7 @@ jobs:
   enrichment-import:
     if: inputs.operation == 'enrichment-import'
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
@@ -222,7 +253,7 @@ jobs:
           command_timeout: 60m
           capture_stdout: true
           script: |
-            set -e
+            set -eo pipefail
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
             AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')
@@ -265,6 +296,7 @@ jobs:
   essay-import:
     if: inputs.operation == 'essay-import'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
@@ -292,7 +324,7 @@ jobs:
           command_timeout: 15m
           capture_stdout: true
           script: |
-            set -e
+            set -eo pipefail
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
             rm -rf /tmp/dictprop-essay-bridge
@@ -331,8 +363,9 @@ jobs:
   corpus-export:
     if: inputs.operation == 'corpus-export'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     concurrency:
-      group: dictprop-production
+      group: dictprop-production-read
       cancel-in-progress: false
     steps:
       - name: Export encrypted corpus
@@ -346,7 +379,7 @@ jobs:
           envs: SENTENCE_BRIDGE_KEY
           command_timeout: 15m
           script: |
-            set -e
+            set -eo pipefail
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
             echo CORPUS_EXPORT_BEGIN
@@ -360,6 +393,7 @@ jobs:
   corpus-import:
     if: inputs.operation == 'corpus-import'
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
@@ -369,7 +403,8 @@ jobs:
       - name: Validate import input
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: test -n "$RELEASE_TAG"
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
       - name: Download encrypted bundle
         env:
@@ -406,7 +441,7 @@ jobs:
           command_timeout: 60m
           capture_stdout: true
           script: |
-            set -e
+            set -eo pipefail
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
             docker compose exec -T app sh -c 'rm -rf /tmp/corpus-audit && mkdir -p /tmp/corpus-audit'
@@ -439,6 +474,7 @@ jobs:
   image-import:
     if: inputs.operation == 'image-import'
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
@@ -463,7 +499,7 @@ jobs:
           envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 60m
           script: |
-            set -e
+            set -eo pipefail
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
             rm -rf /tmp/dictprop-image-bridge
@@ -489,6 +525,7 @@ jobs:
   audio-import:
     if: inputs.operation == 'audio-import'
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
@@ -513,7 +550,7 @@ jobs:
           envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 60m
           script: |
-            set -e
+            set -eo pipefail
             test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
             AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')

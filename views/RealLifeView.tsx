@@ -400,6 +400,16 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
   const CollectionIcon = style.icon;
   const selectedProgress = collectionProgress.get(selectedCollection.id)!;
 
+  // An empty list names what emptied it, the search, the review filter or the theme, and offers to clear each.
+  const shownQuery = deferredQuery.trim();
+  const filtersActive = reviewFilter !== 'all' || sectionId !== 'all';
+  const emptyScope = [
+    'No',
+    reviewFilter === 'all' ? '' : reviewFilter,
+    'conversations',
+    sectionId === 'all' ? '' : `in ${selectedCollection.sections.find(section => section.id === sectionId)?.title ?? 'this theme'}`,
+  ].filter(Boolean).join(' ');
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-50">
       <header className="z-10 shrink-0 border-b border-slate-200 bg-white px-3 pb-3 pt-3 sm:px-4">
@@ -408,7 +418,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
             <button
               type="button"
               onClick={closeCollection}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
               title="Back to Real Life collections"
               aria-label="Back to Real Life collections"
             >
@@ -458,8 +468,9 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
               <button
                 type="button"
                 onClick={() => setQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                className="absolute right-0.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center text-slate-400 hover:text-slate-600"
                 title="Clear search"
+                aria-label="Clear search"
               >
                 <X size={15} />
               </button>
@@ -477,7 +488,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
                 type="button"
                 key={key}
                 onClick={() => setReviewFilter(key)}
-                className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${reviewFilter === key ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold transition-colors ${reviewFilter === key ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
               >
                 {label} <span className={reviewFilter === key ? 'text-white/70' : 'text-slate-400'}>{count}</span>
               </button>
@@ -488,7 +499,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
             <button
               type="button"
               onClick={() => setSectionId('all')}
-              className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${sectionId === 'all' ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold transition-colors ${sectionId === 'all' ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
             >
               All {selectedCollection.sentences.length}
             </button>
@@ -497,7 +508,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
                 type="button"
                 key={section.id}
                 onClick={() => setSectionId(section.id)}
-                className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${sectionId === section.id ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold transition-colors ${sectionId === section.id ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                 title={section.description}
               >
                 {section.title} <span className={sectionId === section.id ? 'text-white/70' : 'text-slate-400'}>{section.sentences.length}</span>
@@ -530,10 +541,21 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
       {filtered.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 pb-24 text-center">
           <Search size={42} className="mb-3 text-slate-200" />
-          <p className="text-sm font-medium text-slate-500">No conversations match “{deferredQuery.trim()}”</p>
-          <button type="button" onClick={() => setQuery('')} className="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-            Clear search
-          </button>
+          <p className="text-sm font-medium text-slate-500">
+            {shownQuery ? `${emptyScope} match “${shownQuery}”` : emptyScope}
+          </p>
+          <div className="mt-1 flex gap-4">
+            {query && (
+              <button type="button" onClick={() => setQuery('')} className="min-h-8 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                Clear search
+              </button>
+            )}
+            {filtersActive && (
+              <button type="button" onClick={() => { setReviewFilter('all'); setSectionId('all'); }} className="min-h-8 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                Show all conversations
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <Virtuoso

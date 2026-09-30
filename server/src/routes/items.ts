@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImage, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
+import { db, getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImageBinary, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
@@ -186,30 +186,38 @@ itemsRoutes.get('/items', (c) => {
   return streamAllItems(c, userId);
 });
 
+/** If-None-Match compares weakly, so a W/ prefix added by an intermediary still matches. */
+function ifNoneMatchHits(header: string | undefined, etag: string): boolean {
+  return !!header && header.split(',').some(tag => {
+    const value = tag.trim();
+    return value === '*' || value.replace(/^W\//, '') === etag;
+  });
+}
+
 // GET /api/items/:id/image — return raw binary image with caching headers
 itemsRoutes.get('/items/:id/image', (c) => {
   const userId = c.get('user').id;
-  const dataUri = getItemImage(c.req.param('id'), userId);
-  if (!dataUri) return c.notFound();
+  // Raster types only: never serve a stored SVG (a script-capable document) from this origin.
+  const image = getItemImageBinary(c.req.param('id'), userId);
+  if (!image) return c.notFound();
 
-  const match = dataUri.match(/^data:(image\/[^;]+);base64,(.+)$/);
-  if (!match) return c.notFound();
-
-  const binary = Buffer.from(match[2], 'base64');
-  return new Response(binary, {
-    headers: {
-      'Content-Type': match[1],
-      // This is authenticated, user-owned content and the image may be regenerated
-      // at the same URL. Never allow a shared cache or immutable stale response.
-      'Cache-Control': 'private, max-age=300, must-revalidate',
-    },
-  });
+  const headers = {
+    // The content hash names these exact bytes, so revalidation costs a 304 instead of the image.
+    ETag: `"${image.contentHash}"`,
+    // This is authenticated, user-owned content and the image may be regenerated
+    // at the same URL. Never allow a shared cache or immutable stale response.
+    'Cache-Control': 'private, max-age=300, must-revalidate',
+  };
+  if (ifNoneMatchHits(c.req.header('if-none-match'), headers.ETag)) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(image.data, { headers: { ...headers, 'Content-Type': image.mimeType } });
 });
 
 // POST /api/items/images — batch fetch images for multiple item IDs
 itemsRoutes.post('/items/images', async (c) => {
   const userId = c.get('user').id;
-  const { ids } = await c.req.json();
+  const { ids } = await c.req.json().catch(() => ({}));
   if (!Array.isArray(ids) || ids.length === 0) {
     return c.json({ error: 'Expected { ids: string[] }' }, 400);
   }
@@ -233,7 +241,7 @@ itemsRoutes.get('/items/images/manifest', (c) => {
 // Registered before PUT /items/:id and PUT /items so it isn't shadowed.
 itemsRoutes.put('/items/images', async (c) => {
   const userId = c.get('user').id;
-  const body = await c.req.json();
+  const body = await c.req.json().catch(() => null);
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return c.json({ error: 'Expected { [id]: dataUri }' }, 400);
   }
@@ -248,8 +256,12 @@ itemsRoutes.put('/items/images', async (c) => {
     }
   }
   if (images.length === 0) return c.json({ error: 'No valid images' }, 400);
-  const saved = upsertItemImages(images, userId);
-  if (saved > 0) touchItemRevisions(images.map(image => image.id), userId);
+  // The images and the revisions that announce them commit together, or a delta client could miss one.
+  const saved = db.transaction(() => {
+    const count = upsertItemImages(images, userId);
+    if (count > 0) touchItemRevisions(images.map(image => image.id), userId);
+    return count;
+  })();
   return c.json({ ok: true, saved });
 });
 
@@ -268,10 +280,12 @@ itemsRoutes.put('/items/:id/image', async (c) => {
     return c.json({ error: 'Invalid image size' }, 413);
   }
   const id = c.req.param('id');
-  if (!upsertItemImageBinary(id, bytes, mimeType, userId)) {
-    return c.json({ error: 'Image could not be stored' }, 400);
-  }
-  touchItemRevisions([id], userId);
+  const stored = db.transaction(() => {
+    if (!upsertItemImageBinary(id, bytes, mimeType, userId)) return false;
+    touchItemRevisions([id], userId);
+    return true;
+  })();
+  if (!stored) return c.json({ error: 'Image could not be stored' }, 400);
   return c.json({ ok: true });
 });
 
@@ -312,15 +326,13 @@ itemsRoutes.put('/items', async (c) => {
   const validationError = validateStoredItemBatch(body, 500);
   if (validationError) return c.json({ error: validationError }, 400);
   try {
-    const result = upsertMany(body, userId);
-    // Return server-enriched sentences immediately instead of waiting for the next 8-second delta pull.
-    // Conflicts use this same bounded canonical response path.
-    const canonicalIds = new Set(result.conflicts);
-    for (const item of body) {
-      if (item.type !== 'sentence' || item.isDeleted || item.data?.analysis) continue;
-      const stored = getItemById(item.data.id, userId, false);
-      if (stored?.data?.analysis) canonicalIds.add(item.data.id);
-    }
+    const { enriched, ...result } = upsertMany(body, userId);
+    // Return sentences the enrichment pool just analysed immediately instead of waiting for the next
+    // 8-second delta pull. Conflicts use this same bounded canonical response path. Fields the server
+    // merely kept from its stored copy are left out, since adopting a canonical copy drops an edit made
+    // while the push was in flight. The saving client keeps its own data at an unchanged revision, so it
+    // lacks those fields until the row next changes.
+    const canonicalIds = new Set([...result.conflicts, ...enriched]);
     const canonical = [...canonicalIds]
       .map(id => getItemById(id, userId, false))
       .filter(Boolean);
@@ -479,13 +491,15 @@ itemsRoutes.post('/reviews/apply', async (c) => {
     }
   }
   try {
-    // Catalog sentences are implicit until their first review. Seed the base item before applying the
-    // idempotent event so an offline/retried first review cannot race the ordinary item sync or advance
-    // the schedule twice. Existing items always win; the seed is used only for a genuinely absent id.
+    // A review can reach the server before its item: an implicit catalog sentence on its first review, or an
+    // item whose first push hasn't landed. Seed the base item before applying the idempotent event so an
+    // offline/retried review cannot race the ordinary item sync or advance the schedule twice. Existing
+    // items always win; the seed is used only for a genuinely absent id.
+    let seededRevision: number | undefined;
     if (seedItem !== undefined && !getItemById(event.itemId, userId, false)) {
-      upsertItem(seedItem, userId);
+      seededRevision = upsertItem(seedItem, userId).revision;
     }
-    const result = applyReviewEvent(event, itemIds, userId);
+    const result = applyReviewEvent(event, itemIds, userId, seededRevision);
     if (!result) return c.json({ error: 'Review item not found' }, 404);
     return c.json(result, result.applied ? 201 : 200);
   } catch (error) {

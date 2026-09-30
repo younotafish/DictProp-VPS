@@ -68,15 +68,30 @@ export const resumeCurrent = () => engine?.resumeCurrent();
 export const stopCurrent = () => engine?.stopCurrent();
 export const seekCurrent = (seconds: number) => engine?.seekCurrent(seconds);
 export const primeKeepAlive = () => { void loadEngine().then(module => module.primeKeepAlive()); };
-export const acquireKeepAlive = () => { void loadEngine().then(module => module.acquireKeepAlive()); };
-export const releaseKeepAlive = () => engine?.releaseKeepAlive();
+// Holds taken before the engine loaded, handed to it once it has. A release in the meantime cancels one
+// of them: dropping that release instead would leak the hold and keep the silent keep-alive running.
+let holdsBeforeLoad = 0;
+export const acquireKeepAlive = () => {
+  if (engine) { engine.acquireKeepAlive(); return; }
+  holdsBeforeLoad++;
+  void loadEngine().then(module => {
+    for (; holdsBeforeLoad > 0; holdsBeforeLoad--) module.acquireKeepAlive();
+  });
+};
+export const releaseKeepAlive = () => {
+  if (holdsBeforeLoad > 0) holdsBeforeLoad--;
+  else engine?.releaseKeepAlive();
+};
 export const setMediaMetadata = (info: { title: string; artist?: string; album?: string; artworkUrl?: string }) => {
   void loadEngine().then(module => module.setMediaMetadata(info));
 };
 export const setMediaSessionHandlers = (handlers: MediaSessionHandlers | null) => {
   void loadEngine().then(module => module.setMediaSessionHandlers(handlers));
 };
+// The engine's timer also runs off the keep-alive's audio clock, which keeps going with the screen off
+// or the tab hidden, where a plain timer stalls; it's loaded by the speech that comes before any gap.
 export const afterGap = (ms: number, callback: () => void) => {
+  if (engine) return engine.afterGap(ms, callback);
   const timer = setTimeout(callback, ms); return () => clearTimeout(timer);
 };
 export const getTimingsFor = (text: string): Promise<WordTiming[] | null> => loadEngine().then(module => module.getTimingsFor(text));

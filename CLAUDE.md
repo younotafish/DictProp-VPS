@@ -46,16 +46,18 @@ git add <files> && git commit -m "description" && git push vps main
 
 To check deploy status:
 ```bash
-/Users/cjs/DictProp/.gh run list --repo younotafish/DictProp-VPS --limit 1
-/Users/cjs/DictProp/.gh run view <RUN_ID> --repo younotafish/DictProp-VPS --log
+/Users/cjs/DictProp-VPS/.gh run list --repo younotafish/DictProp-VPS --limit 1
+/Users/cjs/DictProp-VPS/.gh run view <RUN_ID> --repo younotafish/DictProp-VPS     # lists the job IDs
+/Users/cjs/DictProp-VPS/.gh api repos/younotafish/DictProp-VPS/actions/jobs/<JOB_ID>/logs
 ```
+`run view --log` prints nothing from this sandbox, so fetch a job's log through the API instead.
 
 **IMPORTANT**: The git remote for VPS is named `vps`, not `origin`. Use `git push vps main`.
 - `origin` = git@github.com:younotafish/DictProp.git (old Firebase repo, do NOT push here)
 - `vps` = https://github.com/younotafish/DictProp-VPS.git (VPS fork)
 
 ### GitHub CLI
-- Located at `/Users/cjs/DictProp/.gh` (not on PATH)
+- Located at `/Users/cjs/DictProp-VPS/.gh` (not on PATH)
 - Authenticated as `younotafish` with `workflow` scope
 - Use for: checking deploy status, managing secrets, repo operations
 
@@ -100,7 +102,7 @@ npx tsc --noEmit         # Server type-check (frontend: use `npm run build`)
 git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 
 # Check deploy status
-/Users/cjs/DictProp/.gh run list --repo younotafish/DictProp-VPS --limit 1
+/Users/cjs/DictProp-VPS/.gh run list --repo younotafish/DictProp-VPS --limit 1
 ```
 
 ### IMPORTANT: Type-checking
@@ -171,7 +173,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 - On save (5s debounce): bounded `PUT /api/items` batches push dirty items
 - Visible clients pull paginated server-revision deltas every 8 seconds and on focus/reconnect/tab signals
 - Reviews use a local outbox plus atomic `POST /api/reviews/apply`; retries are idempotent
-- Deletions and archives still push immediately
+- Deletions, archives and SRS resets stay on the device while their 6-second undo toast is open (`undoOfferRef` in `pushNow`), then push at once
 - Per-item dirty tracking via `lastSyncedHash` content hashing
 
 ## Critical Patterns

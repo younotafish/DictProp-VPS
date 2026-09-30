@@ -32,7 +32,11 @@ test('server search stays immediate while local Claude Opus enrichment runs ever
   assert.match(workflow, /audit-enrichment\.js/);
   assert.match(workflow, /capture_stdout: true/);
   assert.match(workflow, /Report content coverage/);
-  assert.match(workflow, /Alert when local enrichment has outstanding work/);
+  assert.match(workflow, /Alert when local enrichment has stalled/);
+  // A non-zero exit loses ssh-action's captured output, so only the report decides the alert.
+  assert.match(workflow, /audit-enrichment\.js \|\| true/);
+  assert.match(workflow, /jq -e '\.stall\.alerts \| length == 0'/);
+  assert.match(workflow, /group: dictprop-production-read/);
   assert.match(productionAudit, /summarizeExampleEnrichmentCoverage/);
   assert.match(productionAudit, /mode: 'audit-only'/);
   assert.doesNotMatch(productionAudit, /generateAnalysisData/);

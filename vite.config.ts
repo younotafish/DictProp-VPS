@@ -44,7 +44,9 @@ function stampServiceWorker(): Plugin {
 export default defineConfig({
   server: {
     port: 3000,
-    host: '0.0.0.0',
+    // Loopback unless DEV_LAN=1: with DEV_AUTH_BYPASS the proxied /api has no auth, so the local network
+    // shouldn't reach it by default.
+    host: process.env.DEV_LAN === '1' ? '0.0.0.0' : '127.0.0.1',
     watch: {
       // Ignore Watchman's ephemeral cookie files — it creates and instantly deletes them, and the
       // dev watcher otherwise races to realpath() a now-gone file and crashes the server with ENOENT.
@@ -56,7 +58,7 @@ export default defineConfig({
     // Proxy API requests to the Hono server during development
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
       }
     }
@@ -79,7 +81,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
+          // react-dom/client and scheduler change only with React, so they ride in the long-cached chunk too.
+          'react-vendor': ['react', 'react-dom', 'react-dom/client', 'scheduler'],
         }
       }
     }

@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from './Button';
-import { LogOut, User as UserIcon } from 'lucide-react';
+import { ConfirmModal } from './ConfirmModal';
+import { Loader2, LogOut, User as UserIcon } from 'lucide-react';
 import { AppUser } from '../types';
 
 interface Props {
   user: AppUser | null;
   onSignIn: () => void;
-  onSignOut: () => void;
+  /** Resolves false when the server couldn't be reached and the session was kept (services/auth logout). */
+  onSignOut: () => void | Promise<boolean | void>;
 }
 
 // Inline Google "G" SVG to work offline
@@ -43,11 +46,24 @@ const UserAvatar: React.FC<{ photoURL?: string | null; displayName?: string | nu
 };
 
 export const UserMenu: React.FC<Props> = ({ user, onSignIn, onSignOut }) => {
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
+
+  const signOut = async () => {
+    setConfirmingSignOut(false);
+    setSigningOut(true);
+    let signedOut: boolean | void = false;
+    try { signedOut = await onSignOut(); } catch { /* treated as not signed out */ }
+    // Signing out reloads the page; if it didn't, the session was kept, so say why.
+    if (signedOut !== true) setSigningOut(false);
+    if (signedOut === false) setSignOutFailed(true);
+  };
 
   if (!user) {
     return (
       <div className="flex items-center gap-1 flex-nowrap shrink-0">
-        <Button variant="primary" size="sm" onClick={onSignIn} className="flex items-center gap-1.5 text-xs bg-white text-slate-700 border-0 hover:bg-slate-50 px-2 py-1 whitespace-nowrap">
+        <Button variant="primary" size="sm" onClick={onSignIn} aria-label="Sign in with Google" className="flex items-center gap-1.5 text-xs bg-white text-slate-700 border-0 hover:bg-slate-50 px-2 py-1 whitespace-nowrap">
             <GoogleIcon />
             <span className="hidden sm:inline">Sign In</span>
         </Button>
@@ -67,12 +83,40 @@ export const UserMenu: React.FC<Props> = ({ user, onSignIn, onSignOut }) => {
         </span>
       </div>
       <button 
-        onClick={onSignOut}
-        className="w-7 h-7 shrink-0 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+        onClick={() => setConfirmingSignOut(true)}
+        disabled={signingOut}
+        className="w-11 h-11 shrink-0 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors disabled:opacity-50"
         title="Sign Out"
+        aria-label="Sign out"
       >
-        <LogOut size={14} />
+        {signingOut ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
       </button>
+      {/* In a portal: the header this sits in slides away on scroll, and would carry a fixed dialog with it. */}
+      {confirmingSignOut && createPortal(
+        <ConfirmModal
+          isOpen
+          title="Sign out?"
+          message="You'll need to be online to sign back in."
+          confirmText="Sign Out"
+          variant="danger"
+          onConfirm={signOut}
+          onCancel={() => setConfirmingSignOut(false)}
+        />,
+        document.body,
+      )}
+      {signOutFailed && createPortal(
+        <ConfirmModal
+          isOpen
+          title="Couldn't sign out"
+          message="The server couldn't be reached, so you're still signed in. Try again once you're online."
+          confirmText="OK"
+          variant="warning"
+          showCancel={false}
+          onConfirm={() => setSignOutFailed(false)}
+          onCancel={() => setSignOutFailed(false)}
+        />,
+        document.body,
+      )}
     </div>
   );
 };

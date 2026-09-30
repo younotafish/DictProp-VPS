@@ -3,6 +3,7 @@ import { resolve } from 'path';
 import { corpusAuditImportState, validateCorpusAuditBundle, type CorpusAuditBundle } from '../corpus-audit.js';
 import { getAllItems, listAllUsers, upsertMany } from '../db.js';
 import { env } from '../env.js';
+import { backupBeforeWrite, checkpointAfterWrite, recordStale } from '../import-support.js';
 import { isOwnerUser } from '../owner-access.js';
 import { isSentenceAnalysis } from '../sentence-analysis.js';
 import { validateStoredItem } from '../validation.js';
@@ -17,13 +18,15 @@ if (validationError) throw new Error(validationError);
 const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
 if (!owner) throw new Error('Owner account not found');
 
+const backup = await backupBeforeWrite('corpus-audit');
 const result = {
   total: bundle.entries.length,
   updated: 0,
   alreadyApplied: 0,
-  missingOrDeleted: 0,
   archivedForUsage: 0,
   unarchivedAfterCorrection: 0,
+  stale: 0,
+  staleIds: [] as string[],
   skipped: 0,
   errors: [] as Array<{ id: string; error: string }>,
 };
@@ -36,8 +39,9 @@ const finiteNonNegative = (value: unknown, fallback: number): number =>
 for (const entry of bundle.entries) {
   try {
     const current = currentById.get(entry.id) as any;
+    // An item deleted or edited since the export is skipped without failing the run; the next export has it.
     if (!current || current.isDeleted) {
-      result.missingOrDeleted++;
+      recordStale(result, entry.id);
       continue;
     }
     if (current.type !== entry.type) throw new Error('item type changed after export');
@@ -50,7 +54,10 @@ for (const entry of bundle.entries) {
       result.alreadyApplied++;
       continue;
     }
-    if (dataState === 'changed') throw new Error('item content changed after export');
+    if (dataState === 'changed') {
+      recordStale(result, entry.id);
+      continue;
+    }
 
     const { project: _legacyProject, ...currentWithoutProject } = current;
     const currentSrs = current.srs && typeof current.srs === 'object' ? current.srs : {};
@@ -99,8 +106,7 @@ for (const entry of bundle.entries) {
 const recordWrite = (candidate: any, conflicts: Set<string>) => {
   const id = candidate.data.id;
   if (conflicts.has(id)) {
-    result.skipped++;
-    result.errors.push({ id, error: 'item changed while the audit was being imported' });
+    recordStale(result, id);
     return;
   }
   result.updated++;
@@ -108,17 +114,20 @@ const recordWrite = (candidate: any, conflicts: Set<string>) => {
   if (unarchivedById.has(id)) result.unarchivedAfterCorrection++;
 };
 
+// The audited data is the whole item: it must match the audited hash exactly, so a server-owned field
+// it leaves out is removed rather than carried over from the stored row.
+const writeOptions = { replaceServerFields: true };
 for (let index = 0; index < pending.length; index += 500) {
   const batch = pending.slice(index, index + 500);
   try {
-    const write = upsertMany(batch, owner.id);
+    const write = upsertMany(batch, owner.id, writeOptions);
     const conflicts = new Set(write.conflicts);
     for (const candidate of batch) recordWrite(candidate, conflicts);
   } catch (batchError) {
     // Isolate a bad legacy record instead of losing every valid item in its transaction batch.
     for (const candidate of batch) {
       try {
-        const write = upsertMany([candidate], owner.id);
+        const write = upsertMany([candidate], owner.id, writeOptions);
         recordWrite(candidate, new Set(write.conflicts));
       } catch (error) {
         result.skipped++;
@@ -131,5 +140,6 @@ for (let index = 0; index < pending.length; index += 500) {
   }
 }
 
-process.stdout.write(`${JSON.stringify(result)}\n`);
+checkpointAfterWrite();
+process.stdout.write(`${JSON.stringify({ ...result, backup })}\n`);
 if (result.errors.length > 0) process.exitCode = 1;

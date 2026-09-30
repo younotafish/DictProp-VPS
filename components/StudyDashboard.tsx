@@ -36,7 +36,8 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
   // When the dashboard goes away (a session starts or another tab shows), save a position still waiting
   // on its timer, so coming back doesn't jump.
   useLayoutEffect(() => {
-    const savedScroll = Number(localStorage.getItem(SCROLL_KEY));
+    let savedScroll = 0;
+    try { savedScroll = Number(localStorage.getItem(SCROLL_KEY)); } catch { /* storage unavailable */ }
     if (savedScroll > 0 && dashboardScrollRef.current) dashboardScrollRef.current.scrollTop = savedScroll;
     return saveScroll;
   }, []);

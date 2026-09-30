@@ -1,10 +1,13 @@
-import { db, getAllItems, listAllUsers, softDeleteItem, upsertItem } from '../db.js';
+import { db, deleteUnreferencedBlobs, getAllItems, listAllUsers, softDeleteItem, upsertItem } from '../db.js';
 import { env } from '../env.js';
+import { backupBeforeWrite, checkpointAfterWrite } from '../import-support.js';
 import { isOwnerUser } from '../owner-access.js';
 
 const apply = process.argv.includes('--apply');
 const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
 if (!owner) throw new Error('Owner account not found');
+// Taken before the library is read, so the copy holds exactly what the repair starts from.
+const backup = apply ? await backupBeforeWrite('repair', { reuseRecent: false }) : null;
 
 // These groups come from the production audit and were manually verified against the encrypted export.
 // Keeping the explicit identities makes this repair surgical: later cards with similar labels are never
@@ -182,15 +185,17 @@ const invalidSrsItems = items.filter(item =>
     .some(field => finite(item.srs?.[field], -1) < 0),
 );
 
-const futureLiveImageIds = new Set<string>();
+// Only an image no item row refers to is stale. A deleted item keeps its picture: saving it again brings
+// the row back, and the VPS never generates a replacement image.
+const referencedImageIds = new Set<string>();
 for (const item of items) {
-  if (item.isDeleted || loserIds.has(item.data.id)) continue;
-  if (typeof item.data?.id === 'string') futureLiveImageIds.add(item.data.id);
+  if (typeof item.data?.id === 'string') referencedImageIds.add(item.data.id);
   if (Array.isArray(item.data?.vocabs)) {
-    for (const vocab of item.data.vocabs) if (typeof vocab?.id === 'string') futureLiveImageIds.add(vocab.id);
+    for (const vocab of item.data.vocabs) if (typeof vocab?.id === 'string') referencedImageIds.add(vocab.id);
   }
 }
-const staleImageIds = [...imageIds].filter(id => !futureLiveImageIds.has(id));
+const itemRowExists = db.prepare('SELECT 1 FROM items WHERE id = ?');
+const staleImageIds = [...imageIds].filter(id => !referencedImageIds.has(id) && !itemRowExists.get(id));
 
 function normalizedSrs(item: any, source = item.srs || {}): any {
   return {
@@ -242,6 +247,7 @@ const transferImage = db.prepare(`
 `);
 const deleteImage = db.prepare('DELETE FROM item_images WHERE id = ? AND user_id = ?');
 
+let deletedBlobCount = 0;
 const applyRepair = db.transaction(() => {
   const now = Date.now();
   for (const plan of duplicatePlans) {
@@ -292,15 +298,17 @@ const applyRepair = db.transaction(() => {
   }
 
   for (const id of staleImageIds) deleteImage.run(id, owner.id);
-  db.prepare(`DELETE FROM image_blobs WHERE NOT EXISTS (
-    SELECT 1 FROM item_images WHERE item_images.content_hash = image_blobs.content_hash
-  )`).run();
+  // Prepared example sentences reference blobs too; the shared helper checks both tables.
+  deletedBlobCount = deleteUnreferencedBlobs();
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now);
   db.prepare('UPDATE items SET project = NULL WHERE project IS NOT NULL').run();
   db.prepare('DELETE FROM projects').run();
 });
 
-if (apply) applyRepair();
+if (apply) {
+  applyRepair();
+  checkpointAfterWrite();
+}
 
 process.stdout.write(`${JSON.stringify({
   mode: apply ? 'applied' : 'dry-run',
@@ -318,4 +326,5 @@ process.stdout.write(`${JSON.stringify({
   invalidSrsIds: invalidSrsItems.filter(item => !consolidatedIds.has(item.data.id)).map(item => item.data.id),
   staleImageReferenceCount: staleImageIds.length,
   staleImageReferenceIds: staleImageIds.slice(0, 100),
+  ...(apply ? { deletedBlobCount, backup } : {}),
 })}\n`);

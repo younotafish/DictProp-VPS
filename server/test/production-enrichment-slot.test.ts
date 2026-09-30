@@ -72,3 +72,29 @@ printf 'idle\n'
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('offline publishers stop waiting for the production slot at their limit', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-production-slot-deadline-'));
+  try {
+    const fakeGh = join(root, 'gh');
+    writeFileSync(fakeGh, "#!/bin/sh\nprintf 'active\\n'\n");
+    chmodSync(fakeGh, 0o700);
+
+    const started = Date.now();
+    const result = spawnSync('bash', [waitScript], {
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: {
+        ...process.env,
+        GH_BIN: fakeGh,
+        PRODUCTION_SLOT_POLL_SECONDS: '1',
+        PRODUCTION_SLOT_WAIT_SECONDS: '1',
+      },
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Gave up waiting for the production slot after 1s/);
+    assert.ok(Date.now() - started < 15_000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

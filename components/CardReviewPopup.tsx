@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { X, RotateCcw, Trash2, CheckCircle2, Flame, ChevronLeft, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
 import { StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { updateAfterRating } from '../services/fsrsScheduler';
 import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
@@ -9,6 +10,7 @@ import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 import { useWarmImages } from '../hooks/useWarmImages';
+import { useEscapeLayer } from './escapeStack';
 
 const formatRelative = (ts: number): string => {
   const diff = ts - Date.now();
@@ -198,7 +200,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const handleGotIt = useCallback(() => {
     if (!currentSaved) return;
     const base = SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type);
-    const preview = SRSAlgorithm.updateAfterRemember(base);
+    const preview = updateAfterRating(base, 'good');
     onUpdateSRS(currentSaved.data.id);
     setFlash(`Next review in ${Math.max(1, Math.round(preview.stability))}d`);
     setTimeout(() => setFlash(null), 1600);
@@ -232,6 +234,12 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
 
   // Eyes-free read zones are for touch only — on macOS the keyboard (P / E / Cmd+1–4) covers reading.
   const isTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+  // Judge each click by what made it where the browser says, so a mouse or trackpad on a touchscreen
+  // laptop (or an iPad's trackpad) still closes from the gutter instead of reading.
+  const isTouchClick = useCallback((e: React.MouseEvent) => {
+    const type = (e.nativeEvent as Partial<PointerEvent>).pointerType;
+    return type ? type !== 'mouse' : isTouch;
+  }, [isTouch]);
 
   const shortcutExamples = useMemo(
     () => (vocab.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
@@ -305,7 +313,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   // controls / text selection so the card stays interactive. (≥sm uses the empty gutters — see onBackdrop.)
   const scrollBodyRef = useRef<HTMLDivElement>(null);
   const handleZoneRead = useCallback((e: React.MouseEvent) => {
-    if (!isTouch || window.innerWidth >= 640 || examplesList.length === 0) return;
+    if (!isTouchClick(e) || window.innerWidth >= 640 || examplesList.length === 0) return;
     if (window.getSelection()?.toString().trim()) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return;
@@ -316,13 +324,13 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     if (!onSide || relY >= rect.height * 0.5) return;
     const z = relY < rect.height * 0.25 ? 0 : 1;
     if (z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); }
-  }, [isTouch, examplesList, toggleSpeak, flashZone]);
+  }, [isTouchClick, examplesList, toggleSpeak, flashZone]);
 
   // iPad / desktop (≥sm, centered card): tapping the empty LEFT/RIGHT gutter beside the card reads —
   // top quarter → example 1, second quarter → example 2. Anywhere else (and the phone sheet, which has
   // no gutter) closes.
   const onBackdrop = useCallback((e: React.MouseEvent) => {
-    if (isTouch && window.innerWidth >= 640 && examplesList.length > 0) {
+    if (isTouchClick(e) && window.innerWidth >= 640 && examplesList.length > 0) {
       const rect = panelRef.current?.getBoundingClientRect();
       if (rect && (e.clientX < rect.left || e.clientX > rect.right)) {
         const h = window.innerHeight;
@@ -333,7 +341,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       }
     }
     onClose();
-  }, [isTouch, examplesList, toggleSpeak, flashZone, onClose]);
+  }, [isTouchClick, examplesList, toggleSpeak, flashZone, onClose]);
 
   // Focus the panel on open; restore focus on close.
   useEffect(() => {
@@ -342,13 +350,16 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     return () => { try { prevFocus?.focus?.(); } catch { /* ignore */ } };
   }, []);
 
+  // Escape closes the popup, unless a dialog opened above it is still open.
+  useEscapeLayer(onClose, 100);
+
   // Keyboard ownership while open (the parent gates the underlying view via interactionLocked).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || (t as HTMLElement).isContentEditable);
-
-      if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t as HTMLElement).isContentEditable);
+      // Space and Enter press whatever control has focus (Close, Got it, a toggle), not the shortcuts below.
+      const onControl = t instanceof Element && !!t.closest('button, a[href], summary, [role="button"], [role="link"], [role="switch"], [role="checkbox"], [role="tab"]');
 
       // Focus trap
       if (e.key === 'Tab') {
@@ -373,6 +384,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         return;
       }
       if (e.key === ' ') {
+        if (onControl) return;
         e.preventDefault();
         const st = getPlaybackState().status;
         if (st === 'playing') pauseCurrent();
@@ -399,12 +411,12 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         else handleSaveThis();
         return;
       }
-      if (e.key === 'Enter') { if (!currentSaved) { e.preventDefault(); handleSaveThis(); } return; }
+      if (e.key === 'Enter') { if (!currentSaved && !onControl) { e.preventDefault(); handleSaveThis(); } return; }
       if (e.key === 'd' || e.key === 'D') { if (currentSaved && !e.metaKey && !e.ctrlKey) { e.preventDefault(); handleDelete(); } return; }
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [vocab, currentSaved, onClose, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, shortcutExamples, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive, speakPopupNatural, speakPopupWord]);
+  }, [vocab, currentSaved, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, shortcutExamples, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive, speakPopupNatural, speakPopupWord]);
 
   // Do not stop a sentence that was already playing beneath the popup. The handle is token-scoped,
   // so cleanup only stops audio this popup actually started and is still responsible for.
@@ -418,7 +430,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="bg-white w-full h-[90vh] rounded-t-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-4xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none"
+        className="bg-white w-full h-[90dvh] rounded-t-2xl sm:h-auto sm:max-h-[90dvh] sm:max-w-4xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none"
         onClick={e => e.stopPropagation()}
         onTouchStart={onPanelTouchStart}
         onTouchEnd={onPanelTouchEnd}

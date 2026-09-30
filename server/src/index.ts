@@ -9,9 +9,10 @@ console.log(`DictProp server starting on port ${env.PORT}...`);
 const server = serve({
   fetch: app.fetch,
   port: env.PORT,
+  ...(env.DEV_AUTH_BYPASS ? { hostname: '127.0.0.1' } : {}),
 });
 
-console.log(`Server running at http://localhost:${env.PORT}`);
+console.log(`Server running at http://localhost:${env.PORT}${env.DEV_AUTH_BYPASS ? ' (auth bypass, loopback only)' : ''}`);
 
 let shuttingDown = false;
 function shutdown(reason: string, exitCode = 0) {

@@ -11,9 +11,15 @@ type AnalyzerStep = 'input' | 'selecting' | 'analyzing' | 'done';
 
 interface AnalyzedResult {
   word: string;
-  vocabCount: number;
+  vocabCount: number;   // meanings the analysis found
+  savedCount: number;   // of those, the ones new to the notebook and saved
   error?: string;
 }
+
+const savedLabel = (result: AnalyzedResult): string =>
+  result.savedCount > 0 ? `${result.savedCount} ${result.savedCount === 1 ? 'meaning' : 'meanings'} saved`
+  : result.vocabCount > 0 ? 'Already in your notebook'
+  : 'No meanings found';
 
 // ─── Level Badge Colors ─────────────────────────────────────────────────────
 
@@ -178,6 +184,12 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     abortRef.current = false;
 
     let savedCount = 0;
+    // Word + sense of every saved card, including the ones this run saves: savedItems won't show those
+    // until the run ends, and two selected words (or one analysis) can yield the same card.
+    const senseKey = (word: string | undefined, sense: string | undefined) => `${(word || '').toLowerCase().trim()}|${sense || ''}`;
+    const savedKeys = new Set(
+      savedItems.filter(item => item.type === 'vocab').map(item => senseKey((item.data as VocabCard).word, (item.data as VocabCard).sense)),
+    );
 
     for (let i = 0; i < wordsToAnalyze.length; i++) {
       if (abortRef.current) break;
@@ -187,8 +199,8 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
       setAnalysisCurrent(i + 1);
 
       try {
-        // Call the existing full AI analysis (word mode — returns all meanings)
-        const result = await analyzeInput(detected.word);
+        // Full analysis of the detected expression as one item (all its meanings), even when it's several words long
+        const result = await analyzeInput(detected.word, { mode: 'batch' });
 
         // Pre-generate + cache the API audio for this word's example sentences up front (fire-and-forget)
         // so the first play is the instant cached voice instead of a cache-miss fallback.
@@ -198,15 +210,9 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
         let wordSaved = 0;
         for (const vocab of result.vocabs || []) {
           // Check if already saved (by word + sense)
-          const vocabWord = (vocab.word || '').toLowerCase().trim();
-          const alreadySaved = savedItems.some(item => {
-            if (item.type !== 'vocab') return false;
-            const sw = ((item.data as VocabCard).word || '').toLowerCase().trim();
-            const ss = (item.data as VocabCard).sense || '';
-            return sw === vocabWord && ss === (vocab.sense || '');
-          });
-
-          if (!alreadySaved) {
+          const key = senseKey(vocab.word, vocab.sense);
+          if (!savedKeys.has(key)) {
+            savedKeys.add(key);
             const storedItem = makeVocabStoredItem(vocab);
             onSave(storedItem);
             wordSaved++;
@@ -219,12 +225,14 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
         setAnalyzedResults(prev => [...prev, {
           word: detected.word,
           vocabCount: result.vocabs?.length || 0,
+          savedCount: wordSaved,
         }]);
         setTotalVocabsSaved(savedCount);
       } catch (err: any) {
         setAnalyzedResults(prev => [...prev, {
           word: detected.word,
           vocabCount: 0,
+          savedCount: 0,
           error: err.message || 'Failed',
         }]);
       }
@@ -530,9 +538,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
                     {result.error ? (
                       <p className="text-xs text-rose-500 mt-0.5">{result.error}</p>
                     ) : (
-                      <p className="text-xs text-emerald-600 mt-0.5">
-                        {result.vocabCount} {result.vocabCount === 1 ? 'meaning' : 'meanings'} saved
-                      </p>
+                      <p className="text-xs text-emerald-600 mt-0.5">{savedLabel(result)}</p>
                     )}
                   </div>
                 </div>
@@ -568,9 +574,11 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
               <h3 className="text-xl font-bold text-slate-800 mb-1">Analysis Complete</h3>
               <p className="text-sm text-slate-500">
                 {totalVocabsSaved > 0 ? (
-                  <><span className="font-bold text-indigo-600">{totalVocabsSaved}</span> vocab cards saved to your notebook</>
-                ) : (
+                  <><span className="font-bold text-indigo-600">{totalVocabsSaved}</span> vocab {totalVocabsSaved === 1 ? 'card' : 'cards'} saved to your notebook</>
+                ) : analyzedResults.some(result => result.vocabCount > 0) ? (
                   'All words were already in your notebook'
+                ) : (
+                  'No new cards were saved'
                 )}
               </p>
             </div>
@@ -593,7 +601,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
                   {result.error ? (
                     <span className="text-xs text-rose-500">{result.error}</span>
                   ) : (
-                    <span className="text-xs text-slate-400">{result.vocabCount} meanings</span>
+                    <span className="text-xs text-slate-400">{savedLabel(result)}</span>
                   )}
                 </div>
               ))}

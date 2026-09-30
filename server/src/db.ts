@@ -16,6 +16,12 @@ const db = new Database(dbPath);
 
 // Enable WAL mode for better concurrent read performance
 db.pragma('journal_mode = WAL');
+// In WAL mode NORMAL can lose only the last commits on power loss, never corrupt the file. Importers
+// write this file while the server runs, so a writer waits out the other's transaction instead of
+// failing, and a checkpointed WAL shrinks back instead of keeping its largest size on the small disk.
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 10000');
+db.pragma('journal_size_limit = 67108864');
 
 // Create tables
 db.exec(`
@@ -81,6 +87,8 @@ if (!columns.some(c => c.name === 'revision')) {
   db.exec(`ALTER TABLE items ADD COLUMN revision INTEGER NOT NULL DEFAULT 0`);
 }
 db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user_revision ON items(user_id, revision, id)`);
+// Phrase scans (image owners, the inline-image fallback) read the user's phrase rows, not the library.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user_type ON items(user_id, type)`);
 
 const reviewColumns = db.prepare(`PRAGMA table_info(review_events)`).all() as { name: string }[];
 if (!reviewColumns.some(column => column.name === 'rating')) {
@@ -106,8 +114,17 @@ db.exec(`
     applied_srs TEXT NOT NULL,
     PRIMARY KEY (event_id, item_id)
   );
-  CREATE INDEX IF NOT EXISTS idx_review_event_items_event ON review_event_items(event_id);
+  DROP INDEX IF EXISTS idx_review_event_items_event;
 `);
+// The item's revisions before and after the review, so a client can tell whether anything besides the
+// review changed the item since its own copy. Rows stored before these columns have neither.
+const reviewItemColumns = db.prepare(`PRAGMA table_info(review_event_items)`).all() as { name: string }[];
+if (!reviewItemColumns.some(column => column.name === 'base_revision')) {
+  db.exec(`ALTER TABLE review_event_items ADD COLUMN base_revision INTEGER`);
+}
+if (!reviewItemColumns.some(column => column.name === 'applied_revision')) {
+  db.exec(`ALTER TABLE review_event_items ADD COLUMN applied_revision INTEGER`);
+}
 
 // Migration: add project column to items if missing
 try {
@@ -176,6 +193,8 @@ try {
   // contain a large base64 payload. This keeps the first sync after a restart from blocking Node.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_user_versions
     ON item_images(user_id, id, content_hash, updated_at)`);
+  // Blob cleanup asks whether anything still references a hash; without this it scans every image.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_content_hash ON item_images(content_hash)`);
   db.exec(`CREATE TABLE IF NOT EXISTS image_blobs (
     content_hash TEXT PRIMARY KEY,
     data BLOB NOT NULL,
@@ -203,6 +222,8 @@ try {
   )`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sentence_enrichments_source_id
     ON sentence_enrichments(source_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sentence_enrichments_image
+    ON sentence_enrichments(image_content_hash) WHERE image_content_hash IS NOT NULL`);
 } catch (e) {
   console.warn('sentence_enrichments table creation:', e);
 }
@@ -223,6 +244,9 @@ try {
 } catch (e) {
   console.warn('comparisons table creation:', e);
 }
+
+// Refresh planner statistics for tables whose indexes changed, bounded so it stays quick on a large file.
+db.pragma('optimize = 0x10002');
 
 // ─── Item prepared statements ───
 
@@ -249,11 +273,13 @@ const stmts = {
     WHERE items.user_id IS NULL OR items.user_id = @user_id
   `),
   softDelete: db.prepare(`UPDATE items SET is_deleted = 1, updated_at = ?, revision = ? WHERE id = ? AND user_id = ?`),
+  existsScoped: db.prepare(`SELECT 1 FROM items WHERE id = ? AND user_id = ?`),
   getByIdScoped: db.prepare(`SELECT * FROM items WHERE id = ? AND user_id = ?`),
   getById: db.prepare(`SELECT * FROM items WHERE id = ?`),
   assignOrphanItems: db.prepare(`UPDATE items SET user_id = ? WHERE user_id IS NULL`),
-  getImageData: db.prepare(`SELECT data FROM items WHERE id = ? AND user_id = ?`),
-  findVocabInPhrase: db.prepare(`SELECT data FROM items WHERE type = 'phrase' AND user_id = ? AND data LIKE ? LIMIT 1`),
+  getDataForIds: db.prepare(`SELECT id, data FROM items WHERE user_id = ? AND id IN (SELECT value FROM json_each(?))`),
+  phrasesWithInlineImages: db.prepare(`SELECT data FROM items
+    WHERE user_id = ? AND type = 'phrase' AND data LIKE '%data:image/%'`),
   updateSrs: db.prepare(`UPDATE items SET srs = ?, updated_at = ?, revision = ? WHERE id = ? AND user_id = ?`),
 };
 
@@ -265,6 +291,7 @@ const compStmts = {
     INSERT INTO comparisons (key, user_id, words, data, updated_at)
     VALUES (@key, @user_id, @words, @data, @updated_at)
     ON CONFLICT(key, user_id) DO UPDATE SET words = @words, data = @data, updated_at = @updated_at
+    WHERE excluded.updated_at >= comparisons.updated_at
   `),
 };
 
@@ -280,14 +307,15 @@ export function getComparisons(userId: string): StoredComparisonRow[] {
   }));
 }
 
-export function upsertComparison(userId: string, key: string, words: string[], data: any, updatedAt: number): void {
-  compStmts.upsert.run({
+/** Returns false when the stored comparison is newer, so a device replaying an old copy can't regress it. */
+export function upsertComparison(userId: string, key: string, words: string[], data: any, updatedAt: number): boolean {
+  return compStmts.upsert.run({
     key,
     user_id: userId,
     words: JSON.stringify(words),
     data: JSON.stringify(data),
     updated_at: updatedAt,
-  });
+  }).changes > 0;
 }
 
 // ─── Image (item_images) prepared statements ───
@@ -306,21 +334,50 @@ const imageStmts = {
       content_hash = @content_hash
     WHERE item_images.user_id IS NULL OR item_images.user_id = @user_id
   `),
-  get: db.prepare(`SELECT COALESCE(b.data, i.data) AS data, i.mime_type
+  get: db.prepare(`SELECT COALESCE(b.data, i.data) AS data, i.mime_type, b.content_hash
     FROM item_images i LEFT JOIN image_blobs b ON b.content_hash = i.content_hash
     WHERE i.id = ? AND i.user_id = ?`),
-  manifest: db.prepare(`SELECT id FROM item_images WHERE user_id = ?`),
-  versionsForIds: db.prepare(`SELECT id, content_hash, updated_at FROM item_images
-    WHERE user_id = ? AND id IN (SELECT value FROM json_each(?))`),
+  getMany: db.prepare(`SELECT i.id, COALESCE(b.data, i.data) AS data, i.mime_type
+    FROM item_images i LEFT JOIN image_blobs b ON b.content_hash = i.content_hash
+    WHERE i.user_id = ? AND i.id IN (SELECT value FROM json_each(?))`),
+  // Leaving out a reference whose blob is gone lets a client that still holds the image upload it again.
+  manifest: db.prepare(`SELECT i.id FROM item_images i WHERE i.user_id = ? AND (
+      i.content_hash IS NULL OR EXISTS (SELECT 1 FROM image_blobs b WHERE b.content_hash = i.content_hash)
+    )`),
+  // A reference whose blob is gone gets no marker: the client would only fetch an empty image for it.
+  versionsForIds: db.prepare(`SELECT i.id, i.content_hash, i.updated_at FROM item_images i
+    WHERE i.user_id = ? AND i.id IN (SELECT value FROM json_each(?)) AND (
+      i.content_hash IS NULL OR EXISTS (SELECT 1 FROM image_blobs b WHERE b.content_hash = i.content_hash)
+    )`),
   owner: db.prepare(`SELECT user_id, content_hash FROM item_images WHERE id = ?`),
+  blobExists: db.prepare(`SELECT 1 FROM image_blobs WHERE content_hash = ?`),
   deleteUnreferencedBlob: db.prepare(`DELETE FROM image_blobs
     WHERE content_hash = ? AND NOT EXISTS (
       SELECT 1 FROM item_images WHERE item_images.content_hash = image_blobs.content_hash
     ) AND NOT EXISTS (
       SELECT 1 FROM sentence_enrichments WHERE sentence_enrichments.image_content_hash = image_blobs.content_hash
     )`),
+  deleteAllUnreferencedBlobs: db.prepare(`DELETE FROM image_blobs
+    WHERE NOT EXISTS (
+      SELECT 1 FROM item_images WHERE item_images.content_hash = image_blobs.content_hash
+    ) AND NOT EXISTS (
+      SELECT 1 FROM sentence_enrichments WHERE sentence_enrichments.image_content_hash = image_blobs.content_hash
+    )`),
   assignOrphan: db.prepare(`UPDATE item_images SET user_id = ? WHERE user_id IS NULL`),
 };
+
+/**
+ * Delete the image blobs that no item image and no example-sentence enrichment references: the given
+ * hashes, or every blob when none are given. Both reference columns are indexed.
+ */
+export function deleteUnreferencedBlobs(contentHashes?: Iterable<string | null | undefined>): number {
+  if (contentHashes === undefined) return imageStmts.deleteAllUnreferencedBlobs.run().changes;
+  let deleted = 0;
+  for (const hash of new Set(contentHashes)) {
+    if (hash) deleted += imageStmts.deleteUnreferencedBlob.run(hash).changes;
+  }
+  return deleted;
+}
 
 const sentenceEnrichmentStmts = {
   get: db.prepare(`SELECT * FROM sentence_enrichments WHERE lookup_hash = ?`),
@@ -386,7 +443,7 @@ function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeT
     mime_type: mimeType, content_hash: contentHash,
   });
   if (reference.changes > 0 && owner?.content_hash && owner.content_hash !== contentHash) {
-    imageStmts.deleteUnreferencedBlob.run(owner.content_hash);
+    deleteUnreferencedBlobs([owner.content_hash]);
   }
   return reference.changes > 0;
 }
@@ -401,7 +458,8 @@ export function upsertItemImageBinary(id: string, data: Buffer, mimeType: string
 }
 
 function storedImageToDataUri(row: { data: Buffer | string; mime_type?: string | null } | undefined): string | null {
-  if (!row?.data) return null;
+  // A blob reference whose blob is gone reads back as the row's empty placeholder: that is no image.
+  if (!row?.data || row.data.length === 0) return null;
   if (typeof row.data === 'string') return row.data.startsWith('data:image/') ? row.data : null;
   const mime = row.mime_type || 'image/webp';
   return `data:${mime};base64,${row.data.toString('base64')}`;
@@ -519,7 +577,7 @@ export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord)
       updated_at: Date.now(),
     });
     if (existing.image_content_hash && existing.image_content_hash !== imageContentHash) {
-      imageStmts.deleteUnreferencedBlob.run(existing.image_content_hash);
+      deleteUnreferencedBlobs([existing.image_content_hash]);
     }
     return { status: 'updated', imageStored };
   }
@@ -543,7 +601,7 @@ export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord)
     updated_at: Date.now(),
   });
   if (existing?.image_content_hash && existing.image_content_hash !== imageContentHash) {
-    imageStmts.deleteUnreferencedBlob.run(existing.image_content_hash);
+    deleteUnreferencedBlobs([existing.image_content_hash]);
   }
   return { status: existing ? 'updated' : 'inserted', imageStored };
 }
@@ -555,7 +613,9 @@ function linkSentenceEnrichmentImage(
   mimeType: string | null,
   updatedAt: number,
 ): boolean {
-  if (!contentHash || !mimeType || imageStmts.owner.get(itemId)) return false;
+  if (!contentHash || !mimeType || imageStmts.owner.get(itemId) || !imageStmts.blobExists.get(contentHash)) {
+    return false;
+  }
   const reference = imageStmts.upsert.run({
     id: itemId,
     user_id: userId,
@@ -682,7 +742,6 @@ const userStmts = {
     VALUES (@id, @google_id, @email, @display_name, @photo_url, @is_approved, @is_admin, @created_at)
   `),
   count: db.prepare(`SELECT COUNT(*) as cnt FROM users`),
-  approve: db.prepare(`UPDATE users SET is_approved = 1 WHERE id = ?`),
   listAll: db.prepare(`SELECT * FROM users ORDER BY created_at`),
 };
 
@@ -693,7 +752,6 @@ const sessionStmts = {
     WHERE s.token = ? AND s.expires_at > ?
   `),
   delete: db.prepare(`DELETE FROM sessions WHERE token = ?`),
-  migrateToken: db.prepare(`UPDATE OR IGNORE sessions SET token = ? WHERE token = ?`),
   deleteExpired: db.prepare(`DELETE FROM sessions WHERE expires_at < ?`),
 };
 
@@ -853,7 +911,56 @@ const nextRevision = db.prepare(`UPDATE sync_meta SET value = value + 1 WHERE ke
 
 export interface UpsertResult { revision: number; conflicted: boolean }
 
-export function upsertItem(item: any, userId: string): UpsertResult {
+export interface UpsertOptions {
+  /**
+   * The write is the whole item, so a server-owned field it omits is removed instead of kept from the
+   * stored row. Only the corpus-audit import writes items this way: its data must match audited hashes.
+   */
+  replaceServerFields?: boolean;
+}
+
+// Only server-side jobs write these. A client or importer can write from a copy made before a job ran.
+const SERVER_OWNED_FIELDS = ['usageAudit', 'advancedEnrichment', 'localImageEnrichment'] as const;
+
+function withServerOwnedFields(target: any, stored: any): any {
+  if (!stored || typeof stored !== 'object') return target;
+  let result = target;
+  for (const field of SERVER_OWNED_FIELDS) {
+    if (result[field] === undefined && stored[field] !== undefined) {
+      if (result === target) result = { ...target };
+      result[field] = stored[field];
+    }
+  }
+  return result;
+}
+
+/**
+ * Keep the server-owned fields a current write omits: the item's own, each phrase vocab's by id, and a
+ * sentence's analysis while its text is unchanged (an analysis of other text would be wrong).
+ */
+function keepServerOwnedData(data: any, type: string, stored: any, storedType: string): any {
+  if (type !== storedType || !stored || typeof stored !== 'object') return data;
+  let result = withServerOwnedFields(data, stored);
+  if (type === 'sentence' && result.analysis === undefined && stored.analysis !== undefined &&
+      result.text === stored.text) {
+    result = { ...result, analysis: stored.analysis, analysisGeneratedAt: stored.analysisGeneratedAt };
+  }
+  if (type === 'phrase' && Array.isArray(result.vocabs) && Array.isArray(stored.vocabs)) {
+    const storedVocabs = new Map<string, any>();
+    for (const vocab of stored.vocabs) if (typeof vocab?.id === 'string') storedVocabs.set(vocab.id, vocab);
+    let changed = false;
+    const vocabs = result.vocabs.map((vocab: any) => {
+      if (!vocab || typeof vocab !== 'object' || typeof vocab.id !== 'string') return vocab;
+      const kept = withServerOwnedFields(vocab, storedVocabs.get(vocab.id));
+      if (kept !== vocab) changed = true;
+      return kept;
+    });
+    if (changed) result = { ...result, vocabs };
+  }
+  return result;
+}
+
+function writeItem(item: any, userId: string, options: UpsertOptions): UpsertResult & { enriched: boolean } {
   let data = item.data;
   if (!data || !data.id) throw new Error('Item missing data.id');
 
@@ -912,34 +1019,44 @@ export function upsertItem(item: any, userId: string): UpsertResult {
     typeof data.text === 'string'
     ? getSentenceEnrichmentForText(data.text)
     : null;
+  let enriched = false;
   if (enrichment && !data.analysis) {
     data = {
       ...data,
       analysis: enrichment.analysis,
       analysisGeneratedAt: enrichment.generatedAt,
     };
+    enriched = true;
   }
+
+  // After the pool, which returns the sentence it analyses to the saving client. Kept fields aren't returned.
+  const beforeKeeping = data;
+  if (existing && existing.is_deleted !== 1 && !staleContent && !item.isDeleted && !options.replaceServerFields) {
+    data = keepServerOwnedData(data, item.type, JSON.parse(existing.data), existing.type);
+  }
+  const keptServerFields = data !== beforeKeeping;
 
   // Capture any incoming base64 into item_images, then strip imageUrl from the data we
   // store — base64 and markers ('idb:stored'/'server:has_image') never live in items.data.
   // For markers / missing / non-base64, we leave item_images untouched (and NEVER delete:
   // a vocab id can be shared with a standalone item). This replaces the old fragile,
   // index-based image-preservation, which could clobber real images with markers.
+  let imagesChanged = false;
   const captureImage = (id: string | undefined, url: unknown) => {
     if (id && typeof url === 'string' && url.startsWith('data:image/')) {
-      storeImage(id, userId, url, now);
+      if (storeImage(id, userId, url, now)) imagesChanged = true;
     }
   };
 
   captureImage(data.id, data.imageUrl);
-  if (enrichment) {
-    linkSentenceEnrichmentImage(
-      data.id,
-      userId,
-      enrichment.imageContentHash,
-      enrichment.imageMimeType,
-      now,
-    );
+  if (enrichment && linkSentenceEnrichmentImage(
+    data.id,
+    userId,
+    enrichment.imageContentHash,
+    enrichment.imageMimeType,
+    now,
+  )) {
+    imagesChanged = true;
   }
   const { imageUrl: _topImageUrl, ...rest } = data;
   const finalData: any = rest;
@@ -956,10 +1073,7 @@ export function upsertItem(item: any, userId: string): UpsertResult {
     });
   }
 
-  const revision = staleContent && !srsChanged
-    ? existingRevision
-    : ((nextRevision.get() as { value: number }).value);
-  stmts.upsert.run({
+  const row = {
     id: data.id,
     type: staleContent ? existing.type : item.type,
     data: staleContent ? existing.data : JSON.stringify(finalData),
@@ -970,20 +1084,44 @@ export function upsertItem(item: any, userId: string): UpsertResult {
     is_archived: staleContent ? existing.is_archived : (item.isArchived ? 1 : 0),
     user_id: userId,
     project: null,
-    revision,
-  });
-  return { revision, conflicted: staleContent };
+  };
+  // A copy that differs from the row only by lacking kept fields changes nothing. Its client keeps its own
+  // data at an unchanged revision and pushes that copy again, so a revision per push would never settle.
+  if (existing && keptServerFields && !imagesChanged && !enriched &&
+      (Object.keys(row) as Array<keyof typeof row>).every(key => row[key] === existing[key])) {
+    return { revision: existingRevision, conflicted: false, enriched: false };
+  }
+  const revision = staleContent && !srsChanged
+    ? existingRevision
+    : ((nextRevision.get() as { value: number }).value);
+  stmts.upsert.run({ ...row, revision });
+  return { revision, conflicted: staleContent, enriched };
 }
 
-export const upsertMany = db.transaction((items: any[], userId: string): { revisions: Record<string, number>; conflicts: string[] } => {
+// The item row, its captured images and its revision commit together.
+const writeItemTransaction = db.transaction(writeItem);
+
+export function upsertItem(item: any, userId: string, options: UpsertOptions = {}): UpsertResult {
+  const { revision, conflicted } = writeItemTransaction(item, userId, options);
+  return { revision, conflicted };
+}
+
+/** `enriched` lists the sentences the example-enrichment pool just gave an analysis. */
+export const upsertMany = db.transaction((items: any[], userId: string, options: UpsertOptions = {}): {
+  revisions: Record<string, number>;
+  conflicts: string[];
+  enriched: string[];
+} => {
   const revisions: Record<string, number> = {};
   const conflicts: string[] = [];
+  const enriched: string[] = [];
   for (const item of items) {
-    const result = upsertItem(item, userId);
+    const result = writeItem(item, userId, options);
     if (result.conflicted) conflicts.push(item.data.id);
     else revisions[item.data.id] = result.revision;
+    if (result.enriched) enriched.push(item.data.id);
   }
-  return { revisions, conflicts };
+  return { revisions, conflicts, enriched };
 });
 
 export interface ReviewEventRow {
@@ -1011,9 +1149,10 @@ const reviewStmts = {
     WHERE user_id = ? AND reviewed_at < ? AND undone_at IS NULL`).pluck(),
   byId: db.prepare(`SELECT id, user_id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id, undone_at
     FROM review_events WHERE id = ?`),
-  insertItemSnapshot: db.prepare(`INSERT INTO review_event_items (event_id, item_id, previous_srs, applied_srs)
-    VALUES (?, ?, ?, ?)`),
-  snapshotsByEvent: db.prepare(`SELECT item_id, previous_srs, applied_srs FROM review_event_items WHERE event_id = ? ORDER BY item_id`),
+  insertItemSnapshot: db.prepare(`INSERT INTO review_event_items (event_id, item_id, previous_srs, applied_srs, base_revision, applied_revision)
+    VALUES (?, ?, ?, ?, ?, ?)`),
+  snapshotsByEvent: db.prepare(`SELECT item_id, previous_srs, applied_srs, base_revision, applied_revision
+    FROM review_event_items WHERE event_id = ? ORDER BY item_id`),
   markUndone: db.prepare(`UPDATE review_events SET undone_at = ? WHERE id = ? AND user_id = ? AND undone_at IS NULL`),
 };
 
@@ -1063,17 +1202,41 @@ export interface AppliedReviewResult {
   applied: boolean;
   event: ReviewEventRow;
   items: any[];
+  /**
+   * Each item's revision before the review, for items the review was the last change to. A client whose
+   * copy has that revision knows the server changed nothing else, so its unsynced edits still apply.
+   */
+  baseRevisions: Record<string, number>;
+}
+
+interface ReviewSnapshotRow {
+  item_id: string;
+  previous_srs: string;
+  applied_srs: string;
+  base_revision: number | null;
+  applied_revision: number | null;
 }
 
 const applyReviewTransaction = db.transaction((
   incoming: ReviewEventRow,
   itemIds: string[],
   userId: string,
-): { applied: boolean; event: ReviewEventRow; itemIds: string[] } | null => {
+  seededRevision: number | undefined,
+): { applied: boolean; event: ReviewEventRow; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
   const previous = reviewStmts.byId.get(incoming.id) as any;
   if (previous) {
     if (previous.user_id !== userId) throw new Error('Review event id belongs to another user');
-    const storedIds = (reviewStmts.snapshotsByEvent.all(incoming.id) as Array<{ item_id: string }>).map(row => row.item_id);
+    const snapshots = reviewStmts.snapshotsByEvent.all(incoming.id) as ReviewSnapshotRow[];
+    const storedIds = snapshots.map(row => row.item_id);
+    // A retried review reports a base only while the review is still the item's latest change.
+    const baseRevisions: Record<string, number> = {};
+    if (previous.undone_at === null) {
+      for (const snapshot of snapshots) {
+        if (snapshot.base_revision === null || snapshot.applied_revision === null) continue;
+        const row = stmts.getByIdScoped.get(snapshot.item_id, userId) as ItemRow | undefined;
+        if (row?.revision === snapshot.applied_revision) baseRevisions[snapshot.item_id] = snapshot.base_revision;
+      }
+    }
     return {
       applied: false,
       event: {
@@ -1089,6 +1252,7 @@ const applyReviewTransaction = db.transaction((
         sessionId: previous.session_id || undefined,
       },
       itemIds: storedIds.length > 0 ? storedIds : itemIds,
+      baseRevisions,
     };
   }
 
@@ -1141,24 +1305,36 @@ const applyReviewTransaction = db.transaction((
   });
   if (inserted.changes !== 1) throw new Error('Review event could not be stored');
 
+  const baseRevisions: Record<string, number> = {};
   for (const row of rows) {
     const revision = (nextRevision.get() as { value: number }).value;
     const siblingSrs = { ...nextSrs, id: row.id, type: row.type };
     const appliedSrs = JSON.stringify(siblingSrs);
-    reviewStmts.insertItemSnapshot.run(event.id, row.id, row.srs, appliedSrs);
+    // A seed is the reviewing client's own copy, so the server held nothing that client hasn't seen: its base
+    // is the "no revision yet" the client itself holds.
+    const baseRevision = row.id === incoming.itemId && row.revision === seededRevision ? 0 : row.revision;
+    reviewStmts.insertItemSnapshot.run(event.id, row.id, row.srs, appliedSrs, baseRevision, revision);
     stmts.updateSrs.run(appliedSrs, serverNow, revision, row.id, userId);
+    baseRevisions[row.id] = baseRevision;
   }
-  return { applied: true, event, itemIds: rows.map(row => row.id) };
+  return { applied: true, event, itemIds: rows.map(row => row.id), baseRevisions };
 });
 
-export function applyReviewEvent(event: ReviewEventRow, itemIds: string[], userId: string): AppliedReviewResult | null {
+/** `seededRevision` is the revision of the review's own seed item, when the request just stored one. */
+export function applyReviewEvent(
+  event: ReviewEventRow,
+  itemIds: string[],
+  userId: string,
+  seededRevision?: number,
+): AppliedReviewResult | null {
   const uniqueIds = Array.from(new Set([event.itemId, ...itemIds])).slice(0, 100);
-  const result = applyReviewTransaction(event, uniqueIds, userId);
+  const result = applyReviewTransaction(event, uniqueIds, userId, seededRevision);
   if (!result) return null;
   return {
     applied: result.applied,
     event: result.event,
     items: result.itemIds.map(id => getItemById(id, userId, false)).filter(Boolean),
+    baseRevisions: result.baseRevisions,
   };
 }
 
@@ -1166,27 +1342,31 @@ export interface UndoneReviewResult {
   undone: boolean;
   eventId: string;
   items: any[];
+  /** Each item's revision before the undo, as AppliedReviewResult reports it for a review. */
+  baseRevisions: Record<string, number>;
 }
 
-const undoReviewTransaction = db.transaction((eventId: string, userId: string): { undone: boolean; itemIds: string[] } | null => {
+const undoReviewTransaction = db.transaction((
+  eventId: string,
+  userId: string,
+): { undone: boolean; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
   const event = reviewStmts.byId.get(eventId) as any;
   if (!event) return null;
   if (event.user_id !== userId) throw new Error('Review event id belongs to another user');
 
-  const snapshots = reviewStmts.snapshotsByEvent.all(eventId) as Array<{
-    item_id: string;
-    previous_srs: string;
-    applied_srs: string;
-  }>;
+  const snapshots = reviewStmts.snapshotsByEvent.all(eventId) as ReviewSnapshotRow[];
   if (snapshots.length === 0) throw new Error('Review event cannot be undone');
   const itemIds = snapshots.map(snapshot => snapshot.item_id);
-  if (event.undone_at !== null) return { undone: false, itemIds };
+  // A retried undo reports no base: the undo's own revision isn't stored.
+  if (event.undone_at !== null) return { undone: false, itemIds, baseRevisions: {} };
 
+  const baseRevisions: Record<string, number> = {};
   for (const snapshot of snapshots) {
     const row = stmts.getByIdScoped.get(snapshot.item_id, userId) as ItemRow | undefined;
     if (!row || row.is_deleted === 1 || row.srs !== snapshot.applied_srs) {
       throw new Error('Review is no longer the latest change for this item');
     }
+    baseRevisions[snapshot.item_id] = row.revision;
   }
 
   const now = Date.now();
@@ -1196,7 +1376,7 @@ const undoReviewTransaction = db.transaction((eventId: string, userId: string): 
   }
   const marked = reviewStmts.markUndone.run(now, eventId, userId);
   if (marked.changes !== 1) throw new Error('Review undo could not be stored');
-  return { undone: true, itemIds };
+  return { undone: true, itemIds, baseRevisions };
 });
 
 export function undoReviewEvent(eventId: string, userId: string): UndoneReviewResult | null {
@@ -1206,12 +1386,16 @@ export function undoReviewEvent(eventId: string, userId: string): UndoneReviewRe
     undone: result.undone,
     eventId,
     items: result.itemIds.map(id => getItemById(id, userId, false)).filter(Boolean),
+    baseRevisions: result.baseRevisions,
   };
 }
 
-export function softDeleteItem(id: string, userId: string) {
+export function softDeleteItem(id: string, userId: string): boolean {
+  // Deleting an id the user doesn't have changes nothing, so it must not advance the revision clock.
+  if (!stmts.existsScoped.get(id, userId)) return false;
   const revision = (nextRevision.get() as { value: number }).value;
   stmts.softDelete.run(Date.now(), revision, id, userId);
+  return true;
 }
 
 export function getItemById(id: string, userId: string, includeImages = true) {
@@ -1229,29 +1413,30 @@ export function getItemById(id: string, userId: string, includeImages = true) {
 }
 
 /**
- * TRANSITIONAL fallback: read a base64 image still inlined in items.data for rows
+ * TRANSITIONAL fallback: read base64 images still inlined in items.data for rows
  * the migration hasn't reached yet. Searches top-level items, then nested phrase vocabs.
  * (Removed in a later cleanup once prod confirms zero inline images remain.)
  */
-function getInlineItemImage(id: string, userId: string): string | null {
-  const row = stmts.getImageData.get(id, userId) as { data: string } | undefined;
-  if (row) {
+function getInlineItemImages(ids: string[], userId: string): Record<string, string> {
+  const found: Record<string, string> = {};
+  const inline = (url: unknown): url is string => typeof url === 'string' && url.startsWith('data:image/');
+  const nested = new Set(ids);
+  for (const row of stmts.getDataForIds.all(userId, JSON.stringify(ids)) as Array<{ id: string; data: string }>) {
+    nested.delete(row.id);
     const data = JSON.parse(row.data);
-    if (data.imageUrl?.startsWith('data:image/')) return data.imageUrl;
-    return null;
+    if (inline(data.imageUrl)) found[row.id] = data.imageUrl;
   }
-
-  // id might be a vocab id nested in a phrase
-  const phraseRow = stmts.findVocabInPhrase.get(userId, `%"id":"${id}"%`) as { data: string } | undefined;
-  if (phraseRow) {
-    const data = JSON.parse(phraseRow.data);
-    if (Array.isArray(data.vocabs)) {
-      const vocab = data.vocabs.find((v: any) => v.id === id);
-      if (vocab?.imageUrl?.startsWith('data:image/')) return vocab.imageUrl;
+  // An id without its own row might be a vocab nested in a phrase.
+  if (nested.size > 0) {
+    for (const row of stmts.phrasesWithInlineImages.iterate(userId) as Iterable<{ data: string }>) {
+      const vocabs = JSON.parse(row.data).vocabs;
+      if (!Array.isArray(vocabs)) continue;
+      for (const vocab of vocabs) {
+        if (nested.has(vocab?.id) && inline(vocab.imageUrl)) found[vocab.id] ??= vocab.imageUrl;
+      }
     }
   }
-
-  return null;
+  return found;
 }
 
 /**
@@ -1263,7 +1448,34 @@ export function getItemImage(id: string, userId: string): string | null {
   const imgRow = imageStmts.get.get(id, userId) as { data: Buffer | string; mime_type: string | null } | undefined;
   const stored = storedImageToDataUri(imgRow);
   if (stored) return stored;
-  return getInlineItemImage(id, userId);
+  return getInlineItemImages([id], userId)[id] ?? null;
+}
+
+const RASTER_DATA_URI = /^data:(image\/(?:avif|gif|jpeg|png|webp));base64,(.+)$/;
+
+/**
+ * An image's bytes for the image endpoint, with their SHA-256 as a version. Blob-backed images already
+ * carry that hash; a legacy or inline data URI is decoded and hashed here. Raster types only.
+ */
+export function getItemImageBinary(id: string, userId: string): {
+  data: Buffer;
+  mimeType: string;
+  contentHash: string;
+} | null {
+  const row = imageStmts.get.get(id, userId) as {
+    data: Buffer | string;
+    mime_type: string | null;
+    content_hash: string | null;
+  } | undefined;
+  if (row?.content_hash && Buffer.isBuffer(row.data) && row.data.length > 0) {
+    const mimeType = row.mime_type || 'image/webp';
+    if (!/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType)) return null;
+    return { data: row.data, mimeType, contentHash: row.content_hash };
+  }
+  const match = getItemImage(id, userId)?.match(RASTER_DATA_URI);
+  if (!match) return null;
+  const data = Buffer.from(match[2], 'base64');
+  return { data, mimeType: match[1], contentHash: createHash('sha256').update(data).digest('hex') };
 }
 
 /**
@@ -1274,31 +1486,31 @@ export function getItemImagesBatch(ids: string[], userId: string): Record<string
   const result: Record<string, string> = {};
   if (ids.length === 0) return result;
 
-  // Fast path: one IN query against item_images.
-  const placeholders = ids.map(() => '?').join(',');
-  const rows = db
-    .prepare(`SELECT i.id, COALESCE(b.data, i.data) AS data, i.mime_type FROM item_images i
-      LEFT JOIN image_blobs b ON b.content_hash = i.content_hash
-      WHERE i.user_id = ? AND i.id IN (${placeholders})`)
-    .all(userId, ...ids) as Array<{ id: string; data: Buffer | string; mime_type: string | null }>;
+  // Fast path: one indexed query against item_images.
+  const rows = imageStmts.getMany.all(userId, JSON.stringify(ids)) as Array<{
+    id: string;
+    data: Buffer | string;
+    mime_type: string | null;
+  }>;
   for (const r of rows) {
     const dataUri = storedImageToDataUri(r);
     if (dataUri) result[r.id] = dataUri;
   }
 
   // Transitional fallback for any ids not yet migrated.
-  for (const id of ids) {
-    if (!result[id]) {
-      const inline = getInlineItemImage(id, userId);
-      if (inline) result[id] = inline;
-    }
-  }
+  const missing = ids.filter(id => !result[id]);
+  if (missing.length > 0) Object.assign(result, getInlineItemImages(missing, userId));
   return result;
 }
 
 /** All image ids this user has stored — for the recovery diff (client uploads what's missing). */
 export function getImageManifest(userId: string): string[] {
   return (imageStmts.manifest.all(userId) as Array<{ id: string }>).map(r => r.id);
+}
+
+/** Whether this id has a stored image whose bytes still exist. */
+export function hasItemImage(id: string, userId: string): boolean {
+  return imageStmts.versionsForIds.all(userId, JSON.stringify([id])).length > 0;
 }
 
 /** Upsert base64 images directly into item_images (upload-on-create + recovery). */
@@ -1373,10 +1585,6 @@ export const createUserAndClaimItems = db.transaction((opts: {
   return user;
 });
 
-export function approveUser(userId: string) {
-  userStmts.approve.run(userId);
-}
-
 export function listAllUsers(): UserRow[] {
   return userStmts.listAll.all() as UserRow[];
 }
@@ -1402,19 +1610,12 @@ export function getSessionUser(token: string): UserRow | null {
     sessionStmts.deleteExpired.run(now);
     lastSessionCleanup = now;
   }
-  const hashed = sessionTokenHash(token);
-  const current = sessionStmts.getUser.get(hashed, now) as UserRow | undefined;
-  if (current) return current;
-
-  // Compatibility for sessions created before hashes were introduced. Migrate on first use.
-  const legacy = sessionStmts.getUser.get(token, now) as UserRow | undefined;
-  if (legacy) sessionStmts.migrateToken.run(hashed, token);
-  return legacy || null;
+  // Only the hash of a cookie is ever looked up, so a copy of the sessions table can't be replayed as a cookie.
+  return (sessionStmts.getUser.get(sessionTokenHash(token), now) as UserRow | undefined) || null;
 }
 
 export function deleteSession(token: string) {
   sessionStmts.delete.run(sessionTokenHash(token));
-  sessionStmts.delete.run(token);
 }
 
 export function isDatabaseReady(): boolean {

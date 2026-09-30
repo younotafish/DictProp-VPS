@@ -378,6 +378,82 @@ test('session bearer tokens are hashed at rest and remain revocable', () => {
   assert.notEqual(stored.token, session.token);
   assert.equal(stored.token.length, 64);
   assert.equal(getSessionUser(session.token)?.id, user.id);
+  // The stored hash is not itself a credential.
+  assert.equal(getSessionUser(stored.token), null);
+  assert.equal(getSessionUser(session.token)?.id, user.id);
   deleteSession(session.token);
   assert.equal(getSessionUser(session.token), null);
+});
+
+test('a cleared flag or an image URL survives a server round trip without re-dirtying the item', async () => {
+  const { isItemDirty } = await import('../../services/itemHash.ts');
+  const { applyServerSave, mergeDatasets, trackServerContent } = await import('../../services/sync.ts');
+  const userId = 'echo-user';
+  for (const [id, change] of [
+    ['echo-undeleted', { isDeleted: false }],
+    ['echo-unarchived', { isArchived: false }],
+    ['echo-image-url', { data: { ...makeItem('echo-image-url', 'with url', 1, 0, 0).data, imageUrl: 'https://example.com/a.png' } }],
+  ] as const) {
+    const saved = makeItem(id, 'with url', 1, 0, 0);
+    const edited = { ...saved, ...change, updatedAt: 2 } as any;
+    // Push, as pushNow does, then pull the server's copy back, as pullChanges does.
+    const { revision } = upsertItem(structuredClone(edited), userId);
+    const [pushed] = applyServerSave([edited], [edited], { revisions: new Map([[id, revision]]), canonical: new Map() });
+    assert.equal(isItemDirty(pushed), false, id);
+    const echo = getItemsAfterRevision({ revision: revision - 1, id: '' }, 500, userId).items.filter(item => item.data.id === id);
+    const [pulled] = trackServerContent(mergeDatasets([pushed], echo), echo);
+    assert.equal(isItemDirty(pulled), false, id);
+  }
+});
+
+test('a reviewed item keeps its unsynced edits only while the server changed nothing else', async () => {
+  const { isItemDirty } = await import('../../services/itemHash.ts');
+  const { mergeDatasets, reconcileReviewedItem, trackServerContent } = await import('../../services/sync.ts');
+  const userId = 'reconcile-user';
+  const wire = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  const pull = (id: string) => {
+    const items = wire(getItemsAfterRevision({ revision: 0, id: '' }, 500, userId).items.filter(item => item.data.id === id));
+    return trackServerContent(mergeDatasets([], items), items)[0];
+  };
+  const edit = (item: any) => ({ ...item, updatedAt: 2, data: { ...item.data, mnemonic: 'my note' } });
+  const review = (id: string, eventId: string) => applyReviewEvent(
+    { id: eventId, itemId: id, itemType: 'vocab', reviewedAt: Date.now(), previousStep: 0, nextStep: 1, rating: 'good' },
+    [id],
+    userId,
+  )!;
+
+  // Only the review changed the server copy: the edit survives it, still dirty, and its push is accepted.
+  upsertItem(makeItem('reconcile-quiet', 'plain', 1, 0, 0), userId);
+  let local = edit(pull('reconcile-quiet'));
+  const applied = review('reconcile-quiet', 'reconcile-quiet-review');
+  let reconciled: any = reconcileReviewedItem(local, wire(applied.items[0]), applied.baseRevisions['reconcile-quiet']);
+  assert.equal(reconciled.data.mnemonic, 'my note');
+  assert.equal(reconciled.srs.totalReviews, 1);
+  assert.equal(isItemDirty(reconciled), true);
+  // A retried review reports the same base while it is still the item's latest change, and none after.
+  assert.deepEqual(review('reconcile-quiet', 'reconcile-quiet-review').baseRevisions, applied.baseRevisions);
+  assert.equal(upsertItem(wire(reconciled), userId).conflicted, false);
+  assert.equal(getItemById('reconcile-quiet', userId)?.data.mnemonic, 'my note');
+  assert.deepEqual(review('reconcile-quiet', 'reconcile-quiet-review').baseRevisions, {});
+
+  // Another writer changed the server copy first: the review hands over its copy, as a pull would, instead of
+  // letting the next push overwrite it.
+  upsertItem(makeItem('reconcile-enriched', 'plain', 1, 0, 0), userId);
+  local = edit(pull('reconcile-enriched'));
+  upsertItem({ ...makeItem('reconcile-enriched', 'enriched', 3, 0, 0), serverRevision: local.serverRevision }, userId);
+  const raced = review('reconcile-enriched', 'reconcile-enriched-review');
+  reconciled = reconcileReviewedItem(local, wire(raced.items[0]), raced.baseRevisions['reconcile-enriched']);
+  assert.equal(reconciled.data.definition, 'enriched');
+  assert.equal(reconciled.srs.totalReviews, 1);
+  assert.equal(isItemDirty(reconciled), false);
+
+  // An undo reports its base the same way.
+  upsertItem(makeItem('reconcile-undo', 'plain', 1, 0, 0), userId);
+  review('reconcile-undo', 'reconcile-undo-review');
+  local = edit(pull('reconcile-undo'));
+  const undone = undoReviewEvent('reconcile-undo-review', userId)!;
+  reconciled = reconcileReviewedItem(local, wire(undone.items[0]), undone.baseRevisions['reconcile-undo']);
+  assert.equal(reconciled.data.mnemonic, 'my note');
+  assert.equal(reconciled.srs.totalReviews, 0);
+  assert.equal(isItemDirty(reconciled), true);
 });

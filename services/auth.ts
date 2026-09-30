@@ -101,12 +101,23 @@ export function loginRedirect(): void {
   window.location.href = '/api/auth/login';
 }
 
-export async function logout(): Promise<void> {
-  clearCachedAuth(); // drop the offline fallback so we don't resurrect the session
+/**
+ * Sign out on the server, then reload to the sign-in screen. Resolves false, keeping the session and the
+ * page, when the server can't be reached: the server session would outlive a local-only sign-out, and
+ * dropping the cached session offline would lock the local library behind a sign-in that needs the network.
+ */
+export async function logout(): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT_MS);
   try {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    const res = await fetch('/api/auth/logout', { method: 'POST', signal: controller.signal });
+    if (!res.ok) return false;
   } catch {
-    /* ignore — still reload so the UI returns to the sign-in screen */
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
+  clearCachedAuth(); // drop the offline fallback so we don't resurrect the session
   window.location.reload();
+  return true;
 }

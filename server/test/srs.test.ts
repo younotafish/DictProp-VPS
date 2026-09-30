@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
+import { updateAfterRating } from '../../services/fsrsScheduler.ts';
 import { advanceReviewSrs } from '../src/srs.js';
 import type { ReviewRating } from '../src/srs.js';
 
@@ -13,7 +14,7 @@ test('legacy fixed-schedule rows migrate lazily for every FSRS rating', () => {
   const reviewedAt = 31 * 86_400_000;
 
   for (const rating of ['again', 'hard', 'good', 'easy'] satisfies ReviewRating[]) {
-    const migrated = SRSAlgorithm.updateAfterRating(legacy, rating, reviewedAt);
+    const migrated = updateAfterRating(legacy, rating, reviewedAt);
     assert.equal(migrated.scheduler, 'fsrs-v6');
     assert.equal(migrated.totalReviews, 4);
     assert.equal(migrated.lastReviewDate, reviewedAt);
@@ -27,7 +28,7 @@ test('reviewing one sense leaves the same-spelling sibling untouched', () => {
   const reviewedAt = 10 * 86_400_000;
   const firstSense = SRSAlgorithm.createNew('lead-metal', 'vocab');
   const secondSense = SRSAlgorithm.createNew('lead-guide', 'vocab');
-  const updatedFirst = SRSAlgorithm.updateAfterRating(firstSense, 'good', reviewedAt);
+  const updatedFirst = updateAfterRating(firstSense, 'good', reviewedAt);
 
   assert.equal(updatedFirst.totalReviews, 1);
   assert.equal(secondSense.totalReviews, 0);
@@ -49,7 +50,7 @@ test('client preview and server-authoritative review transitions stay identical'
   for (const rating of ['again', 'hard', 'good', 'easy'] satisfies ReviewRating[]) {
     assert.deepEqual(
       advanceReviewSrs(base, reviewedAt, rating),
-      SRSAlgorithm.updateAfterRating(base, rating, reviewedAt),
+      updateAfterRating(base, rating, reviewedAt),
     );
   }
 });
@@ -82,4 +83,17 @@ test('migrating a never-reviewed item does not manufacture display strength from
   assert.equal(migrated.memoryStrength, 0);
   assert.equal(migrated.stability, 0.5);
   assert.equal(migrated.totalReviews, 0);
+});
+
+test('a reset starts over with its own time as the review clock, which the first review after it ignores', () => {
+  const resetAt = 40 * 86_400_000;
+  const reset = SRSAlgorithm.reset('reset', 'vocab', resetAt);
+  assert.equal(reset.totalReviews, 0);
+  assert.equal(reset.lastReviewDate, resetAt);
+  assert.equal(reset.nextReview, resetAt);
+
+  const fresh = { ...SRSAlgorithm.createNew('reset', 'vocab'), nextReview: resetAt };
+  const reviewedAt = resetAt + 3_600_000;
+  assert.deepEqual(updateAfterRating(reset, 'good', reviewedAt), updateAfterRating(fresh, 'good', reviewedAt));
+  assert.deepEqual(advanceReviewSrs(reset, reviewedAt, 'good'), advanceReviewSrs(fresh, reviewedAt, 'good'));
 });

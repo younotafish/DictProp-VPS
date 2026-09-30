@@ -1,7 +1,8 @@
 import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent, ReviewHistory, RevisionCursor } from '../types';
 import { dataUriToBlob } from './dataUri';
 import { log, error as logError } from './logger';
-import { HttpError, jsonRequest, requestJson, requestVoid, responseToHttpError } from './http';
+import { HttpError, jsonRequest, requestJson, requestVoid } from './http';
+import { MAX_COMPARE_WORDS } from './queryMode';
 import { publishServerMutation } from './syncSignals';
 import { sortVocabCardsByUsage } from './usageAudit';
 import type { RawEssayCatalog } from './essayCatalog';
@@ -63,26 +64,48 @@ export const loadItemChanges = async (cursor: RevisionCursor, limit = 500): Prom
 export interface SaveItemsResult {
   revisions: Map<string, number>;
   canonical: Map<string, StoredItem>;
+  /** Items the server refuses (invalid, or too large to send), with its reason. The others still save. */
+  rejected?: Map<string, string>;
+  /** Why the push stopped early. The batches before it saved; it and the rest didn't. */
+  error?: unknown;
 }
 
+const SAVE_BATCH_SIZE = 200;
+
 export const saveItems = async (items: readonly StoredItem[]): Promise<SaveItemsResult> => {
-  const saved: SaveItemsResult = { revisions: new Map(), canonical: new Map() };
-  const batchSize = 200;
-  for (let start = 0; start < items.length; start += batchSize) {
-    const batch = items.slice(start, start + batchSize);
-    const result = await requestJson<{
-      revisions?: Record<string, number>;
-      conflicts?: string[];
-      canonical?: StoredItem[];
-    }>(
-      `${API_BASE}/api/items`, jsonRequest('PUT', batch), 'Save items',
-    );
+  const saved: SaveItemsResult = { revisions: new Map(), canonical: new Map(), rejected: new Map() };
+  const send = async (batch: readonly StoredItem[]): Promise<void> => {
+    let result: { revisions?: Record<string, number>; canonical?: StoredItem[] };
+    try {
+      result = await requestJson(`${API_BASE}/api/items`, jsonRequest('PUT', batch), 'Save items');
+    } catch (error) {
+      // The server refuses a whole batch for one bad item, so a refused batch is split until each bad
+      // item is alone: otherwise it would hold back every save after it.
+      if (!(error instanceof HttpError) || (error.status !== 400 && error.status !== 413)) throw error;
+      if (batch.length === 1) {
+        saved.rejected!.set(batch[0].data.id, error.responseBody || error.message);
+        return;
+      }
+      const half = Math.ceil(batch.length / 2);
+      await send(batch.slice(0, half));
+      await send(batch.slice(half));
+      return;
+    }
     for (const [id, revision] of Object.entries(result.revisions ?? {})) {
       if (typeof revision === 'number') saved.revisions.set(id, revision);
     }
     for (const item of result.canonical ?? []) saved.canonical.set(item.data.id, item);
+  };
+  try {
+    for (let start = 0; start < items.length; start += SAVE_BATCH_SIZE) {
+      await send(items.slice(start, start + SAVE_BATCH_SIZE));
+    }
+  } catch (error) {
+    // What earlier batches saved still has to be recorded, or those items would be sent again.
+    if (saved.revisions.size === 0 && saved.canonical.size === 0) throw error;
+    saved.error = error;
   }
-  publishServerMutation();
+  if (saved.revisions.size > 0 || saved.canonical.size > 0) publishServerMutation();
   return saved;
 };
 
@@ -96,6 +119,8 @@ export interface AppliedReviewResponse {
   applied: boolean;
   event: ReviewEvent;
   items: StoredItem[];
+  /** Each item's revision just before the review; older servers and some replays omit it. */
+  baseRevisions?: Record<string, number>;
 }
 
 export const applyReviewMutation = async (
@@ -116,6 +141,8 @@ export interface UndoReviewResponse {
   undone: boolean;
   eventId: string;
   items: StoredItem[];
+  /** Each item's revision just before the undo; older servers omit it. */
+  baseRevisions?: Record<string, number>;
 }
 
 export const undoReviewMutation = async (eventId: string): Promise<UndoReviewResponse> => {
@@ -219,25 +246,52 @@ export const importJSON = async (
 // AI API (replaces aiService.ts)
 // ============================================================================
 
+// Each AI route has an overall time budget on the server (server/src/routes/ai.ts: analysis 300 s,
+// comparison 600 s, extraction 240 s, transcription 30 s). Wait 30 s longer, so the server's own 504
+// with its message arrives before the client gives up.
+const ANALYZE_TIMEOUT_MS = 330_000;
+const COMPARE_TIMEOUT_MS = 630_000;
+const EXTRACT_TIMEOUT_MS = 270_000;
+const TRANSCRIBE_TIMEOUT_MS = 60_000;
+
+// A 429 carries a machine-readable token: QUOTA_EXCEEDED (billing — callers show a quota message) or
+// RATE_LIMITED (transient). Every other failure stays an HttpError with the server's message.
+const toAiError = (error: unknown): unknown => {
+  if (!(error instanceof HttpError) || error.status !== 429) return error;
+  if (error.responseBody.includes('QUOTA_EXCEEDED')) return new Error('QUOTA_EXCEEDED');
+  return new HttpError('The AI provider rate-limited this request. Try again shortly.', 429, error.responseBody);
+};
+
+const postAi = async (path: string, body: unknown, label: string, timeoutMs: number): Promise<any> => {
+  try {
+    return await requestJson<any>(`${API_BASE}${path}`, jsonRequest('POST', body), label, timeoutMs);
+  } catch (error) {
+    throw toAiError(error);
+  }
+};
+
+const textOrEmpty = (value: unknown): string => (typeof value === 'string' ? value : '');
+
+// Only string values survive: the comparison view renders these maps directly.
+const stringRecord = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+};
+
 export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): Promise<SearchResult> => {
   if (!text || text.trim().length === 0) {
     throw new Error("Cannot analyze empty text");
   }
 
   const attemptCall = async (): Promise<SearchResult> => {
-    const res = await fetch(`${API_BASE}/api/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, ...(options?.mode ? { mode: options.mode } : {}) }),
-    });
-
-    if (!res.ok) {
-      const error = await responseToHttpError(res, 'Analysis');
-      if (error.status === 429) throw new Error('QUOTA_EXCEEDED');
-      throw error;
-    }
-
-    const data = await res.json();
+    const data = await postAi(
+      '/api/analyze',
+      { text, ...(options?.mode ? { mode: options.mode } : {}) },
+      'Analysis',
+      ANALYZE_TIMEOUT_MS,
+    );
 
     const vocabs = sortVocabCardsByUsage((data.vocabs || [])
       .filter((v: any) => v && typeof v.word === 'string' && v.word.trim().length > 0)
@@ -294,26 +348,24 @@ export const detectVocabulary = async (text: string): Promise<VocabularyScan> =>
     throw new Error('Please provide some text to analyze.');
   }
 
-  const res = await fetch(`${API_BASE}/api/extract-vocabulary`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  });
-
-  if (!res.ok) {
-    const error = await responseToHttpError(res, 'Vocabulary detection');
-    if (error.status === 429) throw new Error('QUOTA_EXCEEDED');
+  let data: any;
+  try {
+    data = await postAi('/api/extract-vocabulary', { text }, 'Vocabulary detection', EXTRACT_TIMEOUT_MS);
+  } catch (error: any) {
+    if (error?.name === 'TimeoutError') {
+      throw new Error('The model did not finish scanning this text before the timeout. Try a shorter text.');
+    }
     throw error;
   }
-
-  const data = await res.json();
   return {
-    words: (data.words || []).map((w: any) => ({
-      word: w.word.trim(),
-      context: w.context || '',
-      level: w.level || 'C1',
-      reason: w.reason || '',
-    })),
+    words: (Array.isArray(data.words) ? data.words : [])
+      .filter((w: any) => w && typeof w.word === 'string' && w.word.trim())
+      .map((w: any) => ({
+        word: w.word.trim(),
+        context: textOrEmpty(w.context),
+        level: textOrEmpty(w.level) || 'C1',
+        reason: textOrEmpty(w.reason),
+      })),
     translation: typeof data.translation === 'string' ? data.translation : '',
     sourceLang: data.sourceLang === 'zh' ? 'zh' : 'en',
   };
@@ -327,49 +379,70 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
     new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
   );
 
-  const res = await fetch(`${API_BASE}/api/transcribe`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audio: base64, mimeType: audioBlob.type || 'audio/webm' }),
-  });
-
-  if (!res.ok) {
-    if (res.status === 429) throw new Error('QUOTA_EXCEEDED');
+  let data: any;
+  try {
+    data = await postAi(
+      '/api/transcribe',
+      { audio: base64, mimeType: audioBlob.type || 'audio/webm' },
+      'Transcription',
+      TRANSCRIBE_TIMEOUT_MS,
+    );
+  } catch (error: any) {
+    if (error?.message === 'QUOTA_EXCEEDED') throw error;
     throw new Error('Transcription failed');
   }
 
-  const data = await res.json();
   log('[transcribeAudio] Transcription successful:', data.text);
-  return data.text || '';
+  return textOrEmpty(data.text);
+};
+
+// Keeps only the well-formed parts of a comparison. The comparison view renders these fields directly,
+// and a saved comparison opens on every device, so one non-string value must not reach it.
+const sanitizeComparisonResult = (data: any, fallbackWords: string[]): ComparisonResult => {
+  const resultWords = Array.isArray(data?.words) && data.words.length > 0 &&
+    data.words.every((word: unknown) => typeof word === 'string' && word.trim())
+    ? data.words as string[]
+    : fallbackWords;
+  return {
+    words: resultWords,
+    summary: textOrEmpty(data?.summary),
+    dimensions: (Array.isArray(data?.dimensions) ? data.dimensions : [])
+      .filter((dimension: any) => dimension && typeof dimension.label === 'string' && dimension.label)
+      .map((dimension: any) => ({
+        label: dimension.label,
+        analysis: textOrEmpty(dimension.analysis),
+        perWord: stringRecord(dimension.perWord),
+      })),
+    examples: (Array.isArray(data?.examples) ? data.examples : [])
+      .filter((example: any) => example && typeof example === 'object')
+      .map((example: any) => ({ context: textOrEmpty(example.context), sentences: stringRecord(example.sentences) }))
+      .filter((example: { sentences: Record<string, string> }) => Object.keys(example.sentences).length > 0),
+    commonMistakes: (Array.isArray(data?.commonMistakes) ? data.commonMistakes : [])
+      .filter((mistake: unknown): mistake is string => typeof mistake === 'string' && mistake.trim().length > 0),
+    verdict: textOrEmpty(data?.verdict),
+  };
 };
 
 export const compareWords = async (words: string[]): Promise<ComparisonResult> => {
-  if (!words || words.length < 2) {
-    throw new Error('Please provide at least 2 words to compare.');
+  // Mirrors the server: trimmed, the same word (ignoring case) once, 2 to MAX_COMPARE_WORDS of them.
+  const seen = new Set<string>();
+  const uniqueWords: string[] = [];
+  for (const word of words || []) {
+    const trimmed = typeof word === 'string' ? word.trim() : '';
+    if (!trimmed || seen.has(trimmed.toLowerCase())) continue;
+    seen.add(trimmed.toLowerCase());
+    uniqueWords.push(trimmed);
+  }
+  if (uniqueWords.length < 2) {
+    throw new Error('Please provide at least 2 different words to compare.');
+  }
+  if (uniqueWords.length > MAX_COMPARE_WORDS) {
+    throw new Error(`You can compare up to ${MAX_COMPARE_WORDS} words at a time.`);
   }
 
   const attemptCall = async (): Promise<ComparisonResult> => {
-    const res = await fetch(`${API_BASE}/api/compare`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ words }),
-    });
-
-    if (!res.ok) {
-      const error = await responseToHttpError(res, 'Comparison');
-      if (error.status === 429) throw new Error('QUOTA_EXCEEDED');
-      throw error;
-    }
-
-    const data = await res.json();
-    return {
-      words: data.words || words,
-      summary: data.summary || '',
-      dimensions: Array.isArray(data.dimensions) ? data.dimensions : [],
-      examples: Array.isArray(data.examples) ? data.examples : [],
-      commonMistakes: Array.isArray(data.commonMistakes) ? data.commonMistakes : [],
-      verdict: data.verdict || '',
-    };
+    const data = await postAi('/api/compare', { words: uniqueWords }, 'Comparison', COMPARE_TIMEOUT_MS);
+    return sanitizeComparisonResult(data, uniqueWords);
   };
 
   try {
@@ -393,11 +466,20 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
 // ============================================================================
 
 export const loadComparisons = async (): Promise<StoredComparison[]> => {
-  return requestJson<StoredComparison[]>(
+  const stored = await requestJson<unknown>(
     `${API_BASE}/api/comparisons`,
     undefined,
     'Load comparisons',
   );
+  // Comparisons saved before /api/compare validated its output can hold non-string values; clean them
+  // for display (nothing here is written back).
+  return (Array.isArray(stored) ? stored : [])
+    .filter((entry: any) => entry && typeof entry === 'object')
+    .map((entry: any) => {
+      const words = (Array.isArray(entry.words) ? entry.words : [])
+        .filter((word: unknown): word is string => typeof word === 'string');
+      return { ...entry, words, data: sanitizeComparisonResult(entry.data, words) };
+    });
 };
 
 export const saveComparisonApi = async (comparison: StoredComparison): Promise<void> => {
@@ -472,15 +554,28 @@ export const fetchCachedTTSTimings = async (key: string, timeoutMs = TTS_TIMINGS
   }
 };
 
+// The server takes at most 40 clips per request and answers once their audio is stored (three at a
+// time, a few seconds each), so a full request needs well over the default 30 s.
+const TTS_GENERATE_CHUNK = 40;
+const TTS_GENERATE_TIMEOUT_MS = 180_000;
+
 /** Ask the server to generate + cache clips (used by the live cache-miss trigger and the bulk sweep). */
 export const requestTTSGeneration = async (
   items: Array<{ text: string; voice?: string }>
 ): Promise<{ generated: number; skipped: number; failed: number }> => {
-  return requestJson(
-    `${API_BASE}/api/tts/generate`,
-    jsonRequest('POST', { items }),
-    'Generate TTS',
-  );
+  const total = { generated: 0, skipped: 0, failed: 0 };
+  for (let start = 0; start < items.length; start += TTS_GENERATE_CHUNK) {
+    const result = await requestJson<{ generated?: number; skipped?: number; failed?: number }>(
+      `${API_BASE}/api/tts/generate`,
+      jsonRequest('POST', { items: items.slice(start, start + TTS_GENERATE_CHUNK) }),
+      'Generate TTS',
+      TTS_GENERATE_TIMEOUT_MS,
+    );
+    total.generated += Number(result.generated) || 0;
+    total.skipped += Number(result.skipped) || 0;
+    total.failed += Number(result.failed) || 0;
+  }
+  return total;
 };
 
 export interface TtsBackfillStatus { running: boolean; total: number; done: number; generated: number; failed: number }

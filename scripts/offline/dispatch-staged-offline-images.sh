@@ -13,6 +13,10 @@ COOLDOWN_SECONDS="${OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS:-60}"
 SENTENCE_COMPLETE_MARKER="${SENTENCE_WAVE_COMPLETE_MARKER:-/tmp/dictprop-staged-sentence-backfill-v2/complete}"
 WAIT_FOR_SENTENCE_IMPORTS="${WAIT_FOR_SENTENCE_IMPORTS:-1}"
 CORPUS_MANIFEST="${OFFLINE_IMAGE_CORPUS_MANIFEST:-data/offline-backfill/final-reconciliation/usage-adjudicated-corpus-manifest.json}"
+DISPATCH_WAIT_SECONDS="${DISPATCH_WAIT_DEADLINE_SECONDS:-86400}"
+RELEASE_CREATE_ATTEMPTS="${RELEASE_CREATE_ATTEMPTS:-12}"
+
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -37,8 +41,30 @@ publisher_state_dir() {
   printf '%s/dictprop-publish-%s\n' "${TMPDIR:-/tmp}" "$state_key"
 }
 
+# The runner holds its cycle lock while this waits, so a wait that sees no publication ends.
+wait_or_give_up() {
+  if deadline_passed "$WAIT_DEADLINE"; then
+    log "$1 after ${DISPATCH_WAIT_SECONDS}s; giving up" >&2
+    exit 1
+  fi
+  sleep "$2"
+}
+
+# The failed wave is kept for inspection under a name the dispatcher ignores, and its entries go into
+# a fresh wave with a new release on the next run.
+set_wave_aside() {
+  local failed="$1.failed"
+  if [ -e "$failed" ]; then failed="$1.failed-$(date -u +%Y%m%dT%H%M%SZ)"; fi
+  mv "$1" "$failed"
+  log "publication of ${1##*/} failed; set it aside as ${failed##*/} so the next run starts a fresh wave"
+}
+
 if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ]; then
   echo "Image batch size must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "$DISPATCH_WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] || ! [[ "$RELEASE_CREATE_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "DISPATCH_WAIT_DEADLINE_SECONDS and RELEASE_CREATE_ATTEMPTS must be positive integers" >&2
   exit 1
 fi
 if [ ! -s "$SOURCE_ROOT/manifest.json" ]; then
@@ -59,29 +85,33 @@ if [ -s "$CORPUS_MANIFEST" ]; then
     "$CORPUS_MANIFEST"
 fi
 
+WAIT_DEADLINE="$(deadline_after "$DISPATCH_WAIT_SECONDS")"
 if [ "$WAIT_FOR_SENTENCE_IMPORTS" = 1 ]; then
   log "waiting for staged saved-sentence imports before publishing vocabulary images"
   while [ ! -s "$SENTENCE_COMPLETE_MARKER" ]; do
-    sleep 300
+    wait_or_give_up "still waiting for staged saved-sentence imports" 300
   done
 fi
 
-# Recover a wave that completed remotely just before a local restart.
+# Recover a wave that completed remotely just before a local restart. Publisher state lives in each
+# wave; waves published before that moved kept it under TMPDIR.
 while IFS= read -r tag_file; do
   wave_dir="$(dirname "$tag_file")"
   release_tag="$(tr -d '[:space:]' < "$tag_file")"
-  publisher_state="$(publisher_state_dir "$release_tag")"
-  if [ -s "$publisher_state/complete" ]; then
-    cp "$publisher_state/complete" "$wave_dir/published"
-  fi
-done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-tag | sort)
+  for publisher_state in "$wave_dir/publisher" "$(publisher_state_dir "$release_tag")"; do
+    if [ -s "$publisher_state/complete" ]; then
+      cp "$publisher_state/complete" "$wave_dir/published"
+      break
+    fi
+  done
+done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-tag ! -path '*.failed*' | sort)
 
 PUBLISHED_MANIFESTS=()
 while IFS= read -r manifest; do
   if [ -s "$(dirname "$manifest")/published" ]; then
     PUBLISHED_MANIFESTS+=("$manifest")
   fi
-done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json | sort)
+done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json ! -path '*.failed*' | sort)
 
 while :; do
   if [ "${#PUBLISHED_MANIFESTS[@]}" -eq 0 ]; then
@@ -98,7 +128,7 @@ while :; do
   READY_COUNT=$((ACCEPTED_COUNT - PUBLISHED_COUNT))
   if [ "$READY_COUNT" -lt "$BATCH_SIZE" ] && [ "$ACCEPTED_COUNT" -lt "$TOTAL_COUNT" ]; then
     log "$READY_COUNT unpublished images ready; waiting for batch size $BATCH_SIZE"
-    sleep 60
+    wait_or_give_up "still waiting for a batch of $BATCH_SIZE unpublished images" 60
     continue
   fi
 
@@ -121,7 +151,7 @@ while :; do
   WAVE_COUNT="$(printf '%s' "$RESULT" | node -e 'let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).waveEntries))')"
   if [ "$WAVE_COUNT" -eq 0 ]; then
     log "no unpublished verified images were found; retrying later"
-    sleep 60
+    wait_or_give_up "still no unpublished verified images" 60
     continue
   fi
 
@@ -161,28 +191,37 @@ NODE
     printf 'vocab-images-%s-%s\n' "$WAVE_NAME" "$(date -u +%Y%m%dT%H%M%SZ)" > "$TAG_FILE"
   fi
   RELEASE_TAG="$(tr -d '[:space:]' < "$TAG_FILE")"
-  PUBLISHER_STATE="$(publisher_state_dir "$RELEASE_TAG")"
-  if [ ! -s "$PUBLISHER_STATE/complete" ]; then
-    until "$GH_BIN" release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
-      || "$GH_BIN" release create "$RELEASE_TAG" \
+  if [ ! -s "$WAVE_DIR/publisher/complete" ]; then
+    create_attempts=0
+    until gh_bounded release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
+      || gh_bounded release create "$RELEASE_TAG" \
         --repo "$REPO" \
         --title "Temporary encrypted vocabulary image $WAVE_NAME" \
         --notes "Locally generated and strictly reviewed vocabulary images; removed after verified import." \
         --latest=false; do
+      create_attempts=$((create_attempts + 1))
+      if [ "$create_attempts" -ge "$RELEASE_CREATE_ATTEMPTS" ]; then
+        log "GitHub release creation for $WAVE_NAME failed $create_attempts times; giving up for this run" >&2
+        exit 1
+      fi
       log "GitHub release creation unavailable for $WAVE_NAME; retrying later"
       sleep 300
     done
   fi
 
-  scripts/offline/publish-backfill-release.sh \
+  if ! PUBLISH_STATE_DIR="$WAVE_DIR/publisher" scripts/offline/publish-backfill-release.sh \
     "$RELEASE_TAG" \
     "$ARCHIVE" \
     offline-images.enc \
     image-import \
     "$REQUIRED_DEPLOY_SHA" \
-    300
+    300; then
+    if [ -e "$WAVE_DIR/publisher/failed" ]; then set_wave_aside "$WAVE_DIR"; fi
+    exit 1
+  fi
   date -u +%FT%TZ > "$WAVE_DIR/published"
   PUBLISHED_MANIFESTS+=("$WAVE_DIR/manifest.json")
+  WAIT_DEADLINE="$(deadline_after "$DISPATCH_WAIT_SECONDS")"
   log "$WAVE_NAME published ($WAVE_COUNT new images); cooling down for ${COOLDOWN_SECONDS}s"
   sleep "$COOLDOWN_SECONDS"
 done

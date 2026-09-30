@@ -10,6 +10,7 @@ process.env.OWNER_GOOGLE_EMAIL = 'owner@example.com';
 // dotenv loads the repository's local development settings when env.ts is imported. An explicit
 // false value keeps this auth test deterministic even when the developer has bypass enabled in .env.
 process.env.DEV_AUTH_BYPASS = '0';
+process.env.PUBLIC_ORIGIN = '';
 
 const { authRoutes } = await import('../src/routes/auth.js');
 const { createSession, createUserAndClaimItems } = await import('../src/db.js');
@@ -54,4 +55,26 @@ test('trip gate refuses off-site return targets', async () => {
 
   assert.equal(response.status, 302);
   assert.equal(response.headers.get('location'), '/api/auth/login?returnTo=%2F');
+});
+
+test('sign-in cookies are Secure unless the whole round trip is local http', async () => {
+  const cookiesFor = async (url: string, headers: Record<string, string> = {}) => {
+    const response = await app.request(url, { headers });
+    assert.equal(response.status, 302);
+    const cookies = response.headers.getSetCookie();
+    assert.equal(cookies.length, 2);
+    return cookies;
+  };
+
+  // Behind a proxy that forgot x-forwarded-proto, the callback still runs on https://dictprop.online.
+  for (const cookie of await cookiesFor('http://dictprop.online/api/auth/login', { Host: 'dictprop.online' })) {
+    assert.match(cookie, /;\s*Secure/i);
+  }
+  for (const cookie of await cookiesFor('http://localhost:3000/api/auth/login', { Host: 'localhost:3000', 'X-Forwarded-Proto': 'https' })) {
+    assert.match(cookie, /;\s*Secure/i);
+  }
+  // Local development signs in over plain http, where a Secure cookie would never come back.
+  for (const cookie of await cookiesFor('http://localhost:3000/api/auth/login', { Host: 'localhost:3000' })) {
+    assert.doesNotMatch(cookie, /Secure/i);
+  }
 });

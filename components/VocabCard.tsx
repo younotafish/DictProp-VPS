@@ -4,9 +4,9 @@ import { Archive, BadgeCheck, BookOpen, BriefcaseBusiness, Check, ExternalLink, 
 import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
-import { YouGlishPlayer } from './YouGlishPlayer';
 import { HighlightedSentence } from './HighlightedSentence';
 import { SentenceSpeakerButton } from './SentenceSpeakerButton';
+import { MAX_COMPARE_WORDS } from '../services/queryMode';
 
 const CHATGPT_TRANSLATOR_PROMPT = `You are an American English ↔ Chinese visual translator. Your ONLY output is a single generated image — produce no text response of any kind. Follow every rule below — with no exceptions or questions — each time you receive user input.
 
@@ -105,8 +105,6 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   // Compare-pick mode state
   const [comparePicking, setComparePicking] = useState<'synonyms' | 'confusables' | null>(null);
   const [compareSelected, setCompareSelected] = useState<Set<string>>(new Set());
-  const [showYouGlishModal, setShowYouGlishModal] = useState(false);
-  const [showYouGlishInline, setShowYouGlishInline] = useState(false);
   const [showUsageReason, setShowUsageReason] = useState(false);
 
   // Reset compare-pick state when the card changes (e.g., navigating in DetailView). Only what is open gets
@@ -114,8 +112,6 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   React.useEffect(() => {
     if (comparePicking !== null) setComparePicking(null);
     if (compareSelected.size > 0) setCompareSelected(new Set());
-    if (showYouGlishInline) setShowYouGlishInline(false);
-    if (showYouGlishModal) setShowYouGlishModal(false);
     if (showUsageReason) setShowUsageReason(false);
   }, [data.id]);
 
@@ -125,6 +121,10 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
     if (typeof items === 'string') return [items];
     return [];
   };
+  // Same for the word family, whose entries are objects: a malformed one is skipped, not a crash.
+  const wordFamily = Array.isArray(data.wordFamily)
+    ? data.wordFamily.filter((entry): entry is WordFamilyEntry => typeof entry?.word === 'string' && entry.word.trim() !== '')
+    : [];
 
   const toggleCompareSelection = useCallback((word: string) => {
     setCompareSelected(prev => {
@@ -132,7 +132,9 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
       if (next.has(word)) {
         next.delete(word);
       } else {
-        next.add(word); // no cap — compare the current word against any number of others
+        // The current word plus the picks: a comparison takes at most MAX_COMPARE_WORDS words.
+        if (next.size >= MAX_COMPARE_WORDS - 1) return prev;
+        next.add(word);
       }
       return next;
     });
@@ -160,6 +162,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   const renderPills = (items: any, isPickMode: boolean = false) => ensureArray(items).map((item, idx) => {
     if (isPickMode) {
       const isSelected = compareSelected.has(item);
+      const atLimit = !isSelected && compareSelected.size >= MAX_COMPARE_WORDS - 1;
       return (
         <button
           key={`${item}-${idx}`}
@@ -167,10 +170,14 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             e.stopPropagation();
             toggleCompareSelection(item);
           }}
-          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded mr-1 mb-1 transition-colors cursor-pointer text-left border ${
+          disabled={atLimit}
+          title={atLimit ? `A comparison takes up to ${MAX_COMPARE_WORDS} words` : undefined}
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded mr-1 mb-1 transition-colors text-left border ${
             isSelected
-              ? 'bg-indigo-100 text-indigo-700 border-indigo-300'
-              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:border-indigo-200'
+              ? 'cursor-pointer bg-indigo-100 text-indigo-700 border-indigo-300'
+              : atLimit
+                ? 'cursor-not-allowed bg-slate-50 text-slate-300 border-slate-100'
+                : 'cursor-pointer bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:border-indigo-200'
           }`}
         >
           {isSelected && <Check size={12} className="shrink-0" />}
@@ -199,8 +206,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
     >
       {/* Header — title is selectable/copyable; only the action buttons opt out of selection */}
       <div className="flex justify-between items-start mb-3 shrink-0">
-        <div className="select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
-          <h3 className="text-2xl xl:text-3xl font-bold text-slate-800 tracking-tight">{data.word || ''}</h3>
+        <div className="select-text min-w-0" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+          <h3 className="text-2xl xl:text-3xl font-bold text-slate-800 tracking-tight break-words">{data.word || ''}</h3>
           {/* Sense/Meaning Label */}
           {data.sense && (
             <span className="inline-block mt-1 px-2 py-0.5 bg-violet-100 text-violet-700 text-xs font-medium rounded-full">
@@ -242,77 +249,69 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                 className="text-sm bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
               />
             )}
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowYouGlishModal(true); }}
-              className="md:hidden inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm cursor-pointer"
-              title="Listen on YouGlish"
+            {/* A link, not YouGlish's embedded player: the page's CSP blocks its script and frames. */}
+            <a
+              href={`https://youglish.com/pronounce/${encodeURIComponent(data.word || '')}/english/us`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.stopPropagation();
+                try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm cursor-pointer"
+              title="Hear it in real videos on YouGlish"
             >
               <ExternalLink size={12} />
               YouGlish
-            </button>
-            {showYouGlishModal && (
-              <YouGlishPlayer word={data.word} onClose={() => setShowYouGlishModal(false)} mode="modal" />
-            )}
+            </a>
           </div>
           )}
         </div>
         <div className="flex items-center gap-1 select-none">
             {showRefresh && (onRefresh || onSearch) && (
-                 <a
-                    href="#"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); (onRefresh ?? onSearch)!(data.word); }}
+                 <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); (onRefresh ?? onSearch)!(data.word); }}
                     title="Refresh — re-run the AI for this word"
+                    aria-label="Refresh this word"
                     className="p-2 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
                  >
                     <RefreshCw size={18} className="text-slate-400 hover:text-indigo-600" />
-                 </a>
+                 </button>
             )}
             {onExpand && (
-                <a
-                    href="#"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onExpand(); }}
+                <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onExpand(); }}
                     title="View Details"
+                    aria-label="View details"
                     className="p-2 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
                 >
                     <Maximize2 size={20} className="text-slate-400 hover:text-indigo-600" />
-                </a>
+                </button>
             )}
             {showSave && onSave && (
-            <a
-                href="#"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSave(); }}
+            <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onSave(); }}
                 className={`p-2 rounded-full shadow-sm flex items-center justify-center ${isSaved ? "text-indigo-600 bg-indigo-50" : "bg-white/80 hover:bg-white text-slate-700"}`}
                 title={isSaved ? "Saved" : "Save to notebook"}
+                aria-label={isSaved ? "Saved" : "Save to notebook"}
             >
                 <Sparkles size={20} fill={isSaved ? "currentColor" : "none"} />
-            </a>
+            </button>
             )}
         </div>
       </div>
 
       {/* Two-column layout on large screens: image left, content right */}
       <div className={`${data.imageUrl ? 'md:flex md:gap-6' : ''}`}>
-        {/* Generated Image + YouGlish on desktop (click to load) */}
+        {/* Generated Image */}
         {data.imageUrl && (
           <div className="mb-4 md:mb-0 w-full md:w-2/5 md:shrink-0">
             {/* A fixed height, so the text below doesn't move when the picture arrives. */}
             <div className="rounded-xl overflow-hidden h-48 md:h-64 xl:h-80 bg-slate-50 border border-slate-100 shadow-inner">
               <OfflineImage src={data.imageUrl} itemId={data.id} alt={data.word} className="w-full h-full object-cover" onMissing={onLazyLoadImage} />
-            </div>
-            {/* Inline YouGlish below image on desktop — click to load (preserves daily quota) */}
-            <div className="hidden md:block">
-              {showYouGlishInline ? (
-                <YouGlishPlayer word={data.word} mode="inline" />
-              ) : (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowYouGlishInline(true); }}
-                  className="mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors cursor-pointer"
-                  title="Load YouGlish pronunciation videos"
-                >
-                  <ExternalLink size={14} />
-                  <span className="text-xs font-medium">Load YouGlish</span>
-                </button>
-              )}
             </div>
           </div>
         )}
@@ -446,13 +445,13 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
       )}
 
       {/* Word Family - Related words of different parts of speech */}
-      {data.wordFamily && data.wordFamily.length > 0 && (
+      {wordFamily.length > 0 && (
         <div className="mb-4 md:mb-2 shrink-0">
           <div className="flex items-center gap-2 text-xs font-bold text-purple-400 uppercase mb-2">
             <Network size={12} /> Word Family
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {data.wordFamily.map((entry: WordFamilyEntry, idx: number) => (
+            {wordFamily.map((entry, idx) => (
               <button
                 key={`${entry.word}-${idx}`}
                 onClick={(e) => {
@@ -522,7 +521,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
         </div>
 
         {/* Info Grid */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="bg-orange-50 p-3 rounded-xl">
             <div className="flex items-center gap-2 text-xs font-bold text-orange-400 uppercase mb-1">
               <History size={12} /> Origins

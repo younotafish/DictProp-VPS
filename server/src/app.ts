@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import { requireAuth, type AuthVariables } from './middleware/auth.js';
 import { createConcurrencyLimit, createRateLimit } from './middleware/runtime.js';
 import { isDatabaseReady } from './db.js';
+import { env } from './env.js';
 import { aiRoutes } from './routes/ai.js';
 import { authRoutes } from './routes/auth.js';
 import { comparisonsRoutes } from './routes/comparisons.js';
@@ -29,14 +30,20 @@ export interface AppOptions {
 
 const ALLOWED_ORIGINS = [
   'https://dictprop.online',
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://localhost:3002',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:3001',
-  'http://127.0.0.1:3002',
+  // Local development origins. Production is served same-origin behind Caddy and never needs them.
+  ...(env.IS_PRODUCTION ? [] : [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    'http://127.0.0.1:3002',
+  ]),
 ];
 const ALLOWED_ORIGIN_SET = new Set(ALLOWED_ORIGINS);
+// Query strings can carry OAuth codes and state, so request logs keep only the path.
+const logWithoutQuery = (message: string, ...rest: string[]) =>
+  console.log(message.replace(/\?\S*/, ''), ...rest);
 
 export function createApp(options: AppOptions = {}) {
   const app = new Hono<{ Variables: AuthVariables }>();
@@ -60,7 +67,7 @@ export function createApp(options: AppOptions = {}) {
     c.header('X-Request-Id', requestId);
     await next();
   });
-  if (options.logging !== false) app.use('*', logger());
+  if (options.logging !== false) app.use('*', logger(logWithoutQuery));
   app.use('*', secureHeaders({
     crossOriginOpenerPolicy: false,
     crossOriginResourcePolicy: false,
@@ -83,6 +90,9 @@ export function createApp(options: AppOptions = {}) {
   app.use('*', cors({
     origin: ALLOWED_ORIGINS,
     credentials: true,
+    // The client only sends Content-Type. A fixed list also keeps hono from splitting an attacker-sized
+    // Access-Control-Request-Headers value with a backtracking regex before auth (GHSA-8j4g-w8fx-2239).
+    allowHeaders: ['Content-Type'],
   }));
   app.use('*', compress({ threshold: 1024 }));
   app.use('/api/*', async (c, next) => {
@@ -146,6 +156,8 @@ export function createApp(options: AppOptions = {}) {
       database ? 200 : 503,
     );
   });
+  // An unknown API path is an error, not a page: without this the static fallback answers it with the app shell.
+  app.all('/api/*', c => c.json({ error: 'Not found' }, 404));
 
   if (options.serveStaticFiles !== false) {
     const distDir = options.staticDir ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../dist');

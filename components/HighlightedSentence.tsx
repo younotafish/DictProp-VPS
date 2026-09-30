@@ -39,12 +39,8 @@ const MAX_SAVED_PHRASE_WORDS = 6;
 // Strip leading/trailing punctuation for a saved-phrase lookup, keeping internal apostrophes (couldn't).
 const stripEdgePunct = (s: string): string => s.replace(/^[^\w']+|[^\w']+$/g, '');
 
-/**
- * Strip the {{studied item}} and [[uncommon term]] emphasis markers, leaving plain,
- * speakable text. Used for TTS (and anywhere the raw sentence is needed without markup).
- */
-export const stripSentenceMarkers = (text: string): string =>
-  (text || '').replace(/\{\{(.+?)\}\}/g, '$1').replace(/\[\[(.+?)\]\]/g, '$1');
+// In a module of its own, so the services that only strip markers don't load this component.
+export { stripSentenceMarkers } from '../services/sentenceMarkers';
 
 interface HighlightedSentenceProps {
   text: string;

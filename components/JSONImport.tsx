@@ -1,6 +1,19 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo, useDeferredValue } from 'react';
 import { X, ClipboardPaste, Trash2, FileJson, Upload, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { importJSON } from '../services/api';
+
+// The server's reply as a sentence: a JSON error body gives its message, and an HTML error page (a proxy's
+// 502, say) is summarized rather than dumped into the dialog.
+const importErrorMessage = (e: unknown): string => {
+  if (e instanceof TypeError) return "Couldn't reach the server. Check your connection and try again.";
+  const raw = (e instanceof Error ? e.message : '').trim();
+  try {
+    const body = JSON.parse(raw);
+    if (typeof body?.error === 'string' && body.error) return body.error;
+  } catch { /* not JSON */ }
+  if (!raw || raw.startsWith('<') || raw.length > 300) return 'Import failed. Please try again.';
+  return raw;
+};
 
 interface JSONImportProps {
   isOpen: boolean;
@@ -49,11 +62,13 @@ export const JSONImport: React.FC<JSONImportProps> = ({
     }
   }, []);
 
-  const itemCount = (() => {
-    if (!inputText.trim()) return 0;
-    const { items } = parseItems(inputText);
-    return items?.length || 0;
-  })();
+  // Parsed once per change to the text, in a deferred render, instead of on every render and keystroke:
+  // pasted JSON can run to megabytes.
+  const deferredText = useDeferredValue(inputText);
+  const itemCount = useMemo(
+    () => (deferredText.trim() ? parseItems(deferredText).items?.length || 0 : 0),
+    [deferredText, parseItems],
+  );
 
   const handleSubmit = useCallback(async () => {
     const { items, error } = parseItems(inputText);
@@ -74,9 +89,9 @@ export const JSONImport: React.FC<JSONImportProps> = ({
       if (res.skipped > 0) parts.push(`${res.skipped} skipped`);
       setResult(parts.join(' · '));
       onImported();
-    } catch (e: any) {
+    } catch (e) {
       setStatus('error');
-      setResult(e.message || 'Import failed');
+      setResult(importErrorMessage(e));
     }
   }, [inputText, parseItems, onImported]);
 

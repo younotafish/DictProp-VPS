@@ -77,11 +77,15 @@ export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '', i
     start(); // idle, or a different sentence is active → (re)start ours from the top
   }, [plain, start]);
 
+  // Callers passing a className size the button themselves. The bare icon gets a bigger tap target (34px
+  // at the default size), with negative margins so it takes up no more room in the layout than before.
+  const sizing = className ? '' : 'p-2.5 -m-2';
+
   return (
     <button
       type="button"
       onClick={handleClick}
-      className={`p-0.5 transition-colors ${isPlaying ? 'text-indigo-500' : 'text-indigo-300 hover:text-indigo-600'} ${className}`}
+      className={`${sizing} transition-colors ${isPlaying ? 'text-indigo-500' : 'text-indigo-300 hover:text-indigo-600'} ${className}`}
       title={label}
       aria-label={label}
     >

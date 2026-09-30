@@ -1,16 +1,21 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue, useId } from 'react';
 import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles, Scale, BookmarkPlus, MessageSquareQuote } from 'lucide-react';
 import { SearchResult, VocabCard, StoredItem, SentenceData, ComparisonResult, comparisonKey } from '../types';
 import { analyzeInput, detectVocabulary, compareWords } from '../services/api';
 import { VocabCardDisplay } from './VocabCard';
 import { ComparisonBody } from './ComparisonBody';
+import { ErrorBoundary } from './ErrorBoundary';
 import { makeVocabStoredItem } from '../services/items';
 import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 import { stripSentenceMarkers } from './HighlightedSentence';
 import { useSentenceSearch } from '../services/sentenceSearch';
 import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';
 import { log, warn } from '../services/logger';
-import { consumeSearchRetry, describeSearchError, isAuthenticationError, rememberSearchRetry } from '../services/searchRecovery';
+import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../services/searchRecovery';
+import { useEscapeLayer } from './escapeStack';
+import { useModalFocus } from './Modal';
+// The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
+import { looksLikeSentence } from '../services/queryMode';
 
 interface QueueItem {
   id: string;
@@ -52,26 +57,6 @@ interface Props {
 
 let queueIdCounter = 0;
 
-// Mirror of the server's isWordOrPhrase (server/src/routes/ai.ts) — KEEP IN SYNC. Lets the client decide,
-// without a round-trip, whether a typed query is a single word/phrase (→ analyze directly, one card set)
-// or a full sentence (→ scan for its uncommon expressions, then analyze each separately). Conservative:
-// returns false (treat as a word/phrase) unless the input really looks like a sentence.
-const looksLikeSentence = (text: string): boolean => {
-  const trimmed = text.trim();
-  if (!trimmed) return false;
-  if (/[一-鿿]/.test(trimmed)) {
-    if (/[。！？]$/.test(trimmed)) return true;
-    return (trimmed.match(/[一-鿿]/g) || []).length >= 5;
-  }
-  const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-  if (words.length === 1) return false;
-  if (/[.!?]$/.test(trimmed)) return true;
-  if (words.length >= 6) return true;
-  const startsLikeSentence = /^(I|You|He|She|It|We|They|The|A|An|This|That|There|Here)\s/i.test(trimmed);
-  const hasAuxVerb = /\b(is|are|was|were|have|has|had|do|does|did|will|would|could|should|can|may|might)\b/i.test(trimmed);
-  return startsLikeSentence || hasAuxVerb;
-};
-
 export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
@@ -100,16 +85,23 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, []);
   useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
 
-  // Hold the audio session open for the life of the search popup (once, on the first playback gesture) so
+  // Hold the audio session open while the results popup is open (once, on the first playback gesture) so
   // the media route stays "hot" across the word→sentence hop and iOS doesn't re-ramp (heard as a fade-in)
-  // when the sentence <audio> starts after the word played on the speechSynthesis path.
+  // when the sentence <audio> starts after the word played on the speechSynthesis path. Closing the popup
+  // lets go, or the silent keep-alive would run for the rest of the session.
   const keepAliveHeldRef = useRef(false);
   const holdKeepAlive = useCallback(() => {
     if (keepAliveHeldRef.current) return;
     keepAliveHeldRef.current = true;
     acquireKeepAlive();
   }, []);
-  useEffect(() => () => { if (keepAliveHeldRef.current) releaseKeepAlive(); }, []);
+  const letGoKeepAlive = useCallback(() => {
+    if (!keepAliveHeldRef.current) return;
+    keepAliveHeldRef.current = false;
+    releaseKeepAlive();
+  }, []);
+  useEffect(() => { if (mode !== 'viewing') letGoKeepAlive(); }, [mode, letGoKeepAlive]);
+  useEffect(() => letGoKeepAlive, [letGoKeepAlive]);
 
   // Surface a failed search as an auto-dismissing toast. The floating search has no inline results
   // area, so without this a failed queue item just vanishes (the bug behind silent search failures).
@@ -144,6 +136,14 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // Which suggestion is highlighted for keyboard/mouse navigation (-1 = none → plain Enter AI-searches).
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const suggestionsListRef = useRef<HTMLDivElement>(null);
+  const suggestionsId = useId();
+
+  // Escape closes the search box (clearing what was typed) or the results popup, unless a layer above
+  // it (a review popup, a dialog) is still open.
+  useEscapeLayer(() => {
+    if (mode === 'input') { setQuery(''); setHighlightedIndex(-1); }
+    setMode('idle');
+  }, 55, mode !== 'idle');
   // Keep the highlight in range as the list changes, and scroll the highlighted row into view.
   useEffect(() => { setHighlightedIndex(i => (i >= suggestions.length ? suggestions.length - 1 : i)); }, [suggestions.length]);
   useEffect(() => {
@@ -164,7 +164,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [suggestions, onOpenSentence]);
 
   // Derived state — searches AND comparisons are both queue items, so all counts include both.
-  const readyItems = queue.filter(q => q.status === 'ready');
+  const readyItems = useMemo(() => queue.filter(q => q.status === 'ready'), [queue]);
   const busyCount = queue.filter(q => q.status === 'searching' || q.status === 'pending').length;
   const readyCount = readyItems.length;
   const isBusy = busyCount > 0 || scanning; // scanning = sentence→expression scan before items are enqueued
@@ -248,7 +248,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     } catch (err: any) {
       warn('🔍 Sentence scan failed "' + q + '":', err?.message);
       if (isAuthenticationError(err)) rememberSearchRetry({ query: q });
-      showError(describeSearchError(q, err), q);
+      showError(describeSearchError(q, err), isRetryableSearchError(err) ? q : undefined);
     } finally {
       setScanning(false);
     }
@@ -322,7 +322,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       warn('🔍 Queue: failed "' + item.query + '":', err?.message);
       setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
       if (isAuthenticationError(err)) rememberSearchRetry({ query: item.query, analyzeMode: item.analyzeMode });
-      showError(describeSearchError(item.query, err), item.query, item.analyzeMode);
+      showError(describeSearchError(item.query, err), isRetryableSearchError(err) ? item.query : undefined, item.analyzeMode);
     }).finally(done);
   }, [findSavedByWord, finalizeResult, showError, onCompareReady]);
 
@@ -384,20 +384,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           setMode('input');
         }
       }
-      if (e.key === 'Escape') {
-        if (mode === 'input') {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          // Esc clears the typed query AND closes the box — don't leave the searched content behind.
-          setQuery('');
-          setHighlightedIndex(-1);
-          setMode('idle');
-        } else if (mode === 'viewing') {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          setMode('idle');
-        }
-      }
       // Arrow key navigation in viewing mode — stop propagation so background carousel doesn't also move
       if (mode === 'viewing' && readyItems.length > 0) {
         const target = e.target as HTMLElement;
@@ -454,16 +440,29 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }
   }, [mode]);
 
-  // Submit from input box — add to queue and switch to viewing once ready
+  // Submit from input box — add to queue and switch to viewing once ready. Offline, a saved word still
+  // opens (the queue reuses saved cards without the network); anything else needs the AI.
   const handleSubmit = useCallback(() => {
     const q = query.trim();
-    if (!q || !isOnline) return;
+    if (!q) return;
+    if (!isOnline && (looksLikeSentence(q) || findSavedByWord(q).length === 0)) {
+      showError("You're offline, so only saved words can be looked up.");
+      return;
+    }
     void submitQuery(q);
     setQuery('');
     setMode('idle'); // Go back to idle — spinner shows on floating button
-  }, [query, isOnline, submitQuery]);
+  }, [query, isOnline, submitQuery, findSavedByWord, showError]);
 
+  // One timer for the save toast, so an earlier save's timer can't cut a newer message short.
   const [saveToast, setSaveToast] = useState<string | null>(null);
+  const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showSaveToast = useCallback((msg: string) => {
+    setSaveToast(msg);
+    if (saveToastTimer.current) clearTimeout(saveToastTimer.current);
+    saveToastTimer.current = setTimeout(() => setSaveToast(null), 2000);
+  }, []);
+  useEffect(() => () => { if (saveToastTimer.current) clearTimeout(saveToastTimer.current); }, []);
 
   // Save a single vocab
   const saveOneVocab = useCallback((vocab: VocabCard) => {
@@ -480,12 +479,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       if (saveOneVocab(vocab)) count++;
     }
     if (count > 0) {
-      setSaveToast(`Saved "${result.query}" (${count} ${count === 1 ? 'meaning' : 'meanings'})`);
+      showSaveToast(`Saved "${result.query}" (${count} ${count === 1 ? 'meaning' : 'meanings'})`);
     } else {
-      setSaveToast(`"${result.query}" already saved`);
+      showSaveToast(`"${result.query}" already saved`);
     }
-    setTimeout(() => setSaveToast(null), 2000);
-  }, [saveOneVocab]);
+  }, [saveOneVocab, showSaveToast]);
 
   // Save ALL meanings of ALL ready queue items
   const handleSaveAll = useCallback(() => {
@@ -500,20 +498,16 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       if (wordSaved) wordCount++;
     }
     if (totalCount > 0) {
-      setSaveToast(`Saved ${totalCount} meanings from ${wordCount} ${wordCount === 1 ? 'word' : 'words'}`);
+      showSaveToast(`Saved ${totalCount} meanings from ${wordCount} ${wordCount === 1 ? 'word' : 'words'}`);
     } else {
-      setSaveToast('All items already saved');
+      showSaveToast('All items already saved');
     }
-    setTimeout(() => setSaveToast(null), 2000);
-  }, [readyItems, saveOneVocab]);
+  }, [readyItems, saveOneVocab, showSaveToast]);
 
   // Keep single-vocab save for VocabCard's internal use
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
-    if (saveOneVocab(vocab)) {
-      setSaveToast(`Saved "${vocab.word}"`);
-      setTimeout(() => setSaveToast(null), 2000);
-    }
-  }, [saveOneVocab]);
+    if (saveOneVocab(vocab)) showSaveToast(`Saved "${vocab.word}"`);
+  }, [saveOneVocab, showSaveToast]);
 
   // Save the raw typed sentence to the Sentences list (sentence mode). No analysis — we "just save the
   // sentence"; the already-saved expressions inside it are indexed/highlighted automatically wherever it's
@@ -522,14 +516,13 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const q = query.trim();
     if (!q || !onSaveSentence) return;
     if (isSentenceSaved?.(q)) {
-      setSaveToast('Sentence already saved');
+      showSaveToast('Sentence already saved');
     } else {
       onSaveSentence(q, '', undefined);
-      setSaveToast('Sentence saved');
+      showSaveToast('Sentence saved');
     }
     setQuery('');
-    setTimeout(() => setSaveToast(null), 2000);
-  }, [query, onSaveSentence, isSentenceSaved]);
+  }, [query, onSaveSentence, isSentenceSaved, showSaveToast]);
 
   // Remove a single item from queue
   const dismissQueueItem = useCallback((id: string) => {
@@ -606,6 +599,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const viewingResult = viewingItem?.results;
   const viewingVocab = viewingResult?.vocabs?.[viewingVocabIdx];
   const viewingVocabCount = viewingResult?.vocabs?.length || 0;
+  // The results popup is modal: focus moves into it, Tab stays inside, and closing it gives focus back.
+  const resultsOpen = !!viewingItem && (!!viewingVocab || viewingItem.kind === 'compare');
+  const resultsDialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(resultsDialogRef, resultsOpen);
 
   // Warm the TTS cache for the card's example SENTENCES (the word uses the system voice) so taps are instant.
   useEffect(() => {
@@ -621,16 +618,18 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const item = mode === 'viewing' ? readyItems[viewingQueueIdx] : null;
     if (!trimmed || !item || item.refreshing) return;
     const id = item.id;
+    const analyzeMode = item.analyzeMode;
     setQueue(prev => prev.map(q => q.id === id ? { ...q, refreshing: true } : q)); // keep results visible
-    analyzeInput(trimmed).then(result => {
+    // An expression taken from a sentence is refreshed as the same unit, not re-split into its words.
+    analyzeInput(trimmed, analyzeMode ? { mode: analyzeMode } : undefined).then(result => {
       setQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'ready' as const, results: result, query: trimmed, refreshing: false } : q));
       setViewingVocabIdx(0);
       finalizeResult(id, trimmed, result);
     }).catch(err => {
       warn('🔍 Refresh failed "' + trimmed + '":', err?.message);
       setQueue(prev => prev.map(q => q.id === id ? { ...q, refreshing: false } : q));
-      if (isAuthenticationError(err)) rememberSearchRetry({ query: trimmed });
-      showError(describeSearchError(trimmed, err), trimmed);
+      if (isAuthenticationError(err)) rememberSearchRetry({ query: trimmed, analyzeMode });
+      showError(describeSearchError(trimmed, err), isRetryableSearchError(err) ? trimmed : undefined, analyzeMode);
     });
   }, [mode, readyItems, viewingQueueIdx, finalizeResult, showError]);
 
@@ -716,12 +715,16 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
                 Saved sentences
               </div>
-              <div ref={suggestionsListRef} className="max-h-64 overflow-y-auto overscroll-contain">
+              <div ref={suggestionsListRef} id={suggestionsId} role="listbox" aria-label="Saved sentences" className="max-h-64 overflow-y-auto overscroll-contain">
                 {suggestions.map((s, idx) => {
                   const d = s.data as SentenceData;
                   return (
                     <button
                       key={d.id}
+                      id={`${suggestionsId}-${idx}`}
+                      role="option"
+                      aria-selected={idx === highlightedIndex}
+                      tabIndex={-1}
                       onClick={() => openSuggestion(idx)}
                       onMouseEnter={() => setHighlightedIndex(idx)}
                       className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors border-b border-slate-50 last:border-0 ${idx === highlightedIndex ? 'bg-indigo-50' : 'hover:bg-indigo-50'}`}
@@ -767,16 +770,15 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                     e.preventDefault();
                     handleSubmit();
                   }
-                  return;
                 }
-                if (e.key === 'Escape') {
-                  // Esc clears the typed query AND closes the box (not just close).
-                  e.preventDefault();
-                  setQuery('');
-                  setHighlightedIndex(-1);
-                  setMode('idle');
-                }
+                // Escape (clear and close) is handled by the escape layer above.
               }}
+              role="combobox"
+              aria-label="Look up a word"
+              aria-autocomplete="list"
+              aria-expanded={suggestions.length > 0}
+              aria-controls={suggestions.length > 0 ? suggestionsId : undefined}
+              aria-activedescendant={suggestions[highlightedIndex] ? `${suggestionsId}-${highlightedIndex}` : undefined}
               placeholder="Look up a word..."
               className="flex-1 text-sm outline-none bg-transparent text-slate-800 placeholder:text-slate-400"
               autoComplete="off"
@@ -786,6 +788,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               <button
                 onClick={handleSaveSentenceClick}
                 title="Save this sentence to your Sentences list"
+                aria-label="Save this sentence"
                 className="shrink-0 w-8 h-8 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center hover:bg-violet-200 transition-colors"
               >
                 <BookmarkPlus size={15} />
@@ -795,6 +798,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               <button
                 onClick={handleSubmit}
                 title="Analyze (sentence → its uncommon expressions)"
+                aria-label="Analyze"
                 className="shrink-0 w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center hover:bg-indigo-600 transition-colors"
               >
                 <Send size={14} />
@@ -803,6 +807,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
             {readyCount > 0 && (
               <button
                 onClick={handleViewResults}
+                aria-label={`Show ${readyCount} ${readyCount === 1 ? 'result' : 'results'}`}
                 className="shrink-0 h-7 px-2.5 rounded-full bg-indigo-500 text-white text-xs font-bold flex items-center gap-1 hover:bg-indigo-600 transition-colors animate-pulse"
               >
                 <Search size={12} />
@@ -811,6 +816,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
             )}
             <button
               onClick={() => setMode('idle')}
+              aria-label="Close search"
               className="shrink-0 text-slate-400 hover:text-slate-600"
             >
               <X size={18} />
@@ -820,7 +826,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       )}
 
       {/* Results popup */}
-      {mode === 'viewing' && viewingItem && (viewingVocab || viewingItem.kind === 'compare') && (
+      {resultsOpen && viewingItem && (
         <>
           {/* Backdrop */}
           <div
@@ -829,7 +835,14 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           />
           {/* Popup */}
           <div className="fixed inset-x-0 bottom-0 z-[55]">
-            <div className="bg-white rounded-t-3xl shadow-2xl max-h-[85vh] flex flex-col">
+            <div
+              ref={resultsDialogRef}
+              tabIndex={-1}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Search result: ${viewingResult?.query || viewingItem.query}`}
+              className="bg-white rounded-t-3xl shadow-2xl max-h-[85dvh] flex flex-col outline-none"
+            >
               {/* Header */}
               <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100">
                 <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -855,6 +868,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       <button
                         onClick={() => { setViewingQueueIdx(prev => Math.max(0, prev - 1)); setViewingVocabIdx(0); }}
                         disabled={viewingQueueIdx === 0}
+                        aria-label="Previous result"
                         className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30"
                       >
                         <ChevronLeft size={14} />
@@ -865,6 +879,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                       <button
                         onClick={() => { setViewingQueueIdx(prev => Math.min(readyItems.length - 1, prev + 1)); setViewingVocabIdx(0); }}
                         disabled={viewingQueueIdx >= readyItems.length - 1}
+                        aria-label="Next result"
                         className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30"
                       >
                         <ChevronRight size={14} />
@@ -894,6 +909,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                     onClick={() => dismissQueueItem(viewingItem.id)}
                     className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
                     title="Dismiss"
+                    aria-label="Dismiss this result"
                   >
                     <X size={18} />
                   </button>
@@ -908,7 +924,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                 <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4">
                   <div className="max-w-screen-md mx-auto">
                     {viewingItem.comparison
-                      ? <ComparisonBody result={viewingItem.comparison} />
+                      ? (
+                        <ErrorBoundary key={viewingItem.id} variant="inline" fallbackMessage="This comparison couldn't be displayed.">
+                          <ComparisonBody result={viewingItem.comparison} />
+                        </ErrorBoundary>
+                      )
                       : <div className="text-center text-slate-400 py-12 text-sm">Comparison unavailable.</div>}
                   </div>
                 </div>
@@ -920,6 +940,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                   {viewingVocabCount > 1 && viewingVocabIdx > 0 && (
                     <button
                       onClick={() => { setViewingVocabIdx(viewingVocabIdx - 1); }}
+                      aria-label="Previous meaning"
                       className="absolute -left-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
                     >
                       <ChevronLeft size={16} />
@@ -928,6 +949,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                   {viewingVocabCount > 1 && (
                     <button
                       onClick={() => { setViewingVocabIdx((viewingVocabIdx + 1) % viewingVocabCount); }}
+                      aria-label="Next meaning"
                       className="absolute -right-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
                     >
                       <ChevronRight size={16} />
@@ -958,6 +980,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
                         <button
                           key={idx}
                           onClick={() => setViewingVocabIdx(idx)}
+                          aria-label={`Meaning ${idx + 1}`}
+                          aria-current={idx === viewingVocabIdx ? 'true' : undefined}
                           className={`w-2 h-2 rounded-full transition-all ${
                             idx === viewingVocabIdx
                               ? 'bg-indigo-500 w-4'
@@ -1025,6 +1049,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       {mode !== 'input' && mode !== 'viewing' && (
         <button
           onClick={handleFloatingClick}
+          aria-label={readyCount > 0
+            ? `Search (${readyCount} ${readyCount === 1 ? 'result' : 'results'} ready)`
+            : isBusy ? 'Search (in progress)' : 'Search'}
           className={`fixed bottom-24 right-4 z-[55] w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
             ${readyCount > 0 && !isBusy
               ? 'bg-indigo-500 text-white shadow-indigo-300'

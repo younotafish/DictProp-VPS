@@ -7,6 +7,7 @@ import {
   type SentenceEnrichmentImportRecord,
 } from '../db.js';
 import { detectImageMimeType } from '../image-format.js';
+import { backupBeforeWrite, checkpointAfterWrite } from '../import-support.js';
 import {
   validateSentenceEnrichmentBundle,
   type SentenceEnrichmentBundle,
@@ -36,6 +37,7 @@ for (const entry of bundle.entries) {
   prepared.push({ entry, image, mimeType });
 }
 
+const backup = await backupBeforeWrite('sentence-enrichments');
 const result = {
   total: prepared.length,
   inserted: 0,
@@ -56,4 +58,5 @@ db.transaction((records: SentenceEnrichmentImportRecord[]) => {
 })(prepared);
 
 result.after = getSentenceEnrichmentCount();
-process.stdout.write(`${JSON.stringify(result)}\n`);
+checkpointAfterWrite();
+process.stdout.write(`${JSON.stringify({ ...result, backup })}\n`);

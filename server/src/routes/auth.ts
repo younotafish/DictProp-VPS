@@ -12,8 +12,6 @@ import {
   createSession,
   getSessionUser,
   deleteSession,
-  approveUser,
-  listAllUsers,
 } from '../db.js';
 import { isOwnerUser, ownerLoginDecision } from '../owner-access.js';
 import { sanitizeAuthReturnTo } from '../auth-return.js';
@@ -34,9 +32,10 @@ function getRedirectUri(c: any): string {
   return 'https://dictprop.online/api/auth/callback';
 }
 
+// Cookies are Secure whenever the sign-in round trip runs on https, even if a proxy leaves out the header.
 function isSecure(c: any): boolean {
   const proto = c.req.header('x-forwarded-proto') || 'http';
-  return proto === 'https';
+  return proto === 'https' || getRedirectUri(c).startsWith('https://');
 }
 
 // GET /api/auth/login — redirect to Google OAuth
@@ -224,41 +223,4 @@ authRoutes.post('/logout', (c) => {
   }
   deleteCookie(c, 'session', { path: '/' });
   return c.json({ ok: true });
-});
-
-// POST /api/auth/approve/:userId — admin approves a pending user
-authRoutes.post('/approve/:userId', (c) => {
-  const token = getCookie(c, 'session');
-  if (!token) return c.json({ error: 'Not authenticated' }, 401);
-
-  const callerRow = getSessionUser(token);
-  if (!callerRow || !isOwnerUser(callerRow, env.OWNER_GOOGLE_EMAIL)) {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
-
-  approveUser(c.req.param('userId'));
-  return c.json({ ok: true });
-});
-
-// GET /api/auth/users — admin lists all users
-authRoutes.get('/users', (c) => {
-  const token = getCookie(c, 'session');
-  if (!token) return c.json({ error: 'Not authenticated' }, 401);
-
-  const callerRow = getSessionUser(token);
-  if (!callerRow || !isOwnerUser(callerRow, env.OWNER_GOOGLE_EMAIL)) {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
-
-  const users = listAllUsers().map(u => ({
-    id: u.id,
-    email: u.email,
-    displayName: u.display_name,
-    photoUrl: u.photo_url,
-    isApproved: u.is_approved === 1,
-    isAdmin: u.is_admin === 1,
-    createdAt: u.created_at,
-  }));
-
-  return c.json({ users });
 });

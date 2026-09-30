@@ -14,9 +14,13 @@ PYTHON_BIN="${PYTHON_BIN:-$MFLUX_PYTHON}"
 # Publication can run for several days, so its completed-wave ledger must survive OS /tmp cleanup.
 STATE_ROOT="${EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT:-$POOL_ROOT/publish-state}"
 COOLDOWN_SECONDS="${EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS:-60}"
+DISPATCH_WAIT_SECONDS="${DISPATCH_WAIT_DEADLINE_SECONDS:-86400}"
+RELEASE_CREATE_ATTEMPTS="${RELEASE_CREATE_ATTEMPTS:-12}"
 SOURCE="$POOL_ROOT/source.json"
 ANALYSIS="$POOL_ROOT/final-reconciliation/final-analysis.json"
 IMAGE_ROOT="$POOL_ROOT/final-images"
+
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -46,6 +50,24 @@ publisher_state_dir() {
   printf '%s/dictprop-publish-%s\n' "${TMPDIR:-/tmp}" "$state_key"
 }
 
+# The runner holds its cycle lock while this waits, so a wait that sees no publication ends.
+wait_or_give_up() {
+  if deadline_passed "$WAIT_DEADLINE"; then
+    log "$1 after ${DISPATCH_WAIT_SECONDS}s; giving up" >&2
+    exit 1
+  fi
+  sleep "$2"
+}
+
+# The failed wave is kept for inspection under a name the dispatcher ignores, and its entries go into
+# a fresh wave with a new release on the next run.
+set_wave_aside() {
+  local failed="$1.failed"
+  if [ -e "$failed" ]; then failed="$1.failed-$(date -u +%Y%m%dT%H%M%SZ)"; fi
+  mv "$1" "$failed"
+  log "publication of ${1##*/} failed; set it aside as ${failed##*/} so the next run starts a fresh wave"
+}
+
 manifest_count() {
   local source="$1"
   shift
@@ -72,13 +94,20 @@ if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ] || [ "$BATCH_SIZ
   echo "Example enrichment batch size must be between 1 and 500" >&2
   exit 1
 fi
+if ! [[ "$DISPATCH_WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] || ! [[ "$RELEASE_CREATE_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "DISPATCH_WAIT_DEADLINE_SECONDS and RELEASE_CREATE_ATTEMPTS must be positive integers" >&2
+  exit 1
+fi
 if [ ! -s "$KEY_FILE" ]; then
   echo "Sentence bridge key is missing: $KEY_FILE" >&2
   exit 1
 fi
 
+WAIT_DEADLINE="$(deadline_after "$DISPATCH_WAIT_SECONDS")"
 log "waiting for reconciled example-sentence metadata and image targets"
-while [ ! -s "$SOURCE" ] || [ ! -s "$ANALYSIS" ] || [ ! -s "$IMAGE_ROOT/manifest.json" ]; do sleep 300; done
+while [ ! -s "$SOURCE" ] || [ ! -s "$ANALYSIS" ] || [ ! -s "$IMAGE_ROOT/manifest.json" ]; do
+  wait_or_give_up "still waiting for reconciled example-sentence metadata and image targets" 300
+done
 if [ "${ALLOW_DEFERRED_IMAGES:-0}" = 1 ]; then
   # Image generation has finished and deferred images wait for a later cycle, so only accepted ones remain.
   TOTAL_COUNT="$(accepted_count)"
@@ -87,18 +116,20 @@ else
 fi
 mkdir -p "$STATE_ROOT"
 
-# Recover a remotely completed wave after a local publisher restart.
+# Recover a remotely completed wave after a local publisher restart. Publisher state lives in each
+# wave; waves published before that moved kept it under TMPDIR.
 while IFS= read -r tag_file; do
   wave_dir="$(dirname "$tag_file")"
   release_tag="$(tr -d '[:space:]' < "$tag_file")"
-  publisher_state="$(publisher_state_dir "$release_tag")"
-  if [ -s "$publisher_state/complete" ]; then cp "$publisher_state/complete" "$wave_dir/published"; fi
-done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-tag | sort)
+  for publisher_state in "$wave_dir/publisher" "$(publisher_state_dir "$release_tag")"; do
+    if [ -s "$publisher_state/complete" ]; then cp "$publisher_state/complete" "$wave_dir/published"; break; fi
+  done
+done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-tag ! -path '*.failed*' | sort)
 
 PUBLISHED_MANIFESTS=()
 while IFS= read -r manifest; do
   if [ -s "$(dirname "$manifest")/published" ]; then PUBLISHED_MANIFESTS+=("$manifest"); fi
-done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json | sort)
+done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json ! -path '*.failed*' | sort)
 
 while :; do
   if [ "${#PUBLISHED_MANIFESTS[@]}" -eq 0 ]; then PUBLISHED_COUNT=0
@@ -113,7 +144,7 @@ while :; do
   READY_COUNT=$((ACCEPTED_COUNT - PUBLISHED_COUNT))
   if [ "$READY_COUNT" -lt "$BATCH_SIZE" ] && [ "$ACCEPTED_COUNT" -lt "$TOTAL_COUNT" ]; then
     log "$READY_COUNT unpublished enrichments ready; waiting for batch size $BATCH_SIZE"
-    sleep 60
+    wait_or_give_up "still waiting for a batch of $BATCH_SIZE unpublished enrichments" 60
     continue
   fi
 
@@ -131,8 +162,13 @@ while :; do
   fi
   WAVE_COUNT="$(printf '%s' "$RESULT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).waveEntries))')"
   if [ "$WAVE_COUNT" -eq 0 ]; then
+    # With image generation finished, nothing will change while this waits.
+    if [ "${ALLOW_DEFERRED_IMAGES:-0}" = 1 ]; then
+      echo "No unpublished verified enrichments were found for $READY_COUNT accepted image(s) at $PUBLISHED_COUNT/$TOTAL_COUNT" >&2
+      exit 1
+    fi
     log "no unpublished verified enrichments were found; retrying later"
-    sleep 60
+    wait_or_give_up "still no unpublished verified enrichments" 60
     continue
   fi
 
@@ -163,24 +199,35 @@ PY
     printf 'example-enrichments-%s-%s\n' "$WAVE_NAME" "$(date -u +%Y%m%dT%H%M%SZ)" > "$TAG_FILE"
   fi
   RELEASE_TAG="$(tr -d '[:space:]' < "$TAG_FILE")"
-  PUBLISHER_STATE="$(publisher_state_dir "$RELEASE_TAG")"
-  if [ ! -s "$PUBLISHER_STATE/complete" ]; then
-    until "$GH_BIN" release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
-      || "$GH_BIN" release create "$RELEASE_TAG" --repo "$REPO" \
+
+  # Waiting before the release exists means a wait that gives up leaves no release behind.
+  GH_BIN="$GH_BIN" GITHUB_REPOSITORY="$REPO" \
+    scripts/offline/wait-for-incremental-enrichment.sh
+  if [ ! -s "$WAVE_DIR/publisher/complete" ]; then
+    create_attempts=0
+    until gh_bounded release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
+      || gh_bounded release create "$RELEASE_TAG" --repo "$REPO" \
         --title "Temporary encrypted example enrichment $WAVE_NAME" \
         --notes "Locally generated and verified example-sentence analysis and images; removed after import." \
         --latest=false; do
+      create_attempts=$((create_attempts + 1))
+      if [ "$create_attempts" -ge "$RELEASE_CREATE_ATTEMPTS" ]; then
+        log "GitHub release creation for $WAVE_NAME failed $create_attempts times; giving up for this run" >&2
+        exit 1
+      fi
       log "GitHub release creation unavailable for $WAVE_NAME; retrying later"
       sleep 300
     done
   fi
 
-  GH_BIN="$GH_BIN" GITHUB_REPOSITORY="$REPO" \
-    scripts/offline/wait-for-incremental-enrichment.sh
-  scripts/offline/publish-backfill-release.sh \
-    "$RELEASE_TAG" "$ARCHIVE" sentence-enrichments.enc enrichment-import "$REQUIRED_DEPLOY_SHA" 300
+  if ! PUBLISH_STATE_DIR="$WAVE_DIR/publisher" scripts/offline/publish-backfill-release.sh \
+    "$RELEASE_TAG" "$ARCHIVE" sentence-enrichments.enc enrichment-import "$REQUIRED_DEPLOY_SHA" 300; then
+    if [ -e "$WAVE_DIR/publisher/failed" ]; then set_wave_aside "$WAVE_DIR"; fi
+    exit 1
+  fi
   date -u +%FT%TZ > "$WAVE_DIR/published"
   PUBLISHED_MANIFESTS+=("$WAVE_DIR/manifest.json")
+  WAIT_DEADLINE="$(deadline_after "$DISPATCH_WAIT_SECONDS")"
   log "$WAVE_NAME published ($WAVE_COUNT enrichments); cooling down for ${COOLDOWN_SECONDS}s"
   sleep "$COOLDOWN_SECONDS"
 done

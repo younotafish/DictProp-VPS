@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -388,4 +388,58 @@ test('sentence image preparation reuses a verified baseline image', () => {
     ),
     [id],
   );
+});
+
+test('streaming image QA gives up when the renderer stops producing images', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-image-stall-'));
+  const candidates = join(root, 'candidates');
+  const images = join(root, 'images');
+  mkdirSync(candidates, { recursive: true });
+  mkdirSync(images, { recursive: true });
+  const targetsPath = join(root, 'targets.json');
+  const outputPath = join(root, 'refined.json');
+  writeJson(targetsPath, { version: 1, targets: [{ imageId: 'never', filename: 'never.webp', prompt: 'Never rendered.' }] });
+
+  const result = spawnSync(process.execPath, [
+    resolve('..', 'scripts', 'offline', 'stream-image-quality-pass.mjs'),
+    targetsPath, candidates, images, join(root, 'work'), outputPath, '1', '8',
+  ], {
+    cwd: resolve('..'),
+    encoding: 'utf8',
+    timeout: 30_000,
+    env: { ...process.env, IMAGE_QUALITY_STALL_MINUTES: '0.01' },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /no new image for 0\.01 minute\(s\) with 1\/1 still missing; giving up/);
+  assert.equal(existsSync(outputPath), false);
+});
+
+test('streaming image quality loop stops retrying a renderer that keeps failing', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-image-retry-'));
+  const failing = join(root, 'failing');
+  writeFileSync(failing, '#!/bin/sh\nexit 1\n');
+  chmodSync(failing, 0o700);
+  const targetsPath = join(root, 'targets.json');
+  writeJson(targetsPath, { version: 1, targets: [{ imageId: 'never', filename: 'never.webp', prompt: 'Never rendered.' }] });
+
+  const result = spawnSync('bash', [
+    resolve('..', 'scripts', 'offline', 'run-streaming-image-quality-loop.sh'),
+    targetsPath, join(root, 'candidates'), join(root, 'images'), join(root, 'work'), '1024', '576', '4', '1', '8',
+  ], {
+    cwd: resolve('..'),
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: {
+      ...process.env,
+      KREA_PYTHON: failing,
+      CLAUDE_BIN: failing,
+      CODEX_BIN: failing,
+      ENRICHMENT_MODEL_PROVIDER: 'claude',
+      IMAGE_QUALITY_RETRY_LIMIT: '2',
+      IMAGE_QUALITY_RETRY_DELAY_SECONDS: '0',
+    },
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /command failed \(attempt 1\); retrying in 0s: generate_candidates /);
+  assert.match(result.stderr, /command failed 2 time\(s\); giving up: generate_candidates /);
 });

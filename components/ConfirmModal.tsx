@@ -29,10 +29,12 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        onConfirm();
-      }
+      if (e.key !== 'Enter' || e.repeat || e.isComposing) return;
+      // Enter on a focused control is that control's own press: on Cancel or the X it must not confirm.
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest('button, a[href], input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      e.preventDefault();
+      onConfirm();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);

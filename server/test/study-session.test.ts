@@ -5,6 +5,7 @@ import {
   buildReviewQueue,
   createClozePrompt,
   formatReviewInterval,
+  requeueLapse,
   selectReviewTask,
 } from '../../services/studySession.ts';
 
@@ -99,4 +100,13 @@ test('rating interval labels remain compact', () => {
   assert.equal(formatReviewInterval(10), '10m');
   assert.equal(formatReviewInterval(120), '2h');
   assert.equal(formatReviewInterval(4_320), '3d');
+});
+
+test('a card rated Again comes back once more at the end of the session', () => {
+  const ids = ['a', 'b', 'c'];
+  assert.deepEqual(requeueLapse(ids, 0, 'again'), ['a', 'b', 'c', 'a']);
+  assert.deepEqual(requeueLapse(['a', 'b', 'c', 'a'], 3, 'again'), ['a', 'b', 'c', 'a', 'a']);
+  for (const rating of ['hard', 'good', 'easy'] as const) assert.equal(requeueLapse(ids, 1, rating), ids, rating);
+  assert.equal(requeueLapse(ids, 3, 'again'), ids);
+  assert.deepEqual(ids, ['a', 'b', 'c']);
 });

@@ -78,7 +78,7 @@ const checkIndexedDBAvailability = (): Promise<boolean> => {
 
 const getDB = (): Promise<IDBDatabase> => {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
+  const opening: Promise<IDBDatabase> = dbPromise = new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
         reject(new Error("IndexedDB not supported"));
         return;
@@ -91,10 +91,13 @@ const getDB = (): Promise<IDBDatabase> => {
     request.onblocked = () => reject(new Error(UPGRADE_BLOCKED));
     request.onsuccess = () => {
       const db = request.result;
+      const forget = () => { if (dbPromise === opening) dbPromise = null; };
       db.onversionchange = () => {
         db.close();
-        dbPromise = null;
+        forget();
       };
+      // The browser closed the connection itself (storage cleared, say), so the next use opens another.
+      db.onclose = forget;
       resolve(db);
     };
     request.onupgradeneeded = (event) => {
@@ -123,8 +126,28 @@ const getDB = (): Promise<IDBDatabase> => {
       }
     };
   });
-  dbPromise.catch(() => { dbPromise = null; });
-  return dbPromise;
+  opening.catch(() => { if (dbPromise === opening) dbPromise = null; });
+  return opening;
+};
+
+// Safari can lose the connection while the app sits in the background, and every transaction on it fails
+// from then on. Such a failure gets one more try on a new connection; the work is a single transaction,
+// which either applied in full or not at all.
+const LOST_CONNECTION_ERRORS = new Set(['InvalidStateError', 'UnknownError']);
+const withDB = async <T,>(use: (db: IDBDatabase) => Promise<T>): Promise<T> => {
+  const db = await getDB();
+  try {
+    return await use(db);
+  } catch (error) {
+    const name = (error as { name?: unknown } | null)?.name;
+    if (typeof name !== 'string' || !LOST_CONNECTION_ERRORS.has(name)) throw error;
+    // Another caller may have replaced the connection already.
+    if (dbPromise && await dbPromise.catch(() => null) === db) {
+      dbPromise = null;
+      db.close();
+    }
+    return use(await getDB());
+  }
 };
 
 const requestResult = <T>(request: IDBRequest<T>): Promise<T> => new Promise((resolve, reject) => {
@@ -163,11 +186,12 @@ const loadItemRecords = async (
 
 const writeItemRecords = async (items: readonly StoredItem[], userId: string): Promise<void> => {
   if (items.length === 0) return;
-  const db = await getDB();
-  const tx = db.transaction(ITEM_RECORDS_STORE, 'readwrite');
-  const records = tx.objectStore(ITEM_RECORDS_STORE);
-  for (const item of items) records.put(toRecord(item, userId));
-  await transactionDone(tx);
+  await withDB(db => {
+    const tx = db.transaction(ITEM_RECORDS_STORE, 'readwrite');
+    const records = tx.objectStore(ITEM_RECORDS_STORE);
+    for (const item of items) records.put(toRecord(item, userId));
+    return transactionDone(tx);
+  });
 };
 
 /**
@@ -214,6 +238,17 @@ const foldLegacyStores = async (db: IDBDatabase, records: StoredItem[], userId: 
   return Array.from(byId.values());
 };
 
+/**
+ * This device's library exists but couldn't be read. Carrying on with an empty library would let the
+ * server's copy overwrite changes that haven't synced, so the caller retries instead.
+ */
+export class LocalLibraryReadError extends Error {
+  constructor(cause: unknown) {
+    super('This device\u2019s library could not be read.', { cause });
+    this.name = 'LocalLibraryReadError';
+  }
+}
+
 /** The stored library, and the server cursor it is current to (null when a full sync is needed). */
 export const loadData = async (
   userId: string = 'vps',
@@ -229,20 +264,38 @@ export const loadData = async (
   let unhashed: StoredItem[];
   let cursor: RevisionCursor | null;
   try {
-    const db = await getDB();
-    const records = await loadItemRecords(db, userId);
+    const records = await withDB(db => loadItemRecords(db, userId));
     ({ unhashed, cursor } = records);
-    items = await foldLegacyStores(db, records.items, userId).catch(error => {
+    items = await withDB(db => foldLegacyStores(db, records.items, userId)).catch(error => {
       warn('Legacy storage fold will retry on the next launch', error);
       return records.items;
     });
   } catch (error) {
     logError("IDB Load Error", error);
-    return inMemory();
+    throw new LocalLibraryReadError(error);
   }
   persistedItems.set(userId, new Map(items.map(item => [item.data.id, item])));
   unhashedItems.set(userId, unhashed);
   return { items, cursor };
+};
+
+// Whether the last full save failed, and who wants to know when that changes.
+let libraryWriteFailed = false;
+const writeFailureListeners = new Set<(failed: boolean) => void>();
+const setLibraryWriteFailed = (failed: boolean): void => {
+  if (failed === libraryWriteFailed) return;
+  libraryWriteFailed = failed;
+  for (const listener of writeFailureListeners) listener(failed);
+};
+
+/**
+ * Calls `listener` now and whenever saving the library on this device starts or stops failing (storage
+ * full, say). A failed save leaves its items to the next one, which clears the failure once they're in.
+ */
+export const subscribeLibraryWriteFailures = (listener: (failed: boolean) => void): (() => void) => {
+  writeFailureListeners.add(listener);
+  listener(libraryWriteFailed);
+  return () => { writeFailureListeners.delete(listener); };
 };
 
 /** Persist a small set of changed items immediately. */
@@ -284,17 +337,21 @@ export const saveData = async (
       const persisted = persistedItems.get(userId);
       const changed = persisted ? items.filter(item => persisted.get(item.data.id) !== item) : items;
       if (changed.length === 0 && !cursor) return;
-      const db = await getDB();
-      const tx = db.transaction(cursor ? [ITEM_RECORDS_STORE, STORE_NAME] : ITEM_RECORDS_STORE, 'readwrite');
-      const records = tx.objectStore(ITEM_RECORDS_STORE);
-      for (const item of changed) records.put(toRecord(item, userId));
-      if (cursor) tx.objectStore(STORE_NAME).put(cursor, getCursorKey(userId));
-      await transactionDone(tx);
+      await withDB(db => {
+        const tx = db.transaction(cursor ? [ITEM_RECORDS_STORE, STORE_NAME] : ITEM_RECORDS_STORE, 'readwrite');
+        const records = tx.objectStore(ITEM_RECORDS_STORE);
+        for (const item of changed) records.put(toRecord(item, userId));
+        if (cursor) tx.objectStore(STORE_NAME).put(cursor, getCursorKey(userId));
+        return transactionDone(tx);
+      });
       rememberPersisted(userId, changed);
     });
+    // The whole library is stored now, including items an earlier failed save left out.
+    setLibraryWriteFailed(false);
   } catch (error) {
     logError("IDB Save Error", error);
     inMemoryStorage[userId] = items;
+    setLibraryWriteFailed(true);
   }
 };
 
@@ -307,11 +364,12 @@ export const deleteItemRecords = async (ids: readonly string[], userId: string =
     return;
   }
   await queueWrite(async () => {
-    const db = await getDB();
-    const tx = db.transaction(ITEM_RECORDS_STORE, 'readwrite');
-    const records = tx.objectStore(ITEM_RECORDS_STORE);
-    for (const id of ids) records.delete(`${userId}:${id}`);
-    await transactionDone(tx);
+    await withDB(db => {
+      const tx = db.transaction(ITEM_RECORDS_STORE, 'readwrite');
+      const records = tx.objectStore(ITEM_RECORDS_STORE);
+      for (const id of ids) records.delete(`${userId}:${id}`);
+      return transactionDone(tx);
+    });
     const persisted = persistedItems.get(userId);
     for (const id of ids) persisted?.delete(id);
   });
@@ -397,13 +455,14 @@ const toBlob = (image: Blob | string): Blob => typeof image === 'string' ? dataU
 const putImages = async (images: Array<{ id: string; blob: Blob; version?: string }>): Promise<void> => {
   if (!(await checkIndexedDBAvailability())) return;
   try {
-    const db = await getDB();
-    const tx = db.transaction(IMAGES_STORE, 'readwrite');
-    const store = tx.objectStore(IMAGES_STORE);
-    for (const { id, blob, version } of images) {
-      store.put(version ? { blob, version } satisfies StoredImageRecord : blob, id);
-    }
-    await transactionDone(tx);
+    await withDB(db => {
+      const tx = db.transaction(IMAGES_STORE, 'readwrite');
+      const store = tx.objectStore(IMAGES_STORE);
+      for (const { id, blob, version } of images) {
+        store.put(version ? { blob, version } satisfies StoredImageRecord : blob, id);
+      }
+      return transactionDone(tx);
+    });
   } catch (e) {
     warn("Failed to save images to IDB", e);
   }
@@ -461,8 +520,7 @@ const readStoredImage = async (itemId: string, expectedVersion?: string): Promis
   if (!idbAvailable) return null;
 
   try {
-    const db = await getDB();
-    return await new Promise((resolve, reject) => {
+    return await withDB(db => new Promise((resolve, reject) => {
       const tx = db.transaction(IMAGES_STORE, 'readonly');
       const store = tx.objectStore(IMAGES_STORE);
       const request = store.get(itemId);
@@ -489,7 +547,7 @@ const readStoredImage = async (itemId: string, expectedVersion?: string): Promis
         resolve(null);
       };
       request.onerror = () => reject(request.error);
-    });
+    }));
   } catch (e) {
     warn("Failed to load image from IDB", e);
     return null;
@@ -546,8 +604,7 @@ export const getStoredImageIds = async (
   if (!idbAvailable) return found;
 
   try {
-    const db = await getDB();
-    await new Promise<void>((resolve, reject) => {
+    await withDB(db => new Promise<void>((resolve, reject) => {
       const tx = db.transaction(IMAGES_STORE, 'readonly');
       const store = tx.objectStore(IMAGES_STORE);
       let pending = ids.length;
@@ -572,7 +629,7 @@ export const getStoredImageIds = async (
         }
       }
       tx.onerror = () => reject(tx.error);
-    });
+    }));
   } catch (e) {
     warn("Failed to check stored image IDs", e);
   }
@@ -589,8 +646,7 @@ export const getAllStoredImageIds = async (): Promise<Set<string>> => {
   if (!idbAvailable) return found;
 
   try {
-    const db = await getDB();
-    await new Promise<void>((resolve, reject) => {
+    await withDB(db => new Promise<void>((resolve, reject) => {
       const tx = db.transaction(IMAGES_STORE, 'readonly');
       const store = tx.objectStore(IMAGES_STORE);
       const req = store.getAllKeys();
@@ -601,7 +657,7 @@ export const getAllStoredImageIds = async (): Promise<Set<string>> => {
         resolve();
       };
       req.onerror = () => reject(req.error);
-    });
+    }));
   } catch (e) {
     warn("Failed to enumerate stored image ids", e);
   }
@@ -617,17 +673,18 @@ export const loadImagesByIds = async (ids: string[]): Promise<Map<string, Blob |
   if (!idbAvailable) return result;
 
   try {
-    const db = await getDB();
-    const tx = db.transaction(IMAGES_STORE, 'readonly');
-    const store = tx.objectStore(IMAGES_STORE);
-    for (const id of ids) {
-      const req = store.get(id);
-      req.onsuccess = () => {
-        const value = isStoredImageRecord(req.result) ? req.result.blob : req.result;
-        if (typeof value === 'string' || value instanceof Blob) result.set(id, value);
-      };
-    }
-    await transactionDone(tx);
+    await withDB(db => {
+      const tx = db.transaction(IMAGES_STORE, 'readonly');
+      const store = tx.objectStore(IMAGES_STORE);
+      for (const id of ids) {
+        const req = store.get(id);
+        req.onsuccess = () => {
+          const value = isStoredImageRecord(req.result) ? req.result.blob : req.result;
+          if (typeof value === 'string' || value instanceof Blob) result.set(id, value);
+        };
+      }
+      return transactionDone(tx);
+    });
   } catch (e) {
     warn("Failed to load images by ids", e);
   }

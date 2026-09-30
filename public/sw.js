@@ -5,11 +5,14 @@
 //   • install: cache the build's shell and all of its hashed files (the optional voice runtime excluded),
 //     reusing files earlier builds already downloaded, then take over at once. A failed download fails the
 //     install and the browser tries again on a later visit, so a cached shell always has its code beside it.
-//   • navigations (index.html): this build's cached shell, so launches never wait on the network, even a slow
-//     or flaky one. A new build opens on the first launch after its worker has installed.
+//   • navigations to the app (/ or /index.html): this build's cached shell, so launches never wait on the
+//     network, even a slow or flaky one. A new build opens on the first launch after its worker has installed.
+//     Other paths on this origin are separate sites behind their own auth (the trip pages) → network only.
 //   • hashed build files (/assets/*): cache-first from any build's cache → a page still running the previous
-//     build keeps loading its own code; files not precached (the voice runtime) are cached on first use.
-//   • other same-origin GET (icons, manifest): stale-while-revalidate.
+//     build keeps loading its own code. The voice runtime isn't precached: it's cached on first use, in one
+//     cache all builds share, since its files seldom change and a copy per build would cost tens of megabytes.
+//   • the app's own root files (icons, manifest): stale-while-revalidate. Nothing else is stored, so a
+//     response another site on this origin marks private never lands in Cache Storage.
 //   • /api/* and non-GET: untouched (network only) — the app already falls back to its local IndexedDB
 //     cache when the server is unreachable.
 
@@ -19,9 +22,13 @@ const PRECACHE = [];
 const OPTIONAL = [];
 
 const CACHE = `dictprop-${VERSION}`;
+// The voice runtime (OPTIONAL), shared by builds; an update keeps the files of this build and the previous one.
+const MEDIA = 'dictprop-media';
 // Remembers which build's cache the active worker uses, so an update keeps exactly that one for open pages.
 const META = 'dictprop-meta';
 const STATIC = ['/manifest.json', '/favicon-32x32.png', '/apple-touch-icon.png', '/pwa-192x192.png'];
+const ROOT_FILES = new Set([...STATIC, '/pwa-512x512.png', '/pwa-maskable-512x512.png', '/icon.svg']);
+const isAppNavigation = (url) => url.pathname === '/' || url.pathname === '/index.html';
 
 /** A usable build file: never an error, and never the HTML shell a server answers for a file it lacks. */
 const isAsset = (response) =>
@@ -29,10 +36,12 @@ const isAsset = (response) =>
 
 /** A usable copy of a hashed build file (whose content never changes) from this build's cache or an earlier one. */
 async function cachedAsset(request) {
-  const own = await (await caches.open(CACHE)).match(request);
-  if (isAsset(own)) return own;
+  for (const name of [CACHE, MEDIA]) {
+    const hit = await (await caches.open(name)).match(request);
+    if (isAsset(hit)) return hit;
+  }
   for (const name of await caches.keys()) {
-    if (!name.startsWith('dictprop-') || name === CACHE || name === META) continue;
+    if (!name.startsWith('dictprop-') || name === CACHE || name === MEDIA || name === META) continue;
     const hit = await (await caches.open(name)).match(request);
     if (isAsset(hit)) return hit;
   }
@@ -56,9 +65,12 @@ async function precache() {
       if (!isAsset(response)) throw new Error(`Asset precache failed: ${url} (${response.status})`);
       await cache.put(url, response);
     }),
+    // Voice-runtime files that a build from before the shared cache kept in its own cache move there once.
     ...OPTIONAL.map(async (url) => {
+      const media = await caches.open(MEDIA);
+      if (isAsset(await media.match(url))) return;
       const earlier = await cachedAsset(url);
-      if (earlier) await cache.put(url, earlier);
+      if (earlier) await media.put(url, earlier);
     }),
     ...STATIC.map(async (url) => {
       const response = await fetch(url);
@@ -78,11 +90,18 @@ async function pruneCaches() {
     const keys = await caches.keys();
     await Promise.all(
       keys
-        .filter((key) => key.startsWith('dictprop-') && key !== CACHE && key !== previous && key !== META)
+        .filter((key) => key.startsWith('dictprop-') && key !== CACHE && key !== previous && key !== MEDIA && key !== META)
         .map((key) => caches.delete(key)),
     );
   }
+  const previousOptional = await meta.match('/optional').then((response) => (response ? response.json() : [])).catch(() => []);
+  const keep = new Set([...OPTIONAL, ...previousOptional]);
+  const media = await caches.open(MEDIA);
+  await Promise.all(
+    (await media.keys()).filter((request) => !keep.has(new URL(request.url).pathname)).map((request) => media.delete(request)),
+  );
   await meta.put('/active', new Response(CACHE));
+  await meta.put('/optional', new Response(JSON.stringify(OPTIONAL)));
 }
 
 self.addEventListener('install', (event) => {
@@ -108,8 +127,9 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return; // cross-origin (e.g. HF model CDN) → straight to network
   if (url.pathname.startsWith('/api/')) return;     // dynamic — never cache; app handles offline locally
 
-  // Navigations → this build's shell (the same index.html for all SPA routes).
+  // Navigations to the app → this build's shell. Any other page on this origin is not ours to answer.
   if (req.mode === 'navigate') {
+    if (!isAppNavigation(url)) return;
     event.respondWith(
       (async () => {
         const shell = await (await caches.open(CACHE)).match('/');
@@ -132,7 +152,7 @@ self.addEventListener('fetch', (event) => {
         if (hit) return hit;
         const res = await fetch(req);
         if (isAsset(res)) {
-          const cache = await caches.open(CACHE);
+          const cache = await caches.open(OPTIONAL.includes(url.pathname) ? MEDIA : CACHE);
           cache.put(req, res.clone()).catch(() => {});
         }
         return res;
@@ -141,7 +161,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Other same-origin static (icons, manifest) → stale-while-revalidate.
+  // The app's root files (icons, manifest) → stale-while-revalidate.
+  if (!ROOT_FILES.has(url.pathname)) return;
   event.respondWith(
     (async () => {
       const cache = await caches.open(CACHE);

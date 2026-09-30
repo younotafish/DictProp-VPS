@@ -40,19 +40,20 @@ const recentOnly = (recent: ReviewEvent[]): ReviewHistory => ({ recent, olderTim
 
 test('study stats bucket items by memory strength and count due spellings once', () => {
   const items = [
-    vocab('a1', 'run', { strength: 90, due: NOW - HOUR }),
-    vocab('a2', 'run', { strength: 72, due: NOW - DAY }),
-    vocab('b', 'walk', { strength: 55, due: NOW }),
+    vocab('a1', 'run', { strength: 90, reviews: 3, due: NOW - HOUR }),
+    vocab('a2', 'run', { strength: 72, reviews: 2, due: NOW - DAY }),
+    vocab('b', 'walk', { strength: 55, reviews: 1, due: NOW }),
     vocab('c', 'jump', { strength: 30 }),
     vocab('d', 'skip', { strength: 12 }),
-    vocab('e', 'hop', { strength: 0 }),
+    vocab('e', 'hop', { strength: 0, due: NOW - HOUR }),
   ];
   const stats = computeStudyStats(items, recentOnly([]), NOW);
   assert.deepEqual(
     [stats.grandmaster, stats.mastered, stats.proficient, stats.learning, stats.struggling, stats.newItems],
     [1, 1, 1, 1, 1, 1],
   );
-  assert.equal(stats.due, 2); // both senses of "run" share one review slot
+  // Both senses of "run" share one review slot, and "hop", never studied, waits with the new cards.
+  assert.equal(stats.due, 2);
   assert.equal(stats.total, 6);
   assert.equal(stats.avgStrength, Math.round((90 + 72 + 55 + 30 + 12) / 6));
 });

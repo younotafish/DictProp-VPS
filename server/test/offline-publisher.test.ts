@@ -1,10 +1,12 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -162,4 +164,199 @@ fi
   assert.match(output, /import 301 ended as startup_failure/);
   assert.equal(readFileSync(join(fakeState, 'import-count'), 'utf8').trim(), '2');
   assert.ok(existsSync(join(state, 'complete')));
+});
+
+// Answers like gh, including --jq, over a shared list of bridge runs. Every dispatch adds this
+// release's run and, at the same moment, a run another release dispatched.
+const fakeGhWithRuns = `#!/usr/bin/env bash
+set -euo pipefail
+state="$FAKE_GH_STATE"
+printf '%s\n' "$*" >> "$state/gh.log"
+filter=.
+previous=
+for arg in "$@"; do
+  if [ "$previous" = --jq ]; then filter="$arg"; fi
+  previous="$arg"
+done
+respond() { jq -r "$filter"; }
+case "$*" in
+  "release view "*)
+    printf '%s\n' '{"assets":[{"name":"sentence-backfill.enc"}]}' | respond ;;
+  "release upload "* | "release delete "*) ;;
+  "run list "*"--workflow deploy.yml"*)
+    printf '%s\n' '[{"databaseId":100,"status":"completed","conclusion":"success","url":"https://deploy.test"}]' | respond ;;
+  "run list "*"--workflow sentence-backfill.yml"*)
+    respond < "$state/import-runs.json" ;;
+  "run view "*)
+    jq --argjson id "$3" '.[] | select(.databaseId == $id)' "$state/import-runs.json" | respond ;;
+  "workflow run sentence-backfill.yml "*)
+    count=$(( $(cat "$state/import-count" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "$count" > "$state/import-count"
+    conclusion="$(printf '%s\n' "$FAKE_IMPORT_CONCLUSIONS" | awk -F, -v n="$count" '{ print $n }')"
+    if [ -z "$conclusion" ]; then conclusion=success; fi
+    tag="$(printf '%s\n' "$*" | sed -n 's/.*release_tag=\\([^ ]*\\).*/\\1/p')"
+    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg tag "$tag" --arg conclusion "$conclusion" --argjson n "$count" '
+      [{databaseId: (600 + 2 * $n), createdAt: $now, displayTitle: ("import " + $tag), status: "completed",
+        conclusion: $conclusion, url: "https://import.test/ours", jobs: [{name: "import", conclusion: $conclusion}]},
+       {databaseId: (599 + 2 * $n), createdAt: $now, displayTitle: "import sentence-grammar-wave-0009-20260101T000000Z",
+        status: "completed", conclusion: "failure", url: "https://import.test/other",
+        jobs: [{name: "import", conclusion: "failure"}]}] + .' "$state/import-runs.json" > "$state/import-runs.next"
+    mv "$state/import-runs.next" "$state/import-runs.json" ;;
+  *)
+    echo "unexpected gh invocation: $*" >&2
+    exit 1 ;;
+esac
+`;
+
+const bridgeTag = 'sentence-grammar-wave-0001-20260928T000000Z';
+
+function bridgeFixture(prefix: string) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  const bin = join(root, 'bin');
+  const fakeState = join(root, 'fake-state');
+  const stateDir = join(root, 'publisher');
+  mkdirSync(bin);
+  mkdirSync(fakeState);
+  const archive = join(root, 'sentence-backfill.enc');
+  writeFileSync(archive, 'encrypted wave');
+  writeFileSync(join(fakeState, 'import-runs.json'), JSON.stringify([{
+    databaseId: 599, createdAt: '2026-01-01T00:00:00Z', displayTitle: 'import an-older-release',
+    status: 'completed', conclusion: 'success', url: 'https://import.test/older', jobs: [],
+  }]));
+  writeExecutable(join(bin, 'gh'), fakeGhWithRuns);
+  writeExecutable(join(bin, 'git'), '#!/bin/sh\nexit 1\n');
+  writeExecutable(join(bin, 'curl'), `#!/usr/bin/env bash
+if [[ "$*" == *githubstatus.com* ]]; then
+  printf '{"components":[{"name":"API Requests","status":"operational"},{"name":"Actions","status":"%s"}]}\n' "$FAKE_ACTIONS_STATUS"
+fi
+`);
+  writeExecutable(join(bin, 'sleep'), '#!/bin/sh\nif [ -n "$FAKE_REAL_SLEEP" ]; then exec /bin/sleep "$@"; fi\n');
+  const publish = (env: Record<string, string> = {}, pollSeconds = '0') => spawnSync('bash', [
+    resolve('..', 'scripts', 'offline', 'publish-backfill-release.sh'),
+    bridgeTag, archive, 'sentence-backfill.enc', 'import', 'deploy-sha', pollSeconds,
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 120_000,
+    env: {
+      ...process.env,
+      FAKE_ACTIONS_STATUS: 'operational',
+      FAKE_GH_STATE: fakeState,
+      FAKE_IMPORT_CONCLUSIONS: '',
+      FAKE_REAL_SLEEP: '',
+      GH_BIN: join(bin, 'gh'),
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      PUBLISH_STATE_DIR: stateDir,
+      TMPDIR: root,
+      ...env,
+    },
+  });
+  const ghLog = () => readFileSync(join(fakeState, 'gh.log'), 'utf8');
+  const dispatches = () => Number(readFileSync(join(fakeState, 'import-count'), 'utf8').trim());
+  const archiveSha = createHash('sha256').update('encrypted wave').digest('hex');
+  return { root, stateDir, publish, ghLog, dispatches, archiveSha };
+}
+
+const uploadWithClobber = /^release upload \S+ \S+ --repo \S+ --clobber$/m;
+const releaseDelete = new RegExp(`^release delete ${bridgeTag} --repo \\S+ --yes --cleanup-tag$`, 'm');
+
+test('publisher follows its own import run, not one another release dispatched at the same time', () => {
+  const fixture = bridgeFixture('dictprop-publisher-own-run-');
+  try {
+    const result = fixture.publish();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fixture.dispatches(), 1);
+    assert.equal(readFileSync(join(fixture.stateDir, 'import-run'), 'utf8').trim(), '602');
+    assert.doesNotMatch(result.stdout, /ended as failure/);
+    assert.match(fixture.ghLog(), releaseDelete);
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('publisher starts over with a fresh upload when the archive changes', () => {
+  const fixture = bridgeFixture('dictprop-publisher-rebuilt-');
+  try {
+    // State left by an earlier archive: its upload, its spent attempts, and its import run.
+    mkdirSync(fixture.stateDir);
+    writeFileSync(join(fixture.stateDir, 'archive-sha256'), 'earlier-archive\n');
+    writeFileSync(join(fixture.stateDir, 'uploaded-sha256'), 'earlier-archive\n');
+    writeFileSync(join(fixture.stateDir, 'import-dispatch-count'), '3\n');
+    writeFileSync(join(fixture.stateDir, 'import-triggered'), 'earlier\n');
+    writeFileSync(join(fixture.stateDir, 'import-run'), '999\n');
+
+    const result = fixture.publish();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(fixture.ghLog(), uploadWithClobber);
+    assert.doesNotMatch(fixture.ghLog(), /run view 999/);
+    assert.equal(fixture.dispatches(), 1);
+    assert.equal(readFileSync(join(fixture.stateDir, 'archive-sha256'), 'utf8').trim(), fixture.archiveSha);
+    assert.equal(readFileSync(join(fixture.stateDir, 'uploaded-sha256'), 'utf8').trim(), fixture.archiveSha);
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('publisher deletes the release when imports keep failing, and a later run starts over', () => {
+  const fixture = bridgeFixture('dictprop-publisher-give-up-');
+  try {
+    mkdirSync(fixture.stateDir);
+    writeFileSync(join(fixture.stateDir, 'archive-sha256'), `${fixture.archiveSha}\n`);
+    writeFileSync(join(fixture.stateDir, 'uploaded-sha256'), `${fixture.archiveSha}\n`);
+    writeFileSync(join(fixture.stateDir, 'import-dispatch-count'), '2\n');
+    const env = { FAKE_IMPORT_CONCLUSIONS: 'failure,success' };
+
+    const failed = fixture.publish(env);
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.match(failed.stdout, /import 602 ended as failure/);
+    assert.match(failed.stdout, /import failed three fresh workflows; stopping for inspection/);
+    assert.doesNotMatch(fixture.ghLog(), /^release upload /m);
+    assert.match(fixture.ghLog(), releaseDelete);
+    assert.equal(fixture.dispatches(), 1);
+    assert.ok(existsSync(join(fixture.stateDir, 'failed')));
+
+    const retried = fixture.publish(env);
+    assert.equal(retried.status, 0, retried.stderr);
+    assert.match(fixture.ghLog(), uploadWithClobber);
+    assert.equal(fixture.dispatches(), 2);
+    assert.equal(existsSync(join(fixture.stateDir, 'failed')), false);
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('publisher retries a cancelled import without using up an attempt', () => {
+  const fixture = bridgeFixture('dictprop-publisher-cancelled-');
+  try {
+    const result = fixture.publish({ FAKE_IMPORT_CONCLUSIONS: 'cancelled,cancelled,cancelled,success' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fixture.dispatches(), 4);
+    assert.equal(result.stdout.match(/was cancelled; retrying without counting it/g)?.length, 3);
+    assert.equal(readFileSync(join(fixture.stateDir, 'import-dispatch-count'), 'utf8').trim(), '1');
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('publisher gives up at its deadline and deletes the release', () => {
+  const fixture = bridgeFixture('dictprop-publisher-deadline-');
+  try {
+    const result = fixture.publish({
+      FAKE_ACTIONS_STATUS: 'major_outage',
+      FAKE_REAL_SLEEP: '1',
+      PUBLISH_DEADLINE_SECONDS: '1',
+    }, '1');
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stdout,
+      new RegExp(`import import of ${bridgeTag} was not verified within 1s; giving up and deleting the release`));
+    assert.match(fixture.ghLog(), releaseDelete);
+    assert.doesNotMatch(fixture.ghLog(), /^workflow run /m);
+    assert.ok(existsSync(join(fixture.stateDir, 'failed')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
 });

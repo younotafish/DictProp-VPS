@@ -12,8 +12,10 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # The audit only reads production, so it queues apart from deploys and imports and never cancels one
+    # that is waiting.
     concurrency:
-      group: dictprop-production
+      group: dictprop-production-read
       cancel-in-progress: false
     steps:
       - name: Audit incomplete words and sentences without generation
@@ -29,9 +31,11 @@ jobs:
           script: |
             set -e
             cd /opt/dictprop-vps
+            # ssh-action loses the captured output of a command that exits non-zero, so the audit's exit
+            # status is dropped here and the alert step reads the stall from its report instead.
             docker compose exec -T \
               -e INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS=24 \
-              app nice -n 10 node server/dist/scripts/audit-enrichment.js
+              app nice -n 10 node server/dist/scripts/audit-enrichment.js || true
 
       - name: Report content coverage
         if: always()
@@ -48,6 +52,17 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Alert when local enrichment has outstanding work
-        if: steps.audit.outcome != 'success'
-        run: exit 1
+      - name: Alert when local enrichment has stalled
+        env:
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          ENRICHMENT_STDOUT: ${{ steps.audit.outputs.stdout }}
+        run: |
+          report="$(printf '%s\n' "$ENRICHMENT_STDOUT" | tail -n 1)"
+          if [ "$AUDIT_OUTCOME" != success ] \
+            || ! printf '%s\n' "$report" | jq -e '.stall.alerts | type == "array"' >/dev/null 2>&1; then
+            echo '::error::The enrichment audit did not report; see the audit step log.'
+            exit 1
+          fi
+          # Outstanding work is normal between cycles, so only work the cycle should already have done fails.
+          printf '%s\n' "$report" | jq -r '.stall.alerts[] | "::error::" + .'
+          printf '%s\n' "$report" | jq -e '.stall.alerts | length == 0' >/dev/null

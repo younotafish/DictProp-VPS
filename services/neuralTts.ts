@@ -24,8 +24,8 @@
  * upgrades to the natural voice once the model is already resident but never triggers a
  * download on its own.
  */
-import { speak as systemSpeak } from './speech';
-import { stripSentenceMarkers } from '../components/HighlightedSentence';
+import { speak as systemSpeak, cancelSpeech } from './speech';
+import { stripSentenceMarkers } from './sentenceMarkers';
 import {
   ttsKey,
   fetchCachedTTS,
@@ -73,6 +73,9 @@ const CONSENT_KEY = 'tts_neural_consent'; // mobile one-time download consent
 // Whether the worker has the model loaded, so speech can use it without starting a download.
 let modelReady = false;
 const isModelReady = (): boolean => modelReady;
+// Set once the model failed to load on every device (or the worker died before it loaded). For the rest of
+// the session, cache misses go straight to the system voice instead of waiting on a load that just failed.
+let kokoroUnavailable = false;
 
 // ---------------------------------------------------------------------------
 // Capability gate
@@ -147,6 +150,20 @@ let worker: Worker | null = null;
 let nextRequestId = 0;
 const pendingClips = new Map<number, { resolve: (audio: Blob) => void; reject: (error: Error) => void }>();
 
+// A clip that hasn't arrived by then is read by the system voice instead. Loading allows for the first
+// ~326 MB download, which carries on in the worker so a later tap can use it; a loaded model makes a
+// sentence in seconds, even on the CPU.
+const KOKORO_LOAD_TIMEOUT_MS = 120_000;
+const KOKORO_SYNTH_TIMEOUT_MS = 30_000;
+
+/** Terminate a worker that can't make speech and fail whatever still waits on it. */
+const dropWorker = (dropped: Worker, reason: string): void => {
+  dropped.terminate();
+  if (worker === dropped) worker = null;
+  modelReady = false;
+  for (const { reject } of pendingClips.values()) reject(new Error(reason));
+};
+
 const getWorker = (): Worker => {
   if (worker) return worker;
   const created = new Worker(new URL('./kokoroWorker.ts', import.meta.url), { type: 'module' });
@@ -156,20 +173,23 @@ const getWorker = (): Worker => {
       log(`🔊 Neural TTS: Kokoro model ready (fp32, ${data.device})`);
     } else if (data.type === 'loadFailed') {
       warn(`🔊 Neural TTS: ${data.device} load failed`, data.message);
+    } else if (data.type === 'unavailable') {
+      kokoroUnavailable = true;
+      warn('🔊 Neural TTS: Kokoro unavailable this session, using the system voice', data.message);
+      dropWorker(created, data.message);
     } else if (data.type === 'audio') {
       pendingClips.get(data.id)?.resolve(data.audio);
     } else {
       pendingClips.get(data.id)?.reject(new Error(data.message));
     }
   };
-  // The worker's code couldn't load or crashed: drop it, so the next play starts a fresh one.
+  // The worker's code couldn't load or crashed: drop it. Before the model loaded that's a failed load like
+  // any other; after, the next play starts a fresh worker.
   created.onerror = event => {
     event.preventDefault();
     warn('🔊 Neural TTS: worker failed', event.message);
-    created.terminate();
-    if (worker === created) worker = null;
-    modelReady = false;
-    for (const { reject } of pendingClips.values()) reject(new Error(event.message || 'Kokoro worker failed'));
+    if (!modelReady) kokoroUnavailable = true;
+    dropWorker(created, event.message || 'Kokoro worker failed');
   };
   worker = created;
   return created;
@@ -181,11 +201,18 @@ const synthesize = async (text: string, voice: string): Promise<string> => {
   const key = `${voice}:${text}`;
   const cached = audioCache.get(key);
   if (cached) return cached;
+  if (kokoroUnavailable) throw new Error('Kokoro is unavailable this session');
   const request: KokoroRequest = { id: ++nextRequestId, text, voice, devices: pickDevices() };
+  const timeoutMs = modelReady ? KOKORO_SYNTH_TIMEOUT_MS : KOKORO_LOAD_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const audio = await new Promise<Blob>((resolve, reject) => {
     pendingClips.set(request.id, { resolve, reject });
     getWorker().postMessage(request);
-  }).finally(() => pendingClips.delete(request.id));
+    timer = setTimeout(() => reject(new Error(`Kokoro gave no audio within ${timeoutMs / 1000}s`)), timeoutMs);
+  }).finally(() => {
+    clearTimeout(timer);
+    pendingClips.delete(request.id);
+  });
   const url = URL.createObjectURL(audio);
   lruSetUrl(audioCache, key, url, MAX_KOKORO_URLS);
   return url;
@@ -229,11 +256,7 @@ const stopPlayback = (): void => {
   } catch {
     /* ignore */
   }
-  try {
-    window.speechSynthesis?.cancel();
-  } catch {
-    /* ignore */
-  }
+  cancelSpeech();
 };
 
 // Pause keeps the current position (unlike stop, which also bumps the token so onEnd won't fire and
@@ -251,9 +274,9 @@ const pausePlayback = (): void => {
   }
 };
 
-const resumePlayback = (): void => {
+const resumePlayback = (onRefused: () => void): void => {
   try {
-    if (audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0) void audioEl.play();
+    if (audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0) audioEl.play().catch(onRefused);
   } catch {
     /* ignore */
   }
@@ -355,7 +378,11 @@ export const pauseCurrent = (): void => {
 /** Resume after pauseCurrent() (no-op unless paused). */
 export const resumeCurrent = (): void => {
   if (playbackState.status !== 'paused') return;
-  resumePlayback();
+  const token = currentToken;
+  resumePlayback(() => {
+    // The browser refused (iOS can want a fresh tap after an interruption): it's still paused.
+    if (token === currentToken && playbackState.status === 'playing') setPlaybackState({ status: 'paused' });
+  });
   setPlaybackState({ status: 'playing' });
 };
 
@@ -743,9 +770,12 @@ const playUrl = async (
   startAt?: number,
 ): Promise<void> => {
   const el = getAudioEl();
-  el.onplaying = () => { if (isCurrent()) onStart?.(); };
+  let started = false;
+  el.onplaying = () => { started = true; if (isCurrent()) onStart?.(); };
   el.onended = () => { if (isCurrent()) onEnd?.(); };
-  el.onerror = () => { if (isCurrent()) onEnd?.(); };
+  // Before playback starts, a bad clip rejects play() below and the caller falls back to another voice;
+  // ending here as well would let the caller move on while that fallback still speaks.
+  el.onerror = () => { if (started && isCurrent()) onEnd?.(); };
   el.onloadedmetadata = null;
   const begin = startAt && startAt > 0 ? startAt : 0;
   el.src = url;
@@ -754,19 +784,22 @@ const playUrl = async (
   // metadata is loaded is IGNORED, and setting it *after* play() makes the clip start at 0 and then
   // audibly jump to `begin` — i.e. the quiet lead-in plays first and sounds like a fade-in. So wait
   // for metadata, seek, and only THEN play, so playback truly begins at `begin`.
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     let done = false;
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
     const go = () => {
       if (done) return;
       done = true;
-      el.onloadedmetadata = null;
+      clearTimeout(fallbackTimer);
+      // A newer call may have loaded its own clip meanwhile: leave its metadata handler in place.
+      if (el.onloadedmetadata === go) el.onloadedmetadata = null;
       if (!isCurrent()) { resolve(); return; } // superseded → let the newer call drive playback
       try { el.currentTime = begin; } catch { /* ignore */ }
       applyRate(el);
-      el.play().then(() => resolve(), () => resolve());
+      el.play().then(() => resolve(), reject); // a refused play() falls back, as on the path above
     };
     if (el.readyState >= 1 /* HAVE_METADATA */) go();
-    else { el.onloadedmetadata = go; setTimeout(go, 1500); } // fallback if metadata stalls
+    else { el.onloadedmetadata = go; fallbackTimer = setTimeout(go, 1500); } // fallback if metadata stalls
   });
 };
 
@@ -780,7 +813,7 @@ const speakViaKokoro = async (
 ): Promise<void> => {
   const { onStart, onEnd, allowDownload } = opts;
   const wouldDownload = !isModelReady();
-  let useNeural = isNeuralSupported() && (isModelReady() || allowDownload);
+  let useNeural = !kokoroUnavailable && isNeuralSupported() && (isModelReady() || allowDownload);
   if (useNeural && wouldDownload && allowDownload && !confirmDownloadIfNeeded()) useNeural = false;
   if (!useNeural) { systemFallback(); return; }
   try {
@@ -923,6 +956,11 @@ const resolveTimingsForPlayback = async (
   return winner && winner.length ? winner : null;
 };
 
+// Clips loading meanwhile (prefetch, preload) can evict — and so revoke — a clip's URL while its timings
+// are awaited, so look it up again right before playing it.
+const reacquireClipUrl = async (clip: ResolvedCachedClip): Promise<string> =>
+  (await loadClipUrl(clip.key).catch(() => null)) ?? clip.url;
+
 /**
  * Speak `text` with the best available voice:
  *   1. the currently approved cached production clip
@@ -940,10 +978,12 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   const isCurrent = () => token === currentToken;
 
   // Drive the shared playback state so every speaker UI reflects THIS playback (keyed by text),
-  // whatever triggered it. Gated by isCurrent() so a superseded call can't clobber a newer one's state.
-  const markStart = () => { if (isCurrent()) setPlaybackState({ status: 'playing' }); onStart?.(); };
-  const markEnd = () => { if (isCurrent()) setPlaybackState({ text: null, status: 'idle' }); onEnd?.(); };
-  const markError = (e: any) => { if (isCurrent()) setPlaybackState({ text: null, status: 'idle' }); onError?.(e); };
+  // whatever triggered it. Gated by isCurrent() so a superseded call can't clobber a newer one's state,
+  // nor tell its caller it finished: the system voice reports a cancelled utterance as ended or failed,
+  // which would record a read that was cut off or carry a stopped autoplay chain on to the next sentence.
+  const markStart = () => { if (!isCurrent()) return; setPlaybackState({ status: 'playing' }); onStart?.(); };
+  const markEnd = () => { if (!isCurrent()) return; setPlaybackState({ text: null, status: 'idle' }); onEnd?.(); };
+  const markError = (e: any) => { if (!isCurrent()) return; setPlaybackState({ text: null, status: 'idle' }); onError?.(e); };
   const systemFallback = () => systemSpeak(plain, { rate: rate ?? getPlaybackRate(), onStart: markStart, onEnd: markEnd, onError: markError });
 
   // Unlock <audio> synchronously inside the gesture (iOS) and stop anything currently playing.
@@ -972,10 +1012,11 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
             requestTTSGeneration([{ text: plain, voice: clip.token }]).catch(() => {});
           }
         });
+        const url = await reacquireClipUrl(clip);
         if (!isCurrent()) return;
         // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
         const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
-        await playUrl(clip.url, isCurrent, markStart, markEnd, begin);
+        await playUrl(url, isCurrent, markStart, markEnd, begin);
         return;
       }
 
@@ -987,9 +1028,10 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
         if (!isCurrent()) return;
         if (clearClip) {
           currentTimings = await resolveTimingsForPlayback(clearClip.key, () => {}); // non-blocking; no backfill on the fallback clip
+          const url = await reacquireClipUrl(clearClip);
           if (!isCurrent()) return;
           const begin = startAt && startAt > 0 ? startAt : leadInSkip(currentTimings);
-          await playUrl(clearClip.url, isCurrent, markStart, markEnd, begin);
+          await playUrl(url, isCurrent, markStart, markEnd, begin);
           return;
         }
 
@@ -1034,7 +1076,7 @@ export const speakWord = (text: string): SpeakHandle => {
     stop: () => {
       if (!isCurrent()) return;
       currentToken++;
-      try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+      cancelSpeech();
     },
     pause: () => { try { window.speechSynthesis?.pause(); } catch { /* ignore */ } },
     resume: () => { try { window.speechSynthesis?.resume(); } catch { /* ignore */ } },

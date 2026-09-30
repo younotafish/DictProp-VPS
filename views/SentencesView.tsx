@@ -6,7 +6,6 @@ import { HighlightedSentence } from '../components/HighlightedSentence';
 import { barColorFor } from '../components/mastery';
 import { useSentenceSearch } from '../services/sentenceSearch';
 import {
-  compareSentencesByLearningPriority,
   orderSentencesForReview,
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
@@ -62,7 +61,7 @@ const SentenceRow = React.memo(function SentenceRow({
         onClick={() => onOpen(item)}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item); }}
+        onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onOpen(item); }}
         title="Open card to study this sentence"
         className={`relative rounded-xl border p-3 transition-colors cursor-pointer hover:border-indigo-300 hover:shadow-sm ${isDue ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100 bg-white'}`}
       >
@@ -89,7 +88,7 @@ const SentenceRow = React.memo(function SentenceRow({
               {isDue && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onUpdateSRS(d.id); }}
-                  className="flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-lg transition-colors"
+                  className="flex items-center gap-1 min-h-8 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 rounded-lg transition-colors"
                   title="Mark as reviewed"
                 >
                   <Check size={12} />
@@ -100,13 +99,13 @@ const SentenceRow = React.memo(function SentenceRow({
                 <div className="flex items-center gap-1">
                   <button
                     onClick={(e) => { e.stopPropagation(); onDelete(d.id); onConfirmDelete(null); }}
-                    className="text-xs text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-lg transition-colors"
+                    className="min-h-8 text-xs text-red-600 bg-red-50 hover:bg-red-100 px-2.5 rounded-lg transition-colors"
                   >
                     Delete
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); onConfirmDelete(null); }}
-                    className="text-xs text-slate-500 bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded-lg transition-colors"
+                    className="min-h-8 text-xs text-slate-500 bg-slate-50 hover:bg-slate-100 px-2.5 rounded-lg transition-colors"
                   >
                     Cancel
                   </button>
@@ -114,8 +113,9 @@ const SentenceRow = React.memo(function SentenceRow({
               ) : (
                 <button
                   onClick={(e) => { e.stopPropagation(); onConfirmDelete(d.id); }}
-                  className="text-slate-300 hover:text-red-400 p-1 rounded-lg transition-colors"
+                  className="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-red-400 rounded-lg transition-colors"
                   title="Delete sentence"
+                  aria-label="Delete sentence"
                 >
                   <Trash2 size={14} />
                 </button>
@@ -182,16 +182,11 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   // Least-memorized first. Among equally strong sentences, untouched/least-recently heard comes first,
   // then most-recently added. Passive listening therefore rotates a card down without inflating mastery.
   const sorted = useMemo(() => {
-    const q = deferredQuery.trim();
-    let base: StoredItem[];
-    if (q) {
-      // A search overrides the review-state chips so a match surfaces regardless of the active tab.
-      const matchIds = new Set(runSentenceSearch(deferredQuery).map(i => i.data.id));
-      base = activeItems.filter(s => matchIds.has(s.data.id));
-    } else {
-      return orderSentencesForReview(activeItems, filter, now);
-    }
-    return base.sort(compareSentencesByLearningPriority);
+    if (!deferredQuery.trim()) return orderSentencesForReview(activeItems, filter, now);
+    // A search overrides the review-state chips so a match surfaces regardless of the active tab, and
+    // keeps the search's order, so sentences with the typed word as a whole word come first.
+    const activeIds = new Set(activeItems.map(s => s.data.id));
+    return runSentenceSearch(deferredQuery).filter(s => activeIds.has(s.data.id));
   }, [activeItems, filter, now, deferredQuery, runSentenceSearch]);
 
   // Rows open the sentence in the order on screen, read when tapped, so the row callbacks stay the same
@@ -248,7 +243,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                 if (e.key === 'Escape') setSearchQuery('');
               }}
               placeholder="Search saved sentences…"
-              className="w-full pl-8 pr-8 py-2 text-sm rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-indigo-300 outline-none text-slate-700 placeholder:text-slate-400 transition-colors"
+              className="w-full pl-8 pr-9 py-2 text-sm rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-indigo-300 outline-none text-slate-700 placeholder:text-slate-400 transition-colors"
               autoComplete="off"
               autoCapitalize="off"
             />
@@ -256,7 +251,8 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               <button
                 onClick={() => setSearchQuery('')}
                 title="Clear search"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                aria-label="Clear search"
+                className="absolute right-0.5 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600"
               >
                 <X size={15} />
               </button>
@@ -280,7 +276,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                   : key === 'memorized' ? 'Reviewed — not due right now'
                   : 'All sentences'
                 }
-                className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
+                className={`shrink-0 inline-flex items-center min-h-8 px-3 rounded-full text-xs font-semibold transition-colors ${
                   filter === key ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >

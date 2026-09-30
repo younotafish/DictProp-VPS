@@ -12,13 +12,20 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <ErrorBoundary>
+    {/* Recovering starts over on the notebook, in case the screen that was showing is what failed. */}
+    <ErrorBoundary onReset={() => { try { localStorage.removeItem('app_current_view'); } catch { /* storage unavailable */ } }}>
       <App />
     </ErrorBoundary>
   </React.StrictMode>
 );
 
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !import.meta.env.PROD) {
+  // The dev server's worker has no build stamp and would keep serving stale modules; retire any left behind.
+  navigator.serviceWorker.getRegistrations()
+    .then(registrations => Promise.all(registrations.map(registration => registration.unregister())))
+    .then(() => caches.delete('dictprop-dev'))
+    .catch(() => {});
+} else if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').then(registration => {
     // Browsers look for a new worker on navigations, but an installed app can stay open for days without
     // one, so look when it comes back to the foreground too (at most every ten minutes).

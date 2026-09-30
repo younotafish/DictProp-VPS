@@ -1,4 +1,4 @@
-import { stripSentenceMarkers } from '../components/HighlightedSentence';
+import { stripSentenceMarkers } from './sentenceMarkers';
 
 /** Text identity of a saved sentence: markers stripped, NFKC-normalized, whitespace-collapsed, lowercased. */
 export const normalizeSentenceIdentity = (text: string): string =>

@@ -2,7 +2,10 @@ import { TTS_CASUAL_VOICE, TTS_VOICE } from './api';
 
 export type TtsStyle = 'clear' | 'casual';
 const TTS_STYLE_KEY = 'tts_style';
-let style: TtsStyle = typeof localStorage !== 'undefined' && localStorage.getItem(TTS_STYLE_KEY) === 'casual' ? 'casual' : 'clear';
+// Read like the rate below: with storage blocked, touching localStorage throws, and this runs on import.
+let style: TtsStyle = (() => {
+  try { return localStorage.getItem(TTS_STYLE_KEY) === 'casual' ? 'casual' : 'clear'; } catch { return 'clear'; }
+})();
 const styleListeners = new Set<(value: TtsStyle) => void>();
 
 export const getTtsStyle = () => style;

@@ -3,6 +3,9 @@ import { isUsageAudit } from './usage-audit.js';
 
 const ITEM_TYPES = new Set(['vocab', 'phrase', 'sentence']);
 const MAX_ID_LENGTH = 200;
+// The largest real item is a phrase of about 40 KB. Rows are read whole on every sync page.
+const MAX_ITEM_DATA_BYTES = 256 * 1024;
+const MAX_NESTING = 32;
 
 function isRecord(value: unknown): value is Record<string, any> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -27,6 +30,40 @@ function isLocalImageEnrichmentMarker(value: unknown): boolean {
     typeof value.promptHash === 'string' && /^[a-f0-9]{64}$/.test(value.promptHash);
 }
 
+/** 'nested' when the value is too deep to walk, true when a string in it holds an inline image. */
+function containsInlineImage(value: unknown, depth = 0): boolean | 'nested' {
+  if (typeof value === 'string') return /data:image\//i.test(value);
+  if (!value || typeof value !== 'object') return false;
+  if (depth >= MAX_NESTING) return 'nested';
+  for (const child of Object.values(value)) {
+    const found = containsInlineImage(child, depth + 1);
+    if (found) return found;
+  }
+  return false;
+}
+
+/**
+ * Only imageUrl, on the item or on a phrase vocab, may carry an inline image: the server moves those into
+ * image storage on write. Anywhere else the bytes would stay in the row and ride along with every sync.
+ */
+function validateItemDataShape(data: Record<string, any>, srs: unknown): string | null {
+  const { imageUrl: _imageUrl, ...stored } = data;
+  if (Array.isArray(data.vocabs)) {
+    stored.vocabs = data.vocabs.map((vocab: unknown) => {
+      if (!isRecord(vocab)) return vocab;
+      const { imageUrl: _vocabImageUrl, ...rest } = vocab;
+      return rest;
+    });
+  }
+  const found = containsInlineImage([stored, srs]);
+  if (found === 'nested') return 'item is nested too deeply';
+  if (found) return 'item has an inline image outside imageUrl';
+  if (Buffer.byteLength(JSON.stringify(stored), 'utf8') > MAX_ITEM_DATA_BYTES) {
+    return `item.data exceeds ${MAX_ITEM_DATA_BYTES / 1024} KB`;
+  }
+  return null;
+}
+
 export function validateStoredItem(value: unknown): string | null {
   if (!isRecord(value)) return 'item must be an object';
   if (typeof value.type !== 'string' || !ITEM_TYPES.has(value.type)) return 'item.type is invalid';
@@ -34,6 +71,8 @@ export function validateStoredItem(value: unknown): string | null {
   if (typeof value.data.id !== 'string' || value.data.id.length === 0 || value.data.id.length > MAX_ID_LENGTH) {
     return 'item.data.id is invalid';
   }
+  const shapeError = validateItemDataShape(value.data, value.srs);
+  if (shapeError) return shapeError;
   if (!isRecord(value.srs)) return 'item.srs must be an object';
   if (value.srs.id !== value.data.id || value.srs.type !== value.type) return 'item.srs identity does not match item.data';
   for (const field of ['nextReview', 'interval', 'memoryStrength', 'lastReviewDate', 'totalReviews', 'correctStreak', 'stability']) {

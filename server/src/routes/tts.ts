@@ -11,15 +11,15 @@
 // still playable, just larger — so nothing breaks without ffmpeg installed.
 
 import { Hono } from 'hono';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { mkdirSync } from 'fs';
-import { readFile, writeFile, access } from 'fs/promises';
+import { readFile, writeFile, access, rename, rm } from 'fs/promises';
 import { join, resolve } from 'path';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import { getAllSentenceTexts } from '../db.js';
-import { alignAudioLocally } from '../local-whisper.js';
+import { alignAudioLocally, type AlignmentPriority } from '../local-whisper.js';
 import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
 import type { WordTiming } from '../tts-alignment.js';
@@ -36,6 +36,9 @@ const OFFLINE_CACHE_VOICES = new Set([
 const TTS_DIR = resolve(env.DATA_DIR, 'tts');
 const BACKFILL_STATUS_PATH = resolve(env.DATA_DIR, 'tts-backfill-status.json');
 const GEN_TIMEOUT_MS = 90_000;
+// ffmpeg turns a sentence clip around in well under a second; a wedged process must not hold the
+// request (or a backfill worker) forever.
+const FFMPEG_TIMEOUT_MS = 60_000;
 
 // ── Casual "style" track ─────────────────────────────────────────────────────
 // A second rendition of each sentence in fast, reduced, movie-like speech. The cache "voice" field
@@ -85,6 +88,19 @@ async function fileExists(p: string): Promise<boolean> {
   try { await access(p); return true; } catch { return false; }
 }
 
+// Write through a temp file + rename: clips are served as immutable for a year, so a crash mid-write
+// must never leave a truncated file under the final name.
+async function writeFileAtomic(path: string, data: Buffer | string): Promise<void> {
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, data);
+    await rename(temp, path);
+  } catch (error) {
+    await rm(temp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 // Sniff audio content-type from the leading bytes (we store mp3 normally, wav as the no-ffmpeg fallback).
 function sniffContentType(buf: Buffer): string {
   if (buf.length >= 4 && buf.toString('ascii', 0, 4) === 'RIFF') return 'audio/wav';
@@ -94,19 +110,26 @@ function sniffContentType(buf: Buffer): string {
   return 'audio/mpeg';
 }
 
-// Transcode WAV -> MP3 via ffmpeg. Falls back to the original bytes if ffmpeg is unavailable
-// or errors, so the feature still works (just with larger files) where ffmpeg isn't installed.
+// Transcode WAV -> MP3 via ffmpeg. Falls back to the original bytes if ffmpeg is unavailable,
+// errors or hangs, so the feature still works (just with larger files) where ffmpeg isn't installed.
 function transcodeToMp3(wav: Buffer): Promise<Buffer> {
   return new Promise((res) => {
     const ff = spawn('ffmpeg', ['-loglevel', 'error', '-i', 'pipe:0', '-ac', '1', '-b:a', '64k', '-f', 'mp3', 'pipe:1']);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let settled = false;
-    const done = (b: Buffer) => { if (!settled) { settled = true; res(b); } };
+    let timer: NodeJS.Timeout | undefined;
+    const done = (b: Buffer) => { if (!settled) { settled = true; clearTimeout(timer); res(b); } };
+    timer = setTimeout(() => {
+      console.warn(`[tts] ffmpeg exceeded ${FFMPEG_TIMEOUT_MS}ms, storing WAV`);
+      ff.kill('SIGKILL');
+      done(wav);
+    }, FFMPEG_TIMEOUT_MS);
     ff.stdout.on('data', (d) => out.push(d));
     ff.stderr.on('data', (d) => err.push(d));
     ff.on('error', () => done(wav)); // ffmpeg not installed -> keep WAV
     ff.on('close', (code) => {
+      if (settled) return;
       if (code === 0 && out.length) return done(Buffer.concat(out));
       console.warn('[tts] ffmpeg failed, storing WAV:', Buffer.concat(err).toString().slice(0, 200));
       done(wav);
@@ -166,15 +189,6 @@ async function postLargeJson(url: string, body: string): Promise<string> {
   }
 }
 
-async function alignTimings(audio: Buffer): Promise<WordTiming[]> {
-  try {
-    return await alignAudioLocally(audio);
-  } catch (error: any) {
-    console.warn('[tts] local whisper alignment failed:', error?.message);
-    return [];
-  }
-}
-
 function isCasual(voice: string): boolean {
   return voice === CASUAL_STYLE;
 }
@@ -214,28 +228,42 @@ async function synthVoiceDesign(text: string, voiceDesc: string): Promise<Buffer
   return transcodeToMp3(raw);
 }
 
-// Respell ONE sentence into its casual spoken form (vocabulary preserved). Falls back to the original.
-async function reduceToCasual(sentence: string): Promise<string> {
+// The model sometimes wraps its line in quotes: strip one wrapping pair of double quotes (straight or
+// curly). Apostrophes ARE the respelling ("'cause", "goin'") and must survive. Null when nothing is left.
+export function cleanCasualRespelling(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  let text = value.trim();
+  const wrapped = /^["\u201c\u201d]([\s\S]*)["\u201c\u201d]$/.exec(text);
+  if (wrapped) text = wrapped[1].trim();
+  return text || null;
+}
+
+// Respell ONE sentence into its casual spoken form (vocabulary preserved). Null when the respelling
+// failed: voicing the original spelling would store a clear clip under the casual key for good.
+async function reduceToCasual(sentence: string): Promise<string | null> {
   const body = JSON.stringify({
     model: REDUCE_MODEL,
     messages: [{ role: 'system', content: REDUCE_SYS }, { role: 'user', content: sentence }],
     temperature: 0.3,
-    max_tokens: 200,
+    // A respelling runs about as long as its sentence; 200 tokens cut off the longer essay sentences.
+    max_tokens: 800,
   });
   const raw = await postLargeJson(CHAT_URL, body);
-  if (!raw) return sentence;
+  if (!raw) return null;
   try {
-    const data: any = JSON.parse(raw);
-    const out = String(data?.choices?.[0]?.message?.content || '').trim().replace(/^["']+|["']+$/g, '');
-    return out || sentence;
+    const choice: any = JSON.parse(raw)?.choices?.[0];
+    // A line cut off at max_tokens would voice only part of the sentence.
+    if (choice?.finish_reason === 'length') return null;
+    return cleanCasualRespelling(choice?.message?.content);
   } catch {
-    return sentence;
+    return null;
   }
 }
 
 // Respell MANY sentences in one chat call (batch throughput for the backfill). Returns reduced forms
-// aligned 1:1 with the input; on any count mismatch / parse failure, falls back to per-sentence reduce.
-async function reduceCasualBatch(sentences: string[]): Promise<string[]> {
+// aligned 1:1 with the input (null where one failed); on any count mismatch / parse failure, falls back
+// to per-sentence reduce.
+async function reduceCasualBatch(sentences: string[]): Promise<Array<string | null>> {
   if (sentences.length <= 1) return sentences.length ? [await reduceToCasual(sentences[0])] : [];
   const numbered = sentences.map((s, i) => `${i + 1}. ${s}`).join('\n');
   const sys = REDUCE_SYS + ' You will receive a numbered list; respond with JSON {"lines":[...]} ' +
@@ -254,71 +282,114 @@ async function reduceCasualBatch(sentences: string[]): Promise<string[]> {
     if (typeof content === 'string') content = JSON.parse(content);
     const lines = Array.isArray(content?.lines) ? content.lines : null;
     if (lines && lines.length === sentences.length) {
-      return lines.map((l: any, i: number) => String(l || '').trim() || sentences[i]);
+      return lines.map((line: unknown) => cleanCasualRespelling(line));
     }
   } catch {
     /* fall through to per-sentence */
   }
-  const out: string[] = [];
+  const out: Array<string | null> = [];
   for (const s of sentences) out.push(await reduceToCasual(s));
   return out;
 }
 
-// In-flight dedupe so concurrent requests for the same key generate only once.
-const inFlight = new Map<string, Promise<void>>();
+// The network and whisper steps, swappable so tests can drive the routes without DeepInfra or whisper.
+interface TtsDependencies {
+  synthClear(text: string, voice: string): Promise<Buffer>;
+  synthCasual(spoken: string): Promise<Buffer>;
+  reduce(sentence: string): Promise<string | null>;
+  align(audio: Buffer, priority: AlignmentPriority): Promise<WordTiming[]>;
+}
 
-// Generate + store a clip. `voice` doubles as the style: the CASUAL_STYLE sentinel runs the casual
-// recipe (AI-reduce the text, then voice-design TTS); any other value is a MiMo voice (clear track).
-// BOTH styles get word timings now, so tap-to-seek works on the casual track too. `reduced` lets the
-// backfill pass a pre-batched casual respelling.
-function generateAndStore(text: string, voice: string, reduced?: string): Promise<void> {
+let deps: TtsDependencies = {
+  synthClear: synthMiMo,
+  synthCasual: (spoken) => synthVoiceDesign(spoken, CASUAL_VOICE),
+  reduce: reduceToCasual,
+  align: (audio, priority) => alignAudioLocally(audio, { priority }),
+};
+
+/** Test hook: replace some of the network/whisper steps. Returns a function restoring the previous ones. */
+export function setTtsDependenciesForTest(overrides: Partial<TtsDependencies>): () => void {
+  const previous = deps;
+  deps = { ...deps, ...overrides };
+  return () => { deps = previous; };
+}
+
+// In-flight dedupe so concurrent requests for the same key generate (or align) only once.
+const audioInFlight = new Map<string, Promise<Buffer | null>>();
+const timingsInFlight = new Map<string, Promise<void>>();
+
+// Synthesize + store a clip's audio unless it already exists. `voice` doubles as the style: the
+// CASUAL_STYLE sentinel runs the casual recipe (AI-reduce the text, then voice-design TTS); any other
+// value is a MiMo voice (clear track). `reduced` lets the backfill pass a pre-batched casual respelling.
+// Resolves the new bytes, or null when the clip was already on disk.
+function ensureAudio(text: string, voice: string, reduced?: string): Promise<Buffer | null> {
   const key = ttsKey(text, voice);
-  const existing = inFlight.get(key);
+  const existing = audioInFlight.get(key);
   if (existing) return existing;
   const job = (async () => {
     if (OFFLINE_CACHE_VOICES.has(voice)) {
       throw new Error(`${voice} is populated only by the verified offline audio bridge`);
     }
     const p = pathForKey(key);
-    const tp = timingsPathForKey(key);
-    let audioBuf: Buffer | null = null;
-    if (!(await fileExists(p))) {
-      if (isCasual(voice)) {
-        const spoken = reduced ?? (await reduceToCasual(text));
-        audioBuf = await synthVoiceDesign(spoken, CASUAL_VOICE);
-        mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
-        await writeFile(p, audioBuf);
-        // Persist the spoken respelling next to the clip (transparency / future display). Best-effort.
-        await writeFile(p + '.txt', spoken).catch(() => {});
-      } else {
-        audioBuf = await synthMiMo(text, voice);
-        mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
-        await writeFile(p, audioBuf);
-      }
+    if (await fileExists(p)) return null;
+    let audio: Buffer;
+    let spoken: string | null = null;
+    if (isCasual(voice)) {
+      spoken = reduced ?? (await deps.reduce(text));
+      // Nothing is stored, so a later request or backfill pass retries the respelling.
+      if (!spoken) throw new Error('casual respelling failed');
+      audio = await deps.synthCasual(spoken);
+    } else {
+      audio = await deps.synthClear(text, voice);
     }
-    // Word timings for BOTH styles. The casual audio's reduced text keeps word order, so index-aligned
-    // seek lands close (start times stay correct even if whisper mishears a mumbled word). Covers fresh
-    // clips AND legacy audio-only clips (no audio regen).
-    if (!(await fileExists(tp))) {
-      const buf = audioBuf ?? (await readFile(p));
-      const words = await alignTimings(buf);
-      if (words.length) await writeFile(tp, JSON.stringify(words));
-    }
-  })().finally(() => inFlight.delete(key));
-  inFlight.set(key, job);
+    mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
+    await writeFileAtomic(p, audio);
+    // Persist the spoken respelling next to the clip (transparency / future display). Best-effort.
+    if (spoken) await writeFileAtomic(p + '.txt', spoken).catch(() => {});
+    return audio;
+  })().finally(() => audioInFlight.delete(key));
+  audioInFlight.set(key, job);
   return job;
 }
 
+// Align + store a clip's word timings unless they already exist. A clip whisper hears no words in
+// stores [] so it counts as complete instead of being re-aligned by every sweep; a failed alignment
+// stores nothing, so a later request retries it. `fresh` saves re-reading audio just synthesized.
+function ensureTimings(key: string, priority: AlignmentPriority, fresh?: Buffer | null): Promise<void> {
+  const existing = timingsInFlight.get(key);
+  if (existing) return existing;
+  const job = (async () => {
+    const tp = timingsPathForKey(key);
+    if (await fileExists(tp)) return;
+    const audio = fresh ?? (await readFile(pathForKey(key)));
+    let words: WordTiming[];
+    try {
+      words = await deps.align(audio, priority);
+    } catch (error: any) {
+      console.warn('[tts] local whisper alignment failed:', error?.message);
+      return;
+    }
+    await writeFileAtomic(tp, JSON.stringify(words));
+  })().finally(() => timingsInFlight.delete(key));
+  timingsInFlight.set(key, job);
+  return job;
+}
+
+// Word timings for BOTH styles. The casual audio's reduced text keeps word order, so index-aligned
+// seek lands close (start times stay correct even if whisper mishears a mumbled word). Covers fresh
+// clips AND legacy audio-only clips (no audio regen).
 async function generateAndVerify(text: string, voice: string, reduced?: string): Promise<void> {
-  await generateAndStore(text, voice, reduced);
-  if (!(await isComplete(ttsKey(text, voice)))) {
+  const key = ttsKey(text, voice);
+  const fresh = await ensureAudio(text, voice, reduced);
+  await ensureTimings(key, 'background', fresh);
+  if (!(await isComplete(key))) {
     throw new Error('audio or local word timings are still incomplete');
   }
 }
 
 // ── Background backfill ─────────────────────────────────────────────────────
 // Generates audio + word timings for EVERY saved sentence, server-side, detached from any request —
-// so the client never has to stay open. Idempotent (generateAndStore skips clips that already have
+// so the client never has to stay open. Idempotent (generateAndVerify skips clips that already have
 // both files) and resumable (a restart just re-scans and skips what's done). Low concurrency since the
 // work is I/O-bound (DeepInfra + tiny file writes), so it doesn't starve normal request serving.
 const stripMarkers = (t: string): string =>
@@ -418,7 +489,7 @@ async function runBackfillGroup(texts: string[]): Promise<void> {
   }
   backfill.done += texts.length - needAudio.length - needTimingsOnly.length; // already-complete casual
 
-  // Timings-only: cheap, parallel (generateAndStore skips synth, just aligns + writes timings).
+  // Timings-only: cheap, parallel (generateAndVerify skips synth, just aligns + writes timings).
   {
     let t = 0;
     const timingsWorker = async () => {
@@ -441,19 +512,19 @@ async function runBackfillGroup(texts: string[]): Promise<void> {
   const CHUNK = 20;
   for (let i = 0; i < needAudio.length; i += CHUNK) {
     const chunk = needAudio.slice(i, i + CHUNK);
-    let reduced: string[];
+    let reduced: Array<string | null>;
     try {
       reduced = await reduceCasualBatch(chunk);
     } catch (e: any) {
-      console.warn('[tts] backfill reduce batch failed, using originals:', e?.message);
-      reduced = chunk; // degrade to the casual VOICE over the original spelling
+      console.warn('[tts] backfill reduce batch failed, respelling each clip separately:', e?.message);
+      reduced = chunk.map(() => null); // a missing respelling is retried per clip, never voiced as-is
     }
     let j = 0;
     const casualWorker = async () => {
       while (j < chunk.length) {
         const k = j++;
         const result = await retryBackfillOperation(
-          () => generateAndVerify(chunk[k], CASUAL_STYLE, reduced[k]),
+          () => generateAndVerify(chunk[k], CASUAL_STYLE, reduced[k] ?? undefined),
         );
         if (result.succeeded) backfill.generated++;
         else {
@@ -540,30 +611,54 @@ ttsRoutes.get('/tts/:name/timings', async (c) => {
 });
 
 // POST /api/tts/generate  { items: [{ text, voice? }] } -> { generated, skipped, failed }.
-// Used by the live cache-miss trigger (fire-and-forget, usually 1 item) and the bulk sweep.
+// Used by the live cache-miss trigger (fire-and-forget, usually 1 item) and the bulk sweep, which the
+// client splits into requests of at most GENERATE_MAX_ITEMS. Responds once each clip's AUDIO is stored —
+// it is playable then — and aligns word timings afterwards; a lone live clip's alignment jumps ahead of
+// backfill work. A client that disconnects stops further items from starting.
+export const GENERATE_MAX_ITEMS = 40;
+// Covers every study sentence: essay-catalog sentences run to ~600 characters and examples to 1000.
+export const GENERATE_MAX_TEXT_CHARS = 1000;
+const GENERATE_CONCURRENCY = 3;
+// Only the tracks the client plays. Any other name would mint a new MiMo cache entry per request.
+const GENERATE_VOICES = new Set([MIMO_VOICE, CASUAL_STYLE]);
+
 ttsRoutes.post('/tts/generate', async (c) => {
+  // Read before any await: the node adapter only aborts a signal that was accessed.
+  const signal = c.req.raw.signal;
   const body = await c.req.json().catch(() => ({}));
-  const items: Array<{ text?: string; voice?: string }> = Array.isArray(body?.items) ? body.items : [];
+  const items: Array<{ text?: unknown; voice?: unknown }> = Array.isArray(body?.items) ? body.items : [];
   if (items.length === 0) return c.json({ error: 'no items' }, 400);
+  if (items.length > GENERATE_MAX_ITEMS) {
+    return c.json({ error: `at most ${GENERATE_MAX_ITEMS} items per request` }, 400);
+  }
+  const priority: AlignmentPriority = items.length === 1 ? 'interactive' : 'background';
   let generated = 0, skipped = 0, failed = 0;
-  for (const it of items) {
-    const text = (it?.text || '').trim();
-    if (!text) { failed++; continue; }
-    const voice = it.voice || MIMO_VOICE;
+  const generateOne = async (item: { text?: unknown; voice?: unknown }) => {
+    const text = typeof item?.text === 'string' ? item.text.trim() : '';
+    const voice = typeof item?.voice === 'string' && item.voice ? item.voice : MIMO_VOICE;
+    if (!text || text.length > GENERATE_MAX_TEXT_CHARS) { failed++; return; }
+    // Versioned Qwen clips are generated, aligned, and validated on Apple Silicon, then imported.
+    // Never silently put MiMo bytes behind an immutable Qwen cache key.
+    if (OFFLINE_CACHE_VOICES.has(voice)) { skipped++; return; }
+    if (!GENERATE_VOICES.has(voice)) { failed++; return; }
     try {
       const key = ttsKey(text, voice);
       // Skip when both the clip and its local word timings are complete.
-      if (await isComplete(key)) { skipped++; continue; }
-      // Versioned Qwen clips are generated, aligned, and validated on Apple Silicon, then imported.
-      // Never silently put MiMo bytes behind an immutable Qwen cache key.
-      if (OFFLINE_CACHE_VOICES.has(voice)) { skipped++; continue; }
-      await generateAndStore(text, voice);
+      if (await isComplete(key)) { skipped++; return; }
+      const fresh = await ensureAudio(text, voice);
+      void ensureTimings(key, priority, fresh)
+        .catch((e: any) => console.warn('[tts] word timings failed:', e?.message));
       generated++;
     } catch (e: any) {
       console.warn('[tts] generate failed:', e?.message);
       failed++;
     }
-  }
+  };
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length && !signal.aborted) await generateOne(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(GENERATE_CONCURRENCY, items.length) }, () => worker()));
   return c.json({ generated, skipped, failed });
 });
 

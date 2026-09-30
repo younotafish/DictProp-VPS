@@ -1,14 +1,23 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import {
+  NOTHING_SUCCEEDED_EXIT_CODE,
+  ledgerFromEnvironment,
+  parentHash,
+  recordFailure,
+  recordSuccess,
+  updateLedger,
+} from './failure-ledger.mjs';
 import {
   hasCurrentLocalAdvancedEnrichment,
   markLocalAdvancedEnrichment,
 } from './local-advanced-enrichment.mjs';
 import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
+import { missingCardFields } from './vocab-card-contract.mjs';
 
 const [inputArg, outputArg, workArg] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
@@ -21,7 +30,7 @@ const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 40);
 const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 40) * 60 * 1_000;
-const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
+const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 5_000)));
 const REQUIRED_TEXT_FIELDS = ['sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt'];
 const activeChildren = new Set();
 let aborting = false;
@@ -30,6 +39,8 @@ const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'completion-work'));
 mkdirSync(workDir, { recursive: true });
+const failureLedger = ledgerFromEnvironment('vocab');
+const failuresPath = join(workDir, 'failures.json');
 
 const source = JSON.parse(readFileSync(inputPath, 'utf8'));
 if (source?.version !== 1 || !Array.isArray(source.entries) || source.entries.length === 0) {
@@ -118,40 +129,6 @@ For every input:
 
 Preserve the headword's capitalization only when it is a proper name. Use General American English. Everything must be English except chinese and wordFamily.chinese. Copy each itemIndex exactly, return every input once, and output only schema-valid JSON.`;
 
-function validString(value) {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function missingFields(card) {
-  const missing = [];
-  for (const [field, minimum] of [
-    ['sense', 3], ['chinese', 1], ['definition', 10], ['history', 20],
-    ['register', 10], ['mnemonic', 10], ['imagePrompt', 50],
-  ]) {
-    if (!validString(card?.[field]) || card[field].trim().length < minimum) missing.push(field);
-  }
-  if (validString(card?.chinese) && !/[\u3400-\u9fff]/u.test(card.chinese)) missing.push('chinese');
-  if (!/^\/[^/\n]+\/$/.test(String(card?.ipa || '').trim())) missing.push('ipa');
-  for (const field of ['forms', 'synonyms', 'antonyms', 'confusables']) {
-    if (!Array.isArray(card?.[field]) || card[field].some(value => !validString(value))) missing.push(field);
-  }
-  if (!Array.isArray(card?.wordFamily) || card.wordFamily.some(member =>
-    !validString(member?.word) || !validString(member?.pos) ||
-    !validString(member?.chinese) || !/[\u3400-\u9fff]/u.test(member.chinese))) {
-    missing.push('wordFamily');
-  }
-  if (!Array.isArray(card?.examples) || card.examples.length !== 2 ||
-      card.examples.some(example => !validString(example) || !/\{\{[^{}]+\}\}/.test(example))) {
-    missing.push('examples');
-  }
-  if (!card?.usageAudit || !['modern_american', 'current_general', 'british_only', 'rare_or_dated', 'narrow_specialized']
-    .includes(card.usageAudit.status) || !validString(card.usageAudit.reason) ||
-    !['high', 'medium', 'low'].includes(card.usageAudit.confidence)) {
-    missing.push('usageAudit');
-  }
-  return [...new Set(missing)];
-}
-
 const tasks = [];
 for (const entry of source.entries) {
   const cards = entry.type === 'vocab'
@@ -161,7 +138,7 @@ for (const entry of source.entries) {
       : [];
   for (let cardIndex = 0; cardIndex < cards.length; cardIndex++) {
     const card = cards[cardIndex];
-    const missing = missingFields(card);
+    const missing = missingCardFields(card);
     const refreshAll = !hasCurrentLocalAdvancedEnrichment(card);
     if (missing.length === 0 && !refreshAll) continue;
     tasks.push({
@@ -211,32 +188,24 @@ const batches = [];
 const batchSize = Math.max(1, Math.min(20, Number(process.env.VOCAB_COMPLETION_BATCH_SIZE || 8)));
 for (let index = 0; index < tasks.length; index += batchSize) batches.push(tasks.slice(index, index + batchSize));
 
+const FIELD_PROBLEMS = {
+  chinese: 'chinese must be a Simplified Chinese equivalent',
+  ipa: 'IPA must be one General American transcription enclosed in a single pair of slashes',
+  imagePrompt: 'image prompt is missing or shorter than 50 characters',
+  wordFamily: 'every wordFamily entry needs a word, a part of speech, and Simplified Chinese',
+  examples: 'examples must be two sentences of at least 20 characters, each with exactly one target use in double curly braces',
+  usageAudit: 'usage audit is invalid',
+};
+
+// The result is checked against the same contract the selector uses, so an accepted card is never
+// selected again for the same gap.
 function validateCompletion(result, task) {
-  for (const field of REQUIRED_TEXT_FIELDS) {
-    if (!validString(result?.[field])) throw new Error(`${task.cardId}: ${field} is empty`);
-  }
-  if (!/^\/[^/\n]+\/$/.test(result.ipa.trim())) throw new Error(`${task.cardId}: IPA is invalid`);
-  if (!/[\u3400-\u9fff]/u.test(result.chinese)) throw new Error(`${task.cardId}: Chinese translation is invalid`);
-  if (result.imagePrompt.trim().length < 50) throw new Error(`${task.cardId}: image prompt is too short`);
-  for (const field of ['forms', 'wordFamily', 'synonyms', 'antonyms', 'confusables', 'examples']) {
-    if (!Array.isArray(result?.[field])) throw new Error(`${task.cardId}: ${field} is not an array`);
+  if (!result || typeof result !== 'object') throw new Error(`${task.cardId}: result is not an object`);
+  const missing = missingCardFields({ ...result, word: task.card.word }, { requireAuditedAt: false });
+  if (missing.length > 0) {
+    throw new Error(`${task.cardId}: ${missing.map(field => FIELD_PROBLEMS[field] || `${field} is missing or too short`).join('; ')}`);
   }
   if (result.synonyms.length === 0) throw new Error(`${task.cardId}: synonyms are empty`);
-  if (result.examples.length !== 2 || result.examples.some(example => !validString(example) || !example.includes('{{'))) {
-    throw new Error(`${task.cardId}: examples must contain two marked target uses`);
-  }
-  for (const member of result.wordFamily) {
-    if (!validString(member?.word) || !validString(member?.pos) || !validString(member?.chinese)) {
-      throw new Error(`${task.cardId}: wordFamily entry is incomplete`);
-    }
-  }
-  if (!result.usageAudit ||
-      !['modern_american', 'current_general', 'british_only', 'rare_or_dated', 'narrow_specialized']
-        .includes(result.usageAudit.status) ||
-      !validString(result.usageAudit.reason) ||
-      !['high', 'medium', 'low'].includes(result.usageAudit.confidence)) {
-    throw new Error(`${task.cardId}: usage audit is invalid`);
-  }
 }
 
 function normalizeCompletion(result) {
@@ -253,15 +222,18 @@ function normalizeCompletion(result) {
   return result;
 }
 
-async function runBatch(batch, batchIndex) {
-  const compact = batch.map(compactTask);
-  const fingerprint = createHash('sha256')
+function batchFingerprint(batch) {
+  return createHash('sha256')
     .update(JSON.stringify({
-      provider: MODEL_CONFIG.cacheKey, model: MODEL, reasoningEffort: REASONING_EFFORT, records: compact,
+      provider: MODEL_CONFIG.cacheKey, model: MODEL, reasoningEffort: REASONING_EFFORT, records: batch.map(compactTask),
     }))
     .digest('hex')
     .slice(0, 16);
-  const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
+}
+
+async function runBatch(batch, batchIndex) {
+  const compact = batch.map(compactTask);
+  const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${batchFingerprint(batch)}.json`);
   let correction = '';
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -278,22 +250,60 @@ async function runBatch(batch, batchIndex) {
       const byIndex = new Map(parsed.results.map(result => [result.itemIndex, result]));
       if (byIndex.size !== batch.length) throw new Error('Model returned duplicate item indexes');
       return batch.map((task, itemIndex) => {
-        const result = normalizeCompletion(byIndex.get(itemIndex));
-        if (!result) throw new Error(`Model omitted item index ${itemIndex}`);
-        validateCompletion(result, task);
-        return result;
+        const completion = normalizeCompletion(byIndex.get(itemIndex));
+        if (!completion) throw new Error(`Model omitted item index ${itemIndex}`);
+        validateCompletion(completion, task);
+        return { task, completion };
       });
     } catch (error) {
       if (aborting || attempt === 2) throw error;
-      correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Return every itemIndex and two natural examples per item, each with the target wrapped in double curly braces.`;
+      correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Return every itemIndex and two natural examples per item, each at least 20 characters long with exactly one target use wrapped in double curly braces.`;
       if (existsSync(resultPath)) unlinkSync(resultPath);
-      await new Promise(resolvePromise => setTimeout(resolvePromise, retryDelayMs * (attempt + 1)));
+      // Exponential and jittered, so parallel workers that failed together do not retry together.
+      const delay = retryDelayMs * 4 ** attempt * (0.5 + Math.random());
+      await new Promise(resolvePromise => setTimeout(resolvePromise, delay));
     }
   }
   throw new Error(`Completion batch ${batchIndex + 1} exhausted retries`);
 }
 
-const batchResults = new Array(batches.length);
+// A batch that keeps failing is halved until the failure is pinned to single cards, so one card the
+// model cannot complete no longer takes its batch-mates down with it.
+async function runBatchResilient(batch, batchIndex, depth = 0) {
+  const splitMarkerPath = join(
+    workDir,
+    `split-${String(batchIndex + 1).padStart(4, '0')}-${batchFingerprint(batch)}.json`,
+  );
+  // A batch that failed on an earlier run goes straight to its halves, whose results are cached.
+  if (batch.length === 1 || !existsSync(splitMarkerPath)) {
+    try {
+      return { results: await runBatch(batch, batchIndex), failures: [] };
+    } catch (error) {
+      if (aborting) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (batch.length === 1) {
+        process.stderr.write(`Card ${batch[0].cardId} of ${batch[0].parentId} failed on its own: ${message}\n`);
+        return { results: [], failures: [{ task: batch[0], error: message }] };
+      }
+      writeFileSync(splitMarkerPath, `${JSON.stringify({
+        version: 1,
+        batchIndex,
+        depth,
+        cardIds: batch.map(task => task.cardId),
+        error: message,
+        splitAt: new Date().toISOString(),
+      }, null, 2)}\n`, { mode: 0o600 });
+      process.stderr.write(`Completion batch ${batchIndex + 1} failed (${message}); splitting ${batch.length} cards\n`);
+    }
+  }
+  const midpoint = Math.ceil(batch.length / 2);
+  const left = await runBatchResilient(batch.slice(0, midpoint), batchIndex, depth + 1);
+  const right = await runBatchResilient(batch.slice(midpoint), batchIndex, depth + 1);
+  return { results: [...left.results, ...right.results], failures: [...left.failures, ...right.failures] };
+}
+
+const completedTasks = [];
+const failures = [];
 let nextBatch = 0;
 const concurrency = Math.max(1, Math.min(16, Number(process.env.CODEX_CONCURRENCY || 4)));
 async function worker() {
@@ -301,7 +311,9 @@ async function worker() {
     const index = nextBatch++;
     if (index >= batches.length) return;
     process.stderr.write(`Completing corpus batch ${index + 1}/${batches.length}\n`);
-    batchResults[index] = await runBatch(batches[index], index);
+    const outcome = await runBatchResilient(batches[index], index);
+    completedTasks.push(...outcome.results);
+    failures.push(...outcome.failures);
   }
 }
 
@@ -321,11 +333,13 @@ try {
 
 const generatedAt = Date.now();
 const completionByCard = new Map();
-for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-  for (let itemIndex = 0; itemIndex < batches[batchIndex].length; itemIndex++) {
-    const task = batches[batchIndex][itemIndex];
-    completionByCard.set(`${task.parentId}\u0000${task.cardIndex}`, batchResults[batchIndex][itemIndex]);
-  }
+for (const { task, completion } of completedTasks) {
+  completionByCard.set(`${task.parentId}\u0000${task.cardIndex}`, completion);
+}
+// A parent is published whole or not at all, so one failed card holds back only its own item.
+const failedParents = new Map();
+for (const { task, error } of failures) {
+  if (!failedParents.has(task.parentId)) failedParents.set(task.parentId, `${task.cardId}: ${error}`);
 }
 
 function withoutImageFields(value) {
@@ -342,7 +356,7 @@ function corpusHash(data) {
 
 function fillCard(card, completion) {
   const next = { ...card };
-  const missing = new Set(missingFields(card));
+  const missing = new Set(missingCardFields(card));
   const refreshAll = !hasCurrentLocalAdvancedEnrichment(card);
   for (const field of REQUIRED_TEXT_FIELDS) {
     if (refreshAll || missing.has(field)) next[field] = completion[field].trim();
@@ -356,30 +370,46 @@ function fillCard(card, completion) {
   if (refreshAll || missing.has('usageAudit')) {
     next.usageAudit = { ...completion.usageAudit, auditedAt: generatedAt };
   }
-  return markLocalAdvancedEnrichment(next, MODEL, generatedAt, MODEL_CONFIG.marker);
+  const filled = markLocalAdvancedEnrichment(next, MODEL, generatedAt, MODEL_CONFIG.marker);
+  const stillMissing = missingCardFields(filled);
+  if (stillMissing.length > 0) {
+    throw new Error(`${card.id || card.word}: still missing ${stillMissing.join(', ')} after completion`);
+  }
+  return filled;
 }
 
 let completedCards = 0;
-const entries = source.entries.map(entry => {
+const entries = [];
+for (const entry of source.entries) {
+  if (failedParents.has(entry.id)) continue;
   const originalData = entry.data;
   let data = originalData;
-  if (entry.type === 'vocab') {
-    const completion = completionByCard.get(`${entry.id}\u00000`);
-    if (completion) {
-      data = fillCard(originalData, completion);
-      completedCards++;
+  let appliedCards = 0;
+  try {
+    if (entry.type === 'vocab') {
+      const completion = completionByCard.get(`${entry.id}\u00000`);
+      if (completion) {
+        data = fillCard(originalData, completion);
+        appliedCards++;
+      }
+    } else if (entry.type === 'phrase' && Array.isArray(originalData.vocabs)) {
+      let changed = false;
+      const vocabs = originalData.vocabs.map((card, cardIndex) => {
+        const completion = completionByCard.get(`${entry.id}\u0000${cardIndex}`);
+        if (!completion) return card;
+        changed = true;
+        appliedCards++;
+        return fillCard(card, completion);
+      });
+      if (changed) data = { ...originalData, vocabs };
     }
-  } else if (entry.type === 'phrase' && Array.isArray(originalData.vocabs)) {
-    let changed = false;
-    const vocabs = originalData.vocabs.map((card, cardIndex) => {
-      const completion = completionByCard.get(`${entry.id}\u0000${cardIndex}`);
-      if (!completion) return card;
-      changed = true;
-      completedCards++;
-      return fillCard(card, completion);
-    });
-    if (changed) data = { ...originalData, vocabs };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`Vocabulary item ${entry.id} failed its completion check: ${message}\n`);
+    failedParents.set(entry.id, message);
+    continue;
   }
+  completedCards += appliedCards;
   const nextEntry = {
     ...entry,
     // The previous audited target is the source for this second, resumable completion pass.
@@ -390,10 +420,48 @@ const entries = source.entries.map(entry => {
     nextEntry.archiveForUsage = data.usageAudit.confidence !== 'low' &&
       ['british_only', 'rare_or_dated', 'narrow_specialized'].includes(data.usageAudit.status);
   }
-  return nextEntry;
-});
+  entries.push(nextEntry);
+}
 
-if (completedCards !== tasks.length) throw new Error(`Applied ${completedCards}/${tasks.length} completions`);
+const expectedCards = tasks.filter(task => !failedParents.has(task.parentId)).length;
+if (completedCards !== expectedCards) throw new Error(`Applied ${completedCards}/${expectedCards} completions`);
+const failedEntries = source.entries.filter(entry => failedParents.has(entry.id));
+if (failedEntries.length > 0) {
+  const tempPath = `${failuresPath}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify({
+    version: 1,
+    generatedAt,
+    provider: MODEL_CONFIG.marker,
+    model: MODEL,
+    reasoningEffort: REASONING_EFFORT,
+    failures: failedEntries.map(entry => ({ id: entry.id, error: failedParents.get(entry.id) })),
+  }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tempPath, failuresPath);
+} else if (existsSync(failuresPath)) {
+  unlinkSync(failuresPath);
+}
+if (!failureLedger && failedEntries.length > 0) {
+  throw new Error(
+    `${failedEntries.length} vocabulary item(s) remain incomplete; see ${failuresPath}. Successful batches remain cached.`,
+  );
+}
+if (failureLedger) {
+  updateLedger(failureLedger.path, ledger => {
+    for (const entry of source.entries) {
+      if (failedParents.has(entry.id)) {
+        recordFailure(ledger, failureLedger.stage, entry.id, parentHash(entry), failedParents.get(entry.id), generatedAt);
+      } else {
+        recordSuccess(ledger, failureLedger.stage, entry.id);
+      }
+    }
+  }, generatedAt);
+}
+const progressedParents = new Set(completedTasks.map(({ task }) => task.parentId).filter(id => !failedParents.has(id)));
+if (failedEntries.length > 0 && progressedParents.size === 0) {
+  if (existsSync(outputPath)) unlinkSync(outputPath);
+  process.stderr.write(`No vocabulary item was completed; ${failedEntries.length} failure(s) recorded in ${failureLedger.path}\n`);
+  process.exit(NOTHING_SUCCEEDED_EXIT_CODE);
+}
 const output = {
   ...source,
   generatedAt,
@@ -409,10 +477,12 @@ writeFileSync(join(dirname(outputPath), 'completion-report.json'), `${JSON.strin
   provider: MODEL_CONFIG.marker,
   reasoningEffort: REASONING_EFFORT,
   completedCards,
-  advancedRewrites: tasks.filter(task => task.refreshAll).length,
-  parentItems: new Set(tasks.map(task => task.parentId)).size,
+  advancedRewrites: tasks.filter(task => task.refreshAll && !failedParents.has(task.parentId)).length,
+  parentItems: new Set(tasks.map(task => task.parentId).filter(id => !failedParents.has(id))).size,
+  failedParents: failedEntries.map(entry => ({ id: entry.id, error: failedParents.get(entry.id) })),
   missingFieldCounts: Object.fromEntries([...new Set(tasks.flatMap(task => task.missing))]
     .sort()
     .map(field => [field, tasks.filter(task => task.missing.includes(field)).length])),
 }, null, 2)}\n`, { mode: 0o600 });
-process.stderr.write(`Wrote ${completedCards} completed cards to ${outputPath}\n`);
+process.stderr.write(`Wrote ${completedCards} completed cards to ${outputPath}${
+  failedEntries.length ? `; ${failedEntries.length} item(s) deferred to a later cycle` : ''}\n`);

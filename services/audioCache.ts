@@ -43,6 +43,10 @@ const MAX_ORIGIN_FRACTION = 0.8;
 interface MetaRecord { size: number; at: number }
 
 let available: boolean | null = null;
+let unavailableUntil = 0;
+// A failed open is tried again after this long: the failure can pass (another tab upgrading the database
+// blocks the open), and remembering it for good would leave the cache off for the rest of the session.
+const RETRY_UNAVAILABLE_MS = 60_000;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 const getDB = (): Promise<IDBDatabase> => {
@@ -52,7 +56,14 @@ const getDB = (): Promise<IDBDatabase> => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onerror = () => reject(req.error);
     req.onblocked = () => reject(new Error('IndexedDB open blocked'));
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Safari drops the connection of a page left in the background, and a newer build open in another
+      // tab needs it closed to upgrade: reopen on next use instead of failing every call on a dead one.
+      db.onclose = () => { dbPromise = null; };
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(AUDIO)) db.createObjectStore(AUDIO);
@@ -68,15 +79,17 @@ const getDB = (): Promise<IDBDatabase> => {
   return dbPromise;
 };
 
-/** True when IndexedDB is usable here. Cached; a false result (e.g. private mode) makes every op a no-op. */
+/** True when IndexedDB is usable here. While it isn't (e.g. private mode), every op is a no-op. */
 export const audioCacheReady = async (): Promise<boolean> => {
-  if (available !== null) return available;
+  if (available) return true;
+  if (Date.now() < unavailableUntil) return false;
   try {
     await getDB();
     available = true;
   } catch {
+    if (available === null) warn('🔊 Audio cache: IndexedDB unavailable — falling back to network-only');
     available = false;
-    warn('🔊 Audio cache: IndexedDB unavailable — falling back to network-only');
+    unavailableUntil = Date.now() + RETRY_UNAVAILABLE_MS;
   }
   return available;
 };
@@ -168,13 +181,20 @@ const writeAudio = (key: string, blob: Blob, retried: boolean): Promise<void> =>
   });
 
 // ── Eviction (LRU by last-used; runs lazily off the hot path) ────────────────────
+// At most one budget check a minute: each sums every clip's size, and a preload writes hundreds of clips
+// in a row. A write that runs out of quota in between still frees room at once (writeAudio).
+const EVICTION_INTERVAL_MS = 60_000;
 let evictScheduled = false;
+let lastEvictionAt = 0;
 const scheduleEviction = (): void => {
   if (evictScheduled) return;
   evictScheduled = true;
-  const run = () => { evictScheduled = false; void evictToBudget(); };
-  if (typeof requestIdleCallback !== 'undefined') requestIdleCallback(run, { timeout: 5000 });
-  else setTimeout(run, 3000);
+  const run = () => { evictScheduled = false; lastEvictionAt = now(); void evictToBudget(); };
+  const whenIdle = () => {
+    if (typeof requestIdleCallback !== 'undefined') requestIdleCallback(run, { timeout: 5000 });
+    else run();
+  };
+  setTimeout(whenIdle, Math.max(3000, lastEvictionAt + EVICTION_INTERVAL_MS - now()));
 };
 
 const computeBudget = async (currentAudioBytes: number): Promise<number> => {

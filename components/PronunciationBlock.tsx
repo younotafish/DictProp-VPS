@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Volume2 } from 'lucide-react';
-import { speak } from '../services/speech';
+import { speak, cancelSpeech } from '../services/speech';
+import { stopCurrent } from '../services/lazyTts';
 import { error as logError } from '../services/logger';
 
 interface PronunciationBlockProps {
@@ -25,7 +26,7 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
   useEffect(() => {
     return () => {
       // Do not cancel unrelated speech merely because this control leaves the tree.
-      if (utteranceRef.current) window.speechSynthesis?.cancel();
+      if (utteranceRef.current) cancelSpeech();
     };
   }, []);
 
@@ -35,13 +36,16 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
 
     // If currently playing, stop it
     if (isPlaying) {
-      window.speechSynthesis.cancel();
+      cancelSpeech();
       utteranceRef.current = null;
       setIsPlaying(false);
       return;
     }
 
     try {
+      // Stop an example sentence playing through the shared engine, as other word taps do, so the word
+      // isn't read over it. The word itself is still spoken right here in the tap, where iOS requires it.
+      stopCurrent();
       utteranceRef.current = speak(text, {
         onStart: () => setIsPlaying(true),
         onEnd: () => { utteranceRef.current = null; setIsPlaying(false); },

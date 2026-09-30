@@ -2,7 +2,9 @@
   "name": "DictProp - AI Vocabulary Builder",
   "short_name": "DictProp",
   "description": "AI-powered vocabulary learning for English learners",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#f8fafc",
   "theme_color": "#4f46e5",
@@ -18,7 +20,7 @@
       "type": "image/png"
     },
     {
-      "src": "/pwa-512x512.png",
+      "src": "/pwa-maskable-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

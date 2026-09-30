@@ -4,8 +4,8 @@ interface ErrorBoundaryProps {
   children: React.ReactNode;
   onReset?: () => void;
   fallbackMessage?: string;
-  /** "fullscreen" (default) shows a fixed overlay; "inline" shows a card-sized fallback */
-  variant?: 'fullscreen' | 'inline';
+  /** "fullscreen" (default) shows a fixed overlay; "screen" fills a tab, leaving the navigation usable; "inline" shows a card-sized fallback */
+  variant?: 'fullscreen' | 'screen' | 'inline';
 }
 
 interface ErrorBoundaryState {
@@ -68,7 +68,9 @@ export class ErrorBoundary extends React.Component<
       }
 
       return (
-        <div className="fixed inset-0 bg-slate-50 flex items-center justify-center p-6">
+        <div className={this.props.variant === 'screen'
+          ? 'h-full overflow-y-auto bg-slate-50 flex items-center justify-center p-6'
+          : 'fixed inset-0 bg-slate-50 flex items-center justify-center p-6'}>
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 max-w-sm w-full text-center">
             <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

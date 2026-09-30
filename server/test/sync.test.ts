@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getItemContentHash, isItemDirty } from '../../services/itemHash.ts';
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../../services/sync.ts';
+import type { SaveItemsResult } from '../../services/api.ts';
+import { saveOverExisting } from '../../services/items.ts';
 import type { StoredItem, VocabCard } from '../../types.ts';
 
 function vocab(id: string, imageUrl?: string): VocabCard {
@@ -19,6 +21,13 @@ function vocab(id: string, imageUrl?: string): VocabCard {
     register: '',
     mnemonic: '',
     imageUrl,
+  };
+}
+
+function srs(id: string, totalReviews: number, lastReviewDate: number): StoredItem['srs'] {
+  return {
+    id, type: 'vocab', nextReview: lastReviewDate, interval: 0, memoryStrength: 0,
+    lastReviewDate, totalReviews, correctStreak: 0, stability: 0.5,
   };
 }
 
@@ -190,6 +199,45 @@ test('a revision bump that kept the synced content rebases unsynced local edits'
   assert.equal((mergeDatasets([local], [edited])[0].data as any).translation, 'server edit');
 });
 
+test('a review on another device rebases unsynced local edits and brings its schedule', () => {
+  const synced: StoredItem = { type: 'vocab', data: vocab('w'), savedAt: 1, updatedAt: 1, serverRevision: 4, srs: srs('w', 0, 0) };
+  const local: StoredItem = {
+    ...synced,
+    updatedAt: 2,
+    data: { ...synced.data, definition: 'unsynced edit' },
+    lastSyncedHash: getItemContentHash(synced),
+  };
+  // Another device reviewed the card: the schedule and revision changed, the content didn't.
+  const reviewed: StoredItem = { ...structuredClone(synced), serverRevision: 5, srs: srs('w', 1, 5_000) };
+  const merged = mergeDatasets([local], [reviewed])[0];
+  assert.equal((merged.data as VocabCard).definition, 'unsynced edit');
+  assert.equal(merged.srs.totalReviews, 1);
+  assert.equal(merged.serverRevision, 5);
+  assert.equal(isItemDirty(merged), true);
+
+  // A content change there as well still wins by revision.
+  const edited: StoredItem = { ...reviewed, data: { ...reviewed.data, definition: 'server edit' } };
+  assert.equal((mergeDatasets([local], [edited])[0].data as VocabCard).definition, 'server edit');
+});
+
+for (const flag of ['isDeleted', 'isArchived'] as const) {
+  test(`${flag} set offline survives a server rewrite that left the flag alone`, () => {
+    const synced: StoredItem = { type: 'vocab', data: vocab('x'), savedAt: 1, updatedAt: 1, serverRevision: 10, srs: srs('x', 0, 0) };
+    const local: StoredItem = { ...synced, [flag]: true, updatedAt: 2, lastSyncedHash: getItemContentHash(synced) };
+    // The enrichment cycle rewrote the card on the server meanwhile.
+    const enriched: StoredItem = { ...structuredClone(synced), serverRevision: 11, data: { ...vocab('x'), definition: 'enriched' } };
+    const merged = trackServerContent(mergeDatasets([local], [enriched]), [enriched])[0];
+    assert.equal(merged[flag], true);
+    assert.equal((merged.data as VocabCard).definition, 'enriched');
+    assert.equal(merged.serverRevision, 11);
+    assert.equal(isItemDirty(merged), true, 'the flag still has to reach the server');
+
+    // A flag the server changed is the server's call, even over unsynced edits here.
+    const edited: StoredItem = { ...synced, data: { ...vocab('x'), definition: 'mine' }, updatedAt: 2, lastSyncedHash: getItemContentHash(synced) };
+    assert.equal(mergeDatasets([edited], [{ ...enriched, [flag]: true }])[0][flag], true);
+  });
+}
+
 test('an unsynced deletion survives a revision bump that kept the synced content', () => {
   const synced = { ...phrase([], 1), serverRevision: 4 };
   const deleted: StoredItem = { ...synced, isDeleted: true, updatedAt: 2, lastSyncedHash: getItemContentHash(synced) };
@@ -285,4 +333,108 @@ test('an outdated push acknowledgement changes nothing', () => {
   const recorded = { ...sent, serverRevision: 5, lastSyncedHash: getItemContentHash(sent) };
   const repeated = [recorded];
   assert.equal(applyServerSave(repeated, [sent], stale), repeated);
+});
+
+test('an edit saved from a copy older than the saved one never overwrites newer server content', () => {
+  const opened: StoredItem = { type: 'vocab', data: vocab('x'), savedAt: 1, updatedAt: 1, serverRevision: 10, srs: srs('x', 0, 0) };
+  opened.lastSyncedHash = getItemContentHash(opened);
+  const conflict = (canonical: StoredItem): SaveItemsResult => ({ revisions: new Map(), canonical: new Map([['x', canonical]]) });
+
+  // The enrichment cycle rewrote the card while a view still held the copy it opened with.
+  const enriched: StoredItem = { ...opened, serverRevision: 11, data: { ...vocab('x'), definition: 'enriched' } };
+  const saved: StoredItem = { ...enriched, lastSyncedHash: getItemContentHash(enriched) };
+  const edit: StoredItem = { ...opened, data: { ...opened.data, mnemonic: 'mine' } };
+  const staleSave = saveOverExisting(saved, edit, 2);
+  assert.equal(isItemDirty(staleSave), true);
+  const [afterPush] = applyServerSave([staleSave], [staleSave], conflict(enriched));
+  assert.equal((afterPush.data as VocabCard).definition, 'enriched');
+  assert.equal(afterPush.serverRevision, 11);
+  assert.equal(isItemDirty(afterPush), false);
+
+  // A revision that left the content alone (an image upload, say) takes the edit on top.
+  const imaged: StoredItem = { ...opened, serverRevision: 11 };
+  const [rebased] = applyServerSave([saveOverExisting({ ...imaged, lastSyncedHash: opened.lastSyncedHash }, edit, 2)], [staleSave], conflict(imaged));
+  assert.equal((rebased.data as VocabCard).mnemonic, 'mine');
+  assert.equal(rebased.serverRevision, 11);
+  assert.equal(isItemDirty(rebased), true);
+
+  // A current copy builds on the saved one's sync record as before.
+  const current = saveOverExisting(saved, { ...saved, data: { ...saved.data, mnemonic: 'mine' } }, 2);
+  assert.equal(current.lastSyncedHash, saved.lastSyncedHash);
+  assert.equal(current.serverRevision, 11);
+});
+
+test('saving a deleted card again brings back its learning history, not its archive', () => {
+  const reviewed = srs('x', 7, 100);
+  const deleted: StoredItem = { type: 'vocab', data: vocab('x'), savedAt: 1, updatedAt: 5, srs: reviewed, isDeleted: true, isArchived: true };
+  const resaved = saveOverExisting(deleted, { type: 'vocab', data: vocab('x'), savedAt: 9, srs: srs('x', 0, 0) }, 9);
+  assert.equal(resaved.srs.totalReviews, 7);
+  assert.equal(resaved.srs.lastReviewDate, 100);
+  assert.equal(resaved.isDeleted, undefined);
+  assert.equal(resaved.isArchived, undefined);
+  assert.equal(resaved.savedAt, 1);
+
+  // A live card keeps the schedule the save carries, as before.
+  const live = saveOverExisting({ ...deleted, isDeleted: undefined }, { ...deleted, isDeleted: undefined, srs: srs('x', 8, 200) }, 9);
+  assert.equal(live.srs.totalReviews, 8);
+});
+
+test('a pull at the same revision brings the server-owned fields a save here left out', () => {
+  const audit = { status: 'current_general', reason: 'common' };
+  const enrichment = { examplesHash: 'abc' };
+  // Saved here from a fresh AI result: the vocab has no audit, and the phrase's second vocab no enrichment.
+  const pushed: StoredItem = { ...phrase([vocab('alpha'), vocab('beta')], 1), serverRevision: 5 };
+  const local: StoredItem = { ...pushed, lastSyncedHash: getItemContentHash(pushed) };
+  // The server kept them, at the same revision (a save that only left them out changes nothing there).
+  const server: StoredItem = structuredClone(pushed);
+  Object.assign((server.data as any), { usageAudit: audit });
+  Object.assign((server.data as any).vocabs[1], { advancedEnrichment: enrichment });
+
+  const merged = trackServerContent(mergeDatasets([local], [server]), [server])[0];
+  assert.deepEqual((merged.data as any).usageAudit, audit);
+  assert.deepEqual((merged.data as any).vocabs[1].advancedEnrichment, enrichment);
+  assert.equal(isItemDirty(merged), false, 'the item matches its server copy, so nothing is pushed again');
+
+  // Edits made here since are kept, on top of the fields.
+  const edited: StoredItem = { ...local, data: { ...local.data, translation: 'unsynced edit' } };
+  const mergedEdit = trackServerContent(mergeDatasets([edited], [server]), [server])[0];
+  assert.equal((mergedEdit.data as any).translation, 'unsynced edit');
+  assert.deepEqual((mergedEdit.data as any).usageAudit, audit);
+  assert.equal(isItemDirty(mergedEdit), true);
+
+  // A copy of an older revision doesn't speak for the server's current one.
+  const newer: StoredItem = { ...local, serverRevision: 6 };
+  assert.equal((mergeDatasets([newer], [server])[0].data as any).usageAudit, undefined);
+});
+
+test('a sentence takes the server analysis only for the text it analyzed', () => {
+  const sentence = (text: string, revision: number): StoredItem => ({
+    type: 'sentence',
+    data: { id: 's1', text, sourceWord: 'word', createdAt: 1 } as any,
+    savedAt: 1,
+    updatedAt: 1,
+    serverRevision: revision,
+    srs: { ...srs('s1', 0, 0), type: 'sentence' },
+  });
+  const server = sentence('The same text.', 3);
+  Object.assign(server.data as any, { analysis: { summary: 'x' }, analysisGeneratedAt: 7 });
+  const same = sentence('The same text.', 3);
+  assert.deepEqual((mergeDatasets([same], [server])[0].data as any).analysis, { summary: 'x' });
+  const rewritten = sentence('Rewritten here.', 3);
+  assert.equal((mergeDatasets([rewritten], [server])[0].data as any).analysis, undefined);
+});
+
+test('a synced copy takes the server schedule even when it moved back, and unsynced progress keeps its review', () => {
+  const reviewed = { ...phrase([], 1), serverRevision: 4 };
+  reviewed.srs = { ...reviewed.srs, lastReviewDate: 20, totalReviews: 1 };
+  const synced = { ...reviewed, lastSyncedHash: getItemContentHash(reviewed) };
+  // Another device undid the review.
+  const undone = { ...phrase([], 1), serverRevision: 5 };
+
+  const merged = mergeDatasets([synced], [undone])[0];
+  assert.equal(merged.srs.totalReviews, 0);
+  assert.equal(merged.srs.lastReviewDate, 0);
+
+  const reviewedAgain = { ...synced, srs: { ...synced.srs, lastReviewDate: 30, totalReviews: 2 } };
+  assert.equal(mergeDatasets([reviewedAgain], [undone])[0].srs.totalReviews, 2);
 });

@@ -8,7 +8,7 @@
  * - Enter/Space: Activate focused element
  * - Cmd+S: Save current item (if applicable)
  * - Cmd+F: Focus search input
- * - 1/2: Switch between tabs (Notebook/Study)
+ * - 1/2/3: Switch between tabs (Notebook/Sentences/Study) — useGlobalNavigation
  */
 
 import { useEffect, RefObject } from 'react';
@@ -55,14 +55,14 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
         containerRef,
       } = optionsRef.current;
 
-      // Don't intercept if user is typing in an input/textarea
+      // Don't intercept if user is typing in an input/textarea, or picking in a select
       const target = e.target as HTMLElement;
-      const isInputElement = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      const isInputElement = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
 
-      // Cmd+S - Save (works even in input fields)
+      // Cmd+S - Save; never the browser's Save Page dialog, and not while typing
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
-        onSave?.();
+        if (!isInputElement) onSave?.();
         return;
       }
 
@@ -165,55 +165,6 @@ function handleFocusTrap(e: KeyboardEvent, container: HTMLElement) {
     firstElement.focus();
   }
 }
-
-/**
- * Hook for global tab navigation (1, 2, 3 to switch tabs)
- */
-interface GlobalNavigationOptions {
-  onNavigateToNotebook?: () => void;
-  onNavigateToSentences?: () => void;
-  onNavigateToStudy?: () => void;
-  enabled?: boolean;
-}
-
-export const useGlobalNavigation = (options: GlobalNavigationOptions) => {
-  const enabled = options.enabled ?? true;
-  const optionsRef = useLatest(options);
-
-  useEffect(() => {
-    if (!enabled) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept if user is typing
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-        return;
-      }
-
-      // Only respond to number keys without modifiers
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-      const { onNavigateToNotebook, onNavigateToSentences, onNavigateToStudy } = optionsRef.current;
-      switch (e.key) {
-        case '1':
-          e.preventDefault();
-          onNavigateToNotebook?.();
-          break;
-        case '2':
-          e.preventDefault();
-          onNavigateToSentences?.();
-          break;
-        case '3':
-          e.preventDefault();
-          onNavigateToStudy?.();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [enabled, optionsRef]);
-};
 
 /**
  * Hook for horizontal wheel scrolling (trackpad gestures)

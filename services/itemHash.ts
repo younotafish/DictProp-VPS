@@ -3,7 +3,11 @@ import { StoredItem } from '../types';
 // Content hashing for dirty tracking. Stored lastSyncedHash values depend on this exact output, so
 // changing the hash marks every item dirty and re-uploads the library.
 
-/** Version of the hash output. Local records store their hash with it; bump it when the output changes. */
+/**
+ * Version of the hash output. Local records store their hash with it; bump it when the output changes.
+ * Version 1 also hashed false flags and http image URLs. Not bumped for dropping them: a stale stored hash
+ * of such an item only costs one more upload, while a bump would rehash and rewrite every local record.
+ */
 export const ITEM_HASH_VERSION = 1;
 
 const hashString = (str: string): string => {
@@ -22,18 +26,15 @@ const hashString = (str: string): string => {
 // Items are replaced rather than mutated, so a hash stays valid for the object it was computed from.
 const hashCache = new WeakMap<StoredItem, string>();
 
-// Strip image markers/base64 from data before hashing so that
-// items with 'idb:stored' or 'server:has_image' don't hash differently from
-// items with real base64 or no image at all.
+// The server keeps images out of item data (it stores base64 separately and drops every other imageUrl),
+// so an imageUrl (a marker or a URL) is never content: hashing one would leave the item dirty after every echo.
 const stripImageForHash = (data: any): any => {
   if (!data) return data;
   const cleaned = { ...data };
-  if (cleaned.imageUrl && !cleaned.imageUrl.startsWith('http')) {
-    delete cleaned.imageUrl;
-  }
+  delete cleaned.imageUrl;
   if (Array.isArray(cleaned.vocabs)) {
     cleaned.vocabs = cleaned.vocabs.map((v: any) => {
-      if (v?.imageUrl && !v.imageUrl.startsWith('http')) {
+      if (v && typeof v === 'object' && 'imageUrl' in v) {
         const { imageUrl, ...rest } = v;
         return rest;
       }
@@ -51,8 +52,9 @@ export const getItemContentHash = (item: StoredItem): string => {
     type: item.type,
     data: stripImageForHash(item.data),
     srs: item.srs,
-    isDeleted: item.isDeleted,
-    isArchived: item.isArchived,
+    // The server echoes a cleared flag as absent, so false and undefined must hash alike.
+    isDeleted: item.isDeleted || undefined,
+    isArchived: item.isArchived || undefined,
   };
 
   const hash = hashString(JSON.stringify(contentToHash));

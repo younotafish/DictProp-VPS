@@ -4,7 +4,7 @@
  * Review sessions use the same item-level FSRS state and authoritative event stream as quick review.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { StoredItem, getItemSense, type ReviewHistory, type ReviewRating, type ReviewTaskType } from '../types';
 import { 
   BrainCircuit, 
@@ -14,10 +14,12 @@ import {
   Maximize2,
   X,
 } from 'lucide-react';
-import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { previewRatings } from '../services/fsrsScheduler';
 import { speakNatural } from '../services/lazyTts';
-import { createClozePrompt, formatReviewInterval, getStudyContent, selectReviewTask, stripStudyMarkers } from '../services/studySession';
+import { createClozePrompt, formatReviewInterval, getStudyContent, requeueLapse, selectReviewTask, stripStudyMarkers } from '../services/studySession';
 import { StudyDashboard } from '../components/StudyDashboard';
+import { useEscapeLayer } from '../components/escapeStack';
+import { isDialogOpenOutside, isImeKey, isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
@@ -53,6 +55,8 @@ interface LastGrade {
   durationMs: number;
   typedAnswer: string;
   status: 'syncing' | 'ready' | 'waiting' | 'undoing';
+  /** Where an Again rating queued the card's extra showing, which undo takes back. */
+  requeuedAt?: number;
 }
 
 const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
@@ -75,11 +79,29 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const [session, setSession] = useState<StudySession | null>(null);
   const [lastGrade, setLastGrade] = useState<LastGrade | null>(null);
   const [undoError, setUndoError] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  const currentItem = session && session.index < session.itemIds.length
-    ? items.find(item => item.data.id === session.itemIds[session.index]) || null
-    : null;
-  const sessionComplete = !!session && session.index >= session.itemIds.length;
+  // A card deleted or archived mid-session is passed over instead of ending the session there.
+  let currentIndex = session?.index ?? 0;
+  let currentItem: StoredItem | null = null;
+  for (; session && currentIndex < session.itemIds.length; currentIndex++) {
+    const id = session.itemIds[currentIndex];
+    currentItem = items.find(item => item.data.id === id) || null;
+    if (currentItem) break;
+  }
+  const sessionComplete = !!session && !currentItem;
+
+  // Move the session past the cards passed over, so the next card starts unrevealed and unanswered.
+  useLayoutEffect(() => {
+    if (!session || currentIndex === session.index) return;
+    setSession(current => current ? {
+      ...current,
+      index: currentIndex,
+      revealed: false,
+      typedAnswer: '',
+      promptStartedAt: Date.now(),
+    } : null);
+  }, [session, currentIndex]);
 
   const startSession = useCallback((queue: StoredItem[]) => {
     if (queue.length === 0) return;
@@ -100,6 +122,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     if (!session || !currentItem || !session.revealed) return;
     const taskType = selectReviewTask(currentItem);
     const eventId = crypto.randomUUID();
+    const itemIds = requeueLapse(session.itemIds, session.index, rating);
     const grade: LastGrade = {
       eventId,
       sessionId: session.id,
@@ -110,6 +133,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       durationMs: Math.max(0, Date.now() - session.promptStartedAt),
       typedAnswer: session.typedAnswer,
       status: 'syncing',
+      requeuedAt: itemIds !== session.itemIds ? session.itemIds.length : undefined,
     };
     setLastGrade(grade);
     setUndoError('');
@@ -127,6 +151,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     });
     setSession(current => current ? {
       ...current,
+      itemIds,
       index: current.index + 1,
       revealed: false,
       typedAnswer: '',
@@ -144,6 +169,9 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       await onUndoReview(grade.eventId);
       setSession(current => current ? {
         ...current,
+        itemIds: grade.requeuedAt !== undefined && current.itemIds[grade.requeuedAt] === grade.itemId
+          ? current.itemIds.filter((_, index) => index !== grade.requeuedAt)
+          : current.itemIds,
         index: grade.itemIndex,
         revealed: true,
         typedAnswer: grade.typedAnswer,
@@ -166,36 +194,45 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     setSession(null);
   };
 
+  // Escape leaves the answer box first, then ends the session. It goes through the escape stack, so a
+  // search box or dialog opened over the session closes before the session does.
+  useEscapeLayer(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && isTypingTarget(active) && rootRef.current?.contains(active)) active.blur();
+    else closeSession();
+  }, 0, !!session && !interactionLocked);
+
   useEffect(() => {
     if (!session || interactionLocked) return;
+    // In the capture phase the session gets its keys before the window-level shortcuts (1-3 also switch
+    // tabs), and stops the ones it uses so no other shortcut reacts to them.
     const handleSessionKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
-      if (event.key === 'Escape') {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isTypingTarget(event.target) || isDialogOpenOutside(rootRef.current)) return;
+      const rating = keyboardRatings[event.key];
+      if (rating) {
+        // The session owns 1-4 even before the answer shows: an early press does nothing rather than
+        // switch tabs mid-session.
         event.preventDefault();
-        closeSession();
+        event.stopImmediatePropagation();
+        if (session.revealed) gradeCurrent(rating);
         return;
       }
-      if (isTyping) return;
       if (event.key.toLowerCase() === 'u' && lastGrade && lastGrade.status !== 'undoing') {
         event.preventDefault();
+        event.stopImmediatePropagation();
         void undoLastGrade();
         return;
       }
-      if (!session.revealed && (event.key === ' ' || event.key === 'Enter')) {
+      // Space and Enter reveal the answer, unless the keyboard has focused a button they should press.
+      if ((event.key === ' ' || event.key === 'Enter') && currentItem && !session.revealed && !isKeyboardFocusedControl(event.target)) {
         event.preventDefault();
+        event.stopImmediatePropagation();
         setSession(current => current ? { ...current, revealed: true } : null);
-        return;
-      }
-      if (!session.revealed) return;
-      const rating = keyboardRatings[event.key];
-      if (rating) {
-        event.preventDefault();
-        gradeCurrent(rating);
       }
     };
-    window.addEventListener('keydown', handleSessionKey);
-    return () => window.removeEventListener('keydown', handleSessionKey);
+    window.addEventListener('keydown', handleSessionKey, true);
+    return () => window.removeEventListener('keydown', handleSessionKey, true);
   }, [session, currentItem, lastGrade, interactionLocked]);
 
 
@@ -214,8 +251,9 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   if (session) {
     if (sessionComplete || !currentItem) {
       const remembered = session.ratings.hard + session.ratings.good + session.ratings.easy;
+      const prompts = remembered + session.ratings.again;
       return (
-        <div className="h-full overflow-y-auto bg-slate-50 p-5 pb-24">
+        <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-24">
           <div className="max-w-xl mx-auto pt-10">
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-2xl font-bold text-slate-800">Session complete</h2>
@@ -229,7 +267,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                 </div>
               ))}
             </div>
-            <p className="text-sm text-slate-600 mb-6">Recalled {remembered} of {session.itemIds.length} prompts.</p>
+            <p className="text-sm text-slate-600 mb-6">Recalled {remembered} of {prompts} prompts.</p>
             {lastGrade && (
               <button onClick={() => void undoLastGrade()} disabled={lastGrade.status === 'undoing'} className="mb-3 w-full h-12 border border-slate-300 text-slate-700 font-semibold rounded-lg hover:bg-slate-100 disabled:opacity-60 inline-flex items-center justify-center gap-2" aria-keyshortcuts="U">
                 <Undo2 size={18} /> {lastGrade.status === 'undoing' ? 'Undoing...' : 'Undo last rating'}
@@ -245,7 +283,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const task = selectReviewTask(currentItem);
     const content = getStudyContent(currentItem);
     const example = stripStudyMarkers(content.example);
-    const previews = SRSAlgorithm.previewRatings(currentItem.srs);
+    const previews = previewRatings(currentItem.srs);
     const prompt = task === 'meaning'
       ? content.word
       : task === 'production'
@@ -254,7 +292,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           ? createClozePrompt(content.example, content.word)
           : '';
     return (
-      <div className="h-full overflow-y-auto bg-slate-50 p-4 pb-24">
+      <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-4 pb-24">
         <div className="max-w-2xl mx-auto min-h-full flex flex-col">
           <header className="h-14 flex items-center justify-between border-b border-slate-200">
             <span className="text-sm font-semibold text-slate-600">{session.index + 1} / {session.itemIds.length}</span>
@@ -290,7 +328,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
                 value={session.typedAnswer}
                 onChange={event => setSession(current => current ? { ...current, typedAnswer: event.target.value } : null)}
                 onKeyDown={event => {
-                  if (event.key === 'Enter') {
+                  // The Enter that picks an input-method candidate is not the answer.
+                  if (event.key === 'Enter' && !isImeKey(event.nativeEvent)) {
                     event.preventDefault();
                     setSession(current => current ? { ...current, revealed: true } : null);
                   }

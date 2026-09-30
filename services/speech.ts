@@ -72,6 +72,16 @@ if (typeof window !== 'undefined' && window.speechSynthesis) {
   }
 }
 
+// Bumped by every speak() and cancelSpeech(), so an utterance still waiting for the voices to load
+// stays silent once something newer (or a stop) has replaced it.
+let generation = 0;
+
+/** Stop any speech, including an utterance still waiting for the voices to load. */
+export const cancelSpeech = (): void => {
+  generation++;
+  try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+};
+
 /**
  * Speak the given text using browser's speech synthesis.
  *
@@ -90,6 +100,7 @@ export const speak = (
 ): SpeechSynthesisUtterance | null => {
   if (!window.speechSynthesis) return null;
 
+  const myGeneration = ++generation;
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'en-US';
   utterance.rate = options?.rate ?? 0.9;
@@ -133,7 +144,7 @@ export const speak = (
       if (spoken) return;
       spoken = true;
       resolveVoices();
-      doSpeak();
+      if (myGeneration === generation) doSpeak();
     };
     window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged, { once: true });
 
@@ -143,6 +154,7 @@ export const speak = (
         spoken = true;
         window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
         voicesLoaded = true;
+        if (myGeneration !== generation) return;
         warn('🔊 TTS: voiceschanged never fired, speaking with default voice');
         doSpeak();
       }

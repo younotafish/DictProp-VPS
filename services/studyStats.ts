@@ -46,7 +46,8 @@ export function computeStudyStats(
 
   for (const item of items) {
     const srs = item.srs;
-    if ((srs?.nextReview ?? 0) <= now) {
+    // New cards wait in a queue of their own, so as in the review session only studied cards fall due.
+    if ((srs?.totalReviews ?? 0) > 0 && (srs?.nextReview ?? 0) <= now) {
       const spelling = getItemSpelling(item);
       if (spelling) dueSpellings.add(spelling);
     }
