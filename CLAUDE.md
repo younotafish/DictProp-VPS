@@ -148,6 +148,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   ├── useReviewOutbox.ts     # Review outbox drain and refused reviews
 │   ├── useUndoOffer.ts        # The undo toast for deletes, archives and resets
 │   └── ...                    # Detail view, overlays, offline images, batch import, shortcuts, keyboard/gestures
+├── scripts/offline/           # The Mac's enrichment cycle and the encrypted bridge to production (see Offline Data Bridge)
 ├── Dockerfile                 # Multi-stage: npm ci + vite build + tsc inside Docker
 ├── docker-compose.yml         # Single service, SQLite volume at ./data
 ├── .github/workflows/deploy.yml  # Auto-deploy on push to main
@@ -184,6 +185,22 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 - Reviews use a local outbox plus atomic `POST /api/reviews/apply`; retries are idempotent
 - Deletions, archives and SRS resets stay on the device while their 6-second undo toast is open (`undoOfferRef` in `pushNow`), then push at once
 - Per-item dirty tracking via `lastSyncedHash` content hashing
+
+## Offline Data Bridge
+
+Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incremental-example-enrichment`, every six hours) and reaches production only through GitHub, since the Mac can't SSH to the VPS. The repository is public, so everything that crosses is encrypted by `scripts/offline/bridge-crypto.mjs`: AES-256-GCM under a key derived from the `SENTENCE_BRIDGE_KEY` secret, bound to the operation it was made for.
+
+- **Exports** (production → Mac): `sentence-backfill.yml` leaves an encrypted artifact that expires within a day; the run's log shows only its size and hash.
+  ```bash
+  ./.gh workflow run sentence-backfill.yml --repo younotafish/DictProp-VPS --ref main -f operation=corpus-export   # saved sentences: operation=export
+  (umask 077 && GH_BIN=./.gh scripts/offline/fetch-workflow-export.sh <run-id> corpus-export <out.json>)       # saved sentences: sentence-export
+  ```
+  The fetch decrypts the artifact and checks the JSON, then deletes the artifact and the run's log. An export is plaintext production data: keep it out of the repository and delete it when done.
+- **Imports** (Mac → production): the publisher uploads an encrypted release asset; the workflow decrypts it on the runner, for that operation and release tag only, and streams it to the VPS through `scripts/offline/vps-ssh.sh`, which trusts only the pinned host keys.
+- `~/.config/dictprop/sentence_bridge_key` must match the `SENTENCE_BRIDGE_KEY` secret. To rotate: write a new key to the file (mode 0600), set the secret from the file, and fetch an export to check both.
+- A cycle runs only committed code that GitHub deployed (`scripts/offline/vetted-checkout.sh`). A checkout behind `vps/main` is fast-forwarded first, and when that changes the cycle's own code the cycle exits 75 so the next one runs the new code. Uncommitted changes to that code, local commits or another branch make it log why and exit 75.
+- Each cycle sweeps what the bridge leaves behind (`scripts/offline/sweep-bridge-leftovers.sh`): releases idle for six hours, failed waves idle for a week, and the archives of published waves.
+- Before a deploy, an export or a publish by hand, check that no cycle is running and hold its lock, `data/offline-backfill/incremental-example-enrichment/.cycle.lock` (`shlock`). Afterwards, `launchctl kickstart` the agent. Never `launchctl bootout` it: the sandbox can't bootstrap it again.
 
 ## Critical Patterns
 
