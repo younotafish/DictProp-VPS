@@ -35,7 +35,7 @@ interface AppNavigationProps {
   onNavigate: (view: ViewState) => void;
   sentenceDueCount: number;
   onKeyboardHelp: () => void;
-  /** An open card covers the bar, so it leaves the tab order and the accessibility tree. */
+  /** An open card, popup or dialog covers the bar, so it leaves the tab order and the accessibility tree. */
   covered: boolean;
   /** Keyboard focus reaching the bar while a scroll has hidden it brings the bar back. */
   onFocus: () => void;

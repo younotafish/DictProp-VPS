@@ -4,7 +4,7 @@
  * Review sessions use the same item-level FSRS state and authoritative event stream as quick review.
  */
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StoredItem, getItemSense, type ReviewHistory, type ReviewRating, type ReviewTaskType } from '../types';
 import { 
   BrainCircuit, 
@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { previewRatings } from '../services/fsrsScheduler';
 import { speakNatural } from '../services/lazyTts';
-import { createClozePrompt, formatReviewInterval, getStudyContent, requeueLapse, selectReviewTask, stripStudyMarkers } from '../services/studySession';
+import { createClozePrompt, findSessionCard, formatReviewInterval, getStudyContent, requeueLapse, selectReviewTask, stripStudyMarkers } from '../services/studySession';
 import { StudyDashboard } from '../components/StudyDashboard';
 import { useEscapeLayer } from '../components/escapeStack';
 import { isDialogOpenOutside, isImeKey, isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
@@ -43,6 +43,9 @@ interface StudySession {
   typedAnswer: string;
   promptStartedAt: number;
   ratings: Record<ReviewRating, number>;
+  /** Where the cards just passed over begin. One that comes back before the next grade, as an undone
+   *  delete or archive brings it, is shown again where it was. */
+  passedOverFrom?: number;
 }
 
 interface LastGrade {
@@ -82,21 +85,22 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const rootRef = useRef<HTMLDivElement>(null);
 
   // A card deleted or archived mid-session is passed over instead of ending the session there.
-  let currentIndex = session?.index ?? 0;
-  let currentItem: StoredItem | null = null;
-  for (; session && currentIndex < session.itemIds.length; currentIndex++) {
-    const id = session.itemIds[currentIndex];
-    currentItem = items.find(item => item.data.id === id) || null;
-    if (currentItem) break;
-  }
+  const itemsById = useMemo(() => new Map(items.map(item => [item.data.id, item])), [items]);
+  const currentIndex = session
+    ? findSessionCard(session.itemIds, session.index, session.passedOverFrom, id => itemsById.has(id))
+    : 0;
+  const currentId = session?.itemIds[currentIndex];
+  const currentItem: StoredItem | null = (currentId !== undefined && itemsById.get(currentId)) || null;
   const sessionComplete = !!session && !currentItem;
 
-  // Move the session past the cards passed over, so the next card starts unrevealed and unanswered.
+  // Move the session past the cards passed over, or back to one that returned, so the card shown starts
+  // unrevealed and unanswered.
   useLayoutEffect(() => {
     if (!session || currentIndex === session.index) return;
     setSession(current => current ? {
       ...current,
       index: currentIndex,
+      passedOverFrom: currentIndex > current.index ? current.passedOverFrom ?? current.index : current.passedOverFrom,
       revealed: false,
       typedAnswer: '',
       promptStartedAt: Date.now(),
@@ -153,6 +157,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       ...current,
       itemIds,
       index: current.index + 1,
+      passedOverFrom: undefined,
       revealed: false,
       typedAnswer: '',
       promptStartedAt: Date.now(),
@@ -173,6 +178,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           ? current.itemIds.filter((_, index) => index !== grade.requeuedAt)
           : current.itemIds,
         index: grade.itemIndex,
+        passedOverFrom: undefined,
         revealed: true,
         typedAnswer: grade.typedAnswer,
         promptStartedAt: Date.now(),

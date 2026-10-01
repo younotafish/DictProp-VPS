@@ -1,4 +1,5 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
+import { announceUpdate, hasUnsentChanges, isChunkLoadError } from '../services/appUpdate';
 
 type Module<T> = { default: T };
 
@@ -14,7 +15,8 @@ export type LazyScreen<T extends ComponentType<any>> = LazyExoticComponent<T> & 
  * first frame.
  *
  * If the code can't be fetched when the screen is needed, most likely because a deploy replaced the files
- * an open page asks for, the page reloads once to pick up the current build.
+ * an open page asks for, the page reloads once to pick up the current build. While changes are still on
+ * their way to the server it offers the reload instead (services/appUpdate), which sends them first.
  */
 export function lazyScreen<T extends ComponentType<any>>(name: string, load: () => Promise<Module<T>>): LazyScreen<T> {
   const reloadKey = `lazy_screen_reload:${name}`;
@@ -37,13 +39,16 @@ export function lazyScreen<T extends ComponentType<any>>(name: string, load: () 
     const module = loaded;
     if (module) return { then: (resolve: (value: Module<T>) => void) => resolve(module) } as unknown as Promise<Module<T>>;
     return fetchModule().catch(async error => {
-      try {
-        if (!sessionStorage.getItem(reloadKey)) {
-          sessionStorage.setItem(reloadKey, '1');
-          window.location.reload();
-          return await new Promise<never>(() => {});
-        }
-      } catch { /* storage can be unavailable in private browsing */ }
+      if (!hasUnsentChanges()) {
+        try {
+          if (!sessionStorage.getItem(reloadKey)) {
+            sessionStorage.setItem(reloadKey, '1');
+            window.location.reload();
+            return await new Promise<never>(() => {});
+          }
+        } catch { /* storage can be unavailable in private browsing */ }
+      }
+      if (isChunkLoadError(error)) announceUpdate('chunk-load');
       throw error;
     });
   });

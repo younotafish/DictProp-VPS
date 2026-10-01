@@ -18,7 +18,6 @@ const getCursorKey = (userId: string) => `cursor_${userId}`;
 // Fallback storage for iOS Safari private mode
 let inMemoryStorage: Record<string, StoredItem[]> = {};
 const inMemoryCursors: Record<string, RevisionCursor> = {};
-let indexedDBCheck: Promise<boolean> | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 const UPGRADE_BLOCKED = 'IndexedDB upgrade blocked by another tab';
 
@@ -67,14 +66,38 @@ const queueWrite = <T,>(write: () => Promise<T>): Promise<T> => {
 
 // Whether IndexedDB works here (iOS Safari private mode once refused it). Opening the library's own
 // database answers that, instead of creating and deleting a throwaway one on every launch. An upgrade
-// blocked by another tab says nothing about support, and later opens retry it.
+// blocked by another tab says nothing about support, and later opens retry it. Only a yes is kept: a
+// failed open is tried again after a pause that doubles from a second to half a minute, so a hiccup
+// doesn't cost the rest of the session its pictures and its next library load.
+let indexedDBCheck: Promise<boolean> | null = null;
+let indexedDBRetryAt = 0;
+let indexedDBRetryDelay = 0;
+const MAX_INDEXEDDB_RETRY_DELAY = 30_000;
 const checkIndexedDBAvailability = (): Promise<boolean> => {
-  indexedDBCheck ??= getDB().then(
+  if (indexedDBCheck) return indexedDBCheck;
+  if (Date.now() < indexedDBRetryAt) return Promise.resolve(false);
+  const check: Promise<boolean> = indexedDBCheck = getDB().then(
     () => true,
     error => error instanceof Error && error.message === UPGRADE_BLOCKED,
-  );
-  return indexedDBCheck;
+  ).then(available => {
+    if (available) {
+      indexedDBRetryDelay = 0;
+    } else {
+      if (indexedDBCheck === check) indexedDBCheck = null;
+      indexedDBRetryDelay = Math.min(indexedDBRetryDelay * 2 || 1000, MAX_INDEXEDDB_RETRY_DELAY);
+      indexedDBRetryAt = Date.now() + indexedDBRetryDelay;
+    }
+    return available;
+  });
+  return check;
 };
+
+// Users whose library this session came from memory, because IndexedDB wouldn't open when it loaded.
+// Their stored copy wasn't read, so writing this session's library over it could replace changes it
+// holds that haven't synced: their library stays in memory until a later load reads the stored copy.
+const memoryLibraries = new Set<string>();
+const usesIndexedDB = async (userId: string): Promise<boolean> =>
+  !memoryLibraries.has(userId) && await checkIndexedDBAvailability();
 
 const getDB = (): Promise<IDBDatabase> => {
   if (dbPromise) return dbPromise;
@@ -257,6 +280,7 @@ export const loadData = async (
   if (!(await checkIndexedDBAvailability())) {
     // The library is far larger than localStorage allows; private mode relies on the server copy.
     warn("IndexedDB not available, using in-memory storage (iOS Safari private mode?)");
+    memoryLibraries.add(userId);
     return inMemory();
   }
 
@@ -276,6 +300,7 @@ export const loadData = async (
   }
   persistedItems.set(userId, new Map(items.map(item => [item.data.id, item])));
   unhashedItems.set(userId, unhashed);
+  memoryLibraries.delete(userId);
   return { items, cursor };
 };
 
@@ -304,7 +329,7 @@ export const saveItemUpdates = async (
   userId: string = 'vps',
 ): Promise<void> => {
   if (items.length === 0) return;
-  if (!(await checkIndexedDBAvailability())) {
+  if (!(await usesIndexedDB(userId))) {
     const byId = new Map((inMemoryStorage[userId] || []).map(item => [item.data.id, item]));
     for (const item of items) byId.set(item.data.id, item);
     inMemoryStorage[userId] = Array.from(byId.values());
@@ -325,8 +350,7 @@ export const saveData = async (
   userId: string = 'vps',
   cursor?: RevisionCursor,
 ): Promise<void> => {
-  const idbAvailable = await checkIndexedDBAvailability();
-  if (!idbAvailable) {
+  if (!(await usesIndexedDB(userId))) {
     inMemoryStorage[userId] = items;
     if (cursor) inMemoryCursors[userId] = cursor;
     return;
@@ -358,7 +382,7 @@ export const saveData = async (
 /** Removes items from local storage, such as tombstones past their retention. */
 export const deleteItemRecords = async (ids: readonly string[], userId: string = 'vps'): Promise<void> => {
   if (ids.length === 0) return;
-  if (!(await checkIndexedDBAvailability())) {
+  if (!(await usesIndexedDB(userId))) {
     const removed = new Set(ids);
     inMemoryStorage[userId] = (inMemoryStorage[userId] || []).filter(item => !removed.has(item.data.id));
     return;

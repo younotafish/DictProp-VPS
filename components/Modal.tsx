@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useEscapeLayer } from './escapeStack';
+import { useOverlay } from './overlayStack';
 
 interface ModalProps {
   onClose: () => void;
@@ -40,14 +41,16 @@ export function useModalFocus(panelRef: React.RefObject<HTMLElement | null>, act
 }
 
 /**
- * Centered modal shell: dim backdrop, click-outside / Escape to close, focus trap, and focus restore on
- * close — plus role="dialog"/aria-modal. Extracted so the half-dozen modals stop re-implementing the
- * same backdrop markup (and gain the a11y they were each missing). Render your header/body as children.
+ * Centered modal shell: dim backdrop, click-outside / Escape to close, focus trap, an inert page behind, and
+ * focus restore on close — plus role="dialog"/aria-modal. Extracted so the half-dozen modals stop
+ * re-implementing the same backdrop markup (and gain the a11y they were each missing). Render your
+ * header/body as children, and render the modal outside the app's `<main>` (beside it, or in a portal).
  */
 export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max-w-md', panelClassName = '', ariaLabel }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   useEscapeLayer(onClose, 100);
 
+  useOverlay();
   useModalFocus(panelRef);
 
   return (

@@ -11,6 +11,7 @@ import { stripSentenceMarkers } from './HighlightedSentence';
 import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';
+import { useOverlay } from './overlayStack';
 
 const formatRelative = (ts: number): string => {
   const diff = ts - Date.now();
@@ -79,6 +80,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   onSaveVocab,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
+  // Ahead of the focus effect below, so the control that opened the popup is recorded while it has focus.
+  useOverlay();
   const popupPlaybackRef = useRef<ReturnType<typeof speakNatural> | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);

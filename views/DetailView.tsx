@@ -16,6 +16,7 @@ import { AutoPlayCountdown } from '../components/AutoPlayCountdown';
 import { SessionPreload, type PreloadSession } from '../components/SessionPreload';
 import { getMasteryColors } from '../components/mastery';
 import { useEscapeLayer } from '../components/escapeStack';
+import { useOverlay } from '../components/overlayStack';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { updateAfterRating } from '../services/fsrsScheduler';
 import { useKeyboardNavigation, useWheelNavigation, useWarmImages } from '../hooks';
@@ -37,6 +38,9 @@ interface DetailViewProps {
   groups?: ItemGroup[];
   initialGroupIndex?: number;
   initialItemIndex?: number;
+  /** A new value moves the open view to initialGroupIndex/initialItemIndex, as an undo does when it puts a
+   *  removed card back. The first render starts there anyway. */
+  navigationKey?: number;
   
   onClose: () => void;
   onSave: (item: StoredItem) => void;
@@ -93,6 +97,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   groups,
   initialGroupIndex = 0,
   initialItemIndex = 0,
+  navigationKey,
   onClose, 
   onSave, 
   onDelete,
@@ -122,6 +127,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   onAttachImage,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // The page behind goes inert while a card is open; closing it gives focus back to what opened it.
+  useOverlay();
 
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isAndroid = /Android/.test(navigator.userAgent);
@@ -231,6 +238,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   // resets are skipped when already in place: setting a state to its current value right after a render
   // still runs this whole component again.
   const prevGroupIndexRef = useRef(currentGroupIndex);
+  // A move to a given card (navigationKey, below) lands on that card's sense rather than the first.
+  const pendingItemIndexRef = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (prevGroupIndexRef.current !== currentGroupIndex) {
       prevGroupIndexRef.current = currentGroupIndex;
@@ -243,9 +252,23 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       } else if (sentencePage !== 'sentence') {
         setSentencePage('sentence');
       }
-      if (currentItemIndex !== 0) setCurrentItemIndex(0);
+      const itemIndex = pendingItemIndexRef.current ?? 0;
+      pendingItemIndexRef.current = null;
+      if (currentItemIndex !== itemIndex) setCurrentItemIndex(itemIndex);
     }
   }, [currentGroupIndex, sentenceItems, sentencePage, currentItemIndex]);
+
+  // The caller moves the view by changing navigationKey. Declared after the two effects above, so its
+  // indices win over theirs when the groups change in the same render, as they do when a card comes back.
+  const navigationKeyRef = useRef(navigationKey);
+  useLayoutEffect(() => {
+    if (navigationKeyRef.current === navigationKey) return;
+    navigationKeyRef.current = navigationKey;
+    if (initialGroupIndex !== currentGroupIndex) pendingItemIndexRef.current = initialItemIndex;
+    else if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+    setCurrentGroupIndex(initialGroupIndex);
+    setCurrentItemIndex(initialItemIndex);
+  }, [navigationKey, initialGroupIndex, initialItemIndex, currentGroupIndex]);
 
   // These handlers go to the memoized word cards, so they keep one identity across renders and a card
   // renders again only when something it shows changes.

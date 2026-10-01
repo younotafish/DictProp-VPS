@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
-import { Loader2, LogOut, User as UserIcon } from 'lucide-react';
+import { AlertTriangle, Loader2, LogOut, User as UserIcon } from 'lucide-react';
 import { AppUser } from '../types';
+import { useRefusedReviews } from './RefusedReviews';
+import { RefusedReviewsDialog } from './RefusedReviewsDialog';
 
 interface Props {
   user: AppUser | null;
@@ -49,6 +51,8 @@ export const UserMenu: React.FC<Props> = ({ user, onSignIn, onSignOut }) => {
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
+  const refusedCount = useRefusedReviews(user?.uid).entries.length;
+  const [showingRefused, setShowingRefused] = useState(false);
 
   const signOut = async () => {
     setConfirmingSignOut(false);
@@ -82,6 +86,19 @@ export const UserMenu: React.FC<Props> = ({ user, onSignIn, onSignOut }) => {
             {user.displayName?.split(' ')[0] || 'User'}
         </span>
       </div>
+      {refusedCount > 0 && (
+        <button
+          onClick={() => setShowingRefused(true)}
+          className="relative w-11 h-11 shrink-0 flex items-center justify-center text-amber-500 hover:text-amber-700 hover:bg-amber-50 rounded-full transition-colors"
+          title="Reviews the server refused"
+          aria-label={`Reviews the server refused: ${refusedCount}`}
+        >
+          <AlertTriangle size={14} />
+          <span className="absolute top-1.5 right-1 min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold leading-4 text-center">
+            {refusedCount}
+          </span>
+        </button>
+      )}
       <button 
         onClick={() => setConfirmingSignOut(true)}
         disabled={signingOut}
@@ -102,6 +119,10 @@ export const UserMenu: React.FC<Props> = ({ user, onSignIn, onSignOut }) => {
           onConfirm={signOut}
           onCancel={() => setConfirmingSignOut(false)}
         />,
+        document.body,
+      )}
+      {showingRefused && createPortal(
+        <RefusedReviewsDialog userId={user.uid} onClose={() => setShowingRefused(false)} />,
         document.body,
       )}
       {signOutFailed && createPortal(

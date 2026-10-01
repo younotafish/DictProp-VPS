@@ -85,6 +85,23 @@ export function buildReviewQueue(
   return [...burySiblings(due, dueLimit), ...burySiblings(fresh, newLimit)];
 }
 
+/**
+ * The position of the card a session shows, from `index` on. Cards that left the study list mid-session
+ * (deleted or archived) are passed over, and one passed over since `passedOverFrom` that is back, as an
+ * undone delete brings it, is shown again where it was. itemIds.length once no card is left.
+ */
+export function findSessionCard(
+  itemIds: readonly string[],
+  index: number,
+  passedOverFrom: number | undefined,
+  has: (id: string) => boolean,
+): number {
+  for (let at = passedOverFrom ?? index; at < index; at++) if (has(itemIds[at])) return at;
+  let at = index;
+  while (at < itemIds.length && !has(itemIds[at])) at++;
+  return at;
+}
+
 /** A card rated Again comes back at the end of the session, as a further prompt after the rest. */
 export function requeueLapse(itemIds: string[], index: number, rating: ReviewRating): string[] {
   return rating === 'again' && index < itemIds.length ? [...itemIds, itemIds[index]] : itemIds;

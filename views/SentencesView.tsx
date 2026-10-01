@@ -11,6 +11,7 @@ import {
 } from '../services/sentenceOrdering';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
+import { useNow } from '../hooks/useNow';
 
 const formatDue = (ts: number) => {
   const diff = ts - Date.now();
@@ -152,8 +153,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   onOpenCard,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  // Only recompute "now" when items change (when SRS state could have changed)
-  const now = useMemo(() => Date.now(), [items]);
+  const now = useNow(items);
 
   const activeItems = useMemo(() => items.filter(s => !s.isArchived), [items]);
 

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { StoredItem } from '../types';
 import { loadPrivateEssayCatalog } from '../services/api';
+import { useNow } from '../hooks/useNow';
 import {
   ESSAYS,
   installPrivateEssayCatalog,
@@ -123,8 +124,9 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
   const [selectedEssayId, setSelectedEssayId] = useState<string | null>(null);
   const [essays, setEssays] = useState<Essay[]>(() => [...ESSAYS]);
   const [privateCatalogStatus, setPrivateCatalogStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
   const selectedEssay = essays.find(essay => essay.id === selectedEssayId) ?? null;
-  const now = useMemo(() => Date.now(), [progressItems]);
+  const now = useNow(progressItems);
   const progressIndex = useMemo(() => indexEssayProgress(progressItems), [progressItems]);
   const progressByEssay = useMemo(
     () => new Map(essays.map(essay => [essay.id, getEssayProgress(essay, progressItems, now)])),
@@ -151,6 +153,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
 
   useEffect(() => {
     let cancelled = false;
+    setPrivateCatalogStatus('loading');
     loadPrivateEssayCatalog()
       .then(source => {
         if (cancelled) return;
@@ -161,7 +164,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
         if (!cancelled) setPrivateCatalogStatus('error');
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [catalogAttempt]);
 
   const openSentence = (essay: Essay, sentence: EssaySentence) => {
     const index = essay.sentences.findIndex(candidate => candidate.id === sentence.id);
@@ -251,7 +254,18 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
               {privateCatalogStatus === 'loading'
                 ? 'Loading the private modern collection…'
                 : privateCatalogStatus === 'error'
-                  ? 'The private modern collection is temporarily unavailable; the historical collection remains fully usable.'
+                  ? (
+                    <>
+                      The private modern collection is temporarily unavailable; the historical collection remains fully usable.
+                      <button
+                        type="button"
+                        onClick={() => setCatalogAttempt(attempt => attempt + 1)}
+                        className="mt-3 block rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-200"
+                      >
+                        Try again
+                      </button>
+                    </>
+                  )
                   : 'No private modern essays have been imported yet.'}
             </div>
           )}

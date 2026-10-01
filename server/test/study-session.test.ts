@@ -4,6 +4,7 @@ import type { StoredItem } from '../../types.ts';
 import {
   buildReviewQueue,
   createClozePrompt,
+  findSessionCard,
   formatReviewInterval,
   requeueLapse,
   selectReviewTask,
@@ -109,4 +110,17 @@ test('a card rated Again comes back once more at the end of the session', () => 
   for (const rating of ['hard', 'good', 'easy'] as const) assert.equal(requeueLapse(ids, 1, rating), ids, rating);
   assert.equal(requeueLapse(ids, 3, 'again'), ids);
   assert.deepEqual(ids, ['a', 'b', 'c']);
+});
+
+test('a session passes over cards that left the study list, and goes back to one that returns before the next grade', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const present = (...kept: string[]) => (id: string) => kept.includes(id);
+  assert.equal(findSessionCard(ids, 1, undefined, present('a', 'b', 'c', 'd')), 1);
+  assert.equal(findSessionCard(ids, 1, undefined, present('a', 'd')), 3, 'b and c were deleted');
+  assert.equal(findSessionCard(ids, 1, undefined, present('a')), 4, 'nothing left to show');
+  // b and c were passed over from 1 to 3; c came back, then b did too.
+  assert.equal(findSessionCard(ids, 3, 1, present('a', 'c', 'd')), 2);
+  assert.equal(findSessionCard(ids, 3, 1, present('a', 'b', 'c', 'd')), 1);
+  // Cards before the run (already graded) stay behind.
+  assert.equal(findSessionCard(ids, 3, 2, present('a', 'b', 'd')), 3);
 });

@@ -274,7 +274,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                     onClick={(e) => { e.stopPropagation(); (onRefresh ?? onSearch)!(data.word); }}
                     title="Refresh — re-run the AI for this word"
                     aria-label="Refresh this word"
-                    className="p-2 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
+                    className="w-11 h-11 shrink-0 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
                  >
                     <RefreshCw size={18} className="text-slate-400 hover:text-indigo-600" />
                  </button>
@@ -285,7 +285,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                     onClick={(e) => { e.stopPropagation(); onExpand(); }}
                     title="View Details"
                     aria-label="View details"
-                    className="p-2 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
+                    className="w-11 h-11 shrink-0 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
                 >
                     <Maximize2 size={20} className="text-slate-400 hover:text-indigo-600" />
                 </button>
@@ -294,7 +294,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onSave(); }}
-                className={`p-2 rounded-full shadow-sm flex items-center justify-center ${isSaved ? "text-indigo-600 bg-indigo-50" : "bg-white/80 hover:bg-white text-slate-700"}`}
+                className={`w-11 h-11 shrink-0 rounded-full shadow-sm flex items-center justify-center ${isSaved ? "text-indigo-600 bg-indigo-50" : "bg-white/80 hover:bg-white text-slate-700"}`}
                 title={isSaved ? "Saved" : "Save to notebook"}
                 aria-label={isSaved ? "Saved" : "Save to notebook"}
             >
@@ -627,9 +627,12 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
            )}
         </div>
         
+         {/* The server drops a register too short to say anything, so a card can come without one. */}
+         {data.register?.trim() && (
          <div className="text-xs xl:text-sm text-slate-400 pt-2 border-t border-slate-100 select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
             <span className="font-semibold">Register:</span> {data.register}
          </div>
+         )}
       </div>
         </div>{/* close md:flex-1 */}
       </div>{/* close md:flex container */}

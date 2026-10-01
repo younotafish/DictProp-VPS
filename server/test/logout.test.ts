@@ -51,12 +51,18 @@ test('once the server has signed out, the cached session goes and the page reloa
 });
 
 test('the library signs out only after sending what this device has not sent', () => {
-  const app = readFileSync(fileURLToPath(new URL('../../App.tsx', import.meta.url)), 'utf8');
-  const handler = app.match(/const handleSignOut = useCallback\(async[\s\S]*?\n {2}\}, \[/)?.[0];
-  assert.ok(handler, 'App.tsx defines handleSignOut');
-  assert.match(handler, /flushPendingReviews\(\)/);
-  assert.ok(handler.indexOf('pushDirtyItems()') < handler.indexOf('logout()'), 'changes are pushed before the session ends');
-  assert.match(handler, /SIGN_OUT_FLUSH_MS/);
+  const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8');
+  const sync = read('../../hooks/useLibrarySync.ts');
+  const app = read('../../App.tsx');
+  const handler = sync.match(/const handleSignOut = useCallback\(async[\s\S]*?\n {2}\}, \[/)?.[0];
+  assert.ok(handler, 'useLibrarySync defines handleSignOut');
+  assert.ok(handler.indexOf('await sendUnsentChanges()') >= 0 && handler.indexOf('sendUnsentChanges()') < handler.indexOf('logout()'),
+    'changes are sent before the session ends');
+  const send = sync.match(/const sendUnsentChanges = useCallback\(async[\s\S]*?\n {2}\}, \[/)?.[0];
+  assert.ok(send, 'useLibrarySync defines sendUnsentChanges');
+  assert.match(send, /flushPendingReviews\(\)/);
+  assert.match(send, /pushDirtyItems\(\)/);
+  assert.match(send, /SIGN_OUT_FLUSH_MS/);
   assert.match(app, /onSignOut=\{handleSignOut\}/);
   assert.doesNotMatch(app, /onSignOut=\{logout\}/);
 });

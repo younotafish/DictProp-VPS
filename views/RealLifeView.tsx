@@ -37,6 +37,7 @@ import {
 } from '../services/realLifeProgress';
 import type { SentenceReviewFilter } from '../services/sentenceOrdering';
 import { useLatest } from '../hooks/useStableValue';
+import { useNow } from '../hooks/useNow';
 
 interface RealLifeViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
@@ -199,7 +200,14 @@ const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
         role="button"
         tabIndex={0}
         onClick={() => onOpen(sentence)}
-        onKeyDown={event => { if (event.key === 'Enter') onOpen(sentence); }}
+        onKeyDown={event => {
+          // Keys pressed on the buttons inside the row are theirs: Enter on Reviewed mustn't open the lesson too.
+          if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ') || event.repeat) return;
+          event.preventDefault();
+          // The lesson this opens listens for Enter and Space on window too; it mustn't take this press as well.
+          event.stopPropagation();
+          onOpen(sentence);
+        }}
         className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md sm:p-4"
         title="Open the full sentence lesson"
       >
@@ -268,7 +276,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
   const deferredQuery = useDeferredValue(query);
 
   const selectedCollection = REAL_LIFE_COLLECTIONS.find(collection => collection.id === selectedCollectionId) ?? null;
-  const now = useMemo(() => Date.now(), [progressItems]);
+  const now = useNow(progressItems);
   const progressBySentence = useMemo(() => indexRealLifeProgress(progressItems), [progressItems]);
   const collectionProgress = useMemo(
     () => new Map(REAL_LIFE_COLLECTIONS.map(collection => [

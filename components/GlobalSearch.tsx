@@ -14,6 +14,7 @@ import { log, warn } from '../services/logger';
 import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../services/searchRecovery';
 import { useEscapeLayer } from './escapeStack';
 import { useModalFocus } from './Modal';
+import { useOverlay } from './overlayStack';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../services/queryMode';
 
@@ -599,9 +600,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const viewingResult = viewingItem?.results;
   const viewingVocab = viewingResult?.vocabs?.[viewingVocabIdx];
   const viewingVocabCount = viewingResult?.vocabs?.length || 0;
-  // The results popup is modal: focus moves into it, Tab stays inside, and closing it gives focus back.
+  // The results popup is modal: focus moves into it, Tab stays inside, the page behind goes inert, and
+  // closing it gives focus back.
   const resultsOpen = !!viewingItem && (!!viewingVocab || viewingItem.kind === 'compare');
   const resultsDialogRef = useRef<HTMLDivElement>(null);
+  useOverlay(resultsOpen);
   useModalFocus(resultsDialogRef, resultsOpen);
 
   // Warm the TTS cache for the card's example SENTENCES (the word uses the system voice) so taps are instant.
