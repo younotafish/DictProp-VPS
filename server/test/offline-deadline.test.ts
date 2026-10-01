@@ -137,6 +137,21 @@ utc_timestamp_ago 120`);
   assert.ok(skewSeconds >= 119 && skewSeconds < 135, `skew ${skewSeconds}s`);
 });
 
+test('cap_publish_deadline holds a publisher to five hours, inside the sweep of releases idle for six', () => {
+  for (const [value, expected] of [
+    ['7200', '7200'], ['18000', '18000'], ['18001', '18000'], ['86400', '18000'], ['99999999999999999999999', '18000'],
+  ]) {
+    const result = bash('log() { echo "log: $*"; }\ncap_publish_deadline\necho "deadline=$PUBLISH_DEADLINE_SECONDS"', {
+      PUBLISH_DEADLINE_SECONDS: value,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const capped = value === expected ? [] : [
+      `log: PUBLISH_DEADLINE_SECONDS=${value} would outlast the sweep, which deletes a release idle for six hours; capping it at 18000s`,
+    ];
+    assert.deepEqual(result.stdout.trim().split('\n'), [...capped, `deadline=${expected}`], value);
+  }
+});
+
 test('gh_bounded limits a stalled GitHub call and never lets it read the caller input', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-gh-bounded-'));
   try {

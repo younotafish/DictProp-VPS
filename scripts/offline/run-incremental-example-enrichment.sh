@@ -6,7 +6,8 @@ ROOT="${1:-data/offline-backfill/incremental-example-enrichment}"
 BASE_SOURCE="${2:-data/offline-backfill/example-sentence-pool/source.json}"
 BASE_IMAGE_ROOT="${3:-data/offline-backfill/example-sentence-pool/final-images}"
 BASE_ANALYSIS="${BASE_ANALYSIS:-$(dirname "$BASE_SOURCE")/final-reconciliation/final-analysis.json}"
-REQUIRED_DEPLOY_SHA="${4:-$(git rev-parse HEAD)}"
+# Defaults to HEAD, read once the vetted-checkout guard below has run, since the guard can move it.
+REQUIRED_DEPLOY_SHA="${4:-}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
@@ -96,6 +97,8 @@ done
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
 }
+# The publishers inherit the capped deadline, so the cap is logged once per cycle.
+cap_publish_deadline
 
 # The slowest request sets a text stage's wall time, so each stage spreads its sentences over every worker:
 # one sentence per request until they outnumber the workers, then up to SENTENCE_ANALYSIS_BATCH_SIZE.
@@ -161,9 +164,11 @@ trap 'exit 143' TERM
 
 # 75 (EX_TEMPFAIL) marks a refusal in the LaunchAgent log; the next cycle checks again.
 if ! require_vetted_checkout; then
-  log "refusing to run code that is not committed and on vps/main; exiting 75"
+  log "refusing to run code that differs from vps/main; exiting 75"
   exit 75
 fi
+# The publishers wait for this commit's deployment, and HEAD is vps/main now that the guard passed.
+REQUIRED_DEPLOY_SHA="${REQUIRED_DEPLOY_SHA:-$(git rev-parse HEAD)}"
 
 ACTIVE_TEXT_JOBS="$(pgrep -f '[n]ode scripts/offline/(enrich-sentences|complete-corpus-fields)\.mjs' | tr '\n' ' ' || true)"
 if [ -n "$ACTIVE_TEXT_JOBS" ]; then
@@ -180,7 +185,8 @@ done
 
 # A publisher that was killed leaves its release, and the encrypted archive in it, on the public
 # repository; this deletes publisher releases idle for six hours, which none of this cycle's publishers
-# would still hold, and clears failed waves after a week and published waves' archives.
+# would still hold, and clears failed waves after a week and published waves' archives. It also removes
+# the plaintext temp files a killed decryption leaves under data/offline-backfill once they are a day old.
 if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" GITHUB_REPOSITORY="$REPO" scripts/offline/sweep-bridge-leftovers.sh \
   "$PUBLISH_STATE" "$ANALYSIS_PUBLISH_STATE" "$SAVED_PUBLISH_STATE" \
   "$VOCAB_ROOT/publish-state" "$ITEM_IMAGE_ROOT/publish-state"; then

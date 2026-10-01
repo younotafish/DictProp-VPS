@@ -141,6 +141,10 @@ function tempPathFor(outputPath, label) {
   return join(dirname(outputPath), `.${basename(outputPath)}.${label}-${process.pid}-${randomBytes(6).toString('hex')}`);
 }
 
+// The names of decryption's temp files. A SIGKILL skips the cleanup above and leaves one behind,
+// plaintext and all, so the cycle's sweep removes those a day old (bridge-leftovers.mjs temp-files).
+export const DECRYPTION_TEMP_PATTERN = /^\..+\.(?:decrypting|gunzipping)-\d+-[0-9a-f]{12}$/;
+
 async function writePrivately(outputPath, label, write) {
   const tempPath = tempPathFor(outputPath, label);
   // Opened synchronously, so the file exists before anything can fail and the cleanup below always finds it.

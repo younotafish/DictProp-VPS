@@ -19,7 +19,9 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   PUBLISHER_TAG_PATTERN,
+  removeDecryptionTempFiles,
   removeLeftovers,
+  selectDecryptionTempFiles,
   selectLocalLeftovers,
   selectStaleReleases,
 } from '../../scripts/offline/bridge-leftovers.mjs';
@@ -193,6 +195,52 @@ test('symlinks are never followed or removed', t => {
   assert.ok(existsSync(join(outside, 'keep.enc')));
 });
 
+test('decryption temp files idle for a day go from anywhere under a root, and nothing else does', t => {
+  const root = tempDir(t);
+  const outside = tempDir(t);
+  const old = join(root, 'incremental-example-enrichment', '.current-corpus.json.decrypting-123-abcdef012345');
+  const nested = join(root, 'incremental-example-enrichment', 'saved-sentences', '.export.json.gunzipping-77-0123456789ab');
+  const fresh = join(root, '.current-corpus.json.decrypting-456-abcdef012345');
+  // Encryption's temp files hold no plaintext, and names that only resemble decryption's are someone else's.
+  const kept = [
+    fresh,
+    join(root, '.wave.enc.encrypting-123-abcdef012345'),
+    join(root, 'current-corpus.json.decrypting-123-abcdef012345'),
+    join(root, '.current-corpus.json.decrypting-123-abcdef'),
+    join(root, '.current-corpus.json.decrypting-123-abcdef012345.bak'),
+  ];
+  for (const path of [old, nested, ...kept]) write(path, 'plaintext');
+  for (const path of [old, ...kept.slice(1)]) age(path, now - 2 * DAY);
+  age(nested, now - 25 * HOUR);
+  age(fresh, now - HOUR);
+  // A symlink named like a temp file stays, and so does a temp file that only a linked directory reaches.
+  const linkedTemp = join(outside, '.secret.json.decrypting-9-0123456789ab');
+  write(linkedTemp, 'plaintext');
+  age(linkedTemp, now - 3 * DAY);
+  symlinkSync(linkedTemp, join(root, '.linked.json.decrypting-9-0123456789ab'));
+  symlinkSync(outside, join(root, 'linked-data'));
+
+  const files = selectDecryptionTempFiles([root, join(root, 'incremental-example-enrichment'), join(root, 'missing')], { now });
+  assert.deepEqual(files.map(({ path }: { path: string }) => path).sort(), [nested, old].sort());
+  assert.deepEqual(files.find(({ path }: { path: string }) => path === old), { path: old, idleMs: 2 * DAY, bytes: 9 });
+
+  const lines: string[] = [];
+  removeDecryptionTempFiles(files, { dryRun: true, log: (line: string) => lines.push(line) });
+  assert.ok(lines.includes(`would remove decryption temp file ${old} (0.0 MB, idle 2.0 days)`), lines.join('\n'));
+  assert.equal(lines.at(-1), 'would remove 2 decryption temp file(s) (0.0 MB)');
+  for (const path of [old, nested]) assert.ok(existsSync(path), `dry run kept ${path}`);
+
+  removeDecryptionTempFiles(files, { log: (line: string) => lines.push(line) });
+  assert.equal(lines.at(-1), 'removed 2 decryption temp file(s) (0.0 MB)');
+  for (const path of [old, nested]) assert.equal(existsSync(path), false, path);
+  for (const path of [...kept, linkedTemp, join(root, '.linked.json.decrypting-9-0123456789ab')]) {
+    assert.ok(existsSync(path), path);
+  }
+  assert.deepEqual(selectDecryptionTempFiles([root], { now }), []);
+  // A day is the default limit, and another can be given.
+  assert.deepEqual(selectDecryptionTempFiles([root], { now, maxAgeMs: HOUR / 2 }).map(({ path }: { path: string }) => path), [fresh]);
+});
+
 // A stand-in for the GitHub CLI: logs each call, serves the release list, and fails to delete one tag.
 function fakeGh(dir: string, releases: unknown, { failList = false, failDelete = '' } = {}) {
   const calls = join(dir, 'gh-calls.log');
@@ -213,20 +261,29 @@ function fakeGh(dir: string, releases: unknown, { failList = false, failDelete =
   return { gh, calls: () => (existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : []) };
 }
 
-function runSweep(gh: string, args: string[]) {
+// dataRoot stands in for data/offline-backfill, where the sweep looks for decryption temp files.
+function runSweep(gh: string, args: string[], dataRoot: string) {
   return spawnSync('/bin/bash', [sweep, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, GH_BIN: gh, GITHUB_REPOSITORY: 'owner/repo', GH_CALL_TIMEOUT_SECONDS: '30' },
+    env: {
+      ...process.env, GH_BIN: gh, GITHUB_REPOSITORY: 'owner/repo', GH_CALL_TIMEOUT_SECONDS: '30', OFFLINE_DATA_ROOT: dataRoot,
+    },
     timeout: 60_000,
   });
 }
 
-test('the sweep deletes stale publisher releases and clears the wave roots, and --dry-run deletes nothing', t => {
+test('the sweep deletes stale publisher releases, clears the wave roots and old decryption temp files, and --dry-run deletes nothing', t => {
   const dir = tempDir(t);
   const root = join(dir, 'state');
+  const data = join(dir, 'data');
   const failed = wave(root, 'wave-0001.failed', { 'manifest.json': '{}' });
   age(failed, Date.now() - 8 * DAY);
   const published = wave(root, 'wave-0002', { published: 'x', 'corpus-audit.enc': 'blob' });
+  const killedTemp = join(data, 'incremental-example-enrichment', '.current-corpus.json.decrypting-123-abcdef012345');
+  write(killedTemp, 'plaintext');
+  age(killedTemp, Date.now() - 2 * DAY);
+  const runningTemp = join(data, '.export.json.gunzipping-77-0123456789ab');
+  write(runningTemp, 'plaintext');
   const old = at(Date.now() - 3 * DAY);
   const releases = [[
     { tag_name: 'corpus-audit-wave-0001-20260928T120000Z', created_at: old, published_at: old, assets: [] },
@@ -236,7 +293,7 @@ test('the sweep deletes stale publisher releases and clears the wave roots, and 
   ]];
 
   const dry = fakeGh(dir, releases);
-  const preview = runSweep(dry.gh, ['--dry-run', root]);
+  const preview = runSweep(dry.gh, ['--dry-run', root], data);
   assert.equal(preview.status, 0, preview.stderr);
   assert.deepEqual(dry.calls(), ['api --paginate --slurp repos/owner/repo/releases?per_page=100']);
   assert.match(preview.stdout, /would delete release corpus-audit-wave-0001-20260928T120000Z \(idle 72\.0 h\)/);
@@ -244,12 +301,14 @@ test('the sweep deletes stale publisher releases and clears the wave roots, and 
   assert.doesNotMatch(preview.stdout, /example-analyses|v1\.0\.0/);
   assert.match(preview.stdout, /would remove failed wave .*wave-0001\.failed/);
   assert.match(preview.stdout, /would remove published archive .*wave-0002\/corpus-audit\.enc/);
-  assert.ok(existsSync(failed) && existsSync(join(published, 'corpus-audit.enc')));
+  assert.match(preview.stdout, /would remove decryption temp file .*\/\.current-corpus\.json\.decrypting-123-abcdef012345 \(0\.0 MB, idle 2\.0 days\)/);
+  assert.match(preview.stdout, /would remove 1 decryption temp file\(s\) \(0\.0 MB\)/);
+  assert.ok(existsSync(failed) && existsSync(join(published, 'corpus-audit.enc')) && existsSync(killedTemp));
   rmSync(join(dir, 'gh-calls.log'));
 
   // One delete fails: the rest still runs, and the sweep reports the failure.
   const real = fakeGh(dir, releases, { failDelete: 'vocab-images-wave-0002-20260928T120000Z' });
-  const swept = runSweep(real.gh, [root]);
+  const swept = runSweep(real.gh, [root], data);
   assert.equal(swept.status, 1);
   assert.deepEqual(real.calls(), [
     'api --paginate --slurp repos/owner/repo/releases?per_page=100',
@@ -261,6 +320,9 @@ test('the sweep deletes stale publisher releases and clears the wave roots, and 
   assert.equal(existsSync(failed), false);
   assert.equal(existsSync(join(published, 'corpus-audit.enc')), false);
   assert.ok(existsSync(join(published, 'published')));
+  assert.match(swept.stdout, /removed decryption temp file .*\.current-corpus\.json\.decrypting-123-abcdef012345/);
+  assert.equal(existsSync(killedTemp), false);
+  assert.ok(existsSync(runningTemp));
 });
 
 test('a release list that cannot be read still lets the wave roots be cleared, and fails the sweep', t => {
@@ -268,13 +330,13 @@ test('a release list that cannot be read still lets the wave roots be cleared, a
   const root = join(dir, 'state');
   const published = wave(root, 'wave-0001', { published: 'x', 'offline-images.enc': 'blob' });
   const { gh, calls } = fakeGh(dir, [], { failList: true });
-  const result = runSweep(gh, [root]);
+  const result = runSweep(gh, [root], join(dir, 'data'));
   assert.equal(result.status, 1);
   assert.match(result.stdout, /could not list the repository's releases/);
   assert.equal(calls().filter(call => call.startsWith('release')).length, 0);
   assert.equal(existsSync(join(published, 'offline-images.enc')), false);
 
-  const usage = runSweep(gh, ['--dry-run']);
+  const usage = runSweep(gh, ['--dry-run'], join(dir, 'data'));
   assert.equal(usage.status, 2);
   assert.match(usage.stderr, /Usage: .*sweep-bridge-leftovers\.sh \[--dry-run\] <wave-state-root>/);
 });

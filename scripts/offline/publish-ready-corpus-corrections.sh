@@ -101,6 +101,16 @@ if [[ ! -s "$PRODUCTION_EXPORT" ]]; then
   RUN_ID="$(tr -d '[:space:]' < "$RUN_ID_FILE")"
   log "waiting for production corpus export run $RUN_ID"
   "$GH_BIN" run watch "$RUN_ID" --repo "$REPO" --exit-status
+  # Fetching the artifact deletes it and GitHub expires it after a day, so the saved run id can outlive
+  # it, and every later run would fail to download it. The run id goes instead, so the next run requests
+  # a fresh export.
+  ARTIFACT_COUNT="$("$GH_BIN" api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+    --jq '[.artifacts[] | select(.name == "corpus-export" and .expired == false)] | length')"
+  if [[ "$ARTIFACT_COUNT" == 0 ]]; then
+    rm -f "$RUN_ID_FILE"
+    log "artifact corpus-export of run $RUN_ID is gone; removed the saved run id, so the next run requests a fresh export"
+    exit 1
+  fi
   # The run left the corpus as an encrypted artifact; fetching it deletes the artifact and the run's log.
   GH_BIN="$GH_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
     scripts/offline/fetch-workflow-export.sh "$RUN_ID" corpus-export "$PRODUCTION_EXPORT"

@@ -21,7 +21,12 @@ BRIDGE="$(umask 077 && mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/bridge-import.
 trap 'rm -rf "$BRIDGE"' EXIT
 
 attempt=1
-until gh release download "$RELEASE_TAG" --repo "$REPO" --pattern "$ASSET" --dir "$BRIDGE" --clobber; do
+# A stalled transfer would otherwise hold the job until GitHub cancels it, so each attempt gets ten
+# minutes and a stopped one is retried like a failed one. timeout(1) exits 124 when it stops one.
+until timeout 600 gh release download "$RELEASE_TAG" --repo "$REPO" --pattern "$ASSET" --dir "$BRIDGE" --clobber; do
+  if [ "$?" -eq 124 ]; then
+    echo "Download attempt $attempt of $ASSET timed out after 600s" >&2
+  fi
   if [ "$attempt" -ge 5 ]; then
     echo "Could not download $ASSET from release $RELEASE_TAG" >&2
     exit 1

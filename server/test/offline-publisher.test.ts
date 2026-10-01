@@ -360,3 +360,30 @@ test('publisher gives up at its deadline and deletes the release', () => {
     rmSync(fixture.root, { recursive: true, force: true });
   }
 });
+
+test('publisher caps a deadline the release sweep would outlast at five hours', () => {
+  const fixture = bridgeFixture('dictprop-publisher-capped-');
+  try {
+    // Five hours pass between one reading of the clock and the next, so the capped deadline has passed at
+    // the first check, and the 24 hours asked for would not have.
+    writeExecutable(join(fixture.root, 'bin', 'date'), `#!/bin/sh
+if [ "$1" = +%s ]; then
+  reads=$(cat "$FAKE_GH_STATE/clock-reads" 2>/dev/null || echo 0)
+  echo $((reads + 1)) > "$FAKE_GH_STATE/clock-reads"
+  echo $((1800000000 + reads * 18000))
+  exit 0
+fi
+exec /bin/date "$@"
+`);
+    const result = fixture.publish({ PUBLISH_DEADLINE_SECONDS: '86400' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stdout,
+      /PUBLISH_DEADLINE_SECONDS=86400 would outlast the sweep, which deletes a release idle for six hours; capping it at 18000s/);
+    assert.match(result.stdout,
+      new RegExp(`import import of ${bridgeTag} was not verified within 18000s; giving up and deleting the release`));
+    assert.match(fixture.ghLog(), releaseDelete);
+    assert.doesNotMatch(fixture.ghLog(), /^workflow run /m);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});

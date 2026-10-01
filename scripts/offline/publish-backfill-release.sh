@@ -18,7 +18,7 @@ GH_BIN="${GH_BIN:-./.gh}"
 STATE_KEY="$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._-' '_')"
 # The dispatchers keep this state beside their wave, so setting a failed wave aside also discards it.
 STATE_DIR="${PUBLISH_STATE_DIR:-${TMPDIR:-/tmp}/dictprop-publish-${STATE_KEY}}"
-DEADLINE_SECONDS="${PUBLISH_DEADLINE_SECONDS:-14400}"
+PUBLISH_DEADLINE_SECONDS="${PUBLISH_DEADLINE_SECONDS:-14400}"
 CLOCK_SKEW_SECONDS=120
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
@@ -32,7 +32,7 @@ case "$OPERATION" in
     exit 2
     ;;
 esac
-if ! [[ "$DEADLINE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+if ! [[ "$PUBLISH_DEADLINE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "PUBLISH_DEADLINE_SECONDS must be a positive integer" >&2
   exit 2
 fi
@@ -42,6 +42,7 @@ mkdir -p "$STATE_DIR"
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
 }
+cap_publish_deadline
 
 component_states() {
   curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 \
@@ -169,12 +170,12 @@ if [ "$(cat "$STATE_DIR/archive-sha256" 2>/dev/null)" != "$ARCHIVE_SHA" ] || [ -
   printf '%s\n' "$ARCHIVE_SHA" > "$STATE_DIR/archive-sha256"
 fi
 
-PUBLISH_DEADLINE="$(deadline_after "$DEADLINE_SECONDS")"
+PUBLISH_DEADLINE="$(deadline_after "$PUBLISH_DEADLINE_SECONDS")"
 log "publisher waiting for GitHub API and Actions recovery"
 
 while :; do
   if deadline_passed "$PUBLISH_DEADLINE"; then
-    give_up "$OPERATION import of $RELEASE_TAG was not verified within ${DEADLINE_SECONDS}s; giving up and deleting the release"
+    give_up "$OPERATION import of $RELEASE_TAG was not verified within ${PUBLISH_DEADLINE_SECONDS}s; giving up and deleting the release"
   fi
 
   COMPONENT_STATE="$(component_states || printf 'unknown|unknown\n')"

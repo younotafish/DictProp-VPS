@@ -57,6 +57,15 @@ if (args[0] === 'release' && args[1] === 'download') {
 }
 `;
 
+// GNU timeout as the runners have it (macOS has none): logs its limit, and stands for an attempt that
+// stalled, exiting 124 without running the command, for as many calls as FAKE_TIMEOUT_STALLS says.
+const fakeTimeout = `#!/bin/sh
+echo "$1" >> "$FAKE_TIMEOUT_LOG"
+if [ "$(wc -l < "$FAKE_TIMEOUT_LOG")" -le "\${FAKE_TIMEOUT_STALLS:-0}" ]; then exit 124; fi
+shift
+exec "$@"
+`;
+
 function setup(t: test.TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'bridge-transport-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -64,8 +73,10 @@ function setup(t: test.TestContext) {
   for (const dir of ['bin', 'runner-temp', 'tmp', 'releases', 'artifacts']) mkdirSync(path(dir));
   writeFileSync(path('bin/ssh'), fakeSsh);
   writeFileSync(path('bin/gh'), fakeGh);
-  chmodSync(path('bin/ssh'), 0o755);
-  chmodSync(path('bin/gh'), 0o755);
+  writeFileSync(path('bin/timeout'), fakeTimeout);
+  // Retries go on at once.
+  writeFileSync(path('bin/sleep'), '#!/bin/sh\nexit 0\n');
+  for (const fake of ['ssh', 'gh', 'timeout', 'sleep']) chmodSync(path('bin', fake), 0o755);
   writeFileSync(path('key'), 'test-bridge-key\nignored second line\n');
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
@@ -83,8 +94,11 @@ function setup(t: test.TestContext) {
     FAKE_GH_LOG: path('gh.log'),
     FAKE_RELEASES: path('releases'),
     FAKE_ARTIFACTS: path('artifacts'),
+    FAKE_TIMEOUT_LOG: path('timeout.log'),
   };
-  for (const name of ['FAKE_SSH_OUTPUT', 'FAKE_SSH_STATUS', 'GITHUB_RUN_ID', 'RELEASE_TAG', 'REMOTE_SCRIPT']) delete env[name];
+  for (const name of ['FAKE_SSH_OUTPUT', 'FAKE_SSH_STATUS', 'FAKE_TIMEOUT_STALLS', 'GITHUB_RUN_ID', 'RELEASE_TAG', 'REMOTE_SCRIPT']) {
+    delete env[name];
+  }
   const run = (script: string, args: string[], extra: Record<string, string> = {}) =>
     spawnSync('/bin/bash', [join(offlineDir, script), ...args], { env: { ...env, ...extra }, encoding: 'utf8', timeout: 60_000 });
   const encrypt = (input: Buffer, purpose: string, out: string) => {
@@ -131,6 +145,34 @@ test('an import decrypts its asset for its own operation and tag, and the VPS re
   assert.equal(ssh.knownHosts, '107.152.47.101 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA\n');
   assert.deepEqual([ssh.dirMode, ssh.keyMode, ssh.knownHostsMode], ['700', '600', '600']);
   // The decrypted bundle, the key and the known hosts are all gone.
+  assert.deepEqual(readdirSync(path('runner-temp')), []);
+});
+
+test('a download attempt that stalls is stopped after ten minutes and retried, and five end the import', t => {
+  const { path, run, encrypt, ghCalls } = setup(t);
+  encrypt(Buffer.from('bundle'), `import:image-import:${tag}`, path('releases', tag, 'offline-images.enc'));
+  const attempt = (stalls: string) => run('bridge-import.sh', ['image-import', 'offline-images.enc'], {
+    RELEASE_TAG: tag,
+    REMOTE_SCRIPT: 'import',
+    FAKE_TIMEOUT_STALLS: stalls,
+  });
+
+  const retried = attempt('1');
+  assert.equal(retried.status, 0, retried.stderr);
+  assert.match(retried.stderr, /Download attempt 1 of offline-images\.enc timed out after 600s/);
+  assert.deepEqual(readFileSync(path('timeout.log'), 'utf8').trim().split('\n'), ['600', '600']);
+  assert.equal(ghCalls().length, 1);
+  assert.equal(readFileSync(path('ssh-stdin'), 'utf8'), 'bundle');
+  assert.deepEqual(readdirSync(path('runner-temp')), []);
+
+  rmSync(path('timeout.log'));
+  rmSync(path('ssh.json'));
+  const stalled = attempt('5');
+  assert.equal(stalled.status, 1);
+  assert.match(stalled.stderr, /Download attempt 5 of offline-images\.enc timed out after 600s/);
+  assert.match(stalled.stderr, /Could not download offline-images\.enc from release/);
+  assert.equal(readFileSync(path('timeout.log'), 'utf8').trim().split('\n').length, 5);
+  assert.equal(existsSync(path('ssh.json')), false);
   assert.deepEqual(readdirSync(path('runner-temp')), []);
 });
 

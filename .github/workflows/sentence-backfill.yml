@@ -181,7 +181,9 @@ jobs:
 
   # Each import decrypts its release asset on the runner, for its own operation and release tag only,
   # and streams the bundle to the VPS over the pinned SSH channel (scripts/offline/bridge-import.sh).
-  # The bundle arrives on the remote script's standard input, so only the unpacking may read it.
+  # The bundle arrives on the remote script's standard input, so only the unpacking may read it. The
+  # remote script's EXIT trap removes the unpacked bundle from the container however the script ends:
+  # after an import that succeeds or fails, or an unpacking cut short.
   import:
     if: inputs.operation == 'import'
     runs-on: ubuntu-latest
@@ -221,16 +223,12 @@ jobs:
             set -eo pipefail
             exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
+            trap 'docker compose exec -T app rm -rf /tmp/sentence-backfill' EXIT
             docker compose exec -T app sh -c \
               'rm -rf /tmp/sentence-backfill && mkdir -p /tmp/sentence-backfill && tar -xz -C /tmp/sentence-backfill' <&3
             exec 3<&-
-            set +e
             docker compose exec -T app nice -n 10 node server/dist/scripts/import-sentence-backfill.js \
               /tmp/sentence-backfill/manifest.json
-            STATUS=$?
-            set -e
-            docker compose exec -T app rm -rf /tmp/sentence-backfill
-            exit "$STATUS"
         run: bash scripts/offline/bridge-import.sh import sentence-backfill.enc
 
   enrichment-import:
@@ -276,16 +274,12 @@ jobs:
             MIN_FREE_KB=$((5 * 1024 * 1024))
             echo "example-enrichment capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
             test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
+            trap 'docker compose exec -T app rm -rf /tmp/sentence-enrichments' EXIT
             docker compose exec -T app sh -c \
               'rm -rf /tmp/sentence-enrichments && mkdir -p /tmp/sentence-enrichments && tar -xz -C /tmp/sentence-enrichments' <&3
             exec 3<&-
-            set +e
             docker compose exec -T app nice -n 10 node server/dist/scripts/import-sentence-enrichments.js \
               /tmp/sentence-enrichments/manifest.json
-            STATUS=$?
-            set -e
-            docker compose exec -T app rm -rf /tmp/sentence-enrichments
-            exit "$STATUS"
         run: bash scripts/offline/bridge-import.sh enrichment-import sentence-enrichments.enc
 
   essay-import:
@@ -327,16 +321,12 @@ jobs:
             set -eo pipefail
             exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
+            trap 'docker compose exec -T app rm -rf /tmp/private-essay-catalog' EXIT
             docker compose exec -T app sh -c \
               'rm -rf /tmp/private-essay-catalog && mkdir -p /tmp/private-essay-catalog && tar -xz -C /tmp/private-essay-catalog' <&3
             exec 3<&-
-            set +e
             docker compose exec -T app node server/dist/scripts/import-private-essay-catalog.js \
               /tmp/private-essay-catalog/catalog.json
-            STATUS=$?
-            set -e
-            docker compose exec -T app rm -rf /tmp/private-essay-catalog
-            exit "$STATUS"
         run: bash scripts/offline/bridge-import.sh essay-import private-essay-catalog.enc
 
   corpus-export:
@@ -417,16 +407,12 @@ jobs:
             set -eo pipefail
             exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
+            trap 'docker compose exec -T app rm -rf /tmp/corpus-audit' EXIT
             docker compose exec -T app sh -c \
               'rm -rf /tmp/corpus-audit && mkdir -p /tmp/corpus-audit && tar -xz -C /tmp/corpus-audit' <&3
             exec 3<&-
-            set +e
             docker compose exec -T app node server/dist/scripts/import-corpus-audit.js \
               /tmp/corpus-audit/manifest.json
-            STATUS=$?
-            set -e
-            docker compose exec -T app rm -rf /tmp/corpus-audit
-            exit "$STATUS"
         run: bash scripts/offline/bridge-import.sh corpus-import corpus-audit.enc
 
   image-import:
@@ -468,16 +454,12 @@ jobs:
             set -eo pipefail
             exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
+            trap 'docker compose exec -T app rm -rf /tmp/offline-images' EXIT
             docker compose exec -T app sh -c \
               'rm -rf /tmp/offline-images && mkdir -p /tmp/offline-images && tar -xz -C /tmp/offline-images' <&3
             exec 3<&-
-            set +e
             docker compose exec -T app nice -n 10 node server/dist/scripts/import-offline-images.js \
               /tmp/offline-images/manifest.json
-            STATUS=$?
-            set -e
-            docker compose exec -T app rm -rf /tmp/offline-images
-            exit "$STATUS"
         run: bash scripts/offline/bridge-import.sh image-import offline-images.enc
 
   audio-import:
@@ -523,14 +505,10 @@ jobs:
             MIN_FREE_KB=$((5 * 1024 * 1024))
             echo "offline-audio capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
             test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
+            trap 'docker compose exec -T app rm -rf /tmp/offline-audio' EXIT
             docker compose exec -T app sh -c \
               'rm -rf /tmp/offline-audio && mkdir -p /tmp/offline-audio && tar -xz -C /tmp/offline-audio' <&3
             exec 3<&-
-            set +e
             docker compose exec -T app nice -n 10 node server/dist/scripts/import-offline-tts.js \
               /tmp/offline-audio/manifest.json
-            STATUS=$?
-            set -e
-            docker compose exec -T app rm -rf /tmp/offline-audio
-            exit "$STATUS"
         run: bash scripts/offline/bridge-import.sh audio-import offline-audio.enc

@@ -10,6 +10,7 @@ import { gzipSync } from 'node:zlib';
 import test from 'node:test';
 import {
   BridgeCryptoError,
+  DECRYPTION_TEMP_PATTERN,
   HEADER_BYTES,
   MAGIC,
   TAG_BYTES,
@@ -17,6 +18,7 @@ import {
   encryptFile,
   loadKey,
 } from '../../scripts/offline/bridge-crypto.mjs';
+import { selectDecryptionTempFiles } from '../../scripts/offline/bridge-leftovers.mjs';
 
 const script = fileURLToPath(new URL('../../scripts/offline/bridge-crypto.mjs', import.meta.url));
 const passphrase = 'correct horse battery staple';
@@ -238,27 +240,52 @@ test('the CLI encrypts from stdin with a key file and decrypts with the key from
   }
 });
 
+// Starts the CLI on half a blob and returns once the decryption has written plaintext to its temp file.
+// The exit resolves to the exit code, or to the signal when the process could not handle it.
+async function decryptionMidStream(dir: string) {
+  const blob = await encryptBytes(dir, randomBytes(2_000_000));
+  const child = spawn(process.execPath, [script, 'decrypt', '--purpose', purpose, '--out', join(dir, 'plain.out')], {
+    env: { ...process.env, SENTENCE_BRIDGE_KEY: passphrase },
+    stdio: ['pipe', 'ignore', 'pipe'],
+  });
+  const exited = new Promise<number | string | null>(resolve => child.on('exit', (code, signal) => resolve(code ?? signal)));
+  // The kill that ends it closes the pipe while part of the write may still be buffered; that EPIPE is expected.
+  child.stdin.on('error', () => {});
+  child.stdin.write(blob.subarray(0, blob.length / 2));
+  const deadline = Date.now() + 10_000;
+  const partial = () => readdirSync(dir).find(name => name.startsWith('.plain.out.decrypting-'));
+  while (!partial() || statSync(join(dir, partial()!)).size === 0) {
+    assert.ok(Date.now() < deadline, 'the decryption started writing its temp file');
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  return { child, exited };
+}
+
 test('a decryption killed mid-stream removes its partial plaintext', async () => {
   const dir = tempDir();
   try {
-    const blob = await encryptBytes(dir, randomBytes(2_000_000));
-    const child = spawn(process.execPath, [script, 'decrypt', '--purpose', purpose, '--out', join(dir, 'plain.out')], {
-      env: { ...process.env, SENTENCE_BRIDGE_KEY: passphrase },
-      stdio: ['pipe', 'ignore', 'pipe'],
-    });
-    const exited = new Promise<number | null>(resolve => child.on('exit', code => resolve(code)));
-    // The kill below closes the pipe while part of the write may still be buffered; that EPIPE is expected.
-    child.stdin.on('error', () => {});
-    child.stdin.write(blob.subarray(0, blob.length / 2));
-    const deadline = Date.now() + 10_000;
-    const partial = () => readdirSync(dir).find(name => name.startsWith('.plain.out.decrypting-'));
-    while (!partial() || statSync(join(dir, partial()!)).size === 0) {
-      assert.ok(Date.now() < deadline, 'the decryption started writing its temp file');
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
+    const { child, exited } = await decryptionMidStream(dir);
     child.kill('SIGTERM');
     assert.equal(await exited, 143);
     assert.deepEqual(leftovers(dir, ['blob.dpb']), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a decryption killed outright leaves its temp file, which the cycle sweep removes once a day old', async () => {
+  const dir = tempDir();
+  try {
+    const { child, exited } = await decryptionMidStream(dir);
+    // SIGKILL cannot be handled, so the cleanup never runs.
+    child.kill('SIGKILL');
+    assert.equal(await exited, 'SIGKILL');
+    const [left, ...rest] = leftovers(dir, ['blob.dpb']);
+    assert.deepEqual(rest, []);
+    assert.match(left, DECRYPTION_TEMP_PATTERN);
+    assert.deepEqual(selectDecryptionTempFiles([dir]), []);
+    const dayLater = Date.now() + 25 * 60 * 60 * 1_000;
+    assert.deepEqual(selectDecryptionTempFiles([dir], { now: dayLater }).map(({ path }: { path: string }) => path), [join(dir, left)]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

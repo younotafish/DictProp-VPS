@@ -108,3 +108,16 @@ gh_bounded() {
 utc_timestamp_ago() {
   perl -MPOSIX=strftime -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - $ARGV[0])), "\n"' "$1"
 }
+
+# The sweep (bridge-leftovers.mjs) deletes a publisher release idle for six hours as one a killed
+# publisher left, so no publisher may wait longer than five. Caps PUBLISH_DEADLINE_SECONDS, which the
+# caller has checked is a positive integer, and says so through the caller's log function.
+PUBLISH_DEADLINE_MAX_SECONDS=18000
+cap_publish_deadline() {
+  # A value with more digits than the cap is larger, and may be too large for bash to compare.
+  if [ "${#PUBLISH_DEADLINE_SECONDS}" -gt "${#PUBLISH_DEADLINE_MAX_SECONDS}" ] \
+    || [ "$PUBLISH_DEADLINE_SECONDS" -gt "$PUBLISH_DEADLINE_MAX_SECONDS" ]; then
+    log "PUBLISH_DEADLINE_SECONDS=$PUBLISH_DEADLINE_SECONDS would outlast the sweep, which deletes a release idle for six hours; capping it at ${PUBLISH_DEADLINE_MAX_SECONDS}s"
+    PUBLISH_DEADLINE_SECONDS="$PUBLISH_DEADLINE_MAX_SECONDS"
+  fi
+}

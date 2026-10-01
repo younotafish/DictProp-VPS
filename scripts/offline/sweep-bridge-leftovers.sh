@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Deletes publisher releases idle for six hours, which a killed publisher leaves on the public
 # repository with their encrypted archive, then removes failed waves idle for a week and the archives of
-# published waves under each wave-state root. --dry-run lists all of it and deletes nothing.
+# published waves under each wave-state root, and the plaintext temp files a killed decryption leaves,
+# once a day old, anywhere under OFFLINE_DATA_ROOT. --dry-run lists all of it and deletes nothing.
 # Every part runs even if another fails; the exit status is 1 if any did.
 
 set -euo pipefail
@@ -20,6 +21,8 @@ fi
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 NODE_BIN="${NODE_BIN:-node}"
+# Relative to the repository root, which the cycle runs from.
+OFFLINE_DATA_ROOT="${OFFLINE_DATA_ROOT:-data/offline-backfill}"
 OFFLINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$OFFLINE_DIR/deadline.sh"
 
@@ -48,6 +51,11 @@ fi
 
 if ! "$NODE_BIN" "$OFFLINE_DIR/bridge-leftovers.mjs" local ${DRY_RUN:+--dry-run} "$@"; then
   log "could not clear the wave-state roots"
+  status=1
+fi
+
+if ! "$NODE_BIN" "$OFFLINE_DIR/bridge-leftovers.mjs" temp-files ${DRY_RUN:+--dry-run} "$OFFLINE_DATA_ROOT"; then
+  log "could not clear decryption temp files under $OFFLINE_DATA_ROOT"
   status=1
 fi
 exit "$status"

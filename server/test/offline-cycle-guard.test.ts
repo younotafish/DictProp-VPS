@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +55,18 @@ function setup(t: test.TestContext) {
   return { root, remote, work };
 }
 
+// Pushes a commit from a second clone, as a deploy does, so vps/main moves ahead of the checkout.
+function pushElsewhere(root: string, remote: string, path: string, content: string): string {
+  const other = join(root, 'other');
+  if (existsSync(other)) git(other, 'pull', '--quiet', '--ff-only');
+  else git(root, 'clone', '--quiet', remote, other);
+  write(other, path, content);
+  git(other, 'add', path);
+  git(other, 'commit', '--quiet', '-m', `change ${path}`);
+  git(other, 'push', '--quiet', 'origin', 'main');
+  return git(other, 'rev-parse', 'HEAD');
+}
+
 function guard(work: string) {
   const result = spawnSync('/bin/bash', ['-c', [
     'set -euo pipefail',
@@ -96,23 +108,87 @@ test('uncommitted or staged changes to code the cycle runs are refused', t => {
   assert.equal(guard(work).status, 1);
 });
 
-test('a commit that is not on vps/main is refused, and an older commit of vps/main passes', t => {
+test('a checkout ahead of vps/main or diverged from it is refused and left where it is', t => {
   const { root, remote, work } = setup(t);
   write(work, 'notes.md', 'local commit\n');
   git(work, 'commit', '--quiet', '-am', 'local');
-  const local = guard(work);
-  assert.equal(local.status, 1);
-  assert.match(local.log, /HEAD [0-9a-f]{12} has commits that are not on vps\/main \([0-9a-f]{12}\)/);
+  const local = git(work, 'rev-parse', 'HEAD');
+  const ahead = guard(work);
+  assert.equal(ahead.status, 1);
+  assert.match(ahead.log, /^HEAD [0-9a-f]{12} has commits that are not on vps\/main \([0-9a-f]{12}\)$/);
 
-  // Another clone moves vps/main ahead; the guard fetches it, and HEAD is then one of its ancestors.
-  git(work, 'reset', '--quiet', '--hard', 'HEAD~1');
-  const other = join(root, 'other');
-  git(root, 'clone', '--quiet', remote, other);
-  write(other, 'scripts/offline/stage.sh', 'echo newer\n');
-  git(other, 'commit', '--quiet', '-am', 'newer');
-  git(other, 'push', '--quiet', 'origin', 'main');
-  assert.equal(guard(work).status, 0);
-  assert.equal(git(work, 'rev-parse', 'refs/remotes/vps/main'), git(other, 'rev-parse', 'HEAD'));
+  // Another clone moves vps/main on as well, so the two have diverged.
+  pushElsewhere(root, remote, 'scripts/offline/stage.sh', 'echo newer\n');
+  const diverged = guard(work);
+  assert.equal(diverged.status, 1);
+  assert.match(diverged.log, /^HEAD [0-9a-f]{12} has commits that are not on vps\/main \([0-9a-f]{12}\)$/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), local);
+});
+
+test('a clean main behind vps/main is fast-forwarded, and passes only when no code the cycle runs changed', t => {
+  const { root, remote, work } = setup(t);
+  const start = git(work, 'rev-parse', 'HEAD');
+
+  // A push that leaves the cycle's code alone: main moves to it and the cycle carries on.
+  const docs = pushElsewhere(root, remote, 'notes.md', 'newer notes\n');
+  const passed = guard(work);
+  assert.equal(passed.status, 0, passed.log);
+  assert.equal(passed.log, `fast-forwarded main from ${start.slice(0, 12)} to vps/main (${docs.slice(0, 12)})`);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), docs);
+  assert.equal(readFileSync(join(work, 'notes.md'), 'utf8'), 'newer notes\n');
+
+  // A push that changes a script: main moves, but this run started from the old code, so it is refused.
+  const code = pushElsewhere(root, remote, 'scripts/offline/stage.sh', 'echo newer\n');
+  const refused = guard(work);
+  assert.equal(refused.status, 1);
+  assert.equal(refused.log, [
+    `fast-forwarded main from ${docs.slice(0, 12)} to vps/main (${code.slice(0, 12)})`,
+    'the fast-forward changed code the cycle runs; the next cycle runs the updated code',
+  ].join('\n'));
+  assert.equal(git(work, 'rev-parse', 'HEAD'), code);
+  assert.equal(readFileSync(join(work, 'scripts/offline/stage.sh'), 'utf8'), 'echo newer\n');
+
+  // The next run starts from the new code and passes without moving anything.
+  const next = guard(work);
+  assert.equal(next.status, 0, next.log);
+  assert.equal(next.log, '');
+});
+
+test('a checkout behind vps/main stays put on another branch, a detached HEAD, or with a local edit', t => {
+  const { root, remote, work } = setup(t);
+  const start = git(work, 'rev-parse', 'HEAD');
+  pushElsewhere(root, remote, 'notes.md', 'newer notes\n');
+
+  git(work, 'checkout', '--quiet', '-b', 'experiment');
+  const branch = guard(work);
+  assert.equal(branch.status, 1);
+  assert.match(branch.log, /^HEAD [0-9a-f]{12} is behind vps\/main \([0-9a-f]{12}\) on branch experiment, not on main; fast-forward it to vps\/main$/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), start);
+
+  git(work, 'checkout', '--quiet', '--detach', 'main');
+  const detached = guard(work);
+  assert.equal(detached.status, 1);
+  assert.match(detached.log, /is behind vps\/main \([0-9a-f]{12}\) on a detached HEAD, not on main; fast-forward it to vps\/main$/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), start);
+
+  // Back on main, an edit to code the cycle runs is refused before anything moves.
+  git(work, 'checkout', '--quiet', 'main');
+  write(work, 'scripts/offline/stage.sh', 'echo unreviewed\n');
+  const dirty = guard(work);
+  assert.equal(dirty.status, 1);
+  assert.match(dirty.log, /^uncommitted changes to code the cycle runs: scripts\/offline\/stage\.sh$/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), start);
+  git(work, 'checkout', '--', 'scripts/offline/stage.sh');
+
+  // An edit elsewhere that the fast-forward would overwrite stops the merge, and the edit survives.
+  write(work, 'notes.md', 'local notes\n');
+  const blocked = guard(work);
+  assert.equal(blocked.status, 1);
+  assert.match(blocked.log, /^could not fast-forward main from [0-9a-f]{12} to vps\/main \([0-9a-f]{12}\): .*notes\.md.*; fast-forward it to vps\/main$/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), start);
+  assert.equal(readFileSync(join(work, 'notes.md'), 'utf8'), 'local notes\n');
+  assert.equal(git(work, 'rev-parse', 'main'), start);
+  assert.equal(git(work, 'rev-parse', 'experiment'), start);
 });
 
 test('a failed fetch falls back to the vps/main fetched last, and no fetched vps/main is refused', t => {
@@ -132,28 +208,56 @@ test('a failed fetch falls back to the vps/main fetched last, and no fetched vps
   assert.match(missing.log, /no fetched vps\/main to check this checkout against/);
 });
 
+// Runs the cycle in the checkout. It finds no inputs, so once past the guard it stops at its next check.
+function runCycle(root: string, work: string, env: Record<string, string> = {}) {
+  return spawnSync('/bin/bash', ['scripts/offline/run-incremental-example-enrichment.sh', join(root, 'cycle')], {
+    cwd: work,
+    encoding: 'utf8',
+    env: { ...gitEnv, GH_BIN: join(root, 'no-gh'), SENTENCE_BRIDGE_KEY_FILE: join(root, 'no-key'), ...env },
+    timeout: 60_000,
+  });
+}
+
 test('the cycle exits 75 on an unvetted checkout before doing anything else, and releases its lock', { skip: !hasShlock }, t => {
   const { root, work } = setup(t);
   const cycleRoot = join(root, 'cycle');
-  const run = () => spawnSync('/bin/bash', ['scripts/offline/run-incremental-example-enrichment.sh', cycleRoot], {
-    cwd: work,
-    encoding: 'utf8',
-    env: { ...gitEnv, GH_BIN: join(root, 'no-gh'), SENTENCE_BRIDGE_KEY_FILE: join(root, 'no-key') },
-    timeout: 60_000,
-  });
+  const run = (env: Record<string, string> = {}) => runCycle(root, work, env);
 
   write(work, 'scripts/offline/stage.sh', 'echo unreviewed\n');
   const refused = run();
   assert.equal(refused.status, 75, refused.stderr);
   assert.match(refused.stdout, /uncommitted changes to code the cycle runs: scripts\/offline\/stage\.sh/);
-  assert.match(refused.stdout, /refusing to run code that is not committed and on vps\/main; exiting 75/);
+  assert.match(refused.stdout, /refusing to run code that differs from vps\/main; exiting 75/);
   assert.equal(existsSync(join(cycleRoot, '.cycle.lock')), false);
 
-  // Vetted again, the cycle gets past the guard and stops at its next check instead.
+  // Vetted again, the cycle gets past the guard and stops at its next check instead. The publishers it
+  // would start inherit its deadline, capped at five hours.
   git(work, 'checkout', '--', 'scripts/offline/stage.sh');
-  const vetted = run();
+  const vetted = run({ PUBLISH_DEADLINE_SECONDS: '86400' });
   assert.notEqual(vetted.status, 75);
   assert.doesNotMatch(vetted.stdout, /refusing to run/);
+  assert.match(vetted.stdout, /PUBLISH_DEADLINE_SECONDS=86400 would outlast the sweep, .*; capping it at 18000s/);
   assert.match(`${vetted.stdout}${vetted.stderr}`, /Required incremental enrichment input is missing|deferring this cycle/);
   assert.equal(existsSync(join(cycleRoot, '.cycle.lock')), false);
+});
+
+test('the cycle moves main up to a newer vps/main, and exits 75 when that changed its own code', { skip: !hasShlock }, t => {
+  const { root, remote, work } = setup(t);
+  const code = pushElsewhere(root, remote, 'scripts/offline/stage.sh', 'echo newer\n');
+  const refused = runCycle(root, work);
+  assert.equal(refused.status, 75, refused.stderr);
+  assert.match(refused.stdout, /fast-forwarded main from [0-9a-f]{12} to vps\/main \([0-9a-f]{12}\)/);
+  assert.match(refused.stdout, /the fast-forward changed code the cycle runs; the next cycle runs the updated code/);
+  assert.match(refused.stdout, /refusing to run code that differs from vps\/main; exiting 75/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), code);
+  assert.equal(existsSync(join(root, 'cycle', '.cycle.lock')), false);
+
+  // A push that leaves the cycle's code alone is taken in stride: main moves and the cycle carries on.
+  const docs = pushElsewhere(root, remote, 'notes.md', 'newer notes\n');
+  const carried = runCycle(root, work);
+  assert.notEqual(carried.status, 75);
+  assert.match(carried.stdout, /fast-forwarded main from [0-9a-f]{12} to vps\/main \([0-9a-f]{12}\)/);
+  assert.doesNotMatch(carried.stdout, /refusing to run/);
+  assert.match(`${carried.stdout}${carried.stderr}`, /Required incremental enrichment input is missing|deferring this cycle/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), docs);
 });

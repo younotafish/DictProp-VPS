@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -189,7 +191,8 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/vda1 61
     stderr: result.stderr.toString(),
     log: existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [],
     imported: existsSync(imported) ? readFileSync(imported, 'utf8') : undefined,
-    container: join(root, 'container'),
+    // What the container's /tmp still holds once the script has ended.
+    leftovers: readdirSync(join(root, 'container')),
   };
   rmSync(root, { recursive: true, force: true });
   return output;
@@ -207,6 +210,11 @@ test('each import unpacks the streamed bundle, imports it with standard input cl
     writeFileSync(join(staging, target), `{"operation":"${op}"}\n`);
     const bundle = join(root, `${op}.tar.gz`);
     assert.equal(spawnSync('tar', ['-czf', bundle, '-C', staging, target]).status, 0);
+    // A bundle cut off partway through its second file, after the first was already unpacked.
+    writeFileSync(join(staging, 'padding.bin'), randomBytes(200_000));
+    const cut = join(root, `${op}-cut.tar.gz`);
+    assert.equal(spawnSync('tar', ['-czf', cut, '-C', staging, target, 'padding.bin']).status, 0);
+    truncateSync(cut, 100_000);
 
     const imported = runRemote(remote, { stdin: bundle });
     assert.equal(imported.status, 0, `${op}: ${imported.stderr}`);
@@ -215,10 +223,19 @@ test('each import unpacks the streamed bundle, imports it with standard input cl
     assert.match(imported.log[1], new RegExp(`^run .*node server/dist/scripts/${importer.replace('.', '\\.')} .*/${target} stdin=0$`), op);
     assert.match(imported.log[2], /^cleanup rm -rf /, op);
     assert.equal(imported.log.length, 3, op);
+    assert.deepEqual(imported.leftovers, [], op);
 
+    // The exit trap cleans up after a failed import too, and keeps the importer's status.
     const failed = runRemote(remote, { stdin: bundle, env: { FAKE_STATUS: '3' } });
     assert.equal(failed.status, 3, op);
     assert.match(failed.log.at(-1) ?? '', /^cleanup rm -rf /, op);
+    assert.deepEqual(failed.leftovers, [], op);
+
+    const unpacked = runRemote(remote, { stdin: cut });
+    assert.notEqual(unpacked.status, 0, op);
+    assert.deepEqual(unpacked.log.map(line => line.split(' ')[0]), ['unpack', 'cleanup'], op);
+    assert.equal(unpacked.imported, undefined, op);
+    assert.deepEqual(unpacked.leftovers, [], op);
 
     if (remote.includes('MIN_FREE_KB')) {
       const full = runRemote(remote, { stdin: bundle, env: { FAKE_AVAILABLE_KB: '1000' } });
