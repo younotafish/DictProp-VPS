@@ -43,6 +43,12 @@ const analysis = {
   imagePrompt: 'A realistic photograph of a printed report on a desk, without text.',
 };
 
+function auditBundle(entries: object[]): string {
+  const path = join(mkdtempSync(join(tmpdir(), 'dictprop-importers-audit-')), 'audit.json');
+  writeFileSync(path, JSON.stringify({ version: 1, generatedAt: 300, model: 'test-audit-model', entries }));
+  return path;
+}
+
 function bundle(files: string[], manifest: object): string {
   const dir = mkdtempSync(join(tmpdir(), 'dictprop-importers-bundle-'));
   mkdirSync(join(dir, 'images'));
@@ -202,11 +208,6 @@ test('the corpus audit import skips items edited or deleted after export without
     wasArchived: false,
     archiveForUsage: false,
   });
-  const auditBundle = (entries: object[]) => {
-    const path = join(mkdtempSync(join(tmpdir(), 'dictprop-importers-audit-')), 'audit.json');
-    writeFileSync(path, JSON.stringify({ version: 1, generatedAt: 300, model: 'test-audit-model', entries }));
-    return path;
-  };
   const manifest = auditBundle(Object.keys(words).map(id => entry(id, 'vocab')));
   save('ca-changed', 'vocab', { word: 'frank', definition: 'edited' }, 2_000);
   softDeleteItem('ca-deleted', owner.id);
@@ -234,6 +235,46 @@ test('the corpus audit import skips items edited or deleted after export without
   assert.equal(typeChanged.output.stale, 0);
   assert.deepEqual(typeChanged.output.errors, [{ id: 'ca-sentence', error: 'item type changed after export' }]);
   assert.equal(stored('ca-sentence').type, 'sentence');
+});
+
+test('the corpus audit import applies explicit archive states and accepts unaudited sentences', () => {
+  const usageAudit = { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high', auditedAt: 300 };
+  const rareAudit = { ...usageAudit, status: 'rare_or_dated', reason: 'Dated outside historical fiction.' };
+  save('sa-duplicate', 'vocab', { word: 'candour', definition: 'honesty', usageAudit });
+  save('sa-restored', 'vocab', { word: 'forsooth', definition: 'indeed', usageAudit: rareAudit });
+  save('sa-sentence', 'sentence', { text: 'Her candour surprised us.', sourceWord: 'candour', sourceSense: 'noun: honesty', analysis });
+  save('sa-audited', 'sentence', { text: 'His candor helped.', sourceWord: 'candor', usageAudit });
+  const entry = (id: string, type: string, changes: Record<string, unknown>, setArchived?: boolean) => {
+    const data = { ...stored(id).data, ...changes };
+    return {
+      id, type, sourceHash: corpusSourceHash(stored(id).data), data, wasArchived: false,
+      archiveForUsage: data.usageAudit?.status === 'rare_or_dated', ...(setArchived === undefined ? {} : { setArchived }),
+    };
+  };
+
+  const run = runScript('import-corpus-audit', auditBundle([
+    entry('sa-duplicate', 'vocab', {}, true),
+    entry('sa-restored', 'vocab', { definition: 'indeed; truly' }, false),
+    entry('sa-sentence', 'sentence', { sourceWord: 'candor' }),
+  ]));
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.output.updated, 3);
+  assert.equal(run.output.archivedOnRequest, 1);
+  assert.equal(run.output.archivedForUsage, 0);
+  assert.deepEqual(run.output.errors, []);
+  assert.equal(stored('sa-duplicate').isArchived, true);
+  assert.equal(stored('sa-restored').isArchived, undefined);
+  assert.equal(stored('sa-restored').data.definition, 'indeed; truly');
+  assert.equal(stored('sa-sentence').data.sourceWord, 'candor');
+  assert.deepEqual(stored('sa-sentence').data.analysis, analysis);
+  assert.equal(stored('sa-sentence').data.usageAudit, undefined);
+
+  // An entry may leave out a usage audit only when the item has none.
+  const { usageAudit: _dropped, ...unaudited } = stored('sa-audited').data;
+  const dropping = runScript('import-corpus-audit', auditBundle([{ ...entry('sa-audited', 'sentence', {}), data: unaudited }]));
+  assert.equal(dropping.status, 1, dropping.stderr);
+  assert.deepEqual(dropping.output.errors, [{ id: 'sa-audited', error: "entry would drop the item's usage audit" }]);
+  assert.deepEqual(stored('sa-audited').data.usageAudit, usageAudit);
 });
 
 test('the repair only previews by default, and on --apply backs up first and keeps every image still in use', () => {

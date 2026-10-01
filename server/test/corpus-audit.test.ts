@@ -79,6 +79,31 @@ test('corpus audit imports repair usage archive drift after metadata is already 
   });
 });
 
+test('an explicit archive state overrides the one the usage audit implies', () => {
+  const entry = { sourceHash: corpusSourceHash(data), data };
+  assert.equal(corpusAuditImportState(data, false, { ...entry, setArchived: true }).nextArchived, true, 'archived a duplicate');
+  assert.deepEqual(corpusAuditImportState(data, true, { ...entry, setArchived: true }), {
+    dataState: 'target',
+    nextArchived: true,
+    alreadyApplied: true,
+  });
+  const rareData = { ...data, usageAudit: { ...audit, status: 'rare_or_dated' as const } };
+  const rareEntry = { sourceHash: corpusSourceHash(rareData), data: rareData, setArchived: false };
+  assert.equal(corpusAuditImportState(rareData, false, rareEntry).nextArchived, false, 'kept a restored card live');
+  assert.equal(validateCorpusAuditBundle({ ...bundle, entries: [{ ...bundle.entries[0], setArchived: true }] }), null);
+  assert.match(validateCorpusAuditBundle({ ...bundle, entries: [{ ...bundle.entries[0], setArchived: 'yes' }] }) || '', /setArchived/);
+});
+
+test('a sentence entry may carry no usage audit, but a vocab entry must', () => {
+  const sentence = { id: 'sentence-1', text: 'He came clean.', sourceWord: 'come clean', sourceSense: 'idiom: confess' };
+  const entry = {
+    id: 'sentence-1', type: 'sentence', sourceHash: corpusSourceHash(sentence), data: sentence, wasArchived: false, archiveForUsage: false,
+  };
+  assert.equal(validateCorpusAuditBundle({ ...bundle, entries: [entry] }), null);
+  assert.match(validateCorpusAuditBundle({ ...bundle, entries: [{ ...entry, archiveForUsage: true }] }) || '', /disagrees/);
+  assert.match(validateCorpusAuditBundle({ ...bundle, entries: [{ ...entry, type: 'vocab' }] }) || '', /complete/);
+});
+
 test('usage re-audits reverse only prior usage-driven archives', () => {
   const rareAudit = { ...audit, status: 'rare_or_dated' as const };
   assert.equal(resolveUsageArchive(true, rareAudit, audit), false, 'corrected prior auto-archive');

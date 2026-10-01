@@ -19,6 +19,8 @@ export interface CorpusAuditEntry {
   data: Record<string, unknown>;
   wasArchived: boolean;
   archiveForUsage: boolean;
+  /** Overrides the archive state the usage audit implies: archives a duplicate, or keeps a restored card live. */
+  setArchived?: boolean;
 }
 
 export interface CorpusAuditBundle {
@@ -64,7 +66,7 @@ export function corpusAuditDataState(
 export function corpusAuditImportState(
   currentData: unknown,
   currentArchived: boolean,
-  entry: Pick<CorpusAuditEntry, 'sourceHash' | 'data'>,
+  entry: Pick<CorpusAuditEntry, 'sourceHash' | 'data' | 'setArchived'>,
 ): {
   dataState: 'source' | 'target' | 'changed';
   nextArchived: boolean;
@@ -73,7 +75,9 @@ export function corpusAuditImportState(
   const dataState = corpusAuditDataState(currentData, entry);
   const currentAudit = isRecord(currentData) ? currentData.usageAudit : undefined;
   const nextAudit = isRecord(entry.data) ? entry.data.usageAudit : undefined;
-  const nextArchived = resolveUsageArchive(currentArchived, currentAudit, nextAudit);
+  const nextArchived = typeof entry.setArchived === 'boolean'
+    ? entry.setArchived
+    : resolveUsageArchive(currentArchived, currentAudit, nextAudit);
   return {
     dataState,
     nextArchived,
@@ -82,6 +86,8 @@ export function corpusAuditImportState(
 }
 
 function hasCompleteAudit(type: CorpusItemType, data: Record<string, any>): boolean {
+  // Saved sentences were not all audited; the importer refuses an entry that drops an existing audit.
+  if (type === 'sentence' && data.usageAudit === undefined) return true;
   if (!isUsageAudit(data.usageAudit)) return false;
   if (type !== 'phrase') return true;
   return Array.isArray(data.vocabs) && data.vocabs.every((vocab: unknown) =>
@@ -121,8 +127,10 @@ export function validateCorpusAuditBundle(value: unknown): string | null {
       return `entry ${index} does not contain a complete usage audit`;
     }
     if (typeof entry.archiveForUsage !== 'boolean') return `entry ${index} archiveForUsage is invalid`;
-    const expectedArchive = shouldArchiveUsage(entry.data.usageAudit.status, entry.data.usageAudit.confidence);
+    const audit = entry.data.usageAudit;
+    const expectedArchive = audit !== undefined && shouldArchiveUsage(audit.status, audit.confidence);
     if (entry.archiveForUsage !== expectedArchive) return `entry ${index} archiveForUsage disagrees with usage audit`;
+    if (entry.setArchived !== undefined && typeof entry.setArchived !== 'boolean') return `entry ${index} setArchived is invalid`;
   }
   return null;
 }

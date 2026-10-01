@@ -24,6 +24,7 @@ const result = {
   updated: 0,
   alreadyApplied: 0,
   archivedForUsage: 0,
+  archivedOnRequest: 0,
   unarchivedAfterCorrection: 0,
   stale: 0,
   staleIds: [] as string[],
@@ -31,7 +32,8 @@ const result = {
   errors: [] as Array<{ id: string; error: string }>,
 };
 const pending: any[] = [];
-const archivedById = new Set<string>();
+const archivedForUsageById = new Set<string>();
+const archivedOnRequestById = new Set<string>();
 const unarchivedById = new Set<string>();
 const currentById = new Map(getAllItems(owner.id).map(item => [item.data.id, item]));
 const finiteNonNegative = (value: unknown, fallback: number): number =>
@@ -57,6 +59,9 @@ for (const entry of bundle.entries) {
     if (dataState === 'changed') {
       recordStale(result, entry.id);
       continue;
+    }
+    if (entry.data.usageAudit === undefined && current.data.usageAudit !== undefined) {
+      throw new Error('entry would drop the item\'s usage audit');
     }
 
     const { project: _legacyProject, ...currentWithoutProject } = current;
@@ -95,7 +100,9 @@ for (const entry of bundle.entries) {
     const itemError = validateStoredItem(candidate);
     if (itemError) throw new Error(itemError);
     pending.push(candidate);
-    if (!current.isArchived && entry.archiveForUsage) archivedById.add(entry.id);
+    if (!current.isArchived && nextArchived) {
+      (entry.archiveForUsage ? archivedForUsageById : archivedOnRequestById).add(entry.id);
+    }
     if (current.isArchived && !nextArchived) unarchivedById.add(entry.id);
   } catch (error) {
     result.skipped++;
@@ -110,7 +117,8 @@ const recordWrite = (candidate: any, conflicts: Set<string>) => {
     return;
   }
   result.updated++;
-  if (archivedById.has(id)) result.archivedForUsage++;
+  if (archivedForUsageById.has(id)) result.archivedForUsage++;
+  if (archivedOnRequestById.has(id)) result.archivedOnRequest++;
   if (unarchivedById.has(id)) result.unarchivedAfterCorrection++;
 };
 
