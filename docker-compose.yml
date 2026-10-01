@@ -15,6 +15,9 @@ services:
       - DATA_DIR=/app/data
     stop_grace_period: 3s
     restart: unless-stopped
+    # Nothing in the container may gain privileges through a setuid binary.
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: json-file
       options:

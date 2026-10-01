@@ -3,6 +3,9 @@ name: Diagnose Production VPS
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
   # scp-action refuse a host presenting any other key. Read on the VPS and scanned from a runner on 2026-10-01.
@@ -54,6 +57,7 @@ jobs:
               db.close();
             '
             echo '=== DUPLICATE SAVED SENTENCES ==='
+            # This run log is public, so it gets counts, ids and flags only, never a sentence's text.
             docker compose exec -T app node - <<'NODE'
               const Database = require('/app/server/node_modules/better-sqlite3');
               const db = new Database('/app/data/dictprop.db', { readonly: true });
@@ -79,8 +83,7 @@ jobs:
                 if (!groups.has(key)) groups.set(key, []);
                 groups.get(key).push({
                   id: row.id,
-                  text: data.text,
-                  srs: JSON.parse(row.srs),
+                  reviews: row.srs ? JSON.parse(row.srs).totalReviews ?? 0 : 0,
                   savedAt: row.saved_at,
                   updatedAt: row.updated_at,
                   isArchived: row.is_archived === 1,
@@ -90,18 +93,23 @@ jobs:
                   hasAnalysis: !!data.analysis,
                 });
               }
-              const duplicates = [...groups.entries()]
-                .filter(([, entries]) => entries.length > 1)
-                .map(([normalizedText, entries]) => ({ normalizedText, entries }));
-              console.log(JSON.stringify({ duplicateGroups: duplicates.length, duplicates }, null, 2));
+              const duplicates = [...groups.values()].filter(entries => entries.length > 1);
+              console.log(JSON.stringify({
+                duplicateGroups: duplicates.length,
+                duplicateItems: duplicates.reduce((sum, entries) => sum + entries.length, 0),
+              }));
+              for (const entries of duplicates) console.log(JSON.stringify(entries));
               db.close();
             NODE
             echo '=== CONTAINERS ==='
             docker compose ps
             docker stats --no-stream || true
             echo '=== RELEVANT PROCESSES ==='
+            # Command lines can carry credentials, so the rest of a line after a key, token, secret or password is masked.
             ps -eo pid,ppid,stat,etime,%cpu,%mem,cmd \
               | grep -E 'import-(sentence-backfill|offline-images)|docker|node|sqlite|openssl' \
-              | grep -v grep || true
+              | grep -v grep \
+              | sed -E 's/((authorization|bearer|key|token|secret|pass(word|wd)?)[=: ]+).*/\1[masked]/I' \
+              | cut -c1-200 || true
             echo '=== LOCAL HEALTH ==='
             curl --max-time 5 -sS -w '\nHTTP %{http_code} in %{time_total}s\n' http://localhost:3000/api/health || true

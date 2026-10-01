@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       archive_b64:
-        description: Encrypted Lake Loop site archive
-        required: true
+        description: Encrypted Lake Loop site archive; leave empty to reapply only the Caddy route
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -25,6 +26,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Decrypt and validate site archive
+        if: inputs.archive_b64 != ''
         env:
           ARCHIVE_B64: ${{ inputs.archive_b64 }}
           ARCHIVE_KEY: ${{ secrets.TRIP_ARCHIVE_KEY }}
@@ -43,6 +45,7 @@ jobs:
           test "$(find lake-loop-upload -maxdepth 1 -type f | wc -l)" -eq 3
 
       - name: Upload private static site
+        if: inputs.archive_b64 != ''
         uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: 107.152.47.101
@@ -70,11 +73,17 @@ jobs:
             find /var/www/lake-loop-26 -type d -exec chmod 755 {} +
             find /var/www/lake-loop-26 -type f -exec chmod 644 {} +
 
+            # The site loads only its own files, plus data: images from its stylesheet, and has no inline script
+            # or style, forms, frames or plugins.
+            csp="default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
             backup="/etc/caddy/Caddyfile.lake-loop.$(date -u +%Y%m%dT%H%M%SZ)"
             cp /etc/caddy/Caddyfile "$backup"
 
-            python3 - <<'PY'
+            CSP="$csp" python3 - <<'PY'
+            import os
             from pathlib import Path
+            from string import Template
 
             path = Path("/etc/caddy/Caddyfile")
             text = path.read_text(encoding="utf-8")
@@ -90,7 +99,7 @@ jobs:
             if site not in text:
                 raise SystemExit("Expected dictprop.online Caddy site block not found")
 
-            block = r"""    # BEGIN MANAGED LAKE LOOP
+            block = Template(r"""    # BEGIN MANAGED LAKE LOOP
                 @lake_loop_root path /lake-loop-26
                 redir @lake_loop_root /lake-loop-26/ 308
 
@@ -100,12 +109,15 @@ jobs:
                     }
                     root * /var/www/lake-loop-26
                     header {
+                        Content-Security-Policy "$csp"
+                        X-Content-Type-Options "nosniff"
+                        Referrer-Policy "no-referrer"
                         Cache-Control "private, no-store"
                         X-Robots-Tag "noindex, nofollow, noarchive"
                     }
                     file_server
                 }
-                # END MANAGED LAKE LOOP"""
+                # END MANAGED LAKE LOOP""").substitute(csp=os.environ["CSP"])
 
             insert_at = text.index(site) + len(site)
             text = text[:insert_at] + "\n" + block + text[insert_at:]
@@ -124,4 +136,6 @@ jobs:
             http_status="$(curl --max-time 10 -sS -D "$headers" -o /dev/null -w '%{http_code}' https://dictprop.online/lake-loop-26/)"
             test "$http_status" = 302
             grep -Eiq '^location: /api/auth/login\?returnTo=%2F(lake-loop-26%2F)?' "$headers"
+            # The app's redirect brings its own policy too, so look for this route's exact one.
+            tr -d '\r' < "$headers" | grep -Fqix "content-security-policy: $csp"
             echo "Lake Loop deployed and protected by Google login (HTTP $http_status without a session)"

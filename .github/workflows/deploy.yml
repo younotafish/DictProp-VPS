@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
@@ -42,6 +41,9 @@ jobs:
   build-image:
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -65,6 +67,10 @@ jobs:
   deploy:
     needs: build-image
     runs-on: ubuntu-latest
+    # This job's token goes to the server to pull the image, so it can only read packages.
+    permissions:
+      contents: read
+      packages: read
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
@@ -88,6 +94,25 @@ jobs:
             cd /opt/dictprop-vps
             # A failed prior release may have left the checkout detached at its rollback commit.
             PREVIOUS_SHA="$(git rev-parse HEAD)"
+            # Until the new release is healthy, any exit puts the checkout back on the commit the running
+            # container came from, and neither the registry login nor a half-written .env outlives the script.
+            RELEASE_LIVE=0
+            REGISTRY_CONFIG=""
+            ENV_TEMP=""
+            restore_checkout() {
+              if [ "$(git rev-parse HEAD)" != "$PREVIOUS_SHA" ]; then
+                git checkout --quiet --detach "$PREVIOUS_SHA" && echo "Checkout restored to $PREVIOUS_SHA"
+              fi
+            }
+            finish() {
+              status=$?
+              set +e
+              [ -z "$REGISTRY_CONFIG" ] || rm -rf "$REGISTRY_CONFIG"
+              [ -z "$ENV_TEMP" ] || rm -f "$ENV_TEMP"
+              [ "$RELEASE_LIVE" -eq 1 ] || restore_checkout
+              exit "$status"
+            }
+            trap finish EXIT
             git switch main
             git pull --ff-only origin main
             # Ensure swap exists for low-memory VPS
@@ -180,16 +205,34 @@ jobs:
             fi
             # Sync the DeepInfra key from the GH Actions secret WITHOUT clobbering other .env vars
             # (Google OAuth creds live here too). Guarded so an empty/unset secret never blanks the key.
+            # The key is written as data, never spliced into a sed program, and one with a newline or other
+            # control character is refused. The new file takes .env's mode and owner and replaces it in one rename.
             if [ -n "$DEEPINFRA_API_KEY" ]; then
-              if grep -q '^DEEPINFRA_API_KEY=' .env 2>/dev/null; then
-                sed -i "s|^DEEPINFRA_API_KEY=.*|DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY}|" .env
-              else
-                echo "DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY}" >> .env
+              case "$DEEPINFRA_API_KEY" in
+                *[[:cntrl:]]*)
+                  echo "::error::DEEPINFRA_API_KEY contains a control character; .env left unchanged"
+                  exit 1
+                  ;;
+              esac
+              ENV_TEMP="$(umask 077 && mktemp .env.XXXXXX)"
+              if [ -f .env ]; then
+                cp -p .env "$ENV_TEMP"
+                grep -v '^DEEPINFRA_API_KEY=' .env > "$ENV_TEMP" || [ $? -eq 1 ]
               fi
+              printf 'DEEPINFRA_API_KEY=%s\n' "$DEEPINFRA_API_KEY" >> "$ENV_TEMP"
+              mv -f "$ENV_TEMP" .env
+              ENV_TEMP=""
             fi
             echo "=== PULLING PREBUILT RELEASE ==="
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-            docker pull "$RELEASE_IMAGE"
+            # Log in through a throwaway client config, so the registry token never lands in root's Docker config,
+            # and drop any login an earlier deploy left there. Compose then needs only local images.
+            docker logout ghcr.io >/dev/null 2>&1 || true
+            REGISTRY_CONFIG="$(mktemp -d)"
+            chmod 700 "$REGISTRY_CONFIG"
+            printf '%s\n' "$GHCR_TOKEN" | DOCKER_CONFIG="$REGISTRY_CONFIG" docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+            DOCKER_CONFIG="$REGISTRY_CONFIG" docker pull "$RELEASE_IMAGE"
+            rm -rf "$REGISTRY_CONFIG"
+            REGISTRY_CONFIG=""
             CURRENT_CONTAINER="$(docker compose ps -q app 2>/dev/null || true)"
             PREVIOUS_IMAGE_ID=""
             ROLLBACK_IMAGE="dictprop-vps:rollback-${{ github.run_id }}"
@@ -197,9 +240,6 @@ jobs:
               PREVIOUS_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$CURRENT_CONTAINER")"
               docker image tag "$PREVIOUS_IMAGE_ID" "$ROLLBACK_IMAGE"
             fi
-            export DICTPROP_IMAGE="$RELEASE_IMAGE"
-            docker compose up -d --no-build
-            echo "Release container started"
             wait_for_health() {
               consecutive=0
               # Cold SQLite page-cache work may briefly occupy the single Node thread after a large
@@ -215,27 +255,60 @@ jobs:
               done
               return 1
             }
-            if ! wait_for_health; then
-              echo "New release failed health checks; restoring previous image from $PREVIOUS_SHA"
-              docker compose logs --tail=200 || true
-              if [ -n "$PREVIOUS_IMAGE_ID" ]; then
-                export DICTPROP_IMAGE="$ROLLBACK_IMAGE"
-                docker compose up -d --no-build
+            # Prints the app container's state and a short excerpt of its log. Failed requests can log words and
+            # sentences, and this run log is public, so the excerpt keeps only startup and error lines with quoted
+            # text masked. The whole tail goes to a root-only file on the server.
+            report_container() {
+              container="$(docker compose ps -a -q app 2>/dev/null | head -n 1)"
+              if [ -z "$container" ]; then
+                echo "No app container exists"
+                return 0
               fi
-              if [ -n "$PREVIOUS_IMAGE_ID" ] && wait_for_health; then
+              docker inspect --format 'App container: {{.State.Status}}, exit code {{.State.ExitCode}}, {{.RestartCount}} restarts, OOM-killed {{.State.OOMKilled}}{{if .State.Health}}, health {{.State.Health.Status}}{{end}}' "$container"
+              mkdir -p data/deploy-logs
+              chmod 700 data/deploy-logs
+              log_file="data/deploy-logs/${{ github.run_id }}-${{ github.run_attempt }}-$1.log"
+              (umask 077 && docker logs --timestamps --tail 2000 "$container" > "$log_file" 2>&1)
+              echo "Its last 2000 log lines are in /opt/dictprop-vps/$log_file on the server"
+              echo "Startup and error lines, quoted text masked:"
+              grep -aiE 'starting on port|server running|closing http server|\[migrate\]|migration|uncaught|unhandled|fatal|error|exception|cannot find module|sqlite|eaddrinuse|enospc|enomem|eacces|killed|[[:space:]]at .*(/app/|node:)' "$log_file" \
+                | grep -aivE 'deepseek|analysis|analyze request|\[tts\]|google (token|id_token)|"requestId"|[[:space:]]failed "' \
+                | tail -n 40 \
+                | sed -E "s/\"[^\"]*\"/\"...\"/g; s/'[^']{12,}'/'...'/g" \
+                | cut -c1-240
+              # Keep the ten newest logs.
+              ls -1t data/deploy-logs/*.log | tail -n +11 | xargs -r rm -f
+            }
+            echo "=== STARTING RELEASE ==="
+            RELEASE_FAILED=""
+            if ! DICTPROP_IMAGE="$RELEASE_IMAGE" docker compose up -d --no-build; then
+              RELEASE_FAILED="could not be started"
+            elif ! wait_for_health; then
+              RELEASE_FAILED="failed health checks"
+            fi
+            if [ -n "$RELEASE_FAILED" ]; then
+              echo "::error::The new release $RELEASE_FAILED; restoring the previous release from $PREVIOUS_SHA"
+              report_container release || true
+              # The previous image starts with the compose file it was deployed with.
+              restore_checkout || true
+              if [ -z "$PREVIOUS_IMAGE_ID" ]; then
+                echo "::error::No container was running before this deploy, so there is nothing to roll back to"
+              elif DICTPROP_IMAGE="$ROLLBACK_IMAGE" docker compose up -d --no-build && wait_for_health; then
                 echo "Rollback to $PREVIOUS_SHA is healthy"
               else
-                echo "Rollback also failed health checks"
+                echo "::error::The rollback failed too"
+                report_container rollback || true
               fi
               exit 1
             fi
+            RELEASE_LIVE=1
+            echo "Release is healthy"
             # Every release pulls a new image, so drop the earlier releases and the rollback tags failed
             # deploys left, keeping only the image now running.
             docker image ls --format '{{.Repository}}:{{.Tag}}' \
               | grep -E '^(ghcr\.io/younotafish/dictprop-vps:|dictprop-vps:rollback-)' \
               | grep -vxF "$RELEASE_IMAGE" \
               | xargs -r docker image rm >/dev/null || true
-            docker logout ghcr.io || true
             echo "=== DISK AFTER DEPLOY ==="
             df -h . || true
             docker system df || true

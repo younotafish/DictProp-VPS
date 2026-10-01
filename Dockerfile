@@ -81,4 +81,10 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV DATA_DIR=/app/data
 
+# Shows in `docker ps` whether the server answers. Docker only reports it: the restart policy ignores it, and
+# deploys keep their own health gate. The app still runs as root, because host-side root jobs (the deploy's
+# fallback backup among them) create files in ./data that a non-root server couldn't then open.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/api/health', { signal: AbortSignal.timeout(4000) }).then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+
 CMD ["node", "server/dist/index.js"]

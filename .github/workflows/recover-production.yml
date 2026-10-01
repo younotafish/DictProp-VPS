@@ -3,6 +3,9 @@ name: Recover Production App
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
   # scp-action refuse a host presenting any other key. Read on the VPS and scanned from a runner on 2026-10-01.
@@ -51,5 +54,30 @@ jobs:
               fi
               sleep 2
             done
-            docker compose logs --tail=200 app || true
+            echo "::error::The app did not become healthy after the restart"
+            # Prints the app container's state and a short excerpt of its log. Failed requests can log words and
+            # sentences, and this run log is public, so the excerpt keeps only startup and error lines with quoted
+            # text masked. The whole tail goes to a root-only file on the server.
+            report_container() {
+              container="$(docker compose ps -a -q app 2>/dev/null | head -n 1)"
+              if [ -z "$container" ]; then
+                echo "No app container exists"
+                return 0
+              fi
+              docker inspect --format 'App container: {{.State.Status}}, exit code {{.State.ExitCode}}, {{.RestartCount}} restarts, OOM-killed {{.State.OOMKilled}}{{if .State.Health}}, health {{.State.Health.Status}}{{end}}' "$container"
+              mkdir -p data/deploy-logs
+              chmod 700 data/deploy-logs
+              log_file="data/deploy-logs/${{ github.run_id }}-${{ github.run_attempt }}-$1.log"
+              (umask 077 && docker logs --timestamps --tail 2000 "$container" > "$log_file" 2>&1)
+              echo "Its last 2000 log lines are in /opt/dictprop-vps/$log_file on the server"
+              echo "Startup and error lines, quoted text masked:"
+              grep -aiE 'starting on port|server running|closing http server|\[migrate\]|migration|uncaught|unhandled|fatal|error|exception|cannot find module|sqlite|eaddrinuse|enospc|enomem|eacces|killed|[[:space:]]at .*(/app/|node:)' "$log_file" \
+                | grep -aivE 'deepseek|analysis|analyze request|\[tts\]|google (token|id_token)|"requestId"|[[:space:]]failed "' \
+                | tail -n 40 \
+                | sed -E "s/\"[^\"]*\"/\"...\"/g; s/'[^']{12,}'/'...'/g" \
+                | cut -c1-240
+              # Keep the ten newest logs.
+              ls -1t data/deploy-logs/*.log | tail -n +11 | xargs -r rm -f
+            }
+            report_container recover || true
             exit 1

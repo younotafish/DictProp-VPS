@@ -4,12 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       asset_id:
-        description: GitHub draft-release asset ID containing the encrypted site
-        required: true
+        description: Release asset ID of the encrypted site archive; leave it and the SHA-256 empty to reapply only the Caddy route
+        required: false
+        default: ''
         type: string
       archive_sha256:
-        description: SHA-256 of the encrypted archive
-        required: true
+        description: SHA-256 of the encrypted archive; leave it and the asset ID empty to reapply only the Caddy route
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -28,7 +30,33 @@ jobs:
       group: dictprop-production
       cancel-in-progress: false
     steps:
+      - name: Check the inputs and the password hash
+        id: mode
+        env:
+          ASSET_ID: ${{ inputs.asset_id }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          NZ_JAPAN_BASIC_AUTH_HASH: ${{ secrets.NZ_JAPAN_BASIC_AUTH_HASH }}
+        run: |
+          set -euo pipefail
+          # A missing or malformed hash fails here, before anything reaches the server.
+          bcrypt='^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$'
+          if ! [[ "$NZ_JAPAN_BASIC_AUTH_HASH" =~ $bcrypt ]]; then
+            echo "::error::The NZ_JAPAN_BASIC_AUTH_HASH secret must hold a bcrypt hash"
+            exit 1
+          fi
+          # Both archive inputs deploy a new site; neither reapplies only the Caddy route.
+          if [ -z "$ASSET_ID" ] && [ -z "$ARCHIVE_SHA256" ]; then
+            echo "No archive given, so only the Caddy route is reapplied"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$ASSET_ID" =~ ^[0-9]+$ && "$ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Give asset_id (a number) and archive_sha256 (64 hex digits) together, or leave both empty to reapply only the Caddy route"
+            exit 1
+          fi
+
       - name: Download, decrypt and validate site archive
+        if: steps.mode.outputs.upload == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET_ID: ${{ inputs.asset_id }}
@@ -77,6 +105,7 @@ jobs:
           diff -u expected-top-level.txt actual-top-level.txt
 
       - name: Upload private static site
+        if: steps.mode.outputs.upload == 'true'
         uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: 107.152.47.101
@@ -91,12 +120,16 @@ jobs:
 
       - name: Configure password-protected Caddy route
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        env:
+          NZ_JAPAN_BASIC_AUTH_HASH: ${{ secrets.NZ_JAPAN_BASIC_AUTH_HASH }}
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 3m
+          # The action exports the hash in single quotes, so its $ signs reach the server unexpanded.
+          envs: NZ_JAPAN_BASIC_AUTH_HASH
           script: |
             set -eu
             test -s /var/www/nz-japan-2026/index.html
@@ -104,11 +137,21 @@ jobs:
             find /var/www/nz-japan-2026 -type d -exec chmod 755 {} +
             find /var/www/nz-japan-2026 -type f -exec chmod 644 {} +
 
+            # The site loads only its own files, and has no inline script or style, forms, frames or plugins.
+            csp="default-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
             backup="/etc/caddy/Caddyfile.nz-japan.$(date -u +%Y%m%dT%H%M%SZ)"
             cp /etc/caddy/Caddyfile "$backup"
 
-            python3 - <<'PY'
+            CSP="$csp" python3 - <<'PY'
+            import os
+            import re
             from pathlib import Path
+            from string import Template
+
+            password_hash = os.environ.get("NZ_JAPAN_BASIC_AUTH_HASH", "")
+            if not re.fullmatch(r"\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}", password_hash):
+                raise SystemExit("NZ_JAPAN_BASIC_AUTH_HASH must be a bcrypt hash")
 
             path = Path("/etc/caddy/Caddyfile")
             text = path.read_text(encoding="utf-8")
@@ -124,22 +167,25 @@ jobs:
             if site not in text:
                 raise SystemExit("Expected dictprop.online Caddy site block not found")
 
-            block = r"""    # BEGIN MANAGED NZ JAPAN 2026
+            block = Template(r"""    # BEGIN MANAGED NZ JAPAN 2026
                 @nz_japan_root path /nz-japan-2026
                 redir @nz_japan_root /nz-japan-2026/ 308
 
                 handle_path /nz-japan-2026/* {
                     basic_auth {
-                        travel $2y$12$EIuuwcUUTmrG1AdDhQifCO9T/w7MNFtheSHy3MFVyXa9.0kF9cF32
+                        travel $password_hash
                     }
                     root * /var/www/nz-japan-2026
                     header {
+                        Content-Security-Policy "$csp"
+                        X-Content-Type-Options "nosniff"
+                        Referrer-Policy "no-referrer"
                         Cache-Control "private, no-store"
                         X-Robots-Tag "noindex, nofollow, noarchive"
                     }
                     file_server
                 }
-                # END MANAGED NZ JAPAN 2026"""
+                # END MANAGED NZ JAPAN 2026""").substitute(password_hash=password_hash, csp=os.environ["CSP"])
 
             insert_at = text.index(site) + len(site)
             text = text[:insert_at] + "\n" + block + text[insert_at:]
@@ -154,6 +200,9 @@ jobs:
             fi
 
             systemctl reload caddy
-            http_status="$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://dictprop.online/nz-japan-2026/)"
+            headers="$(mktemp)"
+            http_status="$(curl --max-time 10 -sS -D "$headers" -o /dev/null -w '%{http_code}' https://dictprop.online/nz-japan-2026/)"
             test "$http_status" = 401
+            # The route sets its headers before basic_auth answers, so the 401 already carries the policy.
+            tr -d '\r' < "$headers" | grep -Fqix "content-security-policy: $csp"
             echo "NZ Japan travel plan deployed and protected (HTTP $http_status without credentials)"
