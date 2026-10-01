@@ -112,7 +112,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 ## Project Structure
 
 ```
-├── App.tsx                    # Root component (~1800 lines), owns all state
+├── App.tsx                    # Root component (~500 lines): wires the hooks to screens, overlays and toasts
 ├── types.ts                   # StoredItem, VocabCard, SearchResult, SRS types
 ├── services/
 │   ├── api.ts                 # REST + AI client for the Hono backend
@@ -120,7 +120,10 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   ├── storage.ts             # Per-item IndexedDB v4 storage + compatibility journal
 │   ├── sync.ts                # mergeDatasets() for local↔server conflict resolution
 │   ├── srsAlgorithm.ts        # Deterministic FSRS v6 + lazy legacy migration
-│   ├── reviewQueue.ts         # Durable idempotent review outbox
+│   ├── reviewQueue.ts         # Durable idempotent review outbox (one localStorage key per review) + refused-review log
+│   ├── appUpdate.ts           # New-version detection and the flush-then-reload flow
+│   ├── libraryImages.ts       # Image marker helpers for lazy and offline images
+│   ├── mergeDuplicates.ts     # Duplicate-card merging
 │   ├── speech.ts              # Browser speech synthesis
 │   └── logger.ts              # Console logging (silenced in production)
 ├── server/
@@ -138,7 +141,13 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   └── package.json
 ├── views/                     # Notebook, StudyEnhanced, SentencesView, DetailView, ComparisonView
 ├── components/                # UI components (incl. UserMenu — Google auth is active)
-├── hooks/                     # Keyboard/gesture hooks
+├── hooks/                     # App state and behavior, split out of App.tsx:
+│   ├── useLibrary.ts          # The library in memory: latestItemsRef, updateItems(), pushNow(), pulls
+│   ├── useLibrarySync.ts      # Device load/save, first sync, background pulls, debounced pushes, flush before sign-out/reload
+│   ├── useLibraryActions.ts   # Save, delete, archive and reset handlers
+│   ├── useReviewOutbox.ts     # Review outbox drain and refused reviews
+│   ├── useUndoOffer.ts        # The undo toast for deletes, archives and resets
+│   └── ...                    # Detail view, overlays, offline images, batch import, shortcuts, keyboard/gestures
 ├── Dockerfile                 # Multi-stage: npm ci + vite build + tsc inside Docker
 ├── docker-compose.yml         # Single service, SQLite volume at ./data
 ├── .github/workflows/deploy.yml  # Auto-deploy on push to main
@@ -179,7 +188,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 ## Critical Patterns
 
 ### Stale Closure Prevention
-`App.tsx` uses `latestItemsRef` (ref updated via `useEffect`) so event handlers get current data. Always use `latestItemsRef.current` in event handlers, not closure-captured `syncState.items`.
+`hooks/useLibrary.ts` owns `latestItemsRef`. Every library change goes through `updateItems()`/`replaceItem()`, which set the ref before returning, so the next handler, IndexedDB write or push sees the change. Always read `latestItemsRef.current` in event handlers and async work, not a closure-captured `savedItems`.
 
 ### Storage Keys (per-origin)
 - IndexedDB: `PopDictDB` v4 → `items_v2` per-item records; `item_updates` is the rollback-compatible journal
