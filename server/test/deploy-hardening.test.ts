@@ -36,6 +36,9 @@ const productionWorkflows = [
   'deploy-lake-loop.yml',
 ];
 const hasPython = spawnSync('python3', ['--version']).status === 0;
+/** ssh runs a remote script in root's login shell on the VPS, which is zsh, so these tests run it there too.
+ *  -f leaves out this machine's zsh startup files. A step's run block runs in bash on the runner. */
+const REMOTE_SHELL = ['zsh', '-f'] as const;
 
 /** Splits a workflow into steps: each starts at a "- name:" or "- uses:" list item and runs to the next one. */
 const steps = (text: string): string[] => text.split(/\n(?=\s+- (?:name|uses):)/);
@@ -133,15 +136,16 @@ test('public run logs get no raw container logs', () => {
   }
 });
 
-test('every script in the production workflows parses', () => {
-  for (const name of productionWorkflows) {
-    for (const step of steps(workflow(name))) {
-      for (const key of ['run', 'script']) {
-        if (!new RegExp(`^\\s+${key}: \\|$`, 'm').test(step)) continue;
-        const script = block(step, key).replace(/\$\{\{[^}]*\}\}/g, 'expression');
-        const result = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' });
-        assert.equal(result.status, 0, `${name}: ${result.stderr}`);
-      }
+test('every script in the production workflows parses, and every remote script parses in zsh', () => {
+  const parses = (name: string, script: string, [shell, ...options]: readonly string[]) => {
+    const input = script.replace(/\$\{\{[^}]*\}\}/g, 'expression');
+    const result = spawnSync(shell, [...options, '-n'], { input, encoding: 'utf8' });
+    assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+  };
+  for (const { name, text } of workflows) {
+    for (const step of steps(text)) {
+      if (productionWorkflows.includes(name) && /^\s+run: \|$/m.test(step)) parses(name, block(step, 'run'), ['bash']);
+      if (/^\s+script: \|$/m.test(step)) parses(name, block(step, 'script'), REMOTE_SHELL);
     }
   }
 });
@@ -306,7 +310,7 @@ if [ "$(cat "$RUNNING")" = "$RELEASE_IMAGE" ]; then [ -z "$FAIL_HEALTH" ]; else 
 
   const deploy = (part: 'env' | 'release', variables: Record<string, string> = {}): DeployRun => {
     const script = deployScript();
-    const result = spawnSync('bash', ['-c', `${script.checkout}\n${script[part]}\n`], {
+    const result = spawnSync(REMOTE_SHELL[0], [...REMOTE_SHELL.slice(1), '-c', `${script.checkout}\n${script[part]}\n`], {
       cwd: app,
       encoding: 'utf8',
       env: scriptEnv(bin, {
@@ -603,7 +607,7 @@ printf '%s' "$RESPONSE_STATUS"`);
       .map(variable => `export ${variable}='${(values[variable] ?? '').replaceAll("'", String.raw`'\''`)}'\n`)
       .join('');
     const script = original.replaceAll('/var/www/', `${dir}/var/www/`).replaceAll('/etc/caddy/', `${dir}/etc/caddy/`);
-    const result = spawnSync('bash', ['-c', `${exported}${script}`], {
+    const result = spawnSync(REMOTE_SHELL[0], [...REMOTE_SHELL.slice(1), '-c', `${exported}${script}`], {
       encoding: 'utf8',
       env: scriptEnv(bin, {
         CADDYFILE: caddyfile,

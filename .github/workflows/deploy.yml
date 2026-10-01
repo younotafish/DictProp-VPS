@@ -35,6 +35,8 @@ jobs:
       - name: Install server dependencies
         run: npm ci
         working-directory: server
+      - name: Install zsh, the VPS's login shell, for the remote-script tests
+        run: command -v zsh >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends zsh; }
       - name: Verify release
         run: npm run check
 
@@ -104,13 +106,14 @@ jobs:
                 git checkout --quiet --detach "$PREVIOUS_SHA" && echo "Checkout restored to $PREVIOUS_SHA"
               fi
             }
+            # ssh runs this script in root's login shell, zsh, where $status is a read-only name for $?.
             finish() {
-              status=$?
+              exit_code=$?
               set +e
               [ -z "$REGISTRY_CONFIG" ] || rm -rf "$REGISTRY_CONFIG"
               [ -z "$ENV_TEMP" ] || rm -f "$ENV_TEMP"
               [ "$RELEASE_LIVE" -eq 1 ] || restore_checkout
-              exit "$status"
+              exit "$exit_code"
             }
             trap finish EXIT
             git switch main

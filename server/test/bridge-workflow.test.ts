@@ -149,8 +149,8 @@ test('the bridge jobs reach the VPS only through the pinned channel and print no
   }
 });
 
-// Runs a job's REMOTE_SCRIPT as the VPS would, with docker and df stood in for, and production paths
-// moved under a temporary root.
+// Runs a job's REMOTE_SCRIPT as the VPS would, in root's login shell there, zsh (without this machine's
+// startup files), with docker and df stood in for, and production paths moved under a temporary root.
 function runRemote(remote: string, { stdin, env = {} }: { stdin?: string; env?: Record<string, string> }) {
   const root = mkdtempSync(join(tmpdir(), 'bridge-remote-'));
   const bin = join(root, 'bin');
@@ -180,7 +180,7 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/vda1 61
   const script = remote.replaceAll('/tmp/', `${join(root, 'container')}/`).replaceAll('/opt/dictprop-vps', join(root, 'vps'));
   const log = join(root, 'docker.log');
   const imported = join(root, 'imported');
-  const result = spawnSync('/bin/bash', ['-c', script], {
+  const result = spawnSync('zsh', ['-f', '-c', script], {
     input: stdin === undefined ? undefined : readFileSync(stdin),
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_DOCKER_LOG: log, FAKE_IMPORTED: imported, ...env },
     timeout: 30_000,

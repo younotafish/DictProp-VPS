@@ -34,5 +34,7 @@ jobs:
       - name: Install server dependencies
         run: npm ci
         working-directory: server
+      - name: Install zsh, the VPS's login shell, for the remote-script tests
+        run: command -v zsh >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends zsh; }
       - name: Type-check and build
         run: npm run check
