@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { getItemSense, getItemSpelling, getItemTitle, isSentenceItem, type ItemGroup, type SentenceData, type StoredItem, type VocabCard } from '../types';
+import { getItemTitle, isSentenceItem, type ItemGroup, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { sentenceSourceResolver } from '../services/sentenceSource';
 import { normalizeSentenceIdentity } from '../services/sentenceIdentity';
 import { isRealLifeProgressItem } from '../services/realLifeProgressIdentity';
 import { isEssayProgressItem } from '../services/essayProgressIdentity';
@@ -143,24 +144,14 @@ export function useDetailView(
   // Open a saved sentence's source card in DetailView (sentence mode). `ordered` is the on-screen
   // (due-first) order from SentencesView, so swipe/arrow order matches the list exactly. Each sentence
   // maps to one group whose single item is its resolved source vocab card — matched by word + sense
-  // across the whole notebook, falling back to a synthetic minimal card (showing the
-  // sentence as its sole example) when the source word no longer exists.
+  // across the whole notebook, then by a form a card lists (services/sentenceSource), falling back to a
+  // synthetic minimal card (showing the sentence as its sole example) when the source word no longer exists.
   const handleViewSentence = useCallback((ordered: StoredItem[], index: number) => {
     if (ordered.length === 0) return;
-    const vocabBySpelling = new Map<string, StoredItem[]>();
-    for (const item of latestItemsRef.current) {
-      if (item.isDeleted || item.type !== 'vocab') continue;
-      const spelling = getItemSpelling(item);
-      const matches = vocabBySpelling.get(spelling);
-      if (matches) matches.push(item);
-      else vocabBySpelling.set(spelling, [item]);
-    }
+    const findSource = sentenceSourceResolver(latestItemsRef.current);
     const groups: ItemGroup[] = ordered.map(s => {
       const d = s.data as SentenceData;
-      const w = (d.sourceWord || '').toLowerCase().trim();
-      const matches = vocabBySpelling.get(w) ?? [];
-      const exact = d.sourceSense ? matches.find(i => getItemSense(i) === d.sourceSense) : undefined;
-      let resolved: StoredItem | undefined = exact || matches[0];
+      let resolved = findSource(d.sourceWord, d.sourceSense);
       if (!resolved) {
         const synthetic: VocabCard = {
           id: `sentence-src:${d.id}`,
