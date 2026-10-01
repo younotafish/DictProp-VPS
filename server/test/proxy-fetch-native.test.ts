@@ -109,7 +109,8 @@ test('the curl path keeps headers off its command line and removes their file af
   let visibleInProcessList = true;
   await withServer((request, body, response) => {
     // curl is still waiting for this answer, so its command line is in the process list now.
-    visibleInProcessList = execFileSync('ps', ['-axo', 'args'], { encoding: 'utf8' }).includes(authorization);
+    // A busy machine's process list can run past execFileSync's 1 MB default buffer.
+    visibleInProcessList = execFileSync('ps', ['-axo', 'args'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).includes(authorization);
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify({ method: request.method, auth: request.headers.authorization, type: request.headers['content-type'], length: body.length }));
   }, async (baseUrl) => {

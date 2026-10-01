@@ -247,6 +247,8 @@ test('a decryption killed mid-stream removes its partial plaintext', async () =>
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     const exited = new Promise<number | null>(resolve => child.on('exit', code => resolve(code)));
+    // The kill below closes the pipe while part of the write may still be buffered; that EPIPE is expected.
+    child.stdin.on('error', () => {});
     child.stdin.write(blob.subarray(0, blob.length / 2));
     const deadline = Date.now() + 10_000;
     const partial = () => readdirSync(dir).find(name => name.startsWith('.plain.out.decrypting-'));
