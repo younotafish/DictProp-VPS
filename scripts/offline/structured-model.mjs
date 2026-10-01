@@ -3,7 +3,6 @@ import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { killCodex } from './codex-process.mjs';
-import { parseJsonText } from './structured-output-providers.mjs';
 
 const DETACHED_PROCESS_GROUPS = process.platform !== 'win32';
 const IMAGE_MEDIA_TYPES = {
@@ -103,6 +102,21 @@ function imageMediaType(path) {
   const mediaType = IMAGE_MEDIA_TYPES[extname(path).toLowerCase()];
   if (!mediaType) throw new Error(`Unsupported image attachment: ${path}`);
   return mediaType;
+}
+
+function parseJsonText(value, label) {
+  if (value && typeof value === 'object') return value;
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} returned no JSON`);
+  let text = value.trim();
+  const fence = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
+  if (fence) text = fence[1].trim();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const object = text.match(/\{[\s\S]*\}/);
+    if (!object) throw new Error(`${label} returned invalid JSON`);
+    return JSON.parse(object[0]);
+  }
 }
 
 export function claudeStructuredResult(output) {

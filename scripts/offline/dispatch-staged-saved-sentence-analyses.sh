@@ -12,7 +12,8 @@ STATE_ROOT="${SAVED_SENTENCE_ANALYSIS_STATE_ROOT:-/tmp/dictprop-staged-saved-sen
 COOLDOWN_SECONDS="${SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS:-30}"
 RELEASE_CREATE_ATTEMPTS="${RELEASE_CREATE_ATTEMPTS:-12}"
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
+OFFLINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$OFFLINE_DIR/deadline.sh"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -98,16 +99,17 @@ while :; do
     exit 1
   fi
 
-  ARCHIVE="$WAVE_DIR/sentence-backfill.enc"
-  rm -f "$ARCHIVE"
-  tar -czf - -C "$WAVE_DIR" manifest.json \
-    | openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:$KEY_FILE" -out "$ARCHIVE"
-
   TAG_FILE="$WAVE_DIR/release-tag"
   if [ ! -s "$TAG_FILE" ]; then
     printf 'sentence-grammar-%s-%s\n' "$WAVE_NAME" "$(date -u +%Y%m%dT%H%M%SZ)" > "$TAG_FILE"
   fi
   RELEASE_TAG="$(tr -d '[:space:]' < "$TAG_FILE")"
+  # The archive is bound to this operation and release, so it decrypts for no other import.
+  ARCHIVE="$WAVE_DIR/sentence-backfill.enc"
+  rm -f "$ARCHIVE"
+  tar -czf - -C "$WAVE_DIR" manifest.json \
+    | node "$OFFLINE_DIR/bridge-crypto.mjs" encrypt --key-file "$KEY_FILE" \
+      --purpose "import:import:$RELEASE_TAG" --out "$ARCHIVE"
 
   # Waiting before the release exists means a wait that gives up leaves no release behind.
   GH_BIN="$GH_BIN" GITHUB_REPOSITORY="$REPO" \

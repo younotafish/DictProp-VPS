@@ -71,7 +71,9 @@ VOCAB_COMPLETED="$VOCAB_ROOT/completed.json"
 ITEM_IMAGE_ROOT="$ROOT/item-images"
 ITEM_IMAGE_TARGETS="$ITEM_IMAGE_ROOT/cycle-targets.json"
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
+OFFLINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$OFFLINE_DIR/deadline.sh"
+. "$OFFLINE_DIR/vetted-checkout.sh"
 
 case "$ENRICHMENT_MODEL_PROVIDER" in
   claude) MODEL_LABEL="Claude $CLAUDE_MODEL" ;;
@@ -93,27 +95,6 @@ done
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
-}
-
-# GitHub occasionally resets the HTTP/2 stream while a completed workflow log is being downloaded, and a
-# download can stall. Retrying this read is safe and keeps one transient transport error from aborting a
-# six-hour cycle.
-download_workflow_log() {
-  local run_id="$1"
-  local destination="$2"
-  local attempt
-  for attempt in 1 2 3 4 5; do
-    if GH_CALL_TIMEOUT_SECONDS=600 gh_bounded run view "$run_id" --repo "$REPO" --log > "$destination"; then
-      return 0
-    fi
-    rm -f "$destination"
-    if [ "$attempt" -lt 5 ]; then
-      log "workflow log download failed (attempt $attempt/5); retrying"
-      sleep "$((attempt * 5))"
-    fi
-  done
-  echo "Could not download workflow log for run $run_id after 5 attempts" >&2
-  return 1
 }
 
 # The slowest request sets a text stage's wall time, so each stage spreads its sentences over every worker:
@@ -178,6 +159,12 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# 75 (EX_TEMPFAIL) marks a refusal in the LaunchAgent log; the next cycle checks again.
+if ! require_vetted_checkout; then
+  log "refusing to run code that is not committed and on vps/main; exiting 75"
+  exit 75
+fi
+
 ACTIVE_TEXT_JOBS="$(pgrep -f '[n]ode scripts/offline/(enrich-sentences|complete-corpus-fields)\.mjs' | tr '\n' ' ' || true)"
 if [ -n "$ACTIVE_TEXT_JOBS" ]; then
   log "another local sentence-analysis job is active (pid ${ACTIVE_TEXT_JOBS% }); deferring this cycle"
@@ -190,6 +177,15 @@ for required in "$GH_BIN" "$KEY_FILE" "$BASE_SOURCE" "$BASE_ANALYSIS" "$BASE_IMA
     exit 1
   fi
 done
+
+# A publisher that was killed leaves its release, and the encrypted archive in it, on the public
+# repository; this deletes publisher releases idle for six hours, which none of this cycle's publishers
+# would still hold, and clears failed waves after a week and published waves' archives.
+if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" GITHUB_REPOSITORY="$REPO" scripts/offline/sweep-bridge-leftovers.sh \
+  "$PUBLISH_STATE" "$ANALYSIS_PUBLISH_STATE" "$SAVED_PUBLISH_STATE" \
+  "$VOCAB_ROOT/publish-state" "$ITEM_IMAGE_ROOT/publish-state"; then
+  log "the sweep of bridge leftovers did not finish; the next cycle tries again"
+fi
 
 log "checking that local $MODEL_LABEL can answer before exporting production data"
 "$NODE_BIN" scripts/offline/check-structured-model.mjs
@@ -244,13 +240,9 @@ while :; do
   fi
   sleep 10
 done
-EXPORT_LOG_TMP="$ROOT/workflow-export.log.tmp"
-CORPUS_TMP="$ROOT/current-corpus.json.tmp"
-download_workflow_log "$EXPORT_RUN_ID" "$EXPORT_LOG_TMP"
-"$NODE_BIN" scripts/offline/decrypt-workflow-export.mjs \
-  "$EXPORT_LOG_TMP" CORPUS_EXPORT "$KEY_FILE" "$CORPUS_TMP"
-mv "$CORPUS_TMP" "$CURRENT_CORPUS"
-rm -f "$EXPORT_LOG_TMP"
+# The run left the corpus as an encrypted artifact; fetching it deletes the artifact and the run's log.
+GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
+  scripts/offline/fetch-workflow-export.sh "$EXPORT_RUN_ID" corpus-export "$CURRENT_CORPUS"
 
 mkdir -p "$VOCAB_ROOT"
 VOCAB_SOURCE_TMP="$VOCAB_SOURCE.tmp"

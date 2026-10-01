@@ -20,7 +20,8 @@ SOURCE="$POOL_ROOT/source.json"
 ANALYSIS="$POOL_ROOT/final-reconciliation/final-analysis.json"
 IMAGE_ROOT="$POOL_ROOT/final-images"
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
+OFFLINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$OFFLINE_DIR/deadline.sh"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -189,16 +190,17 @@ for entry in entries:
 print(f'Validated {len(entries)} staged example enrichments')
 PY
 
-  ARCHIVE="$WAVE_DIR/sentence-enrichments.enc"
-  rm -f "$ARCHIVE"
-  tar -czf - -C "$WAVE_DIR" manifest.json images \
-    | openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:$KEY_FILE" -out "$ARCHIVE"
-
   TAG_FILE="$WAVE_DIR/release-tag"
   if [ ! -s "$TAG_FILE" ]; then
     printf 'example-enrichments-%s-%s\n' "$WAVE_NAME" "$(date -u +%Y%m%dT%H%M%SZ)" > "$TAG_FILE"
   fi
   RELEASE_TAG="$(tr -d '[:space:]' < "$TAG_FILE")"
+  # The archive is bound to this operation and release, so it decrypts for no other import.
+  ARCHIVE="$WAVE_DIR/sentence-enrichments.enc"
+  rm -f "$ARCHIVE"
+  tar -czf - -C "$WAVE_DIR" manifest.json images \
+    | node "$OFFLINE_DIR/bridge-crypto.mjs" encrypt --key-file "$KEY_FILE" \
+      --purpose "import:enrichment-import:$RELEASE_TAG" --out "$ARCHIVE"
 
   # Waiting before the release exists means a wait that gives up leaves no release behind.
   GH_BIN="$GH_BIN" GITHUB_REPOSITORY="$REPO" \

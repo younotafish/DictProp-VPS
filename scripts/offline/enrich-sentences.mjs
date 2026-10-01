@@ -36,7 +36,7 @@ const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 40);
 const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
   ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
   : 40) * 60 * 1_000;
-const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 1_000)));
+const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 5_000)));
 const failureLedger = ledgerFromEnvironment('sentence-analysis');
 const activeChildren = new Set();
 let aborting = false;
@@ -268,7 +268,9 @@ async function runBatch(batch, index) {
       if (aborting || attempt === 2) throw error;
       correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Copy every index and return a complete, schema-valid analysis for every sentence.`;
       if (existsSync(resultPath)) unlinkSync(resultPath);
-      await new Promise(resolvePromise => setTimeout(resolvePromise, retryDelayMs * (attempt + 1)));
+      // Exponential and jittered, so parallel workers that failed together do not retry together.
+      const delay = retryDelayMs * 4 ** attempt * (0.5 + Math.random());
+      await new Promise(resolvePromise => setTimeout(resolvePromise, delay));
     }
   }
   throw new Error(`Sentence batch ${index + 1} exhausted retries`);

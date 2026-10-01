@@ -38,6 +38,11 @@ env:
   # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
   # scp-action refuse a host presenting any other key. Read on the VPS and scanned from a runner on 2026-10-01.
   VPS_SSH_FINGERPRINT: SHA256:cWQ58bKePv6GhjAw38ul5Xp0/CnivzcAF5G68MtSAZ0
+  # The bridge jobs' own OpenSSH (scripts/offline/vps-ssh.sh) trusts only these host keys. The ECDSA line
+  # is the key VPS_SSH_FINGERPRINT pins; the Ed25519 line was read from the VPS with it.
+  VPS_KNOWN_HOSTS: |
+    107.152.47.101 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLB6yrbgTM0awD4dC9m2xnVS3P6j4DQt01T6Km5u01xVw4/G3QtMjKeOBeMiPv06s8FdC/x30TMBh70fv+eMcf0=
+    107.152.47.101 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILKRKN8J56mPFYuCucDWxCSMH2j7tEGz6OchWZ9ur3lW
 
 jobs:
   repair:
@@ -133,6 +138,8 @@ jobs:
           AUDIT_OUTPUT: ${{ steps.production_audit.outputs.stdout }}
         run: printf '%s\n' "$AUDIT_OUTPUT"
 
+  # Exports leave the runner only as this run's encrypted artifact, which the local cycle downloads,
+  # decrypts and then deletes together with the run's log.
   export:
     if: inputs.operation == 'export'
     runs-on: ubuntu-latest
@@ -141,29 +148,40 @@ jobs:
       group: dictprop-production-read
       cancel-in-progress: false
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-export.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
       - name: Export encrypted sentence records
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        timeout-minutes: 15
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-        with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: SENTENCE_BRIDGE_KEY
-          command_timeout: 15m
-          script: |
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_SCRIPT: |
             set -eo pipefail
-            test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
-            echo SENTENCE_EXPORT_BEGIN
-            docker compose exec -T app node server/dist/scripts/export-sentence-backfill.js \
-              | gzip -9 \
-              | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:SENTENCE_BRIDGE_KEY \
-              | base64 -w 76
-            echo
-            echo SENTENCE_EXPORT_END
+            docker compose exec -T app node server/dist/scripts/export-sentence-backfill.js | gzip -9
+        run: bash scripts/offline/bridge-export.sh sentence-export "$RUNNER_TEMP/sentence-export.dpb"
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sentence-export
+          path: ${{ runner.temp }}/sentence-export.dpb
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  # Each import decrypts its release asset on the runner, for its own operation and release tag only,
+  # and streams the bundle to the VPS over the pinned SSH channel (scripts/offline/bridge-import.sh).
+  # The bundle arrives on the remote script's standard input, so only the unpacking may read it.
   import:
     if: inputs.operation == 'import'
     runs-on: ubuntu-latest
@@ -180,57 +198,40 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - name: Import encrypted sentence enrichment
-        id: sentence_import
-        continue-on-error: true
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        env:
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
-          command_timeout: 60m
-          capture_stdout: true
-          script: |
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-import.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Import encrypted sentence enrichment
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_SCRIPT: |
             set -eo pipefail
-            test -n "$SENTENCE_BRIDGE_KEY"
+            exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
-            rm -rf /tmp/dictprop-sentence-bridge
-            mkdir -p /tmp/dictprop-sentence-bridge
-            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
-              --connect-timeout 20 --max-time 300 \
-              --output /tmp/dictprop-sentence-bridge/sentence-backfill.enc \
-              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/sentence-backfill.enc"
-            docker compose exec -T app sh -c 'rm -rf /tmp/sentence-backfill && mkdir -p /tmp/sentence-backfill'
-            openssl enc -d -aes-256-cbc -pbkdf2 \
-              -pass env:SENTENCE_BRIDGE_KEY \
-              -in /tmp/dictprop-sentence-bridge/sentence-backfill.enc \
-              | docker compose exec -T app tar -xz -C /tmp/sentence-backfill
+            docker compose exec -T app sh -c \
+              'rm -rf /tmp/sentence-backfill && mkdir -p /tmp/sentence-backfill && tar -xz -C /tmp/sentence-backfill' <&3
+            exec 3<&-
             set +e
             docker compose exec -T app nice -n 10 node server/dist/scripts/import-sentence-backfill.js \
               /tmp/sentence-backfill/manifest.json
             STATUS=$?
             set -e
             docker compose exec -T app rm -rf /tmp/sentence-backfill
-            rm -rf /tmp/dictprop-sentence-bridge
             exit "$STATUS"
-
-      - name: Report sentence import result
-        if: always()
-        env:
-          REMOTE_STDOUT: ${{ steps.sentence_import.outputs.stdout }}
-          REMOTE_STDERR: ${{ steps.sentence_import.outputs.stderr }}
-        run: |
-          printf '%s\n' "$REMOTE_STDOUT"
-          printf '%s\n' "$REMOTE_STDERR" >&2
-
-      - name: Enforce sentence import success
-        if: steps.sentence_import.outcome != 'success'
-        run: exit 1
+        run: bash scripts/offline/bridge-import.sh import sentence-backfill.enc
 
   enrichment-import:
     if: inputs.operation == 'enrichment-import'
@@ -248,61 +249,44 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - name: Import encrypted example enrichments
-        id: enrichment_import
-        continue-on-error: true
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        env:
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
-          command_timeout: 60m
-          capture_stdout: true
-          script: |
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-import.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Import encrypted example enrichments
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_SCRIPT: |
             set -eo pipefail
-            test -n "$SENTENCE_BRIDGE_KEY"
+            exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
             AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')
             MIN_FREE_KB=$((5 * 1024 * 1024))
             echo "example-enrichment capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
             test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
-            rm -rf /tmp/dictprop-enrichment-bridge
-            mkdir -p /tmp/dictprop-enrichment-bridge
-            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
-              --connect-timeout 20 --max-time 300 \
-              --output /tmp/dictprop-enrichment-bridge/sentence-enrichments.enc \
-              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/sentence-enrichments.enc"
-            docker compose exec -T app sh -c 'rm -rf /tmp/sentence-enrichments && mkdir -p /tmp/sentence-enrichments'
-            openssl enc -d -aes-256-cbc -pbkdf2 \
-              -pass env:SENTENCE_BRIDGE_KEY \
-              -in /tmp/dictprop-enrichment-bridge/sentence-enrichments.enc \
-              | docker compose exec -T app tar -xz -C /tmp/sentence-enrichments
+            docker compose exec -T app sh -c \
+              'rm -rf /tmp/sentence-enrichments && mkdir -p /tmp/sentence-enrichments && tar -xz -C /tmp/sentence-enrichments' <&3
+            exec 3<&-
             set +e
             docker compose exec -T app nice -n 10 node server/dist/scripts/import-sentence-enrichments.js \
               /tmp/sentence-enrichments/manifest.json
             STATUS=$?
             set -e
             docker compose exec -T app rm -rf /tmp/sentence-enrichments
-            rm -rf /tmp/dictprop-enrichment-bridge
             exit "$STATUS"
-
-      - name: Report enrichment import result
-        if: always()
-        env:
-          REMOTE_STDOUT: ${{ steps.enrichment_import.outputs.stdout }}
-          REMOTE_STDERR: ${{ steps.enrichment_import.outputs.stderr }}
-        run: |
-          printf '%s\n' "$REMOTE_STDOUT"
-          printf '%s\n' "$REMOTE_STDERR" >&2
-
-      - name: Enforce enrichment import success
-        if: steps.enrichment_import.outcome != 'success'
-        run: exit 1
+        run: bash scripts/offline/bridge-import.sh enrichment-import sentence-enrichments.enc
 
   essay-import:
     if: inputs.operation == 'essay-import'
@@ -320,57 +304,40 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - name: Import encrypted private essay catalog
-        id: essay_import
-        continue-on-error: true
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        env:
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
-          command_timeout: 15m
-          capture_stdout: true
-          script: |
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-import.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Import encrypted private essay catalog
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_SCRIPT: |
             set -eo pipefail
-            test -n "$SENTENCE_BRIDGE_KEY"
+            exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
-            rm -rf /tmp/dictprop-essay-bridge
-            mkdir -p /tmp/dictprop-essay-bridge
-            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
-              --connect-timeout 20 --max-time 300 \
-              --output /tmp/dictprop-essay-bridge/private-essay-catalog.enc \
-              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/private-essay-catalog.enc"
-            docker compose exec -T app sh -c 'rm -rf /tmp/private-essay-catalog && mkdir -p /tmp/private-essay-catalog'
-            openssl enc -d -aes-256-cbc -pbkdf2 \
-              -pass env:SENTENCE_BRIDGE_KEY \
-              -in /tmp/dictprop-essay-bridge/private-essay-catalog.enc \
-              | docker compose exec -T app tar -xz -C /tmp/private-essay-catalog
+            docker compose exec -T app sh -c \
+              'rm -rf /tmp/private-essay-catalog && mkdir -p /tmp/private-essay-catalog && tar -xz -C /tmp/private-essay-catalog' <&3
+            exec 3<&-
             set +e
             docker compose exec -T app node server/dist/scripts/import-private-essay-catalog.js \
               /tmp/private-essay-catalog/catalog.json
             STATUS=$?
             set -e
             docker compose exec -T app rm -rf /tmp/private-essay-catalog
-            rm -rf /tmp/dictprop-essay-bridge
             exit "$STATUS"
-
-      - name: Report private essay import result
-        if: always()
-        env:
-          REMOTE_STDOUT: ${{ steps.essay_import.outputs.stdout }}
-          REMOTE_STDERR: ${{ steps.essay_import.outputs.stderr }}
-        run: |
-          printf '%s\n' "$REMOTE_STDOUT"
-          printf '%s\n' "$REMOTE_STDERR" >&2
-
-      - name: Enforce private essay import success
-        if: steps.essay_import.outcome != 'success'
-        run: exit 1
+        run: bash scripts/offline/bridge-import.sh essay-import private-essay-catalog.enc
 
   corpus-export:
     if: inputs.operation == 'corpus-export'
@@ -380,28 +347,36 @@ jobs:
       group: dictprop-production-read
       cancel-in-progress: false
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-export.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
       - name: Export encrypted corpus
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        timeout-minutes: 15
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-        with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: SENTENCE_BRIDGE_KEY
-          command_timeout: 15m
-          script: |
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_SCRIPT: |
             set -eo pipefail
-            test -n "$SENTENCE_BRIDGE_KEY"
             cd /opt/dictprop-vps
-            echo CORPUS_EXPORT_BEGIN
-            docker compose exec -T app node server/dist/scripts/export-corpus-audit.js \
-              | gzip -9 \
-              | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:SENTENCE_BRIDGE_KEY \
-              | base64 -w 76
-            echo
-            echo CORPUS_EXPORT_END
+            docker compose exec -T app node server/dist/scripts/export-corpus-audit.js | gzip -9
+        run: bash scripts/offline/bridge-export.sh corpus-export "$RUNNER_TEMP/corpus-export.dpb"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: corpus-export
+          path: ${{ runner.temp }}/corpus-export.dpb
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   corpus-import:
     if: inputs.operation == 'corpus-import'
@@ -419,72 +394,40 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - name: Download encrypted bundle
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-import.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Import encrypted corpus audit
+        timeout-minutes: 60
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          mkdir -p bridge
-          gh release download "$RELEASE_TAG" \
-            --repo "${{ github.repository }}" \
-            --pattern corpus-audit.enc \
-            --dir bridge
-
-      - name: Upload encrypted bundle
-        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
-        with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          source: bridge/corpus-audit.enc
-          target: /tmp/dictprop-corpus-bridge
-          strip_components: 1
-
-      - name: Import encrypted corpus audit
-        id: corpus_import
-        continue-on-error: true
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-        with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: SENTENCE_BRIDGE_KEY
-          command_timeout: 60m
-          capture_stdout: true
-          script: |
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_SCRIPT: |
             set -eo pipefail
-            test -n "$SENTENCE_BRIDGE_KEY"
+            exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
-            docker compose exec -T app sh -c 'rm -rf /tmp/corpus-audit && mkdir -p /tmp/corpus-audit'
-            openssl enc -d -aes-256-cbc -pbkdf2 \
-              -pass env:SENTENCE_BRIDGE_KEY \
-              -in /tmp/dictprop-corpus-bridge/corpus-audit.enc \
-              | docker compose exec -T app tar -xz -C /tmp/corpus-audit
+            docker compose exec -T app sh -c \
+              'rm -rf /tmp/corpus-audit && mkdir -p /tmp/corpus-audit && tar -xz -C /tmp/corpus-audit' <&3
+            exec 3<&-
             set +e
             docker compose exec -T app node server/dist/scripts/import-corpus-audit.js \
               /tmp/corpus-audit/manifest.json
             STATUS=$?
             set -e
             docker compose exec -T app rm -rf /tmp/corpus-audit
-            rm -rf /tmp/dictprop-corpus-bridge
             exit "$STATUS"
-
-      - name: Report corpus import result
-        if: always()
-        env:
-          REMOTE_STDOUT: ${{ steps.corpus_import.outputs.stdout }}
-          REMOTE_STDERR: ${{ steps.corpus_import.outputs.stderr }}
-        run: |
-          printf '%s\n' "$REMOTE_STDOUT"
-          printf '%s\n' "$REMOTE_STDERR" >&2
-
-      - name: Enforce corpus import success
-        if: steps.corpus_import.outcome != 'success'
-        run: exit 1
+        run: bash scripts/offline/bridge-import.sh corpus-import corpus-audit.enc
 
   image-import:
     if: inputs.operation == 'image-import'
@@ -502,41 +445,40 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - name: Import locally generated images
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        env:
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
-          command_timeout: 60m
-          script: |
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-import.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Import locally generated images
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_SCRIPT: |
             set -eo pipefail
-            test -n "$SENTENCE_BRIDGE_KEY"
+            exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
-            rm -rf /tmp/dictprop-image-bridge
-            mkdir -p /tmp/dictprop-image-bridge
-            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
-              --connect-timeout 20 --max-time 300 \
-              --output /tmp/dictprop-image-bridge/offline-images.enc \
-              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/offline-images.enc"
-            docker compose exec -T app sh -c 'rm -rf /tmp/offline-images && mkdir -p /tmp/offline-images'
-            openssl enc -d -aes-256-cbc -pbkdf2 \
-              -pass env:SENTENCE_BRIDGE_KEY \
-              -in /tmp/dictprop-image-bridge/offline-images.enc \
-              | docker compose exec -T app tar -xz -C /tmp/offline-images
+            docker compose exec -T app sh -c \
+              'rm -rf /tmp/offline-images && mkdir -p /tmp/offline-images && tar -xz -C /tmp/offline-images' <&3
+            exec 3<&-
             set +e
             docker compose exec -T app nice -n 10 node server/dist/scripts/import-offline-images.js \
               /tmp/offline-images/manifest.json
             STATUS=$?
             set -e
             docker compose exec -T app rm -rf /tmp/offline-images
-            rm -rf /tmp/dictprop-image-bridge
             exit "$STATUS"
+        run: bash scripts/offline/bridge-import.sh image-import offline-images.enc
 
   audio-import:
     if: inputs.operation == 'audio-import'
@@ -554,42 +496,41 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - name: Import locally generated audio
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        env:
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          host: 107.152.47.101
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
-          command_timeout: 60m
-          script: |
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-import.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Import locally generated audio
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_SCRIPT: |
             set -eo pipefail
-            test -n "$SENTENCE_BRIDGE_KEY"
+            exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
             AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')
             MIN_FREE_KB=$((5 * 1024 * 1024))
             echo "offline-audio capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
             test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
-            rm -rf /tmp/dictprop-audio-bridge
-            mkdir -p /tmp/dictprop-audio-bridge
-            curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors \
-              --connect-timeout 20 --max-time 600 \
-              --output /tmp/dictprop-audio-bridge/offline-audio.enc \
-              "https://github.com/younotafish/DictProp-VPS/releases/download/$RELEASE_TAG/offline-audio.enc"
-            docker compose exec -T app sh -c 'rm -rf /tmp/offline-audio && mkdir -p /tmp/offline-audio'
-            openssl enc -d -aes-256-cbc -pbkdf2 \
-              -pass env:SENTENCE_BRIDGE_KEY \
-              -in /tmp/dictprop-audio-bridge/offline-audio.enc \
-              | docker compose exec -T app tar -xz -C /tmp/offline-audio
+            docker compose exec -T app sh -c \
+              'rm -rf /tmp/offline-audio && mkdir -p /tmp/offline-audio && tar -xz -C /tmp/offline-audio' <&3
+            exec 3<&-
             set +e
             docker compose exec -T app nice -n 10 node server/dist/scripts/import-offline-tts.js \
               /tmp/offline-audio/manifest.json
             STATUS=$?
             set -e
             docker compose exec -T app rm -rf /tmp/offline-audio
-            rm -rf /tmp/dictprop-audio-bridge
             exit "$STATUS"
+        run: bash scripts/offline/bridge-import.sh audio-import offline-audio.enc

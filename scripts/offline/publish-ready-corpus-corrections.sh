@@ -43,7 +43,6 @@ done
 
 mkdir -p "$WORK_ROOT" "$STATE_ROOT"
 RUN_ID_FILE="$WORK_ROOT/production-export-run-id"
-EXPORT_LOG="$WORK_ROOT/production-export.log"
 PRODUCTION_EXPORT="$WORK_ROOT/production-corpus.json"
 REBASED_MANIFEST="$WORK_ROOT/rebased-corrections.json"
 REBASE_REPORT="$WORK_ROOT/rebase-report.json"
@@ -102,12 +101,9 @@ if [[ ! -s "$PRODUCTION_EXPORT" ]]; then
   RUN_ID="$(tr -d '[:space:]' < "$RUN_ID_FILE")"
   log "waiting for production corpus export run $RUN_ID"
   "$GH_BIN" run watch "$RUN_ID" --repo "$REPO" --exit-status
-  "$GH_BIN" run view "$RUN_ID" --repo "$REPO" --log > "$EXPORT_LOG"
-  node scripts/offline/decrypt-workflow-export.mjs \
-    "$EXPORT_LOG" \
-    CORPUS_EXPORT \
-    "$KEY_FILE" \
-    "$PRODUCTION_EXPORT"
+  # The run left the corpus as an encrypted artifact; fetching it deletes the artifact and the run's log.
+  GH_BIN="$GH_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
+    scripts/offline/fetch-workflow-export.sh "$RUN_ID" corpus-export "$PRODUCTION_EXPORT"
 fi
 
 log "rebasing verified corrections against the fresh production export"

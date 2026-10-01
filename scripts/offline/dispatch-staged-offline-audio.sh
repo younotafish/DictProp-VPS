@@ -10,6 +10,7 @@ REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
 GH_BIN="${GH_BIN:-./.gh}"
 REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
+OFFLINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_ROOT="${OFFLINE_AUDIO_WAVE_STATE_ROOT:-/tmp/dictprop-staged-offline-audio-v1}"
 COOLDOWN_SECONDS="${OFFLINE_AUDIO_WAVE_COOLDOWN_SECONDS:-30}"
 CATALOG_PATH="${OFFLINE_AUDIO_CATALOG:-content/real-life-catalog.json}"
@@ -91,15 +92,17 @@ while :; do
     continue
   fi
 
-  ARCHIVE="$WAVE_DIR/offline-audio.enc"
-  rm -f "$ARCHIVE"
-  tar -czf - -C "$WAVE_DIR" manifest.json audio \
-    | openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:$KEY_FILE" -out "$ARCHIVE"
   TAG_FILE="$WAVE_DIR/release-tag"
   if [ ! -s "$TAG_FILE" ]; then
     printf 'real-life-audio-%s-%s\n' "$WAVE_NAME" "$(date -u +%Y%m%dT%H%M%SZ)" > "$TAG_FILE"
   fi
   RELEASE_TAG="$(tr -d '[:space:]' < "$TAG_FILE")"
+  # The archive is bound to this operation and release, so it decrypts for no other import.
+  ARCHIVE="$WAVE_DIR/offline-audio.enc"
+  rm -f "$ARCHIVE"
+  tar -czf - -C "$WAVE_DIR" manifest.json audio \
+    | node "$OFFLINE_DIR/bridge-crypto.mjs" encrypt --key-file "$KEY_FILE" \
+      --purpose "import:audio-import:$RELEASE_TAG" --out "$ARCHIVE"
   PUBLISHER_STATE="$(publisher_state_dir "$RELEASE_TAG")"
   if [ ! -s "$PUBLISHER_STATE/complete" ]; then
     until "$GH_BIN" release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \

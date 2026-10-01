@@ -16,7 +16,8 @@ CORPUS_MANIFEST="${OFFLINE_IMAGE_CORPUS_MANIFEST:-data/offline-backfill/final-re
 DISPATCH_WAIT_SECONDS="${DISPATCH_WAIT_DEADLINE_SECONDS:-86400}"
 RELEASE_CREATE_ATTEMPTS="${RELEASE_CREATE_ATTEMPTS:-12}"
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
+OFFLINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$OFFLINE_DIR/deadline.sh"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
@@ -181,16 +182,17 @@ const sharp = require('sharp');
 });
 NODE
 
-  ARCHIVE="$WAVE_DIR/offline-images.enc"
-  rm -f "$ARCHIVE"
-  tar -czf - -C "$WAVE_DIR" manifest.json images \
-    | openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:$KEY_FILE" -out "$ARCHIVE"
-
   TAG_FILE="$WAVE_DIR/release-tag"
   if [ ! -s "$TAG_FILE" ]; then
     printf 'vocab-images-%s-%s\n' "$WAVE_NAME" "$(date -u +%Y%m%dT%H%M%SZ)" > "$TAG_FILE"
   fi
   RELEASE_TAG="$(tr -d '[:space:]' < "$TAG_FILE")"
+  # The archive is bound to this operation and release, so it decrypts for no other import.
+  ARCHIVE="$WAVE_DIR/offline-images.enc"
+  rm -f "$ARCHIVE"
+  tar -czf - -C "$WAVE_DIR" manifest.json images \
+    | node "$OFFLINE_DIR/bridge-crypto.mjs" encrypt --key-file "$KEY_FILE" \
+      --purpose "import:image-import:$RELEASE_TAG" --out "$ARCHIVE"
   if [ ! -s "$WAVE_DIR/publisher/complete" ]; then
     create_attempts=0
     until gh_bounded release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \

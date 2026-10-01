@@ -41,12 +41,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
+RELEASE_TAG="private-essays-$(date -u +%Y%m%dT%H%M%SZ)"
 cp "$CATALOG_PATH" "$STAGING_DIR/catalog.json"
+# The archive is bound to this operation and release, so it decrypts for no other import.
 ARCHIVE="$STAGING_DIR/private-essay-catalog.enc"
 tar -czf - -C "$STAGING_DIR" catalog.json \
-  | openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:$KEY_FILE" -out "$ARCHIVE"
+  | node "$(dirname "$0")/bridge-crypto.mjs" encrypt --key-file "$KEY_FILE" \
+    --purpose "import:essay-import:$RELEASE_TAG" --out "$ARCHIVE"
 
-RELEASE_TAG="private-essays-$(date -u +%Y%m%dT%H%M%SZ)"
 "$GH_BIN" release create "$RELEASE_TAG" \
   --repo "$REPO" \
   --title "Temporary encrypted private essay catalog" \
