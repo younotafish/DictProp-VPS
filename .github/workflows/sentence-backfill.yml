@@ -34,6 +34,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
+  # scp-action refuse a host presenting any other key. Read on the VPS and scanned from a runner on 2026-10-01.
+  VPS_SSH_FINGERPRINT: SHA256:cWQ58bKePv6GhjAw38ul5Xp0/CnivzcAF5G68MtSAZ0
+
 jobs:
   repair:
     if: inputs.operation == 'repair' || inputs.operation == 'repair-apply'
@@ -58,11 +63,12 @@ jobs:
 
       - name: Preview production repairs
         id: repair_preview
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 15m
           capture_stdout: true
           script: |
@@ -78,11 +84,12 @@ jobs:
       - name: Apply production repairs
         if: inputs.operation == 'repair-apply'
         id: repair_apply
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 30m
           capture_stdout: true
           script: |
@@ -108,11 +115,12 @@ jobs:
     steps:
       - name: Audit production data
         id: production_audit
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 60m
           capture_stdout: true
           script: |
@@ -134,13 +142,14 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Export encrypted sentence records
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: SENTENCE_BRIDGE_KEY
           command_timeout: 15m
           script: |
@@ -174,7 +183,7 @@ jobs:
       - name: Import encrypted sentence enrichment
         id: sentence_import
         continue-on-error: true
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -182,6 +191,7 @@ jobs:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 60m
           capture_stdout: true
@@ -241,7 +251,7 @@ jobs:
       - name: Import encrypted example enrichments
         id: enrichment_import
         continue-on-error: true
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -249,6 +259,7 @@ jobs:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 60m
           capture_stdout: true
@@ -312,7 +323,7 @@ jobs:
       - name: Import encrypted private essay catalog
         id: essay_import
         continue-on-error: true
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -320,6 +331,7 @@ jobs:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 15m
           capture_stdout: true
@@ -369,13 +381,14 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Export encrypted corpus
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: SENTENCE_BRIDGE_KEY
           command_timeout: 15m
           script: |
@@ -418,11 +431,12 @@ jobs:
             --dir bridge
 
       - name: Upload encrypted bundle
-        uses: appleboy/scp-action@v1
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           source: bridge/corpus-audit.enc
           target: /tmp/dictprop-corpus-bridge
           strip_components: 1
@@ -430,13 +444,14 @@ jobs:
       - name: Import encrypted corpus audit
         id: corpus_import
         continue-on-error: true
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: SENTENCE_BRIDGE_KEY
           command_timeout: 60m
           capture_stdout: true
@@ -488,7 +503,7 @@ jobs:
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
       - name: Import locally generated images
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -496,6 +511,7 @@ jobs:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 60m
           script: |
@@ -539,7 +555,7 @@ jobs:
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
       - name: Import locally generated audio
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -547,6 +563,7 @@ jobs:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: SENTENCE_BRIDGE_KEY,RELEASE_TAG
           command_timeout: 60m
           script: |

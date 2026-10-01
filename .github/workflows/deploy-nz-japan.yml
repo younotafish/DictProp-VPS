@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
+  # scp-action refuse a host presenting any other key. Read on the VPS and scanned from a runner on 2026-10-01.
+  VPS_SSH_FINGERPRINT: SHA256:cWQ58bKePv6GhjAw38ul5Xp0/CnivzcAF5G68MtSAZ0
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -72,11 +77,12 @@ jobs:
           diff -u expected-top-level.txt actual-top-level.txt
 
       - name: Upload private static site
-        uses: appleboy/scp-action@v1
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           source: nz-japan-upload/*
           target: /var/www/nz-japan-2026
           strip_components: 1
@@ -84,11 +90,12 @@ jobs:
           overwrite: true
 
       - name: Configure password-protected Caddy route
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 3m
           script: |
             set -eu

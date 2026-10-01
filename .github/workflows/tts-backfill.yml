@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
+  # scp-action refuse a host presenting any other key. Read on the VPS and scanned from a runner on 2026-10-01.
+  VPS_SSH_FINGERPRINT: SHA256:cWQ58bKePv6GhjAw38ul5Xp0/CnivzcAF5G68MtSAZ0
+
 jobs:
   start:
     runs-on: ubuntu-latest
@@ -17,11 +22,12 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Start or resume the detached TTS backfill
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 5m
           script: |
             set -e

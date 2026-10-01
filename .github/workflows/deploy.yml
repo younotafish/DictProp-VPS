@@ -9,13 +9,20 @@ permissions:
   contents: read
   packages: write
 
+env:
+  # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
+  # scp-action refuse a host presenting any other key. Read on the VPS and scanned from a runner on 2026-10-01.
+  VPS_SSH_FINGERPRINT: SHA256:cWQ58bKePv6GhjAw38ul5Xp0/CnivzcAF5G68MtSAZ0
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -36,15 +43,17 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and publish release image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
@@ -61,7 +70,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,6 +80,7 @@ jobs:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           envs: DEEPINFRA_API_KEY,GHCR_TOKEN,GHCR_USERNAME,RELEASE_IMAGE
           command_timeout: 60m
           script: |
