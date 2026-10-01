@@ -4,37 +4,44 @@ import { db, upsertItem } from './db.js';
 import { env } from './env.js';
 
 const BACKUP_PREFIX = 'pre-';
-const REUSE_BACKUP_MS = 60 * 60 * 1000;
-const KEPT_BACKUPS = 2;
+// The deploy workflow copies the database into the same directory as dictprop-<timestamp>-<sha>.db.
+const COPY_PREFIXES = [BACKUP_PREFIX, 'dictprop-'];
+// The deploy workflow reuses a copy for as long.
+const REUSE_BACKUP_MS = 12 * 60 * 60 * 1000;
 // Room the live database keeps for its WAL and the rows an import adds once the copy is written.
 const FREE_SPACE_RESERVE = 512 * 1024 * 1024;
 
+const isCopy = (name: string) => COPY_PREFIXES.some(prefix => name.startsWith(prefix));
+
+// A copy is in WAL mode like the live database, so opening it to inspect it leaves -wal and -shm files, and
+// the deploy workflow marks a copy it has checked with a .verified file.
+function removeCopy(path: string): void {
+  for (const suffix of ['', '-wal', '-shm', '.verified']) rmSync(`${path}${suffix}`, { force: true });
+}
+
 /**
  * Copy the live database to backups/pre-<operation>-<timestamp>.db in the data dir before a script writes
- * it. Imports reuse a copy younger than an hour, so a sequence of imports writes one; a repair asks for a
- * fresh copy. Each copy is the whole database, so only the newest two are kept and a copy that would
- * leave the disk nearly full is refused before anything is written.
+ * it. Each copy is the whole database and the disk only has room for one beside the copy being written,
+ * so imports and deploys share one slot: a copy of either kind younger than twelve hours is reused, as
+ * the deploy workflow does, and a repair asks for a fresh one. The older copy stays until the new one is
+ * complete, and a copy that would leave the disk nearly full is refused before anything is written.
  */
 export async function backupBeforeWrite(operation: string, options: { reuseRecent?: boolean } = {}): Promise<string> {
   const dir = resolve(env.DATA_DIR, 'backups');
   mkdirSync(dir, { recursive: true });
   const names = readdirSync(dir);
-  // A copy a crashed run left behind is incomplete.
+  // Imports and deploys never run at once, so a partial copy is one a crashed run left behind.
   for (const name of names) {
-    if (name.startsWith(BACKUP_PREFIX) && name.endsWith('.db.partial')) rmSync(resolve(dir, name), { force: true });
+    if (isCopy(name) && name.endsWith('.db.partial')) rmSync(resolve(dir, name), { force: true });
   }
   const copies = names
-    .filter(name => name.startsWith(BACKUP_PREFIX) && name.endsWith('.db'))
+    .filter(name => isCopy(name) && name.endsWith('.db'))
     .map(name => ({ path: resolve(dir, name), modifiedAt: statSync(resolve(dir, name)).mtimeMs }))
     .sort((left, right) => right.modifiedAt - left.modifiedAt);
   if (options.reuseRecent !== false && copies[0] && Date.now() - copies[0].modifiedAt < REUSE_BACKUP_MS) {
     return copies[0].path;
   }
-  // The copy being written is the second one; the older copy stays until the new one is complete.
-  for (const copy of copies.slice(KEPT_BACKUPS - 1)) {
-    // A copy is in WAL mode like the live database, so opening it to inspect it leaves -wal and -shm files.
-    for (const suffix of ['', '-wal', '-shm']) rmSync(`${copy.path}${suffix}`, { force: true });
-  }
+  for (const copy of copies.slice(1)) removeCopy(copy.path);
 
   const pageCount = db.pragma('page_count', { simple: true }) as number;
   const pageSize = db.pragma('page_size', { simple: true }) as number;
@@ -54,6 +61,10 @@ export async function backupBeforeWrite(operation: string, options: { reuseRecen
     renameSync(partial, target);
   } finally {
     rmSync(partial, { force: true });
+  }
+  for (const copy of copies) {
+    // A repair in the same second as the last copy writes over it.
+    if (copy.path !== target) removeCopy(copy.path);
   }
   return target;
 }

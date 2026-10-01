@@ -309,7 +309,7 @@ test('an import writing over an item that changed after it was read finds the en
   assert.ok(stored('import-race').serverRevision > current.serverRevision);
 });
 
-test('imports back up the live database at most hourly and keep only the newest two copies', async () => {
+test('imports and deploys share one backup, which imports reuse for twelve hours', async () => {
   const dir = join(process.env.DATA_DIR!, 'backups');
   const first = await backupBeforeWrite('first');
   assert.match(first, /\/backups\/pre-first-\d{8}T\d{6}Z\.db$/);
@@ -317,18 +317,27 @@ test('imports back up the live database at most hourly and keep only the newest 
   assert.equal((copy.prepare('SELECT COUNT(*) AS n FROM items').get() as { n: number }).n, count('items'));
   copy.close();
 
-  // The next import within the hour reuses that copy; a repair asks for a fresh one.
+  // The next import reuses that copy; a repair asks for a fresh one, which replaces it.
   assert.equal(await backupBeforeWrite('second'), first);
   const fresh = await backupBeforeWrite('fresh', { reuseRecent: false });
   assert.notEqual(fresh, first);
+  assert.deepEqual(readdirSync(dir), [basename(fresh)]);
 
-  // Once both are older than an hour, a new copy replaces the older one. A crashed run's partial copy
-  // is removed; the deploy workflow's own backups are left alone.
+  // A deploy's copy is reused like an import's.
   const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000);
-  utimesSync(first, hoursAgo(3), hoursAgo(3));
-  utimesSync(fresh, hoursAgo(2), hoursAgo(2));
-  writeFileSync(join(dir, 'pre-crashed-20260101T000000Z.db.partial'), 'incomplete');
-  writeFileSync(join(dir, 'dictprop-20260101-000000.db'), 'deploy backup');
-  const third = await backupBeforeWrite('third');
-  assert.deepEqual(readdirSync(dir).sort(), [basename(fresh), basename(third), 'dictprop-20260101-000000.db'].sort());
+  utimesSync(fresh, hoursAgo(13), hoursAgo(13));
+  const deployed = join(dir, 'dictprop-20260101T000000Z-0123abc.db');
+  writeFileSync(deployed, 'deploy backup');
+  writeFileSync(`${deployed}.verified`, '');
+  utimesSync(deployed, hoursAgo(11), hoursAgo(11));
+  assert.equal(await backupBeforeWrite('third'), deployed);
+
+  // Once every copy is older than twelve hours, a new copy replaces them all, with the files that opening
+  // or verifying one left. A crashed run's partial copy is removed.
+  utimesSync(deployed, hoursAgo(12.5), hoursAgo(12.5));
+  writeFileSync(`${fresh}-wal`, '');
+  writeFileSync(join(dir, 'dictprop-20260101T010000Z-4567def.db.partial'), 'incomplete');
+  const fourth = await backupBeforeWrite('fourth');
+  assert.match(fourth, /\/backups\/pre-fourth-\d{8}T\d{6}Z\.db$/);
+  assert.deepEqual(readdirSync(dir), [basename(fourth)]);
 });

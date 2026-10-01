@@ -89,13 +89,23 @@ jobs:
             # built remotely now, so deploys must not garbage-collect BuildKit while the app is live.
             echo "=== DISK BEFORE CLEANUP ==="
             df -h . || true
+            docker system df || true
+            # Imports copy the database to pre-<operation>-<time>.db before they write it, and the disk only
+            # has room for one copy beside the one being written, so their copies and these share one slot.
+            list_copies() {
+              find data/backups -maxdepth 1 -type f \( -name 'dictprop-*.db' -o -name 'pre-*.db' \) \
+                -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-
+            }
+            # Opening a copy leaves -wal and -shm files beside it.
+            remove_copy() {
+              rm -f "$1" "$1-wal" "$1-shm" "$1.verified"
+            }
             # Remove abandoned/old backup copies before deciding whether a fresh snapshot is needed.
             SKIP_DATABASE_BACKUP=0
             if [ -f data/dictprop.db ]; then
               mkdir -p data/backups
               find data/backups -type f -name '*.partial' -delete
-              LATEST_BACKUP="$(find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
-                | sort -nr | head -n 1 | cut -d' ' -f2-)"
+              LATEST_BACKUP="$(list_copies | head -n 1)"
               BACKUP_MARKER="${LATEST_BACKUP}.verified"
               if [ -n "$LATEST_BACKUP" ] && [ -f "$BACKUP_MARKER" ] && [ "$BACKUP_MARKER" -nt "$LATEST_BACKUP" ]; then
                 echo "Reusing persisted verification for $LATEST_BACKUP"
@@ -121,17 +131,24 @@ jobs:
               fi
               # Keep only the newest verified snapshot. A new backup temporarily needs a second copy,
               # but the older one remains available if that copy fails and is pruned only after success.
-              find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
-                | sort -nr | tail -n +2 | cut -d' ' -f2- | xargs -r rm -f
-              find data/backups -type f -name 'dictprop-*.db.verified' | while read -r marker; do
+              list_copies | tail -n +2 | while read -r copy; do remove_copy "$copy"; done
+              find data/backups -type f -name '*.db.verified' | while read -r marker; do
                 [ -f "${marker%.verified}" ] || rm -f "$marker"
               done
             fi
             # Take a transactionally consistent online SQLite backup before the new container can run
-            # schema migrations. Retention and cache cleanup above leave room for the atomic copy.
+            # schema migrations. Retention above leaves room for the atomic copy, and a copy that would
+            # fill the disk under the live database is refused instead.
             if [ -f data/dictprop.db ] && [ "$SKIP_DATABASE_BACKUP" -eq 0 ]; then
               echo "=== DISK BEFORE BACKUP ==="
               df -h . || true
+              DATABASE_BYTES=$(( $(stat -c %s data/dictprop.db) + $(stat -c %s data/dictprop.db-wal 2>/dev/null || echo 0) ))
+              NEEDED_KB=$(( DATABASE_BYTES / 1024 + 512 * 1024 ))
+              AVAILABLE_KB="$(df -Pk data/backups | awk 'NR == 2 { print $4 }')"
+              if [ "$AVAILABLE_KB" -lt "$NEEDED_KB" ]; then
+                echo "::error::Not deploying: a database backup needs ${NEEDED_KB}KB free and ${AVAILABLE_KB}KB are"
+                exit 1
+              fi
               BACKUP_NAME="dictprop-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.sha }}.db"
               BACKUP_TEMP="$BACKUP_NAME.partial"
               if [ -n "$(docker compose ps -q app 2>/dev/null)" ]; then
@@ -149,8 +166,7 @@ jobs:
               mv "data/backups/$BACKUP_TEMP" "data/backups/$BACKUP_NAME"
               touch "data/backups/$BACKUP_NAME.verified"
               # The new verified copy supersedes the older snapshot.
-              find data/backups -type f -name 'dictprop-*.db' -printf '%T@ %p\n' \
-                | sort -nr | tail -n +2 | cut -d' ' -f2- | xargs -r rm -f
+              list_copies | tail -n +2 | while read -r copy; do remove_copy "$copy"; done
             fi
             # Sync the DeepInfra key from the GH Actions secret WITHOUT clobbering other .env vars
             # (Google OAuth creds live here too). Guarded so an empty/unset secret never blanks the key.
@@ -203,6 +219,14 @@ jobs:
               fi
               exit 1
             fi
-            docker image rm "$ROLLBACK_IMAGE" 2>/dev/null || true
+            # Every release pulls a new image, so drop the earlier releases and the rollback tags failed
+            # deploys left, keeping only the image now running.
+            docker image ls --format '{{.Repository}}:{{.Tag}}' \
+              | grep -E '^(ghcr\.io/younotafish/dictprop-vps:|dictprop-vps:rollback-)' \
+              | grep -vxF "$RELEASE_IMAGE" \
+              | xargs -r docker image rm >/dev/null || true
             docker logout ghcr.io || true
+            echo "=== DISK AFTER DEPLOY ==="
+            df -h . || true
+            docker system df || true
             echo "Deploy complete"

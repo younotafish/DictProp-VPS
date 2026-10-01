@@ -48,7 +48,7 @@ jobs:
           {
             echo '### Content enrichment audit (no generation)'
             echo '```json'
-            printf '%s\n' "$ENRICHMENT_STDOUT" | tail -n 1
+            printf '%s\n' "$ENRICHMENT_STDOUT" | grep '^{' | tail -n 1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -57,7 +57,8 @@ jobs:
           AUDIT_OUTCOME: ${{ steps.audit.outcome }}
           ENRICHMENT_STDOUT: ${{ steps.audit.outputs.stdout }}
         run: |
-          report="$(printf '%s\n' "$ENRICHMENT_STDOUT" | tail -n 1)"
+          # ssh-action ends a successful run's output with its own banner, so the report is the last JSON line.
+          report="$(printf '%s\n' "$ENRICHMENT_STDOUT" | grep '^{' | tail -n 1)"
           if [ "$AUDIT_OUTCOME" != success ] \
             || ! printf '%s\n' "$report" | jq -e '.stall.alerts | type == "array"' >/dev/null 2>&1; then
             echo '::error::The enrichment audit did not report; see the audit step log.'
