@@ -19,6 +19,9 @@ type OutboxStorage = StorageLike & Pick<Storage, 'key' | 'length'>;
 // Builds before per-review keys kept the outbox as one array under this key, and each change rewrote the
 // whole array, so two tabs changing it at once could drop each other's reviews. Each review now has a key
 // of its own, written and removed whole. The array is still read, and drains as its reviews are delivered.
+// Those builds read only the array: after a rollback to one, reviews queued under their own keys wait,
+// untouched, until a newer build sends them. Each card keeps its new schedule meanwhile and sends it with
+// the card; only the review's history entry waits.
 const pendingKey = (userId: string) => `review_mutations_pending_${userId}`;
 const entryKey = (userId: string, eventId: string) => `${pendingKey(userId)}:${eventId}`;
 

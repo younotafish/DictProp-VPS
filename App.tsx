@@ -9,7 +9,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
 import { AuthLoadingScreen, LibraryReadFailedScreen, PendingApprovalScreen, SignInScreen } from './components/AppGateScreens';
-import { takeOverlayOpener, useAnyOverlayOpen } from './components/overlayStack';
+import { takeOverlayOpener, useAnyOverlayOpen, useOverlay } from './components/overlayStack';
 import { AppBanners, AppStatusPills } from './components/AppStatus';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { normalizeKey } from './services/wordMatch';
@@ -126,6 +126,9 @@ const App: React.FC = () => {
   // The notebook sits under DetailView and the card popup, so it skips the reviews made there as they
   // happen. It catches up a second after they stop, while hidden, so closing them doesn't have to.
   const notebookItems = useFrozenWhile(allActiveItems, !!detailContext || !!cardPopup, 1_000);
+  // A card covers the page from the moment it's opened, also while its code loads behind the spinner or
+  // when it crashes, not only once DetailView has registered itself.
+  useOverlay(!!detailContext);
   // An open card, popup, dialog or search result covers the tabs and the nav bar, which leave the tab order
   // and the accessibility tree meanwhile (components/overlayStack). Overlays render beside <main>, never in
   // it. When the last one closes, this cleanup runs after the commit that made the page live again, so focus
@@ -135,14 +138,26 @@ const App: React.FC = () => {
     if (!overlayOpen) return;
     return () => {
       const opener = takeOverlayOpener();
+      const main = mainRef.current;
       const active = document.activeElement;
       const focusLost = !active || active === document.body || !active.isConnected || !!active.closest('[inert]');
-      // Not into a text field, where focus would bring up the on-screen keyboard, nor away from anything else.
-      if (focusLost && opener instanceof HTMLElement && opener.isConnected && !opener.closest('[inert]')
-        && (mainRef.current?.contains(opener) || navRef.current?.contains(opener))
+      if (!focusLost || !main) return;
+      // Not into a text field, where focus would bring up the on-screen keyboard.
+      if (opener instanceof HTMLElement && opener.isConnected && !opener.closest('[inert]')
+        && (main.contains(opener) || navRef.current?.contains(opener))
         && !opener.matches('input, textarea, select, [contenteditable]')) {
         opener.focus({ preventScroll: true });
+        if (document.activeElement === opener) return;
       }
+      // The opener is gone (Clear all takes the refused-reviews badge with it), is a text field or can't take
+      // focus, so the page takes it rather than leaving it on the body. The page stays focusable only until
+      // focus moves on, so a click on its background never lands on it and keyboard scrolling still follows
+      // the click.
+      if (!main.hasAttribute('tabindex')) {
+        main.tabIndex = -1;
+        main.addEventListener('blur', () => main.removeAttribute('tabindex'), { once: true });
+      }
+      main.focus({ preventScroll: true });
     };
   }, [overlayOpen]);
 
@@ -368,7 +383,7 @@ const App: React.FC = () => {
         </Suspense>
       )}
 
-      <main ref={mainRef} inert={overlayOpen} className="flex-1 relative w-full min-h-0 overflow-hidden">
+      <main ref={mainRef} inert={overlayOpen} className="flex-1 relative w-full min-h-0 overflow-hidden focus:outline-none">
         <TabScreen shown={currentView === 'notebook'}>
           <NotebookView
             items={notebookItems}

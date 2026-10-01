@@ -34,9 +34,13 @@ export class ErrorBoundary extends React.Component<
     return { hasError: true, error };
   }
 
+  private recoverButton = React.createRef<HTMLButtonElement>();
+
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Caught render error:', error, info.componentStack);
     if (this.props.variant === 'overlay' && isChunkLoadError(error)) this.props.onReset?.();
+    // The full-screen fallback covers whatever had focus, so it takes focus itself.
+    if ((this.props.variant ?? 'fullscreen') === 'fullscreen') this.recoverButton.current?.focus({ preventScroll: true });
   }
 
   // Saves and sends what the app still holds first, when the app is still there to do it.
@@ -105,7 +109,7 @@ export class ErrorBoundary extends React.Component<
       return (
         <div className={this.props.variant === 'screen'
           ? 'h-full overflow-y-auto bg-slate-50 flex items-center justify-center p-6'
-          : 'fixed inset-0 bg-slate-50 flex items-center justify-center p-6'}>
+          : 'fixed inset-0 z-50 bg-slate-50 flex items-center justify-center p-6'}>
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 max-w-sm w-full text-center">
             <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -125,6 +129,7 @@ export class ErrorBoundary extends React.Component<
             )}
             <div className="flex gap-3">
               <button
+                ref={this.recoverButton}
                 onClick={this.handleRecover}
                 className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl transition-colors"
               >
