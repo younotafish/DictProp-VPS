@@ -627,112 +627,6 @@ function linkSentenceEnrichmentImage(
   return reference.changes > 0;
 }
 
-/**
- * Incremental, crash-resumable migration: pull base64 images out of items.data into
- * the item_images table. Invoked from index.ts AFTER serve() (in the background), NOT
- * at import — a synchronous pass over ~150MB would block the boot and the port would
- * never open. It yields to the event loop between batches so /api/health and reads stay
- * responsive while it runs; reads fall back to inline base64 for any not-yet-migrated row.
- *
- * - Resumable: "no rows still contain data:image/" IS the done-state (no flag needed).
- * - Forward-progress guaranteed: walks by rowid high-water mark, so it terminates
- *   even if a stray "data:image/" substring lingers in some non-image field.
- * - Atomic per batch: each batch inserts into item_images first, then strips the
- *   row's data, in one transaction — a crash leaves the row fully migrated or untouched.
- * - Bounded memory: small batches keep peak RSS low on the 1GB VPS. No VACUUM.
- */
-export async function migrateInlineImages() {
-  const BATCH = 20;
-  const selectBatch = db.prepare(
-    `SELECT rowid AS rid, id, data, user_id FROM items
-     WHERE rowid > ? AND data LIKE '%data:image/%' ORDER BY rowid LIMIT ${BATCH}`
-  );
-  const updateData = db.prepare(`UPDATE items SET data = ? WHERE rowid = ?`);
-
-  const runBatch = db.transaction((rows: Array<{ rid: number; id: string; data: string; user_id: string | null }>) => {
-    let imagesInBatch = 0;
-    const now = Date.now();
-    for (const row of rows) {
-      let data: any;
-      try { data = JSON.parse(row.data); } catch { continue; } // skip unparseable rows
-
-      const images: Array<{ id: string; data: string }> = [];
-      if (typeof data.imageUrl === 'string' && data.imageUrl.startsWith('data:image/')) {
-        if (data.id) images.push({ id: data.id, data: data.imageUrl });
-        delete data.imageUrl;
-      }
-      if (Array.isArray(data.vocabs)) {
-        for (const v of data.vocabs) {
-          if (v && typeof v.imageUrl === 'string' && v.imageUrl.startsWith('data:image/')) {
-            if (v.id) images.push({ id: v.id, data: v.imageUrl });
-            delete v.imageUrl;
-          }
-        }
-      }
-
-      if (images.length === 0) continue; // LIKE matched a stray substring — leave row as-is
-      // Insert images FIRST, then rewrite the (now image-free) row.
-      for (const img of images) {
-        storeImage(img.id, row.user_id, img.data, now);
-      }
-      updateData.run(JSON.stringify(data), row.rid);
-      imagesInBatch += images.length;
-    }
-    return imagesInBatch;
-  });
-
-  let mark = 0;
-  let totalRows = 0;
-  let totalImages = 0;
-  for (;;) {
-    // Yield to the event loop before each batch so the server stays responsive
-    // (the port is already open; health checks and reads run in these gaps).
-    await new Promise((r) => setTimeout(r, 0));
-    const rows = selectBatch.all(mark) as Array<{ rid: number; id: string; data: string; user_id: string | null }>;
-    if (rows.length === 0) break;
-    totalImages += runBatch(rows);
-    totalRows += rows.length;
-    mark = rows[rows.length - 1].rid;
-    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* best-effort */ }
-  }
-  if (totalImages > 0) {
-    console.log(`[migrate] item_images: extracted ${totalImages} inline image(s) from ${totalRows} row(s)`);
-  }
-
-  // Convert legacy base64 rows to shared binary blobs in small resumable batches.
-  // Existing rows remain readable throughout; content_hash is the completion marker.
-  const legacyBatch = db.prepare(`SELECT rowid AS rid, id, user_id, data FROM item_images
-    WHERE rowid > ? AND content_hash IS NULL ORDER BY rowid LIMIT 50`);
-  const convertLegacyBatch = db.transaction((rows: Array<{
-    rid: number; id: string; user_id: string | null; data: string | Buffer;
-  }>) => {
-    let count = 0;
-    for (const row of rows) {
-      if (typeof row.data === 'string' && storeImage(row.id, row.user_id, row.data, Date.now())) count++;
-    }
-    return count;
-  });
-  let imageMark = 0;
-  let converted = 0;
-  let convertedSinceCheckpoint = 0;
-  for (;;) {
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const rows = legacyBatch.all(imageMark) as Array<{
-      rid: number; id: string; user_id: string | null; data: string | Buffer;
-    }>;
-    if (rows.length === 0) break;
-    const count = convertLegacyBatch(rows);
-    converted += count;
-    convertedSinceCheckpoint += count;
-    imageMark = rows[rows.length - 1].rid;
-    if (convertedSinceCheckpoint >= 500) {
-      try { db.pragma('wal_checkpoint(PASSIVE)'); } catch { /* best effort */ }
-      convertedSinceCheckpoint = 0;
-    }
-  }
-  if (converted > 0) console.log(`[migrate] item_images: converted ${converted} legacy image(s) to deduplicated blobs`);
-}
-
 // ─── User / Session prepared statements ───
 
 const userStmts = {
@@ -1221,8 +1115,12 @@ const applyReviewTransaction = db.transaction((
   incoming: ReviewEventRow,
   itemIds: string[],
   userId: string,
-  seededRevision: number | undefined,
+  seedItem: unknown,
 ): { applied: boolean; event: ReviewEventRow; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
+  let seededRevision: number | undefined;
+  if (seedItem !== undefined && !stmts.getByIdScoped.get(incoming.itemId, userId)) {
+    seededRevision = writeItem(seedItem, userId, {}).revision;
+  }
   const previous = reviewStmts.byId.get(incoming.id) as any;
   if (previous) {
     if (previous.user_id !== userId) throw new Error('Review event id belongs to another user');
@@ -1320,15 +1218,18 @@ const applyReviewTransaction = db.transaction((
   return { applied: true, event, itemIds: rows.map(row => row.id), baseRevisions };
 });
 
-/** `seededRevision` is the revision of the review's own seed item, when the request just stored one. */
+/**
+ * `seedItem` is the reviewing client's copy of the reviewed item, stored only when the server holds no item
+ * with that id. It commits in the review's transaction, so a failed review leaves no seed behind.
+ */
 export function applyReviewEvent(
   event: ReviewEventRow,
   itemIds: string[],
   userId: string,
-  seededRevision?: number,
+  seedItem?: unknown,
 ): AppliedReviewResult | null {
   const uniqueIds = Array.from(new Set([event.itemId, ...itemIds])).slice(0, 100);
-  const result = applyReviewTransaction(event, uniqueIds, userId, seededRevision);
+  const result = applyReviewTransaction(event, uniqueIds, userId, seedItem);
   if (!result) return null;
   return {
     applied: result.applied,
@@ -1344,6 +1245,22 @@ export interface UndoneReviewResult {
   items: any[];
   /** Each item's revision before the undo, as AppliedReviewResult reports it for a review. */
   baseRevisions: Record<string, number>;
+}
+
+function sortedKeys(value: any): any {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, sortedKeys(value[key])]));
+}
+
+// A device that pushes the reviewed item back can store the same schedule with its keys in another order.
+function sameSrs(stored: string, applied: string): boolean {
+  if (stored === applied) return true;
+  try {
+    return JSON.stringify(sortedKeys(JSON.parse(stored))) === JSON.stringify(sortedKeys(JSON.parse(applied)));
+  } catch {
+    return false;
+  }
 }
 
 const undoReviewTransaction = db.transaction((
@@ -1363,7 +1280,7 @@ const undoReviewTransaction = db.transaction((
   const baseRevisions: Record<string, number> = {};
   for (const snapshot of snapshots) {
     const row = stmts.getByIdScoped.get(snapshot.item_id, userId) as ItemRow | undefined;
-    if (!row || row.is_deleted === 1 || row.srs !== snapshot.applied_srs) {
+    if (!row || row.is_deleted === 1 || !sameSrs(row.srs, snapshot.applied_srs)) {
       throw new Error('Review is no longer the latest change for this item');
     }
     baseRevisions[snapshot.item_id] = row.revision;

@@ -21,8 +21,23 @@ const bundle = JSON.parse(readFileSync(resolvedManifest, 'utf8')) as SentenceEnr
 const validationError = validateSentenceEnrichmentBundle(bundle);
 if (validationError) throw new Error(validationError);
 
+function readBundleImage(path: string): { image: Buffer; mimeType: string } | { error: string } {
+  let image: Buffer;
+  try {
+    image = readFileSync(path);
+  } catch (error) {
+    return { error: `image is unreadable (${(error as NodeJS.ErrnoException).code ?? 'error'})` };
+  }
+  if (image.length === 0 || image.length > 10 * 1024 * 1024) return { error: 'image size is invalid' };
+  const mimeType = detectImageMimeType(image);
+  return mimeType ? { image, mimeType } : { error: 'image format is invalid' };
+}
+
 const bundleRoot = dirname(resolvedManifest);
 const prepared: SentenceEnrichmentImportRecord[] = [];
+// A bad image costs only itself: its sentence's analysis still imports, and an image the sentence already
+// has stays. A path outside the bundle is a broken bundle, though, and stops the import.
+const imageErrors: Array<{ id: string; error: string }> = [];
 for (const entry of bundle.entries) {
   if (!entry.imageFile) {
     prepared.push({ entry });
@@ -30,11 +45,13 @@ for (const entry of bundle.entries) {
   }
   const imagePath = resolve(bundleRoot, entry.imageFile);
   if (!imagePath.startsWith(`${bundleRoot}${sep}`)) throw new Error(`${entry.id}: image path escapes bundle root`);
-  const image = readFileSync(imagePath);
-  if (image.length === 0 || image.length > 10 * 1024 * 1024) throw new Error(`${entry.id}: image size is invalid`);
-  const mimeType = detectImageMimeType(image);
-  if (!mimeType) throw new Error(`${entry.id}: image format is invalid`);
-  prepared.push({ entry, image, mimeType });
+  const image = readBundleImage(imagePath);
+  if ('error' in image) {
+    imageErrors.push({ id: entry.id, error: image.error });
+    prepared.push({ entry });
+    continue;
+  }
+  prepared.push({ entry, ...image });
 }
 
 const backup = await backupBeforeWrite('sentence-enrichments');
@@ -45,6 +62,8 @@ const result = {
   unchanged: 0,
   stale: 0,
   imageBlobsAdded: 0,
+  imagesSkipped: imageErrors.length,
+  imageErrors: imageErrors.slice(0, 50),
   before: getSentenceEnrichmentCount(),
   after: 0,
 };

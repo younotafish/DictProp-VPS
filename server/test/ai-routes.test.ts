@@ -113,13 +113,13 @@ test('a card that never passes is dropped and its valid sibling is still returne
   assert.equal(h.requests.length, 3); // the answer plus two repair rounds
 });
 
-test('cards are returned with schema fields only, and a short register label passes', async () => {
+test('cards are returned with schema fields only, and a short register label is dropped without a retry', async () => {
   const h = harness([reply({ query: 'bank', vocabs: [card({ register: 'formal', advancedEnrichment: { v: 9 } })] })]);
   const response = await h.post('/analyze', { text: 'bank' });
   assert.equal(response.status, 200);
   const body = await response.json() as any;
   assert.equal(body.vocabs.length, 1);
-  assert.equal(body.vocabs[0].register, 'formal');
+  assert.equal(body.vocabs[0].register, '');
   assert.equal('advancedEnrichment' in body.vocabs[0], false);
   assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].body.max_tokens, 16_000);

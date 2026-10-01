@@ -5,6 +5,7 @@
  * every caller's own deadline.
  */
 import { Agent, ProxyAgent, fetch as undiciFetch } from 'undici';
+import type { LookupFunction } from 'net';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -118,9 +119,18 @@ export const NATIVE_HEADERS_TIMEOUT_MS = 11 * 60_000;
 export const NATIVE_BODY_TIMEOUT_MS = 11 * 60_000;
 
 let directAgent: Agent | undefined;
-function getDirectAgent(): Agent {
-  directAgent ??= new Agent({ headersTimeout: NATIVE_HEADERS_TIMEOUT_MS, bodyTimeout: NATIVE_BODY_TIMEOUT_MS });
-  return directAgent;
+const lookupAgents = new WeakMap<LookupFunction, Agent>();
+function getDirectAgent(lookup?: LookupFunction): Agent {
+  if (!lookup) {
+    directAgent ??= new Agent({ headersTimeout: NATIVE_HEADERS_TIMEOUT_MS, bodyTimeout: NATIVE_BODY_TIMEOUT_MS });
+    return directAgent;
+  }
+  let agent = lookupAgents.get(lookup);
+  if (!agent) {
+    agent = new Agent({ headersTimeout: NATIVE_HEADERS_TIMEOUT_MS, bodyTimeout: NATIVE_BODY_TIMEOUT_MS, connect: { lookup } });
+    lookupAgents.set(lookup, agent);
+  }
+  return agent;
 }
 
 /**
@@ -136,7 +146,12 @@ export async function encodeFormDataBody(options: RequestInit): Promise<RequestI
   return { ...options, headers, body: new Uint8Array(await encoded.arrayBuffer()) };
 }
 
-export async function proxyFetch(url: string, options: RequestInit = {}): Promise<Response> {
+export interface DirectConnectOptions {
+  /** Resolves host names for direct connections. Through a proxy (local development only) the proxy resolves them. */
+  lookup?: LookupFunction;
+}
+
+export async function proxyFetch(url: string, options: RequestInit = {}, direct: DirectConnectOptions = {}): Promise<Response> {
   if (dispatcher) {
     // undici's ProxyAgent can stall on the large JSON/base64 request bodies used by comparison
     // and word alignment. Keep that transport detail inside this one outbound HTTP boundary.
@@ -146,5 +161,5 @@ export async function proxyFetch(url: string, options: RequestInit = {}): Promis
     // undici fetch with proxy dispatcher
     return await undiciFetch(url, { ...(await encodeFormDataBody(options)), dispatcher } as any) as unknown as Response;
   }
-  return await undiciFetch(url, { ...(await encodeFormDataBody(options)), dispatcher: getDirectAgent() } as any) as unknown as Response;
+  return await undiciFetch(url, { ...(await encodeFormDataBody(options)), dispatcher: getDirectAgent(direct.lookup) } as any) as unknown as Response;
 }

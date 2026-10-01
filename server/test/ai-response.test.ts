@@ -7,11 +7,11 @@ import {
   isValidGeneratedExample,
   isValidGeneratedExampleSet,
   isValidUsageAudit,
-  LIVE_REGISTER_MINIMUM,
   normalizeAnalysisResponse,
   normalizeVocabCard,
   repairGeneratedExample,
   repairIpa,
+  REGISTER_MINIMUM,
   vocabValidationIssues,
 } from '../src/ai-response.js';
 
@@ -198,13 +198,17 @@ test('only schema fields survive normalization, so a stray key cannot spoof a pi
   ]);
 });
 
-test('live analysis accepts a short register label while stored-corpus checks keep 10 characters', () => {
+test('a register label shorter than 10 characters is dropped; live analysis accepts the card without one', () => {
   const card = normalizeVocabCard(completeCard({ register: 'formal' }), 'bank', 1234);
-  assert.equal(LIVE_REGISTER_MINIMUM, 3);
-  assert.deepEqual(vocabValidationIssues(card, { registerMinimum: LIVE_REGISTER_MINIMUM }), []);
+  assert.equal(REGISTER_MINIMUM, 10);
+  assert.equal(card.register, '');
+  assert.deepEqual(vocabValidationIssues(card, { optionalRegister: true }), []);
   assert.deepEqual(vocabValidationIssues(card), ['"register" must be a string of at least 10 characters']);
   assert.equal(hasCompleteGeneratedVocabMetadata(card), false);
-  assert.equal(hasCompleteGeneratedVocabMetadata(card, { registerMinimum: LIVE_REGISTER_MINIMUM }), true);
+  assert.equal(hasCompleteGeneratedVocabMetadata(card, { optionalRegister: true }), true);
+  // A note that is present still has to be a real one.
+  assert.deepEqual(vocabValidationIssues({ ...card, register: 'formal' }, { optionalRegister: true }),
+    ['"register" must be a string of at least 10 characters']);
 });
 
 test('validation issues name every failing field of a card', () => {

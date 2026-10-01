@@ -15,7 +15,6 @@ import {
   type FetchLike,
 } from '../ai-client.js';
 import {
-  LIVE_REGISTER_MINIMUM,
   normalizeAnalysisResponse,
   normalizeVocabCard,
   sortVocabsByUsage,
@@ -55,6 +54,8 @@ const MAX_REPAIR_ROUNDS = 2;
 const MIN_REPAIR_WINDOW_MS = 20_000;
 
 const MAX_EXTRACTED_WORDS = 12;
+// A headword with more meanings gets its most useful ones: a longer answer is slow and risks being cut off.
+const MAX_CARDS_PER_HEADWORD = 8;
 const DEEPINFRA_WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo';
 
 // ============================================================================
@@ -167,6 +168,8 @@ CRITICAL - WHICH MEANINGS TO INCLUDE AND HOW TO ORDER THEM:
 Create a SEPARATE vocab card for every distinct, established dictionary meaning of the headword,
 including British-only, rare/dated, and genuinely specialized meanings. This makes the result
 future-proof: never silently omit an established sense merely because it is low priority.
+Give at most ${MAX_CARDS_PER_HEADWORD} cards: if the headword has more distinct meanings, keep the
+${MAX_CARDS_PER_HEADWORD} most useful, in the order described below.
 - Different parts of speech = different cards (noun vs verb vs adjective)
 - Different literal vs figurative meanings = different cards
 - Merge tiny dictionary sub-senses that have essentially the same definition and usage; do not
@@ -244,7 +247,8 @@ Keep the form as given when it is its own dictionary entry ("glasses", "manners"
 The 'word' field should contain the BASE FORM.
 
 CRITICAL - WHICH MEANINGS TO INCLUDE:
-Create SEPARATE vocab cards for every distinct, established meaning of the word/phrase AS A WHOLE.
+Create SEPARATE vocab cards for every distinct, established meaning of the word/phrase AS A WHOLE,
+at most ${MAX_CARDS_PER_HEADWORD}: if it has more distinct meanings, keep the ${MAX_CARDS_PER_HEADWORD} most useful.
 - Different parts of speech = different cards
 - Literal vs figurative = different cards
 Include and accurately label British-only, rare/dated, and specialized senses; put them after
@@ -312,7 +316,7 @@ Once a word/phrase is selected for extraction, include every distinct establishe
 SEPARATE vocab card — not only the one used in the sentence context. Include British-only,
 rare/dated, and specialized senses, classify each exact sense with the mandatory usageAudit,
 and put the most common/useful modern American meanings first. Don't split one meaning into
-near-identical cards.
+near-identical cards. Give at most ${MAX_CARDS_PER_HEADWORD} cards for any one word/phrase, keeping the most useful.
 
 Example: If extracting "zest" from a cooking sentence:
 - Card 1: zest (noun: culinary) - "The outer peel of citrus fruit..."
@@ -468,7 +472,8 @@ const TRUNCATION_FEEDBACK = `
 
 Your previous answer was too long and was cut off before it finished. Answer again more compactly: keep every
 field brief (a definition of at most 25 words, a history of at most 2 sentences, a one-sentence register note,
-short examples), merge near-duplicate senses, and if the item has more than 8 distinct meanings, give the 8 most useful.`;
+short examples), merge near-duplicate senses, and if the item has more than ${MAX_CARDS_PER_HEADWORD} distinct meanings, give the
+${MAX_CARDS_PER_HEADWORD} most useful.`;
 
 // ============================================================================
 // Helper functions
@@ -555,8 +560,9 @@ export function sanitizeDetectedWords(value: unknown): DetectedWord[] {
 const cardKey = (card: any): string =>
   `${trimmedString(card?.word).toLowerCase()}|${trimmedString(card?.sense).toLowerCase()}`;
 
-// Live searches accept a short register label; every other field keeps the stored-corpus minimums.
-const liveIssues = (card: unknown): string[] => vocabValidationIssues(card, { registerMinimum: LIVE_REGISTER_MINIMUM });
+// A live card may go without a register note (normalization drops one under the stored-corpus minimum and
+// the local cycle writes it later); every other field keeps the stored-corpus minimums.
+const liveIssues = (card: unknown): string[] => vocabValidationIssues(card, { optionalRegister: true });
 
 interface CardSlot {
   card: any;
@@ -621,7 +627,10 @@ async function repairCards(
   return { fixed, stillFailing };
 }
 
-/** The model's order (repaired cards in their original places), one card per word and sense, sorted by usage. */
+/**
+ * The model's order (repaired cards in their original places), one card per word and sense, sorted by usage,
+ * and at most MAX_CARDS_PER_HEADWORD for any one headword.
+ */
 function finalizeCards(slots: CardSlot[]): any[] {
   const seen = new Set<string>();
   const cards = [...slots].sort((a, b) => a.index - b.index).map(slot => slot.card).filter(card => {
@@ -630,7 +639,13 @@ function finalizeCards(slots: CardSlot[]): any[] {
     seen.add(key);
     return true;
   });
-  return sortVocabsByUsage(cards);
+  const perHeadword = new Map<string, number>();
+  return sortVocabsByUsage(cards).filter(card => {
+    const headword = trimmedString(card?.word).toLowerCase();
+    const count = (perHeadword.get(headword) ?? 0) + 1;
+    perHeadword.set(headword, count);
+    return count <= MAX_CARDS_PER_HEADWORD;
+  });
 }
 
 function reaskFeedback(isWord: boolean, inputCards: number, issues: string[]): string {

@@ -4,6 +4,7 @@ import {
   type JSONWebKeySet,
   type JWTPayload,
 } from 'jose';
+import { createHash, randomBytes } from 'crypto';
 import { proxyFetch } from './proxy-fetch.js';
 
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
@@ -79,4 +80,13 @@ export async function verifyGoogleIdToken(idToken: string, audience: string): Pr
       throw error;
     }
   }
+}
+
+/**
+ * A PKCE (S256) pair: the login sends the challenge, the token exchange the verifier, so an intercepted
+ * authorization code is useless without the verifier kept in the sign-in cookie.
+ */
+export function createPkcePair(): { verifier: string; challenge: string } {
+  const verifier = randomBytes(32).toString('base64url');
+  return { verifier, challenge: createHash('sha256').update(verifier).digest('base64url') };
 }

@@ -2,11 +2,10 @@ import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
 import { db, getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImageBinary, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
-import { proxyFetch } from '../proxy-fetch.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
 import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
-import { resolvePublicHttpUrl } from '../safe-url.js';
+import { fetchPublicHttpUrl } from '../safe-url.js';
 import { sentenceLookupHash } from '../sentence-enrichment.js';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -44,18 +43,11 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
   try {
-    let current = url;
-    let response: Response | null = null;
-    for (let redirects = 0; redirects <= 3; redirects++) {
-      const parsed = await resolvePublicHttpUrl(current);
-      response = await proxyFetch(parsed.toString(), { signal: controller.signal, redirect: 'manual' });
-      if (![301, 302, 303, 307, 308].includes(response.status)) break;
-      const location = response.headers.get('location');
+    const response = await fetchPublicHttpUrl(url, { signal: controller.signal });
+    if (!response.ok) {
       await response.body?.cancel();
-      if (!location || redirects === 3) return undefined;
-      current = new URL(location, parsed).toString();
+      return undefined;
     }
-    if (!response?.ok) return undefined;
     const declaredLength = Number(response.headers.get('content-length') || '0');
     if (declaredLength > MAX_IMAGE_BYTES) return undefined;
     const bytes = await readLimitedBody(response, MAX_IMAGE_BYTES);
@@ -492,14 +484,10 @@ itemsRoutes.post('/reviews/apply', async (c) => {
   }
   try {
     // A review can reach the server before its item: an implicit catalog sentence on its first review, or an
-    // item whose first push hasn't landed. Seed the base item before applying the idempotent event so an
-    // offline/retried review cannot race the ordinary item sync or advance the schedule twice. Existing
-    // items always win; the seed is used only for a genuinely absent id.
-    let seededRevision: number | undefined;
-    if (seedItem !== undefined && !getItemById(event.itemId, userId, false)) {
-      seededRevision = upsertItem(seedItem, userId).revision;
-    }
-    const result = applyReviewEvent(event, itemIds, userId, seededRevision);
+    // item whose first push hasn't landed. The seed is stored in the review's own transaction, so an
+    // offline/retried review cannot race the ordinary item sync or an importer, or advance the schedule twice.
+    // Existing items always win; the seed is used only for a genuinely absent id.
+    const result = applyReviewEvent(event, itemIds, userId, seedItem);
     if (!result) return c.json({ error: 'Review item not found' }, 404);
     return c.json(result, result.applied ? 201 : 200);
   } catch (error) {

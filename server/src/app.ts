@@ -9,7 +9,8 @@ import { randomUUID } from 'crypto';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { requireAuth, type AuthVariables } from './middleware/auth.js';
-import { createConcurrencyLimit, createRateLimit } from './middleware/runtime.js';
+import { createClientRateLimit, createConcurrencyLimit, createRateLimit } from './middleware/runtime.js';
+import { CANONICAL_ORIGIN, isWwwHost, requestedHost } from './canonical-host.js';
 import { isDatabaseReady } from './db.js';
 import { env } from './env.js';
 import { aiRoutes } from './routes/ai.js';
@@ -87,6 +88,12 @@ export function createApp(options: AppOptions = {}) {
       workerSrc: ["'self'", 'blob:'],
     },
   }));
+  // The gate answers Caddy's forward_auth subrequest, whose path isn't the visitor's: it redirects www itself.
+  app.use('*', async (c, next) => {
+    if (c.req.path === '/api/auth/gate' || !isWwwHost(requestedHost(c.req))) return next();
+    const url = new URL(c.req.url);
+    return c.redirect(`${CANONICAL_ORIGIN}${url.pathname}${url.search}`, 308);
+  });
   app.use('*', cors({
     origin: ALLOWED_ORIGINS,
     credentials: true,
@@ -137,6 +144,9 @@ export function createApp(options: AppOptions = {}) {
     onError: c => c.json({ error: 'Import is too large' }, 413),
   }));
 
+  // Sign-in runs before there is a user to key a limit on, so these count per client address.
+  app.use('/api/auth/login', createClientRateLimit(20, 60_000));
+  app.use('/api/auth/callback', createClientRateLimit(10, 60_000));
   app.route('/api/auth', authRoutes);
   app.use('/api/*', requireAuth);
   // Model requests are remote I/O. Let the configured providers own capacity instead of rejecting or

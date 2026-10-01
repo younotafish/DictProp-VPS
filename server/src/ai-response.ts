@@ -113,24 +113,27 @@ export function exampleSetIssues(value: unknown): string[] {
 }
 
 export interface VocabValidationOptions {
-  /** Minimum register-note length. Stored-corpus checks keep 10; live analysis accepts a short label. */
-  registerMinimum?: number;
+  /** Live analysis accepts a card without a register note; stored-corpus checks require one. */
+  optionalRegister?: boolean;
 }
 
-/** Live searches accept a short register label ("formal", "slang"); the local enrichment cycle lengthens it later. */
-export const LIVE_REGISTER_MINIMUM = 3;
+/**
+ * The shortest register note a card keeps, the same as scripts/offline/vocab-card-contract.mjs requires of
+ * the stored corpus. Normalization drops a shorter label ("formal"), and the local cycle writes a full note.
+ */
+export const REGISTER_MINIMUM = 10;
 
 const FIELD_MINIMUMS = [
   ['word', 1], ['sense', 3], ['chinese', 1], ['definition', 10], ['history', 20],
-  ['register', 10], ['mnemonic', 10], ['imagePrompt', 50],
+  ['register', REGISTER_MINIMUM], ['mnemonic', 10], ['imagePrompt', 50],
 ] as const;
 
 function metadataIssues(value: unknown, options: VocabValidationOptions): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['the card must be a JSON object'];
   const vocab = value as any;
   const issues: string[] = [];
-  for (const [field, defaultMinimum] of FIELD_MINIMUMS) {
-    const minimum = field === 'register' ? options.registerMinimum ?? defaultMinimum : defaultMinimum;
+  for (const [field, minimum] of FIELD_MINIMUMS) {
+    if (field === 'register' && options.optionalRegister && vocab.register === '') continue;
     if (typeof vocab[field] !== 'string' || vocab[field].trim().length < minimum) {
       issues.push(`"${field}" must be a string of at least ${minimum} characters`);
     }
@@ -323,7 +326,8 @@ export function normalizeVocabCard(raw: unknown, fallbackWord: string, auditedAt
   if (!word || !definition) return null;
 
   const forms = stringArray(source.forms);
-  const register = stringValue(source.register ?? source.usageNote);
+  const registerNote = stringValue(source.register ?? source.usageNote);
+  const register = registerNote.length >= REGISTER_MINIMUM ? registerNote : '';
   return {
     word,
     sense: stringValue(source.sense ?? source.senseLabel ?? source.partOfSpeech ?? source.part_of_speech, 'general meaning'),
@@ -342,7 +346,7 @@ export function normalizeVocabCard(raw: unknown, fallbackWord: string, auditedAt
     register,
     mnemonic: stringValue(source.mnemonic ?? source.memoryAid),
     imagePrompt: stringValue(source.imagePrompt ?? source.image_prompt),
-    usageAudit: normalizeUsageAudit(source.usageAudit ?? source.usage ?? source.usageLabel, register, auditedAt),
+    usageAudit: normalizeUsageAudit(source.usageAudit ?? source.usage ?? source.usageLabel, registerNote, auditedAt),
   };
 }
 

@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve, sep } from 'node:path';
@@ -59,6 +62,41 @@ function probeDuration(path: string): number {
   return duration;
 }
 
+function syncDirectory(path: string): void {
+  try {
+    const fd = openSync(path, 'r');
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+  } catch {
+    // Not every platform can sync a directory; the files themselves are already synced.
+  }
+}
+
+// A file lands whole or not at all: it is written and synced under a temp name in its own directory, then
+// renamed over the final name. The temp name carries the pid, so concurrent imports never share one.
+function installFile(target: string, bytes: Buffer): void {
+  const temp = `${target}.${process.pid}.importing`;
+  rmSync(`${target}.importing`, { force: true }); // left by an import from before the pid was in the name
+  try {
+    const fd = openSync(temp, 'w');
+    try {
+      writeFileSync(fd, bytes);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temp, target);
+  } finally {
+    rmSync(temp, { force: true });
+  }
+  syncDirectory(dirname(target));
+}
+
+// An existing file is either this entry's own bytes (an earlier run got that far) or a different clip.
+function installedState(path: string, expectedSha256: string): 'missing' | 'same' | 'different' {
+  if (!existsSync(path)) return 'missing';
+  return sha256(readFileSync(path)) === expectedSha256 ? 'same' : 'different';
+}
+
 const result = { total: bundle.entries.length, imported: 0, skipped: 0, errors: [] as Array<{ key: string; error: string }> };
 
 for (const entry of bundle.entries) {
@@ -79,24 +117,17 @@ for (const entry of bundle.entries) {
     const targetTimings = `${targetAudio}.json`;
     mkdirSync(targetDir, { recursive: true });
 
-    if (existsSync(targetAudio) || existsSync(targetTimings)) {
-      const sameAudio = existsSync(targetAudio) && sha256(readFileSync(targetAudio)) === entry.audioSha256;
-      const sameTimings = existsSync(targetTimings) && sha256(readFileSync(targetTimings)) === entry.timingsSha256;
-      if (sameAudio && sameTimings) { result.skipped++; continue; }
+    const audioState = installedState(targetAudio, entry.audioSha256);
+    const timingsState = installedState(targetTimings, entry.timingsSha256);
+    if (audioState === 'different' || timingsState === 'different') {
       throw new Error('immutable cache key already contains different content; publish a new voice version');
     }
+    if (audioState === 'same' && timingsState === 'same') { result.skipped++; continue; }
 
-    const tempAudio = `${targetAudio}.importing`;
-    const tempTimings = `${targetTimings}.importing`;
-    try {
-      copyFileSync(audioPath, tempAudio);
-      copyFileSync(timingsPath, tempTimings);
-      renameSync(tempAudio, targetAudio);
-      renameSync(tempTimings, targetTimings);
-    } finally {
-      rmSync(tempAudio, { force: true });
-      rmSync(tempTimings, { force: true });
-    }
+    // Timings go first. The server serves no clip without audio, but it aligns timings of its own for audio
+    // that has none, so audio arriving first could race the import's timings. A re-run finishes either half.
+    if (timingsState === 'missing') installFile(targetTimings, timings);
+    if (audioState === 'missing') installFile(targetAudio, audio);
     result.imported++;
   } catch (error) {
     result.errors.push({ key: entry.key, error: error instanceof Error ? error.message : String(error) });
