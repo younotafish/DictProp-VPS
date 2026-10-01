@@ -37,11 +37,11 @@ DictProp is an AI-powered vocabulary learning web app for English learners. User
 # 2. Commit and push:
 git add <files> && git commit -m "description" && git push vps main
 
-# 3. GitHub Actions automatically:
-#    - SSHs into VPS
-#    - git pull
-#    - docker compose up -d --build (multi-stage Dockerfile builds everything)
-#    - ~5 minutes to complete
+# 3. GitHub Actions (.github/workflows/deploy.yml) runs three jobs, ~5 minutes in all:
+#    - verify: npm run check
+#    - build-image: builds the multi-stage Dockerfile and pushes ghcr.io/younotafish/dictprop-vps:<sha>
+#    - deploy: SSHs into the VPS (host key pinned), backs up the database, pulls that image and swaps it in;
+#      if the new container fails its health check, the previous image comes back
 ```
 
 To check deploy status:
@@ -196,6 +196,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 - Auto-provisions Let's Encrypt certificates
 - If cert fails, clear stale state: `caddy stop && rm -rf /var/lib/caddy/.local/share/certmagic && systemctl start caddy`
 - Caddyfile must NOT have leading whitespace in domain names (heredoc indentation can cause `eof` identifier errors)
+- `www.dictprop.online` reaches the app, which redirects it to the apex with a 308 (`server/src/canonical-host.ts`), so sign-in cookies live on one origin
 
 ## Environment
 
