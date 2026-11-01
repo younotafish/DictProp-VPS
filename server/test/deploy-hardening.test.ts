@@ -34,6 +34,7 @@ const productionWorkflows = [
   'diagnose-production.yml',
   'deploy-nz-japan.yml',
   'deploy-lake-loop.yml',
+  'deploy-sd-cards.yml',
 ];
 const hasPython = spawnSync('python3', ['--version']).status === 0;
 /** ssh runs a remote script in root's login shell on the VPS, which is zsh, so these tests run it there too.
@@ -197,10 +198,11 @@ test('no workflow carries a bcrypt hash, and nz-japan takes its hash from a secr
   assert.match(configure, /^ {10}envs: NZ_JAPAN_BASIC_AUTH_HASH$/m);
 });
 
-test('both trip sites send a content security policy and check for it after the reload', () => {
+test('every private static site sends a content security policy and checks for it after the reload', () => {
   for (const [name, inputs] of [
     ['deploy-nz-japan.yml', ['asset_id', 'archive_sha256']],
     ['deploy-lake-loop.yml', ['archive_b64']],
+    ['deploy-sd-cards.yml', ['asset_id', 'archive_sha256']],
   ] as const) {
     const text = workflow(name);
     const csp = /^\s+csp="(.*)"$/m.exec(text)?.[1];
@@ -547,6 +549,38 @@ test('nz-japan uploads only when given both archive inputs, and checks the hash 
   }
 });
 
+test('the SD cards upload only when given both archive inputs', () => {
+  const step = steps(workflow('deploy-sd-cards.yml')).find(text => /\n\s+id: mode\n/.test(text));
+  assert.ok(step);
+  const script = block(step, 'run');
+  const dir = scratch();
+  try {
+    const mode = (variables: Record<string, string>) => {
+      const output = join(dir, 'output');
+      writeFileSync(output, '');
+      const result = spawnSync('bash', ['-c', script], {
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH, GITHUB_OUTPUT: output, ASSET_ID: '', ARCHIVE_SHA256: '', ...variables },
+      });
+      return { status: result.status, output: readFileSync(output, 'utf8') };
+    };
+    const sha256 = 'aB'.repeat(32);
+    assert.deepEqual(mode({}), { status: 0, output: 'upload=false\n' });
+    assert.deepEqual(mode({ ASSET_ID: '301234567', ARCHIVE_SHA256: sha256 }), { status: 0, output: 'upload=true\n' });
+    const refused: Record<string, string>[] = [
+      { ASSET_ID: '301234567' },
+      { ARCHIVE_SHA256: sha256 },
+      { ASSET_ID: '../301234567', ARCHIVE_SHA256: sha256 },
+      { ASSET_ID: '301234567', ARCHIVE_SHA256: sha256.slice(1) },
+    ];
+    for (const inputs of refused) {
+      assert.deepEqual(mode(inputs), { status: 1, output: '' }, JSON.stringify(inputs));
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 interface RouteOptions {
   hash?: string;
   status: string;
@@ -663,4 +697,23 @@ test("the Lake Loop route must answer its redirect with its own policy, not only
   assert.ok(deployed.after.includes(`Content-Security-Policy "${deployed.csp}"`));
   assert.match(deployed.csp, /; img-src 'self' data:;/);
   assert.notEqual(configureTripRoute('deploy-lake-loop.yml', { ...options, omitRouteCsp: true }).status, 0);
+});
+
+test('the SD cards route sends sign-in back to the cards and answers its redirect with its own policy', t => {
+  if (!hasPython) return t.skip('python3 is not installed');
+  const options = {
+    status: '302',
+    location: '/api/auth/login?returnTo=%2Fsd-cards%2F',
+    appCsp: "default-src 'self'; base-uri 'self'; object-src 'none'",
+  };
+  const deployed = configureTripRoute('deploy-sd-cards.yml', options);
+  assert.equal(deployed.status, 0, deployed.output);
+  assert.equal(deployed.after.split(deployed.marker).length, 2, 'the managed block is replaced, not duplicated');
+  assert.doesNotMatch(deployed.after, /earlier route/);
+  assert.match(deployed.after, /uri \/api\/auth\/gate\?returnTo=\/sd-cards\/\n/);
+  assert.ok(deployed.after.includes(`Content-Security-Policy "${deployed.csp}"`));
+  assert.match(deployed.after, /reverse_proxy localhost:3000/);
+  assert.notEqual(configureTripRoute('deploy-sd-cards.yml', { ...options, omitRouteCsp: true }).status, 0);
+  // Before the app lets sign-in return to the cards, the gate sends people to / instead: that is a failed deploy.
+  assert.notEqual(configureTripRoute('deploy-sd-cards.yml', { ...options, location: '/api/auth/login?returnTo=%2F' }).status, 0);
 });

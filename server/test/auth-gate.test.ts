@@ -48,6 +48,19 @@ test('trip gate accepts an active owner session', async () => {
   assert.equal(response.status, 204);
 });
 
+test('the gate sends anonymous visitors of the SD flashcards through Google login and back', async () => {
+  const response = await app.request(
+    'https://dictprop.online/api/auth/gate?returnTo=%2Fsd-cards%2F',
+  );
+
+  assert.equal(response.status, 302);
+  assert.equal(
+    response.headers.get('location'),
+    '/api/auth/login?returnTo=%2Fsd-cards%2F',
+  );
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+});
+
 test('trip gate refuses off-site return targets', async () => {
   const response = await app.request(
     'https://dictprop.online/api/auth/gate?returnTo=https%3A%2F%2Fevil.example%2F',

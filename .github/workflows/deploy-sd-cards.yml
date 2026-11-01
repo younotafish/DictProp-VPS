@@ -1,0 +1,193 @@
+name: Deploy SD Cards to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_id:
+        description: Release asset ID of the encrypted site archive; leave it and the SHA-256 empty to reapply only the Caddy route
+        required: false
+        default: ''
+        type: string
+      archive_sha256:
+        description: SHA-256 of the encrypted archive; leave it and the asset ID empty to reapply only the Caddy route
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # SHA-256 of the VPS's ECDSA host key, the key appleboy's Go SSH client negotiates. ssh-action and
+  # scp-action refuse a host presenting any other key. Read on the VPS and scanned from a runner on 2026-10-01.
+  VPS_SSH_FINGERPRINT: SHA256:cWQ58bKePv6GhjAw38ul5Xp0/CnivzcAF5G68MtSAZ0
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    steps:
+      - name: Check the inputs
+        id: mode
+        env:
+          ASSET_ID: ${{ inputs.asset_id }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+        run: |
+          set -euo pipefail
+          # Both archive inputs deploy a new site; neither reapplies only the Caddy route.
+          if [ -z "$ASSET_ID" ] && [ -z "$ARCHIVE_SHA256" ]; then
+            echo "No archive given, so only the Caddy route is reapplied"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$ASSET_ID" =~ ^[0-9]+$ && "$ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Give asset_id (a number) and archive_sha256 (64 hex digits) together, or leave both empty to reapply only the Caddy route"
+            exit 1
+          fi
+
+      - name: Download, decrypt and validate site archive
+        if: steps.mode.outputs.upload == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_ID: ${{ inputs.asset_id }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          ARCHIVE_KEY: ${{ secrets.SD_CARDS_ARCHIVE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$ASSET_ID"
+          test -n "$ARCHIVE_SHA256"
+          test -n "$ARCHIVE_KEY"
+
+          curl --fail --location --silent --show-error \
+            -H "Accept: application/octet-stream" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}" \
+            -o site.enc
+
+          echo "$ARCHIVE_SHA256  site.enc" | sha256sum --check --strict
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -pass env:ARCHIVE_KEY -in site.enc -out site.tar.gz
+
+          tar -tzf site.tar.gz > archive-list.txt
+          if grep -Eq '(^/|(^|/)\.\.(/|$))' archive-list.txt; then
+            echo "Unsafe path found in archive"
+            exit 1
+          fi
+
+          mkdir -p sd-cards-upload
+          tar -xzf site.tar.gz -C sd-cards-upload
+          if find sd-cards-upload -type l -print -quit | grep -q .; then
+            echo "Symbolic links are not allowed in the site archive"
+            exit 1
+          fi
+
+          for file in index.html styles.css app.js dg.js data.js rough.js favicon.svg; do
+            test -s "sd-cards-upload/$file"
+          done
+
+          find sd-cards-upload -mindepth 1 -maxdepth 1 -printf '%f\n' | sort > actual-top-level.txt
+          printf '%s\n' app.js data.js dg.js favicon.svg index.html rough.js styles.css | sort > expected-top-level.txt
+          diff -u expected-top-level.txt actual-top-level.txt
+
+      - name: Upload private static site
+        if: steps.mode.outputs.upload == 'true'
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
+          source: sd-cards-upload/*
+          target: /var/www/sd-cards
+          strip_components: 1
+          rm: true
+          overwrite: true
+
+      - name: Configure Google-protected Caddy route
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: 107.152.47.101
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
+          command_timeout: 3m
+          script: |
+            set -eu
+            test -s /var/www/sd-cards/index.html
+            chown -R root:root /var/www/sd-cards
+            find /var/www/sd-cards -type d -exec chmod 755 {} +
+            find /var/www/sd-cards -type f -exec chmod 644 {} +
+
+            # The cards load only their own files, plus data: images, and have no inline script or style, forms,
+            # frames or plugins.
+            csp="default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+            backup="/etc/caddy/Caddyfile.sd-cards.$(date -u +%Y%m%dT%H%M%SZ)"
+            cp /etc/caddy/Caddyfile "$backup"
+
+            CSP="$csp" python3 - <<'PY'
+            import os
+            from pathlib import Path
+            from string import Template
+
+            path = Path("/etc/caddy/Caddyfile")
+            text = path.read_text(encoding="utf-8")
+            begin = "# BEGIN MANAGED SD CARDS"
+            end = "# END MANAGED SD CARDS"
+
+            if begin in text:
+                prefix, remainder = text.split(begin, 1)
+                _, suffix = remainder.split(end, 1)
+                text = prefix.rstrip() + "\n" + suffix.lstrip("\n")
+
+            site = "dictprop.online, www.dictprop.online {"
+            if site not in text:
+                raise SystemExit("Expected dictprop.online Caddy site block not found")
+
+            # The cards are about 0.5 MB of text sent on every visit (no-store), so the route compresses them.
+            block = Template(r"""    # BEGIN MANAGED SD CARDS
+                @sd_cards_root path /sd-cards
+                redir @sd_cards_root /sd-cards/ 308
+
+                handle_path /sd-cards/* {
+                    forward_auth localhost:3000 {
+                        uri /api/auth/gate?returnTo=/sd-cards/
+                    }
+                    root * /var/www/sd-cards
+                    encode zstd gzip
+                    header {
+                        Content-Security-Policy "$csp"
+                        X-Content-Type-Options "nosniff"
+                        Referrer-Policy "no-referrer"
+                        Cache-Control "private, no-store"
+                        X-Robots-Tag "noindex, nofollow, noarchive"
+                    }
+                    file_server
+                }
+                # END MANAGED SD CARDS""").substitute(csp=os.environ["CSP"])
+
+            insert_at = text.index(site) + len(site)
+            text = text[:insert_at] + "\n" + block + text[insert_at:]
+            path.write_text(text, encoding="utf-8")
+            PY
+
+            if ! caddy fmt --overwrite /etc/caddy/Caddyfile \
+              || ! caddy validate --config /etc/caddy/Caddyfile; then
+              cp "$backup" /etc/caddy/Caddyfile
+              echo "Caddy validation failed; original configuration restored"
+              exit 1
+            fi
+
+            systemctl reload caddy
+            headers="$(mktemp)"
+            http_status="$(curl --max-time 10 -sS -D "$headers" -o /dev/null -w '%{http_code}' https://dictprop.online/sd-cards/)"
+            test "$http_status" = 302
+            # Signing in must come back to the cards, which needs the app's return-target allowlist to include them.
+            grep -Eiq '^location: /api/auth/login\?returnTo=%2Fsd-cards%2F' "$headers"
+            # The app's redirect brings its own policy too, so look for this route's exact one.
+            tr -d '\r' < "$headers" | grep -Fqix "content-security-policy: $csp"
+            echo "SD cards deployed and protected by Google login (HTTP $http_status without a session)"

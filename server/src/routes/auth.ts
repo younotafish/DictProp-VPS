@@ -195,13 +195,13 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     return c.redirect(returnTo);
   });
 
-  // GET /api/auth/gate — Caddy forward-auth endpoint for the private trip site
+  // GET /api/auth/gate — Caddy forward-auth endpoint for the private static sites (the trip site, the SD flashcards)
   authRoutes.get('/gate', (c) => {
     if (env.DEV_AUTH_BYPASS) return c.body(null, 204);
 
     const returnTo = sanitizeAuthReturnTo(c.req.query('returnTo'));
     if (isWwwHost(requestedHost(c.req))) {
-      // Caddy's handle_path strips the trip prefix from X-Forwarded-Uri; then the trip root is the way back.
+      // Caddy's handle_path strips the site prefix from X-Forwarded-Uri; then the site root is the way back.
       const forwardedUri = sanitizeAuthReturnTo(c.req.header('x-forwarded-uri'));
       c.header('Cache-Control', 'private, no-store');
       return c.redirect(`${CANONICAL_ORIGIN}${forwardedUri === '/' ? returnTo : forwardedUri}`, 308);

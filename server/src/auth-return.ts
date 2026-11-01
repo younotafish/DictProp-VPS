@@ -1,8 +1,9 @@
 const AUTH_RETURN_ORIGIN = 'https://dictprop.online';
-const LAKE_LOOP_ROOT = '/lake-loop-26';
+/** The private static sites behind Caddy's forward-auth gate: the trip site and the SD flashcards. */
+const PRIVATE_SITE_ROOTS = ['/lake-loop-26', '/sd-cards'];
 
 /**
- * Keep OAuth return targets on this origin and inside the private trip site.
+ * Keep OAuth return targets on this origin and inside one of the private static sites.
  * The main DictProp client continues to use the default `/` target.
  */
 export function sanitizeAuthReturnTo(value: string | null | undefined): string {
@@ -16,7 +17,8 @@ export function sanitizeAuthReturnTo(value: string | null | undefined): string {
   }
 
   if (target.origin !== AUTH_RETURN_ORIGIN) return '/';
-  if (target.pathname !== LAKE_LOOP_ROOT && !target.pathname.startsWith(`${LAKE_LOOP_ROOT}/`)) {
+  const { pathname } = target;
+  if (!PRIVATE_SITE_ROOTS.some(root => pathname === root || pathname.startsWith(`${root}/`))) {
     return '/';
   }
 
