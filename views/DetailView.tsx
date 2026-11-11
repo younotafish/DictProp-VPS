@@ -728,7 +728,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
-  // A two-finger word chord owns both touch endings; blank-space sentence gestures must ignore them.
+  // A two-finger word chord (lookup) owns both touch endings; blank-space sentence gestures must ignore them.
   const mobileWordChordActiveRef = useRef(false);
   const suppressMobileWordClickUntilRef = useRef(0);
   useEffect(() => {
@@ -1816,35 +1816,52 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     enabled: !detailInteractionLocked && !!(currentGroup && currentGroup.items.length >= 1),
   });
 
-  // Mobile sentence words have fixed gestures: one finger uses the normal lookup action rendered by
-  // HighlightedSentence; holding a finger anywhere and touching a word with another plays from its offset.
+  // Mobile sentence words have fixed gestures: one finger plays from the tapped word; holding a finger
+  // anywhere and touching a word with another runs the word's lookup action rendered by HighlightedSentence
+  // (search an unsaved word, open a saved word's or phrase's card).
+  const mobileLookupClickRef = useRef(false);
   const handleMobileWordTouchStart = (e: React.TouchEvent<HTMLElement>) => {
     if (!isMobile || e.touches.length < 2) return;
     const target = e.target instanceof Element ? e.target : null;
     const word = target?.closest('[data-word-offset]') as HTMLElement | null;
     if (!word || !e.currentTarget.contains(word)) return;
-    const offset = Number(word.dataset.wordOffset);
-    if (!Number.isFinite(offset)) return;
     e.preventDefault();
     e.stopPropagation();
     mobileWordChordActiveRef.current = true;
     suppressMobileWordClickUntilRef.current = Date.now() + 800;
     lastSentenceTapRef.current = null;
-    void playFromWordOffset(offset);
+    // A synchronous synthetic click reaches the word's own lookup handler; the capture handler lets it pass.
+    mobileLookupClickRef.current = true;
+    try {
+      word.click();
+    } finally {
+      mobileLookupClickRef.current = false;
+    }
   };
 
-  const suppressMobileChordClick = (e: React.MouseEvent<HTMLElement>) => {
-    if (!mobileWordChordActiveRef.current && Date.now() >= suppressMobileWordClickUntilRef.current) return;
+  const handleMobileWordClickCapture = (e: React.MouseEvent<HTMLElement>) => {
+    if (mobileLookupClickRef.current) return;
+    if (mobileWordChordActiveRef.current || Date.now() < suppressMobileWordClickUntilRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const target = e.target instanceof Element ? e.target : null;
+    const word = target?.closest('[data-word-offset]') as HTMLElement | null;
+    if (!word || !e.currentTarget.contains(word)) return;
     e.preventDefault();
     e.stopPropagation();
+    if (window.getSelection()?.toString().trim()) return; // finishing a text selection, not a tap
+    const offset = Number(word.dataset.wordOffset);
+    if (Number.isFinite(offset)) void playFromWordOffset(offset);
   };
 
-  // macOS equivalent of the iPhone/iPad two-finger word chord: Command-click always starts at the
+  // macOS equivalent of the iPhone/iPad one-finger word tap: Command-click always starts at the
   // clicked word. Capture the click before HighlightedSentence applies its ordinary click action, so
   // this remains available in both look-up mode and the optional one-click playback mode.
   const handleSentenceWordClickCapture = (e: React.MouseEvent<HTMLElement>) => {
     if (isMobile) {
-      suppressMobileChordClick(e);
+      handleMobileWordClickCapture(e);
       return;
     }
     if (!isMacDesktop || !e.metaKey) return;
@@ -2256,7 +2273,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                         onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
                         onClickCapture={handleSentenceWordClickCapture}
                         title={isMobile
-                          ? 'Tap a word to look it up'
+                          ? 'Tap a word to play from it · two-finger tap a word to look it up'
                           : tapToPlay
                           ? 'Click a word to play from it · click blank space to play/pause · double-click blank space to remember'
                           : isMacDesktop
@@ -2290,7 +2307,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                       onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
                       onClickCapture={handleSentenceWordClickCapture}
                       title={isMobile
-                        ? 'Tap a word to look it up'
+                        ? 'Tap a word to play from it · two-finger tap a word to look it up'
                         : tapToPlay
                         ? 'Click a word to play from it · click blank space to play/pause · double-click blank space to remember'
                         : isMacDesktop

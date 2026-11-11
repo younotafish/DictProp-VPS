@@ -28,7 +28,7 @@ function sentence(
   };
 }
 
-test('every sentence category is ordered by weakest memory, oldest exposure, then newest addition', () => {
+test('every sentence category is ordered by weakest memory, then newest addition; listening does not move a sentence', () => {
   const items = [
     sentence('newer-unreviewed', 0, 400, 0, 0),
     sentence('older-unreviewed', 0, 100, 0, 0),
@@ -41,11 +41,11 @@ test('every sentence category is ordered by weakest memory, oldest exposure, the
 
   assert.deepEqual(
     orderSentencesForReview(items, 'all', NOW).map(item => item.data.id),
-    ['newer-unreviewed', 'older-unreviewed', 'recently-heard-unreviewed', 'weak-due', 'strong-due', 'newer-memorized', 'older-memorized'],
+    ['recently-heard-unreviewed', 'newer-unreviewed', 'older-unreviewed', 'weak-due', 'strong-due', 'newer-memorized', 'older-memorized'],
   );
   assert.deepEqual(
     orderSentencesForReview(items, 'unreviewed', NOW).map(item => item.data.id),
-    ['newer-unreviewed', 'older-unreviewed', 'recently-heard-unreviewed'],
+    ['recently-heard-unreviewed', 'newer-unreviewed', 'older-unreviewed'],
   );
   assert.deepEqual(
     orderSentencesForReview(items, 'due', NOW).map(item => item.data.id),
