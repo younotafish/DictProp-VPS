@@ -1,5 +1,5 @@
 import React, { forwardRef } from 'react';
-import { Book, BookOpenText, BrainCircuit, Compass, GraduationCap, Keyboard, MessageSquareQuote } from 'lucide-react';
+import { Book, BookOpenText, BrainCircuit, Compass, Keyboard, MessageSquareQuote } from 'lucide-react';
 import type { ViewState } from '../types';
 
 interface NavButtonProps {
@@ -28,17 +28,6 @@ const NavButton: React.FC<NavButtonProps> = ({ view, currentView, onClick, icon:
     </div>
     <span className="whitespace-nowrap text-[10px] font-bold uppercase tracking-wider">{label}</span>
   </button>
-);
-
-// The SD flashcards are a separate static site (/sd-cards/) behind the same owner sign-in, so this tab is a plain link.
-const SdCardsLink: React.FC = () => (
-  <a
-    href="/sd-cards/"
-    className="flex flex-1 flex-col items-center justify-center gap-1 py-3 text-slate-400 transition-colors hover:text-slate-600"
-  >
-    <GraduationCap size={24} strokeWidth={2} />
-    <span className="whitespace-nowrap text-[10px] font-bold uppercase tracking-wider">SD</span>
-  </a>
 );
 
 interface AppNavigationProps {
@@ -72,7 +61,6 @@ const AppNavigation = forwardRef<HTMLElement, AppNavigationProps>(({
     <NavButton view="real-life" currentView={currentView} onClick={onNavigate} icon={Compass} label="Real Life" />
     <NavButton view="essays" currentView={currentView} onClick={onNavigate} icon={BookOpenText} label="Essays" />
     <NavButton view="study" currentView={currentView} onClick={onNavigate} icon={BrainCircuit} label="Study" />
-    <SdCardsLink />
     <button
       onClick={onKeyboardHelp}
       className="hidden flex-col items-center justify-center gap-1 py-3 text-slate-300 transition-colors hover:text-slate-500 md:flex"
