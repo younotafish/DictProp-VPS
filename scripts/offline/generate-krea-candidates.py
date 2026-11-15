@@ -157,6 +157,9 @@ def main() -> None:
         if suffix not in (".jpg", ".jpeg", ".webp"):
             raise ValueError(f"Unsupported target image format: {target_path.suffix}")
         print(f"[{target_index}/{len(targets)}] {target['imageId']}", flush=True)
+        # A target may carry its own seed round, so a retry renders new candidates rather than the seeds whose
+        # images a judge already rejected.
+        seed_round = int(target.get("seedRound", args.seed_round))
         for candidate_number in range(args.candidate_start, args.candidates + 1):
             candidate_index = candidate_number - 1
             path = output / f"{stem}-{candidate_number}{suffix}"
@@ -176,7 +179,7 @@ def main() -> None:
                             f"Missing source candidate {args.image_source_candidate} for {target['imageId']}"
                         )
                     generated = model.generate_image(
-                        seed=seed_for(target["imageId"], candidate_index, args.seed_round),
+                        seed=seed_for(target["imageId"], candidate_index, seed_round),
                         prompt=(
                             "Edit the source photograph to teach the exact learning target at a glance. "
                             f"Correct this prior failure: {target.get('rejectionReason', 'the meaning was unclear')} "
@@ -192,7 +195,7 @@ def main() -> None:
                     )
                 else:
                     generated = model.generate_image(
-                        seed=seed_for(target["imageId"], candidate_index, args.seed_round),
+                        seed=seed_for(target["imageId"], candidate_index, seed_round),
                         prompt=prompt,
                         num_inference_steps=args.steps,
                         height=args.height,
