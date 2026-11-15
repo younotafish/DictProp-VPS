@@ -128,7 +128,7 @@ jobs:
       group: dictprop-production-read
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -136,9 +136,10 @@ jobs:
             scripts/offline/bridge-export.sh
             scripts/offline/vps-ssh.sh
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Export encrypted sentence records
         timeout-minutes: 15
@@ -151,7 +152,7 @@ jobs:
             docker compose exec -T app node server/dist/scripts/export-sentence-backfill.js | gzip -9
         run: bash scripts/offline/bridge-export.sh sentence-export "$RUNNER_TEMP/sentence-export.dpb"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: sentence-export
           path: ${{ runner.temp }}/sentence-export.dpb
@@ -180,7 +181,7 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -188,9 +189,10 @@ jobs:
             scripts/offline/bridge-import.sh
             scripts/offline/vps-ssh.sh
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Import encrypted sentence enrichment
         timeout-minutes: 60
@@ -227,7 +229,7 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -235,9 +237,10 @@ jobs:
             scripts/offline/bridge-import.sh
             scripts/offline/vps-ssh.sh
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Import encrypted example enrichments
         timeout-minutes: 60
@@ -278,7 +281,7 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -286,9 +289,10 @@ jobs:
             scripts/offline/bridge-import.sh
             scripts/offline/vps-ssh.sh
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Import encrypted private essay catalog
         timeout-minutes: 15
@@ -317,7 +321,7 @@ jobs:
       group: dictprop-production-read
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -325,9 +329,10 @@ jobs:
             scripts/offline/bridge-export.sh
             scripts/offline/vps-ssh.sh
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Export encrypted corpus
         timeout-minutes: 15
@@ -340,7 +345,7 @@ jobs:
             docker compose exec -T app node server/dist/scripts/export-corpus-audit.js | gzip -9
         run: bash scripts/offline/bridge-export.sh corpus-export "$RUNNER_TEMP/corpus-export.dpb"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: corpus-export
           path: ${{ runner.temp }}/corpus-export.dpb
@@ -364,7 +369,7 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -372,9 +377,10 @@ jobs:
             scripts/offline/bridge-import.sh
             scripts/offline/vps-ssh.sh
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Import encrypted corpus audit
         timeout-minutes: 60
@@ -411,7 +417,7 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -419,9 +425,10 @@ jobs:
             scripts/offline/bridge-import.sh
             scripts/offline/vps-ssh.sh
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Import locally generated images
         timeout-minutes: 60
@@ -458,7 +465,7 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -466,9 +473,10 @@ jobs:
             scripts/offline/bridge-import.sh
             scripts/offline/vps-ssh.sh
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Import locally generated audio
         timeout-minutes: 60
