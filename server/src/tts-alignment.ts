@@ -15,6 +15,11 @@ function cleanWord(value: string): string {
     .replace(/[^\p{L}\p{N}']+$/u, '');
 }
 
+// whisper.cpp's special tokens ([_BEG_], [_TT_<n>] timestamps, [_SOT_], [_EOT_]) and OpenAI's spelling of them
+// (<|startoftranscript|>). The pinned whisper.cpp gives them zero-length spans, which are skipped anyway; one with a
+// span must still never join a word.
+const SPECIAL_TOKEN = /^(?:<\|.*\|>|\[_[A-Za-z_]+\d*\])$/;
+
 function tokenTimings(transcription: any[]): WordTiming[] {
   const output: WordTiming[] = [];
   let current: { text: string; startMs: number; endMs: number } | null = null;
@@ -32,7 +37,7 @@ function tokenTimings(transcription: any[]): WordTiming[] {
       const raw = typeof token?.text === 'string' ? token.text : '';
       const startMs = finiteOffset(token?.offsets?.from);
       const endMs = finiteOffset(token?.offsets?.to);
-      if (!raw || startMs === null || endMs === null || endMs <= startMs || /^<\|.*\|>$/.test(raw.trim())) continue;
+      if (!raw || startMs === null || endMs === null || endMs <= startMs || SPECIAL_TOKEN.test(raw.trim())) continue;
       if (!current || /^\s/u.test(raw)) {
         flush();
         current = { text: raw, startMs, endMs };
