@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { StoredItem, VocabCard } from '../types';
+import { StoredItem, isVocabItem, savedVocabKey } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
 import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api';
 import { ensureTTS } from '../services/lazyTts';
@@ -113,7 +113,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   const [analysisTotal, setAnalysisTotal] = useState(0);
   const [currentAnalyzingWord, setCurrentAnalyzingWord] = useState('');
   const [analyzedResults, setAnalyzedResults] = useState<AnalyzedResult[]>([]);
-  const [totalVocabsSaved, setTotalVocabsSaved] = useState(0);
+  const totalVocabsSaved = analyzedResults.reduce((total, result) => total + result.savedCount, 0);
   const abortRef = useRef(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -143,8 +143,8 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
       // All selected by default
       setSelectedWords(new Set(words.map(w => w.word)));
       setStep('selecting');
-    } catch (err: any) {
-      const msg = err.message || 'Scanning failed';
+    } catch (err) {
+      const msg = (err as Error).message || 'Scanning failed';
       setScanError(msg === 'QUOTA_EXCEEDED' ? 'AI quota exceeded. Please try again later.' : msg);
     } finally {
       setIsScanning(false);
@@ -180,16 +180,11 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     setAnalysisCurrent(0);
     setAnalysisTotal(wordsToAnalyze.length);
     setAnalyzedResults([]);
-    setTotalVocabsSaved(0);
     abortRef.current = false;
 
-    let savedCount = 0;
     // Word + sense of every saved card, including the ones this run saves: savedItems won't show those
     // until the run ends, and two selected words (or one analysis) can yield the same card.
-    const senseKey = (word: string | undefined, sense: string | undefined) => `${(word || '').toLowerCase().trim()}|${sense || ''}`;
-    const savedKeys = new Set(
-      savedItems.filter(item => item.type === 'vocab').map(item => senseKey((item.data as VocabCard).word, (item.data as VocabCard).sense)),
-    );
+    const savedKeys = new Set(savedItems.filter(isVocabItem).map(item => savedVocabKey(item.data)));
 
     for (let i = 0; i < wordsToAnalyze.length; i++) {
       if (abortRef.current) break;
@@ -210,13 +205,12 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
         let wordSaved = 0;
         for (const vocab of result.vocabs || []) {
           // Check if already saved (by word + sense)
-          const key = senseKey(vocab.word, vocab.sense);
+          const key = savedVocabKey(vocab);
           if (!savedKeys.has(key)) {
             savedKeys.add(key);
             const storedItem = makeVocabStoredItem(vocab);
             onSave(storedItem);
             wordSaved++;
-            savedCount++;
 
             // Advanced metadata and imagery are generated later by the Mac-local enrichment cycle.
           }
@@ -227,13 +221,12 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
           vocabCount: result.vocabs?.length || 0,
           savedCount: wordSaved,
         }]);
-        setTotalVocabsSaved(savedCount);
-      } catch (err: any) {
+      } catch (err) {
         setAnalyzedResults(prev => [...prev, {
           word: detected.word,
           vocabCount: 0,
           savedCount: 0,
-          error: err.message || 'Failed',
+          error: (err as Error).message || 'Failed',
         }]);
       }
 
@@ -264,7 +257,6 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     setScanError(null);
     setTranslation('');
     setAnalyzedResults([]);
-    setTotalVocabsSaved(0);
   }, []);
 
   const handlePaste = useCallback(async () => {
@@ -375,7 +367,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
 
             {inputText.trim() && !isScanning && (
               <p className="text-[11px] text-slate-400 mt-2 text-center">
-                {inputText.trim().split(/\s+/).length} words &middot; {(navigator as any).userAgentData?.platform === 'macOS' || navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter
+                {inputText.trim().split(/\s+/).length} words &middot; {(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform === 'macOS' || navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter
               </p>
             )}
 
@@ -541,7 +533,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
               ))}
 
               {/* Currently analyzing indicator */}
-              {analysisCurrent <= analysisTotal && analyzedResults.length < analysisTotal && (
+              {analyzedResults.length < analysisTotal && (
                 <div className="flex items-center gap-3 p-3 rounded-xl border border-indigo-200 bg-indigo-50">
                   <Loader2 size={16} className="text-indigo-500 animate-spin shrink-0" />
                   <span className="text-sm font-medium text-indigo-700">{currentAnalyzingWord}...</span>
