@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseWordList } from '../../components/BatchImport.tsx';
+import { parseWordList } from '../../services/notebook/wordList.ts';
 
 test('one entry per line, with a phrase keeping its commas', () => {
   assert.deepEqual(

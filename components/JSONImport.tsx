@@ -1,19 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo, useDeferredValue } from 'react';
 import { X, ClipboardPaste, Trash2, FileJson, Upload, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { importJSON } from '../services/api';
-
-// The server's reply as a sentence: a JSON error body gives its message, and an HTML error page (a proxy's
-// 502, say) is summarized rather than dumped into the dialog.
-const importErrorMessage = (e: unknown): string => {
-  if (e instanceof TypeError) return "Couldn't reach the server. Check your connection and try again.";
-  const raw = (e instanceof Error ? e.message : '').trim();
-  try {
-    const body = JSON.parse(raw);
-    if (typeof body?.error === 'string' && body.error) return body.error;
-  } catch { /* not JSON */ }
-  if (!raw || raw.startsWith('<') || raw.length > 300) return 'Import failed. Please try again.';
-  return raw;
-};
+import { importErrorMessage, parseImportText } from '../services/notebook/jsonImport';
+import { modifierKeyLabel } from '../services/notebook/platform';
 
 interface JSONImportProps {
   isOpen: boolean;
@@ -44,34 +33,16 @@ export const JSONImport: React.FC<JSONImportProps> = ({
     }
   }, [isOpen]);
 
-  const parseItems = useCallback((text: string): { items: any[] | null; error: string | null } => {
-    try {
-      const parsed = JSON.parse(text.trim());
-      const arr = Array.isArray(parsed) ? parsed : [parsed];
-      // Validate: each item should have at least a 'word' field (simplified) or 'data.id' (full)
-      const valid = arr.filter((item: any) =>
-        (item && typeof item.word === 'string') ||
-        (item && item.data && item.data.id)
-      );
-      if (valid.length === 0) {
-        return { items: null, error: 'No valid items found. Each item needs at least a "word" field.' };
-      }
-      return { items: valid, error: null };
-    } catch (e: any) {
-      return { items: null, error: `Invalid JSON: ${e.message}` };
-    }
-  }, []);
-
   // Parsed once per change to the text, in a deferred render, instead of on every render and keystroke:
   // pasted JSON can run to megabytes.
   const deferredText = useDeferredValue(inputText);
   const itemCount = useMemo(
-    () => (deferredText.trim() ? parseItems(deferredText).items?.length || 0 : 0),
-    [deferredText, parseItems],
+    () => (deferredText.trim() ? parseImportText(deferredText).items?.length || 0 : 0),
+    [deferredText],
   );
 
   const handleSubmit = useCallback(async () => {
-    const { items, error } = parseItems(inputText);
+    const { items, error } = parseImportText(inputText);
     if (!items || error) {
       setStatus('error');
       setResult(error || 'Invalid input');
@@ -93,7 +64,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
       setStatus('error');
       setResult(importErrorMessage(e));
     }
-  }, [inputText, parseItems, onImported]);
+  }, [inputText, onImported]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -213,7 +184,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
 
         {itemCount > 0 && status === 'idle' && (
           <p className="text-[11px] text-slate-400 mt-2 text-center">
-            Image URLs will be auto-downloaded &middot; {(navigator as any).userAgentData?.platform === 'macOS' || navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl'}+Enter
+            Image URLs will be auto-downloaded &middot; {modifierKeyLabel()}+Enter
           </p>
         )}
 
