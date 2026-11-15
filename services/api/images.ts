@@ -1,21 +1,29 @@
 import { dataUriToBlob } from '../dataUri';
-import { requestJson } from '../http';
+import { fetchWithin, requestJson } from '../http';
 import { publishServerMutation } from '../syncSignals';
 
 // Item pictures on the server: downloads by id, the list of ids it holds, and uploads.
 
+// fetch() never gives up on a stalled connection by itself, so a wedged mobile socket would hold a picture's spinner,
+// and every view waiting on the same download, for minutes. A picture is at most 10 MB and usually a few hundred KB,
+// so a minute leaves a slow link room; uploads go the slow direction on a phone, so they get two.
+const IMAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
+const IMAGE_UPLOAD_TIMEOUT_MS = 120_000;
+
 /**
  * Fetch a single item's image file via the binary image endpoint.
  * - 404 → null: the item genuinely has no image (callers should NOT retry).
- * - network error / 5xx → throws: a transient failure (callers MAY retry).
+ * - network error / 5xx / a stall past IMAGE_DOWNLOAD_TIMEOUT_MS → throws: a transient failure (callers MAY retry).
  * This distinction lets OfflineImage retry flaky downloads instead of giving up on the first miss.
  */
 export const loadItemImage = async (itemId: string, imageVersion?: string): Promise<Blob | null> => {
   const versionQuery = imageVersion ? `?v=${encodeURIComponent(imageVersion)}` : '';
-  const res = await fetch(`/api/items/${encodeURIComponent(itemId)}/image${versionQuery}`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Failed to load image: ${res.status}`);
-  return res.blob();
+  const url = `/api/items/${encodeURIComponent(itemId)}/image${versionQuery}`;
+  return fetchWithin(url, undefined, IMAGE_DOWNLOAD_TIMEOUT_MS, async (res) => {
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Failed to load image: ${res.status}`);
+    return res.blob();
+  });
 };
 
 /** Fetch the image files of several items, four at a time. Items without one are omitted. */
@@ -59,10 +67,10 @@ export const uploadImages = async (images: Record<string, Blob | string>): Promi
   let saved = 0;
   for (const [id, image] of Object.entries(images)) {
     const blob = typeof image === 'string' ? dataUriToBlob(image) : image;
-    const response = await fetch(`/api/items/${encodeURIComponent(id)}/image`, {
-      method: 'PUT', headers: { 'Content-Type': blob.type }, body: blob,
+    const init: RequestInit = { method: 'PUT', headers: { 'Content-Type': blob.type }, body: blob };
+    await fetchWithin(`/api/items/${encodeURIComponent(id)}/image`, init, IMAGE_UPLOAD_TIMEOUT_MS, async (response) => {
+      if (!response.ok) throw new Error(`Upload image failed (${response.status})`);
     });
-    if (!response.ok) throw new Error(`Upload image failed (${response.status})`);
     saved++;
   }
   // Each upload bumps the revision of the items showing the image, so other tabs pull the new marker.
