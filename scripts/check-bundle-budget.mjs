@@ -20,25 +20,38 @@ const formatted = (bytes) => `${(bytes / 1024).toFixed(2)} kB`;
 console.log(`Initial JavaScript: ${formatted(total)} gzip across ${initialScripts.size} assets (limit ${formatted(limit)})`);
 if (total > limit) process.exitCode = 1;
 
-const optionalMedia = /\/(?:neuralTts|transformers\.web|kokoro|ort-wasm)[^/]*\.(?:js|wasm)$/;
+// The build stamps two file lists into the service worker (vite.config.ts): PRECACHE, installed with every build,
+// and OPTIONAL, the voice runtime it caches on first use instead. Reading OPTIONAL from the worker keeps that split
+// defined in one place.
+const worker = readFileSync(resolve(dist, 'sw.js'), 'utf8');
+const stampedList = (name) => {
+  const stamped = worker.match(new RegExp(`^const ${name} = (\\[.*\\]);$`, 'm'));
+  if (!stamped) throw new Error(`dist/sw.js has no stamped ${name} list`);
+  return new Set(JSON.parse(stamped[1]));
+};
+const workerPrecache = stampedList('PRECACHE');
+const optionalMedia = stampedList('OPTIONAL');
+
 const referencedAssets = (source) => {
   const urls = new Set();
   for (const match of source.matchAll(/(?:^|["'(/])(assets\/[A-Za-z0-9_.-]+\.(?:js|css))/g)) {
     const url = `/${match[1]}`;
-    if (!optionalMedia.test(url)) urls.add(url);
+    if (!optionalMedia.has(url)) urls.add(url);
   }
   for (const match of source.matchAll(/["'(]\.\/([A-Za-z0-9_.-]+\.(?:js|css))/g)) {
     const url = `/assets/${match[1]}`;
-    if (!optionalMedia.test(url)) urls.add(url);
+    if (!optionalMedia.has(url)) urls.add(url);
   }
   return [...urls];
 };
 
+// The core graph, from the shell through every file it can load short of the voice runtime, must be precached.
 const queue = referencedAssets(html);
 const precached = new Set();
 while (queue.length > 0 && precached.size < 80) {
   const url = queue.shift();
   if (!url || precached.has(url)) continue;
+  if (!workerPrecache.has(url)) throw new Error(`dist/sw.js does not precache ${url}`);
   const source = readFileSync(resolve(dist, url.slice(1)));
   precached.add(url);
   if (url.endsWith('.js')) {
@@ -49,13 +62,6 @@ while (queue.length > 0 && precached.size < 80) {
 }
 if (queue.length > 0) throw new Error('Core service-worker asset graph exceeds 80 files');
 
-// The build stamps its file list into the service worker; it must cover the whole core graph, and every file
-// it lists must exist.
-const stamped = readFileSync(resolve(dist, 'sw.js'), 'utf8').match(/^const PRECACHE = (\[.*\]);$/m);
-if (!stamped) throw new Error('dist/sw.js has no stamped precache list');
-const workerPrecache = new Set(JSON.parse(stamped[1]));
-for (const url of precached) {
-  if (!workerPrecache.has(url)) throw new Error(`dist/sw.js does not precache ${url}`);
-}
+// Every file the worker precaches must exist.
 for (const url of workerPrecache) readFileSync(resolve(dist, url.slice(1)));
 console.log(`Offline core graph: ${precached.size} hashed assets, all precached by the service worker (optional media excluded)`);
