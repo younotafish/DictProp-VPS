@@ -4,7 +4,7 @@ import { advanceReviewSrs } from '../srs.js';
 import type { ItemType } from '../validation-helpers.js';
 import { db, writeTransaction } from './connection.js';
 import { getItemById, stmts, writeItem, type ItemRead, type ItemRow, type ItemWrite } from './items.js';
-import { compareReviewProgress, sortedKeys } from './item-write.js';
+import { sortedKeys } from './item-write.js';
 import { allocateRevision } from './revisions.js';
 
 export interface ReviewEvent {
@@ -116,7 +116,6 @@ interface ReviewSnapshotRow {
 
 const applyReviewTransaction = writeTransaction((
   incoming: ReviewEvent,
-  itemIds: string[],
   userId: string,
   seedItem: ItemWrite | undefined,
 ): { applied: boolean; event: ReviewEvent; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
@@ -141,22 +140,14 @@ const applyReviewTransaction = writeTransaction((
     return {
       applied: false,
       event: rowToReviewEvent(previous),
-      itemIds: storedIds.length > 0 ? storedIds : itemIds,
+      itemIds: storedIds.length > 0 ? storedIds : [incoming.itemId],
       baseRevisions,
     };
   }
 
-  const rows = itemIds
-    .map(id => stmts.getByIdScoped.get(id, userId) as ItemRow | undefined)
-    .filter((row): row is ItemRow => !!row && row.is_deleted !== 1);
-  const target = rows.find(row => row.id === incoming.itemId);
-  if (!target) return null;
-
-  const canonical = rows.reduce(
-    (best, row) => (compareReviewProgress(JSON.parse(row.srs), JSON.parse(best.srs)) > 0 ? row : best),
-    target,
-  );
-  const baseSrs = JSON.parse(canonical.srs);
+  const target = stmts.getByIdScoped.get(incoming.itemId, userId) as ItemRow | undefined;
+  if (!target || target.is_deleted === 1) return null;
+  const baseSrs = JSON.parse(target.srs);
   const serverNow = Date.now();
   const reviewedAt = Math.max(
     Number(baseSrs.lastReviewDate) || 0,
@@ -191,36 +182,32 @@ const applyReviewTransaction = writeTransaction((
   });
   if (inserted.changes !== 1) throw new Error('Review event could not be stored');
 
-  const baseRevisions: Record<string, number> = {};
-  for (const row of rows) {
-    const revision = allocateRevision();
-    const siblingSrs = { ...nextSrs, id: row.id, type: row.type };
-    const appliedSrs = JSON.stringify(siblingSrs);
-    // A seed is the reviewing client's own copy, so the server held nothing that client hasn't seen: its base
-    // is the "no revision yet" the client itself holds.
-    const baseRevision = row.id === incoming.itemId && row.revision === seededRevision ? 0 : row.revision;
-    reviewStmts.insertItemSnapshot.run(event.id, row.id, row.srs, appliedSrs, baseRevision, revision);
-    stmts.updateSrs.run(appliedSrs, serverNow, revision, row.id, userId);
-    baseRevisions[row.id] = baseRevision;
-  }
-  return { applied: true, event, itemIds: rows.map(row => row.id), baseRevisions };
+  const revision = allocateRevision();
+  const appliedSrs = JSON.stringify({ ...nextSrs, id: target.id, type: target.type });
+  // A seed is the reviewing client's own copy, so the server held nothing that client hasn't seen: its base
+  // is the "no revision yet" the client itself holds.
+  const baseRevision = target.revision === seededRevision ? 0 : target.revision;
+  reviewStmts.insertItemSnapshot.run(event.id, target.id, target.srs, appliedSrs, baseRevision, revision);
+  stmts.updateSrs.run(appliedSrs, serverNow, revision, target.id, userId);
+  return { applied: true, event, itemIds: [target.id], baseRevisions: { [target.id]: baseRevision } };
 });
 
 const itemsById = (ids: string[], userId: string): ItemRead[] =>
   ids.map(id => getItemById(id, userId, false)).filter((item): item is ItemRead => !!item);
 
 /**
- * `seedItem` is the reviewing client's copy of the reviewed item, stored only when the server holds no item
- * with that id. It commits in the review's transaction, so a failed review leaves no seed behind.
+ * Apply a review to `event.itemId`. `_itemIds` is the item list the request carries: clients have only ever sent
+ * the reviewed item there, and anything else is ignored. `seedItem` is the reviewing client's copy of the item,
+ * stored only when the server holds no item with that id. It commits in the review's transaction, so a failed
+ * review leaves no seed behind.
  */
 export function applyReviewEvent(
   event: ReviewEvent,
-  itemIds: string[],
+  _itemIds: string[],
   userId: string,
   seedItem?: ItemWrite,
 ): AppliedReviewResult | null {
-  const uniqueIds = Array.from(new Set([event.itemId, ...itemIds])).slice(0, 100);
-  const result = applyReviewTransaction(event, uniqueIds, userId, seedItem);
+  const result = applyReviewTransaction(event, userId, seedItem);
   if (!result) return null;
   return {
     applied: result.applied,

@@ -86,3 +86,27 @@ test('a seed for an id another user holds is refused and changes nothing', async
   assert.equal(getItemById('held-elsewhere', 'other-user')?.srs.totalReviews, 0);
   assert.deepEqual(getReviewEvents(DEV_AUTH_USER.id, 0).filter(event => event.itemId === 'held-elsewhere'), []);
 });
+
+test('a review changes only the reviewed item, whatever other ids the request lists', async () => {
+  upsertItem(vocabItem('reviewed-alone'), DEV_AUTH_USER.id);
+  upsertItem(vocabItem('listed-beside'), DEV_AUTH_USER.id);
+  const besideBefore = getItemById('listed-beside', DEV_AUTH_USER.id, false)!;
+
+  let response = await apply({ event: review('alone-review', 'reviewed-alone'), itemIds: ['reviewed-alone', 'listed-beside'] });
+  assert.equal(response.status, 201);
+  const applied = await response.json() as { items: Array<{ data: { id: string } }>; baseRevisions: Record<string, number> };
+  assert.deepEqual(applied.items.map(item => item.data.id), ['reviewed-alone']);
+  assert.deepEqual(Object.keys(applied.baseRevisions), ['reviewed-alone']);
+  assert.equal(getItemById('reviewed-alone', DEV_AUTH_USER.id)?.srs.totalReviews, 1);
+  assert.deepEqual(getItemById('listed-beside', DEV_AUTH_USER.id, false), besideBefore);
+
+  // A retry reports the same single item.
+  response = await apply({ event: review('alone-review', 'reviewed-alone'), itemIds: ['listed-beside', 'reviewed-alone'] });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json() as typeof applied).items.map(item => item.data.id), ['reviewed-alone']);
+
+  response = await app.request('/api/reviews/alone-review/undo', { method: 'POST' });
+  assert.equal(response.status, 200);
+  assert.equal(getItemById('reviewed-alone', DEV_AUTH_USER.id)?.srs.totalReviews, 0);
+  assert.deepEqual(getItemById('listed-beside', DEV_AUTH_USER.id, false), besideBefore);
+});
