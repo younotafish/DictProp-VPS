@@ -1,6 +1,7 @@
 import { corpusSourceHash } from '../corpus-audit.js';
 import { db, getItemById, upsertItemImageBinary } from '../db.js';
 import { backupBeforeWrite, recordStale, StaleEntryError, writeOverLiveItem } from '../import-support.js';
+import { localImageMarker } from '../incremental-enrichment.js';
 import { validateOfflineImageBundle, type OfflineImageBundle } from '../offline-image-import.js';
 import { errorMessage, readBundleImage, readBundleManifest, resolveInBundle } from './support/bundle.js';
 import { finishImport, requireOwner } from './support/run.js';
@@ -35,13 +36,7 @@ const withImageMarkers = (data: any, entries: PreparedEntry[]) => {
   const markers = new Map<string, object>();
   for (const { entry } of entries) {
     if (!entry.promptHash) continue;
-    markers.set(entry.imageId, {
-      version: 1,
-      provider: 'local-ernie',
-      model: bundle.model,
-      generatedAt: bundle.generatedAt,
-      promptHash: entry.promptHash,
-    });
+    markers.set(entry.imageId, localImageMarker(bundle.model, bundle.generatedAt, entry.promptHash));
   }
   let next = markers.has(data.id) ? { ...data, localImageEnrichment: markers.get(data.id) } : data;
   if (Array.isArray(next.vocabs)) {

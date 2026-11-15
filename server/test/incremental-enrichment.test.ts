@@ -2,14 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   advancedVocabContentHash,
-  collectIncrementalEnrichmentItems,
   hasCurrentLocalAdvancedEnrichment,
   hasCurrentLocalImageEnrichment,
   hasCompleteVocabContent,
   imagePromptHash,
-  incrementalEnrichmentItemKey,
-  selectReplacementVocab,
-  selectUnattemptedIncrementalItems,
+  localImageMarker,
   summarizeIncrementalEnrichmentBacklog,
 } from '../src/incremental-enrichment.js';
 import { validateStoredItem } from '../src/validation.js';
@@ -45,37 +42,8 @@ const legacySentenceAnalysis = {
   imagePrompt: 'A realistic photograph of something new, without text.',
 };
 
-test('incremental enrichment prioritizes recent records and still drains the historical backlog', () => {
-  const items = [
-    { type: 'sentence', savedAt: 99, data: { id: 'legacy', text: 'Old.', sourceWord: '' } },
-    { type: 'vocab', savedAt: 98, data: { id: 'legacy-incomplete-word', word: 'old' } },
-    { type: 'vocab', savedAt: 97, data: { id: 'legacy-image-gap', word: 'pictured', imagePrompt: 'A picture.' } },
-    { type: 'vocab', savedAt: 101, data: { ...completeVocab, id: 'complete', imageUrl: 'server:has_image' } },
-    {
-      type: 'vocab', savedAt: 101.5,
-      data: withLocalImageEnrichment(withAdvancedEnrichment({
-        ...completeVocab, id: 'locally-enriched', imageUrl: 'server:has_image',
-      })),
-    },
-    { type: 'sentence', savedAt: 103, data: { id: 'new-sentence', text: 'New.', sourceWord: '' } },
-    { type: 'sentence', savedAt: 102.5, data: {
-      id: 'legacy-analysis', text: 'New.', sourceWord: '', analysis: legacySentenceAnalysis, imageUrl: 'server:has_image',
-    } },
-    { type: 'vocab', savedAt: 102, data: { id: 'new-word', word: 'new' } },
-    { type: 'sentence', savedAt: 104, isArchived: true, data: { id: 'archived', text: 'Skip.', sourceWord: '' } },
-  ];
 
-  assert.deepEqual(
-    collectIncrementalEnrichmentItems(items, 100, 10).map(item => item.data.id),
-    ['complete', 'new-word', 'legacy-analysis', 'new-sentence', 'legacy-image-gap', 'legacy'],
-  );
-  assert.deepEqual(
-    collectIncrementalEnrichmentItems(items, 100, 1).map(item => item.data.id),
-    ['complete'],
-  );
-});
-
-test('vocabulary completeness and sense-matched replacement are deterministic', () => {
+test('vocabulary completeness and the local enrichment markers are deterministic', () => {
   assert.equal(hasCompleteVocabContent(completeVocab), true);
   const enriched = withAdvancedEnrichment(completeVocab);
   assert.equal(hasCurrentLocalAdvancedEnrichment(enriched), true);
@@ -96,14 +64,15 @@ test('vocabulary completeness and sense-matched replacement are deterministic', 
     },
   }), false);
   assert.equal(hasCompleteVocabContent({ ...completeVocab, examples: ['only one'] }), false);
-  const replacement = selectReplacementVocab(
-    { word: 'bank', sense: 'verb: rely' },
-    [
-      { word: 'bank', sense: 'noun: finance' },
-      { word: 'bank', sense: 'verb: rely' },
-    ],
-  );
-  assert.equal(replacement?.sense, 'verb: rely');
+});
+
+test('a locally drawn image\'s marker is current for the prompt it was drawn for', () => {
+  const marker = localImageMarker('krea/Krea-2-Turbo', 200, imagePromptHash(completeVocab.imagePrompt));
+  // The key order is part of the card's corpus source hash, which every later import checks.
+  assert.deepEqual(Object.keys(marker), ['version', 'provider', 'model', 'generatedAt', 'promptHash']);
+  assert.equal(marker.provider, 'local-ernie');
+  assert.equal(hasCurrentLocalImageEnrichment({ ...completeVocab, localImageEnrichment: marker }), true);
+  assert.equal(hasCurrentLocalImageEnrichment({ ...completeVocab, imagePrompt: 'Another.', localImageEnrichment: marker }), false);
 });
 
 test('production imports accept Codex and Claude advanced-enrichment markers', () => {
@@ -127,18 +96,6 @@ test('production imports accept Codex and Claude advanced-enrichment markers', (
   }), 'vocab advancedEnrichment is invalid');
 });
 
-test('a failed first batch cannot starve newer incremental candidates', () => {
-  const pending = Array.from({ length: 12 }, (_, index) => ({
-    type: 'sentence',
-    data: { id: `sentence-${index}` },
-  }));
-  const attempted = new Set(pending.slice(0, 8).map(incrementalEnrichmentItemKey));
-
-  assert.deepEqual(
-    selectUnattemptedIncrementalItems(pending, attempted, 8).map(item => item.data.id),
-    ['sentence-8', 'sentence-9', 'sentence-10', 'sentence-11'],
-  );
-});
 
 test('incremental enrichment summarizes actionable gap types', () => {
   const items = [
@@ -171,4 +128,114 @@ test('incremental enrichment summarizes actionable gap types', () => {
       nestedVocabImage: 1,
     },
   });
+});
+
+const noGaps = {
+  sentenceDetailedAnalysis: 0,
+  sentenceImage: 0,
+  recentVocabContent: 0,
+  recentVocabAdvanced: 0,
+  recentNestedVocabAdvanced: 0,
+  recentVocabLocalImage: 0,
+  recentPhraseLocalImage: 0,
+  recentNestedVocabLocalImage: 0,
+  vocabImage: 0,
+  phraseImage: 0,
+  nestedVocabImage: 0,
+};
+
+test('the backlog owes recent items everything and older ones only their stored images', () => {
+  const items = [
+    { type: 'sentence', savedAt: 99, data: { id: 'legacy', text: 'Old.', sourceWord: '' } },
+    { type: 'vocab', savedAt: 98, data: { id: 'legacy-incomplete-word', word: 'old' } },
+    { type: 'vocab', savedAt: 97, data: { id: 'legacy-image-gap', word: 'pictured', imagePrompt: 'A picture.' } },
+    { type: 'vocab', savedAt: 101, data: { ...completeVocab, id: 'complete', imageUrl: 'server:has_image' } },
+    {
+      type: 'vocab', savedAt: 101.5,
+      data: withLocalImageEnrichment(withAdvancedEnrichment({
+        ...completeVocab, id: 'locally-enriched', imageUrl: 'server:has_image',
+      })),
+    },
+    { type: 'vocab', savedAt: 104, data: withAdvancedEnrichment({ ...completeVocab, id: 'awaiting-local-image', imageUrl: 'server:has_image' }) },
+    { type: 'sentence', savedAt: 103, data: { id: 'new-sentence', text: 'New.', sourceWord: '' } },
+    { type: 'sentence', savedAt: 102.5, data: {
+      id: 'legacy-analysis', text: 'New.', sourceWord: '', analysis: legacySentenceAnalysis, imageUrl: 'server:has_image',
+    } },
+    { type: 'vocab', savedAt: 102, data: { id: 'new-word', word: 'new' } },
+    { type: 'sentence', savedAt: 104, isArchived: true, data: { id: 'archived', text: 'Skip.', sourceWord: '' } },
+    { type: 'vocab', savedAt: 104, isDeleted: true, data: { id: 'deleted', word: 'gone' } },
+  ];
+
+  assert.deepEqual(summarizeIncrementalEnrichmentBacklog(items, 100), {
+    items: 7,
+    recentItems: 5,
+    historicalItems: 2,
+    byType: { sentence: 3, vocab: 4, phrase: 0 },
+    gaps: {
+      ...noGaps,
+      sentenceDetailedAnalysis: 3,
+      sentenceImage: 2,
+      recentVocabContent: 1,
+      recentVocabAdvanced: 2,
+      recentVocabLocalImage: 1,
+      vocabImage: 1,
+    },
+  });
+});
+
+test('a phrase owes its own image and its cards\' gaps, and a recent one its local image once a card is enriched', () => {
+  const items = [
+    {
+      type: 'phrase',
+      savedAt: 150,
+      data: {
+        id: 'p-recent',
+        query: 'a recent phrase',
+        imagePrompt: 'A scene.',
+        vocabs: [
+          // Marked as enriched, but its examples were cut down afterwards: incomplete content, current marker.
+          withAdvancedEnrichment({ ...completeVocab, id: 'card-a', examples: ['only one'] }),
+          { id: 'card-b', word: 'b' },
+          withLocalImageEnrichment(withAdvancedEnrichment({ ...completeVocab, id: 'card-c', imageUrl: 'server:has_image' })),
+        ],
+      },
+    },
+    {
+      type: 'phrase',
+      savedAt: 50,
+      data: {
+        id: 'p-old',
+        query: 'an old phrase',
+        imagePrompt: 'Old scene.',
+        imageUrl: 'server:has_image',
+        vocabs: [{ id: 'card-d', word: 'd', imagePrompt: 'A picture.' }, { id: 'card-e', word: 'e' }],
+      },
+    },
+    { type: 'phrase', savedAt: 60, data: { id: 'p-old-done', query: 'done', vocabs: [{ id: 'card-f', word: 'f' }] } },
+    { type: 'phrase', savedAt: 160, data: { id: 'p-no-cards', query: 'no cards', imagePrompt: 'A scene.', vocabs: 'none' } },
+    { type: 'phrase', savedAt: 170, isArchived: true, data: { id: 'p-archived', query: 'archived', imagePrompt: 'A scene.', vocabs: [] } },
+  ];
+
+  assert.deepEqual(summarizeIncrementalEnrichmentBacklog(items, 100), {
+    items: 3,
+    recentItems: 2,
+    historicalItems: 1,
+    byType: { sentence: 0, vocab: 0, phrase: 3 },
+    gaps: {
+      ...noGaps,
+      recentNestedVocabAdvanced: 1,
+      recentPhraseLocalImage: 1,
+      recentNestedVocabLocalImage: 1,
+      phraseImage: 2,
+      nestedVocabImage: 2,
+    },
+  });
+  // A card whose only gap is its content still makes its phrase pending, though no gap counter names it.
+  const { imagePrompt: _prompt, ...unprompted } = completeVocab;
+  const contentOnly = withAdvancedEnrichment({ ...unprompted, id: 'card-g', examples: ['only one'] });
+  const summary = summarizeIncrementalEnrichmentBacklog([
+    { type: 'phrase', savedAt: 150, data: { id: 'p-content', query: 'content only', vocabs: [contentOnly] } },
+  ], 100);
+  assert.equal(summary.items, 1);
+  assert.deepEqual(summary.gaps, noGaps);
 });

@@ -2,7 +2,7 @@ import {
   summarizeExampleEnrichmentCoverage,
   type StoredSentenceEnrichmentRecord,
 } from './example-enrichment-coverage.js';
-import { summarizeIncrementalEnrichmentBacklog } from './incremental-enrichment.js';
+import { fieldsOf, summarizeIncrementalEnrichmentBacklog, type AuditedItem } from './incremental-enrichment.js';
 
 const HOUR_MS = 60 * 60 * 1_000;
 // The local cycle completes words saved in the past week: INCREMENTAL_VOCAB_LOOKBACK_HOURS in
@@ -28,23 +28,23 @@ export interface EnrichmentStall {
   alerts: string[];
 }
 
-const cardsOf = (item: any): any[] => {
+const cardsOf = (item: AuditedItem): unknown[] => {
   if (item?.type === 'vocab') return [item.data];
-  if (item?.type === 'phrase') return [item.data, ...(Array.isArray(item.data?.vocabs) ? item.data.vocabs : [])];
-  return [];
+  if (item?.type !== 'phrase') return [];
+  const { vocabs } = fieldsOf(item.data);
+  return [item.data, ...(Array.isArray(vocabs) ? vocabs : [])];
 };
 
+const generatedAt = (marker: unknown): number => Number(fieldsOf(marker).generatedAt) || 0;
+
 /** The newest enrichment the local cycle has published to any item. */
-function latestLocalEnrichmentAt(items: any[]): number {
+function latestLocalEnrichmentAt(items: readonly AuditedItem[]): number {
   let latest = 0;
   for (const item of items) {
-    if (item?.type === 'sentence') latest = Math.max(latest, Number(item.data?.analysisGeneratedAt) || 0);
+    if (item?.type === 'sentence') latest = Math.max(latest, Number(fieldsOf(item.data).analysisGeneratedAt) || 0);
     for (const card of cardsOf(item)) {
-      latest = Math.max(
-        latest,
-        Number(card?.advancedEnrichment?.generatedAt) || 0,
-        Number(card?.localImageEnrichment?.generatedAt) || 0,
-      );
+      const { advancedEnrichment, localImageEnrichment } = fieldsOf(card);
+      latest = Math.max(latest, generatedAt(advancedEnrichment), generatedAt(localImageEnrichment));
     }
   }
   return latest;
@@ -55,12 +55,12 @@ function latestLocalEnrichmentAt(items: any[]): number {
  * review restarts it too, which can only delay an alert, never raise a false one.
  */
 export function findStalledEnrichment(
-  items: any[],
+  items: readonly AuditedItem[],
   readStoredExamples: () => Iterable<StoredSentenceEnrichmentRecord>,
   { overdueAfterHours, imageGapTolerance, examplesPublishedAt = 0, now = Date.now() }: EnrichmentStallOptions,
 ): EnrichmentStall {
   const overdueBefore = now - overdueAfterHours * HOUR_MS;
-  const isSettled = (item: any) =>
+  const isSettled = (item: AuditedItem) =>
     Math.max(Number(item?.savedAt) || 0, Number(item?.updatedAt) || 0) < overdueBefore;
   const { gaps } = summarizeIncrementalEnrichmentBacklog(
     items.filter(isSettled),

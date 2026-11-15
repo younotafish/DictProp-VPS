@@ -2,26 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   collectExpectedExampleSentenceHashes,
-  collectExpectedExampleSentences,
   summarizeExampleEnrichmentCoverage,
 } from '../src/example-enrichment-coverage.js';
 import { sentenceLookupHash } from '../src/sentence-lookup.js';
 import { completeAnalysis } from './support/fixtures.js';
 
-test('example coverage deduplicates markup variants and excludes saved sentences', () => {
+test('example coverage deduplicates markup variants, excludes saved sentences and orders by lookup hash', () => {
   const items = [
-    { type: 'vocab', data: { id: 'vocab-1', examples: ['This is a {{test}}.', 'Keep [[going]].'] } },
-    { type: 'phrase', data: { id: 'phrase-1', vocabs: [{ id: 'nested', examples: ['This is a test.'] }] } },
+    { type: 'vocab', data: { id: 'vocab-1', examples: ['This is a {{test}}.', 'Keep [[going]].', 'A third, plain one.'] } },
+    { type: 'phrase', data: { id: 'phrase-1', vocabs: [{ id: 'nested', examples: ['This is a test.', '', 7] }] } },
     { type: 'sentence', data: { id: 'saved-1', text: 'Keep going.' } },
+    // A deleted saved sentence no longer rules its example out, and a deleted card's examples are not expected.
+    { type: 'sentence', isDeleted: true, data: { id: 'saved-2', text: 'A third, plain one.' } },
     { type: 'vocab', isDeleted: true, data: { id: 'deleted', examples: ['Deleted example.'] } },
   ];
 
-  assert.deepEqual(collectExpectedExampleSentenceHashes(items), [sentenceLookupHash('This is a test.')]);
-  assert.deepEqual(collectExpectedExampleSentences(items), [{
-    id: `example-${sentenceLookupHash('This is a test.').slice(0, 40)}`,
-    text: 'This is a {{test}}.',
-    lookupHash: sentenceLookupHash('This is a test.'),
-  }]);
+  assert.deepEqual(
+    collectExpectedExampleSentenceHashes(items),
+    ['This is a test.', 'A third, plain one.'].map(sentenceLookupHash).sort((left, right) => left.localeCompare(right)),
+  );
 });
 
 test('example coverage reports missing, incomplete, image, and complete gaps separately', () => {

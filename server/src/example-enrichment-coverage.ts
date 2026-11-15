@@ -1,3 +1,4 @@
+import { fieldsOf, type AuditedItem } from './incremental-enrichment.js';
 import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
 import { exampleSentenceId, normalizeSentenceLookup, sentenceLookupHash } from './sentence-lookup.js';
 
@@ -5,12 +6,6 @@ export interface StoredSentenceEnrichmentRecord {
   lookup_hash: string;
   analysis: string;
   image_content_hash: string | null;
-}
-
-export interface ExpectedExampleSentence {
-  id: string;
-  text: string;
-  lookupHash: string;
 }
 
 export interface ExampleEnrichmentCoverage {
@@ -30,47 +25,41 @@ const sample = (values: string[], limit = 100): string[] => values.slice(0, limi
 /** The id of an example's enrichment: exampleSentenceId, under the name the tests import. */
 export const enrichmentId = exampleSentenceId;
 
-export function collectExpectedExampleSentences(items: any[]): ExpectedExampleSentence[] {
+/**
+ * The lookup hashes of the examples on live cards that need an enrichment row of their own, in the order the id
+ * samples follow. A saved sentence owns its analysis and image directly, so an example it matches needs no row.
+ */
+export function collectExpectedExampleSentenceHashes(items: readonly AuditedItem[]): string[] {
   const savedSentenceHashes = new Set<string>();
   for (const item of items) {
     if (item?.isDeleted || item?.type !== 'sentence') continue;
-    const text = typeof item.data?.text === 'string' ? item.data.text : '';
-    if (normalizeSentenceLookup(text)) savedSentenceHashes.add(sentenceLookupHash(text));
+    const { text } = fieldsOf(item.data);
+    if (typeof text === 'string' && normalizeSentenceLookup(text)) savedSentenceHashes.add(sentenceLookupHash(text));
   }
 
-  const sentences = new Map<string, ExpectedExampleSentence>();
-  const addCard = (card: any) => {
-    for (const example of Array.isArray(card?.examples) ? card.examples : []) {
+  const hashes = new Set<string>();
+  const addCard = (card: unknown) => {
+    const { examples } = fieldsOf(card);
+    for (const example of Array.isArray(examples) ? examples : []) {
       if (typeof example !== 'string' || !normalizeSentenceLookup(example)) continue;
       const lookupHash = sentenceLookupHash(example);
-      // A saved sentence owns its analysis and image directly, so it does not also need a shared
-      // example-enrichment row.
-      if (!savedSentenceHashes.has(lookupHash) && !sentences.has(lookupHash)) {
-        sentences.set(lookupHash, {
-          id: enrichmentId(lookupHash),
-          text: example.trim(),
-          lookupHash,
-        });
-      }
+      if (!savedSentenceHashes.has(lookupHash)) hashes.add(lookupHash);
     }
   };
 
   for (const item of items) {
     if (item?.isDeleted) continue;
     if (item?.type === 'vocab') addCard(item.data);
-    if (item?.type === 'phrase' && Array.isArray(item.data?.vocabs)) {
-      for (const vocab of item.data.vocabs) addCard(vocab);
+    const { vocabs } = fieldsOf(item?.data);
+    if (item?.type === 'phrase' && Array.isArray(vocabs)) {
+      for (const vocab of vocabs) addCard(vocab);
     }
   }
-  return [...sentences.values()].sort((left, right) => left.lookupHash.localeCompare(right.lookupHash));
-}
-
-export function collectExpectedExampleSentenceHashes(items: any[]): string[] {
-  return collectExpectedExampleSentences(items).map(sentence => sentence.lookupHash);
+  return [...hashes].sort((left, right) => left.localeCompare(right));
 }
 
 export function summarizeExampleEnrichmentCoverage(
-  items: any[],
+  items: readonly AuditedItem[],
   storedRecords: Iterable<StoredSentenceEnrichmentRecord>,
 ): ExampleEnrichmentCoverage {
   const missingAnalysisIds: string[] = [];
@@ -98,7 +87,7 @@ export function summarizeExampleEnrichmentCoverage(
   }
 
   for (const lookupHash of expectedHashes) {
-    const id = enrichmentId(lookupHash);
+    const id = exampleSentenceId(lookupHash);
     const coverage = coverageByHash.get(lookupHash) || 0;
     const hasRecord = (coverage & 1) !== 0;
     const analysisComplete = (coverage & 2) !== 0;
