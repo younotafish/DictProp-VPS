@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Ownership
+
+Always treat yourself as owning this project. Whenever you find something suboptimal while working on or running any part of it, you have the authority to correct it.
+
 ## What This Is
 
 DictProp is an AI-powered vocabulary learning web app for English learners. Users search words/phrases, get AI-generated analysis (definitions, etymology, mnemonics, examples), and review them with spaced repetition.

@@ -20,7 +20,7 @@ button,
   user-select: text !important;
 }
 
-/* macOS sentence review: holding Command previews the word that a click will seek to. */
+/* macOS sentence review: holding Command previews the word that a click will look up. */
 .sentence-command-seek-active [data-word-offset] {
   cursor: pointer;
   border-radius: 0.25rem;

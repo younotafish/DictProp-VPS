@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, isVocabItem, StoredComparison, type ReviewRating, type SRSData } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, MoreVertical, RotateCcw, Flame, CheckCircle2, X, Play, Pause, AudioLines, Volume2, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText, Lock } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, MoreVertical, RotateCcw, Flame, CheckCircle2, X, Play, Pause, AudioLines, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText, Lock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -152,11 +152,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   const detailInteractionLocked = interactionLocked || !!exampleSentencePreview;
   const rootRef = useRef<HTMLDivElement>(null);
   const moreActionsRef = useRef<HTMLDivElement>(null);
-  // Sentence review — what tapping a word does. true (default) = play from that word (current behaviour);
-  // false = look up the dotted [[uncommon]] term via the bottom-right search, like every other view. Persisted.
-  const [tapToPlay, setTapToPlay] = useState(() => {
-    try { return localStorage.getItem('dictprop_sentence_tap_play') !== '0'; } catch { return true; }
-  });
   const [isCommandHeld, setIsCommandHeld] = useState(false);
   useEffect(() => {
     if (!isMacDesktop) return;
@@ -705,8 +700,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   const commandClickHint = isMacDesktop ? (
     <span
       className={`hidden h-6 w-6 items-center justify-center rounded-full text-xs font-semibold transition-colors sm:inline-flex ${isCommandHeld ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}
-      title="Command-click a word to start playback there"
-      aria-label="Command-click a word to start playback there"
+      title="Command-click a word to look it up"
+      aria-label="Command-click a word to look it up"
       onClick={(e) => e.stopPropagation()}
     >
       <kbd className="font-sans">⌘</kbd>
@@ -1846,6 +1841,12 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       e.stopPropagation();
       return;
     }
+    playFromClickedWord(e);
+  };
+
+  // Words render in look-up mode; a plain click is taken here, before the word's own handler, and plays
+  // from the clicked word instead.
+  const playFromClickedWord = (e: React.MouseEvent<HTMLElement>) => {
     const target = e.target instanceof Element ? e.target : null;
     const word = target?.closest('[data-word-offset]') as HTMLElement | null;
     if (!word || !e.currentTarget.contains(word)) return;
@@ -1856,23 +1857,15 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     if (Number.isFinite(offset)) void playFromWordOffset(offset);
   };
 
-  // macOS equivalent of the iPhone/iPad one-finger word tap: Command-click always starts at the
-  // clicked word. Capture the click before HighlightedSentence applies its ordinary click action, so
-  // this remains available in both look-up mode and the optional one-click playback mode.
+  // Laptops mirror the phone gestures: a click plays from the clicked word, like a one-finger tap, and
+  // Command-click (Ctrl-click off macOS) runs the word's lookup action, like a two-finger tap.
   const handleSentenceWordClickCapture = (e: React.MouseEvent<HTMLElement>) => {
     if (isMobile) {
       handleMobileWordClickCapture(e);
       return;
     }
-    if (!isMacDesktop || !e.metaKey) return;
-    const target = e.target instanceof Element ? e.target : null;
-    const word = target?.closest('[data-word-offset]') as HTMLElement | null;
-    if (!word || !e.currentTarget.contains(word)) return;
-    const offset = Number(word.dataset.wordOffset);
-    if (!Number.isFinite(offset)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    void playFromWordOffset(offset);
+    if (e.metaKey || e.ctrlKey) return; // the word's own handler looks it up
+    playFromClickedWord(e);
   };
 
   const handleDeleteItem = () => {
@@ -2221,19 +2214,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                     <Loader2 size={12} className="animate-spin" /> Loading lesson
                   </span>
                 )}
-                {!isMobile && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setTapToPlay(v => { const next = !v; try { localStorage.setItem('dictprop_sentence_tap_play', next ? '1' : '0'); } catch { /* ignore */ } return next; }); }}
-                    className={`-my-1 flex items-center justify-center w-9 h-9 rounded-full transition-colors ${tapToPlay ? 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}
-                    title={tapToPlay
-                      ? 'Click a word = play from it. Click here to switch to look-up.'
-                      : isMacDesktop
-                        ? 'Click a word = look it up. Command-click always plays from that word.'
-                        : 'Click any word = look it up. Click here to switch to play-from-word.'}
-                  >
-                    {tapToPlay ? <Volume2 size={15} /> : <SearchIcon size={15} />}
-                  </button>
-                )}
                 <span className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
                   <MessageSquareQuote size={12} /> {sentenceIndex + 1} / {sentenceItems?.length ?? 0}
                 </span>
@@ -2274,18 +2254,17 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                         onClickCapture={handleSentenceWordClickCapture}
                         title={isMobile
                           ? 'Tap a word to play from it · two-finger tap a word to look it up'
-                          : tapToPlay
-                          ? 'Click a word to play from it · click blank space to play/pause · double-click blank space to remember'
                           : isMacDesktop
-                            ? 'Click a word to look it up · Command-click to play from it · click blank space to play/pause'
-                            : 'Click any word to look it up · click blank space to play/pause · double-click blank space to remember'}
+                            ? 'Click a word to play from it · Command-click to look it up · click blank space to play/pause'
+                            : 'Click a word to play from it · Ctrl-click to look it up · click blank space to play/pause'}
                       >
                         <HighlightedSentence
                           text={currentSentenceText}
                           itemWord={(currentSentence.data as SentenceData).sourceWord}
                           findSaved={findSaved}
                           onOpenCard={onOpenCard}
-                          {...(isMobile || !tapToPlay ? { onSearchWord: onSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
+                          onSearchWord={onSearch}
+                          searchAnyWord
                         />
                       </p>
                       <div className="mt-5 flex flex-wrap items-center justify-center md:justify-start gap-3">
@@ -2308,18 +2287,17 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                       onClickCapture={handleSentenceWordClickCapture}
                       title={isMobile
                         ? 'Tap a word to play from it · two-finger tap a word to look it up'
-                        : tapToPlay
-                        ? 'Click a word to play from it · click blank space to play/pause · double-click blank space to remember'
                         : isMacDesktop
-                          ? 'Click a word to look it up · Command-click to play from it · click blank space to play/pause'
-                          : 'Click any word to look it up · click blank space to play/pause · double-click blank space to remember'}
+                          ? 'Click a word to play from it · Command-click to look it up · click blank space to play/pause'
+                          : 'Click a word to play from it · Ctrl-click to look it up · click blank space to play/pause'}
                     >
                       <HighlightedSentence
                         text={currentSentenceText}
                         itemWord={(currentSentence.data as SentenceData).sourceWord}
                         findSaved={findSaved}
                         onOpenCard={onOpenCard}
-                        {...(isMobile || !tapToPlay ? { onSearchWord: onSearch, searchAnyWord: true } : { onPlayFromWord: playFromWordOffset })}
+                        onSearchWord={onSearch}
+                        searchAnyWord
                       />
                     </p>
                     <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
