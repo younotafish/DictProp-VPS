@@ -378,7 +378,7 @@ stage_item_images() {
       log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
       run_image_stage item-image "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/images" "saved-item images" \
         env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-        IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
+        IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" \
         IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
         bash scripts/offline/run-streaming-image-quality-loop.sh \
           "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
@@ -502,7 +502,7 @@ example_images() {
       run_image_stage example-image "$IMAGE_TARGETS" "$IMAGE_ROOT/images" "example images" \
         env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
         IMAGE_MODEL="$IMAGE_MODEL" \
-        IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
+        IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" \
         IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
         bash scripts/offline/run-streaming-image-quality-loop.sh \
         "$IMAGE_TARGETS" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \

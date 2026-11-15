@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
+# Renders image candidates locally, one round per candidate number, while the configured structured model
+# (Claude by default) judges each one as it lands and refines the prompts it rejects for the next round.
+# It ends when every target has an accepted image or, with IMAGE_QUALITY_DEFER_AFTER, when the rest have
+# failed that many candidates and wait for a later run.
 set -euo pipefail
 
 # Image rendering is intentionally local-only. A missing renderer must fail visibly instead of
-# silently downloading a model during a scheduled repair. Semantic review runs through Codex.
+# silently downloading a model during a scheduled repair.
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 
 if [[ $# -lt 4 ]]; then
-  echo "Usage: run-streaming-image-quality-loop.sh <targets.json> <candidates-dir> <images-dir> <work-dir> [width=768] [height=432] [steps=6] [candidate=1] [chunk-size=128] [first-generation-targets]" >&2
+  echo "Usage: run-streaming-image-quality-loop.sh <targets.json> <candidates-dir> <images-dir> <work-dir> [width=768] [height=432] [steps=6] [candidate=1] [chunk-size=128]" >&2
   exit 2
 fi
 
@@ -20,34 +24,19 @@ height="${6:-432}"
 steps="${7:-6}"
 candidate="${8:-1}"
 chunk_size="${9:-128}"
-first_generation_targets="${10:-}"
 krea_python="${KREA_PYTHON:-${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}}"
 codex_image_concurrency="${CODEX_IMAGE_CONCURRENCY:-${CODEX_CONCURRENCY:-4}}"
-krea_shard_count="${KREA_SHARD_COUNT:-1}"
+# The renderer's own arguments check the model and the quantization (4 or 8), so a bad value fails the
+# first round's renders.
 image_model="${IMAGE_MODEL:-krea2}"
-image_model_quantize="${IMAGE_MODEL_QUANTIZE:-${KREA_QUANTIZE:-}}"
-krea_image_source_candidate="${KREA_IMAGE_SOURCE_CANDIDATE:-}"
-krea_image_strength="${KREA_IMAGE_STRENGTH:-}"
+image_model_quantize="${IMAGE_MODEL_QUANTIZE:-}"
 defer_after="${IMAGE_QUALITY_DEFER_AFTER:-}"
 retry_limit="${IMAGE_QUALITY_RETRY_LIMIT:-3}"
 retry_delay="${IMAGE_QUALITY_RETRY_DELAY_SECONDS:-60}"
 current="$targets"
-first_round=1
 watcher_pid=""
-generator_pids=()
+generator_pid=""
 
-if ! [[ "$krea_shard_count" =~ ^[0-9]+$ ]] || [[ "$krea_shard_count" -lt 1 ]] || [[ "$krea_shard_count" -gt 8 ]]; then
-  echo "KREA_SHARD_COUNT must be an integer from 1 to 8" >&2
-  exit 2
-fi
-if [[ "$image_model" != "krea2" && "$image_model" != "ernie-image" && "$image_model" != "ernie-image-turbo" && "$image_model" != "qwen-image" && "$image_model" != "qwen-image-edit" && "$image_model" != "z-image-turbo" ]]; then
-  echo "IMAGE_MODEL must be krea2, ernie-image, ernie-image-turbo, qwen-image, qwen-image-edit, or z-image-turbo" >&2
-  exit 2
-fi
-if [[ -n "$image_model_quantize" ]] && [[ "$image_model_quantize" != "4" && "$image_model_quantize" != "8" ]]; then
-  echo "IMAGE_MODEL_QUANTIZE (or KREA_QUANTIZE) must be 4 or 8" >&2
-  exit 2
-fi
 if [[ -n "$defer_after" ]] && { ! [[ "$defer_after" =~ ^[0-9]+$ ]] || [[ "$defer_after" -lt 1 ]] || [[ "$defer_after" -gt 99 ]]; }; then
   echo "IMAGE_QUALITY_DEFER_AFTER must be an integer from 1 to 99" >&2
   exit 2
@@ -59,21 +48,6 @@ fi
 if ! [[ "$retry_delay" =~ ^[0-9]+$ ]]; then
   echo "IMAGE_QUALITY_RETRY_DELAY_SECONDS must be a non-negative integer" >&2
   exit 2
-fi
-if [[ "$image_model" == "qwen-image-edit" ]]; then
-  if [[ -z "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
-    echo "qwen-image-edit requires KREA_IMAGE_SOURCE_CANDIDATE and does not use KREA_IMAGE_STRENGTH" >&2
-    exit 2
-  fi
-elif [[ -n "$krea_image_source_candidate" || -n "$krea_image_strength" ]]; then
-  if [[ -z "$krea_image_source_candidate" || -z "$krea_image_strength" ]]; then
-    echo "KREA_IMAGE_SOURCE_CANDIDATE and KREA_IMAGE_STRENGTH must be set together" >&2
-    exit 2
-  fi
-  if [[ "$krea_image_source_candidate" != "previous" ]] && ! [[ "$krea_image_source_candidate" =~ ^[0-9]+$ ]]; then
-    echo "KREA_IMAGE_SOURCE_CANDIDATE must be an integer or 'previous'" >&2
-    exit 2
-  fi
 fi
 if [[ ! -x "$krea_python" ]]; then
   echo "MFLUX runtime is unavailable: $krea_python" >&2
@@ -116,83 +90,47 @@ retry() {
 }
 
 cleanup() {
-  # macOS Bash 3.2 treats an empty array expansion as unset under nounset.
-  set +u
-  if [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" 2>/dev/null; then
-    kill "$watcher_pid" 2>/dev/null || true
-    wait "$watcher_pid" 2>/dev/null || true
-  fi
-  for generator_pid in "${generator_pids[@]}"; do
-    if kill -0 "$generator_pid" 2>/dev/null; then
-      kill "$generator_pid" 2>/dev/null || true
+  local pid
+  for pid in "$watcher_pid" "$generator_pid"; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
     fi
-  done
-  for generator_pid in "${generator_pids[@]}"; do
-    wait "$generator_pid" 2>/dev/null || true
   done
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# generate_candidates TARGETS CANDIDATE: renders candidate number CANDIDATE of every target without an
+# accepted image. The renderer runs in the background, so a signal reaches the trap while it works.
 generate_candidates() {
-  local generation_targets="$1"
-  local candidate_number="$2"
-  local shard_index
-  local shard_status=0
-  local resolved_image_source_candidate="$krea_image_source_candidate"
+  local status=0
   local generator_args=(
-    "$generation_targets" "$candidates" --candidate-start "$candidate_number" --candidates "$candidate_number"
+    "$1" "$candidates" --candidate-start "$2" --candidates "$2"
     --width "$width" --height "$height" --steps "$steps" --accepted-directory "$images" --model "$image_model"
   )
-
   if [[ -n "$image_model_quantize" ]]; then
     generator_args+=(--quantize "$image_model_quantize")
   fi
-
-  if [[ -n "$krea_image_source_candidate" ]]; then
-    if [[ "$resolved_image_source_candidate" == "previous" ]]; then
-      resolved_image_source_candidate=$((candidate_number - 1))
-    fi
-    if [[ "$resolved_image_source_candidate" -lt 1 ]]; then
-      echo "The previous image candidate is unavailable for candidate $candidate_number" >&2
-      return 2
-    fi
-    generator_args+=(--image-source-candidate "$resolved_image_source_candidate")
-    if [[ -n "$krea_image_strength" ]]; then
-      generator_args+=(--image-strength "$krea_image_strength")
-    fi
-  fi
-
-  generator_pids=()
-  for ((shard_index = 0; shard_index < krea_shard_count; shard_index += 1)); do
-    "$krea_python" scripts/offline/generate-krea-candidates.py \
-      "${generator_args[@]}" \
-      --shard-count "$krea_shard_count" --shard-index "$shard_index" &
-    generator_pids+=("$!")
-  done
-  for generator_pid in "${generator_pids[@]}"; do
-    wait "$generator_pid" || shard_status=1
-  done
-  generator_pids=()
-  return "$shard_status"
+  "$krea_python" scripts/offline/generate-krea-candidates.py "${generator_args[@]}" &
+  generator_pid=$!
+  wait "$generator_pid" || status=1
+  generator_pid=""
+  return "$status"
 }
 
 while [[ "$candidate" -le "${defer_after:-99}" ]]; do
   round="$(printf '%02d' "$candidate")"
   pass_work="$work_root/pass-$round"
   refined="$work_root/refined-round-$round.json"
-  generation_targets="$current"
-  if [[ "$first_round" -eq 1 && -n "$first_generation_targets" ]]; then
-    generation_targets="$first_generation_targets"
-  fi
 
-  echo "[$(date -u +%FT%TZ)] streaming judge/refinement for candidate $candidate with $krea_shard_count $image_model shard(s)"
+  echo "[$(date -u +%FT%TZ)] streaming judge/refinement for candidate $candidate with $image_model"
   env CODEX_IMAGE_CONCURRENCY="$codex_image_concurrency" node scripts/offline/stream-image-quality-pass.mjs \
     "$current" "$candidates" "$images" "$pass_work" "$refined" "$candidate" "$chunk_size" &
   watcher_pid=$!
 
-  retry generate_candidates "$generation_targets" "$candidate"
+  retry generate_candidates "$current" "$candidate"
 
   watcher_status=0
   wait "$watcher_pid" || watcher_status=$?
@@ -214,7 +152,6 @@ while [[ "$candidate" -le "${defer_after:-99}" ]]; do
 
   current="$refined"
   candidate=$((candidate + 1))
-  first_round=0
 done
 
 if [[ -n "$defer_after" ]]; then
