@@ -4,7 +4,7 @@
  * until they finished.
  *
  * One request at a time, since a model session runs one inference at once. A request that a newer one
- * replaced while it waited is dropped unheard: only the latest speech is ever played.
+ * replaced while it waited, or while the model loaded, is dropped unheard: only the latest speech is ever played.
  */
 import { KokoroTTS, type GenerateOptions } from 'kokoro-js';
 import { env } from '@huggingface/transformers';
@@ -71,13 +71,18 @@ const loadModel = (devices: KokoroDevice[]): Promise<KokoroTTS> => {
 let latestId = 0;
 let queue: Promise<void> = Promise.resolve();
 
+const superseded = (id: number): boolean => {
+  if (id === latestId) return false;
+  post({ type: 'error', id, message: 'superseded' });
+  return true;
+};
+
 const synthesize = async ({ id, text, voice, devices }: KokoroRequest): Promise<void> => {
-  if (id !== latestId) {
-    post({ type: 'error', id, message: 'superseded' });
-    return;
-  }
+  if (superseded(id)) return;
   try {
     const tts = await loadModel(devices);
+    // The first load can take minutes; a request replaced meanwhile shouldn't hold up the one replacing it.
+    if (superseded(id)) return;
     const audio = await tts.generate(text, { voice });
     post({ type: 'audio', id, audio: audio.toBlob() });
   } catch (error) {
