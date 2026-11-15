@@ -20,12 +20,13 @@ const sentence = (text: string, hasImage = false) => poolSentence({
 });
 const analysisFor = (prompt: string) => ({ translation: `译文 ${prompt}`, imagePrompt: prompt });
 
-function prepare(sentences: Array<ReturnType<typeof sentence>>, analysis: unknown, fallback?: string) {
+function prepare(sentences: Array<ReturnType<typeof sentence>>, analysis: unknown, fallback?: string, model = 'test-model') {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-sentence-images-'));
   writeJson(join(root, 'source.json'), { version: 1, sentences });
   writeJson(join(root, 'analysis.json'), analysis);
   const output = join(root, 'bundle');
-  const args = [script, join(root, 'source.json'), join(root, 'analysis.json'), output, 'test-model'];
+  const args = [script, join(root, 'source.json'), join(root, 'analysis.json'), output];
+  if (model || fallback) args.push(model);
   if (fallback) args.push(fallback);
   const child = spawnSync(process.execPath, args, { encoding: 'utf8' });
   const read = (name: string) => JSON.parse(readFileSync(join(output, name), 'utf8'));
@@ -88,4 +89,15 @@ test('sentence images refuse an analysis written for different text', () => {
   });
   assert.notEqual(child.status, 0);
   assert.match(child.stderr, new RegExp(`Sentence source mismatch: ${value.id}`));
+});
+
+test('without a model label, sentence image targets name the loop\'s default renderer, Krea', () => {
+  const value = sentence('The {{example}} needs a render.');
+  const { child, read } = prepare([value], {
+    version: 1,
+    generatedAt: 1,
+    entries: [{ id: value.id, textHash: value.textHash, analysis: analysisFor('Prompt'), generatedAt: 1 }],
+  }, undefined, '');
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(read('targets.json').model, 'krea/Krea-2-Turbo');
 });

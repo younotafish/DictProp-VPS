@@ -69,3 +69,18 @@ test('image entries carry the parent hash the importer recomputes, whatever the 
   // The style and analysis are left out of the hash, not merely absent from this fixture.
   assert.notEqual(corpusSourceHash(sentence), createHash('sha256').update(JSON.stringify(sentence)).digest('hex'));
 });
+
+test('without a model label, item image entries name the loop\'s default renderer, Krea, not the retired ERNIE', () => {
+  const card = {
+    id: 'card', word: 'sample', imagePrompt: 'A photorealistic close view of one sample jar beside the full batch, no text.',
+  };
+  const items = [{ id: card.id, type: 'vocab', savedAt: 1, wasArchived: false, data: card }];
+
+  const unlabelled = prepare(items, [], []);
+  assert.equal(unlabelled.manifest.model, 'krea/Krea-2-Turbo');
+  assert.equal(unlabelled.targets.model, 'krea/Krea-2-Turbo');
+
+  const labelled = prepare(items, [], ['local/test-model']);
+  assert.equal(labelled.manifest.model, 'local/test-model');
+  assert.equal(labelled.targets.model, 'local/test-model');
+});

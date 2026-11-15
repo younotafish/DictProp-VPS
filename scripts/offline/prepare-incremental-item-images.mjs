@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { DEFAULT_IMAGE_MODEL_LABEL } from './image-model.mjs';
 import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
 import { readJson, writePrivateJson } from './offline-io.mjs';
 
@@ -34,7 +35,7 @@ if (completionArg && completionArg !== '-') {
 const outputDir = resolve(outputArg);
 mkdirSync(join(outputDir, 'images'), { recursive: true });
 mkdirSync(join(outputDir, 'candidates'), { recursive: true });
-const model = modelArg || 'baidu/ERNIE-Image-Turbo';
+const model = modelArg || DEFAULT_IMAGE_MODEL_LABEL;
 const entries = [];
 const targets = [];
 const seen = new Set();

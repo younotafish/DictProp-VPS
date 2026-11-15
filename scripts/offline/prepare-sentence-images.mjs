@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { DEFAULT_IMAGE_MODEL_LABEL } from './image-model.mjs';
 import { linkOrCopy, readJson, writePrivateJson } from './offline-io.mjs';
 import { sentenceImageFilename } from './sentence-pool.mjs';
 
@@ -49,7 +50,7 @@ const entries = analysis.entries.filter(entry => sources.get(entry.id)?.hasImage
   return { id: entry.id, textHash: entry.textHash, imageFile: `images/${filename}` };
 });
 
-const model = modelArg || 'krea/Krea-2-Turbo';
+const model = modelArg || DEFAULT_IMAGE_MODEL_LABEL;
 // The waves and the verifier read each entry's identity and image file here; the analysis stays in its own manifest.
 writePrivateJson(join(outputDir, 'manifest.json'), { version: 1, generatedAt: analysis.generatedAt, entries });
 writePrivateJson(join(outputDir, 'targets.json'), {
