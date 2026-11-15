@@ -183,6 +183,13 @@ test('pronunciations are reduced to the single /…/ transcription the validator
   assert.equal(repairIpa('', 'bank'), '');
 });
 
+test('a pronunciation broken over two lines fails validation, as it does in the offline contract', () => {
+  const card = normalizeVocabCard(completeCard({ ipa: '/bæ\nŋk/' }), 'bank', 1234);
+  assert.ok(card);
+  assert.deepEqual(vocabValidationIssues(card), ['"ipa" must be exactly one American IPA transcription wrapped in slashes, like /ˈbæŋk/']);
+  assert.deepEqual(vocabValidationIssues({ ...card, ipa: '/ˈbæŋk/' }), []);
+});
+
 test('example markup slips are repaired without changing the wording', () => {
   const cases: Array<[string, string, string[], string]> = [
     ['I had to {{[[bank]] on}} my friend for a ride home.', 'bank on', [], 'I had to {{bank on}} my friend for a ride home.'],

@@ -135,7 +135,8 @@ function metadataIssues(value: unknown, options: VocabValidationOptions): string
   if (typeof vocab.chinese === 'string' && vocab.chinese.trim() && !/[\u3400-\u9fff]/u.test(vocab.chinese)) {
     issues.push('"chinese" must contain Chinese characters');
   }
-  if (typeof vocab.ipa !== 'string' || !/^\/[^/]+\/$/.test(vocab.ipa.trim())) {
+  // One line, as the offline vocab contract also requires.
+  if (typeof vocab.ipa !== 'string' || !/^\/[^/\n]+\/$/.test(vocab.ipa.trim())) {
     issues.push('"ipa" must be exactly one American IPA transcription wrapped in slashes, like /ˈbæŋk/');
   }
   for (const field of ['forms', 'synonyms', 'antonyms', 'confusables'] as const) {
