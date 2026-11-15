@@ -253,7 +253,6 @@ db.pragma('optimize = 0x10002');
 const stmts = {
   getAll: db.prepare(`SELECT * FROM items WHERE user_id = ?`),
   getAllChunk: db.prepare(`SELECT rowid AS _rowid, * FROM items WHERE user_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`),
-  getSince: db.prepare(`SELECT * FROM items WHERE user_id = ? AND (updated_at > ? OR (updated_at IS NULL AND saved_at > ?))`),
   getAfterRevision: db.prepare(`SELECT * FROM items
     WHERE user_id = ? AND (revision > ? OR (revision = ? AND id > ?))
     ORDER BY revision, id LIMIT ?`),
@@ -760,10 +759,6 @@ export function getAllSentenceTexts(): string[] {
     if (typeof d.text === 'string') add(d.text);                                             // saved sentence
   }
   return [...texts];
-}
-
-export function getItemsSince(since: number, userId: string) {
-  return rowsToItems(stmts.getSince.all(userId, since, since) as ItemRow[], userId);
 }
 
 export interface RevisionCursor {
@@ -1429,18 +1424,6 @@ export function getImageManifest(userId: string): string[] {
 export function hasItemImage(id: string, userId: string): boolean {
   return imageStmts.versionsForIds.all(userId, JSON.stringify([id])).length > 0;
 }
-
-/** Upsert base64 images directly into item_images (upload-on-create + recovery). */
-export const upsertItemImages = db.transaction((images: Array<{ id: string; data: string }>, userId: string): number => {
-  const now = Date.now();
-  let count = 0;
-  for (const img of images) {
-    if (img && img.id && typeof img.data === 'string' && img.data.startsWith('data:image/')) {
-      if (storeImage(img.id, userId, img.data, now)) count++;
-    }
-  }
-  return count;
-});
 
 const touchStmts = {
   exists: db.prepare(`SELECT 1 FROM items WHERE id = ? AND user_id = ?`),

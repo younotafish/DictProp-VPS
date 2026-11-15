@@ -64,11 +64,9 @@ test('item writes are refused when their data is oversized or holds an inline im
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), { error: `Invalid item at index 0: ${error}` });
   }
-  let response = await app.request('/api/items/route-inline', send('PUT', vocab('route-inline', {
-    examples: [{ sentence: dataUri(png('example')) }],
-  })));
+  let response = await putItems([vocab('route-inline', { examples: [{ sentence: dataUri(png('example')) }] })]);
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: 'item has an inline image outside imageUrl' });
+  assert.deepEqual(await response.json(), { error: 'Invalid item at index 0: item has an inline image outside imageUrl' });
   for (const id of ['route-large', 'route-inline', 'route-inline-phrase', 'route-deep']) {
     assert.equal((await app.request(`/api/items/${id}`)).status, 404, id);
   }
@@ -89,9 +87,6 @@ test('an image whose blob is gone is served as missing rather than as an empty i
   db.prepare('DELETE FROM image_blobs WHERE content_hash = ?').run(sha256(bytes));
 
   assert.equal((await app.request('/api/items/route-dangling/image')).status, 404);
-  const response = await app.request('/api/items/images', send('POST', { ids: ['route-dangling'] }));
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {});
   assert.equal((await manifest()).includes('route-dangling'), false);
 });
 
@@ -125,23 +120,12 @@ test('the image endpoint names its bytes with a strong ETag and answers a matchi
 
 test('malformed JSON bodies get a 400 instead of failing the request', async () => {
   for (const [path, method, error] of [
-    ['/api/items/images', 'POST', 'Expected { ids: string[] }'],
-    ['/api/items/images', 'PUT', 'Expected { [id]: dataUri }'],
     ['/api/items', 'PUT', 'Expected array of items'],
-    ['/api/items/route-malformed', 'PUT', 'item must be an object'],
   ] as const) {
     const response = await app.request(path, send(method, '{not json'));
     assert.equal(response.status, 400, `${method} ${path}`);
     assert.deepEqual(await response.json(), { error });
   }
-});
-
-test('deleting an id the user never saved leaves the revision clock alone', async () => {
-  const head = async () => (await (await app.request('/api/items?afterRevision=0&limit=1')).json() as any).headRevision;
-  const before = await head();
-  const response = await app.request('/api/items/route-never-saved', { method: 'DELETE' });
-  assert.equal(response.status, 200);
-  assert.equal(await head(), before);
 });
 
 test('comparison saves are bounded, and neither an older nor a future-dated copy wins', async () => {

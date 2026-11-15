@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { db, getItemsSince, getItemsAfterRevision, upsertItem, upsertMany, softDeleteItem, getItemById, getItemImageBinary, getItemImagesBatch, getImageManifest, upsertItemImages, addReviewEvent, getReviewEvents, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
+import { db, getItemsAfterRevision, upsertMany, getItemById, getItemImageBinary, getImageManifest, addReviewEvent, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
 import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
@@ -167,12 +167,6 @@ itemsRoutes.get('/items', (c) => {
     }
     return c.json(getItemsAfterRevision({ revision, id: afterId }, limit, userId));
   }
-  const since = c.req.query('since');
-  if (since) {
-    const ts = parseInt(since, 10);
-    if (isNaN(ts)) return c.json({ error: 'Invalid since parameter' }, 400);
-    return c.json(getItemsSince(ts, userId));
-  }
   // Keep the legacy array response contract, but serialize bounded pages into a stream. A large
   // regenerated corpus must not monopolize the single Node event loop during JSON conversion.
   return streamAllItems(c, userId);
@@ -206,59 +200,14 @@ itemsRoutes.get('/items/:id/image', (c) => {
   return new Response(image.data, { headers: { ...headers, 'Content-Type': image.mimeType } });
 });
 
-// POST /api/items/images — batch fetch images for multiple item IDs
-itemsRoutes.post('/items/images', async (c) => {
-  const userId = c.get('user').id;
-  const { ids } = await c.req.json().catch(() => ({}));
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return c.json({ error: 'Expected { ids: string[] }' }, 400);
-  }
-  // Cap at 20 per request to limit response size
-  const capped = Array.from(new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 200))).slice(0, 20);
-  if (capped.length === 0) return c.json({ error: 'Expected valid image ids' }, 400);
-  const images = getItemImagesBatch(capped, userId);
-  return c.json(images);
-});
-
 // GET /api/items/images/manifest — ids of every image this user has stored.
 // Lightweight (ids only); the client diffs this against its IndexedDB to know what to re-upload.
-// Registered before GET /items/:id so the literal path isn't captured as an :id.
 itemsRoutes.get('/items/images/manifest', (c) => {
   const userId = c.get('user').id;
   return c.json(getImageManifest(userId));
 });
 
-// PUT /api/items/images — upload base64 images straight into item_images.
-// Body: { [id]: 'data:image/...;base64,...' }. Used by upload-on-create and the recovery action.
-// Registered before PUT /items/:id and PUT /items so it isn't shadowed.
-itemsRoutes.put('/items/images', async (c) => {
-  const userId = c.get('user').id;
-  const body = await c.req.json().catch(() => null);
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    return c.json({ error: 'Expected { [id]: dataUri }' }, 400);
-  }
-  const MAX_ENTRIES = 25;
-  const MAX_LEN = 14 * 1024 * 1024; // ~10MB binary encoded as base64
-  const images: Array<{ id: string; data: string }> = [];
-  for (const [id, val] of Object.entries(body)) {
-    if (images.length >= MAX_ENTRIES) break;
-    if (id.length > 0 && id.length <= 200 && typeof val === 'string' &&
-        /^data:image\/(?:avif|gif|jpeg|png|webp);base64,/.test(val) && val.length <= MAX_LEN) {
-      images.push({ id, data: val });
-    }
-  }
-  if (images.length === 0) return c.json({ error: 'No valid images' }, 400);
-  // The images and the revisions that announce them commit together, or a delta client could miss one.
-  const saved = db.transaction(() => {
-    const count = upsertItemImages(images, userId);
-    if (count > 0) touchItemRevisions(images.map(image => image.id), userId);
-    return count;
-  })();
-  return c.json({ ok: true, saved });
-});
-
-// Binary image upload. New clients use this to avoid base64/JSON expansion;
-// the batch JSON endpoint remains temporarily for older deployed clients.
+// PUT /api/items/:id/image — binary image upload, without base64/JSON expansion.
 itemsRoutes.put('/items/:id/image', async (c) => {
   const userId = c.get('user').id;
   const mimeType = (c.req.header('content-type') || '').split(';', 1)[0].toLowerCase();
@@ -289,28 +238,6 @@ itemsRoutes.get('/items/:id', (c) => {
   return c.json(item);
 });
 
-// PUT /api/items/:id — upsert a single item
-itemsRoutes.put('/items/:id', async (c) => {
-  const userId = c.get('user').id;
-  const body = await c.req.json().catch(() => null);
-  const validationError = validateStoredItem(body);
-  if (validationError) return c.json({ error: validationError }, 400);
-  const id = c.req.param('id');
-  if (!id || id.length > 200) return c.json({ error: 'Invalid item id' }, 400);
-  // Ensure URL param matches body
-  body.data.id = id;
-  body.srs.id = id;
-  try {
-    const result = upsertItem(body, userId);
-    return c.json({ ok: true, ...result });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('belongs to another user')) {
-      return c.json({ error: error.message }, 409);
-    }
-    throw error;
-  }
-});
-
 // PUT /api/items — batch upsert (array of items)
 itemsRoutes.put('/items', async (c) => {
   const userId = c.get('user').id;
@@ -335,15 +262,6 @@ itemsRoutes.put('/items', async (c) => {
     }
     throw error;
   }
-});
-
-// DELETE /api/items/:id — soft delete
-itemsRoutes.delete('/items/:id', (c) => {
-  const userId = c.get('user').id;
-  const id = c.req.param('id');
-  if (!id || id.length > 200) return c.json({ error: 'Invalid item id' }, 400);
-  softDeleteItem(id, userId);
-  return c.json({ ok: true });
 });
 
 // POST /api/import — bulk import
@@ -426,14 +344,6 @@ itemsRoutes.post('/import', async (c) => {
     skipped: body.length - items.length,
     imagesFetched,
   });
-});
-
-// Append-only review history. The event id makes retries idempotent.
-itemsRoutes.get('/reviews', (c) => {
-  const userId = c.get('user').id;
-  const since = Number(c.req.query('since') || Date.now() - 366 * 24 * 60 * 60 * 1000);
-  if (!Number.isFinite(since) || since < 0) return c.json({ error: 'Invalid since parameter' }, 400);
-  return c.json(getReviewEvents(userId, since));
 });
 
 itemsRoutes.get('/reviews/history', (c) => {

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { enrichmentId } from '../src/example-enrichment-coverage.js';
 
-const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, touchItemRevisions, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
+const { getItemById, getItemsAfterRevision, upsertItem, touchItemRevisions, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const makeItem = (
@@ -124,14 +124,14 @@ test('legacy project cleanup runs as a resumable background migration', async ()
 });
 
 test('image ids cannot overwrite another user', () => {
-  const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
   const blobs = () => (db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count;
   const blobsBefore = blobs();
-  assert.equal(upsertItemImages([{ id: 'owned-image', data: image }], 'user-a'), 1);
-  assert.equal(upsertItemImages([{ id: 'owned-image', data: image }], 'user-b'), 0);
-  assert.equal(upsertItemImages([{ id: 'duplicate-image', data: image }], 'user-a'), 1);
+  assert.equal(upsertItemImageBinary('owned-image', image, 'image/png', 'user-a'), true);
+  assert.equal(upsertItemImageBinary('owned-image', image, 'image/png', 'user-b'), false);
+  assert.equal(upsertItemImageBinary('duplicate-image', image, 'image/png', 'user-a'), true);
   assert.equal(blobs(), blobsBefore + 1);
-  const replacement = Buffer.concat([Buffer.from(image.split(',')[1], 'base64'), Buffer.from([0])]);
+  const replacement = Buffer.concat([image, Buffer.from([0])]);
   assert.equal(upsertItemImageBinary('owned-image', replacement, 'image/png', 'user-a'), true);
   assert.equal(blobs(), blobsBefore + 2);
   assert.equal(upsertItemImageBinary('duplicate-image', replacement, 'image/png', 'user-a'), true);

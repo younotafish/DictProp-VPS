@@ -80,9 +80,10 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   assert.equal(deltaItems[0].srs.scheduler, 'fsrs-v6');
   assert.ok(delta.cursor.revision > 0);
 
-  response = await app.request('/api/reviews?since=0');
+  response = await app.request('/api/reviews/history?recentSince=0');
   assert.equal(response.status, 200);
-  const events = (await response.json() as any[]).filter(stored => stored.id === event.id);
+  type History = { recent: Array<Record<string, unknown>> };
+  const events = (await response.json() as History).recent.filter(stored => stored.id === event.id);
   assert.equal(events.length, 1);
   assert.deepEqual(
     {
@@ -104,8 +105,8 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   assert.equal(response.status, 200);
   assert.equal((await response.json() as any).undone, false);
 
-  response = await app.request('/api/reviews?since=0');
-  assert.deepEqual((await response.json() as any[]).filter(stored => stored.id === event.id), []);
+  response = await app.request('/api/reviews/history?recentSince=0');
+  assert.deepEqual((await response.json() as History).recent.filter(stored => stored.id === event.id), []);
 });
 
 test('review history sends recent reviews in full and older ones as times and a count', async () => {
