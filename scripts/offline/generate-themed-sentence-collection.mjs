@@ -3,8 +3,9 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
 import { readJson, writePrivateJson } from './offline-io.mjs';
+import { runThemedCodex, themedCodexSettings } from './themed-collection-codex.mjs';
 
 const [briefArg, outputArg, workArg] = process.argv.slice(2);
 if (!briefArg || !outputArg) {
@@ -52,10 +53,8 @@ const schema = {
 const schemaPath = join(workDir, 'output-schema.json');
 writePrivateJson(schemaPath, schema);
 
-const model = process.env.CODEX_MODEL || 'gpt-5.6-sol';
+const { model, timeoutMs } = themedCodexSettings();
 const concurrency = Math.max(1, Math.min(32, Number(process.env.CODEX_CONCURRENCY || 8)));
-const timeoutMinutes = Math.max(5, Math.min(60, Number(process.env.CODEX_TIMEOUT_MINUTES || 30)));
-const timeoutMs = timeoutMinutes * 60 * 1_000;
 const activeChildren = new Set();
 let aborting = false;
 installCodexSignalCleanup(activeChildren, () => { aborting = true; });
@@ -76,7 +75,7 @@ function validateSection(value, section) {
     const text = String(sentence?.text || '').trim();
     const focus = String(sentence?.focus || '').trim();
     const textKey = normalized(text);
-    const wordCount = text.match(/[A-Za-z0-9]+(?:['’\-][A-Za-z0-9]+)*/g)?.length ?? 0;
+    const wordCount = text.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g)?.length ?? 0;
     if (text.length < 35 || text.length > 280 || wordCount < 8 || wordCount > 32 || !/[.!?]$/.test(text)) {
       throw new Error(`${section.id}/${index + 1}: sentence must be a complete, bounded utterance`);
     }
@@ -131,44 +130,17 @@ ${extraRequirements}
 - Return sectionId exactly and exactly ${sentencesPerSection} unique sentence objects.${correction}`;
 }
 
-function runCodex(prompt, resultPath) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnCodex([
-      'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-      '-m', model, '--output-schema', schemaPath, '-o', resultPath, '-',
-    ]);
-    activeChildren.add(child);
-    let stderr = '';
-    let hardKill;
-    const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKill = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
-    }, timeoutMs);
-    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
-    child.on('error', error => {
-      activeChildren.delete(child);
-      clearTimeout(timeout);
-      clearTimeout(hardKill);
-      reject(error);
-    });
-    child.on('exit', (code, signal) => {
-      activeChildren.delete(child);
-      clearTimeout(timeout);
-      clearTimeout(hardKill);
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Codex exited with ${code ?? signal}: ${stderr}`));
-    });
-    child.stdin.end(prompt);
-  });
-}
-
 async function generateSection(section) {
   const fingerprint = createHash('sha256').update(JSON.stringify({ brief, section })).digest('hex').slice(0, 16);
   const resultPath = join(workDir, `${section.id}-${fingerprint}.json`);
   let correction = '';
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      if (!existsSync(resultPath)) await runCodex(promptFor(section, correction), resultPath);
+      if (!existsSync(resultPath)) {
+        await runThemedCodex({
+          prompt: promptFor(section, correction), schemaPath, resultPath, model, timeoutMs, activeChildren,
+        });
+      }
       return validateSection(readJson(resultPath), section);
     } catch (error) {
       if (aborting || attempt === 2) throw error;
