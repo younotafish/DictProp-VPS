@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
-import { db } from './connection.js';
+import { db, writeTransaction } from './connection.js';
 
 // ─── User / Session prepared statements ───
 
@@ -50,7 +50,7 @@ export function getUserCount(): number {
   return (userStmts.count.get() as { cnt: number }).cnt;
 }
 
-export const createUserAndClaimItems = db.transaction((opts: {
+export const createUserAndClaimItems = writeTransaction((opts: {
   googleId: string;
   email: string;
   displayName: string | null;

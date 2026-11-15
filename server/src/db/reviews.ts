@@ -1,7 +1,7 @@
 import { ConflictError } from '../errors.js';
 import type { ReviewRating, ReviewTaskType } from '../shared/review.js';
 import { advanceReviewSrs } from '../srs.js';
-import { db } from './connection.js';
+import { db, writeTransaction } from './connection.js';
 import { getItemById, stmts, writeItem, type ItemRow } from './items.js';
 import { nextRevision } from './revisions.js';
 
@@ -89,7 +89,7 @@ interface ReviewSnapshotRow {
   applied_revision: number | null;
 }
 
-const applyReviewTransaction = db.transaction((
+const applyReviewTransaction = writeTransaction((
   incoming: ReviewEventRow,
   itemIds: string[],
   userId: string,
@@ -241,7 +241,7 @@ function sameSrs(stored: string, applied: string): boolean {
   }
 }
 
-const undoReviewTransaction = db.transaction((
+const undoReviewTransaction = writeTransaction((
   eventId: string,
   userId: string,
 ): { undone: boolean; itemIds: string[]; baseRevisions: Record<string, number> } | null => {

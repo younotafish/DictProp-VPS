@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { db, getItemsAfterRevision, upsertMany, getItemById, getItemImageBinary, getImageManifest, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
+import { getItemsAfterRevision, upsertMany, getItemById, getItemImageBinary, getImageManifest, getReviewHistory, applyReviewEvent, undoReviewEvent, storeItemImage, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType, isSupportedImageMime } from '../image-format.js';
 import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
@@ -218,13 +218,10 @@ itemsRoutes.put('/items/:id/image', async (c) => {
   if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
     return c.json({ error: 'Invalid image size' }, 413);
   }
-  const id = c.req.param('id');
-  const stored = db.transaction(() => {
-    if (!upsertItemImageBinary(id, bytes, mimeType, userId)) return false;
-    touchItemRevisions([id], userId);
-    return true;
-  })();
-  if (!stored) return c.json({ error: 'Image could not be stored' }, 400);
+  // The image and the revisions that announce it commit together, or a delta client could miss it.
+  if (!storeItemImage(c.req.param('id'), bytes, mimeType, userId)) {
+    return c.json({ error: 'Image could not be stored' }, 400);
+  }
   return c.json({ ok: true });
 });
 

@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { isSupportedImageMime, isValidImage, parseImageDataUri } from '../image-format.js';
-import { db } from './connection.js';
+import { db, writeTransaction } from './connection.js';
 
 // ─── Image (item_images) prepared statements ───
 
@@ -92,9 +92,8 @@ export function storeImage(id: string, userId: string | null, dataUri: string, u
   return parsed ? storeImageBuffer(id, userId, parsed.data, parsed.mimeType, updatedAt) : false;
 }
 
-export function upsertItemImageBinary(id: string, data: Buffer, mimeType: string, userId: string): boolean {
-  return storeImageBuffer(id, userId, data, mimeType, Date.now());
-}
+export const upsertItemImageBinary = writeTransaction((id: string, data: Buffer, mimeType: string, userId: string): boolean =>
+  storeImageBuffer(id, userId, data, mimeType, Date.now()));
 
 function storedImageToDataUri(row: { data: Buffer | string; mime_type?: string | null } | undefined): string | null {
   // A blob reference whose blob is gone reads back as the row's empty placeholder: that is no image.

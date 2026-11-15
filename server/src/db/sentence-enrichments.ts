@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { isSupportedImageMime, isValidImage } from '../image-format.js';
 import { hasCompleteSentenceAnalysis } from '../sentence-analysis.js';
 import { sentenceLookupHash, type SentenceEnrichmentEntry } from '../sentence-enrichment.js';
-import { db } from './connection.js';
+import { db, writeTransaction } from './connection.js';
 import { deleteUnreferencedBlobs, imageStmts } from './images.js';
 
 const sentenceEnrichmentStmts = {
@@ -111,7 +111,7 @@ export function getSentenceEnrichmentImage(lookupHash: string): {
   return { data: row.data, mimeType: row.image_mime_type };
 }
 
-export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord): SentenceEnrichmentImportResult {
+function writeSentenceEnrichment(record: SentenceEnrichmentImportRecord): SentenceEnrichmentImportResult {
   const { entry, image, mimeType } = record;
   const existing = sentenceEnrichmentStmts.get.get(entry.lookupHash) as SentenceEnrichmentRow | undefined;
   const existingHasImage = existing
@@ -187,3 +187,5 @@ export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord)
   }
   return { status: existing ? 'updated' : 'inserted', imageStored };
 }
+
+export const upsertSentenceEnrichment = writeTransaction(writeSentenceEnrichment);

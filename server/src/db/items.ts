@@ -1,8 +1,8 @@
 import { ConflictError } from '../errors.js';
 import { serverImageMarker } from '../shared/image-markers.js';
 import { keepServerOwnedData } from '../shared/server-owned-data.js';
-import { db } from './connection.js';
-import { getItemImagesBatch, imageStmts, linkSentenceEnrichmentImage, storeImage } from './images.js';
+import { db, writeTransaction } from './connection.js';
+import { getItemImagesBatch, imageStmts, linkSentenceEnrichmentImage, storeImage, upsertItemImageBinary } from './images.js';
 import { currentRevision, nextRevision } from './revisions.js';
 import { getSentenceEnrichmentForText } from './sentence-enrichments.js';
 
@@ -319,7 +319,7 @@ export function writeItem(item: any, userId: string, options: UpsertOptions): Up
 }
 
 // The item row, its captured images and its revision commit together.
-const writeItemTransaction = db.transaction(writeItem);
+const writeItemTransaction = writeTransaction(writeItem);
 
 export function upsertItem(item: any, userId: string, options: UpsertOptions = {}): UpsertResult {
   const { revision, conflicted } = writeItemTransaction(item, userId, options);
@@ -327,7 +327,7 @@ export function upsertItem(item: any, userId: string, options: UpsertOptions = {
 }
 
 /** `enriched` lists the sentences the example-enrichment pool just gave an analysis. */
-export const upsertMany = db.transaction((items: any[], userId: string, options: UpsertOptions = {}): {
+export const upsertMany = writeTransaction((items: any[], userId: string, options: UpsertOptions = {}): {
   revisions: Record<string, number>;
   conflicts: string[];
   enriched: string[];
@@ -344,13 +344,13 @@ export const upsertMany = db.transaction((items: any[], userId: string, options:
   return { revisions, conflicts, enriched };
 });
 
-export function softDeleteItem(id: string, userId: string): boolean {
+export const softDeleteItem = writeTransaction((id: string, userId: string): boolean => {
   // Deleting an id the user doesn't have changes nothing, so it must not advance the revision clock.
   if (!stmts.existsScoped.get(id, userId)) return false;
   const revision = (nextRevision.get() as { value: number }).value;
   stmts.softDelete.run(Date.now(), revision, id, userId);
   return true;
-}
+});
 
 export function getItemById(id: string, userId: string, includeImages = true) {
   const row = stmts.getByIdScoped.get(id, userId) as ItemRow | undefined;
@@ -375,7 +375,7 @@ const touchStmts = {
  * Image bytes live outside item rows, so storing one changes no revision. Bump every item that shows
  * one of these images, itself or as a phrase vocab, so revision-delta clients pick up its new marker.
  */
-export const touchItemRevisions = db.transaction((imageIds: readonly string[], userId: string): void => {
+export const touchItemRevisions = writeTransaction((imageIds: readonly string[], userId: string): void => {
   const owners = new Set<string>();
   for (const imageId of new Set(imageIds)) {
     if (stmts.existsScoped.get(imageId, userId)) owners.add(imageId);
@@ -388,4 +388,11 @@ export const touchItemRevisions = db.transaction((imageIds: readonly string[], u
     }
   }
   for (const id of owners) touchStmts.bump.run((nextRevision.get() as { value: number }).value, id, userId);
+});
+
+/** Store an image for an item or phrase vocab id, together with the revisions that announce it to delta clients. */
+export const storeItemImage = writeTransaction((id: string, data: Buffer, mimeType: string, userId: string): boolean => {
+  if (!upsertItemImageBinary(id, data, mimeType, userId)) return false;
+  touchItemRevisions([id], userId);
+  return true;
 });

@@ -1,6 +1,6 @@
 // The SQLite database, split by table group under db/. Importing it opens the database file and applies the
 // schema, so only server code imports it: code the client also runs lives in server/src/shared instead.
-export { db, isDatabaseReady } from './db/connection.js';
+export { db, isDatabaseReady, writeTransaction } from './db/connection.js';
 export {
   deleteUnreferencedBlobs,
   getImageManifest,
@@ -24,6 +24,7 @@ export {
   getItemById,
   getItemsAfterRevision,
   softDeleteItem,
+  storeItemImage,
   touchItemRevisions,
   upsertItem,
   upsertMany,
