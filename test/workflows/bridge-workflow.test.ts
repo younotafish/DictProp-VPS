@@ -6,11 +6,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { readRepoFile } from '../support/paths.ts';
 
-const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
-const workflow = readFileSync(join(repoRoot, '.github/workflows/sentence-backfill.yml'), 'utf8');
+const workflow = readRepoFile('.github/workflows/sentence-backfill.yml');
 
 // Each import job, the release asset it decrypts, and the server script that imports the bundle.
 const imports = [
@@ -125,7 +124,7 @@ test('each import decrypts only its own asset and streams it to its importer', (
 
 test('each dispatcher binds its archive to the import job that decrypts it', () => {
   for (const { op, asset, dispatcher } of imports) {
-    const script = readFileSync(join(repoRoot, 'scripts/offline', dispatcher), 'utf8');
+    const script = readRepoFile(`scripts/offline/${dispatcher}`);
     assert.match(script, new RegExp(`ARCHIVE="\\$[A-Z_]+/${asset.replace('.', '\\.')}"`), dispatcher);
     assert.ok(script.includes(`--purpose "import:${op}:$RELEASE_TAG"`), dispatcher);
     assert.match(script, new RegExp(`\\b${asset.replace('.', '\\.')}\\s*\\\\?\\s*${op}\\b`), dispatcher);

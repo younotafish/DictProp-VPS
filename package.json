@@ -16,10 +16,11 @@
     "build:all": "npm run build && npm run build:server",
     "typecheck": "tsc --noEmit",
     "typecheck:server": "cd server && npm run typecheck",
+    "test": "tsx --import ./test/support/isolated-env.ts --test --test-timeout=120000 'test/**/*.test.ts'",
     "test:server": "cd server && npm test",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
     "check:sw": "node --check public/sw.js && node --check dist/sw.js",
-    "check": "npm run typecheck && npm run typecheck:server && npm run test:server && npm run build:all && npm run check:bundle && npm run check:sw"
+    "check": "npm run typecheck && npm run typecheck:server && npm test && npm run test:server && npm run build:all && npm run check:bundle && npm run check:sw"
   },
   "dependencies": {
     "fuse.js": "^7.1.0",
@@ -39,8 +40,10 @@
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.22",
     "canvas": "^3.2.0",
+    "fake-indexeddb": "^6.2.5",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.17",
+    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

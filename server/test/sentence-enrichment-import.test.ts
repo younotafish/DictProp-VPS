@@ -5,14 +5,13 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { SERVER_DIR } from './support/paths.js';
 
 const DATA_DIR = process.env.DATA_DIR!;
 
 const { getSentenceEnrichmentForText, getSentenceEnrichmentImage, upsertSentenceEnrichment } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
-const serverDir = fileURLToPath(new URL('..', import.meta.url));
 const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const png = (seed: string) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(seed)]);
 const analysis = (translation: string) => ({
@@ -32,7 +31,7 @@ const entry = (text: string, generatedAt: number, imageFile?: string) => {
 function runImport(manifest: string) {
   const { NODE_TEST_CONTEXT: _testContext, ...parentEnv } = process.env;
   const child = spawnSync(process.execPath, ['--import', 'tsx', 'src/scripts/import-sentence-enrichments.ts', manifest], {
-    cwd: serverDir,
+    cwd: SERVER_DIR,
     env: { ...parentEnv, DATA_DIR },
     encoding: 'utf8',
   });

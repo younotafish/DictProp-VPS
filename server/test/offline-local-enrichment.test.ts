@@ -4,13 +4,12 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { corpusSourceHash } from '../src/corpus-audit.js';
 import { hasCurrentLocalAdvancedEnrichment } from '../src/incremental-enrichment.js';
+import { repoPath } from './support/paths.js';
 
-const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
-const script = (name: string) => join(repoRoot, 'scripts', 'offline', name);
+const script = (name: string) => repoPath('scripts', 'offline', name);
 const completeAudit = {
   status: 'current_general',
   reason: 'This is current general English.',

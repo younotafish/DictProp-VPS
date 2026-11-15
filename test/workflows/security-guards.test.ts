@@ -1,19 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const serverDir = fileURLToPath(new URL('..', import.meta.url));
-const readRepoFile = (relativePath: string): string => readFileSync(
-  fileURLToPath(new URL(`../../${relativePath}`, import.meta.url)),
-  'utf8',
-);
+import { readRepoFile, SERVER_DIR } from '../support/paths.ts';
 
 /** Loads env.ts in a child process with the given variables and reports how it went. */
 const loadEnv = (vars: Record<string, string>) => spawnSync(process.execPath, ['--import', 'tsx', 'src/env.ts'], {
-  cwd: serverDir,
+  cwd: SERVER_DIR,
   env: { ...process.env, ...vars },
   encoding: 'utf8',
 });

@@ -3,9 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
 import { sentenceLookupHash } from '../src/sentence-enrichment.js';
+import { repoPath } from './support/paths.js';
 
 const analysis = {
   translation: 'translation',
@@ -59,7 +60,7 @@ test('example enrichment waves are bounded, resumable, and copy only ready image
   }));
 
   const stdout = execFileSync(process.execPath, [
-    resolve('..', 'scripts/offline/prepare-example-enrichment-wave.mjs'),
+    repoPath('scripts/offline/prepare-example-enrichment-wave.mjs'),
     sourcePath,
     analysisPath,
     imageRoot,
@@ -96,7 +97,7 @@ test('example analysis waves publish validated content without waiting for image
   writeFileSync(excludedPath, JSON.stringify({ version: 1, entries: [{ id: first.id }] }));
 
   const stdout = execFileSync(process.execPath, [
-    resolve('..', 'scripts/offline/prepare-example-analysis-wave.mjs'),
+    repoPath('scripts/offline/prepare-example-analysis-wave.mjs'),
     sourcePath,
     analysisPath,
     output,
@@ -129,7 +130,7 @@ test('example waves ignore publication manifests older than the production snaps
   writeFileSync(stalePath, JSON.stringify({ version: 1, generatedAt: 99, entries: [imageEntry] }));
 
   const analysisResult = JSON.parse(execFileSync(process.execPath, [
-    resolve('..', 'scripts/offline/prepare-example-analysis-wave.mjs'),
+    repoPath('scripts/offline/prepare-example-analysis-wave.mjs'),
     sourcePath,
     analysisPath,
     analysisOutput,
@@ -137,7 +138,7 @@ test('example waves ignore publication manifests older than the production snaps
     stalePath,
   ], { encoding: 'utf8' }));
   const imageResult = JSON.parse(execFileSync(process.execPath, [
-    resolve('..', 'scripts/offline/prepare-example-enrichment-wave.mjs'),
+    repoPath('scripts/offline/prepare-example-enrichment-wave.mjs'),
     sourcePath,
     analysisPath,
     imageRoot,

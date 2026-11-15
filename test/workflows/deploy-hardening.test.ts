@@ -16,15 +16,11 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { readRepoFile, repoPath } from '../support/paths.ts';
 
-const readRepoFile = (relativePath: string): string => readFileSync(
-  fileURLToPath(new URL(`../../${relativePath}`, import.meta.url)),
-  'utf8',
-);
 const workflow = (name: string): string => readRepoFile(`.github/workflows/${name}`);
-const workflows = readdirSync(fileURLToPath(new URL('../../.github/workflows/', import.meta.url)))
+const workflows = readdirSync(repoPath('.github/workflows'))
   .filter(name => name.endsWith('.yml'))
   .map(name => ({ name, text: workflow(name) }));
 /** The workflows that act on production and print to a public run log. */

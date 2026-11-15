@@ -2,9 +2,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { REPO_ROOT, repoPath } from '../support/paths.ts';
 
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
@@ -32,7 +33,7 @@ test('streaming image QA reuses a completed chunk without judging it again', () 
   writeJson(join(chunk, 'refined.json'), { version: 1, targets: rejected });
 
   execFileSync(process.execPath, [
-    resolve('..', 'scripts', 'offline', 'stream-image-quality-pass.mjs'),
+    repoPath('scripts', 'offline', 'stream-image-quality-pass.mjs'),
     targetsPath,
     candidates,
     images,
@@ -69,7 +70,7 @@ test('streaming image QA reuses historical rejections accepted by a later candid
   writeJson(join(chunk, 'refined.json'), { version: 1, targets: historicallyRejected });
 
   execFileSync(process.execPath, [
-    resolve('..', 'scripts', 'offline', 'stream-image-quality-pass.mjs'),
+    repoPath('scripts', 'offline', 'stream-image-quality-pass.mjs'),
     targetsPath,
     candidates,
     images,
@@ -125,10 +126,10 @@ test('streaming image QA defers images that exhaust their candidates and keeps a
   writeJson(targetsPath, { version: 1, targets });
 
   const output = execFileSync('bash', [
-    resolve('..', 'scripts', 'offline', 'run-streaming-image-quality-loop.sh'),
+    repoPath('scripts', 'offline', 'run-streaming-image-quality-loop.sh'),
     targetsPath, candidates, images, join(root, 'work'), '1024', '576', '4', '1', '8',
   ], {
-    cwd: resolve('..'),
+    cwd: REPO_ROOT,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
@@ -204,7 +205,7 @@ test('example pool verification accepts a deferred image only when the cycle all
   // The second image exhausted its candidates.
   writeFileSync(join(bundle, 'images', exampleImageFilename(sentences[0].id)), 'RIFF\0\0\0\0WEBPVP8 ');
   const verify = (env: Record<string, string>): string => execFileSync(process.execPath, [
-    resolve('..', 'scripts', 'offline', 'verify-example-sentence-pool.mjs'), sourcePath, analysisPath, bundle,
+    repoPath('scripts', 'offline', 'verify-example-sentence-pool.mjs'), sourcePath, analysisPath, bundle,
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
 
   assert.throws(() => verify({}), /image file is missing/);
@@ -239,9 +240,9 @@ test('example enrichment publication finishes without waiting for deferred image
   chmodSync(python, 0o700);
 
   const output = execFileSync('bash', [
-    resolve('..', 'scripts', 'offline', 'dispatch-staged-example-enrichments.sh'), root, '100', 'test-sha',
+    repoPath('scripts', 'offline', 'dispatch-staged-example-enrichments.sh'), root, '100', 'test-sha',
   ], {
-    cwd: resolve('..'),
+    cwd: REPO_ROOT,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     // Without the deferral, the publisher would keep waiting for the deferred image.
@@ -311,7 +312,7 @@ test('example enrichment publication excludes published and production-covered i
   });
 
   const result = JSON.parse(execFileSync(process.execPath, [
-    resolve('..', 'scripts', 'offline', 'prepare-example-enrichment-wave.mjs'),
+    repoPath('scripts', 'offline', 'prepare-example-enrichment-wave.mjs'),
     source,
     analysis,
     imageRoot,
@@ -367,7 +368,7 @@ test('sentence image preparation reuses a verified baseline image', () => {
   });
 
   execFileSync(process.execPath, [
-    resolve('..', 'scripts', 'offline', 'prepare-sentence-images.mjs'),
+    repoPath('scripts', 'offline', 'prepare-sentence-images.mjs'),
     sourcePath,
     analysisPath,
     outputRoot,
@@ -401,10 +402,10 @@ test('streaming image QA gives up when the renderer stops producing images', () 
   writeJson(targetsPath, { version: 1, targets: [{ imageId: 'never', filename: 'never.webp', prompt: 'Never rendered.' }] });
 
   const result = spawnSync(process.execPath, [
-    resolve('..', 'scripts', 'offline', 'stream-image-quality-pass.mjs'),
+    repoPath('scripts', 'offline', 'stream-image-quality-pass.mjs'),
     targetsPath, candidates, images, join(root, 'work'), outputPath, '1', '8',
   ], {
-    cwd: resolve('..'),
+    cwd: REPO_ROOT,
     encoding: 'utf8',
     timeout: 30_000,
     env: { ...process.env, IMAGE_QUALITY_STALL_MINUTES: '0.01' },
@@ -423,10 +424,10 @@ test('streaming image quality loop stops retrying a renderer that keeps failing'
   writeJson(targetsPath, { version: 1, targets: [{ imageId: 'never', filename: 'never.webp', prompt: 'Never rendered.' }] });
 
   const result = spawnSync('bash', [
-    resolve('..', 'scripts', 'offline', 'run-streaming-image-quality-loop.sh'),
+    repoPath('scripts', 'offline', 'run-streaming-image-quality-loop.sh'),
     targetsPath, join(root, 'candidates'), join(root, 'images'), join(root, 'work'), '1024', '576', '4', '1', '8',
   ], {
-    cwd: resolve('..'),
+    cwd: REPO_ROOT,
     encoding: 'utf8',
     timeout: 60_000,
     env: {

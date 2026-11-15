@@ -3,7 +3,7 @@ import test from 'node:test';
 
 // Progress that moves backwards (a reset, an undone review) has to survive the server's save and every
 // device's merge, which otherwise keep the schedule with the newest review.
-const { applyReviewEvent, getItemsAfterRevision, undoReviewEvent, upsertMany } = await import('../src/db.js');
+const { applyReviewEvent, getItemsAfterRevision, undoReviewEvent, upsertMany } = await import('../../server/src/db.js');
 const { applyServerSave, mergeDatasets, trackServerContent } = await import('../../services/sync.ts');
 const { isItemDirty } = await import('../../services/itemHash.ts');
 const { SRSAlgorithm } = await import('../../services/srsAlgorithm.ts');

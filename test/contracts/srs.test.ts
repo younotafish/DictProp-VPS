@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { updateAfterRating } from '../../services/fsrsScheduler.ts';
-import { advanceReviewSrs } from '../src/srs.js';
-import type { ReviewRating } from '../src/srs.js';
+import { advanceReviewSrs } from '../../server/src/srs.js';
+import type { ReviewRating } from '../../server/src/srs.js';
 
 test('legacy fixed-schedule rows migrate lazily for every FSRS rating', () => {
   const legacy = {

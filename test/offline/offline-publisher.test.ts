@@ -10,9 +10,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { repoPath, SERVER_DIR } from '../support/paths.ts';
 
 function writeExecutable(path: string, contents: string): void {
   writeFileSync(path, contents);
@@ -62,7 +63,7 @@ fi
 
   const tag = 'publisher-fallback-test';
   const output = execFileSync('bash', [
-    resolve('..', 'scripts', 'offline', 'publish-backfill-release.sh'),
+    repoPath('scripts', 'offline', 'publish-backfill-release.sh'),
     tag,
     archive,
     'offline-images.enc',
@@ -70,7 +71,7 @@ fi
     'missing-deploy-sha',
     '0',
   ], {
-    cwd: resolve('.'),
+    cwd: SERVER_DIR,
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -140,7 +141,7 @@ fi
 
   const tag = 'publisher-startup-failure-test';
   const output = execFileSync('bash', [
-    resolve('..', 'scripts', 'offline', 'publish-backfill-release.sh'),
+    repoPath('scripts', 'offline', 'publish-backfill-release.sh'),
     tag,
     archive,
     'sentence-enrichments.enc',
@@ -148,7 +149,7 @@ fi
     'HEAD',
     '0',
   ], {
-    cwd: resolve('.'),
+    cwd: SERVER_DIR,
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -232,7 +233,7 @@ fi
 `);
   writeExecutable(join(bin, 'sleep'), '#!/bin/sh\nif [ -n "$FAKE_REAL_SLEEP" ]; then exec /bin/sleep "$@"; fi\n');
   const publish = (env: Record<string, string> = {}, pollSeconds = '0') => spawnSync('bash', [
-    resolve('..', 'scripts', 'offline', 'publish-backfill-release.sh'),
+    repoPath('scripts', 'offline', 'publish-backfill-release.sh'),
     bridgeTag, archive, 'sentence-backfill.enc', 'import', 'deploy-sha', pollSeconds,
   ], {
     cwd: root,

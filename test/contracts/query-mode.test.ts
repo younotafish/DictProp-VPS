@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import * as client from '../../services/queryMode.ts';
-import * as server from '../src/query-mode.js';
+import * as server from '../../server/src/query-mode.js';
 
 const SENTENCES = [
   'The cat sat on the mat',

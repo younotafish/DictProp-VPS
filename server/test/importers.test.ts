@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
+import { SERVER_DIR } from './support/paths.js';
 
 const DATA_DIR = process.env.DATA_DIR!;
 const OWNER_EMAIL = 'owner@example.com';
@@ -20,7 +20,6 @@ const {
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const owner = createUserAndClaimItems({ googleId: 'importer-owner', email: OWNER_EMAIL, displayName: null, photoUrl: null });
-const serverDir = fileURLToPath(new URL('..', import.meta.url));
 const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const png = (seed: string) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(seed)]);
 const dataUri = (seed: string) => `data:image/png;base64,${png(seed).toString('base64')}`;
@@ -60,7 +59,7 @@ function bundle(files: string[], manifest: object): string {
 function runScript(name: string, ...args: string[]) {
   const { NODE_TEST_CONTEXT: _testContext, ...parentEnv } = process.env;
   const child = spawnSync(process.execPath, ['--import', 'tsx', `src/scripts/${name}.ts`, ...args], {
-    cwd: serverDir,
+    cwd: SERVER_DIR,
     env: { ...parentEnv, DATA_DIR, OWNER_GOOGLE_EMAIL: OWNER_EMAIL },
     encoding: 'utf8',
   });

@@ -1,11 +1,12 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { repoPath } from '../support/paths.ts';
 
-const scripts = resolve('..', 'scripts', 'offline');
+const scripts = repoPath('scripts', 'offline');
 
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);

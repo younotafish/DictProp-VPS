@@ -5,12 +5,11 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 import { offlineTtsKey } from '../src/offline-tts-import.js';
+import { SERVER_DIR } from './support/paths.js';
 
 const DATA_DIR = process.env.DATA_DIR!;
 const TTS_DIR = join(DATA_DIR, 'tts');
-const serverDir = fileURLToPath(new URL('..', import.meta.url));
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 // ffprobe stands in for the real one: every clip is two seconds long.
@@ -48,7 +47,7 @@ function bundle(clips: Clip[]): string {
 function runImport(manifest: string) {
   const { NODE_TEST_CONTEXT: _testContext, ...parentEnv } = process.env;
   const child = spawnSync(process.execPath, ['--import', 'tsx', 'src/scripts/import-offline-tts.ts', manifest], {
-    cwd: serverDir,
+    cwd: SERVER_DIR,
     env: { ...parentEnv, DATA_DIR, PATH: `${binDir}:${process.env.PATH}` },
     encoding: 'utf8',
   });

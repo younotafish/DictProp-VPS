@@ -2,9 +2,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { REPO_ROOT, repoPath } from '../support/paths.ts';
 
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
@@ -36,7 +37,7 @@ test('corpus rebasing accepts an ordered chain of verified predecessors', () => 
   writeJson(paths.second, { entries: [wrap(secondData, hash(firstData))] });
 
   const stdout = execFileSync(process.execPath, [
-    resolve('..', 'scripts', 'offline', 'prepare-rebased-corpus-delta.mjs'),
+    repoPath('scripts', 'offline', 'prepare-rebased-corpus-delta.mjs'),
     paths.production,
     paths.base,
     paths.target,
@@ -90,10 +91,10 @@ test('corrections publisher drops a saved export run whose artifact is gone, and
     for (const name of ['ready', 'base.json', 'target.json', 'key']) writeFileSync(join(root, name), 'x\n');
     const runIdFile = join(work, 'production-export-run-id');
     const publish = () => spawnSync('bash', [
-      resolve('..', 'scripts', 'offline', 'publish-ready-corpus-corrections.sh'),
+      repoPath('scripts', 'offline', 'publish-ready-corpus-corrections.sh'),
       join(root, 'ready'), join(root, 'base.json'), join(root, 'target.json'),
     ], {
-      cwd: resolve('..'),
+      cwd: REPO_ROOT,
       encoding: 'utf8',
       timeout: 60_000,
       env: {

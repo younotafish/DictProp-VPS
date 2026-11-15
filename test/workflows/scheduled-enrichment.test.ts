@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-
-const readRepoFile = (relativePath: string): string => readFileSync(
-  fileURLToPath(new URL(`../../${relativePath}`, import.meta.url)),
-  'utf8',
-);
+import { readRepoFile } from '../support/paths.ts';
 
 test('server search stays immediate while local Claude Opus enrichment runs every six hours', () => {
   const workflow = readRepoFile('.github/workflows/incremental-enrichment.yml');

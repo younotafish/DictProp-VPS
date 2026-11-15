@@ -12,7 +12,7 @@ function serverOwnedFields(relativePath: string): string[] {
 }
 
 test('the server and the client agree on which fields the server owns', () => {
-  const server = serverOwnedFields('../src/db.ts');
+  const server = serverOwnedFields('../../server/src/db.ts');
   assert.ok(server.length > 0);
   assert.deepEqual(serverOwnedFields('../../services/sync.ts'), server);
 });
