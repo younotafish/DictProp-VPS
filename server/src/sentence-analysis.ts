@@ -69,9 +69,14 @@ const isString = (value: unknown, max = MAX_TEXT_LENGTH): value is string =>
 const isStringList = (value: unknown, maxItems = MAX_LIST_ITEMS): value is string[] =>
   Array.isArray(value) && value.length <= maxItems && value.every(item => isString(item, 2_000));
 
+type JsonRecord = Record<string, unknown>;
+const asRecord = (value: unknown): JsonRecord | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : null;
+const isStatus = (value: unknown): value is AmericanEnglishStatus => STATUSES.has(value as AmericanEnglishStatus);
+
 export function isSentencePronunciationGuide(value: unknown): value is SentencePronunciationGuide {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const pronunciation = value as Record<string, any>;
+  const pronunciation = asRecord(value);
+  if (!pronunciation) return false;
   return isString(pronunciation.slowIpa, 2_000) && SLASH_DELIMITED_IPA.test(pronunciation.slowIpa.trim()) &&
     isString(pronunciation.fastIpa, 2_000) && SLASH_DELIMITED_IPA.test(pronunciation.fastIpa.trim()) &&
     isString(pronunciation.carefulSpeakerGuide, 4_000) &&
@@ -81,15 +86,15 @@ export function isSentencePronunciationGuide(value: unknown): value is SentenceP
 }
 
 export function isSentenceGrammarAnalysis(value: unknown): value is SentenceGrammarAnalysis {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const grammar = value as Record<string, any>;
+  const grammar = asRecord(value);
+  if (!grammar) return false;
   return isString(grammar.structure, 4_000) &&
     Array.isArray(grammar.points) && grammar.points.length <= MAX_GRAMMAR_POINTS &&
-    grammar.points.every((point: any) =>
-      point && typeof point === 'object' && !Array.isArray(point) &&
-      isString(point.label, 300) && isString(point.excerpt, 1_000) &&
-      isString(point.explanation, 4_000)
-    );
+    grammar.points.every((entry: unknown) => {
+      const point = asRecord(entry);
+      return point !== null && isString(point.label, 300) && isString(point.excerpt, 1_000) &&
+        isString(point.explanation, 4_000);
+    });
 }
 
 export function hasSentenceGrammarAnalysis(
@@ -109,24 +114,24 @@ export function hasCompleteSentenceAnalysis(value: unknown): value is CompleteSe
 }
 
 export function isSentenceAnalysis(value: unknown): value is SentenceAnalysis {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const analysis = value as Record<string, any>;
-  const american = analysis.americanEnglish;
+  const analysis = asRecord(value);
+  if (!analysis) return false;
+  const american = asRecord(analysis.americanEnglish);
   if (!isString(analysis.translation) || !isString(analysis.imagePrompt, 4_000)) return false;
   if (analysis.naturalSpeechIpa !== undefined && !isString(analysis.naturalSpeechIpa, 2_000)) return false;
   if (analysis.grammar !== undefined && !isSentenceGrammarAnalysis(analysis.grammar)) return false;
   if (analysis.pronunciation !== undefined && !isSentencePronunciationGuide(analysis.pronunciation)) return false;
-  if (!american || typeof american !== 'object' || Array.isArray(american) ||
-      !STATUSES.has(american.status) || !isString(american.explanation, 4_000)) return false;
+  if (!american || !isStatus(american.status) || !isString(american.explanation, 4_000)) return false;
   if (american.evidence !== undefined && !isStringList(american.evidence, 6)) return false;
   if (!Array.isArray(analysis.terms) || analysis.terms.length > MAX_TERMS) return false;
-  return analysis.terms.every((term: any) =>
-    term && typeof term === 'object' && !Array.isArray(term) &&
-    isString(term.term, 300) && isString(term.chinese, 1_000) && isString(term.ipa, 500) &&
-    isString(term.originalMeaning, 4_000) && isStringList(term.synonyms) &&
-    isStringList(term.antonyms) && isStringList(term.examples, 5) &&
-    isString(term.historicalEvolution, 4_000)
-  );
+  return analysis.terms.every((entry: unknown) => {
+    const term = asRecord(entry);
+    return term !== null &&
+      isString(term.term, 300) && isString(term.chinese, 1_000) && isString(term.ipa, 500) &&
+      isString(term.originalMeaning, 4_000) && isStringList(term.synonyms) &&
+      isStringList(term.antonyms) && isStringList(term.examples, 5) &&
+      isString(term.historicalEvolution, 4_000);
+  });
 }
 
 // Keys a provider may wrap its answer in.
@@ -150,18 +155,18 @@ export function sentenceAnalysisValidationIssues(value: unknown): string[] {
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
     return ['the response must be one JSON object'];
   }
-  const analysis = candidate as Record<string, any>;
+  const analysis = candidate as JsonRecord;
   const issues: string[] = [];
-  const american = analysis.americanEnglish;
-  const pronunciation = analysis.pronunciation;
+  const american = asRecord(analysis.americanEnglish);
+  const pronunciation = asRecord(analysis.pronunciation);
   const grammar = analysis.grammar;
 
   if (!isString(analysis.translation)) issues.push('translation must be a non-empty string');
   if (!isString(analysis.imagePrompt, 4_000)) issues.push('imagePrompt must be a non-empty string');
-  if (!american || typeof american !== 'object' || Array.isArray(american)) {
+  if (!american) {
     issues.push('americanEnglish must be an object');
   } else {
-    if (!STATUSES.has(american.status)) issues.push('americanEnglish.status must be american, shared, or not_american');
+    if (!isStatus(american.status)) issues.push('americanEnglish.status must be american, shared, or not_american');
     if (!isString(american.explanation, 4_000)) issues.push('americanEnglish.explanation must be a non-empty string');
     if (!isStringList(american.evidence, 6) || american.evidence.length === 0) {
       issues.push('americanEnglish.evidence must contain 1-6 non-empty strings');
@@ -171,8 +176,9 @@ export function sentenceAnalysisValidationIssues(value: unknown): string[] {
   if (!Array.isArray(analysis.terms) || analysis.terms.length > MAX_TERMS) {
     issues.push(`terms must be an array with at most ${MAX_TERMS} entries`);
   } else {
-    analysis.terms.forEach((term: any, index: number) => {
-      if (!term || typeof term !== 'object' || Array.isArray(term)) {
+    analysis.terms.forEach((entry: unknown, index: number) => {
+      const term = asRecord(entry);
+      if (!term) {
         issues.push(`terms[${index}] must be an object`);
         return;
       }
@@ -191,7 +197,7 @@ export function sentenceAnalysisValidationIssues(value: unknown): string[] {
     });
   }
 
-  if (!pronunciation || typeof pronunciation !== 'object' || Array.isArray(pronunciation)) {
+  if (!pronunciation) {
     issues.push('pronunciation must be an object');
   } else {
     if (!isString(pronunciation.slowIpa, 2_000) || !SLASH_DELIMITED_IPA.test(pronunciation.slowIpa.trim())) {
@@ -217,7 +223,8 @@ export function sentenceAnalysisValidationIssues(value: unknown): string[] {
   if (!isSentenceGrammarAnalysis(grammar)) issues.push('grammar must contain a structure and valid points');
   if (analysis.naturalSpeechIpa !== undefined &&
       (!isString(analysis.naturalSpeechIpa, 2_000) ||
-       !pronunciation || analysis.naturalSpeechIpa.trim() !== pronunciation.fastIpa?.trim())) {
+       !pronunciation || analysis.naturalSpeechIpa.trim() !==
+         (typeof pronunciation.fastIpa === 'string' ? pronunciation.fastIpa.trim() : undefined))) {
     issues.push('naturalSpeechIpa, when present, must equal pronunciation.fastIpa');
   }
   return issues.length > 0 ? issues : ['the response does not satisfy the complete sentence-analysis contract'];
