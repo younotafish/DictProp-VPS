@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react';
+import { memo, useState } from 'react';
 import { VocabCard as VocabType, WordFamilyEntry, type UsageAudit } from '../types';
 import { Archive, BadgeCheck, BookOpen, BriefcaseBusiness, Check, Flame, History, Lightbulb, MapPin, Maximize2, Network, RefreshCw, Scale, Shapes, Sparkles, X, BookmarkPlus, BookmarkCheck, type LucideIcon } from 'lucide-react';
 import { PronunciationBlock } from './PronunciationBlock';
@@ -237,13 +237,16 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
   const [compareSelected, setCompareSelected] = useState<Set<string>>(new Set());
   const [showUsageReason, setShowUsageReason] = useState(false);
 
-  // Reset compare-pick state when the card changes (e.g., navigating in DetailView). Only what is open gets
-  // reset: any state set here, even to its current value, renders the whole card again.
-  React.useEffect(() => {
+  // Compare picks and the usage note belong to the card they were opened on. When the card changes
+  // (navigating in DetailView), they close during the same render, so the next card never shows them,
+  // not even for a frame. Only what is open gets reset.
+  const [openedOnCardId, setOpenedOnCardId] = useState(data.id);
+  if (openedOnCardId !== data.id) {
+    setOpenedOnCardId(data.id);
     if (comparePicking !== null) setComparePicking(null);
     if (compareSelected.size > 0) setCompareSelected(new Set());
     if (showUsageReason) setShowUsageReason(false);
-  }, [data.id]);
+  }
 
   const forms = ensureArray(data.forms);
   const examples = ensureArray(data.examples);
