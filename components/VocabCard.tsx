@@ -1,4 +1,4 @@
-import React, { memo, useState, useCallback } from 'react';
+import React, { memo, useState } from 'react';
 import { VocabCard as VocabType, WordFamilyEntry, type UsageAudit } from '../types';
 import { Archive, BadgeCheck, BookOpen, BriefcaseBusiness, Check, Flame, History, Lightbulb, MapPin, Maximize2, Network, RefreshCw, Scale, Shapes, Sparkles, X, BookmarkPlus, BookmarkCheck, type LucideIcon } from 'lucide-react';
 import { PronunciationBlock } from './PronunciationBlock';
@@ -49,8 +49,169 @@ const usagePresentation: Record<UsageAudit['status'], { label: string; className
   narrow_specialized: { label: 'Specialized current usage', className: 'bg-slate-100 text-slate-700 border-slate-300', icon: BriefcaseBusiness },
 };
 
-// Memoize to prevent re-renders when other cards in the list update
-export const VocabCardDisplay: React.FC<Props> = memo(({
+// The AI's lists are normally string arrays, but a malformed card can hold a string, junk entries or
+// nothing; whatever it holds becomes the strings it contains.
+const ensureArray = (items: unknown): string[] => {
+  if (Array.isArray(items)) return items.filter((x): x is string => typeof x === 'string');
+  if (typeof items === 'string') return [items];
+  return [];
+};
+
+function UsageBadge({ audit, expanded, onToggle }: { audit: UsageAudit; expanded: boolean; onToggle: () => void }) {
+  const presentation = usagePresentation[audit.status];
+  const UsageIcon = presentation.icon;
+  return (
+    <div className="mt-1.5 max-w-xl">
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); onToggle(); }}
+        className={`inline-flex h-9 w-9 items-center justify-center rounded-md border shadow-sm transition-transform hover:scale-105 ${presentation.className}`}
+        title={`${presentation.label}: ${audit.reason}`}
+        aria-label={presentation.label}
+        aria-expanded={expanded}
+      >
+        <UsageIcon size={19} strokeWidth={2.4} />
+      </button>
+      {expanded && (
+        <p className="mt-1.5 text-xs leading-5 text-slate-500">
+          <span className="font-semibold text-slate-700">{presentation.label}.</span>{' '}
+          {audit.reason}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Synonyms compare in indigo, confusables in amber.
+const COMPARE_TONES = {
+  indigo: {
+    start: 'inline-flex items-center gap-1 text-[10px] font-bold text-indigo-400 hover:text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded-full transition-colors uppercase tracking-wider',
+    go: 'text-white bg-indigo-500 hover:bg-indigo-600',
+  },
+  amber: {
+    start: 'inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 hover:text-amber-600 bg-amber-50 hover:bg-amber-100 px-1.5 py-0.5 rounded-full transition-colors uppercase tracking-wider',
+    go: 'text-white bg-amber-500 hover:bg-amber-600',
+  },
+};
+
+interface CompareControlsProps {
+  tone: keyof typeof COMPARE_TONES;
+  /** The Compare button's tooltip. */
+  title: string;
+  /** Whether Compare is offered while the section isn't picking. */
+  canStart: boolean;
+  /** Whether this section is picking words to compare. */
+  picking: boolean;
+  /** How many words are picked, besides the card's own. */
+  picked: number;
+  onStart: () => void;
+  onGo: () => void;
+  onCancel: () => void;
+}
+
+/** A section's Compare button, or, while it picks words, its Go (n) and Cancel buttons. */
+function CompareControls({ tone, title, canStart, picking, picked, onStart, onGo, onCancel }: CompareControlsProps) {
+  const classes = COMPARE_TONES[tone];
+  return (
+    <>
+      {canStart && !picking && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onStart(); }}
+          className={classes.start}
+          title={title}
+        >
+          <Scale size={10} /> Compare
+        </button>
+      )}
+      {picking && (
+        <span className="inline-flex items-center gap-1.5">
+          <button
+            onClick={(e) => { e.stopPropagation(); onGo(); }}
+            disabled={picked < 1}
+            className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors uppercase tracking-wider ${
+              picked >= 1
+                ? classes.go
+                : 'text-slate-400 bg-slate-100 cursor-not-allowed'
+            }`}
+            title="Run comparison"
+          >
+            <Scale size={10} /> Go ({picked + 1})
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onCancel(); }}
+            className="text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+            title="Cancel"
+          >
+            <X size={12} />
+          </button>
+        </span>
+      )}
+    </>
+  );
+}
+
+interface ExampleRowProps {
+  text: string;
+  /** Its position in the card's list, for the buttons' labels. */
+  index: number;
+  word: string;
+  sense?: string;
+  onSearch?: (term: string) => void;
+  onOpenExampleSentence?: (text: string, word: string, sense?: string) => void;
+  onSaveSentence?: (text: string, word: string, sense?: string) => void;
+  isSentenceSaved?: (text: string) => boolean;
+}
+
+/** One example sentence with its open, listen and save buttons. */
+function ExampleRow({ text, index, word, sense, onSearch, onOpenExampleSentence, onSaveSentence, isSentenceSaved }: ExampleRowProps) {
+  return (
+    <li className="border-l-2 border-indigo-200 pl-3 text-sm leading-relaxed text-slate-700 xl:text-base">
+      <HighlightedSentence text={text} itemWord={word || ''} onSearchWord={onSearch} />
+      <div className="mt-2 flex items-center justify-end gap-2 border-t border-slate-200/80 pt-2">
+        {onOpenExampleSentence && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpenExampleSentence(text, word, sense); }}
+            className="grid h-11 w-11 touch-manipulation place-items-center rounded-md border border-indigo-200 bg-white text-indigo-600 transition-colors hover:bg-indigo-50"
+            title="Open sentence review"
+            aria-label={`Open example ${index + 1} in sentence review`}
+          >
+            <Maximize2 size={18} />
+          </button>
+        )}
+        <SentenceSpeakerButton
+          text={text}
+          iconSize={18}
+          className="grid h-11 w-11 touch-manipulation place-items-center rounded-md border border-sky-200 bg-white !p-0 text-sky-600 hover:bg-sky-50"
+        />
+        {onSaveSentence && (
+          <SaveExampleButton
+            saved={isSentenceSaved?.(text) ?? false}
+            index={index}
+            onSave={() => onSaveSentence(text, word, sense)}
+          />
+        )}
+      </div>
+    </li>
+  );
+}
+
+function SaveExampleButton({ saved, index, onSave }: { saved: boolean; index: number; onSave: () => void }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); if (!saved) onSave(); }}
+      className={`grid h-11 w-11 touch-manipulation place-items-center rounded-md border bg-white transition-colors ${saved ? 'border-emerald-200 text-emerald-600' : 'border-slate-200 text-slate-500 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700'}`}
+      title={saved ? 'Sentence saved' : 'Save sentence for review'}
+      aria-label={saved ? `Example ${index + 1} saved` : `Save example ${index + 1} for review`}
+      disabled={saved}
+    >
+      {saved ? <BookmarkCheck size={18} /> : <BookmarkPlus size={18} />}
+    </button>
+  );
+}
+
+// Memoized, so a card re-renders only when its own props change, not when the list around it updates.
+export const VocabCardDisplay = memo(function VocabCardDisplay({
   data,
   onSave,
   isSaved = false,
@@ -64,7 +225,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   onOpenExampleSentence,
   isSentenceSaved,
   onLazyLoadImage,
-}) => {
+}: Props) {
 
   // Compare-pick mode state
   const [comparePicking, setComparePicking] = useState<'synonyms' | 'confusables' | null>(null);
@@ -79,18 +240,17 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
     if (showUsageReason) setShowUsageReason(false);
   }, [data.id]);
 
-  // Robust helper to ensure we always map over an array of strings
-  const ensureArray = (items: any): string[] => {
-    if (Array.isArray(items)) return items.filter((x): x is string => typeof x === 'string');
-    if (typeof items === 'string') return [items];
-    return [];
-  };
-  // Same for the word family, whose entries are objects: a malformed one is skipped, not a crash.
+  const forms = ensureArray(data.forms);
+  const examples = ensureArray(data.examples);
+  const synonyms = ensureArray(data.synonyms);
+  const antonyms = ensureArray(data.antonyms);
+  const confusables = ensureArray(data.confusables);
+  // The word family's entries are objects: a malformed one is skipped, not a crash.
   const wordFamily = Array.isArray(data.wordFamily)
     ? data.wordFamily.filter((entry): entry is WordFamilyEntry => typeof entry?.word === 'string' && entry.word.trim() !== '')
     : [];
 
-  const toggleCompareSelection = useCallback((word: string) => {
+  const toggleCompareSelection = (word: string) => {
     setCompareSelected(prev => {
       const next = new Set(prev);
       if (next.has(word)) {
@@ -102,28 +262,30 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
       }
       return next;
     });
-  }, []);
+  };
 
-  const startComparePick = useCallback((section: 'synonyms' | 'confusables') => {
+  const startComparePick = (section: 'synonyms' | 'confusables') => {
     setComparePicking(section);
     setCompareSelected(new Set());
-  }, []);
+  };
 
-  const cancelComparePick = useCallback(() => {
+  const cancelComparePick = () => {
     setComparePicking(null);
     setCompareSelected(new Set());
-  }, []);
+  };
 
-  const executeCompare = useCallback(() => {
+  const executeCompare = () => {
     if (onCompare && compareSelected.size >= 1) {
       const words = [data.word, ...Array.from(compareSelected)];
       onCompare(words);
       setComparePicking(null);
       setCompareSelected(new Set());
     }
-  }, [onCompare, compareSelected, data.word]);
+  };
 
-  const renderPills = (items: any, isPickMode: boolean = false) => ensureArray(items).map((item, idx) => {
+  const refresh = onRefresh ?? onSearch;
+
+  const renderPills = (items: string[], isPickMode: boolean = false) => items.map((item, idx) => {
     if (isPickMode) {
       const isSelected = compareSelected.has(item);
       const atLimit = !isSelected && compareSelected.size >= MAX_COMPARE_WORDS - 1;
@@ -179,30 +341,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             </span>
           )}
           {data.usageAudit && (
-            <div className="mt-1.5 max-w-xl">
-              {(() => {
-                const presentation = usagePresentation[data.usageAudit.status];
-                const UsageIcon = presentation.icon;
-                return (
-                  <button
-                    type="button"
-                    onClick={(event) => { event.stopPropagation(); setShowUsageReason(current => !current); }}
-                    className={`inline-flex h-9 w-9 items-center justify-center rounded-md border shadow-sm transition-transform hover:scale-105 ${presentation.className}`}
-                    title={`${presentation.label}: ${data.usageAudit.reason}`}
-                    aria-label={presentation.label}
-                    aria-expanded={showUsageReason}
-                  >
-                    <UsageIcon size={19} strokeWidth={2.4} />
-                  </button>
-                );
-              })()}
-              {showUsageReason && (
-                <p className="mt-1.5 text-xs leading-5 text-slate-500">
-                  <span className="font-semibold text-slate-700">{usagePresentation[data.usageAudit.status].label}.</span>{' '}
-                  {data.usageAudit.reason}
-                </p>
-              )}
-            </div>
+            <UsageBadge audit={data.usageAudit} expanded={showUsageReason} onToggle={() => setShowUsageReason(current => !current)} />
           )}
           <div className="flex items-center gap-2 mt-1 text-slate-500">
             {data.ipa && (
@@ -223,10 +362,10 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
           </div>
         </div>
         <div className="flex items-center gap-1 select-none">
-            {showRefresh && (onRefresh || onSearch) && (
+            {showRefresh && refresh && (
                  <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); (onRefresh ?? onSearch)!(data.word); }}
+                    onClick={(e) => { e.stopPropagation(); refresh(data.word); }}
                     title="Refresh — re-run the AI for this word"
                     aria-label="Refresh this word"
                     className="w-11 h-11 shrink-0 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
@@ -280,13 +419,13 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
       </div>
 
       {/* Word Forms */}
-      {ensureArray(data.forms).length > 0 && (
+      {forms.length > 0 && (
         <div className="mb-4 md:mb-2 shrink-0">
           <div className="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase mb-2">
             <Shapes size={12} /> Word Forms
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {ensureArray(data.forms).map((form, idx) => (
+            {forms.map((form, idx) => (
               <button
                 key={`${form}-${idx}`}
                 onClick={(e) => {
@@ -334,47 +473,19 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
             <BookOpen size={12} /> Usage
           </div>
           <ul className="space-y-2">
-            {ensureArray(data.examples).map((ex, i) => {
-              const saveBtn = onSaveSentence && (() => {
-                const saved = isSentenceSaved?.(ex) ?? false;
-                return (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); if (!saved) onSaveSentence(ex, data.word, data.sense); }}
-                    className={`grid h-11 w-11 touch-manipulation place-items-center rounded-md border bg-white transition-colors ${saved ? 'border-emerald-200 text-emerald-600' : 'border-slate-200 text-slate-500 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700'}`}
-                    title={saved ? 'Sentence saved' : 'Save sentence for review'}
-                    aria-label={saved ? `Example ${i + 1} saved` : `Save example ${i + 1} for review`}
-                    disabled={saved}
-                  >
-                    {saved ? <BookmarkCheck size={18} /> : <BookmarkPlus size={18} />}
-                  </button>
-                );
-              })();
-
-              return (
-                <li key={i} className="border-l-2 border-indigo-200 pl-3 text-sm leading-relaxed text-slate-700 xl:text-base">
-                  <HighlightedSentence text={ex} itemWord={data.word || ''} onSearchWord={onSearch} />
-                  <div className="mt-2 flex items-center justify-end gap-2 border-t border-slate-200/80 pt-2">
-                    {onOpenExampleSentence && (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onOpenExampleSentence(ex, data.word, data.sense); }}
-                        className="grid h-11 w-11 touch-manipulation place-items-center rounded-md border border-indigo-200 bg-white text-indigo-600 transition-colors hover:bg-indigo-50"
-                        title="Open sentence review"
-                        aria-label={`Open example ${i + 1} in sentence review`}
-                      >
-                        <Maximize2 size={18} />
-                      </button>
-                    )}
-                    <SentenceSpeakerButton
-                      text={ex}
-                      iconSize={18}
-                      className="grid h-11 w-11 touch-manipulation place-items-center rounded-md border border-sky-200 bg-white !p-0 text-sky-600 hover:bg-sky-50"
-                    />
-                    {saveBtn}
-                  </div>
-                </li>
-              );
-            })}
+            {examples.map((ex, i) => (
+              <ExampleRow
+                key={i}
+                text={ex}
+                index={i}
+                word={data.word}
+                sense={data.sense}
+                onSearch={onSearch}
+                onOpenExampleSentence={onOpenExampleSentence}
+                onSaveSentence={onSaveSentence}
+                isSentenceSaved={isSentenceSaved}
+              />
+            ))}
           </ul>
         </div>
 
@@ -400,86 +511,42 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
            <div className="mb-1">
              <div className="flex flex-wrap items-baseline gap-2">
                <span className="text-slate-400 font-semibold text-xs uppercase mr-1">Synonyms</span>
-               {onCompare && ensureArray(data.synonyms).length > 0 && comparePicking !== 'synonyms' && (
-                 <button
-                   onClick={(e) => { e.stopPropagation(); startComparePick('synonyms'); }}
-                   className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-400 hover:text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded-full transition-colors uppercase tracking-wider"
-                   title="Compare with synonyms"
-                 >
-                   <Scale size={10} /> Compare
-                 </button>
-               )}
-               {comparePicking === 'synonyms' && (
-                 <span className="inline-flex items-center gap-1.5">
-                   <button
-                     onClick={(e) => { e.stopPropagation(); executeCompare(); }}
-                     disabled={compareSelected.size < 1}
-                     className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors uppercase tracking-wider ${
-                       compareSelected.size >= 1
-                         ? 'text-white bg-indigo-500 hover:bg-indigo-600'
-                         : 'text-slate-400 bg-slate-100 cursor-not-allowed'
-                     }`}
-                     title="Run comparison"
-                   >
-                     <Scale size={10} /> Go ({compareSelected.size + 1})
-                   </button>
-                   <button
-                     onClick={(e) => { e.stopPropagation(); cancelComparePick(); }}
-                     className="text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
-                     title="Cancel"
-                   >
-                     <X size={12} />
-                   </button>
-                 </span>
-               )}
-               <span className="inline">{renderPills(data.synonyms, comparePicking === 'synonyms')}</span>
+               <CompareControls
+                 tone="indigo"
+                 title="Compare with synonyms"
+                 canStart={!!onCompare && synonyms.length > 0}
+                 picking={comparePicking === 'synonyms'}
+                 picked={compareSelected.size}
+                 onStart={() => startComparePick('synonyms')}
+                 onGo={executeCompare}
+                 onCancel={cancelComparePick}
+               />
+               <span className="inline">{renderPills(synonyms, comparePicking === 'synonyms')}</span>
              </div>
            </div>
 
            {/* Antonyms */}
            <p className="mb-1 flex flex-wrap items-baseline gap-2">
              <span className="text-slate-400 font-semibold text-xs uppercase mr-1">Antonyms</span>
-             <span className="inline">{renderPills(data.antonyms)}</span>
+             <span className="inline">{renderPills(antonyms)}</span>
            </p>
 
            {/* Confusables */}
-           {ensureArray(data.confusables).length > 0 && (
+           {confusables.length > 0 && (
              <div>
                <div className="flex flex-wrap items-baseline gap-2">
                  <span className="text-amber-500 font-semibold text-xs uppercase mr-1">Confusables</span>
-                 {onCompare && comparePicking !== 'confusables' && (
-                   <button
-                     onClick={(e) => { e.stopPropagation(); startComparePick('confusables'); }}
-                     className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 hover:text-amber-600 bg-amber-50 hover:bg-amber-100 px-1.5 py-0.5 rounded-full transition-colors uppercase tracking-wider"
-                     title="Compare with confusables"
-                   >
-                     <Scale size={10} /> Compare
-                   </button>
-                 )}
-                 {comparePicking === 'confusables' && (
-                   <span className="inline-flex items-center gap-1.5">
-                     <button
-                       onClick={(e) => { e.stopPropagation(); executeCompare(); }}
-                       disabled={compareSelected.size < 1}
-                       className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors uppercase tracking-wider ${
-                         compareSelected.size >= 1
-                           ? 'text-white bg-amber-500 hover:bg-amber-600'
-                           : 'text-slate-400 bg-slate-100 cursor-not-allowed'
-                       }`}
-                       title="Run comparison"
-                     >
-                       <Scale size={10} /> Go ({compareSelected.size + 1})
-                     </button>
-                     <button
-                       onClick={(e) => { e.stopPropagation(); cancelComparePick(); }}
-                       className="text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
-                       title="Cancel"
-                     >
-                       <X size={12} />
-                     </button>
-                   </span>
-                 )}
-                 <span className="inline">{renderPills(data.confusables, comparePicking === 'confusables')}</span>
+                 <CompareControls
+                   tone="amber"
+                   title="Compare with confusables"
+                   canStart={!!onCompare}
+                   picking={comparePicking === 'confusables'}
+                   picked={compareSelected.size}
+                   onStart={() => startComparePick('confusables')}
+                   onGo={executeCompare}
+                   onCancel={cancelComparePick}
+                 />
+                 <span className="inline">{renderPills(confusables, comparePicking === 'confusables')}</span>
                </div>
              </div>
            )}
