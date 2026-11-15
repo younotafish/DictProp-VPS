@@ -21,13 +21,14 @@ const exampleEnrichmentCoverage: Array<{
   hasAnalysis: boolean;
   hasImage: boolean;
 }> = [];
+// length(data) comes from the blob row's header; byte_length sits after the blob and would read all of it.
 const enrichmentRows = db.prepare(`
   SELECT
     e.lookup_hash,
     e.analysis,
     EXISTS (
       SELECT 1 FROM image_blobs b
-      WHERE b.content_hash = e.image_content_hash AND b.byte_length > 0
+      WHERE b.content_hash = e.image_content_hash AND length(b.data) > 0
     ) AS has_image
   FROM sentence_enrichments e
   ORDER BY e.lookup_hash

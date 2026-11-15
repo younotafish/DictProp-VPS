@@ -160,7 +160,7 @@ const sentenceEnrichmentStats = db.prepare(`
       SELECT 1 FROM image_blobs b WHERE b.content_hash = sentence_enrichments.image_content_hash
     ) THEN 1 ELSE 0 END) AS missing_blobs,
     COALESCE(SUM(CASE WHEN image_content_hash IS NOT NULL THEN (
-      SELECT byte_length FROM image_blobs b WHERE b.content_hash = sentence_enrichments.image_content_hash
+      SELECT length(data) FROM image_blobs b WHERE b.content_hash = sentence_enrichments.image_content_hash
     ) ELSE 0 END), 0) AS image_bytes
   FROM sentence_enrichments
 `).get() as {
@@ -185,8 +185,7 @@ const exampleSentenceCoverage = summarizeExampleEnrichmentCoverage(
     SELECT
       e.lookup_hash,
       e.analysis,
-      CASE WHEN b.content_hash IS NOT NULL AND b.byte_length > 0
-        THEN e.image_content_hash ELSE NULL END AS image_content_hash
+      CASE WHEN length(b.data) > 0 THEN e.image_content_hash ELSE NULL END AS image_content_hash
     FROM sentence_enrichments e
     LEFT JOIN image_blobs b ON b.content_hash = e.image_content_hash
   `).iterate() as Iterable<StoredSentenceEnrichmentRecord>,

@@ -18,13 +18,14 @@ const prioritySince = Date.now() - lookbackHours * HOUR_MS;
 const owner = requireOwner();
 const items = getAllItems(owner.id);
 const topLevel = summarizeIncrementalEnrichmentBacklog(items, prioritySince);
-// Streamed on each read: the stored analyses run to several kilobytes apiece, tens of thousands of them.
+// Streamed on each read: the stored analyses run to several kilobytes apiece, tens of thousands of them. An image
+// counts by length(data), which SQLite reads from the row's header; byte_length sits after the blob, and reaching
+// it would read every page of every image.
 const readStoredExamples = () => db.prepare(`
   SELECT
     e.lookup_hash,
     e.analysis,
-    CASE WHEN b.content_hash IS NOT NULL AND b.byte_length > 0
-      THEN e.image_content_hash ELSE NULL END AS image_content_hash
+    CASE WHEN length(b.data) > 0 THEN e.image_content_hash ELSE NULL END AS image_content_hash
   FROM sentence_enrichments e
   LEFT JOIN image_blobs b ON b.content_hash = e.image_content_hash
 `).iterate() as Iterable<StoredSentenceEnrichmentRecord>;
