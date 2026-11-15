@@ -4,13 +4,18 @@ import { getAllStoredImageIds, getStoredImageIds, loadImagesByIds, saveImagesBat
 import { getServerImageManifest, loadItemImagesBatch, uploadImages } from '../services/api';
 import { getServerImageVersion, isImageMarker } from '../services/libraryImages';
 import { log, warn } from '../services/logger';
-import type { ImageRestoreProgress } from '../components/AppStatus';
 import type { Library } from './useLibrary';
+import { picturesOf } from './useWarmImages';
+
+/** How far the explicit offline-image download has got. */
+export interface ImagePrefetchProgress { done: number; total: number }
+/** How far restoring this device's images to the server has got. */
+export interface ImageRestoreProgress { phase: 'checking' | 'uploading' | 'done' | 'failed'; done: number; total: number; failed: number }
 
 /** Pictures kept for offline use: the study ones cached quietly, all of them on request, and restoring the server's. */
 export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsRef'>) {
   // Progress of the explicit offline-image download; the automatic caching of study pictures is silent.
-  const [imagePrefetchProgress, setImagePrefetchProgress] = useState<{ done: number; total: number } | null>(null);
+  const [imagePrefetchProgress, setImagePrefetchProgress] = useState<ImagePrefetchProgress | null>(null);
   const [imageRestoreProgress, setImageRestoreProgress] = useState<ImageRestoreProgress | null>(null);
   // Starting the offline download, or stopping it, ends the image downloads under way. The new one fetches
   // whatever is still missing.
@@ -53,13 +58,7 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
     };
     for (const item of candidates) {
       if (item.isDeleted || item.isArchived) continue;
-      const data = item.data as any;
-      addImageMarker(data.id, data.imageUrl);
-      if (Array.isArray(data.vocabs)) {
-        for (const v of data.vocabs) {
-          addImageMarker(v.id, v.imageUrl);
-        }
-      }
+      for (const { id, imageUrl } of picturesOf(item)) addImageMarker(id, imageUrl);
     }
     if (idsWithImages.length === 0) return;
 
@@ -71,15 +70,8 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
     // Sort by SRS nextReview (soonest first) so study-relevant images load first
     const srsMap = new Map<string, number>();
     for (const item of candidates) {
-      const nrd = (item.srs as any)?.nextReview;
-      if (nrd) {
-        srsMap.set(item.data.id, nrd);
-        if (Array.isArray((item.data as any).vocabs)) {
-          for (const v of (item.data as any).vocabs) {
-            srsMap.set(v.id, nrd);
-          }
-        }
-      }
+      const nextReview = item.srs?.nextReview;
+      if (nextReview) for (const { id } of picturesOf(item)) srsMap.set(id, nextReview);
     }
     missing.sort((a, b) => (srsMap.get(a) || Infinity) - (srsMap.get(b) || Infinity));
 
@@ -140,9 +132,7 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
       const liveIds = new Set<string>();
       for (const item of latestItemsRef.current) {
         if (item.isDeleted) continue;
-        liveIds.add(item.data.id);
-        const vocabs = (item.data as any).vocabs;
-        if (Array.isArray(vocabs)) for (const v of vocabs) if (v?.id) liveIds.add(v.id);
+        for (const { id } of picturesOf(item)) if (id) liveIds.add(id);
       }
 
       const missing = [...localIds].filter(id => !manifest.has(id) && liveIds.has(id));

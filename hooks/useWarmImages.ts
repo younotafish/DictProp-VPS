@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { isPhraseItem, type StoredItem } from '../types';
+import { IMAGE_IDB_MARKER, getServerImageVersion } from '../services/libraryImages';
 import { decodeImage, warmImage } from '../services/storage';
 
 type LoadMissingImage = (itemId: string, imageVersion?: string) => Promise<string | null>;
 
 /** The pictures a card shows: its own, and those of the words inside a phrase. */
-const picturesOf = (item: StoredItem) => [
+export const picturesOf = (item: StoredItem): Array<{ id: string; imageUrl: string | undefined }> => [
   { id: item.data.id, imageUrl: item.data.imageUrl },
   ...(isPhraseItem(item) ? (item.data.vocabs ?? []).map(vocab => ({ id: vocab.id, imageUrl: vocab.imageUrl })) : []),
 ];
@@ -30,8 +31,9 @@ export function useWarmImages(items: readonly StoredItem[], loadMissing?: LoadMi
             void decodeImage(imageUrl);
             continue;
           }
-          if (imageUrl !== 'idb:stored' && !imageUrl.startsWith('server:has_image:')) continue;
-          const version = imageUrl.startsWith('server:has_image:') ? imageUrl.slice('server:has_image:'.length) : undefined;
+          // Stored on this device, or on the server at a version; the bare legacy server marker isn't warmed.
+          const version = getServerImageVersion(imageUrl);
+          if (imageUrl !== IMAGE_IDB_MARKER && version === undefined) continue;
           const key = `${id}\n${version ?? ''}`;
           void warmImage(id, version).then(async stored => {
             if (stored || !loadMissing || requested.has(key)) return;

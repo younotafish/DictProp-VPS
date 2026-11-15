@@ -2,10 +2,11 @@ import React from 'react';
 import { Loader2, X } from 'lucide-react';
 import { AppUpdateToast } from './AppUpdateToast';
 import { RefusedReviewsNotice } from './RefusedReviews';
+import type { ImagePrefetchProgress, ImageRestoreProgress } from '../hooks/useOfflineImages';
+import type { SpeechBackfill } from '../hooks/useSpeechBackfill';
 
 // The app-wide notices: banners across the top, and the pills that float above the navigation.
 
-export interface ImageRestoreProgress { phase: 'checking' | 'uploading' | 'done' | 'failed'; done: number; total: number; failed: number }
 const describeImageRestore = ({ phase, done, total, failed }: ImageRestoreProgress): string => {
   if (phase === 'checking') return 'Checking which images the server is missing…';
   if (phase === 'uploading') return `Restoring images to server: ${done}/${total}`;
@@ -36,10 +37,10 @@ export const AppBanners: React.FC<{ showOffline: boolean; writeFailed: boolean; 
 interface AppStatusPillsProps {
   userId: string;
   onViewRefusedReviews: () => void;
-  imagePrefetchProgress: { done: number; total: number } | null;
+  imagePrefetchProgress: ImagePrefetchProgress | null;
   onStopImageDownload: () => void;
   imageRestoreProgress: ImageRestoreProgress | null;
-  ttsGenProgress: { current: number; total: number; isRunning: boolean } | null;
+  ttsGenProgress: SpeechBackfill['ttsGenProgress'];
   onStopSpeechGeneration: () => void;
   undoMessage: string | null;
   onUndo: () => void;
