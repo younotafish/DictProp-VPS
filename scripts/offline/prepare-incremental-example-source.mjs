@@ -33,34 +33,29 @@ const previous = previousArg
   ? readSource(previousArg, 'Previous incremental sentence source', true)
   : { source: null, byId: new Map() };
 
-// Legacy exports without coverage stay monotonic for compatibility. Once the export reports live
-// coverage, retain the first text/hash identity only for sentences that remain in the current corpus.
-// The lookup identity ignores learning markup, so markup-only changes do not require regeneration.
-const coverageAvailable = current.source.stats?.exampleEnrichmentCoverageAvailable === true;
-// Once production coverage is available, the live corpus is authoritative. Historical entries that
-// are no longer referenced do not need repeated repair attempts; if they return later, their server
-// coverage will decide whether they are re-added.
-const incremental = coverageAvailable ? new Map() : new Map(previous.byId);
+// The pool carries production's coverage of every example (build-example-sentence-pool.mjs takes it from the corpus
+// export), so the live corpus decides which sentences still need an analysis or an image.
+if (current.source.stats?.exampleEnrichmentCoverageAvailable !== true) {
+  throw new Error('Current sentence source has no production coverage; build it from a current corpus export');
+}
+
+// A sentence keeps the text and hash it was first seen with, with its coverage refreshed: the lookup identity ignores
+// learning markup, so a markup-only edit needs no regeneration. A sentence no longer in the corpus drops out, and if
+// it returns, its coverage decides again. The baseline only tells a coverage repair from a new discovery.
+const incremental = new Map();
 let newlyDiscovered = 0;
 let coverageRepairs = 0;
 for (const [id, sentence] of current.byId) {
+  if (sentence.hasAnalysis === true && sentence.hasImage === true) continue;
   const prior = previous.byId.get(id);
-  const needsCoverageRepair = coverageAvailable &&
-    (sentence.hasAnalysis !== true || sentence.hasImage !== true);
-  if (coverageAvailable && !needsCoverageRepair) continue;
   if (prior) {
-    // Preserve the first published text/hash identity, while refreshing server coverage flags used
-    // to decide which analysis and image waves still need publication.
     incremental.set(id, {
       ...prior,
-      ...(coverageAvailable ? {
-        hasAnalysis: sentence.hasAnalysis === true,
-        hasImage: sentence.hasImage === true,
-      } : {}),
+      hasAnalysis: sentence.hasAnalysis === true,
+      hasImage: sentence.hasImage === true,
     });
     continue;
   }
-  if (baseline.byId.has(id) && !needsCoverageRepair) continue;
   if (baseline.byId.has(id)) coverageRepairs++;
   else newlyDiscovered++;
   incremental.set(id, sentence);
@@ -75,17 +70,11 @@ const output = {
   stats: {
     corpusRecords: Number(current.source.stats?.corpusRecords || 0),
     savedSentenceTexts: Number(current.source.stats?.savedSentenceTexts || 0),
-    exampleSlots: sentences.length,
-    savedSlots: 0,
-    duplicateSlots: 0,
-    poolSentences: sentences.length,
     baselineSentences: baseline.byId.size,
     currentSentences: current.byId.size,
     newlyDiscovered,
     coverageRepairs,
-    retired: coverageAvailable
-      ? [...previous.byId.keys()].filter(id => !current.byId.has(id)).length
-      : 0,
+    retired: [...previous.byId.keys()].filter(id => !current.byId.has(id)).length,
   },
 };
 const outputPath = resolve(outputArg);
