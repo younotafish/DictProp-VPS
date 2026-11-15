@@ -183,12 +183,21 @@ subscribePlaybackRate(rate => {
   }
 });
 
-/** Seek the currently-playing clip to a time offset (seconds) and ensure it's playing. No-op if idle. */
+/**
+ * Seek the playing or paused clip to a time offset (seconds) and make sure it's playing. Does nothing unless a
+ * clip is the active output: the system voice can't seek.
+ */
 export const seekCurrent = (timeSec: number): void => {
   const a = audioEl;
-  if (!a) return;
+  if (!a || player.backend !== 'clip') return;
   try { a.currentTime = Math.max(0, timeSec); } catch { /* ignore */ }
-  if (a.paused && !a.ended) { void a.play().catch(() => {}); }
+  if (a.paused && !a.ended) {
+    const token = player.token;
+    a.play().catch(() => {
+      // The browser refused, as it can on iOS after an interruption: it's still paused (see resumeCurrent).
+      if (token === player.token && player.state.status === 'playing') setPlaybackState({ status: 'paused' });
+    });
+  }
   if (player.state.status === 'paused') setPlaybackState({ status: 'playing' });
 };
 

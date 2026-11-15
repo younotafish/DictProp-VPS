@@ -251,18 +251,32 @@ test('a media error after playback started ends the read as if it had finished',
   assert.deepEqual(callbacks.heard, ['end']);
 });
 
-test('a seek moves the clip and shows it playing, even when the browser refuses to play', async () => {
+test('a seek moves the clip and plays it, and shows it paused again when the browser refuses to play', async () => {
   const { el } = await playing();
   el.currentTime = 1;
   engine.pauseCurrent();
   engine.seekCurrent(2.5);
   assert.equal(el.currentTime, 2.5);
+  assert.equal(el.paused, false);
   assert.equal(engine.getPlaybackState().status, 'playing');
   engine.pauseCurrent();
   FakeAudioElement.playPolicy = 'refuse';
   engine.seekCurrent(1.5);
-  await new Promise(resolve => setImmediate(resolve));
   assert.equal(engine.getPlaybackState().status, 'playing');
+  await until(() => engine.getPlaybackState().status === 'paused', 'the refusal is noticed');
+});
+
+test('a seek while the system voice reads leaves it alone', async () => {
+  const text = await sentence(false);
+  engine.speakNatural(text, { allowDownload: true });
+  await until(() => media.synth.last?.text === text, 'the system voice reads');
+  media.synth.last?.onstart?.();
+  engine.pauseCurrent();
+  const el = media.element();
+  const plays = el.playCalls;
+  engine.seekCurrent(1);
+  assert.equal(el.playCalls, plays, 'nothing plays on the element');
+  assert.equal(engine.getPlaybackState().status, 'paused', 'it still shows the voice paused');
 });
 
 test('without a speech engine a miss stays loading', async () => {
