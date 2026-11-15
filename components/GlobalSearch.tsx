@@ -11,6 +11,7 @@ import { useEscapeLayer } from './escapeStack';
 import { isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
+import { useLatest } from '../hooks/useStableValue';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../services/queryMode';
 import { useSearchQueue } from './search/useSearchQueue';
@@ -147,6 +148,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     if (w) speakWord(w);
   }, [pendingOpenId, readyItems]);
 
+  // The arrow and Cmd+1–4 keys read the open result through this ref, so their listener is added once per mode
+  // instead of again after every change to the queue.
+  const sheetKeysRef = useLatest({ readyItems, viewingQueueIdx, viewingVocabIdx, playOrToggleSentence, showMeaning });
+
   // Cmd+F / Ctrl+F keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -160,6 +165,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         }
       }
       // Arrow key navigation in viewing mode — stop propagation so background carousel doesn't also move
+      const { readyItems, viewingQueueIdx, viewingVocabIdx, playOrToggleSentence, showMeaning } = sheetKeysRef.current;
       if (mode === 'viewing' && readyItems.length > 0) {
         if (isTypingTarget(e.target)) return;
         const currentResult = readyItems[viewingQueueIdx]?.results;
@@ -188,7 +194,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [mode, readyItems, viewingQueueIdx, viewingVocabIdx, playOrToggleSentence, showMeaning]);
+  }, [mode, sheetKeysRef]);
 
   // Auto-focus input
   useEffect(() => {
@@ -329,9 +335,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // Refresh button on the card: a REAL re-run of the AI for this word. We refresh the viewed item
   // IN PLACE — keep showing its current card (with a spinner) while the AI runs, then swap in the fresh
   // result — instead of clearing the queue entry (which blanked the popup until the API returned).
+  // It reads the open item through a ref, so the card's onRefresh stays the same while other results arrive.
+  const viewingItemRef = useLatest(viewingItem);
   const handleRefreshCard = useCallback((word: string) => {
     const trimmed = word.trim();
-    const item = mode === 'viewing' ? readyItems[viewingQueueIdx] : null;
+    const item = viewingItemRef.current;
     if (!trimmed || !item || item.refreshing) return;
     const id = item.id;
     const analyzeMode = item.analyzeMode;
@@ -347,7 +355,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       if (isAuthenticationError(err)) rememberSearchRetry({ query: trimmed, analyzeMode });
       showError(describeSearchError(trimmed, err), isRetryableSearchError(err) ? trimmed : undefined, analyzeMode);
     });
-  }, [mode, readyItems, viewingQueueIdx, finalizeResult, showError, updateQueue]);
+  }, [viewingItemRef, finalizeResult, showError, updateQueue]);
 
   // The error toast's retry: replays the query the failure carries.
   const retryFailedSearch = (failed: SearchErrorToast) => {

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { VocabCard } from '../../types';
 import { VocabCardDisplay } from '../VocabCard';
@@ -38,6 +38,13 @@ export const SearchVocabPane: React.FC<Props> = ({
   const viewingVocab = vocabs[meaningIndex];
   const viewingVocabCount = vocabs.length;
   const touchStart = useRef<{ x: number; y: number } | null>(null);
+  // The card's example sentences as they're read aloud: the zone guides and the zone taps both use them.
+  const plainExamples = useMemo(
+    () => (viewingVocab?.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
+    [viewingVocab],
+  );
+  // A stable save handler, so the memoized card doesn't re-render for queue changes it doesn't show.
+  const saveViewing = useCallback(() => onSaveVocab(viewingVocab), [onSaveVocab, viewingVocab]);
 
   // Moves to the next or previous meaning. Each control keeps its own rule: the arrows wrap only forwards and
   // stay quiet; a swipe says the word, and wraps only forwards too.
@@ -75,7 +82,7 @@ export const SearchVocabPane: React.FC<Props> = ({
     if (window.getSelection()?.toString().trim()) return; // don't hijack a text selection
     const target = e.target as HTMLElement | null;
     if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return; // a control
-    const examples = (viewingVocab?.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean);
+    const examples = plainExamples;
     if (!examples.length) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const rel = e.clientY - rect.top;
@@ -83,7 +90,7 @@ export const SearchVocabPane: React.FC<Props> = ({
     if (zone < 0) return;
     flashZone(zone);
     playOrToggleSentence(examples[Math.min(zone, examples.length - 1)]);
-  }, [viewingVocab, flashZone, playOrToggleSentence]);
+  }, [plainExamples, flashZone, playOrToggleSentence]);
 
   return (
     <>
@@ -113,7 +120,7 @@ export const SearchVocabPane: React.FC<Props> = ({
           <VocabCardDisplay
             data={viewingVocab}
             isSaved={isVocabSaved(viewingVocab)}
-            onSave={() => onSaveVocab(viewingVocab)}
+            onSave={saveViewing}
             showSave={true}
             onSearch={onSearch}
             onRefresh={onRefresh}
@@ -148,7 +155,7 @@ export const SearchVocabPane: React.FC<Props> = ({
     </div>
     <EyesFreeZones
       anchor="fill"
-      bands={Math.min(2, (viewingVocab?.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean).length)}
+      bands={Math.min(2, plainExamples.length)}
       flash={zoneFlash}
     />
     </>
