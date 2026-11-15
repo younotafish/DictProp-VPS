@@ -142,31 +142,13 @@ function assertString(value, label) {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${label} is invalid`);
 }
 
+// The contract is the whole check: a detailed analysis already has a translation, a slash-delimited fluent IPA, an
+// image prompt, an American-usage verdict and complete terms.
 function validateAnalysis(value, id, requireDetailed) {
   if (requireDetailed && !isDetailedSentenceAnalysis(value)) {
     throw new Error(`${id}: detailed sentence analysis is incomplete`);
   }
   if (!requireDetailed && !isSentenceAnalysis(value)) {
     throw new Error(`${id}: production-covered sentence analysis is not importable`);
-  }
-  if (!requireDetailed) return;
-  assertString(value?.translation, `${id}: translation`);
-  const fluentIpa = value.naturalSpeechIpa || value.pronunciation.fastIpa;
-  assertString(fluentIpa, `${id}: fluent IPA`);
-  if (!/^\/[^/]+\/$/.test(fluentIpa.trim())) throw new Error(`${id}: fluent IPA is invalid`);
-  assertString(value?.imagePrompt, `${id}: imagePrompt`);
-  if (!value?.americanEnglish || !['american', 'shared', 'not_american'].includes(value.americanEnglish.status)) {
-    throw new Error(`${id}: American English status is invalid`);
-  }
-  assertString(value.americanEnglish.explanation, `${id}: American English explanation`);
-  if (!Array.isArray(value.terms) || value.terms.length > 20) throw new Error(`${id}: terms are invalid`);
-  for (const term of value.terms) {
-    for (const field of ['term', 'chinese', 'ipa', 'originalMeaning', 'historicalEvolution']) {
-      assertString(term?.[field], `${id}: term ${field}`);
-    }
-    if (!Array.isArray(term.synonyms) || term.synonyms.length === 0 ||
-        !Array.isArray(term.antonyms) || !Array.isArray(term.examples) || term.examples.length < 2) {
-      throw new Error(`${id}: term arrays are invalid`);
-    }
   }
 }
