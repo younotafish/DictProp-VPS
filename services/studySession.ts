@@ -242,3 +242,17 @@ export function formatReviewInterval(minutes: number): string {
   if (minutes < 1440) return `${Math.round(minutes / 60)}h`;
   return `${Math.round(minutes / 1440)}d`;
 }
+
+/**
+ * How long until `timestamp`, in whole days, else hours, else minutes ('3d', '5h', '12m'); 'now' once it is
+ * under a minute away or past. Review rows show 'due' for a past review before asking.
+ */
+export function formatTimeUntil(timestamp: number, now: number): string {
+  const diff = timestamp - now;
+  if (diff <= 0) return 'now';
+  const minutes = Math.floor(diff / 60_000), hours = Math.floor(diff / 3_600_000), days = Math.floor(diff / 86_400_000);
+  if (days > 0) return `${days}d`;
+  if (hours > 0) return `${hours}h`;
+  if (minutes > 0) return `${minutes}m`;
+  return 'now';
+}

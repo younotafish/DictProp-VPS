@@ -39,7 +39,7 @@ export const MasteryBadge: React.FC<{ label: string; color: string; percentage: 
 }) => {
   const c = getMasteryColors(color);
   return (
-    <span className={`${c.bg} ${c.text} px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${className}`}>
+    <span className={`${c.bg} ${c.text} px-2 py-0.5 rounded-full font-semibold whitespace-nowrap${className ? ` ${className}` : ''}`}>
       {label} {Math.round(percentage)}%
     </span>
   );

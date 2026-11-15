@@ -6,22 +6,16 @@ import { updateAfterRating } from '../services/fsrsScheduler';
 import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
-import { getMasteryColors } from './mastery';
+import { MasteryBadge, getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
+import { formatTimeUntil } from '../services/studySession';
 import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';
+import { isTypingTarget } from './keyboardTarget';
+import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
-
-const formatRelative = (ts: number): string => {
-  const diff = ts - Date.now();
-  if (diff <= 0) return 'due';
-  const m = Math.floor(diff / 60000), h = Math.floor(diff / 3600000), d = Math.floor(diff / 86400000);
-  if (d > 0) return `${d}d`;
-  if (h > 0) return `${h}h`;
-  if (m > 0) return `${m}m`;
-  return 'now';
-};
+import { ZoneGuides } from './review/ZoneGuides';
 
 const senseKey = (s?: string) => (s || '').trim().toLowerCase();
 
@@ -80,8 +74,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   onSaveVocab,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
-  // Ahead of the focus effect below, so the control that opened the popup is recorded while it has focus.
+  // Ahead of the focus effect, so the control that opened the popup is recorded while it has focus.
   useOverlay();
+  // Focus the panel on open, keep Tab inside it, and restore focus on close.
+  useModalFocus(panelRef);
   const popupPlaybackRef = useRef<ReturnType<typeof speakNatural> | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -199,6 +195,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const totalReviews = currentSaved?.srs?.totalReviews ?? 0;
   const streak = currentSaved?.srs?.correctStreak ?? 0;
   const nextReview = currentSaved?.srs?.nextReview ?? 0;
+  const now = Date.now();
 
   const handleGotIt = useCallback(() => {
     if (!currentSaved) return;
@@ -346,13 +343,6 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     onClose();
   }, [isTouchClick, examplesList, toggleSpeak, flashZone, onClose]);
 
-  // Focus the panel on open; restore focus on close.
-  useEffect(() => {
-    const prevFocus = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
-    return () => { try { prevFocus?.focus?.(); } catch { /* ignore */ } };
-  }, []);
-
   // Escape closes the popup, unless a dialog opened above it is still open.
   useEscapeLayer(onClose, 100);
 
@@ -360,25 +350,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t as HTMLElement).isContentEditable);
       // Space and Enter press whatever control has focus (Close, Got it, a toggle), not the shortcuts below.
       const onControl = t instanceof Element && !!t.closest('button, a[href], summary, [role="button"], [role="link"], [role="switch"], [role="checkbox"], [role="tab"]');
 
-      // Focus trap
-      if (e.key === 'Tab') {
-        const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
-          'a[href],button:not([disabled]),input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])',
-        );
-        const list = focusables ? Array.from(focusables).filter(el => el.offsetParent !== null) : [];
-        if (list.length === 0) return;
-        const first = list[0], last = list[list.length - 1];
-        const active = document.activeElement as HTMLElement;
-        if (e.shiftKey && (active === first || active === panelRef.current)) { e.preventDefault(); last.focus(); }
-        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
-        return;
-      }
-
-      if (typing) return;
+      if (isTypingTarget(e.target)) return;
 
       // ← / → page between this word's meanings.
       if (count > 1 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
@@ -472,9 +447,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
           {/* Action row — SRS for a saved sense, or a Save button for an unsaved AI sense */}
           {currentSaved && mastery ? (
             <div className="flex items-center gap-2 text-xs">
-              <span className={`${colors.bg} ${colors.text} px-2 py-0.5 rounded-full font-semibold whitespace-nowrap`}>
-                {mastery.label} {Math.round(mastery.percentage)}%
-              </span>
+              <MasteryBadge {...mastery} />
               <div className="hidden sm:block flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
                 <div className={`h-full ${colors.bar} transition-all duration-300`} style={{ width: `${mastery.percentage}%` }} />
               </div>
@@ -483,7 +456,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
                 <span className="text-orange-500 flex items-center gap-0.5"><Flame size={12} />{streak}</span>
               )}
               <span className="text-slate-500 whitespace-nowrap">
-                {nextReview <= Date.now() ? 'due' : formatRelative(nextReview)}
+                {nextReview <= now ? 'due' : formatTimeUntil(nextReview, now)}
               </span>
               <div className="ml-auto flex items-center gap-1">
                 <button onClick={handleReset} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)">
@@ -540,50 +513,12 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
           </div>
           {/* PHONE side-edge read-zone guide (top quarter = example 1, second = example 2). Visual only;
               taps fall through to the scroll body's handler. Hidden ≥sm (iPad/desktop use the gutters). */}
-          {isTouch && examplesList.length > 0 && (
-            <div className="absolute inset-0 pointer-events-none sm:hidden" aria-hidden="true">
-              <div className="absolute inset-x-0 top-0 h-1/4">
-                <div className="absolute left-0 inset-y-2 w-1 rounded-full bg-indigo-400/60" />
-                <div className="absolute right-0 inset-y-2 w-1 rounded-full bg-indigo-400/60" />
-                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
-                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
-                {zoneFlash?.zone === 0 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-[28%] bg-indigo-400/15 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-[28%] bg-indigo-400/15 zone-flash" /></>)}
-              </div>
-              {examplesList.length > 1 && (
-                <div className="absolute inset-x-0 top-1/4 h-1/4">
-                  <div className="absolute left-0 inset-y-2 w-1 rounded-full bg-emerald-400/60" />
-                  <div className="absolute right-0 inset-y-2 w-1 rounded-full bg-emerald-400/60" />
-                  <span className="absolute left-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
-                  {zoneFlash?.zone === 1 && (<><div key={`l${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-[28%] bg-emerald-400/15 zone-flash" /><div key={`r${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-[28%] bg-emerald-400/15 zone-flash" /></>)}
-                </div>
-              )}
-            </div>
-          )}
+          {isTouch && examplesList.length > 0 && <ZoneGuides layout="phone" bands={examplesList.length} flash={zoneFlash} />}
         </div>
       </div>
 
       {/* iPad / desktop (≥sm) gutter read-zone guide — visual only; taps are handled in onBackdrop. */}
-      {isTouch && examplesList.length > 0 && (
-        <div className="fixed inset-0 z-[101] pointer-events-none hidden sm:block" aria-hidden="true">
-          <div className="absolute inset-x-0 top-0 h-[25vh]">
-            <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
-            <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-indigo-400/70" />
-            <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
-            <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shadow-sm">1</span>
-            {zoneFlash?.zone === 0 && (<><div key={`gl${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-16 bg-indigo-400/20 zone-flash" /><div key={`gr${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-16 bg-indigo-400/20 zone-flash" /></>)}
-          </div>
-          {examplesList.length > 1 && (
-            <div className="absolute inset-x-0 top-[25vh] h-[25vh]">
-              <div className="absolute left-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
-              <div className="absolute right-0 inset-y-3 w-1.5 rounded-full bg-emerald-400/70" />
-              <span className="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-[11px] font-bold flex items-center justify-center shadow-sm">2</span>
-              {zoneFlash?.zone === 1 && (<><div key={`gl${zoneFlash.n}`} className="absolute left-0 inset-y-0 w-16 bg-emerald-400/20 zone-flash" /><div key={`gr${zoneFlash.n}`} className="absolute right-0 inset-y-0 w-16 bg-emerald-400/20 zone-flash" /></>)}
-            </div>
-          )}
-        </div>
-      )}
+      {isTouch && examplesList.length > 0 && <ZoneGuides layout="gutter" bands={examplesList.length} flash={zoneFlash} />}
     </div>
   );
 };

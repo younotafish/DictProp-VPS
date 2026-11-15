@@ -7,6 +7,7 @@ import {
   createClozePrompt,
   findSessionCard,
   formatReviewInterval,
+  formatTimeUntil,
   gradeSessionCard,
   isDueForReview,
   moveSessionTo,
@@ -205,4 +206,14 @@ test('undoing a grade goes back to its card, revealed, and takes back its count 
   const moved = undoSessionGrade({ ...after, itemIds: ['a', 'b', 'c', 'x', 'b'], ratings: { again: 0, hard: 0, good: 0, easy: 0 } }, grade, 7_000);
   assert.deepEqual(moved.itemIds, ['a', 'b', 'c', 'x', 'b']);
   assert.equal(moved.ratings.again, 0);
+});
+
+test('time until a review reads in whole days, else hours, else minutes, and now when under a minute', () => {
+  const now = 1_000_000_000;
+  const MINUTE = 60_000, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
+  const cases: [offset: number, label: string][] = [
+    [-DAY, 'now'], [0, 'now'], [1, 'now'], [MINUTE - 1, 'now'], [MINUTE, '1m'], [59 * MINUTE + 59_999, '59m'],
+    [HOUR, '1h'], [23 * HOUR + 59 * MINUTE, '23h'], [DAY, '1d'], [10 * DAY + 23 * HOUR, '10d'],
+  ];
+  for (const [offset, label] of cases) assert.equal(formatTimeUntil(now + offset, now), label, String(offset));
 });
