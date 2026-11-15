@@ -1,29 +1,44 @@
-import { useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useEffect } from 'react';
 import type { ViewState } from '../types';
-import { useGlobalNavigation } from './useGlobalNavigation';
+import { isDialogOpenOutside, isTypingTarget } from '../components/keyboardTarget';
 import type { DetailViewState } from './useDetailView';
 import type { Overlays } from './useOverlays';
 
-/** The app-wide keys: 1, 2 and 3 switch tabs, Escape closes what's on top, and ? lists the shortcuts. */
+/** The tab each number key opens. */
+const TAB_KEYS: ReadonlyMap<string, ViewState> = new Map([['1', 'notebook'], ['2', 'sentences'], ['3', 'study']]);
+
+/**
+ * The app-wide keys: 1, 2 and 3 switch tabs, Escape closes what's on top, and ? lists the shortcuts. The card
+ * view's own keys are in useKeyboardNavigation, which only the card view loads.
+ */
 export function useAppShortcuts(
-  setCurrentView: Dispatch<SetStateAction<ViewState>>,
+  navigate: (view: ViewState) => void,
   { detailContext, updateDetailContext }: Pick<DetailViewState, 'detailContext' | 'updateDetailContext'>,
   { cardPopup, setCardPopup, confirmModal, setConfirmModal, showKeyboardHelp, setShowKeyboardHelp, duplicateClusters }: Pick<Overlays,
     'cardPopup' | 'setCardPopup' | 'confirmModal' | 'setConfirmModal' | 'showKeyboardHelp' | 'setShowKeyboardHelp' | 'duplicateClusters'>,
 ) {
-  // Global keyboard navigation for tab switching (1, 2, 3 keys)
-  useGlobalNavigation({
-    onNavigateToNotebook: () => {
-      setCurrentView('notebook');
-    },
-    onNavigateToSentences: () => {
-      setCurrentView('sentences');
-    },
-    onNavigateToStudy: () => {
-      setCurrentView('study');
-    },
-    enabled: !detailContext && !confirmModal && !showKeyboardHelp && !cardPopup && !duplicateClusters, // Disable when modals are open
-  });
+  // 1, 2 and 3 switch tabs, while nothing covers them.
+  const tabKeysEnabled = !detailContext && !confirmModal && !showKeyboardHelp && !cardPopup && !duplicateClusters;
+  useEffect(() => {
+    if (!tabKeysEnabled) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // A focused screen (a study session grading with 1-4) may already have used the key.
+      if (e.defaultPrevented) return;
+      if (isTypingTarget(e.target)) return;
+      // Only number keys without modifiers
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const view = TAB_KEYS.get(e.key);
+      if (!view) return;
+      // A dialog over the page, such as the search results, keeps the keyboard.
+      if (isDialogOpenOutside(null)) return;
+      e.preventDefault();
+      navigate(view);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [tabKeysEnabled, navigate]);
 
   // Global Escape key to close modals or go back
   useEffect(() => {
@@ -45,10 +60,7 @@ export function useAppShortcuts(
       // Cmd+F belongs to GlobalSearch, which opens its search box.
 
       // ? shows the keyboard shortcuts, except where it is being typed.
-      const target = e.target as HTMLElement | null;
-      const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' ||
-        target.tagName === 'SELECT' || target.isContentEditable);
-      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !typing) {
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !isTypingTarget(e.target)) {
         e.preventDefault();
         setShowKeyboardHelp(true);
       }
