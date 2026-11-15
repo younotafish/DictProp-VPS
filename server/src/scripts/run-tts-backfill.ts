@@ -1,11 +1,13 @@
 import { open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { env } from '../env.js';
-import { getBackfillStatus, runBackfill } from '../tts/backfill.js';
+import { createBackfill } from '../tts/backfill.js';
+import { createClipStore, defaultClipDependencies } from '../tts/clips.js';
 
 const lockPath = join(env.DATA_DIR, 'tts-backfill.lock');
 const statusPath = join(env.DATA_DIR, 'tts-backfill-status.json');
 const staleAfterMs = 5 * 60 * 1_000;
+const backfill = createBackfill({ clips: createClipStore(defaultClipDependencies) });
 
 async function acquireLock() {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -29,13 +31,13 @@ if (!lock) {
 }
 
 const persist = async () => {
-  const payload = { ...getBackfillStatus(), workerPid: process.pid, heartbeatAt: Date.now() };
+  const payload = { ...backfill.status(), workerPid: process.pid, heartbeatAt: Date.now() };
   await writeFile(lockPath, `${JSON.stringify(payload)}\n`, { mode: 0o600 });
   await writeFile(statusPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
 };
 const heartbeat = setInterval(() => { void persist(); }, 30_000);
 try {
-  const job = runBackfill();
+  const job = backfill.run();
   await persist();
   await job;
   await persist();

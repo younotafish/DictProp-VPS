@@ -24,96 +24,100 @@ function isCasual(voice: string): boolean {
 }
 
 // The network and whisper steps, swappable so tests can drive the routes without DeepInfra or whisper.
-interface TtsDependencies {
+export interface ClipDependencies {
   synthClear(text: string, voice: string): Promise<Buffer>;
   synthCasual(spoken: string): Promise<Buffer>;
   reduce(sentence: string): Promise<string | null>;
   align(audio: Buffer, priority: AlignmentPriority): Promise<WordTiming[]>;
 }
 
-let deps: TtsDependencies = {
+export const defaultClipDependencies: ClipDependencies = {
   synthClear: synthMiMo,
   synthCasual: (spoken) => synthVoiceDesign(spoken, CASUAL_VOICE),
   reduce: reduceToCasual,
   align: (audio, priority) => alignAudioLocally(audio, { priority }),
 };
 
-/** Test hook: replace some of the network/whisper steps. Returns a function restoring the previous ones. */
-export function setTtsDependenciesForTest(overrides: Partial<TtsDependencies>): () => void {
-  const previous = deps;
-  deps = { ...deps, ...overrides };
-  return () => { deps = previous; };
+export interface ClipStore {
+  ensureAudio(text: string, voice: string, reduced?: string): Promise<Buffer | null>;
+  ensureTimings(key: string, priority: AlignmentPriority, fresh?: Buffer | null): Promise<void>;
+  generateAndVerify(text: string, voice: string, reduced?: string): Promise<void>;
 }
 
-// In-flight dedupe so concurrent requests for the same key generate (or align) only once.
-const audioInFlight = new Map<string, Promise<Buffer | null>>();
-const timingsInFlight = new Map<string, Promise<void>>();
+/** Clip generation on top of the cache. One store per process, so the routes and the backfill share its dedupe. */
+export function createClipStore(deps: ClipDependencies): ClipStore {
+  // In-flight dedupe so concurrent requests for the same key generate (or align) only once.
+  const audioInFlight = new Map<string, Promise<Buffer | null>>();
+  const timingsInFlight = new Map<string, Promise<void>>();
 
-// Synthesize + store a clip's audio unless it already exists. `voice` doubles as the style: the
-// CASUAL_STYLE sentinel runs the casual recipe (AI-reduce the text, then voice-design TTS); any other
-// value is a MiMo voice (clear track). `reduced` lets the backfill pass a pre-batched casual respelling.
-// Resolves the new bytes, or null when the clip was already on disk.
-export function ensureAudio(text: string, voice: string, reduced?: string): Promise<Buffer | null> {
-  const key = ttsKey(text, voice);
-  const existing = audioInFlight.get(key);
-  if (existing) return existing;
-  const job = (async () => {
-    if (OFFLINE_CACHE_VOICES.has(voice)) {
-      throw new Error(`${voice} is populated only by the verified offline audio bridge`);
-    }
-    const p = pathForKey(key);
-    if (await fileExists(p)) return null;
-    let audio: Buffer;
-    let spoken: string | null = null;
-    if (isCasual(voice)) {
-      spoken = reduced ?? (await deps.reduce(text));
-      // Nothing is stored, so a later request or backfill pass retries the respelling.
-      if (!spoken) throw new Error('casual respelling failed');
-      audio = await deps.synthCasual(spoken);
-    } else {
-      audio = await deps.synthClear(text, voice);
-    }
-    mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
-    await writeFileAtomic(p, audio);
-    // Persist the spoken respelling next to the clip (transparency / future display). Best-effort.
-    if (spoken) await writeFileAtomic(p + '.txt', spoken).catch(() => {});
-    return audio;
-  })().finally(() => audioInFlight.delete(key));
-  audioInFlight.set(key, job);
-  return job;
-}
-
-// Align + store a clip's word timings unless they already exist. A clip whisper hears no words in
-// stores [] so it counts as complete instead of being re-aligned by every sweep; a failed alignment
-// stores nothing, so a later request retries it. `fresh` saves re-reading audio just synthesized.
-export function ensureTimings(key: string, priority: AlignmentPriority, fresh?: Buffer | null): Promise<void> {
-  const existing = timingsInFlight.get(key);
-  if (existing) return existing;
-  const job = (async () => {
-    const tp = timingsPathForKey(key);
-    if (await fileExists(tp)) return;
-    const audio = fresh ?? (await readFile(pathForKey(key)));
-    let words: WordTiming[];
-    try {
-      words = await deps.align(audio, priority);
-    } catch (error: any) {
-      console.warn('[tts] local whisper alignment failed:', error?.message);
-      return;
-    }
-    await writeFileAtomic(tp, JSON.stringify(words));
-  })().finally(() => timingsInFlight.delete(key));
-  timingsInFlight.set(key, job);
-  return job;
-}
-
-// Word timings for BOTH styles. The casual audio's reduced text keeps word order, so index-aligned
-// seek lands close (start times stay correct even if whisper mishears a mumbled word). Covers fresh
-// clips AND legacy audio-only clips (no audio regen).
-export async function generateAndVerify(text: string, voice: string, reduced?: string): Promise<void> {
-  const key = ttsKey(text, voice);
-  const fresh = await ensureAudio(text, voice, reduced);
-  await ensureTimings(key, 'background', fresh);
-  if (!(await isComplete(key))) {
-    throw new Error('audio or local word timings are still incomplete');
+  // Synthesize + store a clip's audio unless it already exists. `voice` doubles as the style: the
+  // CASUAL_STYLE sentinel runs the casual recipe (AI-reduce the text, then voice-design TTS); any other
+  // value is a MiMo voice (clear track). `reduced` lets the backfill pass a pre-batched casual respelling.
+  // Resolves the new bytes, or null when the clip was already on disk.
+  function ensureAudio(text: string, voice: string, reduced?: string): Promise<Buffer | null> {
+    const key = ttsKey(text, voice);
+    const existing = audioInFlight.get(key);
+    if (existing) return existing;
+    const job = (async () => {
+      if (OFFLINE_CACHE_VOICES.has(voice)) {
+        throw new Error(`${voice} is populated only by the verified offline audio bridge`);
+      }
+      const p = pathForKey(key);
+      if (await fileExists(p)) return null;
+      let audio: Buffer;
+      let spoken: string | null = null;
+      if (isCasual(voice)) {
+        spoken = reduced ?? (await deps.reduce(text));
+        // Nothing is stored, so a later request or backfill pass retries the respelling.
+        if (!spoken) throw new Error('casual respelling failed');
+        audio = await deps.synthCasual(spoken);
+      } else {
+        audio = await deps.synthClear(text, voice);
+      }
+      mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
+      await writeFileAtomic(p, audio);
+      // Persist the spoken respelling next to the clip (transparency / future display). Best-effort.
+      if (spoken) await writeFileAtomic(p + '.txt', spoken).catch(() => {});
+      return audio;
+    })().finally(() => audioInFlight.delete(key));
+    audioInFlight.set(key, job);
+    return job;
   }
+
+  // Align + store a clip's word timings unless they already exist. A clip whisper hears no words in
+  // stores [] so it counts as complete instead of being re-aligned by every sweep; a failed alignment
+  // stores nothing, so a later request retries it. `fresh` saves re-reading audio just synthesized.
+  function ensureTimings(key: string, priority: AlignmentPriority, fresh?: Buffer | null): Promise<void> {
+    const existing = timingsInFlight.get(key);
+    if (existing) return existing;
+    const job = (async () => {
+      const tp = timingsPathForKey(key);
+      if (await fileExists(tp)) return;
+      const audio = fresh ?? (await readFile(pathForKey(key)));
+      let words: WordTiming[];
+      try {
+        words = await deps.align(audio, priority);
+      } catch (error: any) {
+        console.warn('[tts] local whisper alignment failed:', error?.message);
+        return;
+      }
+      await writeFileAtomic(tp, JSON.stringify(words));
+    })().finally(() => timingsInFlight.delete(key));
+    timingsInFlight.set(key, job);
+    return job;
+  }
+
+  // Word timings for BOTH styles. The casual audio's reduced text keeps word order, so index-aligned
+  // seek lands close (start times stay correct even if whisper mishears a mumbled word). Covers fresh
+  // clips AND legacy audio-only clips (no audio regen).
+  async function generateAndVerify(text: string, voice: string, reduced?: string): Promise<void> {
+    const key = ttsKey(text, voice);
+    const fresh = await ensureAudio(text, voice, reduced);
+    await ensureTimings(key, 'background', fresh);
+    if (!(await isComplete(key))) {
+      throw new Error('audio or local word timings are still incomplete');
+    }
+  }
+
+  return { ensureAudio, ensureTimings, generateAndVerify };
 }
