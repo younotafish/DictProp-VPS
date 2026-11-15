@@ -8,7 +8,7 @@ import { stripAndStoreImages } from '../services/libraryImages';
 import { setReloadGuard } from '../services/appUpdate';
 import { readPendingReviewMutations } from '../services/reviewQueue';
 import { prepareStoredLibrary } from '../services/libraryLaunch';
-import { hasUnsentChanges, sendBeforeLeaving } from '../services/unsentChanges';
+import { sendBeforeLeaving } from '../services/unsentChanges';
 import { subscribeToServerMutations } from '../services/syncSignals';
 import { log, warn, error as logError } from '../services/logger';
 import { useLatest } from './useStableValue';
@@ -46,8 +46,8 @@ export function useLibrarySync(
   },
 ) {
   const {
-    savedItems, latestItemsRef, serverCursorRef, updateItems, userSaveData, initialServerSyncDoneRef,
-    initialSyncIncompleteRef, inSyncLane, refusedPushesRef, undoOfferRef, pushNow, pushDirtyItems, syncFullSnapshot, syncWithServer,
+    savedItems, latestItemsRef, userSaveData, adoptStoredLibrary, hasUnsentChanges, inSyncLane, pushNow, pushDirtyItems,
+    syncFullSnapshot, syncWithServer,
   } = library;
   // Becomes true once IndexedDB has been read (or failed), whether or not it held any items.
   const [isLoaded, setIsLoaded] = useState(false);
@@ -107,14 +107,7 @@ export function useLibrarySync(
 
   // A new version's reload waits for changes still on their way to the server (services/appUpdate), and
   // sends them first. Items the server refused don't count: they wait for the next edit.
-  useEffect(() => setReloadGuard({
-    hasUnsentChanges: () => hasUnsentChanges(
-      latestItemsRef.current,
-      { heldId: undoOfferRef.current?.id ?? null, refused: refusedPushesRef.current },
-      () => readPendingReviewMutations(userId).length,
-    ),
-    beforeReload: sendUnsentChanges,
-  }), [userId, sendUnsentChanges]);
+  useEffect(() => setReloadGuard({ hasUnsentChanges, beforeReload: sendUnsentChanges }), [hasUnsentChanges, sendUnsentChanges]);
 
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
@@ -199,8 +192,7 @@ export function useLibrarySync(
             await deleteItemRecords(pruned.droppedIds, userId)
                 .catch(error => warn('Expired deletions stay stored until the next launch:', error));
 
-            updateItems(() => processedItems);
-            serverCursorRef.current = prepared.cursor;
+            adoptStoredLibrary(processedItems, prepared.cursor);
 
             // Write back the items the steps above replaced
             await saveData(processedItems, userId);
@@ -214,6 +206,10 @@ export function useLibrarySync(
   }, [userId, libraryLoadAttempt]);
 
   // 2. SERVER SYNC — once local data is loaded, pull what changed since it was stored
+  const initialServerSyncDoneRef = useRef(false);
+  // A launch whose first sync failed (offline, say) leaves the push of changes made before it, and the
+  // image download, to the first background pull that gets through.
+  const initialSyncIncompleteRef = useRef(false);
   useEffect(() => {
     if (!isLoaded) return;
     const syncFromServer = async () => {

@@ -17,34 +17,38 @@ export interface UndoOffer {
 }
 
 export function useUndoOffer(
-  { undoOfferRef, pushDirtyItems, replaceItem, latestItemsRef, storeItemUpdates }: Pick<Library,
-    'undoOfferRef' | 'pushDirtyItems' | 'replaceItem' | 'latestItemsRef' | 'storeItemUpdates'>,
+  { holdFromPush, pushDirtyItems, replaceItem, latestItemsRef, storeItemUpdates }: Pick<Library,
+    'holdFromPush' | 'pushDirtyItems' | 'replaceItem' | 'latestItemsRef' | 'storeItemUpdates'>,
   { detailVersionRef, updateDetailContext }: Pick<DetailViewState, 'detailVersionRef' | 'updateDetailContext'>,
 ) {
   const [undoMessage, setUndoMessage] = useState<string | null>(null);
   const undoTimerRef = useRef(0);
+  // The change on offer. Its item stays on this device meanwhile (useLibrary's holdFromPush).
+  const offerRef = useRef<UndoOffer | null>(null);
 
   /** Ends the undo offer and sends its change on. */
   const closeUndoOffer = useCallback(() => {
-    const offer = undoOfferRef.current;
+    const offer = offerRef.current;
     if (!offer) return;
-    undoOfferRef.current = null;
+    offerRef.current = null;
+    holdFromPush(null);
     window.clearTimeout(undoTimerRef.current);
     setUndoMessage(null);
     pushDirtyItems(new Set([offer.id])).catch(error => logError('Push after the undo offer failed', error));
-  }, [pushDirtyItems]);
+  }, [holdFromPush, pushDirtyItems]);
 
   /** Offers to undo the change just made to `before`'s item. Call it before that change's push. */
   const offerUndo = useCallback((verb: string, before: StoredItem, undo: UndoOffer['undo'], view?: UndoOffer['view']) => {
     closeUndoOffer();
     const message = `${verb} “${getItemTitle(before)}”`;
-    undoOfferRef.current = { id: before.data.id, message, undo, view };
+    offerRef.current = { id: before.data.id, message, undo, view };
+    holdFromPush(before.data.id);
     setUndoMessage(message);
     undoTimerRef.current = window.setTimeout(closeUndoOffer, 6_000);
-  }, [closeUndoOffer]);
+  }, [closeUndoOffer, holdFromPush]);
 
   const undoLastChange = useCallback(async () => {
-    const offer = undoOfferRef.current;
+    const offer = offerRef.current;
     if (!offer) return;
     const prior = latestItemsRef.current.find(item => item.data.id === offer.id);
     const restored = replaceItem(offer.id, offer.undo);

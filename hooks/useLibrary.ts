@@ -4,12 +4,11 @@ import { deleteItemRecords, saveData, saveItemUpdates } from '../services/storag
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../services/sync';
 import { getItemContentHash } from '../services/itemHash';
 import { loadAllItems, loadItemChanges, saveItems } from '../services/api';
-import { excludePendingReviewItems } from '../services/reviewQueue';
+import { excludePendingReviewItems, readPendingReviewMutations } from '../services/reviewQueue';
 import { createSerialLane } from '../services/serialLane';
 import { pullOrSnapshot, syncSnapshot } from '../services/serverSync';
-import { selectUnsent } from '../services/unsentChanges';
+import { hasUnsentChanges as anyUnsentChanges, selectUnsent } from '../services/unsentChanges';
 import { log, warn, error as logError } from '../services/logger';
-import type { UndoOffer } from './useUndoOffer';
 
 /**
  * The library of account `userId` in memory, and the pulls and pushes that keep it in step with the server.
@@ -61,10 +60,11 @@ export function useLibrary(userId: string) {
   /** Stores a few replaced items on this device at once, under the library's account. */
   const storeItemUpdates = useCallback((items: StoredItem[]) => saveItemUpdates(items, userId), [userId]);
 
-  const initialServerSyncDoneRef = useRef(false);
-  // A launch whose first sync failed (offline, say) leaves the push of changes made before it, and the
-  // image download, to the first background pull that gets through.
-  const initialSyncIncompleteRef = useRef(false);
+  /** Takes the library read from this device as the one in memory, current to `cursor`. */
+  const adoptStoredLibrary = useCallback((items: StoredItem[], cursor: RevisionCursor | null) => {
+    updateItems(() => items);
+    serverCursorRef.current = cursor;
+  }, [updateItems]);
 
   // Pulls and pushes run one at a time: a pull merges only after an earlier push's acknowledgement is
   // recorded, and each push sends the latest copies. Tasks in the lane call pushNow, not pushDirtyItems,
@@ -75,12 +75,24 @@ export function useLibrary(userId: string) {
   const refusedPushesRef = useRef(new Map<string, string>());
   // A change the user can still undo stays on this device until the offer closes, so an undone change never
   // reaches the server or another device.
-  const undoOfferRef = useRef<UndoOffer | null>(null);
+  const heldIdRef = useRef<string | null>(null);
+  /** Keeps the item `id` out of pushes while its change can still be undone; null lets it go. */
+  const holdFromPush = useCallback((id: string | null) => { heldIdRef.current = id; }, []);
+
+  /**
+   * Whether a change is still waiting to reach the server: an open undo offer, a queued review, or an unsent
+   * item (services/unsentChanges). Items the server refused don't count: they wait for the next edit.
+   */
+  const hasUnsentChanges = useCallback(() => anyUnsentChanges(
+    latestItemsRef.current,
+    { heldId: heldIdRef.current, refused: refusedPushesRef.current },
+    () => readPendingReviewMutations(userId).length,
+  ), [userId]);
 
   /** Pushes the dirty items (all, or those in `ids`) and records what the server kept. Returns the count. */
   const pushNow = useCallback(async (ids?: ReadonlySet<string>): Promise<number> => {
     const refused = refusedPushesRef.current;
-    const unsent = selectUnsent(latestItemsRef.current, { heldId: undoOfferRef.current?.id ?? null, refused }, ids);
+    const unsent = selectUnsent(latestItemsRef.current, { heldId: heldIdRef.current, refused }, ids);
     // Items with an unsent review wait for the review outbox, which applies the review atomically.
     const toPush = excludePendingReviewItems(unsent, userId);
     if (toPush.length === 0) return 0;
@@ -180,9 +192,8 @@ export function useLibrary(userId: string) {
   }, [storeItemUpdates, pushDirtyItems]);
 
   return {
-    savedItems, latestItemsRef, serverCursorRef, updateItems, replaceItem, userSaveData, storeItemUpdates,
-    initialServerSyncDoneRef, initialSyncIncompleteRef, inSyncLane, refusedPushesRef, undoOfferRef,
-    pushNow, pushDirtyItems, syncFullSnapshot, syncWithServer, persistChangedItems,
+    savedItems, latestItemsRef, updateItems, replaceItem, userSaveData, storeItemUpdates, adoptStoredLibrary,
+    holdFromPush, hasUnsentChanges, inSyncLane, pushNow, pushDirtyItems, syncFullSnapshot, syncWithServer, persistChangedItems,
   };
 }
 
