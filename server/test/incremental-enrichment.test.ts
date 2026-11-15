@@ -119,6 +119,7 @@ test('incremental enrichment summarizes actionable gap types', () => {
       sentenceImage: 1,
       recentVocabContent: 1,
       recentVocabAdvanced: 1,
+      recentNestedVocabContent: 0,
       recentNestedVocabAdvanced: 0,
       recentVocabLocalImage: 0,
       recentPhraseLocalImage: 0,
@@ -135,6 +136,7 @@ const noGaps = {
   sentenceImage: 0,
   recentVocabContent: 0,
   recentVocabAdvanced: 0,
+  recentNestedVocabContent: 0,
   recentNestedVocabAdvanced: 0,
   recentVocabLocalImage: 0,
   recentPhraseLocalImage: 0,
@@ -223,6 +225,7 @@ test('a phrase owes its own image and its cards\' gaps, and a recent one its loc
     byType: { sentence: 0, vocab: 0, phrase: 3 },
     gaps: {
       ...noGaps,
+      recentNestedVocabContent: 2,
       recentNestedVocabAdvanced: 1,
       recentPhraseLocalImage: 1,
       recentNestedVocabLocalImage: 1,
@@ -230,12 +233,12 @@ test('a phrase owes its own image and its cards\' gaps, and a recent one its loc
       nestedVocabImage: 2,
     },
   });
-  // A card whose only gap is its content still makes its phrase pending, though no gap counter names it.
+  // A card whose only gap is its content makes its phrase pending, and the nested content counter says why.
   const { imagePrompt: _prompt, ...unprompted } = completeVocab;
   const contentOnly = withAdvancedEnrichment({ ...unprompted, id: 'card-g', examples: ['only one'] });
   const summary = summarizeIncrementalEnrichmentBacklog([
     { type: 'phrase', savedAt: 150, data: { id: 'p-content', query: 'content only', vocabs: [contentOnly] } },
   ], 100);
   assert.equal(summary.items, 1);
-  assert.deepEqual(summary.gaps, noGaps);
+  assert.deepEqual(summary.gaps, { ...noGaps, recentNestedVocabContent: 1 });
 });

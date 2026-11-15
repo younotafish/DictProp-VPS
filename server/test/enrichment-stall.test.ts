@@ -6,7 +6,9 @@ import {
   readStoredExampleCoverage,
   type StoredSentenceEnrichmentRecord,
 } from '../src/example-enrichment-coverage.js';
-import { advancedVocabContentHash, type AuditedItem } from '../src/incremental-enrichment.js';
+import {
+  advancedVocabContentHash, summarizeIncrementalEnrichmentBacklog, type AuditedItem,
+} from '../src/incremental-enrichment.js';
 import { sentenceLookupHash } from '../src/sentence-lookup.js';
 import { completeAnalysis, completeVocab } from './support/fixtures.js';
 
@@ -117,4 +119,20 @@ test('the stall check alerts once overdue images outnumber the deferral allowanc
   assert.deepEqual(check(2), [
     '3 images have been due for over 18 h, more than the 2 that deferred subjects explain (it has never published)',
   ]);
+});
+
+test('a phrase card missing only part of its content is counted in the backlog but raises no stall alert', () => {
+  // Enriched, and its examples are analysed, but its image prompt is gone: incomplete content, nothing else owed.
+  const { imagePrompt: _prompt, ...unprompted } = completeVocab;
+  const items = [{
+    type: 'phrase',
+    savedAt: now - 30 * HOUR,
+    data: { id: 'p-content', query: 'content only', vocabs: [withAdvancedEnrichment({ ...unprompted, id: 'card-content' })] },
+  }];
+  assert.equal(summarizeIncrementalEnrichmentBacklog(items, 0).gaps.recentNestedVocabContent, 1);
+  const stall = findStalledEnrichment(items, storedFor(items, enrichedExamples), {
+    overdueAfterHours: 18, imageGapTolerance: 20, now,
+  });
+  assert.equal(stall.textGaps, 0);
+  assert.deepEqual(stall.alerts, []);
 });

@@ -19,6 +19,7 @@ const noGaps = {
   sentenceImage: 0,
   recentVocabContent: 0,
   recentVocabAdvanced: 0,
+  recentNestedVocabContent: 0,
   recentNestedVocabAdvanced: 0,
   recentVocabLocalImage: 0,
   recentPhraseLocalImage: 0,

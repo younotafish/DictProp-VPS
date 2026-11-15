@@ -173,6 +173,7 @@ export function summarizeIncrementalEnrichmentBacklog(items: readonly AuditedIte
       sentenceImage: 0,
       recentVocabContent: 0,
       recentVocabAdvanced: 0,
+      recentNestedVocabContent: 0,
       recentNestedVocabAdvanced: 0,
       recentVocabLocalImage: 0,
       recentPhraseLocalImage: 0,
@@ -207,6 +208,7 @@ export function summarizeIncrementalEnrichmentBacklog(items: readonly AuditedIte
       if (gaps.image) counts.phraseImage++;
       if (gaps.localImage) counts.recentPhraseLocalImage++;
       for (const card of gaps.cards) {
+        if (card.content) counts.recentNestedVocabContent++;
         if (card.advanced) counts.recentNestedVocabAdvanced++;
         if (card.localImage) counts.recentNestedVocabLocalImage++;
         if (card.storedImage) counts.nestedVocabImage++;
