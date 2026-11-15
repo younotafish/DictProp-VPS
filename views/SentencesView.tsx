@@ -3,6 +3,7 @@ import { isSentenceItem, type ReviewRating, type SentenceData, type StoredItem }
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
+import { isImeKey } from '../components/keyboardTarget';
 import { barColorFor } from '../components/mastery';
 import { useSentenceSearch } from '../services/sentenceSearch';
 import {
@@ -227,6 +228,8 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => {
+                // Mid-composition, Enter (picking a pinyin candidate) and Escape belong to the input method.
+                if (isImeKey(e.nativeEvent)) return;
                 if (e.key === 'Enter' && searchQuery.trim()) { e.preventDefault(); onSearch(searchQuery.trim()); }
                 if (e.key === 'Escape') setSearchQuery('');
               }}

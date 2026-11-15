@@ -13,6 +13,7 @@ import {
 import { Virtuoso } from 'react-virtuoso';
 import type { ReviewRating, StoredItem } from '../../types';
 import { HighlightedSentence } from '../../components/HighlightedSentence';
+import { isImeKey } from '../../components/keyboardTarget';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import type { RealLifeCollection, RealLifeSentence } from '../../services/realLifeCatalog';
@@ -264,7 +265,10 @@ export function RealLifeCollectionScreen({
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
-              onKeyDown={event => { if (event.key === 'Escape') setQuery(''); }}
+              onKeyDown={event => {
+                // Mid-composition, Escape belongs to the input method.
+                if (event.key === 'Escape' && !isImeKey(event.nativeEvent)) setQuery('');
+              }}
               placeholder={`Search ${collection.title.toLocaleLowerCase('en-US')}…`}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-sm text-slate-700 outline-none transition-colors placeholder:text-slate-400 focus:border-indigo-300 focus:bg-white"
               autoComplete="off"
