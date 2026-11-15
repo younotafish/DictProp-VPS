@@ -119,6 +119,45 @@ export class FakeSpeechSynthesis {
   get last(): FakeUtterance | undefined { return this.spoken.at(-1); }
 }
 
+/** An AudioBufferSourceNode that records how it was scheduled; a test fires its 'ended' itself. */
+export class FakeBufferSource {
+  buffer: { length: number } | null = null;
+  loop = false;
+  onended: (() => void) | null = null;
+  startedAt: number | null = null;
+  stoppedAt: number | null = null;
+  connect<T>(node: T): T { return node; }
+  start(when = 0) { this.startedAt = when; }
+  stop(when = 0) {
+    if (this.startedAt === null) throw new DOMException('stop() before start()', 'InvalidStateError');
+    this.stoppedAt = when;
+  }
+}
+
+/** The parts of AudioContext the keep-alive uses. It starts suspended, as one created outside a gesture does. */
+export class FakeAudioContext {
+  static created: FakeAudioContext[] = [];
+  state: AudioContextState = 'suspended';
+  currentTime = 0;
+  readonly sampleRate = 48_000;
+  readonly destination = {};
+  readonly sources: FakeBufferSource[] = [];
+  oscillatorsStarted = 0;
+  constructor() { FakeAudioContext.created.push(this); }
+  resume() { this.state = 'running'; return Promise.resolve(); }
+  suspend() { this.state = 'suspended'; return Promise.resolve(); }
+  createOscillator() {
+    return { frequency: { value: 0 }, connect: <T>(node: T) => node, start: () => { this.oscillatorsStarted++; } };
+  }
+  createGain() { return { gain: { value: 1 }, connect: <T>(node: T) => node }; }
+  createBuffer(_channels: number, length: number) { return { length }; }
+  createBufferSource() {
+    const source = new FakeBufferSource();
+    this.sources.push(source);
+    return source;
+  }
+}
+
 export interface FakeMedia {
   synth: FakeSpeechSynthesis;
   /** The shared <audio> element the engine plays clips through (the first element it created after install). */
@@ -132,7 +171,7 @@ export const installFakeMedia = (options: { speech?: boolean; userAgent?: string
   Object.assign(globalThis, {
     Audio: FakeAudioElement,
     SpeechSynthesisUtterance: FakeUtterance,
-    window: { speechSynthesis: options.speech === false ? undefined : synth, confirm: () => false },
+    window: { speechSynthesis: options.speech === false ? undefined : synth, confirm: () => false, AudioContext: FakeAudioContext },
   });
   if (options.userAgent) {
     Object.defineProperty(globalThis.navigator, 'userAgent', { configurable: true, value: options.userAgent });

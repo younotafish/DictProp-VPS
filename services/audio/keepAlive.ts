@@ -104,10 +104,10 @@ export const releaseKeepAlive = (): void => {
 
 /**
  * Run `cb` after `ms`. A setTimeout is ALWAYS set (so behaviour can never regress below the old
- * timeout-only path); additionally, when the keep-alive AudioContext is running, an equal-length silent
- * buffer is scheduled whose onended fires on the audio thread — which keeps firing with the screen off /
- * tab hidden, where setTimeout is throttled or paused. Whichever fires first wins; the other is
- * cancelled. This is what lets sentence autoplay cross the inter-sentence gap in the background on
+ * timeout-only path); additionally, when the keep-alive AudioContext is running, a silent source is
+ * scheduled to stop after `ms`, and its onended fires on the audio thread — which keeps firing with the
+ * screen off / tab hidden, where setTimeout is throttled or paused. Whichever fires first wins; the other
+ * is cancelled. This is what lets sentence autoplay cross the inter-sentence gap in the background on
  * iPad/macOS (iPhone already worked via the <audio> keep-alive). Returns a canceller.
  */
 export const afterGap = (ms: number, cb: () => void): (() => void) => {
@@ -123,13 +123,20 @@ export const afterGap = (ms: number, cb: () => void): (() => void) => {
   const ctx = keepAliveCtx;
   if (ctx && ctx.state === 'running') {
     try {
-      const frames = Math.max(1, Math.ceil(ctx.sampleRate * (ms / 1000)));
+      // One silent frame, looped until the scheduled stop: onended fires `ms` later on the audio thread,
+      // without allocating a buffer as long as the gap (up to ~2 MB for a 10 s gap at 48 kHz).
       src = ctx.createBufferSource();
-      src.buffer = ctx.createBuffer(1, frames, ctx.sampleRate); // silent → onended ~`ms` later, audio-thread timed
+      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      src.loop = true;
       src.onended = fire;
       src.connect(ctx.destination); // silent; keeps the node scheduled
       src.start();
-    } catch { src = null; }
+      src.stop(ctx.currentTime + ms / 1000);
+    } catch {
+      // Never leave a looping source running without its scheduled stop.
+      try { if (src) { src.onended = null; src.stop(); } } catch { /* it never started */ }
+      src = null;
+    }
   }
   return () => { if (done) return; done = true; cleanup(); };
 };
