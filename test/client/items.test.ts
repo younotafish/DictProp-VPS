@@ -1,34 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mergeGeneratedVocabIntoStoredItem } from '../../services/items.ts';
-import type { StoredItem, VocabCard } from '../../types.ts';
+import { makeVocabStoredItem, sameItemContent } from '../../services/items.ts';
+import type { VocabCard } from '../../types.ts';
 
-const saved: StoredItem = {
-  type: 'vocab',
-  data: {
-    id: 'saved-id', word: 'visceral', sense: 'adj: instinctive', chinese: '', ipa: '',
-    definition: 'old', synonyms: [], antonyms: [], confusables: [], examples: [],
-    history: '', register: '', mnemonic: '',
-  },
-  srs: {
-    id: 'saved-id', type: 'vocab', nextReview: 9, interval: 8, memoryStrength: 7,
-    lastReviewDate: 6, totalReviews: 5, correctStreak: 4, stability: 3,
-  },
-  savedAt: 1,
+const vocab: VocabCard = {
+  id: 'saved-id', word: 'visceral', sense: 'adj: instinctive', chinese: '', ipa: '', definition: 'deep',
+  synonyms: [], antonyms: [], confusables: [], examples: [], history: '', register: '', mnemonic: '',
 };
 
-test('a late illustration attaches to the saved identity without resetting learning', () => {
-  const generated: VocabCard = {
-    ...(saved.data as VocabCard),
-    id: 'temporary-ai-id',
-    definition: 'new',
-    imageUrl: 'data:image/jpeg;base64,/9j/',
-  };
-  const merged = mergeGeneratedVocabIntoStoredItem([saved], generated);
+test('a freshly saved sense gets a new schedule under its own id and a save time', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
+  const item = makeVocabStoredItem(vocab);
+  assert.equal(item.type, 'vocab');
+  assert.equal(item.data, vocab);
+  assert.equal(item.savedAt, 1_700_000_000_000);
+  assert.equal(item.srs.id, 'saved-id');
+  assert.equal(item.srs.type, 'vocab');
+  assert.equal(item.srs.totalReviews, 0);
+  assert.equal(item.srs.nextReview, 1_700_000_000_000, 'due at once');
+});
 
-  assert.equal(merged?.data.id, 'saved-id');
-  assert.equal((merged?.data as VocabCard).imageUrl, generated.imageUrl);
-  assert.equal((merged?.data as VocabCard).definition, 'old');
-  assert.deepEqual(merged?.srs, saved.srs);
-  assert.equal(merged?.savedAt, saved.savedAt);
+test('two copies share their content exactly when they share the content object', () => {
+  const item = makeVocabStoredItem(vocab);
+  assert.equal(sameItemContent(item, { ...item, isArchived: true }), true, 'archiving replaces only the wrapper');
+  assert.equal(sameItemContent(item, { ...item, data: { ...vocab } }), false);
 });
