@@ -64,10 +64,6 @@ export async function requireAuth(c: Context, next: Next) {
     return c.json({ error: 'owner_only' }, 403);
   }
 
-  if (!userRow.is_approved) {
-    return c.json({ error: 'pending_approval' }, 403);
-  }
-
   c.set('user', userRowToAuthUser(userRow));
   return next();
 }

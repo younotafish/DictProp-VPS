@@ -86,9 +86,8 @@ test('/api/auth/me reports the owner, and refuses and ends a session that is not
   const ownerSession = createSession(owner.id).token;
   response = await get('/api/auth/me', ownerSession);
   assert.equal(response.status, 200);
-  const { user } = await response.json() as { user: Record<string, unknown> };
-  assert.deepEqual(user, {
-    id: owner.id, email: 'owner@example.com', displayName: 'Owner', photoUrl: 'https://example.com/owner.png', isAdmin: true,
+  assert.deepEqual(await response.json(), {
+    user: { id: owner.id, email: 'owner@example.com', displayName: 'Owner', photoUrl: 'https://example.com/owner.png', isAdmin: true },
   });
 });
 

@@ -225,7 +225,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
   authRoutes.get('/me', (c) => {
     // Local dev only: report the synthetic bypass user so the client treats us as signed in.
     if (env.DEV_AUTH_BYPASS) {
-      return c.json({ user: DEV_AUTH_USER, pending: false });
+      return c.json({ user: DEV_AUTH_USER });
     }
 
     const token = getCookie(c, 'session');
@@ -251,7 +251,6 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
         photoUrl: userRow.photo_url,
         isAdmin: userRow.is_admin === 1,
       },
-      pending: userRow.is_approved === 0,
     });
   });
 
