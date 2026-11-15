@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { readJson, writePrivateJson } from './offline-io.mjs';
 import { isDetailedSentenceAnalysis, isSentenceAnalysis } from './sentence-analysis-contract.mjs';
@@ -31,22 +31,6 @@ const supplementalById = supplementalAnalysis
 const reusedEntries = [];
 const supplementalEntries = [];
 const missingSentences = [];
-const staleBaseEntries = [];
-const staleSupplementalEntries = [];
-const incompleteBaseEntries = [];
-const incompleteSupplementalEntries = [];
-
-for (const entry of baseById.values()) {
-  const sentence = finalById.get(entry.id);
-  if (!sentence || sentence.textHash !== entry.textHash) staleBaseEntries.push(entry);
-  else if (!acceptableAnalysis(entry.analysis, sentence)) incompleteBaseEntries.push(entry);
-}
-for (const entry of supplementalById.values()) {
-  const sentence = finalById.get(entry.id);
-  if (!sentence || sentence.textHash !== entry.textHash) staleSupplementalEntries.push(entry);
-  else if (!acceptableAnalysis(entry.analysis, sentence)) incompleteSupplementalEntries.push(entry);
-}
-
 for (const sentence of source.sentences) {
   const baseEntry = matchingEntry(baseById, sentence);
   if (baseEntry) {
@@ -68,49 +52,31 @@ const generatedAt = Math.max(
 );
 const completeEntries = [...reusedEntries, ...supplementalEntries]
   .sort((left, right) => left.id.localeCompare(right.id));
+const unusableBase = countUnusable(baseById);
+const unusableSupplemental = countUnusable(supplementalById);
+// Every sentence is reused, supplemented or missing, so nothing missing means every sentence has an analysis.
 const report = {
   sourceSentences: source.sentences.length,
   reused: reusedEntries.length,
   supplemented: supplementalEntries.length,
   missing: missingSentences.length,
-  staleBase: staleBaseEntries.length,
-  staleSupplemental: staleSupplementalEntries.length,
-  incompleteBase: incompleteBaseEntries.length,
-  incompleteSupplemental: incompleteSupplementalEntries.length,
-  complete: missingSentences.length === 0 && completeEntries.length === source.sentences.length,
+  staleBase: unusableBase.stale,
+  staleSupplemental: unusableSupplemental.stale,
+  incompleteBase: unusableBase.incomplete,
+  incompleteSupplemental: unusableSupplemental.incomplete,
+  complete: missingSentences.length === 0,
 };
 
 mkdirSync(outputDir, { recursive: true });
+// Earlier versions wrote these lists here, unread; in the example cycle the stale list held nearly the whole baseline.
+for (const name of ['reused-analysis.json', 'stale-analysis.json', 'incomplete-analysis.json']) {
+  rmSync(resolve(outputDir, name), { force: true });
+}
+// The analysis stage reads only the sentences.
 writePrivateJson(resolve(outputDir, 'missing-source.json'), {
   version: 1,
   exportedAt: Date.now(),
-  sourceGeneratedAt: Number(source.sourceGeneratedAt || source.exportedAt || 0),
   sentences: missingSentences,
-  stats: {
-    corpusRecords: Number(source.stats?.corpusRecords || 0),
-    savedSentenceTexts: Number(source.stats?.savedSentenceTexts || 0),
-    exampleSlots: missingSentences.length,
-    savedSlots: 0,
-    duplicateSlots: 0,
-    poolSentences: missingSentences.length,
-  },
-});
-writePrivateJson(resolve(outputDir, 'reused-analysis.json'), {
-  version: 1,
-  generatedAt,
-  entries: reusedEntries.sort((left, right) => left.id.localeCompare(right.id)),
-});
-writePrivateJson(resolve(outputDir, 'stale-analysis.json'), {
-  version: 1,
-  generatedAt,
-  entries: [...staleBaseEntries, ...staleSupplementalEntries]
-    .sort((left, right) => left.id.localeCompare(right.id)),
-});
-writePrivateJson(resolve(outputDir, 'incomplete-analysis.json'), {
-  version: 1,
-  generatedAt,
-  entries: [...incompleteBaseEntries, ...incompleteSupplementalEntries]
-    .sort((left, right) => left.id.localeCompare(right.id)),
 });
 writePrivateJson(resolve(outputDir, 'report.json'), report);
 
@@ -150,6 +116,18 @@ function indexAnalyses(manifest, label) {
     byId.set(entry.id, entry);
   }
   return byId;
+}
+
+/** Counts a manifest's entries that no source sentence can use: stale (no sentence with that id and text) or incomplete. */
+function countUnusable(byId) {
+  let stale = 0;
+  let incomplete = 0;
+  for (const entry of byId.values()) {
+    const sentence = finalById.get(entry.id);
+    if (!sentence || sentence.textHash !== entry.textHash) stale++;
+    else if (!acceptableAnalysis(entry.analysis, sentence)) incomplete++;
+  }
+  return { stale, incomplete };
 }
 
 function matchingEntry(entries, sentence) {

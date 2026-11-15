@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -64,6 +64,11 @@ function reconcile(
     writeJson(supplementalPath, supplemental);
     args.push(supplementalPath);
   }
+  // What earlier versions left in the output directory.
+  mkdirSync(outputDir);
+  for (const name of ['reused-analysis.json', 'stale-analysis.json', 'incomplete-analysis.json']) {
+    writeFileSync(join(outputDir, name), '{}');
+  }
   const child = spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, ...env } });
   const read = (name: string) => JSON.parse(readFileSync(join(outputDir, name), 'utf8'));
   return { child, outputDir, read };
@@ -115,6 +120,7 @@ test('reconciliation reuses the base, then the supplement, and lists what is sti
   });
   assert.deepEqual(JSON.parse(child.stdout), report);
   const missing = read('missing-source.json');
+  assert.deepEqual(Object.keys(missing), ['version', 'exportedAt', 'sentences']);
   assert.equal(missing.version, 1);
   assert.deepEqual(missing.sentences, [
     sentence('supplemented'), sentence('basic-in-base'), sentence('changed-text'), sentence('missing'),
@@ -153,6 +159,8 @@ test('a complete reconciliation writes final-analysis.json sorted by id', () => 
   assert.ok(final.generatedAt >= 30);
   assert.deepEqual(final.entries, [entry('a', detailed), entry('b', detailed), entry('c', detailed)]);
   assert.deepEqual(read('missing-source.json').sentences, []);
+  // Only what later stages read: the unread reused, stale and incomplete lists are gone, old copies included.
+  assert.deepEqual(readdirSync(outputDir).sort(), ['final-analysis.json', 'missing-source.json', 'report.json']);
   assert.ok(existsSync(join(outputDir, 'report.json')));
 });
 
