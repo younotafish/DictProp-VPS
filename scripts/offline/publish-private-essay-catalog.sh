@@ -10,9 +10,9 @@ fi
 CATALOG_PATH="$1"
 REQUIRED_DEPLOY_SHA="${2:-$(git rev-parse HEAD)}"
 POLL_SECONDS="${3:-300}"
-GH_BIN="${GH_BIN:-./.gh}"
-REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
+
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
 
 if [ ! -s "$CATALOG_PATH" ]; then
   echo "Private essay catalog is missing: $CATALOG_PATH" >&2

@@ -4,13 +4,12 @@
 # not pushed, or an older commit that a later push replaced.
 
 # The tracked files a cycle executes: its scripts, the server code tsx runs for the saved-sentence
-# source, the package files behind both node_modules trees (the image check loads sharp from the root
-# one), and the GitHub CLI binary it calls.
+# source, and the package files behind both node_modules trees (the image check loads sharp from the root
+# one). The GitHub CLI it calls is not tracked: it lives in the ignored .tools/ folder (deadline.sh).
 VETTED_PATHS=(
   scripts/offline
   server/src server/package.json server/package-lock.json server/tsconfig.json
   package.json package-lock.json
-  .gh
 )
 
 # Run from the repository root, as the cycle is. Logs why and returns 1 when VETTED_PATHS has uncommitted

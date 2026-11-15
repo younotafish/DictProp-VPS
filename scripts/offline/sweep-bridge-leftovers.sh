@@ -18,8 +18,6 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
-GH_BIN="${GH_BIN:-./.gh}"
-REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 NODE_BIN="${NODE_BIN:-node}"
 # Relative to the repository root, which the cycle runs from.
 OFFLINE_DATA_ROOT="${OFFLINE_DATA_ROOT:-data/offline-backfill}"

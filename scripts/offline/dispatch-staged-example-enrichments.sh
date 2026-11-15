@@ -5,8 +5,6 @@ set -euo pipefail
 POOL_ROOT="${1:-data/offline-backfill/example-sentence-pool}"
 BATCH_SIZE="${2:-100}"
 REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
-GH_BIN="${GH_BIN:-./.gh}"
-REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 MFLUX_PYTHON="${DICTPROP_MFLUX_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/dictprop/mflux/bin/python}"
 CANONICAL_MFLUX_PYTHON="$HOME/.cache/dictprop/mflux/bin/python"

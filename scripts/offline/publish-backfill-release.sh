@@ -13,8 +13,6 @@ ASSET_NAME="$3"
 OPERATION="$4"
 DEPLOY_SHA="$(git rev-parse "$5^{commit}" 2>/dev/null || printf '%s' "$5")"
 POLL_SECONDS="${6:-300}"
-REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
-GH_BIN="${GH_BIN:-./.gh}"
 STATE_KEY="$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._-' '_')"
 # The dispatchers keep this state beside their wave, so setting a failed wave aside also discards it.
 STATE_DIR="${PUBLISH_STATE_DIR:-${TMPDIR:-/tmp}/dictprop-publish-${STATE_KEY}}"

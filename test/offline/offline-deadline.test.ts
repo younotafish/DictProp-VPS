@@ -152,6 +152,15 @@ test('cap_publish_deadline holds a publisher to five hours, inside the sweep of 
   }
 });
 
+test('the GitHub CLI and the repository have one default each, which the caller can override', () => {
+  const defaults = (env: Record<string, string>) => spawnSync('/bin/bash', ['-c', '. "$DEADLINE_SH"; echo "$GH_BIN $REPO"'], {
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', DEADLINE_SH: deadlineScript, ...env },
+  }).stdout.trim();
+  assert.equal(defaults({}), '.tools/gh younotafish/DictProp-VPS');
+  assert.equal(defaults({ GH_BIN: '/opt/gh', GITHUB_REPOSITORY: 'owner/repo' }), '/opt/gh owner/repo');
+});
+
 test('gh_bounded limits a stalled GitHub call and never lets it read the caller input', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-gh-bounded-'));
   try {

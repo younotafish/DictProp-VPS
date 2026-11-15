@@ -43,7 +43,6 @@ function setup(t: test.TestContext) {
   write(work, 'server/src/scripts/source.ts', 'export {};\n');
   write(work, 'server/package.json', '{}\n');
   write(work, 'package.json', '{}\n');
-  write(work, '.gh', 'binary\n');
   write(work, 'notes.md', 'notes\n');
   for (const file of ['deadline.sh', 'vetted-checkout.sh', 'run-incremental-example-enrichment.sh']) {
     copyFileSync(join(offlineDir, file), join(work, 'scripts/offline', file));
@@ -93,7 +92,7 @@ test('a clean checkout at vps/main passes, untracked files and changes outside t
 
 test('uncommitted or staged changes to code the cycle runs are refused', t => {
   const { work } = setup(t);
-  for (const path of ['scripts/offline/stage.sh', 'server/src/scripts/source.ts', 'server/package.json', 'package.json', '.gh']) {
+  for (const path of ['scripts/offline/stage.sh', 'server/src/scripts/source.ts', 'server/package.json', 'package.json']) {
     write(work, path, 'changed\n');
     const result = guard(work);
     assert.equal(result.status, 1, path);

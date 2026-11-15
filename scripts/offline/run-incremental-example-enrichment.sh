@@ -10,8 +10,6 @@ BASE_IMAGE_ROOT="${3:-data/offline-backfill/example-sentence-pool/final-images}"
 BASE_ANALYSIS="${BASE_ANALYSIS:-$(dirname "$BASE_SOURCE")/final-reconciliation/final-analysis.json}"
 # Defaults to HEAD, read once the vetted-checkout guard below has run, since the guard can move it.
 REQUIRED_DEPLOY_SHA="${4:-}"
-GH_BIN="${GH_BIN:-./.gh}"
-REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 NODE_BIN="${NODE_BIN:-node}"
 TSX_BIN="${TSX_BIN:-server/node_modules/.bin/tsx}"
@@ -178,7 +176,11 @@ if [ -n "$ACTIVE_TEXT_JOBS" ]; then
   exit 0
 fi
 
-for required in "$GH_BIN" "$KEY_FILE" "$BASE_SOURCE" "$BASE_ANALYSIS" "$BASE_IMAGE_ROOT/targets.json" "$TSX_BIN"; do
+if [ ! -x "$GH_BIN" ]; then
+  echo "Required incremental enrichment input is missing: $GH_BIN (an executable GitHub CLI)" >&2
+  exit 1
+fi
+for required in "$KEY_FILE" "$BASE_SOURCE" "$BASE_ANALYSIS" "$BASE_IMAGE_ROOT/targets.json" "$TSX_BIN"; do
   if [ ! -s "$required" ]; then
     echo "Required incremental enrichment input is missing: $required" >&2
     exit 1

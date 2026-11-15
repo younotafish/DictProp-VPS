@@ -5,8 +5,6 @@ set -euo pipefail
 POOL_ROOT="${1:-data/offline-backfill/example-sentence-pool}"
 BATCH_SIZE="${2:-2000}"
 REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
-GH_BIN="${GH_BIN:-./.gh}"
-REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 STATE_ROOT="${EXAMPLE_ANALYSIS_WAVE_STATE_ROOT:-/tmp/dictprop-staged-example-analyses}"
 COOLDOWN_SECONDS="${EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS:-30}"

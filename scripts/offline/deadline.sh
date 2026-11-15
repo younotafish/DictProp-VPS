@@ -3,6 +3,11 @@
 # needs an end: macOS has no timeout(1), so polling loops compare wall-clock deadlines and single
 # commands run under a perl alarm.
 
+# The GitHub CLI and the repository the offline scripts talk to. The CLI binary is kept in .tools/, which
+# git ignores, relative to the repository root that the cycle and the publishers run from.
+GH_BIN="${GH_BIN:-.tools/gh}"
+REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
+
 # Prints the epoch second that is SECONDS from now.
 deadline_after() {
   echo "$(( $(date +%s) + $1 ))"
@@ -100,7 +105,7 @@ stop_stage() {
 # A stalled GitHub API request would otherwise hang the caller while it holds the cycle lock. Standard
 # input is closed because the command runs in a background process group, where a read would stop it.
 gh_bounded() {
-  run_bounded "${GH_CALL_TIMEOUT_SECONDS:-300}" "${GH_BIN:-./.gh}" "$@" < /dev/null
+  run_bounded "${GH_CALL_TIMEOUT_SECONDS:-300}" "$GH_BIN" "$@" < /dev/null
 }
 
 # Prints the UTC time SECONDS ago in GitHub's timestamp format. Run lists are limited to runs created

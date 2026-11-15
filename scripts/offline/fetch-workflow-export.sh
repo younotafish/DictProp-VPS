@@ -9,8 +9,6 @@ USAGE="Usage: fetch-workflow-export.sh <run-id> <corpus-export|sentence-export> 
 RUN_ID="${1:?$USAGE}"
 ARTIFACT="${2:?$USAGE}"
 OUTPUT="${3:?$USAGE}"
-GH_BIN="${GH_BIN:-./.gh}"
-REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 NODE_BIN="${NODE_BIN:-node}"
 

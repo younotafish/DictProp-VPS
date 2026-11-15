@@ -5,8 +5,6 @@ set -euo pipefail
 ANALYSIS="${1:?Usage: dispatch-staged-saved-sentence-analyses.sh <analysis.json> [batch-size=5000] [required-deploy-sha]}"
 BATCH_SIZE="${2:-5000}"
 REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
-GH_BIN="${GH_BIN:-./.gh}"
-REPO="${GITHUB_REPOSITORY:-younotafish/DictProp-VPS}"
 KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 STATE_ROOT="${SAVED_SENTENCE_ANALYSIS_STATE_ROOT:-/tmp/dictprop-staged-saved-sentence-analyses}"
 COOLDOWN_SECONDS="${SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS:-30}"
