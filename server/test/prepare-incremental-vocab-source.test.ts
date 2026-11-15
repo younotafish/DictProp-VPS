@@ -125,3 +125,26 @@ test('the vocabulary source marks a card for archiving exactly when the server w
     assert.equal(entry.archiveForUsage, shouldArchiveUsage(audit.status, audit.confidence), entry.id);
   }
 });
+
+test('the vocabulary source refuses a batch size or lookback that is not an integer, and clamps the rest', () => {
+  const now = Date.now();
+  const items = Array.from({ length: 3 }, (_, index) => ({
+    type: 'vocab', savedAt: now - index * DAY_MS, data: card(`card-${index}`),
+  }));
+
+  for (const args of [['many', '168'], ['8.5', '168'], ['10', 'a week'], ['10', '1.5']]) {
+    const result = prepare(items, args);
+    assert.notEqual(result.status, 0, args.join(' '));
+    assert.match(result.stderr, /(limit|lookback-hours) must be an integer, not "/);
+  }
+
+  const atLeastOne = prepare(items, ['0', '168']);
+  assert.equal(atLeastOne.status, 0, atLeastOne.stderr);
+  assert.equal(atLeastOne.output.entries.length, 1);
+
+  // A lookback clamped to one hour leaves only today's card recent; the older complete cards wait.
+  const shortLookback = prepare(items, ['', '-5']);
+  assert.equal(shortLookback.status, 0, shortLookback.stderr);
+  assert.deepEqual(shortLookback.output.entries.map((entry: Entry) => entry.id), ['card-0']);
+  assert.equal(shortLookback.summary.ignoredOlderNonCritical, 2);
+});

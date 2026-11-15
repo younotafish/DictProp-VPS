@@ -14,8 +14,14 @@ if (!corpusArg || !outputArg) {
 
 const corpus = readJson(corpusArg);
 if (corpus?.version !== 1 || !Array.isArray(corpus.items)) throw new Error('Corpus export is invalid');
-const limit = Math.max(1, Math.min(100, Number(limitArg || 8)));
-const lookbackHours = Math.max(1, Math.min(24 * 365, Number(lookbackHoursArg || 168)));
+// A knob that isn't an integer would select nothing (slice(0, NaN) is empty) and look like a quiet cycle.
+function integerArg(name, raw, fallback, min, max) {
+  const value = Number(raw || fallback);
+  if (!Number.isInteger(value)) throw new Error(`${name} must be an integer, not ${JSON.stringify(raw)}`);
+  return Math.max(min, Math.min(max, value));
+}
+const limit = integerArg('limit', limitArg, 8, 1, 100);
+const lookbackHours = integerArg('lookback-hours', lookbackHoursArg, 168, 1, 24 * 365);
 const providerFilter = typeof providerFilterArg === 'string' ? providerFilterArg.trim() : '';
 const recentSince = Date.now() - lookbackHours * 60 * 60 * 1_000;
 
