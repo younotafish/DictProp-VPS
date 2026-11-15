@@ -73,6 +73,9 @@ for (const entry of bundle.entries) {
     // current is the entry's own item (looked up by its id, its type checked above), so its identity is the entry's.
     const candidate = {
       ...current,
+      // A row untouched since revisions were added reads back without one. Writing with no revision would compare
+      // clocks, and a device whose clock runs behind could have its edit, made while this import runs, overwritten.
+      serverRevision: current.serverRevision ?? 0,
       data: { ...entry.data, ...preservedSentenceAnalysis, ...preservedSentenceSpeechStyle },
       srs: normalizedSrs(current, currentSrs),
       savedAt: finiteNonNegative(current.savedAt, Date.now()),

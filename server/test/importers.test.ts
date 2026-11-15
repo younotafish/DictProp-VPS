@@ -223,6 +223,25 @@ test('the corpus audit import skips items edited or deleted after export without
   assert.equal(stored('ca-sentence').type, 'sentence');
 });
 
+test('the corpus audit import writes a row stored before revisions existed like any other', () => {
+  const usageAudit = { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high', auditedAt: 300 };
+  save('ca-revision-zero', 'vocab', { word: 'sincere', definition: 'honest' });
+  // Such a row reads back without a serverRevision; the import writes it with revision 0, which still matches.
+  db.prepare('UPDATE items SET revision = 0 WHERE id = ?').run('ca-revision-zero');
+  const before = stored('ca-revision-zero');
+  assert.equal(before.serverRevision, undefined);
+
+  const run = runScript('import-corpus-audit', auditBundle([{
+    id: 'ca-revision-zero', type: 'vocab', sourceHash: corpusSourceHash(before.data),
+    data: { ...before.data, usageAudit }, wasArchived: false, archiveForUsage: false,
+  }]));
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.output.updated, 1);
+  assert.equal(run.output.stale, 0);
+  assert.deepEqual(stored('ca-revision-zero').data.usageAudit, usageAudit);
+  assert.ok(stored('ca-revision-zero').serverRevision > 0);
+});
+
 test('the corpus audit import applies explicit archive states and accepts unaudited sentences', () => {
   const usageAudit = { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high', auditedAt: 300 };
   const rareAudit = { ...usageAudit, status: 'rare_or_dated', reason: 'Dated outside historical fiction.' };
