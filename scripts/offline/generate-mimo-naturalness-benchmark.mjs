@@ -4,8 +4,9 @@
 // These clips are paired with generate-qwen-naturalness-benchmark.py for blinded human listening.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { writePrivateJson } from './offline-io.mjs';
 
@@ -38,33 +39,42 @@ const ffmpeg = option('--ffmpeg', process.env.FFMPEG_BIN || '/Users/cjs/.local/b
 const apiKey = envValue('DEEPINFRA_API_KEY');
 if (!apiKey) throw new Error('DEEPINFRA_API_KEY is required');
 mkdirSync(outputRoot, { recursive: true });
+// The key reaches curl through a private file, as in server/src/proxy-fetch.ts: any local process can read a command
+// line.
+const headerDir = mkdtempSync(join(tmpdir(), 'dictprop-mimo-'));
+const authorizationHeader = join(headerDir, 'authorization');
+writeFileSync(authorizationHeader, `Authorization: Bearer ${apiKey}\n`, { mode: 0o600 });
 
 const entries = [];
-for (const [sentenceIndex, text] of TEST_SENTENCES.slice(0, sentenceLimit || undefined).entries()) {
-  const digest = createHash('sha256').update(`mimo-v2.5-mia\n${text}`).digest('hex');
-  const audioPath = resolve(outputRoot, `${digest}.mp3`);
-  if (!existsSync(audioPath)) {
-    const response = spawnSync('curl', [
-      '--fail', '--silent', '--show-error', '--max-time', '120', MIMO_URL,
-      '-H', `Authorization: Bearer ${apiKey}`,
-      '-H', 'Content-Type: application/json',
-      '--data-binary', JSON.stringify({ text, voice: 'Mia', output_format: 'wav' }),
-    ], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
-    if (response.status !== 0) throw new Error(`MiMo request failed: ${response.stderr.slice(-1_000)}`);
-    const payload = JSON.parse(response.stdout);
-    const encoded = String(payload.audio || '').replace(/^data:[^,]*,/, '');
-    if (!encoded) throw new Error('MiMo returned no audio');
-    const wavPath = resolve(outputRoot, `${digest}.wav`);
-    writeFileSync(wavPath, Buffer.from(encoded, 'base64'), { mode: 0o600 });
-    const transcode = spawnSync(ffmpeg, [
-      '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', wavPath,
-      '-af', 'loudnorm=I=-18:TP=-2:LRA=7', '-ar', '24000', '-ac', '1', '-b:a', '96k', audioPath,
-    ], { encoding: 'utf8', timeout: 90_000 });
-    unlinkSync(wavPath);
-    if (transcode.status !== 0) throw new Error(`ffmpeg failed: ${transcode.stderr.slice(-1_000)}`);
+try {
+  for (const [sentenceIndex, text] of TEST_SENTENCES.slice(0, sentenceLimit || undefined).entries()) {
+    const digest = createHash('sha256').update(`mimo-v2.5-mia\n${text}`).digest('hex');
+    const audioPath = resolve(outputRoot, `${digest}.mp3`);
+    if (!existsSync(audioPath)) {
+      const response = spawnSync('curl', [
+        '--fail', '--silent', '--show-error', '--max-time', '120', MIMO_URL,
+        '-H', `@${authorizationHeader}`,
+        '-H', 'Content-Type: application/json',
+        '--data-binary', JSON.stringify({ text, voice: 'Mia', output_format: 'wav' }),
+      ], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
+      if (response.status !== 0) throw new Error(`MiMo request failed: ${response.stderr.slice(-1_000)}`);
+      const payload = JSON.parse(response.stdout);
+      const encoded = String(payload.audio || '').replace(/^data:[^,]*,/, '');
+      if (!encoded) throw new Error('MiMo returned no audio');
+      const wavPath = resolve(outputRoot, `${digest}.wav`);
+      writeFileSync(wavPath, Buffer.from(encoded, 'base64'), { mode: 0o600 });
+      const transcode = spawnSync(ffmpeg, [
+        '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', wavPath,
+        '-af', 'loudnorm=I=-18:TP=-2:LRA=7', '-ar', '24000', '-ac', '1', '-b:a', '96k', audioPath,
+      ], { encoding: 'utf8', timeout: 90_000 });
+      unlinkSync(wavPath);
+      if (transcode.status !== 0) throw new Error(`ffmpeg failed: ${transcode.stderr.slice(-1_000)}`);
+    }
+    entries.push({ sentenceIndex, text, recipe: 'mimo-v2.5-mia', file: audioPath.split('/').at(-1) });
+    process.stderr.write(`[${sentenceIndex + 1}/${sentenceLimit || TEST_SENTENCES.length}] MiMo Mia\n`);
   }
-  entries.push({ sentenceIndex, text, recipe: 'mimo-v2.5-mia', file: audioPath.split('/').at(-1) });
-  process.stderr.write(`[${sentenceIndex + 1}/${sentenceLimit || TEST_SENTENCES.length}] MiMo Mia\n`);
+} finally {
+  rmSync(headerDir, { recursive: true, force: true });
 }
 
 writePrivateJson(resolve(outputRoot, 'manifest.json'), {
