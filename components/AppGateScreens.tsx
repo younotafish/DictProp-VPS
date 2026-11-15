@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { logout } from '../services/auth';
 
-// The screens App shows in place of the library: while sign-in is checked, to someone signed out, to an
-// account awaiting approval, and when this device's copy of the library can't be read.
+// The screens App shows in place of the library: while sign-in is checked or the library is read, to someone
+// signed out, to an account awaiting approval, and when this device's copy of the library can't be read.
 
-export const AuthLoadingScreen: React.FC = () => (
+export const LoadingScreen: React.FC = () => (
   <div className="fixed inset-0 bg-white flex items-center justify-center">
     <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
   </div>

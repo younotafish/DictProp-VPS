@@ -6,7 +6,7 @@ import { loginRedirect, type AuthState, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
-import { AuthLoadingScreen, LibraryReadFailedScreen, PendingApprovalScreen, SignInScreen } from './components/AppGateScreens';
+import { LibraryReadFailedScreen, LoadingScreen, PendingApprovalScreen, SignInScreen } from './components/AppGateScreens';
 import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppBanners, AppStatusPills } from './components/AppStatus';
 import { useFrozenWhile } from './hooks/useStableValue';
@@ -161,15 +161,7 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
   }
 
   // The library is still being read from this device.
-  if (!isLoaded) {
-    return (
-      <div className="fixed inset-0 bg-white flex flex-col">
-        <div className="flex items-center justify-center h-full">
-          <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
-        </div>
-      </div>
-    );
-  }
+  if (!isLoaded) return <LoadingScreen />;
 
   return (
     <div className="fixed inset-0 bg-white flex flex-col">
@@ -431,7 +423,7 @@ const App: React.FC = () => {
 
   // Auth gate: show login/pending/loading before the main app
   if (authState.loading) {
-    return <AuthLoadingScreen />;
+    return <LoadingScreen />;
   }
 
   if (!authState.user) {
