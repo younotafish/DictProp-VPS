@@ -73,3 +73,38 @@ test('a bundle whose image path could leave it is still refused whole', () => {
   assert.match(run.stderr, /imageFile is invalid/);
   assert.equal(getSentenceEnrichmentForText(escaping.text), null);
 });
+
+test('a bundle larger than one chunk imports every entry, and its counts add up across the chunks', () => {
+  const entries = Array.from({ length: 230 }, (_, index) =>
+    entry(`Sentence number ${index} arrives in a bundle of several chunks.`, 500,
+      index >= 100 && index < 220 ? `images/missing-${index}.png` : undefined));
+  // One entry the server holds a newer analysis for, one it already holds exactly, and one it holds an older one for.
+  upsertSentenceEnrichment({ entry: { ...entries[5], generatedAt: 900 } });
+  upsertSentenceEnrichment({ entry: { ...entries[150], imageFile: undefined } });
+  upsertSentenceEnrichment({ entry: { ...entries[220], generatedAt: 100 } });
+
+  const dir = mkdtempSync(join(tmpdir(), 'dictprop-sentence-enrichment-bundle-'));
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ version: 1, generatedAt: 500, entries }));
+  const run = runImport(join(dir, 'manifest.json'));
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(Object.keys(run.output), [
+    'total', 'inserted', 'updated', 'unchanged', 'stale', 'imageBlobsAdded', 'imagesSkipped', 'imageErrors',
+    'before', 'after', 'backup',
+  ]);
+  assert.equal(run.output.total, 230);
+  assert.equal(run.output.inserted, 227);
+  assert.equal(run.output.updated, 1);
+  assert.equal(run.output.unchanged, 1);
+  assert.equal(run.output.stale, 1);
+  assert.equal(run.output.after - run.output.before, 227);
+  // Every missing image is counted; the report lists the first 50.
+  assert.equal(run.output.imagesSkipped, 120);
+  assert.equal(run.output.imageErrors.length, 50);
+  assert.equal(run.output.imageErrors[0].id, entries[100].id);
+  assert.equal(run.output.imageErrors[49].id, entries[149].id);
+  for (const index of [0, 99, 100, 199, 229]) {
+    assert.equal(getSentenceEnrichmentForText(entries[index].text)?.generatedAt, 500);
+  }
+  assert.equal(getSentenceEnrichmentForText(entries[5].text)?.generatedAt, 900);
+});
