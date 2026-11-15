@@ -23,14 +23,16 @@ const failureLedger = ledgerFromEnvironment('vocab');
 const deferredEntries = failureLedger ? readLedger(failureLedger.path).stages[failureLedger.stage] || {} : {};
 const now = Date.now();
 
+// The server's shouldArchiveUsage (server/src/usage-audit.ts), which the corpus importer applies.
 function shouldArchive(audit) {
   return audit?.confidence !== 'low' &&
     ['british_only', 'rare_or_dated', 'narrow_specialized'].includes(audit?.status);
 }
 
 const candidates = [];
-let ignoredLegacyExampleOnly = 0;
+let ignoredOlderNonCritical = 0;
 let missingHeadword = 0;
+let unauditedPhrases = 0;
 let deferred = 0;
 for (const item of corpus.items) {
   if (!item?.data || item.isDeleted || item.wasArchived || !['vocab', 'phrase'].includes(item.type)) continue;
@@ -46,13 +48,18 @@ for (const item of corpus.items) {
   if (missing.length === 0 && !needsAdvancedEnrichment) continue;
   const recent = Number(item.savedAt || 0) >= recentSince;
   const critical = missing.some(field => field !== 'examples');
+  // An older card is left alone when all it lacks is two well-formed examples or the advanced rewrite.
   if (!providerFilter && !recent && !critical) {
-    ignoredLegacyExampleOnly++;
+    ignoredOlderNonCritical++;
     continue;
   }
-  // A phrase-level usage audit is required by the optimistic corpus importer. Vocabulary cards can
-  // have their own missing audit generated below, but an unaudited phrase needs the broader audit job.
-  if (item.type === 'phrase' && !validUsageAudit(item.data.usageAudit)) continue;
+  // The corpus importer requires a phrase-level usage audit, and completion writes only card-level ones. The bulk job
+  // that wrote phrase audits is gone, and the app has saved searched phrases as vocab items since January 2026, so
+  // only legacy phrases land here.
+  if (item.type === 'phrase' && !validUsageAudit(item.data.usageAudit)) {
+    unauditedPhrases++;
+    continue;
+  }
   if (isDeferred(deferredEntries[item.data.id], parentHash(item), now)) {
     deferred++;
     continue;
@@ -70,7 +77,8 @@ const selected = candidates.slice(0, limit).map(({ item }) => ({
   id: item.data.id,
   type: item.type,
   sourceHash: item.sourceHash,
-  wasArchived: item.wasArchived === true,
+  // Archived items never become candidates, and the importer requires the field.
+  wasArchived: false,
   data: item.data,
   archiveForUsage: shouldArchive(item.data.usageAudit),
 }));
@@ -78,7 +86,6 @@ const output = {
   version: 1,
   generatedAt: Date.now(),
   model: 'Incremental vocabulary completion source',
-  advancedEnrichmentVersion: 1,
   entries: selected,
 };
 writePrivateJson(outputArg, output);
@@ -86,8 +93,9 @@ process.stdout.write(`${JSON.stringify({
   eligible: candidates.length,
   advancedEligible: candidates.filter(candidate => candidate.needsAdvancedEnrichment).length,
   selected: selected.length,
-  ignoredLegacyExampleOnly,
+  ignoredOlderNonCritical,
   missingHeadword,
+  unauditedPhrases,
   deferred,
   providerFilter: providerFilter || null,
   recentSince,
