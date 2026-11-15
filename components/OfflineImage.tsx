@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ImageOff, Loader2 } from 'lucide-react';
+import { getServerImageVersion } from '../services/libraryImages';
 import { loadImage, peekImage } from '../services/storage';
 
 interface Props {
@@ -31,9 +32,7 @@ export const OfflineImage: React.FC<Props> = ({
   onMissing,
 }) => {
   const directSrc = src && (src.startsWith('data:image/') || src.startsWith('/api/')) ? src : undefined;
-  const serverVersion = src?.startsWith('server:has_image:')
-    ? src.slice('server:has_image:'.length)
-    : undefined;
+  const serverVersion = getServerImageVersion(src);
   // Identity of the image to show. Changes when we switch items → triggers the reset below.
   const idKey = directSrc ?? (itemId ? `id:${itemId}:${serverVersion || 'local'}` : '');
   // A picture already in memory shows on the first frame instead of after a storage round trip.
