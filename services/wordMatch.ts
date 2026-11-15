@@ -14,7 +14,7 @@
 // A generated candidate only causes a wrong pop-up if it collides with a *different*
 // real saved base word; over-generation that hits nothing simply falls through to AI.
 
-import { StoredItem, VocabCard } from '../types';
+import { isVocabItem, type StoredItem, type VocabCard } from '../types';
 
 // Words that LOOK inflected (end in -s/-es/-ed/-ing/-ier) but are actually base
 // forms. Returned as-is, never reduced. Cheap, high-value guard.
@@ -112,7 +112,7 @@ function undouble(stem: string): string | null {
  * Always includes the token itself. Never emits a candidate shorter than 3 chars.
  * Skips tokens shorter than 4 chars and anything in the invariant stoplist.
  */
-export function tokenCandidates(token: string): string[] {
+function tokenCandidates(token: string): string[] {
   const w = token;
   const cands = new Set<string>([w]);
   if (w.length < 4 || INVARIANT_STOPLIST.has(w)) return [...cands];
@@ -168,7 +168,7 @@ export function tokenCandidates(token: string): string[] {
  * comes first. For phrases it is the cross-product of per-token candidates, capped
  * (≤4 tokens, ≤64 combinations) to avoid combinatorial blow-up.
  */
-export function variantKeys(s: string): string[] {
+function variantKeys(s: string): string[] {
   const norm = normalizeKey(s);
   if (!norm) return [];
   const tokens = norm.split(' ');
@@ -214,8 +214,8 @@ const RULE = '~';
 export function buildVariantIndex(items: StoredItem[]): VariantIndex {
   const index: VariantIndex = new Map();
   for (const item of items) {
-    if (!item || item.type !== 'vocab' || item.isDeleted) continue;
-    const { base, keys } = cardKeys(item.data as VocabCard);
+    if (!item || item.isDeleted || !isVocabItem(item)) continue;
+    const { base, keys } = cardKeys(item.data);
     for (const key of keys) {
       const owners = index.get(key);
       if (owners === undefined) index.set(key, base);
@@ -327,7 +327,7 @@ export function findDuplicateClusters(items: StoredItem[]): string[][] {
   for (const g of groups.values()) {
     if (g.size >= 2) clusters.push([...g].sort((a, b) => a.length - b.length || a.localeCompare(b)));
   }
-  // Stable, friendly ordering: smallest clusters and shortest canonical first.
+  // Clusters in alphabetical order of their shortest word, each listed shortest word first.
   clusters.sort((a, b) => a[0].localeCompare(b[0]));
   return clusters;
 }
