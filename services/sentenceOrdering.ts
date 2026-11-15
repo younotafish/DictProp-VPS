@@ -1,8 +1,24 @@
-import type { StoredItem } from '../types';
+import type { SRSData, StoredItem } from '../types';
 
 export type SentenceReviewFilter = 'all' | 'unreviewed' | 'due' | 'memorized';
 
-export const compareSentencesByLearningPriority = (a: StoredItem, b: StoredItem): number => {
+/** Where a sentence stands in review; every sentence is exactly one of these. */
+export type SentenceReviewState = 'unreviewed' | 'due' | 'memorized';
+
+/**
+ * Never reviewed (totalReviews 0), reviewed and due again (nextReview has passed), or reviewed and resting
+ * until nextReview. totalReviews is a validated non-negative count.
+ */
+export function sentenceReviewState(srs: SRSData | undefined, now: number): SentenceReviewState {
+  if ((srs?.totalReviews ?? 0) === 0) return 'unreviewed';
+  return (srs?.nextReview ?? 0) <= now ? 'due' : 'memorized';
+}
+
+/** Whether a sentence belongs under a review filter chip. */
+export const matchesReviewFilter = (srs: SRSData | undefined, filter: SentenceReviewFilter, now: number): boolean =>
+  filter === 'all' || sentenceReviewState(srs, now) === filter;
+
+const compareSentencesByLearningPriority = (a: StoredItem, b: StoredItem): number => {
   const strengthDifference = (a.srs?.memoryStrength ?? 0) - (b.srs?.memoryStrength ?? 0);
   if (strengthDifference) return strengthDifference;
 
@@ -17,12 +33,6 @@ export function orderSentencesForReview(
   now: number,
 ): StoredItem[] {
   return items
-    .filter(item => {
-      if (filter === 'all') return true;
-      const reviews = item.srs?.totalReviews ?? 0;
-      if (filter === 'unreviewed') return reviews === 0;
-      if (filter === 'due') return reviews > 0 && (item.srs?.nextReview ?? 0) <= now;
-      return reviews > 0 && (item.srs?.nextReview ?? 0) > now;
-    })
+    .filter(item => matchesReviewFilter(item.srs, filter, now))
     .sort(compareSentencesByLearningPriority);
 }

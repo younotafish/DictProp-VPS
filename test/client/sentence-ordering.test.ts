@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { orderSentencesForReview } from '../../services/sentenceOrdering.ts';
+import { matchesReviewFilter, orderSentencesForReview, sentenceReviewState } from '../../services/sentenceOrdering.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import type { StoredItem } from '../../types.ts';
 
@@ -55,4 +55,18 @@ test('every sentence category is ordered by weakest memory, then newest addition
     orderSentencesForReview(items, 'memorized', NOW).map(item => item.data.id),
     ['newer-memorized', 'older-memorized'],
   );
+});
+
+test('a sentence is unreviewed until its first review, then due once nextReview passes, else memorized', () => {
+  const srs = (totalReviews: number, nextReview: number) => ({ ...SRSAlgorithm.createNew('s', 'sentence'), totalReviews, nextReview });
+  assert.equal(sentenceReviewState(undefined, NOW), 'unreviewed');
+  assert.equal(sentenceReviewState(srs(0, NOW + 1), NOW), 'unreviewed', 'a future nextReview does not make a new sentence reviewed');
+  assert.equal(sentenceReviewState(srs(3, NOW), NOW), 'due');
+  assert.equal(sentenceReviewState(srs(3, NOW - 1), NOW), 'due');
+  assert.equal(sentenceReviewState(srs(1, NOW + 1), NOW), 'memorized');
+
+  assert.equal(matchesReviewFilter(srs(1, NOW + 1), 'all', NOW), true);
+  assert.equal(matchesReviewFilter(srs(1, NOW + 1), 'memorized', NOW), true);
+  assert.equal(matchesReviewFilter(srs(1, NOW + 1), 'due', NOW), false);
+  assert.equal(matchesReviewFilter(undefined, 'unreviewed', NOW), true);
 });
