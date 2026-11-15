@@ -87,12 +87,13 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USERNAME: ${{ github.actor }}
           RELEASE_IMAGE: ghcr.io/younotafish/dictprop-vps:${{ github.sha }}
+          RELEASE_SHA: ${{ github.sha }}
         with:
           host: 107.152.47.101
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          envs: DEEPINFRA_API_KEY,GHCR_TOKEN,GHCR_USERNAME,RELEASE_IMAGE
+          envs: DEEPINFRA_API_KEY,GHCR_TOKEN,GHCR_USERNAME,RELEASE_IMAGE,RELEASE_SHA
           command_timeout: 60m
           script: |
             set -e
@@ -119,8 +120,15 @@ jobs:
               exit "$exit_code"
             }
             trap finish EXIT
-            git switch main
-            git pull --ff-only origin main
+            # The checkout is the commit this run deploys, whatever main is now, so it always matches the image.
+            # Running an older run again, or one finishing after a newer push's deploy, must not roll production
+            # back: a release production already contains is left alone. A rollback is a revert commit.
+            git fetch --quiet origin
+            if [ "$RELEASE_SHA" != "$PREVIOUS_SHA" ] && git merge-base --is-ancestor "$RELEASE_SHA" "$PREVIOUS_SHA"; then
+              echo "::notice::Production runs $PREVIOUS_SHA, which already contains $RELEASE_SHA, so there is nothing to deploy"
+              exit 0
+            fi
+            git checkout --quiet -B main "$RELEASE_SHA"
             # Ensure swap exists for low-memory VPS
             if [ ! -f /swapfile ]; then
               (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile) || true
@@ -175,7 +183,7 @@ jobs:
                 echo "::error::Not deploying: a database backup needs ${NEEDED_KB}KB free and ${AVAILABLE_KB}KB are"
                 exit 1
               fi
-              BACKUP_NAME="dictprop-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.sha }}.db"
+              BACKUP_NAME="dictprop-$(date -u +%Y%m%dT%H%M%SZ)-$RELEASE_SHA.db"
               BACKUP_TEMP="$BACKUP_NAME.partial"
               # Only a running app takes the online copy: a container in its restart backoff is listed, but refuses exec.
               APP_CONTAINER="$(docker compose ps -q app 2>/dev/null | head -n 1)"

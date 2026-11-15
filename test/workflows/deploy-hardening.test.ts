@@ -208,6 +208,8 @@ if [ "$(cat "$RUNNING")" = "$RELEASE_IMAGE" ]; then [ -z "$FAIL_HEALTH" ]; else 
   git(dir, 'init', '--quiet', '--bare', '--initial-branch=main', origin);
   git(dir, 'init', '--quiet', '--initial-branch=main', work);
   git(work, 'remote', 'add', 'origin', origin);
+  /** The newest commit on main, which a deploy run starts for unless a test says otherwise. */
+  let latest = '';
   /** Pushes a new commit to main, as merging a release would, and returns its SHA. */
   const publish = (message: string): string => {
     writeFileSync(join(work, '.gitignore'), 'data/\n.env\n');
@@ -215,7 +217,8 @@ if [ "$(cat "$RUNNING")" = "$RELEASE_IMAGE" ]; then [ -z "$FAIL_HEALTH" ]; else 
     git(work, 'add', '.');
     git(work, 'commit', '--quiet', '-m', message);
     git(work, 'push', '--quiet', 'origin', 'main');
-    return git(work, 'rev-parse', 'HEAD');
+    latest = git(work, 'rev-parse', 'HEAD');
+    return latest;
   };
   const previous = publish('previous release');
   git(dir, 'clone', '--quiet', origin, app);
@@ -230,6 +233,7 @@ if [ "$(cat "$RUNNING")" = "$RELEASE_IMAGE" ]; then [ -z "$FAIL_HEALTH" ]; else 
         CALLS: calls,
         RUNNING: running,
         RELEASE_IMAGE,
+        RELEASE_SHA: latest,
         GHCR_TOKEN: 'registry-token',
         GHCR_USERNAME: 'deployer',
         DEEPINFRA_API_KEY: '',
@@ -332,6 +336,51 @@ test('a healthy release drops the images no release runs, and nothing else', () 
       'docker image rm ghcr.io/younotafish/dictprop-vps:0123abc dictprop-vps:rollback-77 dictprop-vps:local',
       'docker image prune -f',
     ]);
+  } finally {
+    server.remove();
+  }
+});
+
+test('a run deploys exactly its own commit, even when main has moved on since', () => {
+  const server = makeServer();
+  try {
+    const wanted = server.publish('the release this run is for');
+    server.publish('a newer commit with its own run');
+    const run = server.deploy('release', { RELEASE_SHA: wanted });
+    assert.equal(run.status, 0, run.output);
+    assert.equal(server.head(), wanted);
+    assert.equal(server.branch(), 'main');
+    assert.deepEqual(composeUps(run).map(call => call.split(' head=')[1]), [wanted]);
+  } finally {
+    server.remove();
+  }
+});
+
+// A rerun keeps its run's commit, and two quick pushes can finish their deploys in either order.
+test('a run for a commit production already contains changes nothing, and the running commit still redeploys', () => {
+  const server = makeServer();
+  try {
+    const newer = server.publish('newer release');
+    assert.equal(server.deploy('release').status, 0);
+    assert.equal(server.head(), newer);
+
+    const stale = server.deploy('release', { RELEASE_SHA: server.previous });
+    assert.equal(stale.status, 0, stale.output);
+    assert.match(stale.output, new RegExp(`::notice::Production runs ${newer}, which already contains ${server.previous}, so there is nothing to deploy`));
+    assert.deepEqual(stale.calls, [], 'no backup, pull or container swap');
+    assert.equal(server.head(), newer);
+
+    const again = server.deploy('release', { RELEASE_SHA: newer });
+    assert.equal(again.status, 0, again.output);
+    assert.match(again.output, /Release is healthy/);
+    assert.equal(composeUps(again).length, 1);
+    assert.equal(server.head(), newer);
+
+    // A commit the server can't find ends the run red, on the checkout it started from.
+    const unknown = server.deploy('release', { RELEASE_SHA: 'f'.repeat(40) });
+    assert.notEqual(unknown.status, 0);
+    assert.deepEqual(unknown.calls, []);
+    assert.equal(server.head(), newer);
   } finally {
     server.remove();
   }

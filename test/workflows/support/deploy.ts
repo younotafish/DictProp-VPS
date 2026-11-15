@@ -57,7 +57,7 @@ export function deployScript() {
   };
   assert.deepEqual(lines.slice(0, 2), ['set -e', 'cd /opt/dictprop-vps']);
   return {
-    checkout: ['set -e', 'cd "$DEPLOY_DIR"', ...lines.slice(2, at('git pull --ff-only origin main') + 1)].join('\n'),
+    checkout: ['set -e', 'cd "$DEPLOY_DIR"', ...lines.slice(2, at('git checkout --quiet -B main "$RELEASE_SHA"') + 1)].join('\n'),
     // From the disk report after the swap setup, so a test never touches the machine's swap.
     backup: lines.slice(at('=== DISK BEFORE CLEANUP ==='), at('# Sync the DeepInfra key')).join('\n'),
     env: lines.slice(at('# Sync the DeepInfra key'), at('=== PULLING PREBUILT RELEASE ===')).join('\n'),

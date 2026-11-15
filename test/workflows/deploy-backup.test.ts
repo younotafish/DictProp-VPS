@@ -135,6 +135,7 @@ PATH="$REAL_PATH" exec find "$@"`);
       encoding: 'utf8',
       env: scriptEnv(bin, {
         DEPLOY_DIR: app,
+        RELEASE_SHA: 'candidate',
         CALLS: calls,
         REAL_PATH: process.env.PATH ?? '/usr/bin:/bin',
         NODE: process.execPath,
