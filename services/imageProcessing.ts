@@ -9,7 +9,7 @@ const JPEG_QUALITY = 0.85;
  * Resize oversized images before IDB/network persistence and normalize them to WebP (JPEG where the
  * browser can't encode WebP), unless that wouldn't make a small JPEG/PNG/WebP any smaller.
  */
-export async function optimizeImageDataUri(dataUri: string): Promise<string> {
+async function optimizeImageDataUri(dataUri: string): Promise<string> {
   if (!dataUri.startsWith('data:image/')) return dataUri;
   let bitmap: ImageBitmap | null = null;
   let canvas: HTMLCanvasElement | null = null;
