@@ -82,14 +82,13 @@ export const SearchVocabPane: React.FC<Props> = ({
     if (window.getSelection()?.toString().trim()) return; // don't hijack a text selection
     const target = e.target as HTMLElement | null;
     if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return; // a control
-    const examples = plainExamples;
-    if (!examples.length) return;
+    if (!plainExamples.length) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const rel = e.clientY - rect.top;
     const zone = rel < rect.height / 4 ? 0 : rel < rect.height / 2 ? 1 : -1; // top ¼ → 1st, 2nd ¼ → 2nd
     if (zone < 0) return;
     flashZone(zone);
-    playOrToggleSentence(examples[Math.min(zone, examples.length - 1)]);
+    playOrToggleSentence(plainExamples[Math.min(zone, plainExamples.length - 1)]);
   }, [plainExamples, flashZone, playOrToggleSentence]);
 
   return (

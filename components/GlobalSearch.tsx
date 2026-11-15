@@ -407,7 +407,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         <SearchResultsSheet
           dialogRef={resultsDialogRef}
           viewingItem={viewingItem}
-          viewingResult={viewingResult}
           meaningIndex={viewingVocabIdx}
           meaningCount={viewingVocabCount}
           readyItems={readyItems}

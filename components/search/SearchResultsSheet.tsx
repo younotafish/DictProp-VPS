@@ -9,7 +9,6 @@ interface Props {
   dialogRef: React.RefObject<HTMLDivElement | null>;
   /** The open result, a lookup or a comparison. */
   viewingItem: QueueItem;
-  viewingResult: SearchResult | null | undefined;
   /** The meaning on screen, and how many the result has. */
   meaningIndex: number;
   meaningCount: number;
@@ -33,7 +32,7 @@ interface Props {
  * buttons; the open comparison or meaning; and a strip of every ready result, with Save all and Clear all.
  */
 export const SearchResultsSheet: React.FC<Props> = ({
-  dialogRef, viewingItem, viewingResult, meaningIndex, meaningCount, readyItems, resultIndex, onShowResult,
+  dialogRef, viewingItem, meaningIndex, meaningCount, readyItems, resultIndex, onShowResult,
   isVocabSaved, onClose, onSaveWord, onDismiss, onSaveAll, onClearAll, children,
 }) => (
   <>
@@ -49,7 +48,7 @@ export const SearchResultsSheet: React.FC<Props> = ({
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label={`Search result: ${viewingResult?.query || viewingItem.query}`}
+        aria-label={`Search result: ${viewingItem.results?.query || viewingItem.query}`}
         className="bg-white rounded-t-3xl shadow-2xl max-h-[85dvh] flex flex-col outline-none"
       >
         {/* Header */}
@@ -58,7 +57,7 @@ export const SearchResultsSheet: React.FC<Props> = ({
             {viewingItem.kind === 'compare'
               ? <Scale size={14} className="text-indigo-500 shrink-0" />
               : <Search size={14} className="text-indigo-500 shrink-0" />}
-            <span className="text-sm font-semibold text-slate-700 truncate">"{viewingResult?.query || viewingItem.query}"</span>
+            <span className="text-sm font-semibold text-slate-700 truncate">"{viewingItem.results?.query || viewingItem.query}"</span>
             {viewingItem.refreshing && (
               <span className="flex items-center gap-1 text-xs font-medium text-indigo-500 shrink-0">
                 <Loader2 size={12} className="animate-spin" /> Refreshing…
@@ -97,11 +96,10 @@ export const SearchResultsSheet: React.FC<Props> = ({
             )}
             {/* Save all meanings of current word (searches only — comparisons auto-save) */}
             {viewingItem.kind !== 'compare' && (() => {
-              const allSaved = viewingResult?.vocabs?.every(v => isVocabSaved(v)) ?? false;
-              const meaningCount = viewingResult?.vocabs?.length ?? 0;
+              const allSaved = viewingItem.results?.vocabs?.every(v => isVocabSaved(v)) ?? false;
               return (
                 <button
-                  onClick={() => onSaveWord(viewingResult ?? null)}
+                  onClick={() => onSaveWord(viewingItem.results)}
                   className={`h-8 px-3 rounded-full flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
                     allSaved
                       ? 'bg-indigo-100 text-indigo-600 border border-indigo-200'
