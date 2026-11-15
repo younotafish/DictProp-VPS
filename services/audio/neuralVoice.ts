@@ -18,6 +18,8 @@ import { MAX_KOKORO_URLS, UrlLru } from './urlLru';
 const DEFAULT_VOICE: KokoroVoice = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
 
 const CONSENT_KEY = 'tts_neural_consent'; // mobile one-time download consent
+// A "no" holds for the rest of the session, so a run of sentences without clips doesn't ask again for each one.
+let downloadDeclined = false;
 
 // Whether the worker has the model loaded, so speech can use it without starting a download.
 let modelReady = false;
@@ -39,6 +41,7 @@ const hasConsent = (): boolean => {
 /** On mobile, confirm the one-time ~330 MB (fp32) download before pulling it (respect cellular data). */
 const confirmDownloadIfNeeded = (): boolean => {
   if (!isMobile() || hasConsent()) return true;
+  if (downloadDeclined) return false;
   const ok =
     typeof window !== 'undefined' &&
     window.confirm(
@@ -50,6 +53,8 @@ const confirmDownloadIfNeeded = (): boolean => {
     } catch {
       /* ignore */
     }
+  } else {
+    downloadDeclined = true;
   }
   return !!ok;
 };
