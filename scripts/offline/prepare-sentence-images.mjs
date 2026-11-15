@@ -46,11 +46,12 @@ const entries = analysis.entries.filter(entry => sources.get(entry.id)?.hasImage
       definition: entry.analysis.translation,
     },
   });
-  return { ...entry, imageFile: `images/${filename}`, replaceImage: true };
+  return { id: entry.id, textHash: entry.textHash, imageFile: `images/${filename}` };
 });
 
 const model = modelArg || 'krea/Krea-2-Turbo';
-writePrivateJson(join(outputDir, 'manifest.json'), { ...analysis, entries });
+// The waves and the verifier read each entry's identity and image file here; the analysis stays in its own manifest.
+writePrivateJson(join(outputDir, 'manifest.json'), { version: 1, generatedAt: analysis.generatedAt, entries });
 writePrivateJson(join(outputDir, 'targets.json'), {
   version: 1,
   generatedAt: analysis.generatedAt,
