@@ -1,8 +1,14 @@
+// Word timings from whisper.cpp's full JSON output (whisper-cli -ojf): words built from the token timestamps, or,
+// when the output has none, each segment's span shared among its words by length.
 export interface WordTiming {
   start: number;
   end: number;
   text: string;
 }
+
+type JsonRecord = Record<string, unknown>;
+const asRecord = (value: unknown): JsonRecord | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : null;
 
 function finiteOffset(value: unknown): number | null {
   const number = Number(value);
@@ -20,7 +26,7 @@ function cleanWord(value: string): string {
 // span must still never join a word.
 const SPECIAL_TOKEN = /^(?:<\|.*\|>|\[_[A-Za-z_]+\d*\])$/;
 
-function tokenTimings(transcription: any[]): WordTiming[] {
+function tokenTimings(transcription: unknown[]): WordTiming[] {
   const output: WordTiming[] = [];
   let current: { text: string; startMs: number; endMs: number } | null = null;
   const flush = () => {
@@ -33,10 +39,13 @@ function tokenTimings(transcription: any[]): WordTiming[] {
   };
 
   for (const segment of transcription) {
-    for (const token of Array.isArray(segment?.tokens) ? segment.tokens : []) {
-      const raw = typeof token?.text === 'string' ? token.text : '';
-      const startMs = finiteOffset(token?.offsets?.from);
-      const endMs = finiteOffset(token?.offsets?.to);
+    const tokens = asRecord(segment)?.tokens;
+    for (const token of Array.isArray(tokens) ? tokens : []) {
+      const fields = asRecord(token);
+      const raw = typeof fields?.text === 'string' ? fields.text : '';
+      const offsets = asRecord(fields?.offsets);
+      const startMs = finiteOffset(offsets?.from);
+      const endMs = finiteOffset(offsets?.to);
       if (!raw || startMs === null || endMs === null || endMs <= startMs || SPECIAL_TOKEN.test(raw.trim())) continue;
       if (!current || /^\s/u.test(raw)) {
         flush();
@@ -51,13 +60,15 @@ function tokenTimings(transcription: any[]): WordTiming[] {
   return output;
 }
 
-function segmentTimings(transcription: any[]): WordTiming[] {
+function segmentTimings(transcription: unknown[]): WordTiming[] {
   const output: WordTiming[] = [];
   for (const segment of transcription) {
-    const startMs = finiteOffset(segment?.offsets?.from);
-    const endMs = finiteOffset(segment?.offsets?.to);
-    const words: string[] = typeof segment?.text === 'string'
-      ? segment.text.split(/\s+/).map(cleanWord).filter(Boolean)
+    const fields = asRecord(segment);
+    const offsets = asRecord(fields?.offsets);
+    const startMs = finiteOffset(offsets?.from);
+    const endMs = finiteOffset(offsets?.to);
+    const words: string[] = typeof fields?.text === 'string'
+      ? fields.text.split(/\s+/).map(cleanWord).filter(Boolean)
       : [];
     if (startMs === null || endMs === null || endMs <= startMs || words.length === 0) continue;
     const weights = words.map(word => Math.max(1, [...word].length));
@@ -75,9 +86,8 @@ function segmentTimings(transcription: any[]): WordTiming[] {
 }
 
 export function parseWhisperCppTimings(value: unknown): WordTiming[] {
-  const transcription = value && typeof value === 'object' && Array.isArray((value as any).transcription)
-    ? (value as any).transcription
-    : [];
+  const output = asRecord(value)?.transcription;
+  const transcription: unknown[] = Array.isArray(output) ? output : [];
   const tokens = tokenTimings(transcription);
   return tokens.length > 0 ? tokens : segmentTimings(transcription);
 }
