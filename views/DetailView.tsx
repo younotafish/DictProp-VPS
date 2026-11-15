@@ -64,7 +64,6 @@ interface DetailViewProps {
   ) => void | Promise<boolean>; // Direct SRS update (triggers "remember")
   onCompare?: (words: string[]) => void;
   comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
-  comparingKeys?: string[];                   // comparison keys currently generating (background queue)
   onOpenComparison?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string, prepared?: SentenceData) => void;
   onOpenExampleSentence?: (text: string, word: string, sense?: string) => StoredItem | null | Promise<StoredItem | null>;
@@ -113,7 +112,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   onUpdateSRS,
   onCompare,
   comparisons,
-  comparingKeys,
   onOpenComparison,
   onSaveSentence,
   onOpenExampleSentence,
@@ -240,19 +238,17 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     if (prevGroupIndexRef.current !== currentGroupIndex) {
       prevGroupIndexRef.current = currentGroupIndex;
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-      // Keep the analysis page open while moving between saved sentences. Word review still resets to
-      // its primary page when changing groups.
+      // The analysis page stays open while moving between saved sentences, scrolled back to its top. (Word
+      // cards never leave their one page.)
       if (sentenceItems?.length) {
         const analysisScroller = document.querySelector<HTMLElement>('[data-sentence-analysis]');
         if (analysisScroller) analysisScroller.scrollTop = 0;
-      } else if (sentencePage !== 'sentence') {
-        setSentencePage('sentence');
       }
       const itemIndex = pendingItemIndexRef.current ?? 0;
       pendingItemIndexRef.current = null;
       if (currentItemIndex !== itemIndex) setCurrentItemIndex(itemIndex);
     }
-  }, [currentGroupIndex, sentenceItems, sentencePage, currentItemIndex]);
+  }, [currentGroupIndex, sentenceItems, currentItemIndex]);
 
   // The caller moves the view by changing navigationKey. Declared after the two effects above, so its
   // indices win over theirs when the groups change in the same render, as they do when a card comes back.
@@ -517,7 +513,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   // ('idb:stored'/'server:has_image') → OfflineImage lazy-loads it by id (IDB, then server).
   const sentenceImageUrl = currentSentence ? getItemImageUrl(currentSentence) : undefined;
   const hasSentenceImage = !!sentenceImageUrl;
-  const sentenceImageDirectSrc = sentenceImageUrl;
 
   // Refs so the post-remember timer and key handlers read fresh sentence state without re-subscribing.
   const sentenceModeRef = useRef(sentenceMode);
@@ -899,8 +894,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       if (isStillTap && !onControl && !onSentenceWord) {
         suppressSentenceSurfaceClickUntilRef.current = Date.now() + 500;
         queueSentenceSurfaceTap(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
-      } else if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
-        setShowHeader(true);                                    // keep short-swipe-down → reveal header
       } else if (isVerticalSwipe && isLongSwipe) {
         if (diffY < -longSwipeMin && (isAtBottom || scrollHeight <= clientHeight)) {
           goToSentence(currentGroupIndexRef.current + 1);      // swipe up → next sentence
@@ -1024,7 +1017,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   const wordComparisons = (comparisons || [])
     .filter((c) => c.words.some((w) => w.toLowerCase().trim() === normTitle))
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  const wordComparingPairs = (comparingKeys || []).filter((k) => k.split('|').includes(normTitle));
 
   // Auto-pronounce the word when the card changes — but NOT during sentence auto-play, which
   // reads the example sentence instead (we don't want the word spoken over it).
@@ -1084,9 +1076,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     if (sentences.length) prefetchTTS(sentences);
   }, [sentenceMode, upcomingItems, prefetchSpeechStyle]);
 
-  // P key to pronounce current word
-  // Moved to bottom to access handlers
-  
   // Find saved item - first try by ID (most reliable), then fallback to title+sense matching
   const savedItemMatch = useMemo(() =>
     savedItems.find(item => item.data.id === data.id) ||
@@ -1094,7 +1083,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       getItemTitle(item).toLowerCase().trim() === (title || '').toLowerCase().trim() &&
       (item.type === 'phrase' || (item.data as VocabCard).sense === (data as VocabCard).sense)
     ),
-    [savedItems, data.id, title, type]
+    [savedItems, data, title]
   );
   const isSaved = !!savedItemMatch;
 
@@ -1473,6 +1462,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       cancelGapRef.current = null;
       resumeChainRef.current = null;
     };
+    // The chain reads the card's text, title and picture when it starts, and restarts only when auto-play is
+    // switched, the view moves or the cards change; a review or a refreshed copy mid-read doesn't restart it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSentenceAutoPlaying, currentGroupIndex, currentItemIndex, groups]);
 
@@ -1683,7 +1674,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       return;
     }
     setIsAutoPlaying(false);
-    setShowHeader(false);
     setCurrentGroupIndex(clamped);
     setCurrentItemIndex(0);
     const next = list[clamped];
@@ -1808,7 +1798,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     onScrollRight: navRight,
     containerRef: scrollContainerRef,
     threshold: 80,
-    enabled: !detailInteractionLocked && !!(currentGroup && currentGroup.items.length >= 1),
+    enabled: !detailInteractionLocked,
   });
 
   // Mobile sentence words have fixed gestures: one finger plays from the tapped word; holding a finger
@@ -1820,7 +1810,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     const target = e.target instanceof Element ? e.target : null;
     const word = target?.closest('[data-word-offset]') as HTMLElement | null;
     if (!word || !e.currentTarget.contains(word)) return;
-    e.preventDefault();
+    // React's touch listeners are passive, so nothing here can cancel the touch. Stopping it keeps the blank-space
+    // gestures from seeing the chord, and the click-suppression window below swallows the clicks that follow it.
     e.stopPropagation();
     mobileWordChordActiveRef.current = true;
     suppressMobileWordClickUntilRef.current = Date.now() + 800;
@@ -2028,7 +2019,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
         srs: newSRS
       });
     }
-  }, [catalogSentencePreview, data, type, onSave, onUpdateSRS, title, onClose, isSentencePreview]);
+  }, [catalogSentencePreview, data, type, onSave, onUpdateSRS, title, isSentencePreview]);
 
   const handleDoubleClick = () => {
     // Avoid triggering when selecting text
@@ -2068,8 +2059,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       // The rest are bare keys, so Cmd+R still reloads rather than marking the card remembered.
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      // H: Toggle header visibility
-      if (e.key === 'h' || e.key === 'H') {
+      // H: Toggle the word card's header (sentence review has none)
+      if ((e.key === 'h' || e.key === 'H') && !sentenceMode) {
         e.preventDefault();
         setShowHeader(prev => !prev);
       }
@@ -2237,7 +2228,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                       <div className="w-full max-w-md md:max-w-none rounded-2xl overflow-hidden bg-slate-100 shadow-sm flex items-center justify-center">
                         <OfflineImage
                           key={`${currentSentence.data.id}:${imageReloadTick[currentSentence.data.id] ?? 0}`}
-                          src={sentenceImageDirectSrc}
+                          src={sentenceImageUrl}
                           itemId={currentSentence.data.id}
                           alt="Attached image for this sentence"
                           onMissing={onLazyLoadImage}
@@ -2460,12 +2451,11 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                   variant="ghost" 
                   size="sm" 
                   onClick={() => {
-                    const searchText = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
                     // Use onRefresh if available (forces real AI search), otherwise fall back to onSearch
                     if (onRefresh) {
-                      onRefresh(searchText);
+                      onRefresh(title);
                     } else {
-                      onSearch(searchText);
+                      onSearch(title);
                     }
                   }}
                   className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
@@ -2573,8 +2563,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
             </ErrorBoundary>
           )}
 
-          {/* Saved comparisons involving this word (+ any still generating in the background queue). */}
-          {onOpenComparison && (wordComparisons.length > 0 || wordComparingPairs.length > 0) && (
+          {/* Saved comparisons involving this word. */}
+          {onOpenComparison && wordComparisons.length > 0 && (
             <div className="max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto mt-5">
               <div className="flex items-center gap-2 mb-2">
                 <Scale size={14} className="text-indigo-500" />
@@ -2590,16 +2580,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                   >
                     {c.words.join(' vs ')}
                   </button>
-                ))}
-                {wordComparingPairs.map((k) => (
-                  <span
-                    key={k}
-                    className="px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1.5"
-                    title="Generating in the background"
-                  >
-                    <Loader2 size={12} className="animate-spin" />
-                    {k.split('|').join(' vs ')} · comparing…
-                  </span>
                 ))}
               </div>
             </div>
@@ -2976,7 +2956,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
             onUpdateSRS={onUpdateSRS}
             onCompare={onCompare}
             comparisons={comparisons}
-            comparingKeys={comparingKeys}
             onOpenComparison={onOpenComparison}
             onSaveSentence={onSaveSentence}
             isSentenceSaved={isSentenceSaved}
