@@ -31,7 +31,7 @@ function notifyAuthRequired(error: HttpError): void {
   }));
 }
 
-export async function responseToHttpError(response: Response, label = 'Request'): Promise<HttpError> {
+async function responseToHttpError(response: Response, label = 'Request'): Promise<HttpError> {
   const body = await readErrorBody(response);
   const detail = body ? `: ${body}` : '';
   const error = new HttpError(`${label} failed (${response.status})${detail}`, response.status, body);
@@ -39,7 +39,7 @@ export async function responseToHttpError(response: Response, label = 'Request')
   return error;
 }
 
-export async function assertResponseOk(response: Response, label: string): Promise<void> {
+async function assertResponseOk(response: Response, label: string): Promise<void> {
   if (response.ok) return;
   throw await responseToHttpError(response, label);
 }
@@ -54,7 +54,7 @@ export function jsonRequest(method: string, body: unknown): RequestInit {
 
 // fetch() never times out on its own. A wedged mobile socket would otherwise hold the delta-pull,
 // review-flush and force-sync guards until the page reloads, so bound the headers and body together.
-export const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 async function withTimeout<T>(
   init: RequestInit | undefined,
@@ -75,27 +75,41 @@ async function withTimeout<T>(
   }
 }
 
+/**
+ * fetch() given `timeoutMs` for the headers and `read`, which reads what it needs of the body. A request that runs
+ * out of time rejects with a TimeoutError. It never checks the status or reports a lapsed sign-in: `read` decides
+ * what a response means. For requests whose failures the caller handles itself (pictures, audio, the sign-in check).
+ */
+export async function fetchWithin<T>(
+  url: string,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+  read: (response: Response) => Promise<T>,
+): Promise<T> {
+  return withTimeout(init, timeoutMs, async (timedInit) => read(await fetch(url, timedInit)));
+}
+
+/** A JSON request: a failed status throws an HttpError (a 401 also reports the lapsed sign-in), else the body. */
 export async function requestJson<T>(
   url: string,
   init?: RequestInit,
   label = 'Request',
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<T> {
-  return withTimeout(init, timeoutMs, async (timedInit) => {
-    const response = await fetch(url, timedInit);
+  return fetchWithin(url, init, timeoutMs, async (response) => {
     await assertResponseOk(response, label);
     return await response.json() as T;
   });
 }
 
+/** A request whose reply has no body to read: a failed status throws as in requestJson. */
 export async function requestVoid(
   url: string,
   init?: RequestInit,
   label = 'Request',
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<void> {
-  return withTimeout(init, timeoutMs, async (timedInit) => {
-    const response = await fetch(url, timedInit);
+  return fetchWithin(url, init, timeoutMs, async (response) => {
     await assertResponseOk(response, label);
   });
 }

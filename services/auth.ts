@@ -1,3 +1,5 @@
+import { fetchWithin } from './http';
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -22,7 +24,8 @@ function readCachedAuth(): CachedAuth | null {
     const raw = localStorage.getItem(AUTH_USER_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CachedAuth;
-    return parsed && parsed.user ? { user: parsed.user, pending: !!parsed.pending } : null;
+    // A session without an id (a damaged entry) would open someone's library under no name.
+    return parsed && parsed.user && typeof parsed.user.id === 'string' ? { user: parsed.user, pending: !!parsed.pending } : null;
   } catch {
     return null;
   }
@@ -55,30 +58,27 @@ function clearCachedAuth(): void {
  * redeploy) means "can't verify right now", NOT "logged out", so we keep the cache.
  */
 export async function checkAuth(): Promise<{ user: AuthUser | null; pending: boolean; offline?: boolean }> {
-  // A wedged connection counts as offline rather than holding a first sign-in on the spinner.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT_MS);
-  try {
-    const res = await fetch('/api/auth/me', { signal: controller.signal });
-    if (res.status === 401 || res.status === 403) {
-      clearCachedAuth(); // genuinely signed out
-      return { user: null, pending: false };
-    }
-    if (!res.ok) {
-      // Server reachable but erroring — don't nuke the session; use the cache if present.
-      const cached = readCachedAuth();
-      return cached ? { ...cached, offline: true } : { user: null, pending: false };
-    }
-    const data = await res.json();
-    const auth: CachedAuth = { user: data.user ?? null, pending: data.pending || false };
-    writeCachedAuth(auth);
-    return auth;
-  } catch {
-    // Network failure (offline) — render from the cached session + local data.
+  const cachedSession = () => {
     const cached = readCachedAuth();
     return cached ? { ...cached, offline: true } : { user: null, pending: false };
-  } finally {
-    clearTimeout(timer);
+  };
+  try {
+    // A wedged connection counts as offline rather than holding a first sign-in on the spinner.
+    return await fetchWithin('/api/auth/me', undefined, AUTH_CHECK_TIMEOUT_MS, async (res) => {
+      if (res.status === 401 || res.status === 403) {
+        clearCachedAuth(); // genuinely signed out
+        return { user: null, pending: false };
+      }
+      // Server reachable but erroring — don't nuke the session; use the cache if present.
+      if (!res.ok) return cachedSession();
+      const data = await res.json();
+      const auth: CachedAuth = { user: data.user ?? null, pending: data.pending || false };
+      writeCachedAuth(auth);
+      return auth;
+    });
+  } catch {
+    // Network failure (offline) — render from the cached session + local data.
+    return cachedSession();
   }
 }
 
@@ -107,15 +107,11 @@ export function loginRedirect(): void {
  * dropping the cached session offline would lock the local library behind a sign-in that needs the network.
  */
 export async function logout(): Promise<boolean> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT_MS);
   try {
-    const res = await fetch('/api/auth/logout', { method: 'POST', signal: controller.signal });
-    if (!res.ok) return false;
+    const signedOut = await fetchWithin('/api/auth/logout', { method: 'POST' }, AUTH_CHECK_TIMEOUT_MS, async (res) => res.ok);
+    if (!signedOut) return false;
   } catch {
     return false;
-  } finally {
-    clearTimeout(timer);
   }
   clearCachedAuth(); // drop the offline fallback so we don't resurrect the session
   window.location.reload();
