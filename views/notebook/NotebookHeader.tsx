@@ -43,6 +43,8 @@ export const NotebookHeader: React.FC<NotebookHeaderProps> = ({
         {isOnline && (
           <button
             onClick={onToggleCompare}
+            aria-label="Compare words"
+            aria-pressed={compareMode}
             className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full transition-colors ${
               compareMode
                 ? 'text-indigo-600 bg-indigo-100'

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { Download, FileJson, GitMerge, ListPlus, Loader2, MoreHorizontal, RefreshCw, ScanText, UploadCloud, Volume2 } from 'lucide-react';
 import type { SyncStatus } from '../../types';
 import { SpeechStyleToggle } from '../../components/SpeechStyleToggle';
@@ -30,7 +30,6 @@ interface MenuItemProps {
 
 const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onSelect, busy }) => (
   <button
-    role="menuitem"
     onClick={onSelect}
     disabled={busy}
     className={`w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50${busy === undefined ? '' : ' disabled:opacity-50'}`}
@@ -39,13 +38,17 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onSelect, busy }) => (
   </button>
 );
 
-/** The ⋯ button at the head of the notebook's toolbar and the tools it opens. A click outside or Escape closes it. */
+/**
+ * The ⋯ button at the head of the notebook's toolbar and the panel of tools it discloses: plain buttons in tab
+ * order, with the speech settings above them. A click outside or Escape closes it.
+ */
 export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({
   isOnline, onAnalyzeText, onBatchImport, onImportJSON, onDownloadOfflineImages, onForceSync, syncStatus,
   onGenerateAllSpeech, speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning, onFindDuplicates,
 }) => {
   const [showMaintenanceMenu, setShowMaintenanceMenu] = useState(false);
   const maintenanceMenuRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
 
   useEffect(() => {
     if (!showMaintenanceMenu) return;
@@ -82,14 +85,14 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({
         onClick={() => setShowMaintenanceMenu(open => !open)}
         className="w-11 h-11 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
         aria-label="Notebook tools"
-        aria-haspopup="menu"
         aria-expanded={showMaintenanceMenu}
+        aria-controls={showMaintenanceMenu ? panelId : undefined}
         title="Notebook tools"
       >
         <MoreHorizontal size={20} />
       </button>
       {showMaintenanceMenu && (
-        <div role="menu" className="absolute right-0 top-full mt-1 w-64 max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+        <div id={panelId} className="absolute right-0 top-full mt-1 w-64 max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
           <div className="min-h-11 px-3 py-2 flex items-center justify-between gap-3 border-b border-slate-100">
             <span className="text-sm text-slate-600">Speech playback</span>
             <div className="flex items-center gap-1">

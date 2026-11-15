@@ -44,6 +44,7 @@ export const ArchivedToggle: React.FC<{ count: number; expanded: boolean; onTogg
   <div className="px-3 mt-6 pt-4 border-t-2 border-slate-200">
     <button
       onClick={onToggle}
+      aria-expanded={expanded}
       className="w-full flex items-center justify-between px-4 py-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
     >
       <div className="flex items-center gap-3">
