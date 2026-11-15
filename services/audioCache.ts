@@ -94,8 +94,6 @@ export const audioCacheReady = async (): Promise<boolean> => {
   return available;
 };
 
-const now = (): number => Date.now();
-
 // ── Reads ──────────────────────────────────────────────────────────────────────
 /** The cached clip Blob for `key`, or null on miss / error. Bumps last-used (fire-and-forget) on a hit. */
 export const getAudioBlob = async (key: string): Promise<Blob | null> => {
@@ -190,7 +188,7 @@ const writeAudio = (key: string, blob: Blob, retried: boolean): Promise<void> =>
     getDB().then((db) => {
       const tx = db.transaction([AUDIO, META], 'readwrite');
       tx.objectStore(AUDIO).put(blob, key);
-      tx.objectStore(META).put({ size: blob.size, at: now() } as MetaRecord, key);
+      tx.objectStore(META).put({ size: blob.size, at: Date.now() } as MetaRecord, key);
       tx.oncomplete = () => resolve();
       tx.onabort = () => {
         const err = tx.error;
@@ -216,12 +214,12 @@ let lastEvictionAt = 0;
 const scheduleEviction = (): void => {
   if (evictScheduled) return;
   evictScheduled = true;
-  const run = () => { evictScheduled = false; lastEvictionAt = now(); void evictToBudget(); };
+  const run = () => { evictScheduled = false; lastEvictionAt = Date.now(); void evictToBudget(); };
   const whenIdle = () => {
     if (typeof requestIdleCallback !== 'undefined') requestIdleCallback(run, { timeout: 5000 });
     else run();
   };
-  setTimeout(whenIdle, Math.max(3000, lastEvictionAt + EVICTION_INTERVAL_MS - now()));
+  setTimeout(whenIdle, Math.max(3000, lastEvictionAt + EVICTION_INTERVAL_MS - Date.now()));
 };
 
 const computeBudget = async (currentAudioBytes: number): Promise<number> => {
@@ -300,7 +298,7 @@ const touch = (key: string): void => {
     const g = store.get(key);
     g.onsuccess = () => {
       const m = g.result as MetaRecord | undefined;
-      if (m) store.put({ size: m.size, at: now() } as MetaRecord, key);
+      if (m) store.put({ size: m.size, at: Date.now() } as MetaRecord, key);
     };
   }).catch(() => { /* best-effort */ });
 };

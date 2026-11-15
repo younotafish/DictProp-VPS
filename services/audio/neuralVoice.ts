@@ -21,7 +21,6 @@ const CONSENT_KEY = 'tts_neural_consent'; // mobile one-time download consent
 
 // Whether the worker has the model loaded, so speech can use it without starting a download.
 let modelReady = false;
-const isModelReady = (): boolean => modelReady;
 // Set once the model failed to load on every device (or the worker died before it loaded). For the rest of
 // the session, cache misses go straight to the system voice instead of waiting on a load that just failed.
 let kokoroUnavailable = false;
@@ -139,8 +138,8 @@ export const speakViaKokoro = async (
   systemFallback: () => void,
 ): Promise<void> => {
   const { onStart, onEnd, allowDownload } = opts;
-  const wouldDownload = !isModelReady();
-  let useNeural = !kokoroUnavailable && isNeuralSupported() && (isModelReady() || allowDownload);
+  const wouldDownload = !modelReady;
+  let useNeural = !kokoroUnavailable && isNeuralSupported() && (modelReady || allowDownload);
   if (useNeural && wouldDownload && allowDownload && !confirmDownloadIfNeeded()) useNeural = false;
   if (!useNeural) { systemFallback(); return; }
   try {
