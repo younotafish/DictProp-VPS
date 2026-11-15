@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# The incremental enrichment cycle, which the LaunchAgent com.dictprop.incremental-example-enrichment runs
+# from the repository root every six hours. It exports the production corpus, then goes stage by stage:
+# vocabulary completion, saved-sentence analyses, saved-item images, then example-sentence analyses and
+# images. Each stage publishes what it made, and a later stage builds on it only once production has it.
+#
+# Usage: run-incremental-example-enrichment.sh [cycle-root] [baseline-source.json] [baseline-image-root]
+#          [required-deploy-sha]
 
 set -euo pipefail
 
@@ -19,7 +26,9 @@ CLAUDE_REASONING_EFFORT="${CLAUDE_REASONING_EFFORT:-xhigh}"
 CODEX_MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
 CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
 # Same knob names as the sibling pipelines. The defaults are the scripts' own caps (16 text requests,
-# 8 image judgments); the LaunchAgent leaves them unset so a new default applies without a reload.
+# 8 image judgments); the LaunchAgent leaves them unset so a new default applies without a reload. The
+# stages read them as CODEX_CONCURRENCY and CODEX_IMAGE_CONCURRENCY, names from when Codex was the only
+# provider; they apply to whichever ENRICHMENT_MODEL_PROVIDER runs.
 ANALYSIS_CONCURRENCY="${ANALYSIS_CONCURRENCY:-16}"
 IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-8}"
 # An image that fails this many candidates waits for the next cycle, which renders fresh ones; a long
@@ -119,6 +128,8 @@ stage_failed() {
   log "$1 did not complete this cycle"
 }
 
+# What the cycle's last log line says; the example stage, which runs last, sets it.
+CYCLE_MESSAGE=""
 finish_cycle() {
   log "$1"
   "$NODE_BIN" scripts/offline/failure-ledger.mjs summary "$FAILURE_LEDGER" || true
@@ -148,6 +159,363 @@ check_stage() {
       ;;
     *) exit "$2" ;;
   esac
+}
+
+# json_value FILE EXPRESSION: prints EXPRESSION of the JSON document in FILE, as in `json_value report.json
+# .missing`.
+json_value() {
+  "$NODE_BIN" -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1]))$2)" "$1"
+}
+
+# ensure_analysis_cache FILE: starts FILE as an empty analysis manifest unless it holds one.
+ensure_analysis_cache() {
+  if [ ! -s "$1" ]; then
+    "$NODE_BIN" -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({version:1,generatedAt:Date.now(),entries:[]},null,2)+"\n", {mode:0o600})' \
+      "$1"
+  fi
+}
+
+# run_image_stage LEDGER_STAGE TARGETS IMAGES STAGE LOOP...: runs the image loop LOOP within the image stage's
+# time and records each target's outcome in the failure ledger, so images deferred after too many rejected
+# candidates stop being rendered every cycle. A loop that failed fails STAGE, and the model must still answer.
+run_image_stage() {
+  local ledger_stage="$1" targets="$2" images="$3" stage="$4" status=0
+  shift 4
+  run_stage "$IMAGE_STAGE_TIMEOUT_SECONDS" "$@" || status=$?
+  "$NODE_BIN" scripts/offline/failure-ledger.mjs record-image-outcomes \
+    "$FAILURE_LEDGER" "$ledger_stage" "$targets" "$images" "$status"
+  if [ "$status" -ne 0 ]; then
+    stage_failed "$stage"
+    require_model
+  fi
+}
+
+# Has the sentence-backfill workflow export the production corpus, waits for that run and fetches the corpus
+# into CURRENT_CORPUS. The run's id names the cycle: CYCLE_ID.
+export_corpus() {
+  PREVIOUS_RUN_ID="$(gh_bounded run list \
+    --repo "$REPO" --workflow sentence-backfill.yml --event workflow_dispatch --limit 1 \
+    --json databaseId --jq 'if length == 0 then 0 else .[0].databaseId end')"
+  if ! [[ "$PREVIOUS_RUN_ID" =~ ^[0-9]+$ ]]; then PREVIOUS_RUN_ID=0; fi
+  # Only runs created after this dispatch qualify, so an older queued export is never taken for this one.
+  EXPORT_SINCE="$(utc_timestamp_ago 120)"
+  log "requesting a fresh encrypted production corpus export"
+  gh_bounded workflow run sentence-backfill.yml --repo "$REPO" --ref main -f operation=corpus-export
+
+  EXPORT_RUN_ID=""
+  DISCOVERY_DEADLINE="$(deadline_after 600)"
+  until [ -n "$EXPORT_RUN_ID" ] || deadline_passed "$DISCOVERY_DEADLINE"; do
+    sleep 5
+    while IFS= read -r candidate; do
+      if gh_bounded run view "$candidate" --repo "$REPO" --json jobs \
+        --jq '.jobs[] | select(.name == "corpus-export" and .conclusion != "skipped") | .name' 2>/dev/null \
+        | grep -qx corpus-export; then
+        EXPORT_RUN_ID="$candidate"
+        break
+      fi
+    done < <(gh_bounded run list \
+      --repo "$REPO" --workflow sentence-backfill.yml --event workflow_dispatch --limit 30 \
+      --json databaseId,createdAt \
+      --jq ".[] | select(.databaseId > $PREVIOUS_RUN_ID and .createdAt >= \"$EXPORT_SINCE\") | .databaseId" \
+      2>/dev/null | sort -n)
+  done
+  if [ -z "$EXPORT_RUN_ID" ]; then
+    echo "Could not identify the dispatched corpus export workflow" >&2
+    exit 1
+  fi
+  CYCLE_ID="$EXPORT_RUN_ID"
+
+  log "waiting for corpus export run $EXPORT_RUN_ID"
+  EXPORT_DEADLINE="$(deadline_after "$CORPUS_EXPORT_WAIT_SECONDS")"
+  while :; do
+    EXPORT_STATE="$(gh_bounded run view "$EXPORT_RUN_ID" --repo "$REPO" --json status,conclusion \
+      --jq '[.status, .conclusion] | @tsv' 2>/dev/null || true)"
+    IFS=$'\t' read -r EXPORT_STATUS EXPORT_CONCLUSION <<< "$EXPORT_STATE"
+    if [ "$EXPORT_STATUS" = completed ]; then
+      if [ "$EXPORT_CONCLUSION" != success ]; then
+        echo "Corpus export run $EXPORT_RUN_ID ended as $EXPORT_CONCLUSION" >&2
+        exit 1
+      fi
+      break
+    fi
+    if deadline_passed "$EXPORT_DEADLINE"; then
+      echo "Corpus export run $EXPORT_RUN_ID did not finish within ${CORPUS_EXPORT_WAIT_SECONDS}s; ending this cycle" >&2
+      exit 1
+    fi
+    sleep 10
+  done
+  # The run left the corpus as an encrypted artifact; fetching it deletes the artifact and the run's log.
+  GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
+    scripts/offline/fetch-workflow-export.sh "$EXPORT_RUN_ID" corpus-export "$CURRENT_CORPUS"
+}
+
+# Completes new or incomplete vocabulary records and publishes them. VOCAB_OVERLAY is the completed records
+# once production has them, for the later stages to build on, and - otherwise.
+stage_vocabulary() {
+  mkdir -p "$VOCAB_ROOT"
+  ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=vocab \
+  "$NODE_BIN" scripts/offline/prepare-incremental-vocab-source.mjs \
+    "$CURRENT_CORPUS" "$VOCAB_SOURCE.tmp" "$INCREMENTAL_VOCAB_BATCH_SIZE" "$INCREMENTAL_VOCAB_LOOKBACK_HOURS" \
+    "$INCREMENTAL_VOCAB_PROVIDER_FILTER"
+  mv "$VOCAB_SOURCE.tmp" "$VOCAB_SOURCE"
+  VOCAB_COUNT="$(json_value "$VOCAB_SOURCE" .entries.length)"
+  VOCAB_OVERLAY="-"
+  if [ "$VOCAB_COUNT" -gt 0 ]; then
+    log "creating advanced $MODEL_LABEL metadata for $VOCAB_COUNT new or incomplete vocabulary record(s)"
+    rm -f "$VOCAB_COMPLETED"
+    STAGE_STATUS=0
+    run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
+      VOCAB_COMPLETION_BATCH_SIZE="$VOCAB_COMPLETION_BATCH_SIZE" \
+      ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=vocab \
+      "$NODE_BIN" scripts/offline/complete-corpus-fields.mjs \
+        "$VOCAB_SOURCE" "$VOCAB_COMPLETED" "$VOCAB_ROOT/work" || STAGE_STATUS=$?
+    if check_stage "vocabulary completion" "$STAGE_STATUS"; then
+      log "publishing locally completed vocabulary records"
+      # Later stages build on the completed records only once production has them.
+      if CORPUS_AUDIT_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/vocabulary/$CYCLE_ID" \
+        CORPUS_AUDIT_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+        scripts/offline/dispatch-staged-corpus-audit.sh \
+          "$VOCAB_COMPLETED" 100 "$REQUIRED_DEPLOY_SHA"; then
+        VOCAB_OVERLAY="$VOCAB_COMPLETED"
+      else
+        stage_failed "vocabulary publication"
+      fi
+    fi
+  else
+    log "no recent vocabulary records need structural completion"
+  fi
+}
+
+# Gives the saved sentences that lack one a detailed analysis, and publishes the analyses.
+stage_saved_sentences() {
+  mkdir -p "$SAVED_ROOT"
+  SAVED_PREVIOUS_SOURCE="-"
+  if [ -s "$SAVED_SOURCE" ]; then SAVED_PREVIOUS_SOURCE="$SAVED_SOURCE"; fi
+  "$TSX_BIN" server/src/scripts/prepare-incremental-saved-sentence-source.ts \
+    "$CURRENT_CORPUS" "$SAVED_SOURCE.tmp" "$SAVED_PREVIOUS_SOURCE" "$SAVED_BASE_ANALYSIS"
+  mv "$SAVED_SOURCE.tmp" "$SAVED_SOURCE"
+  # The source keeps every sentence, so the next cycle still sees each one's first identity; this cycle
+  # works on those that are not waiting out a failure backoff.
+  SAVED_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
+    "$FAILURE_LEDGER" saved-sentence "$SAVED_SOURCE" "$SAVED_CYCLE_SOURCE")"
+  if [ "$SAVED_COUNT" -gt 0 ]; then
+    ensure_analysis_cache "$SAVED_ANALYSIS_CACHE"
+    # Reconciliation writes final-analysis.json only when it is complete and never removes an old one.
+    rm -f "$SAVED_RECONCILIATION/final-analysis.json"
+    "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
+      "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION"
+    SAVED_MISSING_COUNT="$(json_value "$SAVED_RECONCILIATION/report.json" .missing)"
+    if [ "$SAVED_MISSING_COUNT" -gt 0 ]; then
+      log "generating detailed $MODEL_LABEL explanations for $SAVED_MISSING_COUNT saved sentence(s)"
+      SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
+      rm -f "$SAVED_NEW_ANALYSIS"
+      STAGE_STATUS=0
+      run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$SAVED_MISSING_COUNT")" \
+        ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=saved-sentence \
+        "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
+        "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
+        "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS" || STAGE_STATUS=$?
+      check_stage "saved-sentence analysis" "$STAGE_STATUS" || true
+      # Sentences that just failed now wait out their backoff, so the rest can still be published.
+      SAVED_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
+        "$FAILURE_LEDGER" saved-sentence "$SAVED_SOURCE" "$SAVED_CYCLE_SOURCE")"
+      if [ "$SAVED_COUNT" -gt 0 ] && [ -s "$SAVED_NEW_ANALYSIS" ]; then
+        "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
+          "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION" "$SAVED_NEW_ANALYSIS" || true
+      elif [ "$SAVED_COUNT" -gt 0 ]; then
+        "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
+          "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION"
+      fi
+    fi
+    if [ -s "$SAVED_RECONCILIATION/final-analysis.json" ]; then
+      cp "$SAVED_RECONCILIATION/final-analysis.json" "$SAVED_ANALYSIS_CACHE.tmp"
+      mv "$SAVED_ANALYSIS_CACHE.tmp" "$SAVED_ANALYSIS_CACHE"
+      log "publishing detailed saved-sentence analyses"
+      if ! REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 \
+        SAVED_SENTENCE_ANALYSIS_STATE_ROOT="$PUBLISH_STATE_ROOT/saved-sentences/$CYCLE_ID" \
+        SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+        scripts/offline/dispatch-staged-saved-sentence-analyses.sh \
+          "$SAVED_ANALYSIS_CACHE" 2000 "$REQUIRED_DEPLOY_SHA"; then
+        stage_failed "saved-sentence publication"
+      fi
+    elif [ "$SAVED_COUNT" -gt 0 ]; then
+      echo "Incremental saved-sentence analysis reconciliation is incomplete" >&2
+      stage_failed "saved-sentence reconciliation"
+    fi
+  else
+    log "no saved sentences need detailed analysis"
+  fi
+}
+
+# Renders the missing images of saved words, phrases and sentences, has the model judge them, and publishes
+# the accepted ones.
+stage_item_images() {
+  mkdir -p "$ITEM_IMAGE_ROOT"
+  SAVED_ANALYSIS_INPUT="-"
+  if [ -s "$SAVED_ANALYSIS_CACHE" ]; then SAVED_ANALYSIS_INPUT="$SAVED_ANALYSIS_CACHE"; fi
+  "$NODE_BIN" scripts/offline/prepare-incremental-item-images.mjs \
+    "$CURRENT_CORPUS" \
+    "$SAVED_ANALYSIS_INPUT" \
+    "$VOCAB_OVERLAY" \
+    "$ITEM_IMAGE_ROOT" \
+    "$IMAGE_MODEL_LABEL"
+  ITEM_IMAGE_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-image-targets \
+    "$FAILURE_LEDGER" item-image "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_TARGETS")"
+  if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
+    log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
+    run_image_stage item-image "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/images" "saved-item images" \
+      env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
+      IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
+      IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
+      bash scripts/offline/run-streaming-image-quality-loop.sh \
+        "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
+        "$ITEM_IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
+    # The publisher waits for every manifest entry, so deferred images leave the manifest. They are still
+    # missing in production, so a later cycle targets them again.
+    ITEM_IMAGE_READY="$("$NODE_BIN" -e 'const f=require("fs"),p=require("path"),file=p.join(process.argv[1],"manifest.json"),m=JSON.parse(f.readFileSync(file,"utf8"));m.entries=m.entries.filter(e=>f.existsSync(p.join(process.argv[1],e.imageFile)));f.writeFileSync(file,JSON.stringify(m,null,2)+"\n",{mode:0o600});console.log(m.entries.length)' \
+      "$ITEM_IMAGE_ROOT")"
+    if [ "$ITEM_IMAGE_READY" -gt 0 ]; then
+      log "publishing $ITEM_IMAGE_READY locally generated saved-word/phrase/sentence image(s)"
+      if ! OFFLINE_IMAGE_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/item-images/$CYCLE_ID" \
+        OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+        scripts/offline/dispatch-staged-offline-images.sh \
+          "$ITEM_IMAGE_ROOT" 100 "$REQUIRED_DEPLOY_SHA"; then
+        stage_failed "saved-item image publication"
+      fi
+    fi
+  else
+    log "no saved-word/phrase/sentence image needs generating this cycle"
+  fi
+}
+
+# Builds the cycle's example-sentence source, gives the sentences production lacks one for a detailed
+# analysis, and publishes the analyses ahead of their images, which follow. When nothing is left to
+# publish, the stage returns early, and CYCLE_MESSAGE says why.
+stage_example_sentences() {
+  "$NODE_BIN" scripts/offline/build-example-sentence-pool.mjs \
+    "$CURRENT_CORPUS" "$CURRENT_POOL.tmp" "$VOCAB_OVERLAY"
+  mv "$CURRENT_POOL.tmp" "$CURRENT_POOL"
+  # The unfiltered source carries each sentence's first identity to the next cycle. source.json, which the
+  # verifier and the publishers read, leaves out sentences waiting out a failure backoff.
+  PREVIOUS_SOURCE=""
+  if [ -s "$UNFILTERED_SOURCE" ]; then
+    PREVIOUS_SOURCE="$UNFILTERED_SOURCE"
+  elif [ -s "$SOURCE" ]; then
+    PREVIOUS_SOURCE="$SOURCE"
+  fi
+  "$NODE_BIN" scripts/offline/prepare-incremental-example-source.mjs \
+    "$CURRENT_POOL" "$BASE_SOURCE" "$SOURCE.tmp" ${PREVIOUS_SOURCE:+"$PREVIOUS_SOURCE"}
+  mv "$SOURCE.tmp" "$UNFILTERED_SOURCE"
+
+  TOTAL_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
+    "$FAILURE_LEDGER" example-sentence "$UNFILTERED_SOURCE" "$SOURCE")"
+  if [ "$TOTAL_COUNT" -eq 0 ]; then
+    CYCLE_MESSAGE="no post-baseline example sentences need enrichment"
+    return 0
+  fi
+
+  ensure_analysis_cache "$ANALYSIS_CACHE"
+  "$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
+    "$COMBINED_ANALYSIS_CACHE" "$BASE_ANALYSIS" "$ANALYSIS_CACHE"
+  rm -f "$RECONCILIATION/final-analysis.json"
+  ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
+  "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
+    "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION"
+  MISSING_COUNT="$(json_value "$RECONCILIATION/report.json" .missing)"
+  if [ "$MISSING_COUNT" -gt 0 ]; then
+    log "generating detailed $MODEL_LABEL explanations for $MISSING_COUNT production gap(s)"
+    NEW_ANALYSIS="$ROOT/new-analysis.json"
+    rm -f "$NEW_ANALYSIS"
+    STAGE_STATUS=0
+    run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$MISSING_COUNT")" \
+      ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=example-sentence \
+      "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
+        "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE" || STAGE_STATUS=$?
+    check_stage "example-sentence analysis" "$STAGE_STATUS" || true
+    TOTAL_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
+      "$FAILURE_LEDGER" example-sentence "$UNFILTERED_SOURCE" "$SOURCE")"
+    if [ "$TOTAL_COUNT" -eq 0 ]; then
+      CYCLE_MESSAGE="every post-baseline example sentence is waiting out a failure backoff"
+      return 0
+    fi
+    if [ -s "$NEW_ANALYSIS" ]; then
+      ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
+      "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
+        "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION" "$NEW_ANALYSIS" || true
+    else
+      ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
+      "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
+        "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION"
+    fi
+  fi
+  if [ ! -s "$RECONCILIATION/final-analysis.json" ]; then
+    echo "Incremental sentence analysis reconciliation is incomplete" >&2
+    stage_failed "example-sentence reconciliation"
+    CYCLE_MESSAGE="example sentences are not published this cycle"
+    return 0
+  fi
+  "$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
+    "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE" "$RECONCILIATION/final-analysis.json"
+  mv "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE"
+  "$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
+    "$SOURCE" "$RECONCILIATION/final-analysis.json"
+  log "publishing validated explanations before their images"
+  if ! REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 \
+    EXAMPLE_ANALYSIS_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/example-analyses/$CYCLE_ID" \
+    EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+    scripts/offline/dispatch-staged-example-analyses.sh "$ROOT" 2000 "$REQUIRED_DEPLOY_SHA"; then
+    stage_failed "example-sentence analysis publication"
+  fi
+
+  example_images
+}
+
+# The rest of the example stage: renders the missing example images, has the model judge them, and
+# publishes the accepted ones with their analyses.
+example_images() {
+  "$NODE_BIN" scripts/offline/prepare-sentence-images.mjs \
+    "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT" "$IMAGE_MODEL_LABEL" \
+    "$BASE_IMAGE_ROOT/images"
+  IMAGE_TARGET_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-image-targets \
+    "$FAILURE_LEDGER" example-image "$IMAGE_ROOT/targets.json" "$IMAGE_TARGETS")"
+
+  if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
+    BASE_EXPECTED="$(json_value "$BASE_IMAGE_ROOT/targets.json" .targets.length)"
+    BASE_ACCEPTED="$(find "$BASE_IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
+    if pgrep -f '[r]un-streaming-image-quality-loop\.sh' >/dev/null 2>&1; then
+      CYCLE_MESSAGE="another local image pipeline is active; incremental images are queued"
+      return 0
+    fi
+    if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ]; then
+      # A tiny hard tail may exhaust the independent bulk QA loop. It remains visible in production
+      # coverage reports, but must not permanently starve every example discovered afterwards.
+      log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
+    fi
+    log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
+    run_image_stage example-image "$IMAGE_TARGETS" "$IMAGE_ROOT/images" "example images" \
+      env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
+      IMAGE_MODEL="$IMAGE_MODEL" \
+      IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
+      IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
+      bash scripts/offline/run-streaming-image-quality-loop.sh \
+      "$IMAGE_TARGETS" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
+      "$IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
+  else
+    log "no example image needs generating this cycle"
+  fi
+
+  # Explanations are already published, so a deferred image only delays its own sentence's image.
+  ALLOW_DEFERRED_IMAGES=1 \
+  "$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
+    "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT"
+  log "publishing verified incremental explanation-image pairs"
+  if ! ALLOW_DEFERRED_IMAGES=1 \
+    EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/example-enrichments/$CYCLE_ID" \
+    EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
+    scripts/offline/dispatch-staged-example-enrichments.sh "$ROOT" 100 "$REQUIRED_DEPLOY_SHA"; then
+    stage_failed "example enrichment publication"
+  fi
+  CYCLE_MESSAGE="incremental example-enrichment cycle complete: $TOTAL_COUNT post-baseline sentence(s)"
 }
 
 mkdir -p "$ROOT"
@@ -205,331 +573,10 @@ fi
 log "checking that local $MODEL_LABEL can answer before exporting production data"
 "$NODE_BIN" scripts/offline/check-structured-model.mjs
 
-PREVIOUS_RUN_ID="$(gh_bounded run list \
-  --repo "$REPO" --workflow sentence-backfill.yml --event workflow_dispatch --limit 1 \
-  --json databaseId --jq 'if length == 0 then 0 else .[0].databaseId end')"
-if ! [[ "$PREVIOUS_RUN_ID" =~ ^[0-9]+$ ]]; then PREVIOUS_RUN_ID=0; fi
-# Only runs created after this dispatch qualify, so an older queued export is never taken for this one.
-EXPORT_SINCE="$(utc_timestamp_ago 120)"
-log "requesting a fresh encrypted production corpus export"
-gh_bounded workflow run sentence-backfill.yml --repo "$REPO" --ref main -f operation=corpus-export
-
-EXPORT_RUN_ID=""
-DISCOVERY_DEADLINE="$(deadline_after 600)"
-until [ -n "$EXPORT_RUN_ID" ] || deadline_passed "$DISCOVERY_DEADLINE"; do
-  sleep 5
-  while IFS= read -r candidate; do
-    if gh_bounded run view "$candidate" --repo "$REPO" --json jobs \
-      --jq '.jobs[] | select(.name == "corpus-export" and .conclusion != "skipped") | .name' 2>/dev/null \
-      | grep -qx corpus-export; then
-      EXPORT_RUN_ID="$candidate"
-      break
-    fi
-  done < <(gh_bounded run list \
-    --repo "$REPO" --workflow sentence-backfill.yml --event workflow_dispatch --limit 30 \
-    --json databaseId,createdAt \
-    --jq ".[] | select(.databaseId > $PREVIOUS_RUN_ID and .createdAt >= \"$EXPORT_SINCE\") | .databaseId" \
-    2>/dev/null | sort -n)
-done
-if [ -z "$EXPORT_RUN_ID" ]; then
-  echo "Could not identify the dispatched corpus export workflow" >&2
-  exit 1
-fi
-CYCLE_ID="$EXPORT_RUN_ID"
-
-log "waiting for corpus export run $EXPORT_RUN_ID"
-EXPORT_DEADLINE="$(deadline_after "$CORPUS_EXPORT_WAIT_SECONDS")"
-while :; do
-  EXPORT_STATE="$(gh_bounded run view "$EXPORT_RUN_ID" --repo "$REPO" --json status,conclusion \
-    --jq '[.status, .conclusion] | @tsv' 2>/dev/null || true)"
-  IFS=$'\t' read -r EXPORT_STATUS EXPORT_CONCLUSION <<< "$EXPORT_STATE"
-  if [ "$EXPORT_STATUS" = completed ]; then
-    if [ "$EXPORT_CONCLUSION" != success ]; then
-      echo "Corpus export run $EXPORT_RUN_ID ended as $EXPORT_CONCLUSION" >&2
-      exit 1
-    fi
-    break
-  fi
-  if deadline_passed "$EXPORT_DEADLINE"; then
-    echo "Corpus export run $EXPORT_RUN_ID did not finish within ${CORPUS_EXPORT_WAIT_SECONDS}s; ending this cycle" >&2
-    exit 1
-  fi
-  sleep 10
-done
-# The run left the corpus as an encrypted artifact; fetching it deletes the artifact and the run's log.
-GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
-  scripts/offline/fetch-workflow-export.sh "$EXPORT_RUN_ID" corpus-export "$CURRENT_CORPUS"
-
-mkdir -p "$VOCAB_ROOT"
-VOCAB_SOURCE_TMP="$VOCAB_SOURCE.tmp"
-ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=vocab \
-"$NODE_BIN" scripts/offline/prepare-incremental-vocab-source.mjs \
-  "$CURRENT_CORPUS" "$VOCAB_SOURCE_TMP" "$INCREMENTAL_VOCAB_BATCH_SIZE" "$INCREMENTAL_VOCAB_LOOKBACK_HOURS" \
-  "$INCREMENTAL_VOCAB_PROVIDER_FILTER"
-mv "$VOCAB_SOURCE_TMP" "$VOCAB_SOURCE"
-VOCAB_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).entries.length)' \
-  "$VOCAB_SOURCE")"
-VOCAB_OVERLAY="-"
-if [ "$VOCAB_COUNT" -gt 0 ]; then
-  log "creating advanced $MODEL_LABEL metadata for $VOCAB_COUNT new or incomplete vocabulary record(s)"
-  rm -f "$VOCAB_COMPLETED"
-  STAGE_STATUS=0
-  run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
-    VOCAB_COMPLETION_BATCH_SIZE="$VOCAB_COMPLETION_BATCH_SIZE" \
-    ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=vocab \
-    "$NODE_BIN" scripts/offline/complete-corpus-fields.mjs \
-      "$VOCAB_SOURCE" "$VOCAB_COMPLETED" "$VOCAB_ROOT/work" || STAGE_STATUS=$?
-  if check_stage "vocabulary completion" "$STAGE_STATUS"; then
-    log "publishing locally completed vocabulary records"
-    # Later stages build on the completed records only once production has them.
-    if CORPUS_AUDIT_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/vocabulary/$CYCLE_ID" \
-      CORPUS_AUDIT_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
-      scripts/offline/dispatch-staged-corpus-audit.sh \
-        "$VOCAB_COMPLETED" 100 "$REQUIRED_DEPLOY_SHA"; then
-      VOCAB_OVERLAY="$VOCAB_COMPLETED"
-    else
-      stage_failed "vocabulary publication"
-    fi
-  fi
-else
-  log "no recent vocabulary records need structural completion"
-fi
-
-mkdir -p "$SAVED_ROOT"
-SAVED_SOURCE_TMP="$SAVED_SOURCE.tmp"
-if [ -s "$SAVED_SOURCE" ]; then
-  "$TSX_BIN" server/src/scripts/prepare-incremental-saved-sentence-source.ts \
-    "$CURRENT_CORPUS" "$SAVED_SOURCE_TMP" "$SAVED_SOURCE" "$SAVED_BASE_ANALYSIS"
-else
-  "$TSX_BIN" server/src/scripts/prepare-incremental-saved-sentence-source.ts \
-    "$CURRENT_CORPUS" "$SAVED_SOURCE_TMP" - "$SAVED_BASE_ANALYSIS"
-fi
-mv "$SAVED_SOURCE_TMP" "$SAVED_SOURCE"
-# The source keeps every sentence, so the next cycle still sees each one's first identity; this cycle
-# works on those that are not waiting out a failure backoff.
-SAVED_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
-  "$FAILURE_LEDGER" saved-sentence "$SAVED_SOURCE" "$SAVED_CYCLE_SOURCE")"
-if [ "$SAVED_COUNT" -gt 0 ]; then
-  if [ ! -s "$SAVED_ANALYSIS_CACHE" ]; then
-    "$NODE_BIN" -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({version:1,generatedAt:Date.now(),entries:[]},null,2)+"\n", {mode:0o600})' \
-      "$SAVED_ANALYSIS_CACHE"
-  fi
-  # Reconciliation writes final-analysis.json only when it is complete and never removes an old one.
-  rm -f "$SAVED_RECONCILIATION/final-analysis.json"
-  "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-    "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION"
-  SAVED_MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
-    "$SAVED_RECONCILIATION/report.json")"
-  if [ "$SAVED_MISSING_COUNT" -gt 0 ]; then
-    log "generating detailed $MODEL_LABEL explanations for $SAVED_MISSING_COUNT saved sentence(s)"
-    SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
-    rm -f "$SAVED_NEW_ANALYSIS"
-    STAGE_STATUS=0
-    run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$SAVED_MISSING_COUNT")" \
-      ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=saved-sentence \
-      "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
-      "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
-      "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS" || STAGE_STATUS=$?
-    check_stage "saved-sentence analysis" "$STAGE_STATUS" || true
-    # Sentences that just failed now wait out their backoff, so the rest can still be published.
-    SAVED_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
-      "$FAILURE_LEDGER" saved-sentence "$SAVED_SOURCE" "$SAVED_CYCLE_SOURCE")"
-    if [ "$SAVED_COUNT" -gt 0 ] && [ -s "$SAVED_NEW_ANALYSIS" ]; then
-      "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-        "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION" "$SAVED_NEW_ANALYSIS" || true
-    elif [ "$SAVED_COUNT" -gt 0 ]; then
-      "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-        "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION"
-    fi
-  fi
-  if [ -s "$SAVED_RECONCILIATION/final-analysis.json" ]; then
-    cp "$SAVED_RECONCILIATION/final-analysis.json" "$SAVED_ANALYSIS_CACHE.tmp"
-    mv "$SAVED_ANALYSIS_CACHE.tmp" "$SAVED_ANALYSIS_CACHE"
-    log "publishing detailed saved-sentence analyses"
-    if ! REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 \
-      SAVED_SENTENCE_ANALYSIS_STATE_ROOT="$PUBLISH_STATE_ROOT/saved-sentences/$CYCLE_ID" \
-      SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
-      scripts/offline/dispatch-staged-saved-sentence-analyses.sh \
-        "$SAVED_ANALYSIS_CACHE" 2000 "$REQUIRED_DEPLOY_SHA"; then
-      stage_failed "saved-sentence publication"
-    fi
-  elif [ "$SAVED_COUNT" -gt 0 ]; then
-    echo "Incremental saved-sentence analysis reconciliation is incomplete" >&2
-    stage_failed "saved-sentence reconciliation"
-  fi
-else
-  log "no saved sentences need detailed analysis"
-fi
-
-mkdir -p "$ITEM_IMAGE_ROOT"
-SAVED_ANALYSIS_INPUT="-"
-if [ -s "$SAVED_ANALYSIS_CACHE" ]; then SAVED_ANALYSIS_INPUT="$SAVED_ANALYSIS_CACHE"; fi
-"$NODE_BIN" scripts/offline/prepare-incremental-item-images.mjs \
-  "$CURRENT_CORPUS" \
-  "$SAVED_ANALYSIS_INPUT" \
-  "$VOCAB_OVERLAY" \
-  "$ITEM_IMAGE_ROOT" \
-  "$IMAGE_MODEL_LABEL"
-ITEM_IMAGE_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-image-targets \
-  "$FAILURE_LEDGER" item-image "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_TARGETS")"
-if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
-  log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
-  STAGE_STATUS=0
-  run_stage "$IMAGE_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-    IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
-    IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
-    bash scripts/offline/run-streaming-image-quality-loop.sh \
-      "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
-      "$ITEM_IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64 || STAGE_STATUS=$?
-  # Deferred images go into the failure ledger, so later cycles stop rendering them every time.
-  "$NODE_BIN" scripts/offline/failure-ledger.mjs record-image-outcomes \
-    "$FAILURE_LEDGER" item-image "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/images" "$STAGE_STATUS"
-  if [ "$STAGE_STATUS" -ne 0 ]; then
-    stage_failed "saved-item images"
-    require_model
-  fi
-  # The publisher waits for every manifest entry, so deferred images leave the manifest. They are still
-  # missing in production, so a later cycle targets them again.
-  ITEM_IMAGE_READY="$("$NODE_BIN" -e 'const f=require("fs"),p=require("path"),file=p.join(process.argv[1],"manifest.json"),m=JSON.parse(f.readFileSync(file,"utf8"));m.entries=m.entries.filter(e=>f.existsSync(p.join(process.argv[1],e.imageFile)));f.writeFileSync(file,JSON.stringify(m,null,2)+"\n",{mode:0o600});console.log(m.entries.length)' \
-    "$ITEM_IMAGE_ROOT")"
-  if [ "$ITEM_IMAGE_READY" -gt 0 ]; then
-    log "publishing $ITEM_IMAGE_READY locally generated saved-word/phrase/sentence image(s)"
-    if ! OFFLINE_IMAGE_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/item-images/$CYCLE_ID" \
-      OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
-      scripts/offline/dispatch-staged-offline-images.sh \
-        "$ITEM_IMAGE_ROOT" 100 "$REQUIRED_DEPLOY_SHA"; then
-      stage_failed "saved-item image publication"
-    fi
-  fi
-else
-  log "no saved-word/phrase/sentence image needs generating this cycle"
-fi
-
-CURRENT_POOL_TMP="$ROOT/current-source.json.tmp"
-"$NODE_BIN" scripts/offline/build-example-sentence-pool.mjs \
-  "$CURRENT_CORPUS" "$CURRENT_POOL_TMP" "$VOCAB_OVERLAY"
-mv "$CURRENT_POOL_TMP" "$CURRENT_POOL"
-# The unfiltered source carries each sentence's first identity to the next cycle. source.json, which the
-# verifier and the publishers read, leaves out sentences waiting out a failure backoff.
-PREVIOUS_SOURCE="$UNFILTERED_SOURCE"
-if [ ! -s "$PREVIOUS_SOURCE" ]; then PREVIOUS_SOURCE="$SOURCE"; fi
-SOURCE_TMP="$ROOT/source.json.tmp"
-if [ -s "$PREVIOUS_SOURCE" ]; then
-  "$NODE_BIN" scripts/offline/prepare-incremental-example-source.mjs \
-    "$CURRENT_POOL" "$BASE_SOURCE" "$SOURCE_TMP" "$PREVIOUS_SOURCE"
-else
-  "$NODE_BIN" scripts/offline/prepare-incremental-example-source.mjs \
-    "$CURRENT_POOL" "$BASE_SOURCE" "$SOURCE_TMP"
-fi
-mv "$SOURCE_TMP" "$UNFILTERED_SOURCE"
-
-TOTAL_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
-  "$FAILURE_LEDGER" example-sentence "$UNFILTERED_SOURCE" "$SOURCE")"
-if [ "$TOTAL_COUNT" -eq 0 ]; then
-  finish_cycle "no post-baseline example sentences need enrichment"
-fi
-
-if [ ! -s "$ANALYSIS_CACHE" ]; then
-  "$NODE_BIN" -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({version:1,generatedAt:Date.now(),entries:[]},null,2)+"\n", {mode:0o600})' \
-    "$ANALYSIS_CACHE"
-fi
-"$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
-  "$COMBINED_ANALYSIS_CACHE" "$BASE_ANALYSIS" "$ANALYSIS_CACHE"
-rm -f "$RECONCILIATION/final-analysis.json"
-ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
-"$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-  "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION"
-MISSING_COUNT="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).missing)' \
-  "$RECONCILIATION/report.json")"
-if [ "$MISSING_COUNT" -gt 0 ]; then
-  log "generating detailed $MODEL_LABEL explanations for $MISSING_COUNT production gap(s)"
-  NEW_ANALYSIS="$ROOT/new-analysis.json"
-  rm -f "$NEW_ANALYSIS"
-  STAGE_STATUS=0
-  run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$MISSING_COUNT")" \
-    ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=example-sentence \
-    "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
-      "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE" || STAGE_STATUS=$?
-  check_stage "example-sentence analysis" "$STAGE_STATUS" || true
-  TOTAL_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
-    "$FAILURE_LEDGER" example-sentence "$UNFILTERED_SOURCE" "$SOURCE")"
-  if [ "$TOTAL_COUNT" -eq 0 ]; then
-    finish_cycle "every post-baseline example sentence is waiting out a failure backoff"
-  fi
-  if [ -s "$NEW_ANALYSIS" ]; then
-    ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
-    "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-      "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION" "$NEW_ANALYSIS" || true
-  else
-    ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
-    "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-      "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION"
-  fi
-fi
-if [ ! -s "$RECONCILIATION/final-analysis.json" ]; then
-  echo "Incremental sentence analysis reconciliation is incomplete" >&2
-  stage_failed "example-sentence reconciliation"
-  finish_cycle "example sentences are not published this cycle"
-fi
-"$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
-  "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE" "$RECONCILIATION/final-analysis.json"
-mv "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE"
-"$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
-  "$SOURCE" "$RECONCILIATION/final-analysis.json"
-log "publishing validated explanations before their images"
-if ! REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 \
-  EXAMPLE_ANALYSIS_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/example-analyses/$CYCLE_ID" \
-  EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
-  scripts/offline/dispatch-staged-example-analyses.sh "$ROOT" 2000 "$REQUIRED_DEPLOY_SHA"; then
-  stage_failed "example-sentence analysis publication"
-fi
-
-"$NODE_BIN" scripts/offline/prepare-sentence-images.mjs \
-  "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT" "$IMAGE_MODEL_LABEL" \
-  "$BASE_IMAGE_ROOT/images"
-IMAGE_TARGET_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-image-targets \
-  "$FAILURE_LEDGER" example-image "$IMAGE_ROOT/targets.json" "$IMAGE_TARGETS")"
-
-if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
-  BASE_EXPECTED="$($NODE_BIN -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).targets.length)' \
-    "$BASE_IMAGE_ROOT/targets.json")"
-  BASE_ACCEPTED="$(find "$BASE_IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
-  if pgrep -f '[r]un-streaming-image-quality-loop\.sh' >/dev/null 2>&1; then
-    finish_cycle "another local image pipeline is active; incremental images are queued"
-  fi
-  if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ]; then
-    # A tiny hard tail may exhaust the independent bulk QA loop. It remains visible in production
-    # coverage reports, but must not permanently starve every example discovered afterwards.
-    log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
-  fi
-  log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
-  STAGE_STATUS=0
-  run_stage "$IMAGE_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-    IMAGE_MODEL="$IMAGE_MODEL" \
-    IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
-    IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
-    bash scripts/offline/run-streaming-image-quality-loop.sh \
-    "$IMAGE_TARGETS" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
-    "$IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64 || STAGE_STATUS=$?
-  "$NODE_BIN" scripts/offline/failure-ledger.mjs record-image-outcomes \
-    "$FAILURE_LEDGER" example-image "$IMAGE_TARGETS" "$IMAGE_ROOT/images" "$STAGE_STATUS"
-  if [ "$STAGE_STATUS" -ne 0 ]; then
-    stage_failed "example images"
-    require_model
-  fi
-else
-  log "no example image needs generating this cycle"
-fi
-
-# Explanations are already published, so a deferred image only delays its own sentence's image.
-ALLOW_DEFERRED_IMAGES=1 \
-"$NODE_BIN" scripts/offline/verify-example-sentence-pool.mjs \
-  "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT"
-log "publishing verified incremental explanation-image pairs"
-if ! ALLOW_DEFERRED_IMAGES=1 \
-  EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/example-enrichments/$CYCLE_ID" \
-  EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
-  scripts/offline/dispatch-staged-example-enrichments.sh "$ROOT" 100 "$REQUIRED_DEPLOY_SHA"; then
-  stage_failed "example enrichment publication"
-fi
-finish_cycle "incremental example-enrichment cycle complete: $TOTAL_COUNT post-baseline sentence(s)"
+export_corpus
+stage_vocabulary
+stage_saved_sentences
+stage_item_images
+# The example sentences go last, since the stage returns early when it has nothing left to publish.
+stage_example_sentences
+finish_cycle "$CYCLE_MESSAGE"
