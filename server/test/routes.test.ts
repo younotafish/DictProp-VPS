@@ -430,6 +430,9 @@ test('the server does not expose remote image generation routes', async () => {
     }],
     ['/api/image-backfill', { method: 'GET' }],
     ['/api/image-backfill', { method: 'DELETE' }],
+    // The client bundles the Real Life catalog, and its analyses and artwork are prepared offline.
+    ['/api/real-life', { method: 'GET' }],
+    ['/api/real-life/sentences/career-conversations%3Arapport-and-small-talk%3A01/prepare', { method: 'POST' }],
   ];
   for (const [path, init] of requests) {
     const response = await app.request(path, init);

@@ -36,28 +36,17 @@ export interface RealLifeCatalogSentence extends RawSentence {
   sectionTitle: string;
 }
 
-export interface RealLifeCatalogSummary {
-  id: string;
-  title: string;
-  sentenceCount: number;
-  sectionCount: number;
-}
-
 function readCatalog(): RawCatalog {
   const path = fileURLToPath(new URL('../../content/real-life-catalog.json', import.meta.url));
   return JSON.parse(readFileSync(path, 'utf8')) as RawCatalog;
 }
 
-function buildCatalog(source: RawCatalog): {
-  byId: Map<string, RealLifeCatalogSentence>;
-  summaries: RealLifeCatalogSummary[];
-} {
+function buildCatalog(source: RawCatalog): { byId: Map<string, RealLifeCatalogSentence> } {
   if (source.version !== 1 || !Array.isArray(source.collections) || source.collections.length === 0) {
     throw new Error('Real Life catalog must contain version 1 collections');
   }
 
   const byId = new Map<string, RealLifeCatalogSentence>();
-  const summaries: RealLifeCatalogSummary[] = [];
   const collectionIds = new Set<string>();
 
   for (const collection of source.collections) {
@@ -98,25 +87,15 @@ function buildCatalog(source: RawCatalog): {
     if (sentenceCount < 200) {
       throw new Error(`Real Life collection ${collection.id} must contain at least 200 sentences`);
     }
-    summaries.push({
-      id: collection.id,
-      title: collection.title,
-      sentenceCount,
-      sectionCount: collection.sections.length,
-    });
   }
 
-  return { byId, summaries };
+  return { byId };
 }
 
 const catalog = buildCatalog(readCatalog());
 
 export function getRealLifeCatalogSentence(id: string): RealLifeCatalogSentence | undefined {
   return catalog.byId.get(id);
-}
-
-export function getRealLifeCatalogSummaries(): readonly RealLifeCatalogSummary[] {
-  return catalog.summaries;
 }
 
 export function getRealLifeCatalogSentenceCount(): number {
