@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState, useDeferredValue } from 'react';
-import { StoredItem, isSentenceItem, SentenceData } from '../types';
+import { isSentenceItem, type ReviewRating, type SentenceData, type StoredItem } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
@@ -24,14 +24,17 @@ const formatDue = (ts: number) => {
 };
 
 const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
+
+/** A library item known to be a sentence, as isSentenceItem narrows it. */
+type SentenceItem = StoredItem & { type: 'sentence'; data: SentenceData };
 const listComponents = { Footer: () => <div className="h-[calc(5rem+env(safe-area-inset-bottom))]" /> };
 
 interface SentenceRowProps {
-  item: StoredItem;
+  item: SentenceItem;
   isDue: boolean;
   confirmingDelete: boolean;
   onOpen: (item: StoredItem) => void;
-  onUpdateSRS: (itemId: string) => void;
+  onUpdateSRS: (itemId: string) => Promise<boolean>;
   onDelete: (itemId: string) => void;
   onConfirmDelete: (itemId: string | null) => void;
   onSearch: (term: string) => void;
@@ -53,7 +56,7 @@ const SentenceRow = React.memo(function SentenceRow({
   findSaved,
   onOpenCard,
 }: SentenceRowProps) {
-  const d = item.data as SentenceData;
+  const d = item.data;
   const mastery = item.srs ? SRSAlgorithm.getMasteryLevel(item.srs) : null;
   const barColor = barColorFor(mastery?.percentage);
 
@@ -89,7 +92,7 @@ const SentenceRow = React.memo(function SentenceRow({
             <div className="flex items-center gap-1">
               {isDue && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); onUpdateSRS(d.id); }}
+                  onClick={(e) => { e.stopPropagation(); void onUpdateSRS(d.id); }}
                   className="flex items-center gap-1 min-h-8 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 rounded-lg transition-colors"
                   title="Mark as reviewed"
                 >
@@ -132,7 +135,7 @@ const SentenceRow = React.memo(function SentenceRow({
 
 interface SentencesViewProps {
   items: StoredItem[];
-  onUpdateSRS: (itemId: string) => void;
+  onUpdateSRS: (itemId: string, rating?: ReviewRating, context?: { seedItem?: StoredItem }) => Promise<boolean>;
   onDelete: (itemId: string) => void;
   onSearch: (term: string) => void;
   onScroll: (e: React.UIEvent<HTMLElement>) => void;
@@ -304,7 +307,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
         className="flex-1 min-h-0"
         data={sorted}
         overscan={400}
-        onScroll={onScroll as any}
+        onScroll={onScroll}
         components={listComponents}
         computeItemKey={sentenceKey}
         itemContent={renderSentence}

@@ -128,11 +128,7 @@ interface RealLifeCollectionScreenProps {
   now: number;
   onClose: () => void;
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
-  onUpdateSRS: (
-    itemId: string,
-    rating?: ReviewRating,
-    context?: { seedItem?: StoredItem },
-  ) => void | Promise<boolean>;
+  onUpdateSRS: (itemId: string, rating?: ReviewRating, context?: { seedItem?: StoredItem }) => Promise<boolean>;
   isSentenceSaved: (text: string) => boolean;
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
   findSaved?: (term: string) => StoredItem | null;
@@ -372,7 +368,7 @@ export function RealLifeCollectionScreen({
           className="min-h-0 flex-1"
           data={filtered}
           overscan={400}
-          onScroll={onScroll as any}
+          onScroll={onScroll}
           components={listComponents}
           computeItemKey={sentenceKey}
           itemContent={renderSentence}

@@ -9,11 +9,7 @@ import { RealLifeCollectionScreen } from './reading/RealLifeCollectionScreen';
 interface RealLifeViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
   progressItems: StoredItem[];
-  onUpdateSRS: (
-    itemId: string,
-    rating?: ReviewRating,
-    context?: { seedItem?: StoredItem },
-  ) => void | Promise<boolean>;
+  onUpdateSRS: (itemId: string, rating?: ReviewRating, context?: { seedItem?: StoredItem }) => Promise<boolean>;
   isSentenceSaved: (text: string) => boolean;
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
   findSaved?: (term: string) => StoredItem | null;
