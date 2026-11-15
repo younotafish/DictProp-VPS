@@ -311,6 +311,7 @@ const SCENARIOS: Record<string, Scenario> = {
     examples: [1], exampleMissing: [0], exampleImages: 1, itemImages: 1, busy: 'image',
     seed: { 'item-images/images/item-image-0.webp': 'image' },
   },
+  'bad-setting': { env: { INCREMENTAL_VOCAB_LOOKBACK_HOURS: 'week' } },
   previous: {
     seed: {
       'unfiltered-source.json': '{}\n',
@@ -581,6 +582,14 @@ test('a cycle builds its sources on what the previous cycle left, and sets an ou
   assert.equal(readFileSync(join(cycleRoot, 'launchd.out.log.1'), 'utf8'), 'x'.repeat(64));
   assert.equal(readFileSync(join(cycleRoot, 'launchd.err.log'), 'utf8'), 'errors\n');
   assert.equal(existsSync(join(cycleRoot, 'launchd.err.log.1')), false);
+});
+
+test('a setting that is not a positive integer stops the cycle before it takes the lock', async () => {
+  const result = await cycle('bad-setting');
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.stderr, ['INCREMENTAL_VOCAB_LOOKBACK_HOURS must be a positive integer']);
+  assert.deepEqual(result.trace, []);
+  assert.equal(existsSync(join(fixture.root, 'bad-setting', 'cycle')), false);
 });
 
 test('a model that stops answering after a failed stage ends the cycle there', async () => {
