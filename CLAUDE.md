@@ -95,12 +95,14 @@ curl -X POST http://localhost:3001/api/analyze ...       # AI search works
 # Frontend
 npm run dev              # Vite dev server (port 3000)
 npm run build            # Production build to dist/
-npm run check            # Full release gate
+npm test                 # Tests in test/: client, contract, offline-script and workflow tests
+npm run check            # Full release gate: both type checks, both test suites, both builds, bundle budget
 
 # Server (run from server/ directory)
 npm run dev              # Hono dev server with hot reload (port 3001)
-npm run build            # TypeScript compile to server/dist/
-npx tsc --noEmit         # Server type-check (frontend: use `npm run build`)
+npm run build            # TypeScript compile of src/ to server/dist/ (tsconfig.build.json)
+npm test                 # Tests in server/test/
+npx tsc --noEmit         # Server type-check of src/ and test/ (frontend: npm run typecheck)
 
 # Deploy
 git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
@@ -112,6 +114,11 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 ### IMPORTANT: Type-checking
 - Server: `cd server && npx tsc --noEmit`
 - Frontend: `npm run typecheck` (strict) plus `npm run build`
+
+### Tests
+- `test/` (root TypeScript program): `client/` for client modules, `contracts/` for client-server agreements, `offline/` for `scripts/offline`, `workflows/` for workflows, deploy files and configuration. `server/test/` (server program, NodeNext) holds the tests that import `server/src` and no client module; a test that imports client code can't live there, because NodeNext rejects the client's extensionless imports.
+- Both test scripts preload `test/support/isolated-env.ts`: every test process gets its own `DATA_DIR` and temp folder, and never sees the repo `.env`, the real GitHub CLI, the bridge key or the proxy. Run one file the same way: `npx tsx --import ./test/support/isolated-env.ts --test test/client/sync.test.ts`, or from `server/`, `npx tsx --import ../test/support/isolated-env.ts --test test/db.test.ts`.
+- Shared helpers live in `test/support/` and `server/test/support/`; resolve repository paths through their `paths.ts`, never from the working directory.
 
 ## Project Structure
 
@@ -153,6 +160,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   ├── useUndoOffer.ts        # The undo toast for deletes, archives and resets
 │   └── ...                    # Detail view, overlays, offline images, batch import, shortcuts, keyboard/gestures
 ├── scripts/offline/           # The Mac's enrichment cycle and the encrypted bridge to production (see Offline Data Bridge)
+├── test/                      # Client, contract, offline-script and workflow tests (server tests: server/test/)
 ├── Dockerfile                 # Multi-stage: npm ci + vite build + tsc inside Docker
 ├── docker-compose.yml         # Single service, SQLite volume at ./data
 ├── .github/workflows/deploy.yml  # Auto-deploy on push to main

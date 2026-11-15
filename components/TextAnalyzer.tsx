@@ -256,10 +256,6 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     setTranslation('');
   }, []);
 
-  const handleBackToSelection = useCallback(() => {
-    setStep('selecting');
-  }, []);
-
   const handleStartOver = useCallback(() => {
     setInputText('');
     setStep('input');

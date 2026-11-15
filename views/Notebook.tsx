@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, getItemSpelling } from '../types';
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
-import { Button } from '../components/Button';
 import { UserMenu } from '../components/UserMenu';
 import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../components/PlaybackSpeedToggle';
@@ -16,7 +15,7 @@ import { analyzeInput, transcribeAudio } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
 import { buildNotebookList, findFuzzyMatches, findLiteralMatches, type NotebookFilter, type NotebookList, type NotebookSort } from '../services/notebookList';
 import { speakWord, ensureTTS } from '../services/lazyTts';
-import { warn, error as logError } from '../services/logger';
+import { error as logError } from '../services/logger';
 import { isDialogOpenOutside, isTypingTarget } from './keyboardTarget';
 
 type NotebookSection = 'main' | 'due' | 'archived';

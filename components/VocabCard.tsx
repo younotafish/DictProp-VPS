@@ -1,7 +1,6 @@
 import React, { memo, useState, useCallback } from 'react';
 import { VocabCard as VocabType, WordFamilyEntry, type UsageAudit } from '../types';
 import { Archive, BadgeCheck, BookOpen, BriefcaseBusiness, Check, ExternalLink, Flame, History, Lightbulb, MapPin, Maximize2, Network, RefreshCw, Scale, Shapes, Sparkles, X, BookmarkPlus, BookmarkCheck, type LucideIcon } from 'lucide-react';
-import { Button } from './Button';
 import { PronunciationBlock } from './PronunciationBlock';
 import { OfflineImage } from './OfflineImage';
 import { HighlightedSentence } from './HighlightedSentence';

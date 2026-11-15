@@ -47,7 +47,7 @@ RUN npm run build
 # and times out. If the prebuilt download flakes (GitHub 504), the deploy fails fast — just retry.
 COPY server/package.json server/package-lock.json ./server/
 RUN cd server && npm ci
-COPY server/tsconfig.json ./server/
+COPY server/tsconfig.json server/tsconfig.build.json ./server/
 COPY server/src/ ./server/src/
 RUN cd server && npm run build
 
