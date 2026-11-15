@@ -161,7 +161,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   └── ...                    # Detail view, overlays, offline images, batch import, shortcuts, keyboard/gestures
 ├── scripts/offline/           # The Mac's enrichment cycle and the encrypted bridge to production (see Offline Data Bridge)
 ├── test/                      # Client, contract, offline-script and workflow tests (server tests: server/test/)
-├── Dockerfile                 # Multi-stage: npm ci + vite build + tsc inside Docker
+├── Dockerfile                 # Multi-stage, one digest-pinned node image: client build, server build (tsc), slim runtime
 ├── docker-compose.yml         # Single service, SQLite volume at ./data
 ├── .github/workflows/deploy.yml  # Auto-deploy on push to main
 └── .env                       # DEEPINFRA_API_KEY, PORT (not committed)
@@ -225,7 +225,8 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 - **Each domain/origin has separate browser storage** — data on `localhost:3000` is separate from `dictprop.online` and `107.152.47.101:3000`
 
 ### Docker Build Pitfalls
-- Rollup needs platform-specific binaries — do NOT use `--ignore-scripts` with npm ci
+- Rollup needs platform-specific binaries — do NOT use `--ignore-scripts` with the client's npm ci (only the server-build stage, which just runs tsc, skips install scripts)
+- Compose never builds: deploys set `DICTPROP_IMAGE` to the release image. For a local image, `docker build -t dictprop-vps:local .`
 - VPS has 2GB RAM, but local Docker builds can still OOM. Keep swap available: `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`
 
 ### Caddy (HTTPS)
