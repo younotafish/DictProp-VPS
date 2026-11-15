@@ -23,7 +23,7 @@ import { SentenceHeaderRow } from './SentenceHeaderRow';
 import { SentenceActionsRow } from './SentenceActionsRow';
 import { SentencePlaybackControls } from './SentencePlaybackControls';
 import { SentenceImageFab, SentenceImagePanel } from './SentenceImageAttach';
-import { useCardNavigation } from './useCardNavigation';
+import { useCardNavigation, useScrollTopOnNewCard } from './useCardNavigation';
 import { useCommandKeyHeld } from './useCommandKeyHeld';
 import { useAutoPlay } from './useAutoPlay';
 import { useAutoPlayReader } from './useAutoPlayReader';
@@ -105,6 +105,7 @@ export function SentenceReviewView({
   // even when the local index is briefly stale relative to the latest sentenceItems.
   const sentenceIndex = Math.min(currentGroupIndex, sentenceItems.length - 1);
   const currentSentenceSnapshot = sentenceItems[sentenceIndex] ?? null;
+  useScrollTopOnNewCard(currentSentenceSnapshot?.data.id, { sentenceReview: true });
   const { preparedSentenceById, preparingSentenceId, sentencePreloadWindow } = useSentenceEnrichment({
     sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef,
   });

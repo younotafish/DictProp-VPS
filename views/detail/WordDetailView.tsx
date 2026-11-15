@@ -23,7 +23,7 @@ import { MeaningDots } from './MeaningDots';
 import { WordComparisons, comparisonsInvolving } from './WordComparisons';
 import { PhraseBody } from './PhraseBody';
 import { ExampleSentencePreview } from './ExampleSentencePreview';
-import { useCardNavigation } from './useCardNavigation';
+import { useCardNavigation, useScrollTopOnNewCard } from './useCardNavigation';
 import { useAutoPlay } from './useAutoPlay';
 import { useAutoPlayReader } from './useAutoPlayReader';
 import { useSpeechStyle } from './useSpeechStyle';
@@ -81,6 +81,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentGroup, currentItem,
     hasNextGroup, hasPrevGroup, hasPrevItem,
   } = useCardNavigation(groups, { initialGroupIndex, initialItemIndex, navigationKey, scrollContainerRef, sentenceReview: false });
+  useScrollTopOnNewCard(currentGroup.title, { scrollContainerRef, sentenceReview: false });
 
   const [showHeader, setShowHeader] = useState(false); // Hidden by default, shown on short swipe down or H key
   const [showActionMenu, setShowActionMenu] = useState(false);

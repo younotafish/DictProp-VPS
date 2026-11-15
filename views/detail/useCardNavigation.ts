@@ -80,3 +80,25 @@ export function useCardNavigation(
     safeGroupIndex, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
   };
 }
+
+/**
+ * Puts the card's pages back at their tops when another card takes the slot on screen without a move, as when a
+ * delete or archive slides the next card into place. `cardKey` names what fills the slot: a word card's group
+ * title, so moving between its meanings keeps the place, or the listed sentence's id in sentence review, so a
+ * preview binding to its saved copy keeps it too. A move between cards resets the pages already (above).
+ */
+export function useScrollTopOnNewCard(
+  cardKey: string | undefined,
+  { scrollContainerRef, sentenceReview }: Pick<CardNavigationOptions, 'scrollContainerRef' | 'sentenceReview'>,
+) {
+  const prevCardKeyRef = useRef(cardKey);
+  useLayoutEffect(() => {
+    if (prevCardKeyRef.current === cardKey) return;
+    prevCardKeyRef.current = cardKey;
+    if (scrollContainerRef?.current) scrollContainerRef.current.scrollTop = 0;
+    if (sentenceReview) {
+      const analysisScroller = document.querySelector<HTMLElement>('[data-sentence-analysis]');
+      if (analysisScroller) analysisScroller.scrollTop = 0;
+    }
+  }, [cardKey, scrollContainerRef, sentenceReview]);
+}
