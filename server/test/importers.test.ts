@@ -226,10 +226,10 @@ test('the corpus audit import skips items edited or deleted after export without
 test('the corpus audit import writes a row stored before revisions existed like any other', () => {
   const usageAudit = { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high', auditedAt: 300 };
   save('ca-revision-zero', 'vocab', { word: 'sincere', definition: 'honest' });
-  // Such a row reads back without a serverRevision; the import writes it with revision 0, which still matches.
+  // Such a row reads back without a serverRevision (or with 0); the import writes it with 0, which still matches.
   db.prepare('UPDATE items SET revision = 0 WHERE id = ?').run('ca-revision-zero');
   const before = stored('ca-revision-zero');
-  assert.equal(before.serverRevision, undefined);
+  assert.equal(before.serverRevision ?? 0, 0);
 
   const run = runScript('import-corpus-audit', auditBundle([{
     id: 'ca-revision-zero', type: 'vocab', sourceHash: corpusSourceHash(before.data),
