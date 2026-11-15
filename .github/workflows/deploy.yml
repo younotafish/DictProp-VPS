@@ -175,10 +175,11 @@ jobs:
               BACKUP_NAME="dictprop-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.sha }}.db"
               BACKUP_TEMP="$BACKUP_NAME.partial"
               if [ -n "$(docker compose ps -q app 2>/dev/null)" ]; then
+                # One step copies one consistent snapshot. Stepwise copying restarts whenever the server commits.
                 docker compose exec -T -e BACKUP_PATH="/app/data/backups/$BACKUP_TEMP" app node -e '
                   const Database = require("/app/server/node_modules/better-sqlite3");
                   const db = new Database("/app/data/dictprop.db", { readonly: true });
-                  db.backup(process.env.BACKUP_PATH)
+                  db.backup(process.env.BACKUP_PATH, { progress: () => 0x7fffffff })
                     .then(() => db.close())
                     .catch((error) => { console.error(error); process.exit(1); });
                 '

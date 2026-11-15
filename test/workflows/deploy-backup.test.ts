@@ -13,6 +13,19 @@ const hasPython = spawnSync('python3', ['--version']).status === 0;
 const skip = !hasPython && 'python3 is not installed';
 const HOUR = 60 * 60;
 const ROWS = 3_000;
+// Counts the steps of a better-sqlite3 backup: its progress callback runs once after each step that leaves pages
+// to copy, so a copy taken in one step calls it once. It wraps whatever callback the script under test passes.
+const BACKUP_SPY = `
+const { writeFileSync } = require('node:fs');
+const Database = require(process.env.BETTER_SQLITE3);
+const backup = Database.prototype.backup;
+Database.prototype.backup = function (filename, options = {}) {
+  let steps = 0;
+  const progress = info => { steps += 1; return options.progress ? options.progress(info) : undefined; };
+  return backup.call(this, filename, { ...options, progress })
+    .finally(() => writeFileSync(process.env.BACKUP_SPY_LOG, String(steps)));
+};
+`;
 
 /** Runs Python with the given program and arguments, and returns what it printed. */
 function python(program: string, ...args: string[]): string {
@@ -26,15 +39,16 @@ const createDatabase = (path: string): void => {
 db = sqlite3.connect(sys.argv[1])
 db.execute("PRAGMA journal_mode=WAL")
 db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, text TEXT)")
-db.executemany("INSERT INTO items (text) VALUES (?)", [("row %d " % i * 20,) for i in range(${ROWS})])
+db.executemany("INSERT INTO items (text) VALUES (?)", [("row %d " % i * 40,) for i in range(${ROWS})])
 db.commit()
 db.close()`, path);
 };
 
-/** How many rows a copy holds, read without leaving -wal or -shm files beside it. */
-const rowsIn = (path: string): number => Number(python(`import sqlite3, sys
+/** Runs one query on a database, read without leaving -wal or -shm files beside it. */
+const query = (path: string, sql: string): number => Number(python(`import sqlite3, sys
 db = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro&immutable=1", uri=True)
-print(db.execute("SELECT COUNT(*) FROM items").fetchone()[0])`, path));
+print(db.execute(sys.argv[2]).fetchone()[0])`, path, sql));
+const rowsIn = (path: string): number => query(path, 'SELECT COUNT(*) FROM items');
 
 /** /opt/dictprop-vps with a data folder and the stubs on PATH. */
 function makeDeployDir() {
@@ -45,6 +59,9 @@ function makeDeployDir() {
   mkdirSync(backups, { recursive: true });
   mkdirSync(bin);
   const calls = join(dir, 'calls.log');
+  const spy = join(dir, 'backup-spy.cjs');
+  const spyLog = join(dir, 'backup-steps');
+  writeFileSync(spy, BACKUP_SPY);
 
   // The online copy runs the script exactly as the container would, with its paths moved to this checkout.
   stub(bin, 'docker', String.raw`
@@ -61,7 +78,7 @@ case "$1 $2" in
     [ "$1 $2" = 'node -e' ] || { echo "unexpected docker compose exec $*" >&2; exit 97; }
     [ -z "$FAIL_EXEC" ] || exit 1
     script="$(printf '%s' "$3" | sed -e "s#/app/server/node_modules/better-sqlite3#$BETTER_SQLITE3#g" -e "s#/app/data/#$PWD/data/#g")"
-    BACKUP_PATH="$PWD/$backup_path" exec "$NODE" -e "$script" ;;
+    BACKUP_PATH="$PWD/$backup_path" exec "$NODE" --require "$BACKUP_SPY" -e "$script" ;;
   'system df') ;;
   *) echo "unexpected docker $*" >&2; exit 97 ;;
 esac`);
@@ -123,6 +140,8 @@ PATH="$REAL_PATH" exec find "$@"`);
         REAL_PATH: process.env.PATH ?? '/usr/bin:/bin',
         NODE: process.execPath,
         BETTER_SQLITE3: repoPath('server/node_modules/better-sqlite3'),
+        BACKUP_SPY: spy,
+        BACKUP_SPY_LOG: spyLog,
         AVAILABLE_KB: '50000000',
         ...variables,
       }),
@@ -139,6 +158,8 @@ PATH="$REAL_PATH" exec find "$@"`);
     copy,
     run,
     listing: () => readdirSync(backups).sort(),
+    /** How many steps the online copy took. */
+    onlineSteps: () => Number(readFileSync(spyLog, 'utf8')),
     remove: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -167,10 +188,12 @@ test('a copy younger than twelve hours is reused as it is, and the older copies 
   }
 });
 
-test('an older copy is replaced by one fresh copy of the database, taken from the running container', { skip }, () => {
+test('an older copy is replaced by one fresh copy of the database, taken from the running container in one step', { skip }, () => {
   const server = makeDeployDir();
   try {
     createDatabase(server.database);
+    // Big enough that better-sqlite3's default of 100 pages a step would take several.
+    assert.ok(query(server.database, 'PRAGMA page_count') > 200);
     const old = 'pre-offline-images-20261114T000000Z.db';
     for (const suffix of ['', '-wal', '-shm']) server.copy(`${old}${suffix}`, 13);
 
@@ -181,6 +204,8 @@ test('an older copy is replaced by one fresh copy of the database, taken from th
     assert.deepEqual(rest, [], 'the old copy goes with its -wal and -shm files');
     assert.deepEqual(run.calls, [`docker compose exec data/backups/${fresh}.partial`]);
     assert.equal(rowsIn(join(server.backups, fresh)), ROWS);
+    // Each step after the first restarts the copy if the live server commits in between.
+    assert.equal(server.onlineSteps(), 1);
   } finally {
     server.remove();
   }
