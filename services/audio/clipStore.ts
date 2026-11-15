@@ -206,7 +206,8 @@ export const leadInSkip = (timings: WordTiming[] | null): number => {
 // on good 5G" bug (a second sequential fetch was awaited before every cold play). Returns warm timings
 // instantly; on a device-cache miss it waits only TIMINGS_WAIT_MS for the server, then resolves so the clip
 // plays NOW while the fetch keeps running in the background — caching whatever lands so the next play /
-// tap-to-seek has it. onGenuineMiss fires when the server truly has no timings (so we backfill), not on a timeout.
+// tap-to-seek has it. onGenuineMiss fires whenever the lookup ends without timings: on the server's 404, but also
+// on the fetch's own 6 s timeout or a network error, so offline every play of such a clip requests them again.
 const TIMINGS_WAIT_MS = 400;
 export const resolveTimingsForPlayback = async (
   key: string,
@@ -215,7 +216,7 @@ export const resolveTimingsForPlayback = async (
   const cached = ttsTimingsCache.get(key);
   if (cached) return cached;
   // memory missed → look up IDB (fast, local) then the server; the whole lookup is raced against a short
-  // budget so a slow NETWORK fetch never holds up playback. onGenuineMiss fires only on a true server miss.
+  // budget so a slow NETWORK fetch never holds up playback. onGenuineMiss fires once the lookup itself ends empty.
   const lookupP = loadTimingsCached(key).catch(() => null).then((t) => {
     if (!t) onGenuineMiss(); // server has no timings yet → backfill for next time (runs even if we didn't wait)
     return t;

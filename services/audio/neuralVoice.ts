@@ -1,7 +1,13 @@
 /**
- * The in-browser Kokoro voice, the desktop cache-miss fallback: consent, the worker client and its URL cache.
- * (Named for what it is rather than "kokoro…": the build marks chunks starting with "kokoro" as optional
- * downloads, and this module ships with the engine.)
+ * The in-browser Kokoro voice (Kokoro-82M through kokoro-js), the desktop fallback when a sentence's clip is
+ * missing: the download consent, the client of the worker that loads and runs the model off the page's thread
+ * (services/kokoroWorker.ts), and the cache of the clips it made. The ~326 MB fp32 model comes from the Hugging
+ * Face CDN into the browser's Cache Storage once, then works offline. Chromium with WebGPU runs it on the GPU,
+ * retrying on WASM if that fails to load; other browsers run it on the CPU through WASM (platform.ts says why
+ * Safari stays on WASM). iOS/iPadOS never gets here.
+ *
+ * Named for what it is rather than "kokoro…": the build marks chunks whose names start with "kokoro" as
+ * optional downloads, and this module ships with the engine.
  */
 import type { KokoroDevice, KokoroRequest, KokoroResponse, KokoroVoice } from '../kokoroWorker';
 import { log, warn } from '../logger';

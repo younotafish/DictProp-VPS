@@ -1,28 +1,19 @@
 /**
- * In-browser neural TTS (Kokoro-82M via kokoro-js / Transformers.js).
+ * The speech engine: every sentence read and word pronunciation goes through here.
  *
- * Produces a natural voice that runs 100% on-device — zero network roundtrip after a
- * one-time model download (fetched from the Hugging Face CDN into the browser's Cache
- * Storage, so it works offline afterward and never touches our server).
+ * A sentence (speakNatural) plays the best voice available, in this order:
+ *  1. the server's cached MiMo clip for the current speech style. audio/clipStore.ts keeps the clips in
+ *     memory and in IndexedDB (services/audioCache.ts), so each one downloads once;
+ *  2. in the casual style, the clear clip, while the server generates the casual one;
+ *  3. on a miss, after asking the server to generate the clip for next time, the in-browser Kokoro voice
+ *     on desktop (audio/neuralVoice.ts: a ~326 MB model, downloaded once and run in a worker), or the
+ *     system voice (services/speech.ts) on iOS/iPadOS and wherever Kokoro can't run.
+ * A word (speakWord) always uses the system voice: instant, and fine for one word.
  *
- * Engine policy (see pickDevices / speakNatural) — always fp32, the only clean precision:
- *  - Chromium + WebGPU -> Kokoro on the WebGPU backend (fp32). Fast.
- *  - Everything else   -> Kokoro on the WASM/CPU backend (fp32). Works on Safari, iOS/iPadOS,
- *                         and any browser with WebAssembly — CPU-bound so slower (seconds per
- *                         sentence on a phone), but the audio is clean.
- *  - WebGPU load fails -> automatically retried on WASM before giving up.
- *  - All engines fail  -> fall back to the system Web Speech voice (services/speech.ts).
- *
- * Why not WebGPU on Safari/iOS? Safari exposes navigator.gpu (iOS/iPadOS/macOS 26+) but
- * onnxruntime-web's WebGPU backend is unreliable there, so Apple devices use WASM.
- *
- * The model loads and runs in a worker (services/kokoroWorker.ts), so the seconds it takes never
- * freeze the page.
- *
- * The model is only ever downloaded on a *deliberate* speaker-button click
- * (allowDownload: true). Automatic/navigation speech passes allowDownload: false, so it
- * upgrades to the natural voice once the model is already resident but never triggers a
- * download on its own.
+ * audio/player.ts holds the one shared <audio> element, the system voice's controls and the playback state
+ * every speaker button shows; audio/keepAlive.ts the silent keep-alive and the background-safe gap timer
+ * that auto-play uses; audio/mediaSession.ts the lock-screen controls. Screens load this module through
+ * services/lazyTts.ts.
  */
 import { speak as systemSpeak, cancelSpeech } from './speech';
 import { stripSentenceMarkers } from './sentenceMarkers';
@@ -97,12 +88,8 @@ export const setMediaSessionHandlers = (handlers: MediaSessionHandlers | null): 
   applyMediaSessionHandlers(handlers, { play: () => resumeCurrent(), pause: () => pauseCurrent(), stop: () => stopCurrent() });
 
 /**
- * Speak `text` with the best available voice:
- *   1. the currently approved cached production clip
- *   2. on a true cache MISS: kick off legacy generation (fills the fallback cache), then fall
- *      back immediately — macOS/desktop → in-browser Kokoro, iOS/iPadOS → system Web Speech voice.
- * The cache miss never blocks the tap on the ~2.75 s generation. Returns a handle whose
- * stop() controls whichever backend ends up playing.
+ * Speak `text` with the best available voice (see the order at the top of this file). A miss never waits for
+ * the ~2.75 s generation it requests. Returns a handle whose stop() stops whichever output ends up playing.
  */
 export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle => {
   const plain = stripSentenceMarkers(text).trim();

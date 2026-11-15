@@ -1,15 +1,18 @@
 /**
- * Shared speech synthesis utilities
+ * Shared speech synthesis utilities: the system voice, which reads words, and sentences whose cached clip
+ * is missing on iOS/iPadOS (services/neuralTts.ts).
  *
  * Chrome on macOS loads voices asynchronously — getVoices() returns []
  * until the voiceschanged event fires (~1-2s after page load). We cache
  * the resolved voice eagerly at module load so it's ready by the time
  * the user interacts.
  *
- * Known Chrome bugs handled:
- * 1. Voices load asynchronously (voiceschanged event)
- * 2. cancel() followed immediately by speak() silently drops the utterance
- * 3. Long utterances (>15s) get cut off — we don't hit this for single words
+ * Known Chrome quirks:
+ * 1. Voices load asynchronously (voiceschanged event): handled by waiting for it, up to 1.5 s.
+ * 2. The engine can stick in a "paused" state after cancel(), so speak() silently does nothing: handled
+ *    in speak() below.
+ * 3. Long utterances (>15s) can get cut off. Words never get that long and a sentence rarely does; nothing
+ *    here works around it.
  */
 
 import { log, warn } from './logger';
@@ -85,8 +88,9 @@ export const cancelSpeech = (): void => {
 /**
  * Speak the given text using browser's speech synthesis.
  *
- * Chrome bug workaround: cancel() immediately followed by speak() can
- * silently drop the utterance. We add a small delay after cancel().
+ * It speaks synchronously, inside the caller's gesture, which iOS requires; see doSpeak for the
+ * resume() calls that keep Chrome's engine from sticking after cancel(). Returns null when the browser
+ * has no speech engine.
  */
 export const speak = (
   text: string,
