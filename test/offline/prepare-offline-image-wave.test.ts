@@ -60,7 +60,6 @@ test('an image wave skips published, missing and unsafe images and stages the re
     imageEntry('missing'),
     imageEntry('outside-images', 'other/outside-images.webp'),
     imageEntry('absolute', '/tmp/absolute.webp'),
-    imageEntry('escaping', 'images/../../escaping.webp'),
     imageEntry('not-a-string', 42),
     imageEntry('first'),
     imageEntry('second'),
@@ -70,17 +69,16 @@ test('an image wave skips published, missing and unsafe images and stages the re
   ]);
   mkdirSync(join(bundle.sourceDir, 'other'));
   writeFileSync(join(bundle.sourceDir, 'other', 'outside-images.webp'), 'outside images/');
-  writeFileSync(join(bundle.root, 'escaping.webp'), 'outside the source directory');
 
   const result = prepare(bundle, ['100'], [{ version: 1, entries: [{ imageId: 'published' }] }]);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.manifest.entries, [entries[6], entries[7]]);
+  assert.deepEqual(result.manifest.entries, [entries[5], entries[6]]);
   assert.equal(result.manifest.version, 1);
   assert.equal(result.manifest.model, 'krea/Krea-2-Turbo');
   assert.notEqual(result.manifest.generatedAt, 5);
   assert.deepEqual(Object.keys(result.manifest), ['version', 'generatedAt', 'model', 'entries']);
-  assert.deepEqual(result.summary, { sourceEntries: 8, previouslyPublished: 1, waveEntries: 2 });
+  assert.deepEqual(result.summary, { sourceEntries: 7, previouslyPublished: 1, waveEntries: 2 });
   assert.deepEqual(readdirSync(join(bundle.outputDir, 'images')).sort(), ['first.webp', 'second.webp']);
   assert.equal(readFileSync(join(bundle.outputDir, 'images', 'first.webp'), 'utf8'), 'bytes of images/first.webp');
   assert.equal(statSync(result.manifestPath).mode & 0o777, 0o600);
@@ -126,4 +124,18 @@ test('an image wave refuses a bad cap, a duplicate or missing image id, and a ma
   const badPublished = prepare(valid, ['10'], [{ version: 1 }]);
   assert.notEqual(badPublished.status, 0);
   assert.match(badPublished.stderr, /Published image manifest is invalid: \/.*published-0\.json/);
+});
+
+test('an image wave refuses an image nested below images/, which it could not stage under its own name', () => {
+  for (const imageFile of ['images/sub/nested.webp', 'images/../../escaping.webp']) {
+    const bundle = sourceBundle([imageEntry('flat'), imageEntry('nested', imageFile)], ['images/flat.webp']);
+    mkdirSync(join(bundle.sourceDir, 'images', 'sub'));
+    writeFileSync(join(bundle.sourceDir, 'images', 'sub', 'nested.webp'), 'nested');
+    writeFileSync(join(bundle.root, 'escaping.webp'), 'outside the source directory');
+
+    const result = prepare(bundle);
+
+    assert.notEqual(result.status, 0, imageFile);
+    assert.match(result.stderr, /Source manifest image is not directly under images\//);
+  }
 });

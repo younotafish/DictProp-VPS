@@ -33,6 +33,11 @@ for (const entry of manifest.entries) {
   sourceIds.add(entry.imageId);
   if (publishedIds.has(entry.imageId)) continue;
   if (typeof entry.imageFile !== 'string' || !entry.imageFile.startsWith('images/')) continue;
+  // The wave stages images/<basename> under the manifest's own name for it, so a nested path would name a file the
+  // wave lacks, and two nested images could share one staged name. The image preparers write only flat names.
+  if (entry.imageFile.slice('images/'.length).includes('/')) {
+    throw new Error(`Source manifest image is not directly under images/: ${entry.imageFile}`);
+  }
   const sourceImage = resolve(sourceDir, entry.imageFile);
   if (!sourceImage.startsWith(`${sourceDir}/`) || !existsSync(sourceImage)) continue;
   selected.push(entry);
