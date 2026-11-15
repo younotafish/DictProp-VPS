@@ -10,6 +10,7 @@ import { MasteryBadge, getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { formatTimeUntil } from '../services/studySession';
 import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/lazyTts';
+import { useLatest } from '../hooks/useStableValue';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';
 import { isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
@@ -111,14 +112,17 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   // speak() that follows too closely on a cancel() (see services/speech.ts), which is why swipe/arrow
   // switches pronounced only intermittently. The short delay lets the cancel settle so the speak sticks
   // every time; the cleanup clears it on a rapid re-switch so only the final sense speaks. Mirrors
-  // DetailView's word-card auto-pronounce (same 100ms). Skips the initial open.
+  // DetailView's word-card auto-pronounce (same 100ms). Skips the initial open. It says the spelling on the
+  // page shown ('polish' after 'Polish'), read through a ref (one object for the popup's life) so that only a
+  // switch, not a refreshed card, speaks.
+  const spokenWordRef = useLatest(vocab.word || word);
   const didOpenRef = useRef(false);
   useEffect(() => {
     if (!didOpenRef.current) { didOpenRef.current = true; return; }
     if (!word) return;
-    const t = setTimeout(() => speakPopupWord(word), 100);
+    const t = setTimeout(() => speakPopupWord(spokenWordRef.current), 100);
     return () => clearTimeout(t);
-  }, [currentSense, word, speakPopupWord]);
+  }, [currentSense, word, speakPopupWord, spokenWordRef]);
 
   // Touch: a horizontal swipe across the card pages between senses (when there are multiple). Vertical
   // drags are left to the body's scroll (we only act when the move is clearly horizontal).
