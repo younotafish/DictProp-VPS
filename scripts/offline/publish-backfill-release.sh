@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Publishes one encrypted bridge archive to production: uploads it to its release, waits until the commit
+# the import needs is deployed, dispatches the import, follows that exact run to success and a healthy
+# production, then deletes the release. No wait outlasts PUBLISH_DEADLINE_SECONDS: at the deadline the
+# release is deleted and STATE_DIR/failed written, so the dispatcher sets the wave aside.
+#
+# Only STATE_DIR/complete and STATE_DIR/failed outlive this process. Every caller encrypts a fresh archive,
+# with a new salt and IV, before calling, so nothing a stopped publisher had in flight could be resumed.
 
 set -uo pipefail
 
@@ -11,7 +18,6 @@ RELEASE_TAG="$1"
 ARCHIVE="$2"
 ASSET_NAME="$3"
 OPERATION="$4"
-DEPLOY_SHA="$(git rev-parse "$5^{commit}" 2>/dev/null || printf '%s' "$5")"
 POLL_SECONDS="${6:-300}"
 STATE_KEY="$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._-' '_')"
 # The dispatchers keep this state beside their wave, so setting a failed wave aside also discards it.
@@ -21,6 +27,15 @@ CLOCK_SKEW_SECONDS=120
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
 
+# GitHub matches a deployment by its full head SHA, so the commit must resolve here or be given in full.
+if ! DEPLOY_SHA="$(git rev-parse --verify --quiet "$5^{commit}" 2>/dev/null)"; then
+  if [[ "$5" =~ ^[0-9a-f]{40}$ ]]; then
+    DEPLOY_SHA="$5"
+  else
+    echo "required-deploy-sha must be a commit this checkout knows or a full 40-character SHA: $5" >&2
+    exit 2
+  fi
+fi
 case "$OPERATION" in
   import|corpus-import|image-import|enrichment-import|audio-import|essay-import)
     IMPORT_JOB="$OPERATION"
@@ -32,6 +47,10 @@ case "$OPERATION" in
 esac
 if ! [[ "$PUBLISH_DEADLINE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "PUBLISH_DEADLINE_SECONDS must be a positive integer" >&2
+  exit 2
+fi
+if ! [[ "$POLL_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "poll-seconds must be a non-negative integer: $POLL_SECONDS" >&2
   exit 2
 fi
 
@@ -71,6 +90,21 @@ give_up() {
   exit 1
 }
 
+# What this process knows about the publication in flight. Each step below either finds its work done
+# and returns 0, or logs why it is waiting, sleeps and returns 1, and the loop starts its checks over.
+UPLOADED=""
+DEPLOY_VERIFIED=""
+DEPLOY_DISPATCHED=""
+DEPLOY_DISPATCHED_AT=""
+PREVIOUS_DEPLOY_RUN_ID=0
+DEPLOY_RUN_ID=""
+DEPLOY_RERUN=""
+IMPORT_DISPATCH_COUNT=0
+IMPORT_TRIGGERED=""
+IMPORT_DISPATCHED_AT=""
+PREVIOUS_RUN_ID=""
+IMPORT_RUN_ID=""
+
 deploy_run_line() {
   local run_id="$1"
   gh_bounded run view "$run_id" \
@@ -80,16 +114,13 @@ deploy_run_line() {
     2>/dev/null || true
 }
 
+# Sets DEPLOY_RUN_ID to the deployment this process dispatched: the first run created after the newest
+# one seen before the dispatch, and no earlier than the dispatch itself.
 discover_dispatched_deploy() {
-  local previous_run_id
-  local dispatched_since
+  local previous_run_id="$1"
+  local dispatched_since="$2"
   local dispatched_run_id
 
-  previous_run_id="$(tr -d '[:space:]' < "$STATE_DIR/previous-deploy-run" 2>/dev/null || true)"
-  if ! [[ "$previous_run_id" =~ ^[0-9]+$ ]]; then
-    return
-  fi
-  dispatched_since="$(tr -d '[:space:]' < "$STATE_DIR/deploy-dispatched-at" 2>/dev/null || true)"
   dispatched_run_id="$(gh_bounded run list \
     --repo "$REPO" \
     --workflow deploy.yml \
@@ -99,21 +130,20 @@ discover_dispatched_deploy() {
     --jq ".[] | select(.databaseId > $previous_run_id and .createdAt >= \"$dispatched_since\") | .databaseId" \
     2>/dev/null | sort -n | head -1 || true)"
   if [[ "$dispatched_run_id" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$dispatched_run_id" > "$STATE_DIR/deploy-run"
+    DEPLOY_RUN_ID="$dispatched_run_id"
   fi
 }
 
+# Sets IMPORT_RUN_ID to the import run this process dispatched.
 discover_dispatched_import() {
-  local previous_run_id
-  local dispatched_since
+  local previous_run_id="$1"
+  local dispatched_since="$2"
   local candidate_run_id
   local candidate_kind
 
-  previous_run_id="$(tr -d '[:space:]' < "$STATE_DIR/previous-run" 2>/dev/null || true)"
   if ! [[ "$previous_run_id" =~ ^[0-9]+$ ]]; then
     previous_run_id=0
   fi
-  dispatched_since="$(tr -d '[:space:]' < "$STATE_DIR/import-dispatched-at" 2>/dev/null || true)"
 
   # Only runs created after this dispatch are candidates. Once the bridge workflow names its runs after
   # their release tag, a run titled with another release's timestamp is excluded as well.
@@ -123,7 +153,7 @@ discover_dispatched_import() {
       --jq "if ([.jobs[]? | select(.name == \"$IMPORT_JOB\" and .conclusion != \"skipped\")] | length) > 0 then \"operation-job\" elif .status == \"completed\" and ([.jobs[]?] | length) == 0 and (.conclusion == \"startup_failure\" or .conclusion == \"failure\" or .conclusion == \"cancelled\" or .conclusion == \"timed_out\") then \"workflow-startup-failure\" else empty end" \
       2>/dev/null || true)"
     if [ "$candidate_kind" = "operation-job" ] || [ "$candidate_kind" = "workflow-startup-failure" ]; then
-      printf '%s\n' "$candidate_run_id" > "$STATE_DIR/import-run"
+      IMPORT_RUN_ID="$candidate_run_id"
       if [ "$candidate_kind" = "workflow-startup-failure" ]; then
         log "identified failed import workflow $candidate_run_id before any job started"
       fi
@@ -139,6 +169,210 @@ discover_dispatched_import() {
     2>/dev/null | sort -n || true)
 }
 
+github_ready() {
+  local component_state api_state actions_state
+  component_state="$(component_states || printf 'unknown|unknown\n')"
+  api_state="${component_state%%|*}"
+  actions_state="${component_state#*|}"
+  if [ "$api_state" = "unknown" ] || [ "$api_state" = "major_outage" ] \
+    || [ "$actions_state" = "unknown" ] || [ "$actions_state" = "major_outage" ]; then
+    log "GitHub not ready (API=$api_state, Actions=$actions_state); checking again later"
+    sleep_for_poll
+    return 1
+  fi
+}
+
+# An asset left by an earlier attempt may hold a different encryption of the wave, so this archive
+# replaces it once. A release that can't be read is checked again later, never uploaded to blindly.
+archive_uploaded() {
+  local asset_count
+  if ! asset_count="$(gh_bounded release view "$RELEASE_TAG" \
+    --repo "$REPO" \
+    --json assets \
+    --jq "[.assets[] | select(.name == \"$ASSET_NAME\")] | length" \
+    2>/dev/null)"; then
+    log "could not read release $RELEASE_TAG; checking again later"
+    sleep_for_poll
+    return 1
+  fi
+  if [ -n "$UPLOADED" ] && [ "$asset_count" = "1" ]; then
+    return 0
+  fi
+  log "uploading verified $ASSET_NAME archive"
+  if ! GH_CALL_TIMEOUT_SECONDS="${GH_UPLOAD_TIMEOUT_SECONDS:-3600}" \
+    gh_bounded release upload "$RELEASE_TAG" "$ARCHIVE" --repo "$REPO" --clobber; then
+    log "archive upload did not complete; retrying later"
+    sleep_for_poll
+    return 1
+  fi
+  UPLOADED=1
+}
+
+# Production must run DEPLOY_SHA before the import does. Its own deployment is followed; when it has
+# none, the deploy workflow is dispatched once on main and the run that dispatch started is followed.
+# A deployment that failed gets one rerun. A lookup that fails is retried, never taken to mean that no
+# deployment exists, and once the deployment has succeeded it is not looked up again.
+required_deployment_succeeded() {
+  local deploy_line deploy_id deploy_status deploy_conclusion _
+
+  if [ -n "$DEPLOY_RUN_ID" ]; then
+    deploy_line="$(deploy_run_line "$DEPLOY_RUN_ID")"
+  elif ! deploy_line="$(gh_bounded run list \
+    --repo "$REPO" \
+    --workflow deploy.yml \
+    --commit "$DEPLOY_SHA" \
+    --limit 1 \
+    --json databaseId,status,conclusion,url \
+    --jq 'if length == 0 then empty else .[0] | [.databaseId,.status,.conclusion,.url] | @tsv end' \
+    2>/dev/null)"; then
+    log "could not query the deployment of $DEPLOY_SHA; checking again later"
+    sleep_for_poll
+    return 1
+  fi
+  if [ -z "$deploy_line" ]; then
+    if [ -z "$DEPLOY_DISPATCHED" ]; then
+      PREVIOUS_DEPLOY_RUN_ID="$(gh_bounded run list \
+        --repo "$REPO" \
+        --workflow deploy.yml \
+        --event workflow_dispatch \
+        --limit 1 \
+        --json databaseId \
+        --jq 'if length == 0 then 0 else .[0].databaseId end' \
+        2>/dev/null || printf '0\n')"
+      if ! [[ "$PREVIOUS_DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]; then
+        PREVIOUS_DEPLOY_RUN_ID=0
+      fi
+      DEPLOY_DISPATCHED_AT="$(utc_timestamp_ago "$CLOCK_SKEW_SECONDS")"
+      log "no deployment run exists for $DEPLOY_SHA; dispatching it explicitly"
+      if gh_bounded workflow run deploy.yml --repo "$REPO" --ref main; then
+        DEPLOY_DISPATCHED=1
+        sleep 20
+      fi
+    fi
+    if [ -n "$DEPLOY_DISPATCHED" ] && [ -z "$DEPLOY_RUN_ID" ]; then
+      discover_dispatched_deploy "$PREVIOUS_DEPLOY_RUN_ID" "$DEPLOY_DISPATCHED_AT"
+    fi
+    if [ -n "$DEPLOY_RUN_ID" ]; then
+      deploy_line="$(deploy_run_line "$DEPLOY_RUN_ID")"
+    fi
+    if [ -z "$deploy_line" ]; then
+      log "archive uploaded; waiting to identify the explicitly dispatched deployment"
+      sleep_for_poll
+      return 1
+    fi
+  fi
+
+  IFS=$'\t' read -r deploy_id deploy_status deploy_conclusion _ <<< "$deploy_line"
+  if [ "$deploy_status" = "completed" ] && [ "$deploy_conclusion" != "success" ]; then
+    if [ -z "$DEPLOY_RERUN" ]; then
+      log "deployment $deploy_id ended as $deploy_conclusion; requesting one rerun"
+      if gh_bounded run rerun "$deploy_id" --repo "$REPO"; then
+        DEPLOY_RERUN=1
+      fi
+    fi
+    sleep_for_poll
+    return 1
+  fi
+  if [ "$deploy_status" != "completed" ] || [ "$deploy_conclusion" != "success" ]; then
+    log "waiting for required deployment $deploy_id ($deploy_status)"
+    sleep_for_poll
+    return 1
+  fi
+  DEPLOY_VERIFIED=1
+}
+
+# Each archive gets three fresh import workflows; a cancelled one does not count (import_succeeded).
+import_dispatched() {
+  if [ -n "$IMPORT_TRIGGERED" ]; then
+    return 0
+  fi
+  if [ "$IMPORT_DISPATCH_COUNT" -ge 3 ]; then
+    give_up "$OPERATION import failed three fresh workflows; stopping for inspection"
+  fi
+  PREVIOUS_RUN_ID="$(gh_bounded run list \
+    --repo "$REPO" \
+    --workflow sentence-backfill.yml \
+    --event workflow_dispatch \
+    --limit 1 \
+    --json databaseId \
+    --jq 'if length == 0 then empty else .[0].databaseId end' \
+    2>/dev/null || true)"
+  IMPORT_DISPATCHED_AT="$(utc_timestamp_ago "$CLOCK_SKEW_SECONDS")"
+  log "required deployment succeeded; dispatching $OPERATION import"
+  if ! gh_bounded workflow run sentence-backfill.yml \
+    --repo "$REPO" \
+    --ref main \
+    -f operation="$OPERATION" \
+    -f release_tag="$RELEASE_TAG"; then
+    log "import dispatch failed; retrying later"
+    sleep_for_poll
+    return 1
+  fi
+  IMPORT_DISPATCH_COUNT=$((IMPORT_DISPATCH_COUNT + 1))
+  IMPORT_TRIGGERED=1
+  sleep 20
+}
+
+import_identified() {
+  if [ -n "$IMPORT_RUN_ID" ]; then
+    return 0
+  fi
+  discover_dispatched_import "$PREVIOUS_RUN_ID" "$IMPORT_DISPATCHED_AT"
+  if [ -z "$IMPORT_RUN_ID" ]; then
+    log "$OPERATION import dispatched; waiting for its exact run ID"
+    sleep 20
+    return 1
+  fi
+}
+
+# A failed import is followed by a fresh workflow after a poll interval.
+import_succeeded() {
+  local import_line import_status import_conclusion _
+  import_line="$(gh_bounded run view "$IMPORT_RUN_ID" \
+    --repo "$REPO" \
+    --json status,conclusion,url \
+    --jq '[.status,.conclusion,.url] | @tsv' \
+    2>/dev/null || true)"
+  if [ -z "$import_line" ]; then
+    log "waiting for import run $IMPORT_RUN_ID to become queryable"
+    sleep 120
+    return 1
+  fi
+
+  IFS=$'\t' read -r import_status import_conclusion _ <<< "$import_line"
+  if [ "$import_status" = "completed" ] && [ "$import_conclusion" != "success" ]; then
+    if [ "$import_conclusion" = "cancelled" ]; then
+      # A newer run in the bridge's concurrency group cancels a pending one, so a cancelled run says
+      # nothing about this archive and does not use up an attempt.
+      if [ "$IMPORT_DISPATCH_COUNT" -gt 0 ]; then
+        IMPORT_DISPATCH_COUNT=$((IMPORT_DISPATCH_COUNT - 1))
+      fi
+      log "import $IMPORT_RUN_ID was cancelled; retrying without counting it"
+    else
+      log "import $IMPORT_RUN_ID ended as $import_conclusion; backing off before a fresh workflow"
+    fi
+    IMPORT_TRIGGERED=""
+    IMPORT_RUN_ID=""
+    PREVIOUS_RUN_ID=""
+    IMPORT_DISPATCHED_AT=""
+    sleep_for_poll
+    return 1
+  fi
+  if [ "$import_status" != "completed" ]; then
+    log "$OPERATION import $IMPORT_RUN_ID is $import_status"
+    sleep 60
+    return 1
+  fi
+}
+
+production_healthy() {
+  if ! curl -fsS --max-time 15 https://dictprop.online/api/health >/dev/null; then
+    log "import succeeded but production health is not reachable yet"
+    sleep 120
+    return 1
+  fi
+}
+
 if [ ! -s "$ARCHIVE" ]; then
   echo "Encrypted archive not found or empty: $ARCHIVE" >&2
   exit 1
@@ -151,22 +385,8 @@ if [ -s "$STATE_DIR/complete" ]; then
   log "release was already imported and verified"
   exit 0
 fi
-
-# The state describes one archive. A rebuilt archive, or a retry after this publisher gave up, starts
-# over with a fresh upload and a fresh import count instead of inheriting a spent one.
-ARCHIVE_SHA="$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)"
-if [ -z "$ARCHIVE_SHA" ]; then
-  echo "Could not hash encrypted archive: $ARCHIVE" >&2
-  exit 1
-fi
-if [ "$(cat "$STATE_DIR/archive-sha256" 2>/dev/null)" != "$ARCHIVE_SHA" ] || [ -e "$STATE_DIR/failed" ]; then
-  rm -f "$STATE_DIR/previous-deploy-run" "$STATE_DIR/deploy-run" "$STATE_DIR/deploy-dispatched" \
-    "$STATE_DIR/deploy-dispatched-at" "$STATE_DIR/deploy-rerun" "$STATE_DIR/previous-run" \
-    "$STATE_DIR/import-triggered" "$STATE_DIR/import-run" "$STATE_DIR/import-rerun" \
-    "$STATE_DIR/import-dispatch-count" "$STATE_DIR/import-dispatched-at" "$STATE_DIR/uploaded-sha256" \
-    "$STATE_DIR/failed"
-  printf '%s\n' "$ARCHIVE_SHA" > "$STATE_DIR/archive-sha256"
-fi
+# Left by an attempt that gave up; this one starts afresh.
+rm -f "$STATE_DIR/failed"
 
 PUBLISH_DEADLINE="$(deadline_after "$PUBLISH_DEADLINE_SECONDS")"
 log "publisher waiting for GitHub API and Actions recovery"
@@ -175,188 +395,19 @@ while :; do
   if deadline_passed "$PUBLISH_DEADLINE"; then
     give_up "$OPERATION import of $RELEASE_TAG was not verified within ${PUBLISH_DEADLINE_SECONDS}s; giving up and deleting the release"
   fi
-
-  COMPONENT_STATE="$(component_states || printf 'unknown|unknown\n')"
-  API_STATE="${COMPONENT_STATE%%|*}"
-  ACTIONS_STATE="${COMPONENT_STATE#*|}"
-  if [ "$API_STATE" = "unknown" ] || [ "$API_STATE" = "major_outage" ] \
-    || [ "$ACTIONS_STATE" = "unknown" ] || [ "$ACTIONS_STATE" = "major_outage" ]; then
-    log "GitHub not ready (API=$API_STATE, Actions=$ACTIONS_STATE); checking again later"
-    sleep_for_poll
-    continue
+  github_ready || continue
+  archive_uploaded || continue
+  if [ -z "$DEPLOY_VERIFIED" ]; then
+    required_deployment_succeeded || continue
   fi
-
-  ASSET_COUNT="$(gh_bounded release view "$RELEASE_TAG" \
-    --repo "$REPO" \
-    --json assets \
-    --jq "[.assets[] | select(.name == \"$ASSET_NAME\")] | length" \
-    2>/dev/null || true)"
-  # An asset left by an earlier attempt may hold a different encryption of the wave, so this archive
-  # replaces it once.
-  if [ "$ASSET_COUNT" != "1" ] || [ "$(cat "$STATE_DIR/uploaded-sha256" 2>/dev/null)" != "$ARCHIVE_SHA" ]; then
-    log "uploading verified $ASSET_NAME archive"
-    if ! GH_CALL_TIMEOUT_SECONDS="${GH_UPLOAD_TIMEOUT_SECONDS:-3600}" \
-      gh_bounded release upload "$RELEASE_TAG" "$ARCHIVE" --repo "$REPO" --clobber; then
-      log "archive upload did not complete; retrying later"
-      sleep_for_poll
-      continue
-    fi
-    printf '%s\n' "$ARCHIVE_SHA" > "$STATE_DIR/uploaded-sha256"
-  fi
-
-  DEPLOY_LINE=""
-  if [ -s "$STATE_DIR/deploy-run" ]; then
-    DEPLOY_RUN_ID="$(tr -d '[:space:]' < "$STATE_DIR/deploy-run")"
-    if [[ "$DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]; then
-      DEPLOY_LINE="$(deploy_run_line "$DEPLOY_RUN_ID")"
-    fi
-  else
-    DEPLOY_LINE="$(gh_bounded run list \
-      --repo "$REPO" \
-      --workflow deploy.yml \
-      --commit "$DEPLOY_SHA" \
-      --limit 1 \
-      --json databaseId,status,conclusion,url \
-      --jq 'if length == 0 then empty else .[0] | [.databaseId,.status,.conclusion,.url] | @tsv end' \
-      2>/dev/null || true)"
-  fi
-  if [ -z "$DEPLOY_LINE" ]; then
-    if [ ! -e "$STATE_DIR/deploy-dispatched" ]; then
-      PREVIOUS_DEPLOY_RUN_ID="$(gh_bounded run list \
-        --repo "$REPO" \
-        --workflow deploy.yml \
-        --event workflow_dispatch \
-        --limit 1 \
-        --json databaseId \
-        --jq 'if length == 0 then 0 else .[0].databaseId end' \
-        2>/dev/null || printf '0\n')"
-      if ! [[ "$PREVIOUS_DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]; then
-        PREVIOUS_DEPLOY_RUN_ID=0
-      fi
-      printf '%s\n' "$PREVIOUS_DEPLOY_RUN_ID" > "$STATE_DIR/previous-deploy-run"
-      utc_timestamp_ago "$CLOCK_SKEW_SECONDS" > "$STATE_DIR/deploy-dispatched-at"
-      log "no deployment run exists for $DEPLOY_SHA; dispatching it explicitly"
-      if gh_bounded workflow run deploy.yml --repo "$REPO" --ref main; then
-        touch "$STATE_DIR/deploy-dispatched"
-        sleep 20
-      fi
-    fi
-    if [ -e "$STATE_DIR/deploy-dispatched" ] && [ ! -s "$STATE_DIR/deploy-run" ]; then
-      discover_dispatched_deploy
-    fi
-    if [ -s "$STATE_DIR/deploy-run" ]; then
-      DEPLOY_RUN_ID="$(tr -d '[:space:]' < "$STATE_DIR/deploy-run")"
-      DEPLOY_LINE="$(deploy_run_line "$DEPLOY_RUN_ID")"
-    fi
-    if [ -z "$DEPLOY_LINE" ]; then
-      log "archive uploaded; waiting to identify the explicitly dispatched deployment"
-      sleep_for_poll
-      continue
-    fi
-  fi
-
-  IFS=$'\t' read -r DEPLOY_ID DEPLOY_STATUS DEPLOY_CONCLUSION DEPLOY_URL <<< "$DEPLOY_LINE"
-  if [ "$DEPLOY_STATUS" = "completed" ] && [ "$DEPLOY_CONCLUSION" != "success" ]; then
-    if [ ! -e "$STATE_DIR/deploy-rerun" ]; then
-      log "deployment $DEPLOY_ID ended as $DEPLOY_CONCLUSION; requesting one rerun"
-      if gh_bounded run rerun "$DEPLOY_ID" --repo "$REPO"; then
-        touch "$STATE_DIR/deploy-rerun"
-      fi
-    fi
-    sleep_for_poll
-    continue
-  fi
-  if [ "$DEPLOY_STATUS" != "completed" ] || [ "$DEPLOY_CONCLUSION" != "success" ]; then
-    log "waiting for required deployment $DEPLOY_ID ($DEPLOY_STATUS)"
-    sleep_for_poll
-    continue
-  fi
-
-  if [ ! -e "$STATE_DIR/import-triggered" ]; then
-    DISPATCH_COUNT="$(cat "$STATE_DIR/import-dispatch-count" 2>/dev/null || printf '0')"
-    if ! [[ "$DISPATCH_COUNT" =~ ^[0-9]+$ ]]; then DISPATCH_COUNT=0; fi
-    if [ "$DISPATCH_COUNT" -ge 3 ]; then
-      give_up "$OPERATION import failed three fresh workflows; stopping for inspection"
-    fi
-    PREVIOUS_RUN_ID="$(gh_bounded run list \
-      --repo "$REPO" \
-      --workflow sentence-backfill.yml \
-      --event workflow_dispatch \
-      --limit 1 \
-      --json databaseId \
-      --jq 'if length == 0 then empty else .[0].databaseId end' \
-      2>/dev/null || true)"
-    printf '%s\n' "$PREVIOUS_RUN_ID" > "$STATE_DIR/previous-run"
-    utc_timestamp_ago "$CLOCK_SKEW_SECONDS" > "$STATE_DIR/import-dispatched-at"
-    log "required deployment succeeded; dispatching $OPERATION import"
-    if ! gh_bounded workflow run sentence-backfill.yml \
-      --repo "$REPO" \
-      --ref main \
-      -f operation="$OPERATION" \
-      -f release_tag="$RELEASE_TAG"; then
-      log "import dispatch failed; retrying later"
-      sleep_for_poll
-      continue
-    fi
-    printf '%s\n' "$((DISPATCH_COUNT + 1))" > "$STATE_DIR/import-dispatch-count"
-    date -u +%FT%TZ > "$STATE_DIR/import-triggered"
-    sleep 20
-  fi
-
-  if [ ! -s "$STATE_DIR/import-run" ]; then
-    discover_dispatched_import
-    if [ ! -s "$STATE_DIR/import-run" ]; then
-      log "$OPERATION import dispatched; waiting for its exact run ID"
-      sleep 20
-      continue
-    fi
-  fi
-
-  IMPORT_ID="$(tr -d '[:space:]' < "$STATE_DIR/import-run")"
-  IMPORT_LINE="$(gh_bounded run view "$IMPORT_ID" \
-    --repo "$REPO" \
-    --json status,conclusion,url \
-    --jq '[.status,.conclusion,.url] | @tsv' \
-    2>/dev/null || true)"
-  if [ -z "$IMPORT_LINE" ]; then
-    log "waiting for import run $IMPORT_ID to become queryable"
-    sleep 120
-    continue
-  fi
-
-  IFS=$'\t' read -r IMPORT_STATUS IMPORT_CONCLUSION IMPORT_URL <<< "$IMPORT_LINE"
-  if [ "$IMPORT_STATUS" = "completed" ] && [ "$IMPORT_CONCLUSION" != "success" ]; then
-    if [ "$IMPORT_CONCLUSION" = "cancelled" ]; then
-      # A newer run in the bridge's concurrency group cancels a pending one, so a cancelled run says
-      # nothing about this archive and does not use up an attempt.
-      DISPATCH_COUNT="$(cat "$STATE_DIR/import-dispatch-count" 2>/dev/null || printf '0')"
-      if [[ "$DISPATCH_COUNT" =~ ^[1-9][0-9]*$ ]]; then
-        printf '%s\n' "$((DISPATCH_COUNT - 1))" > "$STATE_DIR/import-dispatch-count"
-      fi
-      log "import $IMPORT_ID was cancelled; retrying without counting it"
-    else
-      log "import $IMPORT_ID ended as $IMPORT_CONCLUSION; backing off before a fresh workflow"
-    fi
-    rm -f "$STATE_DIR/import-triggered" "$STATE_DIR/import-run" \
-      "$STATE_DIR/previous-run" "$STATE_DIR/import-rerun" "$STATE_DIR/import-dispatched-at"
-    sleep_for_poll
-    continue
-  fi
-  if [ "$IMPORT_STATUS" != "completed" ]; then
-    log "$OPERATION import $IMPORT_ID is $IMPORT_STATUS"
-    sleep 60
-    continue
-  fi
-
-  if ! curl -fsS --max-time 15 https://dictprop.online/api/health >/dev/null; then
-    log "import succeeded but production health is not reachable yet"
-    sleep 120
-    continue
-  fi
-
-  log "$OPERATION import succeeded and production is healthy"
-  gh_bounded release delete "$RELEASE_TAG" --repo "$REPO" --yes --cleanup-tag || true
-  date -u +%FT%TZ > "$STATE_DIR/complete"
-  log "temporary bridge release removed; publisher complete"
+  import_dispatched || continue
+  import_identified || continue
+  import_succeeded || continue
+  production_healthy || continue
   break
 done
+
+log "$OPERATION import succeeded and production is healthy"
+gh_bounded release delete "$RELEASE_TAG" --repo "$REPO" --yes --cleanup-tag || true
+date -u +%FT%TZ > "$STATE_DIR/complete"
+log "temporary bridge release removed; publisher complete"
