@@ -26,8 +26,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The sites change only Caddy and /var/www, never the database or the app's container, so they queue among
+    # themselves. In dictprop-production a new job cancels the one pending there, which may be a deploy or an import.
     concurrency:
-      group: dictprop-production
+      group: dictprop-static-sites
       cancel-in-progress: false
     steps:
       - name: Check the inputs and the password hash

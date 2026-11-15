@@ -15,6 +15,19 @@ test("pull requests get the same check as the deploy's verify job, which checks 
   assert.deepEqual(recipe(check, 'build'), recipe(deploy, 'verify'));
 });
 
+// A concurrency group holds one running and one pending job, and a newly queued job cancels the pending one.
+test('the static sites queue apart from the jobs that change production', () => {
+  const group = (name: string, id: string): string | undefined => {
+    const text = workflows.find(workflow => workflow.name === name)?.text ?? '';
+    return /^ {4}concurrency:\n {6}group: (.+)$/m.exec(jobs(text).get(id) ?? '')?.[1];
+  };
+  for (const name of ['deploy-sd-cards.yml', 'deploy-nz-japan.yml', 'deploy-lake-loop.yml']) {
+    assert.equal(group(name, 'deploy'), 'dictprop-static-sites', name);
+  }
+  assert.equal(group('deploy.yml', 'deploy'), 'dictprop-production');
+  assert.equal(group('recover-production.yml', 'restart'), 'dictprop-production');
+});
+
 // Without one, GitHub lets a wedged job hold its runner, and any concurrency group it joins, for six hours.
 test('every job has a time limit', () => {
   for (const { name, text } of workflows) {

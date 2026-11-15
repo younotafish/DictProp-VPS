@@ -496,6 +496,8 @@ interface RouteOptions {
   appCsp?: string;
   /** Answers as if Caddy had not applied the route's headers. */
   omitRouteCsp?: boolean;
+  /** How many requests first get a 502, as from an app that a deploy is restarting. */
+  restartingFor?: number;
 }
 
 /** Runs a trip workflow's Caddy step on a scratch Caddyfile, prefixed with the exports drone-ssh writes for `envs:`. */
@@ -504,13 +506,22 @@ function configureTripRoute(name: string, options: RouteOptions) {
   try {
     const bin = join(dir, 'bin');
     mkdirSync(bin);
-    for (const command of ['chown', 'caddy', 'systemctl']) stub(bin, command, 'exit 0');
+    for (const command of ['chown', 'caddy', 'systemctl', 'sleep']) stub(bin, command, 'exit 0');
+    const requests = join(dir, 'requests');
     // Answers as Caddy would: the route's headers as configured, plus whatever the app adds upstream.
     stub(bin, 'curl', String.raw`
 while [ $# -gt 0 ]; do
   [ "$1" = -D ] && headers="$2"
   shift
 done
+echo request >> "$REQUESTS"
+if [ "$(wc -l < "$REQUESTS")" -le "$RESTARTING_FOR" ]; then
+  printf 'HTTP/2 502
+
+' > "$headers"
+  printf 502
+  exit 0
+fi
 route_policy="$(sed -n 's/^ *Content-Security-Policy "\(.*\)"$/\1/p' "$CADDYFILE")"
 {
   printf 'HTTP/2 %s\r\n' "$RESPONSE_STATUS"
@@ -556,11 +567,14 @@ printf '%s' "$RESPONSE_STATUS"`);
         RESPONSE_LOCATION: options.location ?? '',
         APP_CSP: options.appCsp ?? '',
         OMIT_ROUTE_CSP: options.omitRouteCsp ? '1' : '',
+        REQUESTS: requests,
+        RESTARTING_FOR: String(options.restartingFor ?? 0),
       }),
     });
     return {
       status: result.status,
       output: `${result.stdout}${result.stderr}`,
+      requests: existsSync(requests) ? readFileSync(requests, 'utf8').trim().split('\n').length : 0,
       before,
       after: readFileSync(caddyfile, 'utf8'),
       marker,
@@ -623,4 +637,24 @@ test('the SD cards route sends sign-in back to the cards and answers its redirec
   assert.notEqual(configureTripRoute('deploy-sd-cards.yml', { ...options, omitRouteCsp: true }).status, 0);
   // Before the app lets sign-in return to the cards, the gate sends people to / instead: that is a failed deploy.
   assert.notEqual(configureTripRoute('deploy-sd-cards.yml', { ...options, location: '/api/auth/login?returnTo=%2F' }).status, 0);
+});
+
+// The sites queue apart from production deploys, so the app behind forward_auth may be restarting during the check.
+test('the Google-protected routes ride out an app restart, and still fail on an app that stays down', t => {
+  if (!hasPython) return t.skip('python3 is not installed');
+  for (const [name, path] of [['deploy-sd-cards.yml', 'sd-cards'], ['deploy-lake-loop.yml', 'lake-loop-26']] as const) {
+    const options = {
+      status: '302',
+      location: `/api/auth/login?returnTo=%2F${path}%2F`,
+      appCsp: "default-src 'self'; base-uri 'self'; object-src 'none'",
+    };
+    const recovered = configureTripRoute(name, { ...options, restartingFor: 3 });
+    assert.equal(recovered.status, 0, `${name}: ${recovered.output}`);
+    assert.equal(recovered.requests, 4, name);
+    const down = configureTripRoute(name, { ...options, restartingFor: 100 });
+    assert.notEqual(down.status, 0, name);
+    assert.equal(down.requests, 10, name);
+  }
+  // Basic auth never asks the app, so the NZ Japan check needs no retry.
+  assert.notEqual(configureTripRoute('deploy-nz-japan.yml', { hash: BCRYPT_HASH, status: '401', restartingFor: 1 }).status, 0);
 });

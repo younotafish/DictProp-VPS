@@ -21,8 +21,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The sites change only Caddy and /var/www, never the database or the app's container, so they queue among
+    # themselves. In dictprop-production a new job cancels the one pending there, which may be a deploy or an import.
     concurrency:
-      group: dictprop-production
+      group: dictprop-static-sites
       cancel-in-progress: false
     steps:
       - name: Decrypt and validate site archive
@@ -133,7 +135,14 @@ jobs:
 
             systemctl reload caddy
             headers="$(mktemp)"
-            http_status="$(curl --max-time 10 -sS -D "$headers" -o /dev/null -w '%{http_code}' https://dictprop.online/lake-loop-26/)"
+            # forward_auth asks the app, which a production deploy may be restarting at this moment.
+            for attempt in $(seq 1 10); do
+              http_status="$(curl --max-time 10 -sS -D "$headers" -o /dev/null -w '%{http_code}' https://dictprop.online/lake-loop-26/ || true)"
+              case "$http_status" in
+                000|502|503|504) sleep 3 ;;
+                *) break ;;
+              esac
+            done
             test "$http_status" = 302
             grep -Eiq '^location: /api/auth/login\?returnTo=%2F(lake-loop-26%2F)?' "$headers"
             # The app's redirect brings its own policy too, so look for this route's exact one.

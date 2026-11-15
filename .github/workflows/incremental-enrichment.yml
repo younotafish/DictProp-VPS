@@ -39,9 +39,20 @@ jobs:
             cd /opt/dictprop-vps
             # ssh-action loses the captured output of a command that exits non-zero, so the audit's exit
             # status is dropped here and the alert step reads the stall from its report instead.
-            docker compose exec -T \
-              -e INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS=24 \
-              app nice -n 10 node server/dist/scripts/audit-enrichment.js || true
+            # A deploy that swaps the container ends an audit midway, so one that printed no report runs
+            # again once the new container answers.
+            for attempt in 1 2 3; do
+              output="$(docker compose exec -T \
+                -e INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS=24 \
+                app nice -n 10 node server/dist/scripts/audit-enrichment.js || true)"
+              printf '%s\n' "$output"
+              if printf '%s\n' "$output" | grep -q '^{' || [ "$attempt" -eq 3 ]; then break; fi
+              echo "The audit printed no report; it runs again once the app answers"
+              for check in $(seq 1 24); do
+                if curl -sf --max-time 3 http://localhost:3000/api/health >/dev/null; then break; fi
+                sleep 5
+              done
+            done
 
       # The audit step's log already shows its whole output, so this step only puts the report in the summary.
       - name: Report content coverage
