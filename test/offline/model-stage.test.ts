@@ -98,7 +98,7 @@ test('a cached batch result is reused without asking the model', async t => {
     correction: () => '',
     ask: async () => { asked++; return {}; },
     validate: (parsed: { results: string[] }) => parsed.results,
-    retryDelay: () => 0,
+    retryDelayMs: 0,
     lifecycle: lifecycle(),
   });
   assert.deepEqual(results, ['cached']);
@@ -109,7 +109,6 @@ test('an invalid answer is deleted and asked again with the reason, three times 
   const dir = workDir(t);
   const resultPath = join(dir, 'batch-0001-x.json');
   const prompts: string[] = [];
-  const delays: number[] = [];
   await assert.rejects(runCachedModelBatch({
     resultPath,
     prompt: (correction: string) => `ask${correction}`,
@@ -120,11 +119,10 @@ test('an invalid answer is deleted and asked again with the reason, three times 
       return { attempt: prompts.length };
     },
     validate: (parsed: { attempt: number }) => { throw new Error(`bad answer ${parsed.attempt}`); },
-    retryDelay: (attempt: number) => { delays.push(attempt); return 0; },
+    retryDelayMs: 0,
     lifecycle: lifecycle(),
   }), /bad answer 3/);
   assert.deepEqual(prompts, ['ask', 'ask [fix: bad answer 1]', 'ask [fix: bad answer 2]']);
-  assert.deepEqual(delays, [0, 1]);
   // The last answer stays cached for inspection; the earlier ones were deleted before each retry.
   assert.deepEqual(JSON.parse(readFileSync(resultPath, 'utf8')), { attempt: 3 });
 });
@@ -140,7 +138,7 @@ test('a stage that is aborting does not retry a failed batch', async t => {
     correction: () => '',
     ask: async () => { asked++; throw new Error('killed'); },
     validate: () => [],
-    retryDelay: () => 0,
+    retryDelayMs: 0,
     lifecycle: stage,
   }), /killed/);
   assert.equal(asked, 1);

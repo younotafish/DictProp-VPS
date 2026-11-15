@@ -24,7 +24,7 @@ if (!Number.isSafeInteger(candidateNumber) || candidateNumber < 1 || candidateNu
 
 const MODEL_CONFIG = resolveStructuredModel();
 const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
-const { timeoutMs: MODEL_TIMEOUT_MS, concurrency } = stageSettings({
+const { timeoutMs: MODEL_TIMEOUT_MS, retryDelayMs, concurrency } = stageSettings({
   defaultTimeoutMinutes: 20,
   maxConcurrency: 8,
   concurrencyVariables: ['CODEX_IMAGE_CONCURRENCY', 'CODEX_CONCURRENCY'],
@@ -91,7 +91,7 @@ function judgeBatch(batch, batchIndex) {
       prompt, schema, resultPath, images: candidates, timeoutMs: MODEL_TIMEOUT_MS, activeChildren: lifecycle.activeChildren,
     }),
     validate: parsed => readVerdicts(parsed, batch, candidates, batchIndex + 1),
-    retryDelay: attempt => 1_000 * (attempt + 1),
+    retryDelayMs,
     lifecycle,
   });
 }

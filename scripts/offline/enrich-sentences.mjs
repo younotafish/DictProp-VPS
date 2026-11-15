@@ -14,7 +14,6 @@ import {
   batchFiles,
   batchFingerprint,
   createStageLifecycle,
-  jitteredDelay,
   runCachedModelBatch,
   runPool,
   runSplittingBatches,
@@ -113,7 +112,7 @@ function runBatch(batch, index) {
     correction: message => `\n\nYour previous response failed validation: ${message}. Copy every index and return a complete, schema-valid analysis for every sentence.`,
     ask: askModel,
     validate: parsed => readAnalysisResults(parsed, batch, checkOptions),
-    retryDelay: attempt => jitteredDelay(retryDelayMs, attempt),
+    retryDelayMs,
     lifecycle,
   });
 }

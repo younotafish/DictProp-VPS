@@ -101,14 +101,14 @@ export function indexedResults(parsed, count, { wrongCount, duplicate }) {
   return byIndex;
 }
 
-// Up to three attempts at one batch. A cached result is reused. A result that fails validation is deleted,
-// and the next attempt's prompt carries the reason so the model can correct it.
+// Up to three attempts at one batch, with jittered backoff from retryDelayMs. A cached result is reused. A
+// result that fails validation is deleted, and the next attempt's prompt carries the reason so the model can
+// correct it.
 //   prompt(correction)  the full prompt, with the correction text ('' on the first attempt) in its place
 //   correction(message) the correction text for a failure
 //   ask(request)        sends { prompt, resultPath } to the model and resolves to the parsed result
 //   validate(parsed)    returns the batch's results, or throws why the answer is unusable
-//   retryDelay(attempt) milliseconds to wait before the next attempt
-export async function runCachedModelBatch({ resultPath, prompt, correction, ask, validate, retryDelay, lifecycle }) {
+export async function runCachedModelBatch({ resultPath, prompt, correction, ask, validate, retryDelayMs, lifecycle }) {
   let correctionText = '';
   for (let attempt = 0; ; attempt++) {
     try {
@@ -120,7 +120,7 @@ export async function runCachedModelBatch({ resultPath, prompt, correction, ask,
       if (lifecycle.aborting || attempt === 2) throw error;
       correctionText = correction(errorMessage(error));
       if (existsSync(resultPath)) unlinkSync(resultPath);
-      await sleep(retryDelay(attempt));
+      await sleep(jitteredDelay(retryDelayMs, attempt));
     }
   }
 }

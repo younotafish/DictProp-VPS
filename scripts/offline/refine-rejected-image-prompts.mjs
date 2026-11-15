@@ -7,7 +7,6 @@ import {
   batchFiles,
   batchFingerprint,
   createStageLifecycle,
-  jitteredDelay,
   runCachedModelBatch,
   runPool,
   stageSettings,
@@ -84,7 +83,7 @@ function refineBatch(batch, batchIndex) {
       prompt, schema, resultPath, timeoutMs: MODEL_TIMEOUT_MS, activeChildren: lifecycle.activeChildren,
     }),
     validate: parsed => readRefinements(parsed, batch, batchIndex + 1),
-    retryDelay: attempt => jitteredDelay(retryDelayMs, attempt),
+    retryDelayMs,
     lifecycle,
   });
 }

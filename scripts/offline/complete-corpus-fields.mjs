@@ -14,7 +14,6 @@ import {
   batchFiles,
   batchFingerprint,
   createStageLifecycle,
-  jitteredDelay,
   runCachedModelBatch,
   runPool,
   runSplittingBatches,
@@ -160,7 +159,7 @@ function runBatch(batch, batchIndex) {
     correction: message => `\n\nYour previous response failed validation: ${message}. Return every itemIndex and two natural examples per item, each at least 20 characters long with exactly one target use wrapped in double curly braces.`,
     ask: askModel,
     validate: parsed => readCompletionResults(parsed, batch),
-    retryDelay: attempt => jitteredDelay(retryDelayMs, attempt),
+    retryDelayMs,
     lifecycle,
   });
 }
