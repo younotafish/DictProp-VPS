@@ -1,59 +1,45 @@
-import { spawn } from 'node:child_process';
+// Word timings for a clip from whisper.cpp, run locally on the server. Alignments run one at a time, live clips
+// ahead of backfill work.
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseWhisperCppTimings, type WordTiming } from './tts-alignment.js';
+import { runProcess } from './tts/process.js';
 
-const WHISPER_BIN = process.env.WHISPER_CPP_BIN || '/usr/local/bin/whisper-cli';
-const WHISPER_MODEL = process.env.WHISPER_CPP_MODEL || '/opt/whisper/ggml-tiny.en.bin';
 const ALIGNMENT_TIMEOUT_MS = 180_000;
-const configuredThreads = Number.parseInt(process.env.WHISPER_CPP_THREADS || '2', 10);
-const WHISPER_THREADS = Number.isFinite(configuredThreads)
-  ? Math.max(1, Math.min(2, configuredThreads))
-  : 2;
+// Decoding a sentence clip takes well under a second; a wedged ffmpeg must not hold the alignment queue for long.
+const DECODE_TIMEOUT_MS = 60_000;
 
-function run(command: string, args: string[]): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (error) reject(error);
-      else resolvePromise();
-    };
-    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
-    child.on('error', error => finish(error));
-    child.on('exit', (code, signal) => {
-      if (code === 0) finish();
-      else finish(new Error(`${command} exited with ${code ?? signal}: ${stderr.slice(-2_000)}`));
-    });
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      finish(new Error(`${command} exceeded ${ALIGNMENT_TIMEOUT_MS}ms`));
-    }, ALIGNMENT_TIMEOUT_MS);
-  });
+// whisper.cpp's binary, model and thread count; the defaults are the Docker image's. Read when an alignment runs,
+// after env.ts has loaded .env. At most 2 threads: the VPS has 2 vCPUs, shared with the web server and ffmpeg,
+// and alignment is background work.
+function whisperSettings(): { bin: string; model: string; threads: number } {
+  const configuredThreads = Number.parseInt(process.env.WHISPER_CPP_THREADS || '2', 10);
+  return {
+    bin: process.env.WHISPER_CPP_BIN || '/usr/local/bin/whisper-cli',
+    model: process.env.WHISPER_CPP_MODEL || '/opt/whisper/ggml-tiny.en.bin',
+    threads: Number.isFinite(configuredThreads) ? Math.max(1, Math.min(2, configuredThreads)) : 2,
+  };
 }
 
 async function alignOnce(audio: Buffer): Promise<WordTiming[]> {
-  await Promise.all([access(WHISPER_BIN), access(WHISPER_MODEL)]);
+  const whisper = whisperSettings();
+  await Promise.all([access(whisper.bin), access(whisper.model)]);
   const root = await mkdtemp(join(tmpdir(), 'dictprop-whisper-'));
   try {
     const inputPath = join(root, 'audio.bin');
     const wavPath = join(root, 'audio.wav');
     const outputPrefix = join(root, 'alignment');
     await writeFile(inputPath, audio);
-    await run('ffmpeg', [
+    await runProcess('ffmpeg', [
       '-nostdin', '-loglevel', 'error', '-y', '-i', inputPath,
       '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath,
-    ]);
-    await run(WHISPER_BIN, [
-      '-m', WHISPER_MODEL,
+    ], { timeoutMs: DECODE_TIMEOUT_MS });
+    await runProcess(whisper.bin, [
+      '-m', whisper.model,
       '-f', wavPath,
       '-l', 'en',
-      '-t', String(WHISPER_THREADS),
+      '-t', String(whisper.threads),
       '-bo', '1',
       '-bs', '1',
       '-sow',
@@ -62,7 +48,7 @@ async function alignOnce(audio: Buffer): Promise<WordTiming[]> {
       '-of', outputPrefix,
       '-np',
       '-ng',
-    ]);
+    ], { timeoutMs: ALIGNMENT_TIMEOUT_MS });
     const parsed = JSON.parse(await readFile(`${outputPrefix}.json`, 'utf8'));
     // No words is a real answer (a silent clip) and gets stored; output without a transcription is not.
     if (!Array.isArray(parsed?.transcription)) throw new Error('whisper output has no transcription');

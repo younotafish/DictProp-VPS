@@ -18,7 +18,7 @@ import {
   writeFileAtomic,
 } from './cache.js';
 import { reduceToCasual } from './casual.js';
-import { CASUAL_VOICE, synthMiMo, synthVoiceDesign } from './synthesis.js';
+import { synthCasual, synthClear } from './synthesis.js';
 
 function isCasual(voice: string): boolean {
   return voice === CASUAL_STYLE;
@@ -33,8 +33,8 @@ export interface ClipDependencies {
 }
 
 export const defaultClipDependencies: ClipDependencies = {
-  synthClear: synthMiMo,
-  synthCasual: (spoken) => synthVoiceDesign(spoken, CASUAL_VOICE),
+  synthClear,
+  synthCasual,
   reduce: reduceToCasual,
   align: (audio, priority) => alignAudioLocally(audio, { priority }),
 };
