@@ -141,35 +141,19 @@ export function createApp(options: AppOptions = {}) {
   // Everything after this needs the owner's session.
   app.use('/api/*', requireAuth);
   // Body limits run after the session gate, so an anonymous upload is refused before any of it is read.
-  const smallJsonLimit = bodyLimit({
-    maxSize: 512 * 1024,
-    onError: c => c.json({ error: 'Request body too large' }, 413),
-  });
-  app.use('/api/analyze', smallJsonLimit);
-  app.use('/api/compare', smallJsonLimit);
-  app.use('/api/extract-vocabulary', smallJsonLimit);
-  app.use('/api/comparisons', smallJsonLimit);
-  app.use('/api/comparisons/*', smallJsonLimit);
-  app.use('/api/sentence-enrichments/*', smallJsonLimit);
-  app.use('/api/tts/*', smallJsonLimit);
-  app.use('/api/reviews', smallJsonLimit);
-  app.use('/api/reviews/*', smallJsonLimit);
-  app.use('/api/transcribe', bodyLimit({
-    maxSize: 25 * 1024 * 1024,
-    onError: c => c.json({ error: 'Audio upload too large' }, 413),
-  }));
-  app.use('/api/items', bodyLimit({
-    maxSize: 20 * 1024 * 1024,
-    onError: c => c.json({ error: 'Item batch is too large' }, 413),
-  }));
-  app.use('/api/items/*', bodyLimit({
-    maxSize: 11 * 1024 * 1024,
-    onError: c => c.json({ error: 'Item request is too large' }, 413),
-  }));
-  app.use('/api/import', bodyLimit({
-    maxSize: 25 * 1024 * 1024,
-    onError: c => c.json({ error: 'Import is too large' }, 413),
-  }));
+  // One limit per route that reads a body, and no two patterns overlap: a trailing /* also matches the bare path.
+  const limitBody = (maxSize: number, error: string) => bodyLimit({ maxSize, onError: c => c.json({ error }, 413) });
+  const smallJsonLimit = limitBody(512 * 1024, 'Request body too large');
+  for (const path of [
+    '/api/analyze', '/api/compare', '/api/extract-vocabulary', '/api/comparisons',
+    '/api/sentence-enrichments/*', '/api/tts/*', '/api/reviews/*',
+  ]) {
+    app.use(path, smallJsonLimit);
+  }
+  app.use('/api/transcribe', limitBody(25 * 1024 * 1024, 'Audio upload too large'));
+  app.use('/api/import', limitBody(25 * 1024 * 1024, 'Import is too large'));
+  app.use('/api/items', limitBody(20 * 1024 * 1024, 'Item batch is too large'));
+  app.use('/api/items/:id/image', limitBody(11 * 1024 * 1024, 'Item request is too large'));
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
   app.use('/api/import', createConcurrencyLimit(1, 'Another data import is already running. Try again shortly.'));
   app.route('/api', sentenceEnrichmentRoutes);
