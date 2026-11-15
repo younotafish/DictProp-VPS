@@ -126,10 +126,10 @@ function runBatchResilient(batch, batchIndex) {
       error,
       splitAt: new Date().toISOString(),
     }),
-    onSplit: ({ batch: part, halves: [left, right], depth }) => {
-      process.stderr.write(
-        `Sentence batch ${batchIndex + 1} failed after retries; splitting ${part.length} sentence(s) into ${left.length}+${right.length} at depth ${depth + 1}\n`,
-      );
+    onSplit: ({ batch: part, halves: [left, right], depth, resumed }) => {
+      process.stderr.write(resumed
+        ? `Sentence batch ${batchIndex + 1} was split on an earlier run; resuming its ${left.length}+${right.length} halves at depth ${depth + 1}\n`
+        : `Sentence batch ${batchIndex + 1} failed after retries; splitting ${part.length} sentence(s) into ${left.length}+${right.length} at depth ${depth + 1}\n`);
     },
     onSingletonFailure: (sentence, error) => {
       const failure = { id: sentence.id, textHash: sentence.textHash, error };
