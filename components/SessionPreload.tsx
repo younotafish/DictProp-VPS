@@ -54,8 +54,11 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
     };
     report();
 
-    // Audio: one progress-reporting batch, which dedupes and generates what's missing itself.
-    preloadAudio(texts, done => { audioDone = done; report(); }, { intoMemory: false, signal: audioStop.signal }).catch(() => {});
+    // Audio: one progress-reporting batch, which dedupes and generates what's missing itself. Once it settles
+    // the audio part is done, even when the speech engine couldn't load, so the pill never sticks.
+    preloadAudio(texts, done => { audioDone = done; report(); }, { intoMemory: false, signal: audioStop.signal })
+      .catch(() => {})
+      .then(() => { audioDone = audioTotal; report(); });
 
     // Pictures already in IndexedDB only need an existence check (opening each would churn the memory
     // cache); the rest download a few at a time.
