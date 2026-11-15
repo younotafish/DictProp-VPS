@@ -1,4 +1,5 @@
 import { fetchWithin, jsonRequest, requestJson } from '../http';
+import { sha256Hex } from '../sha256';
 
 // Server-side speech: the voices, cached clips and their word timings by key, generation, and the background
 // backfill.
@@ -18,11 +19,8 @@ export interface WordTiming { start: number; end: number; text: string }
  * Cache key for a clip — sha256(voice + "\n" + text.trim()), hex.
  * MUST match the server's ttsKey (server/src/routes/tts.ts).
  */
-export const ttsKey = async (text: string, voice: string): Promise<string> => {
-  const data = new TextEncoder().encode(`${voice}\n${text.trim()}`);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-};
+export const ttsKey = async (text: string, voice: string): Promise<string> =>
+  sha256Hex(new TextEncoder().encode(`${voice}\n${text.trim()}`));
 
 // A plain fetch() has NO timeout: a stalled connection (a wedged mobile keep-alive socket, or the
 // 1-vCPU VPS briefly busy) leaves the await hanging for the browser's multi-minute default — the
