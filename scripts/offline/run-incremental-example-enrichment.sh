@@ -192,6 +192,16 @@ run_image_stage() {
   fi
 }
 
+# image_pipeline_busy STAGE: true, after logging it, when another local image pipeline is running. One image
+# job saturates the GPU, so the image stage STAGE leaves its new images to a later cycle, and publishes only
+# the ones accepted before.
+image_pipeline_busy() {
+  local pids
+  pids="$(pgrep -f '[r]un-streaming-image-quality-loop\.sh' | tr '\n' ' ' || true)"
+  if [ -z "$pids" ]; then return 1; fi
+  log "another local image pipeline is active (pid ${pids% }); $1 wait for a later cycle"
+}
+
 # Has the sentence-backfill workflow export the production corpus, waits for that run and fetches the corpus
 # into CURRENT_CORPUS. The run's id names the cycle: CYCLE_ID.
 export_corpus() {
@@ -364,14 +374,16 @@ stage_item_images() {
   ITEM_IMAGE_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-image-targets \
     "$FAILURE_LEDGER" item-image "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_TARGETS")"
   if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
-    log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
-    run_image_stage item-image "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/images" "saved-item images" \
-      env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-      IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
-      IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
-      bash scripts/offline/run-streaming-image-quality-loop.sh \
-        "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
-        "$ITEM_IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
+    if ! image_pipeline_busy "saved-item images"; then
+      log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
+      run_image_stage item-image "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/images" "saved-item images" \
+        env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
+        IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
+        IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
+        bash scripts/offline/run-streaming-image-quality-loop.sh \
+          "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
+          "$ITEM_IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
+    fi
     # The publisher waits for every manifest entry, so deferred images leave the manifest. They are still
     # missing in production, so a later cycle targets them again.
     ITEM_IMAGE_READY="$("$NODE_BIN" -e 'const f=require("fs"),p=require("path"),file=p.join(process.argv[1],"manifest.json"),m=JSON.parse(f.readFileSync(file,"utf8"));m.entries=m.entries.filter(e=>f.existsSync(p.join(process.argv[1],e.imageFile)));f.writeFileSync(file,JSON.stringify(m,null,2)+"\n",{mode:0o600});console.log(m.entries.length)' \
@@ -478,26 +490,24 @@ example_images() {
     "$FAILURE_LEDGER" example-image "$IMAGE_ROOT/targets.json" "$IMAGE_TARGETS")"
 
   if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
-    BASE_EXPECTED="$(json_value "$BASE_IMAGE_ROOT/targets.json" .targets.length)"
-    BASE_ACCEPTED="$(find "$BASE_IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
-    if pgrep -f '[r]un-streaming-image-quality-loop\.sh' >/dev/null 2>&1; then
-      CYCLE_MESSAGE="another local image pipeline is active; incremental images are queued"
-      return 0
+    if ! image_pipeline_busy "example images"; then
+      BASE_EXPECTED="$(json_value "$BASE_IMAGE_ROOT/targets.json" .targets.length)"
+      BASE_ACCEPTED="$(find "$BASE_IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
+      if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ]; then
+        # A tiny hard tail may exhaust the independent bulk QA loop. It remains visible in production
+        # coverage reports, but must not permanently starve every example discovered afterwards.
+        log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
+      fi
+      log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
+      run_image_stage example-image "$IMAGE_TARGETS" "$IMAGE_ROOT/images" "example images" \
+        env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
+        IMAGE_MODEL="$IMAGE_MODEL" \
+        IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
+        IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
+        bash scripts/offline/run-streaming-image-quality-loop.sh \
+        "$IMAGE_TARGETS" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
+        "$IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
     fi
-    if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ]; then
-      # A tiny hard tail may exhaust the independent bulk QA loop. It remains visible in production
-      # coverage reports, but must not permanently starve every example discovered afterwards.
-      log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
-    fi
-    log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
-    run_image_stage example-image "$IMAGE_TARGETS" "$IMAGE_ROOT/images" "example images" \
-      env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-      IMAGE_MODEL="$IMAGE_MODEL" \
-      IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" KREA_SHARD_COUNT=1 \
-      IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
-      bash scripts/offline/run-streaming-image-quality-loop.sh \
-      "$IMAGE_TARGETS" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
-      "$IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
   else
     log "no example image needs generating this cycle"
   fi

@@ -306,7 +306,11 @@ const SCENARIOS: Record<string, Scenario> = {
   incomplete: { examples: [1, 1], exampleMissing: [1, 1] },
   'model-down': { vocab: 1, vocabStatus: 124, model: [0, 1] },
   'text-busy': { busy: 'text' },
-  'image-busy': { examples: [1], exampleMissing: [0], exampleImages: 1, itemImages: 1, busy: 'image' },
+  // An item image an earlier cycle accepted is still waiting to be published.
+  'image-busy': {
+    examples: [1], exampleMissing: [0], exampleImages: 1, itemImages: 1, busy: 'image',
+    seed: { 'item-images/images/item-image-0.webp': 'image' },
+  },
   previous: {
     seed: {
       'unfiltered-source.json': '{}\n',
@@ -597,7 +601,7 @@ test('a model that stops answering after a failed stage ends the cycle there', a
   assert.equal(result.lock, false);
 });
 
-test('another local job defers the cycle, and a busy image pipeline queues the example images', async () => {
+test('another local job defers the cycle, and a busy image pipeline leaves new images to a later cycle', async () => {
   const [text, image] = await Promise.all([cycle('text-busy'), cycle('image-busy')]);
   assert.equal(text.status, 0, text.stderr.join('\n'));
   assert.deepEqual(text.trace, []);
@@ -612,8 +616,7 @@ test('another local job defers the cycle, and a busy image pipeline queues the e
     savedFilter,
     itemImagePrep('-', '-'),
     itemImageFilter,
-    `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/101 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
-    `failure-ledger.mjs record-image-outcomes ${LEDGER} item-image ${C}/item-images/cycle-targets.json ${C}/item-images/images 0`,
+    // Neither image stage renders, or records outcomes for images it never tried; the accepted ones still go out.
     `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${STATE}/item-images/101 OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
     pool('-'),
     exampleSource,
@@ -625,13 +628,17 @@ test('another local job defers the cycle, and a busy image pipeline queues the e
     `dispatch-staged-example-analyses.sh ${C} 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 EXAMPLE_ANALYSIS_WAVE_STATE_ROOT=${STATE}/example-analyses/101 EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30]`,
     `prepare-sentence-images.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images krea/Krea-2-Turbo <root>/base/final-images/images`,
     `failure-ledger.mjs filter-image-targets ${LEDGER} example-image ${C}/final-images/targets.json ${C}/final-images/cycle-targets.json`,
+    `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images  [ALLOW_DEFERRED_IMAGES=1]`,
+    `dispatch-staged-example-enrichments.sh ${C} 100 <head>  [ALLOW_DEFERRED_IMAGES=1 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT=${STATE}/example-enrichments/101 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30]`,
     summary,
   ]);
-  assert.deepEqual(image.log.slice(-4), [
-    'generating locally and judging with Claude claude-opus-5-5 1 missing saved-word/phrase/sentence image(s)',
+  assert.deepEqual(image.log.slice(-6), [
+    'another local image pipeline is active (pid 4242); saved-item images wait for a later cycle',
     'publishing 1 locally generated saved-word/phrase/sentence image(s)',
     'publishing validated explanations before their images',
-    'another local image pipeline is active; incremental images are queued',
+    'another local image pipeline is active (pid 4242); example images wait for a later cycle',
+    'publishing verified incremental explanation-image pairs',
+    'incremental example-enrichment cycle complete: 1 post-baseline sentence(s)',
   ]);
   assert.equal(image.lock, false);
 });
