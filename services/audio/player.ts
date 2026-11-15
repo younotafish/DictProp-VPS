@@ -213,21 +213,28 @@ const applyRate = (el: HTMLAudioElement): void => {
   } catch { /* ignore */ }
 };
 
+/** What playUrl reports back: playback started, reached the end, or failed after it started. */
+export interface ClipCallbacks {
+  onStart?: () => void;
+  onEnd?: () => void;
+  onError?: (error: unknown) => void;
+}
+
 // Play an object URL through the shared, iOS-unlocked <audio> element (cached MiMo + Kokoro both use this).
 export const playUrl = async (
   url: string,
   isCurrent: () => boolean,
-  onStart?: () => void,
-  onEnd?: () => void,
+  { onStart, onEnd, onError }: ClipCallbacks,
   startAt?: number,
 ): Promise<void> => {
   const el = getAudioEl();
   let started = false;
   el.onplaying = () => { started = true; if (isCurrent()) onStart?.(); };
   el.onended = () => { if (isCurrent()) onEnd?.(); };
-  // Before playback starts, a bad clip rejects play() below and the caller falls back to another voice;
-  // ending here as well would let the caller move on while that fallback still speaks.
-  el.onerror = () => { if (started && isCurrent()) onEnd?.(); };
+  // A clip that breaks mid-play fails the read rather than finishing it. Before playback starts, a bad clip
+  // rejects play() below and the caller falls back to another voice; failing here as well would let the
+  // caller move on while that fallback still speaks.
+  el.onerror = () => { if (started && isCurrent()) onError?.(el.error ?? new Error('The clip failed while playing')); };
   el.onloadedmetadata = null;
   const begin = startAt && startAt > 0 ? startAt : 0;
   el.src = url;

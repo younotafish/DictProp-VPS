@@ -244,11 +244,11 @@ test('a word read clears the speakers and supersedes the sentence', async () => 
   assert.equal(word.isActive(), false);
 });
 
-test('a media error after playback started ends the read as if it had finished', async () => {
+test('a media error after playback started fails the read instead of finishing it', async () => {
   const { el, callbacks } = await playing();
   el.fail();
   assert.deepEqual(engine.getPlaybackState(), { text: null, status: 'idle' });
-  assert.deepEqual(callbacks.heard, ['end']);
+  assert.deepEqual(callbacks.heard, ['error']);
 });
 
 test('a seek moves the clip and plays it, and shows it paused again when the browser refuses to play', async () => {

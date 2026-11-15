@@ -12,7 +12,7 @@
 import type { KokoroDevice, KokoroRequest, KokoroResponse, KokoroVoice } from '../kokoroWorker';
 import { log, warn } from '../logger';
 import { canUseWebGPU, isMobile, isNeuralSupported } from './platform';
-import { playUrl } from './player';
+import { playUrl, type ClipCallbacks } from './player';
 import { MAX_KOKORO_URLS, UrlLru } from './urlLru';
 
 const DEFAULT_VOICE: KokoroVoice = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
@@ -133,11 +133,11 @@ const synthesize = async (text: string, voice: KokoroVoice): Promise<string> => 
 // the system voice if the model can't load / consent is declined. iOS/iPadOS never reaches here.
 export const speakViaKokoro = async (
   plain: string,
-  opts: { onStart?: () => void; onEnd?: () => void; allowDownload: boolean },
+  opts: ClipCallbacks & { allowDownload: boolean },
   isCurrent: () => boolean,
   systemFallback: () => void,
 ): Promise<void> => {
-  const { onStart, onEnd, allowDownload } = opts;
+  const { allowDownload, ...callbacks } = opts;
   const wouldDownload = !modelReady;
   let useNeural = !kokoroUnavailable && isNeuralSupported() && (modelReady || allowDownload);
   if (useNeural && wouldDownload && allowDownload && !confirmDownloadIfNeeded()) useNeural = false;
@@ -145,7 +145,7 @@ export const speakViaKokoro = async (
   try {
     const url = await synthesize(plain, DEFAULT_VOICE);
     if (!isCurrent()) return;
-    await playUrl(url, isCurrent, onStart, onEnd);
+    await playUrl(url, isCurrent, callbacks);
   } catch (err) {
     if (!isCurrent()) return;
     warn('🔊 Kokoro failed, falling back to system voice', err);

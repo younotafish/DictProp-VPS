@@ -119,7 +119,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
     if (!isCurrent()) return;
     // Caller-specified start (word-level seek) wins; otherwise auto-skip the quiet lead-in.
     const begin = startAt && startAt > 0 ? startAt : leadInSkip(timings);
-    await playUrl(url, isCurrent, markStart, markEnd, begin);
+    await playUrl(url, isCurrent, { onStart: markStart, onEnd: markEnd, onError: markError }, begin);
   };
 
   // Unlock <audio> synchronously inside the gesture (iOS) and stop anything currently playing.
@@ -163,7 +163,7 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
       // 3) MISS — fill the clear cache for next time (fire-and-forget), then fall back now (no timings).
       requestTTSGeneration([{ text: plain, voice: STYLE_VOICES.clear.generate }]).catch(() => { /* best-effort */ });
       if (isIOS()) { systemFallback(); return; }
-      await speakViaKokoro(plain, { onStart: markStart, onEnd: markEnd, allowDownload }, isCurrent, systemFallback);
+      await speakViaKokoro(plain, { onStart: markStart, onEnd: markEnd, onError: markError, allowDownload }, isCurrent, systemFallback);
     } catch (err) {
       if (!isCurrent()) return;
       warn('🔊 TTS chain failed, falling back to system voice', err);
