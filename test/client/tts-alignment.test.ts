@@ -42,11 +42,22 @@ test('no sentence, no timings or no anchors give nothing to seek to', () => {
   assert.equal(seekTimeForOffset([], 3), null);
 });
 
-test('a misheard short word can anchor inside a later word', () => {
-  // 'the' was transcribed as 'a', which matches the a in 'hat' and moves the cursor past it.
+test('a misheard short word anchors nothing rather than matching inside a later word', () => {
+  // 'the' was transcribed as 'a', which used to match the a in 'hat' and move the cursor past it.
   const aligned = alignWordsToStripped('Put the hat on it', words(['Put', 0.1], ['a', 0.3], ['hat', 0.5], ['on', 0.7], ['it', 0.9]));
-  assert.deepEqual(aligned.map(anchor => anchor.charOffset), [0, 9, 12, 15]);
-  assert.equal(seekTimeForOffset(aligned, 8), 0.1, 'a click on "hat" starts back at "Put"');
+  assert.deepEqual(aligned.map(anchor => anchor.charOffset), [0, 8, 12, 15]);
+  assert.equal(seekTimeForOffset(aligned, 8), 0.5, 'a click on "hat" starts at "hat"');
+  assert.equal(seekTimeForOffset(aligned, 4), 0.1, 'a click on the misheard word starts at the word before');
+});
+
+test('a token matches only whole words, though punctuation at its edges needs no boundary', () => {
+  const anchors = (sentence: string, ...tokens: string[]) =>
+    alignWordsToStripped(sentence, words(...tokens.map((token, index): [string, number] => [token, index]))).map(anchor => anchor.charOffset);
+  assert.deepEqual(anchors('Thinking in the bin', 'in', 'bin'), [9, 16], '"in" skips the two inside "Thinking"');
+  assert.deepEqual(anchors("Don't stop", 'don', "'t", 'stop'), [0, 3, 6]);
+  assert.deepEqual(anchors('A well-known fact', 'a', 'well', '-known', 'fact'), [0, 2, 6, 13]);
+  // The trade-off: a token that is only part of a word anchors nothing, so a click there starts a word early.
+  assert.deepEqual(anchors('She walks home', 'she', 'walk', 'home'), [0, 10]);
 });
 
 test('playback skips the quiet lead-in, starting 30 ms before the first word, and from 0 without timings', () => {
