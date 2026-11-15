@@ -38,7 +38,7 @@ test('an item the server refuses is isolated, and the rest of its batch still sa
   const result = await saveItems(['a', 'b', 'bad', 'c', 'd'].map(item));
 
   assert.deepEqual([...result.revisions.keys()].sort(), ['a', 'b', 'c', 'd']);
-  assert.deepEqual([...(result.rejected ?? [])], [['bad', 'Item data is too large']]);
+  assert.deepEqual([...result.rejected], [['bad', 'Item data is too large']]);
   assert.equal(result.error, undefined);
   assert.deepEqual(batches[0], ['a', 'b', 'bad', 'c', 'd']);
   assert.ok(batches.length <= 1 + 2 * Math.ceil(Math.log2(5)), `split into few requests (${batches.length})`);

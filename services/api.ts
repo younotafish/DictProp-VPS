@@ -7,25 +7,12 @@ import { publishServerMutation } from './syncSignals';
 import { sortVocabCardsByUsage } from './usageAudit';
 import type { RawEssayCatalog } from './essayCatalog';
 
-// Same origin — Hono serves both API and static files
-const API_BASE = '';
-
 export const loadPrivateEssayCatalog = async (): Promise<RawEssayCatalog> =>
-  requestJson<RawEssayCatalog>(`${API_BASE}/api/essays/catalog`, undefined, 'Load private essay catalog');
-
-// Internal ID generator
-const generateId = (): string => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-};
+  requestJson<RawEssayCatalog>('/api/essays/catalog', undefined, 'Load private essay catalog');
 
 // ============================================================================
-// Items API (replaces firebase.ts data functions)
+// Items API
 // ============================================================================
-
-export type { RevisionCursor };
 
 /** The whole library, plus the cursor after its last change, where the next delta pull starts. */
 export const loadAllItems = async (): Promise<{ items: StoredItem[]; cursor: RevisionCursor }> => {
@@ -57,7 +44,7 @@ export const loadItemChanges = async (cursor: RevisionCursor, limit = 500): Prom
     afterId: cursor.id,
     limit: String(limit),
   });
-  return requestJson<ItemChanges>(`${API_BASE}/api/items?${params}`, undefined, 'Load item changes');
+  return requestJson<ItemChanges>(`/api/items?${params}`, undefined, 'Load item changes');
 };
 
 /** What the server kept for a push: new revisions, plus its own copy wherever it kept different content. */
@@ -65,7 +52,7 @@ export interface SaveItemsResult {
   revisions: Map<string, number>;
   canonical: Map<string, StoredItem>;
   /** Items the server refuses (invalid, or too large to send), with its reason. The others still save. */
-  rejected?: Map<string, string>;
+  rejected: Map<string, string>;
   /** Why the push stopped early. The batches before it saved; it and the rest didn't. */
   error?: unknown;
 }
@@ -77,13 +64,13 @@ export const saveItems = async (items: readonly StoredItem[]): Promise<SaveItems
   const send = async (batch: readonly StoredItem[]): Promise<void> => {
     let result: { revisions?: Record<string, number>; canonical?: StoredItem[] };
     try {
-      result = await requestJson(`${API_BASE}/api/items`, jsonRequest('PUT', batch), 'Save items');
+      result = await requestJson('/api/items', jsonRequest('PUT', batch), 'Save items');
     } catch (error) {
       // The server refuses a whole batch for one bad item, so a refused batch is split until each bad
       // item is alone: otherwise it would hold back every save after it.
       if (!(error instanceof HttpError) || (error.status !== 400 && error.status !== 413)) throw error;
       if (batch.length === 1) {
-        saved.rejected!.set(batch[0].data.id, error.responseBody || error.message);
+        saved.rejected.set(batch[0].data.id, error.responseBody || error.message);
         return;
       }
       const half = Math.ceil(batch.length / 2);
@@ -110,10 +97,10 @@ export const saveItems = async (items: readonly StoredItem[]): Promise<SaveItems
 };
 
 export const loadReviewHistory = async (recentSince: number): Promise<ReviewHistory> =>
-  requestJson(`${API_BASE}/api/reviews/history?recentSince=${recentSince}`, undefined, 'Load review history');
+  requestJson(`/api/reviews/history?recentSince=${recentSince}`, undefined, 'Load review history');
 
 export const saveReviewEvent = async (event: ReviewEvent): Promise<void> =>
-  requestVoid(`${API_BASE}/api/reviews`, jsonRequest('POST', event), 'Save review event');
+  requestVoid('/api/reviews', jsonRequest('POST', event), 'Save review event');
 
 export interface AppliedReviewResponse {
   applied: boolean;
@@ -129,7 +116,7 @@ export const applyReviewMutation = async (
   seedItem?: StoredItem,
 ): Promise<AppliedReviewResponse> => {
   const result = await requestJson<AppliedReviewResponse>(
-    `${API_BASE}/api/reviews/apply`,
+    '/api/reviews/apply',
     jsonRequest('POST', { event, itemIds, ...(seedItem ? { seedItem } : {}) }),
     'Apply review',
   );
@@ -147,7 +134,7 @@ export interface UndoReviewResponse {
 
 export const undoReviewMutation = async (eventId: string): Promise<UndoReviewResponse> => {
   const result = await requestJson<UndoReviewResponse>(
-    `${API_BASE}/api/reviews/${encodeURIComponent(eventId)}/undo`,
+    `/api/reviews/${encodeURIComponent(eventId)}/undo`,
     { method: 'POST' },
     'Undo review',
   );
@@ -163,7 +150,7 @@ export const undoReviewMutation = async (eventId: string): Promise<UndoReviewRes
  */
 export const loadItemImage = async (itemId: string, imageVersion?: string): Promise<Blob | null> => {
   const versionQuery = imageVersion ? `?v=${encodeURIComponent(imageVersion)}` : '';
-  const res = await fetch(`${API_BASE}/api/items/${encodeURIComponent(itemId)}/image${versionQuery}`);
+  const res = await fetch(`/api/items/${encodeURIComponent(itemId)}/image${versionQuery}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Failed to load image: ${res.status}`);
   return res.blob();
@@ -195,7 +182,7 @@ export const loadItemImagesBatch = async (
  */
 export const getServerImageManifest = async (): Promise<Set<string>> => {
   const ids = await requestJson<unknown>(
-    `${API_BASE}/api/items/images/manifest`,
+    '/api/items/images/manifest',
     undefined,
     'Load image manifest',
   );
@@ -203,16 +190,14 @@ export const getServerImageManifest = async (): Promise<Set<string>> => {
 };
 
 /**
- * Upload images (files or data URIs) to the server (upload-on-create and recovery).
- * Callers should chunk to <=10 entries per call to keep payloads small.
+ * Uploads pictures (files or data URIs) to the server, one request each, in order: a new picture's upload and the
+ * recovery action. Throws at the first that fails; the ones before it are stored.
  */
-export const uploadImages = async (
-  images: Record<string, Blob | string>
-): Promise<{ ok: boolean; saved: number }> => {
+export const uploadImages = async (images: Record<string, Blob | string>): Promise<void> => {
   let saved = 0;
   for (const [id, image] of Object.entries(images)) {
     const blob = typeof image === 'string' ? dataUriToBlob(image) : image;
-    const response = await fetch(`${API_BASE}/api/items/${encodeURIComponent(id)}/image`, {
+    const response = await fetch(`/api/items/${encodeURIComponent(id)}/image`, {
       method: 'PUT', headers: { 'Content-Type': blob.type }, body: blob,
     });
     if (!response.ok) throw new Error(`Upload image failed (${response.status})`);
@@ -220,7 +205,6 @@ export const uploadImages = async (
   }
   // Each upload bumps the revision of the items showing the image, so other tabs pull the new marker.
   if (saved > 0) publishServerMutation();
-  return { ok: true, saved };
 };
 
 // ============================================================================
@@ -230,7 +214,7 @@ export const uploadImages = async (
 export const importJSON = async (
   items: any[],
 ): Promise<{ ok: boolean; imported: number; skipped: number; imagesFetched: number }> => {
-  const res = await fetch(`${API_BASE}/api/import`, {
+  const res = await fetch('/api/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(items),
@@ -243,7 +227,7 @@ export const importJSON = async (
 };
 
 // ============================================================================
-// AI API (replaces aiService.ts)
+// AI API
 // ============================================================================
 
 // Each AI route has an overall time budget on the server (server/src/routes/ai.ts: analysis 300 s,
@@ -264,7 +248,7 @@ const toAiError = (error: unknown): unknown => {
 
 const postAi = async (path: string, body: unknown, label: string, timeoutMs: number): Promise<any> => {
   try {
-    return await requestJson<any>(`${API_BASE}${path}`, jsonRequest('POST', body), label, timeoutMs);
+    return await requestJson<any>(path, jsonRequest('POST', body), label, timeoutMs);
   } catch (error) {
     throw toAiError(error);
   }
@@ -285,7 +269,7 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
     throw new Error("Cannot analyze empty text");
   }
 
-  const attemptCall = async (): Promise<SearchResult> => {
+  try {
     const data = await postAi(
       '/api/analyze',
       { text, ...(options?.mode ? { mode: options.mode } : {}) },
@@ -295,10 +279,10 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
 
     const vocabs = sortVocabCardsByUsage((data.vocabs || [])
       .filter((v: any) => v && typeof v.word === 'string' && v.word.trim().length > 0)
-      .map((v: any) => ({ ...v, id: generateId() })));
+      .map((v: any) => ({ ...v, id: crypto.randomUUID() })));
 
     return {
-      id: generateId(),
+      id: crypto.randomUUID(),
       query: data.query || text,
       translation: data.translation,
       grammar: data.grammar,
@@ -308,10 +292,6 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
       timestamp: Date.now(),
       originalQuery: data.originalQuery,
     };
-  };
-
-  try {
-    return await attemptCall();
   } catch (error: any) {
     const msg = error.message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
@@ -440,13 +420,9 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
     throw new Error(`You can compare up to ${MAX_COMPARE_WORDS} words at a time.`);
   }
 
-  const attemptCall = async (): Promise<ComparisonResult> => {
+  try {
     const data = await postAi('/api/compare', { words: uniqueWords }, 'Comparison', COMPARE_TIMEOUT_MS);
     return sanitizeComparisonResult(data, uniqueWords);
-  };
-
-  try {
-    return await attemptCall();
   } catch (error: any) {
     const msg = error.message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
@@ -467,7 +443,7 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
 
 export const loadComparisons = async (): Promise<StoredComparison[]> => {
   const stored = await requestJson<unknown>(
-    `${API_BASE}/api/comparisons`,
+    '/api/comparisons',
     undefined,
     'Load comparisons',
   );
@@ -484,7 +460,7 @@ export const loadComparisons = async (): Promise<StoredComparison[]> => {
 
 export const saveComparisonApi = async (comparison: StoredComparison): Promise<void> => {
   return requestVoid(
-    `${API_BASE}/api/comparisons`,
+    '/api/comparisons',
     jsonRequest('PUT', comparison),
     'Save comparison',
   );
@@ -526,7 +502,7 @@ const TTS_TIMINGS_TIMEOUT_MS = 6000;  // timings are non-essential (lead-in trim
 /** Fetch a cached clip by key. Returns the audio Blob, or null on miss (404) / timeout / error. */
 export const fetchCachedTTS = async (key: string, timeoutMs = TTS_AUDIO_TIMEOUT_MS): Promise<Blob | null> => {
   try {
-    return await fetchWithin(`${API_BASE}/api/tts/${key}.mp3`, undefined, timeoutMs, async (res) => (res.ok ? await res.blob() : null));
+    return await fetchWithin(`/api/tts/${key}.mp3`, undefined, timeoutMs, async (res) => (res.ok ? await res.blob() : null));
   } catch {
     return null;
   }
@@ -535,7 +511,7 @@ export const fetchCachedTTS = async (key: string, timeoutMs = TTS_AUDIO_TIMEOUT_
 /** Fetch a clip's per-word timings by key. Returns the WordTiming[] or null on miss / timeout / error. */
 export const fetchCachedTTSTimings = async (key: string, timeoutMs = TTS_TIMINGS_TIMEOUT_MS): Promise<WordTiming[] | null> => {
   try {
-    return await fetchWithin(`${API_BASE}/api/tts/${key}/timings`, undefined, timeoutMs, async (res) => {
+    return await fetchWithin(`/api/tts/${key}/timings`, undefined, timeoutMs, async (res) => {
       if (!res.ok) return null;
       const data = await res.json();
       return Array.isArray(data) ? data : null;
@@ -557,7 +533,7 @@ export const requestTTSGeneration = async (
   const total = { generated: 0, skipped: 0, failed: 0 };
   for (let start = 0; start < items.length; start += TTS_GENERATE_CHUNK) {
     const result = await requestJson<{ generated?: number; skipped?: number; failed?: number }>(
-      `${API_BASE}/api/tts/generate`,
+      '/api/tts/generate',
       jsonRequest('POST', { items: items.slice(start, start + TTS_GENERATE_CHUNK) }),
       'Generate TTS',
       TTS_GENERATE_TIMEOUT_MS,
@@ -574,7 +550,7 @@ export interface TtsBackfillStatus { running: boolean; total: number; done: numb
 /** Start the server-side background backfill (audio + word timings for every sentence). Idempotent. */
 export const startTtsBackfill = async (): Promise<TtsBackfillStatus> => {
   return requestJson<TtsBackfillStatus>(
-    `${API_BASE}/api/tts/backfill`,
+    '/api/tts/backfill',
     { method: 'POST' },
     'Start TTS backfill',
   );
@@ -583,25 +559,8 @@ export const startTtsBackfill = async (): Promise<TtsBackfillStatus> => {
 /** Poll the server-side backfill progress. */
 export const getTtsBackfillStatus = async (): Promise<TtsBackfillStatus> => {
   return requestJson<TtsBackfillStatus>(
-    `${API_BASE}/api/tts/backfill`,
+    '/api/tts/backfill',
     undefined,
     'Load TTS backfill status',
   );
-};
-
-/** Of the given keys, which are already cached on the server (so the bulk sweep can skip them). */
-export const ttsManifest = async (keys: string[]): Promise<Set<string>> => {
-  if (keys.length === 0) return new Set();
-  try {
-    const res = await fetch(`${API_BASE}/api/tts/manifest`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keys }),
-    });
-    if (!res.ok) return new Set();
-    const data = await res.json();
-    return new Set(Array.isArray(data.have) ? data.have : []);
-  } catch {
-    return new Set();
-  }
 };

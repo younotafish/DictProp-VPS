@@ -338,7 +338,7 @@ test('an outdated push acknowledgement changes nothing', () => {
 test('an edit saved from a copy older than the saved one never overwrites newer server content', () => {
   const opened: StoredItem = { type: 'vocab', data: vocab('x'), savedAt: 1, updatedAt: 1, serverRevision: 10, srs: srs('x', 0, 0) };
   opened.lastSyncedHash = getItemContentHash(opened);
-  const conflict = (canonical: StoredItem): SaveItemsResult => ({ revisions: new Map(), canonical: new Map([['x', canonical]]) });
+  const conflict = (canonical: StoredItem): Pick<SaveItemsResult, 'revisions' | 'canonical'> => ({ revisions: new Map(), canonical: new Map([['x', canonical]]) });
 
   // The enrichment cycle rewrote the card while a view still held the copy it opened with.
   const enriched: StoredItem = { ...opened, serverRevision: 11, data: { ...vocab('x'), definition: 'enriched' } };

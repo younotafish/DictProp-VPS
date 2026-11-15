@@ -425,7 +425,7 @@ export const reconcileReviewedItem = (
 export const applyServerSave = (
   items: StoredItem[],
   pushed: readonly StoredItem[],
-  result: SaveItemsResult,
+  result: Pick<SaveItemsResult, 'revisions' | 'canonical'>,
 ): StoredItem[] => {
   const pushedHashes = new Map(pushed.map(item => [item.data.id, getItemContentHash(item)]));
   let changed = false;
