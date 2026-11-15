@@ -24,8 +24,7 @@ export const filterNoun = (filter: NotebookFilter): string =>
   filter === 'phrase' ? 'phrases' : filter === 'vocab' ? 'words' : 'items';
 
 export interface NotebookList {
-  /** Listed active items, in display order. */
-  active: StoredItem[];
+  /** The listed unarchived items, grouped by spelling in display order. */
   groups: ItemGroup[];
   archived: StoredItem[];
   archivedGroups: ItemGroup[];
@@ -166,7 +165,7 @@ export const buildNotebookList = (
     dueGroups = groupByTitle(due.sort(byPriority));
   }
 
-  return { active, groups: groupByTitle(active), archived, archivedGroups: groupByTitle(archived), dueGroups };
+  return { groups: groupByTitle(active), archived, archivedGroups: groupByTitle(archived), dueGroups };
 };
 
 /**

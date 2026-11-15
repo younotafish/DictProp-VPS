@@ -109,7 +109,7 @@ test('archived items form their own alphabetical section and the type filter app
   assert.deepEqual(titles(all.archivedGroups), ['apple', 'break a leg', 'zebra']);
 
   const words = buildNotebookList(items, null, 'familiarity', 'vocab', NOW);
-  assert.deepEqual(ids(words.active), ['mango:']);
+  assert.deepEqual(titles(words.groups), ['mango']);
   assert.deepEqual(ids(words.archived), ['apple:', 'zebra:']);
 });
 
