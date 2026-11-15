@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getItemContentHash, isItemDirty } from '../../services/itemHash.ts';
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../../services/sync.ts';
-import type { SaveItemsResult } from '../../services/api.ts';
+import type { SaveItemsResult } from '../../services/api/library.ts';
 import { saveOverExisting } from '../../services/items.ts';
 import type { StoredItem, VocabCard } from '../../types.ts';
 

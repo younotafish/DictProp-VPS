@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fetchCachedTTS, fetchCachedTTSTimings, ttsKey } from '../../services/api.ts';
+import { fetchCachedTTS, fetchCachedTTSTimings, ttsKey } from '../../services/api/tts.ts';
 
 // The cached-clip requests only need fetch; each test scripts the server's answer.
 const realFetch = globalThis.fetch;

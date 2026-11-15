@@ -1,4 +1,4 @@
-import { uploadImages } from './api';
+import { uploadImages } from './api/images';
 import { optimizeImages } from './imageProcessing';
 import { saveImagesBatch } from './imageStore';
 import { warn } from './logger';

@@ -4,7 +4,7 @@ import { warn } from './logger';
 import { getItemContentHash, isItemDirty } from './itemHash';
 import { getServerImageVersion } from './libraryImages';
 import { isSameJson } from './sameJson';
-import type { SaveItemsResult } from './api';
+import type { SaveItemsResult } from './api/library';
 
 // MIRRORS keepServerOwnedData in server/src/db.ts. Only server-side jobs write these fields, and the server
 // keeps them when a save leaves them out (a fresh AI result saved over the card, say).

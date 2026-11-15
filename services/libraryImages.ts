@@ -1,5 +1,5 @@
 import { isPhraseItem, isVocabItem, type SearchResult, type StoredItem, type VocabCard } from '../types';
-import { loadItemImage } from './api';
+import { loadItemImage } from './api/images';
 import { log } from './logger';
 import { saveImage } from './imageStore';
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { saveItems } from '../../services/api.ts';
+import { saveItems } from '../../services/api/library.ts';
 import { HttpError } from '../../services/http.ts';
 import type { StoredItem } from '../../types.ts';
 

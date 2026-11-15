@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analyzeInput, compareWords, loadComparisons } from '../../services/api.ts';
+import { analyzeInput, compareWords } from '../../services/api/ai.ts';
+import { loadComparisons } from '../../services/api/comparisons.ts';
 import { HttpError } from '../../services/http.ts';
 
 // The AI client functions only need fetch from the browser; each test scripts its reply and records the calls.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { loadAllItems, loadItemChangesSince, type ItemChanges } from '../../services/api.ts';
+import { loadAllItems, loadItemChangesSince, type ItemChanges } from '../../services/api/library.ts';
 import type { RevisionCursor, StoredItem } from '../../types.ts';
 
 // The pager only needs fetch; each test serves pages keyed by the cursor they start after.
