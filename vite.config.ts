@@ -12,10 +12,31 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const OPTIONAL_MEDIA = /^assets\/(?:neuralTts|transformers\.web|kokoro|ort-wasm)[^/]*\.(?:js|wasm)$/;
 
 /**
- * Stamps the build into the copied service worker: the hashed files to precache and a version derived from
- * them, so every deploy that changes the app changes the worker, and devices install it in the background.
+ * The service worker a build ships: public/sw.js stamped with the build's hashed files to precache, the voice
+ * runtime it caches on first use instead, and a version derived from them and the shell, so every deploy that
+ * changes the app changes the worker, and devices install it in the background. `files` are the bundle's file
+ * names (`assets/index-1a2b.js`). The tests stamp their workers with it too.
  */
-function stampServiceWorker(): Plugin {
+export function stampServiceWorker(worker: string, build: { html: string; files: readonly string[] }): string {
+  const files = build.files.filter(name => name.startsWith('assets/')).sort();
+  const precache = files.filter(name => !OPTIONAL_MEDIA.test(name)).map(name => `/${name}`);
+  const optional = files.filter(name => OPTIONAL_MEDIA.test(name)).map(name => `/${name}`);
+  const version = createHash('sha256').update(build.html).update(files.join('\n')).digest('hex').slice(0, 16);
+
+  let stamped = worker;
+  for (const [placeholder, value] of [
+    ["const VERSION = 'dev';", `const VERSION = '${version}';`],
+    ['const PRECACHE = [];', `const PRECACHE = ${JSON.stringify(precache)};`],
+    ['const OPTIONAL = [];', `const OPTIONAL = ${JSON.stringify(optional)};`],
+  ]) {
+    if (!stamped.includes(placeholder)) throw new Error(`sw.js no longer contains \`${placeholder}\``);
+    stamped = stamped.replace(placeholder, () => value);
+  }
+  return stamped;
+}
+
+/** Stamps the build into the service worker Vite copied from public/ (see stampServiceWorker). */
+function serviceWorkerStamp(): Plugin {
   let outDir = '';
   return {
     name: 'stamp-service-worker',
@@ -24,23 +45,9 @@ function stampServiceWorker(): Plugin {
       outDir = resolve(config.root, config.build.outDir);
     },
     writeBundle(_options, bundle) {
-      const files = Object.keys(bundle).filter(name => name.startsWith('assets/')).sort();
-      const precache = files.filter(name => !OPTIONAL_MEDIA.test(name)).map(name => `/${name}`);
-      const optional = files.filter(name => OPTIONAL_MEDIA.test(name)).map(name => `/${name}`);
       const html = readFileSync(resolve(outDir, 'index.html'), 'utf8');
-      const version = createHash('sha256').update(html).update(files.join('\n')).digest('hex').slice(0, 16);
-
       const workerPath = resolve(outDir, 'sw.js');
-      let worker = readFileSync(workerPath, 'utf8');
-      for (const [placeholder, value] of [
-        ["const VERSION = 'dev';", `const VERSION = '${version}';`],
-        ['const PRECACHE = [];', `const PRECACHE = ${JSON.stringify(precache)};`],
-        ['const OPTIONAL = [];', `const OPTIONAL = ${JSON.stringify(optional)};`],
-      ]) {
-        if (!worker.includes(placeholder)) throw new Error(`sw.js no longer contains \`${placeholder}\``);
-        worker = worker.replace(placeholder, () => value);
-      }
-      writeFileSync(workerPath, worker);
+      writeFileSync(workerPath, stampServiceWorker(readFileSync(workerPath, 'utf8'), { html, files: Object.keys(bundle) }));
     },
   };
 }
@@ -75,7 +82,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    stampServiceWorker(),
+    serviceWorkerStamp(),
   ],
   optimizeDeps: {
     // kokoro-js + transformers.js (onnxruntime-web wasm/workers) don't play well with Vite's
