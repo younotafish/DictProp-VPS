@@ -23,6 +23,7 @@ import { alignAudioLocally, type AlignmentPriority } from '../local-whisper.js';
 import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
 import type { WordTiming } from '../tts-alignment.js';
+import { GENERATE_MAX_ITEMS } from '../shared/ai-limits.js';
 
 export const ttsRoutes = new Hono();
 
@@ -615,7 +616,6 @@ ttsRoutes.get('/tts/:name/timings', async (c) => {
 // client splits into requests of at most GENERATE_MAX_ITEMS. Responds once each clip's AUDIO is stored —
 // it is playable then — and aligns word timings afterwards; a lone live clip's alignment jumps ahead of
 // backfill work. A client that disconnects stops further items from starting.
-export const GENERATE_MAX_ITEMS = 40;
 // Covers every study sentence: essay-catalog sentences run to ~600 characters and examples to 1000.
 export const GENERATE_MAX_TEXT_CHARS = 1000;
 const GENERATE_CONCURRENCY = 3;

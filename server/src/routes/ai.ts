@@ -13,24 +13,20 @@ import {
 import { containsChinese, generateAnalysisData } from '../ai/analysis.js';
 import { COMPARE_WORDS_INSTRUCTION, TEXT_DETECT_INSTRUCTION } from '../ai/prompts.js';
 import { sanitizeComparison, sanitizeDetectedWords, trimmedString } from '../ai/sanitize.js';
+import {
+  ANALYSIS_BUDGET_MS,
+  COMPARE_BUDGET_MS,
+  EXTRACT_BUDGET_MS,
+  TRANSCRIBE_BUDGET_MS,
+} from '../shared/ai-limits.js';
 import { isWordOrPhrase, MAX_COMPARE_WORDS } from '../shared/query-mode.js';
 
 // The JSON extractor lives with the chat client; re-exported for existing callers and tests.
 export { parseModelJson } from '../ai-client.js';
 
 // ============================================================================
-// Budgets and limits
+// Limits (the request budgets live in shared/ai-limits.ts, where the client can read them too)
 // ============================================================================
-
-// DeepSeek-V4-Flash can take well over a minute to emit a full multi-sense vocab card set ("run down"
-// alone yields 6 full cards, ~74s clean and more under VPS load). Each request gets ONE overall budget,
-// shared by the first answer, targeted card repairs and a re-ask, and it ends early if the client
-// disconnects. The client waits this long plus 30s (services/api.ts).
-const ANALYSIS_BUDGET_MS = 300_000;
-// Comparisons run in the background queue and get a larger budget than searches.
-const COMPARE_BUDGET_MS = 600_000;
-const EXTRACT_BUDGET_MS = 240_000;
-const TRANSCRIBE_BUDGET_MS = 30_000;
 
 const COMPARE_MAX_TOKENS = 8_000;
 const EXTRACT_MAX_TOKENS = 8_000;

@@ -9,11 +9,11 @@ const DATA_DIR = process.env.DATA_DIR!;
 
 const {
   cleanCasualRespelling,
-  GENERATE_MAX_ITEMS,
   GENERATE_MAX_TEXT_CHARS,
   setTtsDependenciesForTest,
   ttsRoutes,
 } = await import('../src/routes/tts.js');
+const { GENERATE_MAX_ITEMS } = await import('../src/shared/ai-limits.js');
 const { createPriorityQueue } = await import('../src/local-whisper.js');
 type Dependencies = Parameters<typeof setTtsDependenciesForTest>[0];
 
