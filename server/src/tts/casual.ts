@@ -46,6 +46,56 @@ export function cleanCasualRespelling(value: unknown): string | null {
   return text || null;
 }
 
+// A batch line counts only when it respells its own sentence: of the batch's sentences, its own shares the most letter
+// pairs with it (a line shifted from a neighbor shares more with that neighbor), and at least this much (Dice). A bar
+// alone can't tell them apart: "I'm gonna go." scores 0.32 against "I am going to go.", while two unrelated short
+// sentences can reach 0.4.
+const MIN_RESPELLING_SIMILARITY = 0.2;
+
+function letterPairs(text: string): Map<string, number> {
+  const letters = text.toLowerCase().replace(/[^a-z]/g, '');
+  const pairs = new Map<string, number>();
+  for (let i = 0; i + 1 < letters.length; i++) {
+    const pair = letters.slice(i, i + 2);
+    pairs.set(pair, (pairs.get(pair) ?? 0) + 1);
+  }
+  return pairs;
+}
+
+/** The Dice similarity of two texts' letter pairs (a-z only): 1 for the same letters in the same order, 0 for none shared. */
+export function letterPairSimilarity(a: string, b: string): number {
+  const pairsA = letterPairs(a);
+  const pairsB = letterPairs(b);
+  let total = 0;
+  let shared = 0;
+  for (const count of pairsA.values()) total += count;
+  for (const [pair, count] of pairsB) {
+    total += count;
+    shared += Math.min(count, pairsA.get(pair) ?? 0);
+  }
+  return total === 0 ? 0 : (2 * shared) / total;
+}
+
+/**
+ * The batch reply's lines, one per sentence, keeping only those that respell their own sentence. A list number the
+ * model mirrored ("1. I'm gonna go.") is removed, unless the sentence itself starts with it; a line closer to another
+ * sentence (one shifted from a neighbor) or to none is null, so its sentence is respelled on its own when its clip is
+ * made.
+ */
+export function acceptBatchRespellings(sentences: string[], lines: unknown[]): Array<string | null> {
+  return sentences.map((sentence, index) => {
+    let text = cleanCasualRespelling(lines[index]);
+    const echoed = new RegExp(`^${index + 1}\\s*[.):-]\\s+`);
+    if (text && echoed.test(text) && !echoed.test(sentence)) text = cleanCasualRespelling(text.replace(echoed, ''));
+    if (!text) return null;
+    const respelling = text;
+    const own = letterPairSimilarity(sentence, respelling);
+    const closestToOwn = sentences.every((other, otherIndex) =>
+      otherIndex === index || letterPairSimilarity(other, respelling) <= own);
+    return own >= MIN_RESPELLING_SIMILARITY && closestToOwn ? respelling : null;
+  });
+}
+
 /** True when no respelling can succeed for the rest of a run: the provider's balance is spent, or the key is missing or refused. */
 export function respellingUnavailable(error: unknown): error is AiError {
   return error instanceof AiError && (error.kind === 'quota' || error.kind === 'config');
@@ -73,8 +123,8 @@ export async function reduceToCasual(sentence: string, chat: ChatText = chatText
 }
 
 // Respell MANY sentences in one chat call (batch throughput for the backfill). Returns reduced forms
-// aligned 1:1 with the input; a null entry (or all of them, when the reply is unusable) is respelled on its
-// own when its clip is made. Rejects only when respelling can't work for the rest of the run: the provider's
+// aligned 1:1 with the input; a null entry (a line that doesn't respell its sentence, or all of them when the
+// reply is unusable) is respelled on its own when its clip is made. Rejects only when respelling can't work for the rest of the run: the provider's
 // balance is spent or the key is missing or refused.
 export async function reduceCasualBatch(sentences: string[], chat: ChatJson = chatJson): Promise<Array<string | null>> {
   if (sentences.length <= 1) return sentences.length ? [await reduceToCasual(sentences[0])] : [];
@@ -95,9 +145,7 @@ export async function reduceCasualBatch(sentences: string[], chat: ChatJson = ch
     return sentences.map(() => null);
   }
   const lines = Array.isArray(reply.lines) ? reply.lines : null;
-  if (lines && lines.length === sentences.length) {
-    return lines.map((line: unknown) => cleanCasualRespelling(line));
-  }
+  if (lines && lines.length === sentences.length) return acceptBatchRespellings(sentences, lines);
   console.warn(`[tts] casual respelling batch answered ${lines ? lines.length : 'no'} lines for ${sentences.length} sentences`);
   return sentences.map(() => null);
 }

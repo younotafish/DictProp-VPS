@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AiError, createChatClient, createChatTextClient, type FetchLike } from '../src/ai-client.js';
-import { cleanCasualRespelling, reduceCasualBatch, reduceToCasual } from '../src/tts/casual.js';
+import {
+  acceptBatchRespellings,
+  cleanCasualRespelling,
+  letterPairSimilarity,
+  reduceCasualBatch,
+  reduceToCasual,
+} from '../src/tts/casual.js';
 import { httpStatus, reply, type Responder } from './support/ai.js';
 
 // DeepInfra's chat API answered from a script (the last answer repeats), with each request body recorded.
 function chat(...responders: Responder[]) {
-  const bodies: any[] = [];
+  const bodies: Array<{ model: string; temperature: number; max_tokens: number; response_format?: unknown; messages: Array<{ content: string }> }> = [];
   const fetch: FetchLike = async (_url, init = {}) => {
     bodies.push(JSON.parse(String(init.body)));
     return responders[Math.min(bodies.length, responders.length) - 1](init);
@@ -67,4 +73,28 @@ test('casual respellings lose wrapping quotes but keep their apostrophes', () =>
   assert.equal(cleanCasualRespelling('""'), null);
   assert.equal(cleanCasualRespelling('   '), null);
   assert.equal(cleanCasualRespelling(42), null);
+});
+
+test('a batch line loses a list number the model mirrored, quoted or not, but a sentence that starts with one keeps it', () => {
+  const sentences = ['I am going to head home now.', 'Let me see what you have got.', '3. Preheat the oven first.'];
+  assert.deepEqual(acceptBatchRespellings(sentences, [
+    "1. I'm gonna head home now.",
+    '"2) Lemme see whatcha got."',
+    '3. Preheat the oven first.',
+  ]), ["I'm gonna head home now.", 'Lemme see whatcha got.', '3. Preheat the oven first.']);
+  assert.deepEqual(acceptBatchRespellings(['I am going to head home now.'], ['1. "I\'m gonna head home now."']), ["I'm gonna head home now."]);
+});
+
+test('a batch line that respells another sentence is dropped, so its own sentence is respelled alone', () => {
+  const sentences = ['I want to go because of them.', 'We should have left earlier tonight.', 'Do you know what I mean?'];
+  // One line lost and another split: every line is its neighbor's.
+  const shifted = ["We shoulda left earlier tonight.", "D'ya know what I mean?", "I wanna go 'cause o' 'em."];
+  assert.deepEqual(acceptBatchRespellings(sentences, shifted), [null, null, null]);
+  // Reductions the prompt allows are kept, a heavily reduced short one too.
+  const aligned = ["I wanna go 'cause o' 'em.", 'We shoulda left earlier tonight.', "D'ya know whaddai mean?"];
+  assert.deepEqual(acceptBatchRespellings(sentences, aligned), aligned);
+  assert.deepEqual(acceptBatchRespellings(['I am going to go.', 'Let me see.'], ["I'm gonna go.", 'Lemme see.']), ["I'm gonna go.", 'Lemme see.']);
+  assert.ok(letterPairSimilarity('I am going to go.', "I'm gonna go.") < 0.4);
+  // A line like no sentence at all is dropped too.
+  assert.deepEqual(acceptBatchRespellings(['Let me see.', 'Kind of.'], ['Sure thing.', 'Kinda.']), [null, 'Kinda.']);
 });
