@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { db, getItemById, getItemImageBinary, upsertItem } = await import('../src/db.js');
+const { applyReviewEvent, db, getItemById, getItemImageBinary, undoReviewEvent, upsertItem } = await import('../src/db.js');
 
 const USER = 'conflict-user';
 const vocab = (id: string, extra: Record<string, unknown> = {}, srs: Record<string, unknown> = {}) => ({
@@ -112,4 +112,57 @@ test('a stale phrase copy keeps the stored image of each vocab and fills in the 
   }, USER);
   assert.deepEqual(storedImage('stale-phrase-kept'), pngVariant(5));
   assert.deepEqual(storedImage('stale-phrase-new'), pngVariant(6));
+});
+
+/** An item reviewed once and then undone, and the copy another device pulled between the two. */
+function reviewedThenUndone(id: string) {
+  upsertItem(vocab(id), USER);
+  const review = { id: `${id}-review`, itemId: id, itemType: 'vocab' as const, reviewedAt: 5_000, previousStep: 1, nextStep: 2 };
+  assert.equal(applyReviewEvent(review, [id], USER)?.applied, true);
+  const pulled = getItemById(id, USER, false)!;
+  assert.equal(pulled.srs.totalReviews, 2);
+  assert.equal(undoReviewEvent(review.id, USER)?.undone, true);
+  const restored = getItemById(id, USER, false)!;
+  assert.equal(restored.srs.totalReviews, 1);
+  return { pulled, restored };
+}
+
+test('a stale copy pulled before an undo cannot bring the undone review back', () => {
+  const id = 'undone-stale';
+  const { pulled, restored } = reviewedThenUndone(id);
+  const result = upsertItem({ ...pulled, data: { ...pulled.data, definition: 'edited on the other device' }, updatedAt: 9_000 }, USER);
+  assert.deepEqual(result, { revision: restored.serverRevision, conflicted: true });
+  const stored = getItemById(id, USER, false)!;
+  assert.deepEqual(stored.srs, restored.srs);
+  assert.equal(stored.data.definition, restored.data.definition);
+});
+
+test('a current copy carrying an undone review saves its content and keeps the restored schedule', () => {
+  const id = 'undone-current';
+  const { pulled, restored } = reviewedThenUndone(id);
+  // The other device rebased its edit onto the undo's revision but kept the reviewed schedule.
+  const result = upsertItem({
+    ...pulled, data: { ...pulled.data, definition: 'rebased edit' }, serverRevision: restored.serverRevision, updatedAt: 9_000,
+  }, USER);
+  assert.equal(result.conflicted, false);
+  const stored = getItemById(id, USER, false)!;
+  assert.equal(stored.data.definition, 'rebased edit');
+  assert.deepEqual(stored.srs, restored.srs);
+});
+
+test('a newer listen on a copy carrying an undone review still counts', () => {
+  const id = 'undone-listened';
+  const { pulled, restored } = reviewedThenUndone(id);
+  const result = upsertItem({ ...pulled, srs: { ...pulled.srs, lastExposureDate: 7_000 } }, USER);
+  assert.equal(result.conflicted, true);
+  assert.ok(result.revision > restored.serverRevision!);
+  assert.deepEqual(getItemById(id, USER, false)!.srs, { ...restored.srs, lastExposureDate: 7_000 });
+});
+
+test('a review made after the undo is newer progress again', () => {
+  const id = 'undone-then-reviewed';
+  const { restored } = reviewedThenUndone(id);
+  const later = { ...restored, srs: { ...restored.srs, lastReviewDate: 6_000, totalReviews: 2 }, updatedAt: 9_000 };
+  assert.equal(upsertItem(later, USER).conflicted, false);
+  assert.equal(getItemById(id, USER, false)!.srs.lastReviewDate, 6_000);
 });

@@ -42,6 +42,19 @@ test('the newest listen survives whichever schedule wins, and a newer incoming l
   assert.deepEqual(resolveSrs(stored, schedule(1_000, 1, 4_000)), { srs: stored, changed: false });
 });
 
+test('newer progress that ends in an undone review leaves the restored schedule in place', () => {
+  const restored = schedule(2_000, 2, 1_000);
+  const undoneTimes = new Set([3_000]);
+  const isUndone = (time: number) => undoneTimes.has(time);
+  assert.deepEqual(resolveSrs(restored, schedule(3_000, 3, 1_000), isUndone), { srs: restored, changed: false });
+  // Its newer listen still survives and still counts as a change.
+  assert.deepEqual(resolveSrs(restored, schedule(3_000, 3, 4_000), isUndone), { srs: schedule(2_000, 2, 4_000), changed: true });
+  // Progress from any other review wins as before, and the lookup only runs when the incoming copy would win.
+  const later = schedule(3_500, 3);
+  assert.deepEqual(resolveSrs(restored, later, isUndone), { srs: { ...later, lastExposureDate: 1_000 }, changed: true });
+  assert.deepEqual(resolveSrs(restored, schedule(1_000, 1), () => assert.fail('no lookup for older progress')).changed, false);
+});
+
 test('content is stale by server revision when the copy carries one, otherwise by its clock', () => {
   const clocks = { storedRevision: 5, storedUpdatedAt: 2_000 };
   assert.equal(isStaleContent({ ...clocks, incomingRevision: 4, incomingUpdatedAt: 9_999 }), true);

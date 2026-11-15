@@ -23,9 +23,19 @@ export function compareReviewProgress(a: unknown, b: unknown): number {
  * with newer review progress wins, whatever happens to the content. A passive listen is independent of review
  * progress, so the newest lastExposureDate always survives. `changed` says the incoming copy brought newer
  * progress or a newer listen, which earns a new revision even when its content is stale.
+ *
+ * `isUndoneReview(lastReviewDate)` says whether a review made at that time was undone. A schedule a review left
+ * carries the review's time as its lastReviewDate, so newer progress that ends in an undone review is a copy
+ * pulled before the undo, and the restored schedule stays.
  */
-export function resolveSrs(stored: unknown, incoming: unknown): { srs: unknown; changed: boolean } {
-  const order = compareReviewProgress(stored, incoming);
+export function resolveSrs(
+  stored: unknown,
+  incoming: unknown,
+  isUndoneReview: (lastReviewDate: number) => boolean = () => false,
+): { srs: unknown; changed: boolean } {
+  let order = compareReviewProgress(stored, incoming);
+  const incomingReview = numberOrZero(fieldOf(incoming, 'lastReviewDate'));
+  if (order < 0 && incomingReview > 0 && isUndoneReview(incomingReview)) order = 1;
   let srs = order > 0 ? stored : incoming;
   let changed = order < 0;
   const incomingExposure = numberOrZero(fieldOf(incoming, 'lastExposureDate'));

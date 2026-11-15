@@ -39,6 +39,9 @@ export const stmts = {
   getByIdScoped: db.prepare(`SELECT * FROM items WHERE id = ? AND user_id = ?`),
   getById: db.prepare(`SELECT * FROM items WHERE id = ?`),
   updateSrs: db.prepare(`UPDATE items SET srs = ?, updated_at = ?, revision = ? WHERE id = ? AND user_id = ?`),
+  // Reviews record their item's id and the time the review set as the schedule's lastReviewDate.
+  undoneReviewAt: db.prepare(`SELECT 1 FROM review_events
+    WHERE user_id = ? AND reviewed_at = ? AND item_id = ? AND undone_at IS NOT NULL LIMIT 1`),
 };
 
 // Row → StoredItem JSON
@@ -223,8 +226,9 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   const existingRevision = existing?.revision || 0;
 
   const storedSrs: unknown = existing ? JSON.parse(existing.srs) : undefined;
+  const isUndoneReview = (lastReviewDate: number) => !!stmts.undoneReviewAt.get(userId, lastReviewDate, id);
   const { srs, changed: srsChanged } = existing
-    ? resolveSrs(storedSrs, item.srs)
+    ? resolveSrs(storedSrs, item.srs, isUndoneReview)
     : { srs: item.srs, changed: false };
   const staleContent = !!existing && isStaleContent({
     storedRevision: existingRevision,
