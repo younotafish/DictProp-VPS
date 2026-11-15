@@ -202,7 +202,7 @@ export const notebookStats = (items: StoredItem[], now: number): { reviewedToday
   return { reviewedToday: reviewed, dueCount: due };
 };
 
-export interface ListNote {
+export interface ListNoteContent {
   message: string;
   /** Offer to look the query up with AI. */
   offerLookUp: boolean;
@@ -221,7 +221,7 @@ export const listNoteFor = ({ searchQuery, searchSettled, groupCount, archivedCo
   archivedCount: number;
   filter: NotebookFilter;
   canLookUp: boolean;
-}): ListNote | null => {
+}): ListNoteContent | null => {
   if (groupCount > 0) return null;
   if (searchQuery ? !searchSettled : archivedCount === 0 && filter === 'all') return null;
   const noun = filterNoun(filter);

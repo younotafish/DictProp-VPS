@@ -1,10 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
-import { BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, Archive, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
-import { UserMenu } from '../components/UserMenu';
-import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
-import { PlaybackSpeedToggle } from '../components/PlaybackSpeedToggle';
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
 import { JSONImport } from '../components/JSONImport';
@@ -19,9 +15,16 @@ import { error as logError } from '../services/logger';
 import { isTypingTarget } from '../components/keyboardTarget';
 import { NotebookGroup } from './notebook/NotebookGroup';
 import { SearchResultsCarousel } from './notebook/SearchResultsCarousel';
+import { NotebookHeader } from './notebook/NotebookHeader';
+import { NotebookToolsMenu } from './notebook/NotebookToolsMenu';
+import { NotebookSearchBar } from './notebook/NotebookSearchBar';
+import { ArchivedToggle, DueHeader, ListNote } from './notebook/ListRows';
+import { CompareBanner, CompareRow, CompareSelectedButton } from './notebook/CompareMode';
+import { EmptyNotebook } from './notebook/EmptyNotebook';
+import { BatchImportBanner, type BatchImportProgress } from './notebook/BatchImportBanner';
+import { SearchErrorBanner } from './notebook/SearchErrorBanner';
 
 const virtualRowKey = (_index: number, row: NotebookRow) => row.key;
-const noop = () => {};
 
 interface NotebookProps {
   items: StoredItem[];
@@ -48,7 +51,7 @@ interface NotebookProps {
   /** A card or dialog is open over the notebook, whose keys are its own. */
   hasOverlay: boolean;
   onBatchImport: (words: string[]) => void;
-  batchImportProgress: { current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean } | null;
+  batchImportProgress: BatchImportProgress | null;
   onJSONImported: () => void;
   onGenerateAllSpeech: () => void;
   ttsGenProgress: { current: number; total: number; isRunning: boolean } | null;
@@ -87,29 +90,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
   const [showJSONImport, setShowJSONImport] = useState(false);
-  const [showMaintenanceMenu, setShowMaintenanceMenu] = useState(false);
-  const maintenanceMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!showMaintenanceMenu) return;
-    const handleClick = (event: MouseEvent) => {
-      if (maintenanceMenuRef.current && !maintenanceMenuRef.current.contains(event.target as Node)) {
-        setShowMaintenanceMenu(false);
-      }
-    };
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault(); // closing the menu is all this Escape does
-      setShowMaintenanceMenu(false);
-      maintenanceMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    };
-    document.addEventListener('mousedown', handleClick);
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      document.removeEventListener('mousedown', handleClick);
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [showMaintenanceMenu]);
 
   // Compare mode state
   const [compareMode, setCompareMode] = useState(false);
@@ -393,31 +373,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       searchQuery, searchSettled, groupCount: list.groups.length, archivedCount: list.archived.length, filter: filterMode, canLookUp,
     });
     if (!note) return null;
-    return (
-      <div className="mx-3 mt-3 px-4 py-5 bg-white border border-dashed border-slate-200 rounded-2xl text-center">
-        <p className="text-sm text-slate-500">{note.message}</p>
-        {(note.offerLookUp || note.offerShowAll) && (
-          <div className="mt-3 flex flex-wrap justify-center gap-2">
-            {note.offerLookUp && (
-              <button
-                onClick={() => performAISearch(localSearchQuery)}
-                className="min-h-11 px-4 inline-flex items-center gap-2 rounded-xl bg-violet-50 text-violet-700 text-sm font-semibold hover:bg-violet-100 transition-colors"
-              >
-                <Wand2 size={16} /> Look it up with AI
-              </button>
-            )}
-            {note.offerShowAll && (
-              <button
-                onClick={() => setFilterMode('all')}
-                className="min-h-11 px-4 inline-flex items-center gap-2 rounded-xl bg-indigo-50 text-indigo-700 text-sm font-semibold hover:bg-indigo-100 transition-colors"
-              >
-                <Filter size={16} /> Show all items
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    );
+    return <ListNote note={note} onLookUp={() => performAISearch(localSearchQuery)} onShowAll={() => setFilterMode('all')} />;
   }, [list, searchSettled, searchQuery, filterMode, canLookUp, performAISearch, localSearchQuery]);
   const showListNote = listNote !== null;
 
@@ -437,64 +393,17 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
 
     if (row.type === 'compare-banner') {
       return (
-        <div className="px-3 pt-3">
-          <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Scale size={16} className="text-indigo-500" />
-              <span className="text-sm font-medium text-indigo-700">
-                Select 2-3 words to compare
-              </span>
-              {selectedForCompare.length > 0 && (
-                <span className="text-xs font-bold text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">
-                  {selectedForCompare.length} selected
-                </span>
-              )}
-            </div>
-            <button
-              onClick={() => { setCompareMode(false); setSelectedForCompare([]); }}
-              className="text-indigo-400 hover:text-indigo-600 p-1 rounded-full hover:bg-indigo-100 transition-colors"
-              title="Exit compare mode"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
+        <CompareBanner
+          selectedCount={selectedForCompare.length}
+          onExit={() => { setCompareMode(false); setSelectedForCompare([]); }}
+        />
       );
     }
 
-    if (row.type === 'due-header') {
-      return (
-        <div className="px-3 mt-4 pt-3 border-t border-dashed border-orange-200">
-          <div className="flex items-center gap-2 px-1 mb-3">
-            <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide">Due for Review</span>
-            <span className="text-xs text-slate-400">{row.count} words to revisit</span>
-          </div>
-        </div>
-      );
-    }
+    if (row.type === 'due-header') return <DueHeader count={row.count} />;
 
     if (row.type === 'archived-toggle') {
-      return (
-        <div className="px-3 mt-6 pt-4 border-t-2 border-slate-200">
-          <button
-            onClick={() => setShowArchived(open => !open)}
-            className="w-full flex items-center justify-between px-4 py-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <Archive size={18} className="text-slate-500" />
-              <span className="font-bold text-slate-700">Archived</span>
-              <span className="text-sm text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
-                {row.count} {row.count === 1 ? 'item' : 'items'}
-              </span>
-            </div>
-            {showArchived ? (
-              <ChevronUp size={18} className="text-slate-500" />
-            ) : (
-              <ChevronDown size={18} className="text-slate-500" />
-            )}
-          </button>
-        </div>
-      );
+      return <ArchivedToggle count={row.count} expanded={showArchived} onToggle={() => setShowArchived(open => !open)} />;
     }
 
     // row.type === 'group'
@@ -518,42 +427,15 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       };
 
       return (
-        <div className="px-3 py-1.5">
-          <div
-            role="checkbox"
-            tabIndex={0}
-            aria-checked={isSelected}
-            aria-disabled={!canSelect}
-            aria-label={displayWord}
-            className={`relative cursor-pointer transition-all ${isSelected ? 'ring-2 ring-indigo-400 rounded-2xl' : ''}`}
-            onClick={toggleSelected}
-            onKeyDown={(e) => {
-              if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) {
-                e.preventDefault();
-                toggleSelected();
-              }
-            }}
-          >
-            <div className={`absolute top-3 right-3 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
-              isSelected
-                ? 'bg-indigo-500 border-indigo-500 text-white'
-                : canSelect
-                  ? 'bg-white border-slate-300'
-                  : 'bg-slate-100 border-slate-200 opacity-50'
-            }`}>
-              {isSelected && <Check size={14} />}
-            </div>
-            <div className="pointer-events-none" inert>
-              <NotebookGroup
-                group={group}
-                section={section}
-                groupIndex={groupIndex}
-                onViewDetail={noop}
-                onDelete={noop}
-              />
-            </div>
-          </div>
-        </div>
+        <CompareRow
+          group={group}
+          section={section}
+          groupIndex={groupIndex}
+          displayWord={displayWord}
+          isSelected={isSelected}
+          canSelect={canSelect}
+          onToggle={toggleSelected}
+        />
       );
     }
 
@@ -582,31 +464,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   }, []);
 
   if (!hasSavedItems && !localSearchQuery) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50">
-        <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
-          <BookOpen size={32} className="text-indigo-300" />
-        </div>
-        <h3 className="text-xl font-bold text-slate-700 mb-2">Your notebook is empty</h3>
-        <p className="text-sm mb-8 max-w-xs mx-auto">Search for a word or phrase to get started.</p>
-
-        <div className="w-full max-w-sm">
-          <form onSubmit={(e) => { e.preventDefault(); if (localSearchQuery.trim()) onSearch(localSearchQuery.trim()); }} className="relative">
-            <input
-              type="text"
-              value={localSearchQuery}
-              onChange={(e) => setLocalSearchQuery(e.target.value)}
-              placeholder="Search a word or phrase..."
-              className="w-full px-4 py-3 pr-12 rounded-xl border border-slate-200 bg-white text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-base"
-              autoFocus
-            />
-            <button type="submit" className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-500 hover:text-indigo-700">
-              <Search size={20} />
-            </button>
-          </form>
-        </div>
-      </div>
-    );
+    return <EmptyNotebook query={localSearchQuery} onQueryChange={setLocalSearchQuery} onSearch={onSearch} />;
   }
 
   return (
@@ -615,231 +473,71 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       className="h-full overflow-y-auto overflow-x-hidden bg-slate-50"
       onScroll={handleScroll}
     >
-      {/* Header */}
-      <div ref={headerRef} className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200/50 transition-transform duration-300">
-        <div className="px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
-          <div className="min-w-0">
-            <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-            <p className="text-xs text-slate-500 font-medium truncate">{savedCount} saved · {reviewedToday} reviewed today · {dueCount} due</p>
-          </div>
-          <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 min-w-0">
-            {isOnline && (
-              <div className="relative shrink-0" ref={maintenanceMenuRef}>
-                <button
-                  onClick={() => setShowMaintenanceMenu(open => !open)}
-                  className="w-11 h-11 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
-                  aria-label="Notebook tools"
-                  aria-haspopup="menu"
-                  aria-expanded={showMaintenanceMenu}
-                  title="Notebook tools"
-                >
-                  <MoreHorizontal size={20} />
-                </button>
-                {showMaintenanceMenu && (
-                  <div role="menu" className="absolute right-0 top-full mt-1 w-64 max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-                    <div className="min-h-11 px-3 py-2 flex items-center justify-between gap-3 border-b border-slate-100">
-                      <span className="text-sm text-slate-600">Speech playback</span>
-                      <div className="flex items-center gap-1">
-                        <SpeechStyleToggle className="shrink-0" />
-                        <PlaybackSpeedToggle className="shrink-0 bg-slate-100 hover:bg-slate-200" />
-                      </div>
-                    </div>
-                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowTextAnalyzer(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
-                      <ScanText size={17} /> Analyze text
-                    </button>
-                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowBatchImport(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
-                      <ListPlus size={17} /> Batch import
-                    </button>
-                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowJSONImport(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
-                      <FileJson size={17} /> Import JSON
-                    </button>
-                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onDownloadOfflineImages(); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
-                      <Download size={17} /> Download image pack
-                    </button>
-                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onForceSync(); }} disabled={syncStatus === 'syncing'} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                      {syncStatus === 'syncing' ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />} Sync now
-                    </button>
-                    <div className="h-px bg-slate-100 my-1" />
-                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onGenerateAllSpeech(); }} disabled={ttsGenProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                      {ttsGenProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <Volume2 size={17} />} Generate speech cache
-                    </button>
-                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onRestoreImagesToServer(); }} disabled={imageRestoreRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                      {imageRestoreRunning ? <Loader2 size={17} className="animate-spin" /> : <UploadCloud size={17} />} Restore server images
-                    </button>
-                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onFindDuplicates(); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
-                      <GitMerge size={17} /> Merge duplicates
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            {/* Compare mode toggle */}
-            {isOnline && (
-              <button
-                onClick={() => {
-                  setCompareMode(prev => !prev);
-                  setSelectedForCompare([]);
-                }}
-                className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full transition-colors ${
-                  compareMode 
-                    ? 'text-indigo-600 bg-indigo-100' 
-                    : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
-                }`}
-                title={compareMode ? 'Exit compare mode' : 'Compare words — select 2-3 to compare'}
-              >
-                <Scale size={16} />
-              </button>
-            )}
-            <button
-              onClick={() => setFilterMode(nextNotebookFilter)}
-              className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors ${filterMode !== 'all' ? 'text-indigo-600 bg-indigo-50' : 'text-slate-500'}`}
-              title={`Filter: ${filterMode === 'all' ? 'All Items' : filterMode === 'vocab' ? 'Vocabulary Only' : 'Phrases Only'}`}
-            >
-              {filterMode === 'all' && <Filter size={16} />}
-              {filterMode === 'vocab' && <Type size={16} />}
-              {filterMode === 'phrase' && <Layers size={16} />}
-            </button>
-            <button
-              onClick={() => setSortMode(nextNotebookSort)}
-              className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 hover:text-indigo-600 transition-colors"
-              title={sortMode === 'familiarity' ? 'Sort: Review Priority' : 'Sort: A-Z'}
-            >
-              {sortMode === 'familiarity' ? <Sparkles size={16} /> : <ArrowDownAZ size={16} />}
-            </button>
-            <div className="hidden md:block h-4 w-px bg-slate-200 mx-1 shrink-0"></div>
-            {!isOnline && (
-              <div className="w-11 h-11 flex items-center justify-center text-amber-500 shrink-0" title="Offline">
-                <WifiOff size={14} />
-              </div>
-            )}
-            {user && (
-              <>
-                <div className="hidden md:block h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
-                <div className="shrink-0">
-                  <UserMenu
-                    user={user}
-                    onSignIn={onSignIn}
-                    onSignOut={onSignOut}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-        
+      <NotebookHeader
+        headerRef={headerRef}
+        savedCount={savedCount}
+        reviewedToday={reviewedToday}
+        dueCount={dueCount}
+        isOnline={isOnline}
+        toolsMenu={
+          <NotebookToolsMenu
+            isOnline={isOnline}
+            onAnalyzeText={() => setShowTextAnalyzer(true)}
+            onBatchImport={() => setShowBatchImport(true)}
+            onImportJSON={() => setShowJSONImport(true)}
+            onDownloadOfflineImages={onDownloadOfflineImages}
+            onForceSync={onForceSync}
+            syncStatus={syncStatus}
+            onGenerateAllSpeech={onGenerateAllSpeech}
+            speechGenerationRunning={!!ttsGenProgress?.isRunning}
+            onRestoreImagesToServer={onRestoreImagesToServer}
+            imageRestoreRunning={imageRestoreRunning}
+            onFindDuplicates={onFindDuplicates}
+          />
+        }
+        compareMode={compareMode}
+        onToggleCompare={() => {
+          setCompareMode(prev => !prev);
+          setSelectedForCompare([]);
+        }}
+        filterMode={filterMode}
+        onCycleFilter={() => setFilterMode(nextNotebookFilter)}
+        sortMode={sortMode}
+        onCycleSort={() => setSortMode(nextNotebookSort)}
+        user={user}
+        onSignIn={onSignIn}
+        onSignOut={onSignOut}
+      >
         {/* Search Bar - swipe right to clear */}
-        <div 
-          className="px-6 pb-4"
+        <NotebookSearchBar
+          query={localSearchQuery}
+          onQueryChange={setLocalSearchQuery}
+          onKeyDown={handleSearchKeyDown}
           onTouchStart={handleSwipeTouchStart}
           onTouchEnd={handleSwipeTouchEnd}
-        >
-          <div className="relative group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16} />
-            <input 
-              type="text"
-              value={localSearchQuery}
-              onChange={(e) => setLocalSearchQuery(e.target.value)}
-              onKeyDown={handleSearchKeyDown}
-              placeholder={isRecording ? "Listening..." : "Search or look up new word"}
-              aria-label="Search the notebook, or look up a new word"
-              className="w-full pl-10 pr-24 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
-            />
-            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-              {/* Voice recording button */}
-              {!localSearchQuery && !isSearching && !isTranscribing && (
-                <button 
-                  onClick={toggleRecording}
-                  className={`w-9 h-9 flex items-center justify-center rounded-lg transition-all ${
-                    isRecording 
-                      ? 'text-rose-500 bg-rose-50 animate-pulse' 
-                      : 'text-slate-400 hover:text-violet-600 hover:bg-violet-50'
-                  }`}
-                  title={isRecording ? 'Stop recording' : 'Voice search'}
-                  aria-label={isRecording ? 'Stop recording' : 'Voice search'}
-                  disabled={!isOnline}
-                >
-                  {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
-                </button>
-              )}
-              {isTranscribing && (
-                <div className="flex items-center gap-1.5 text-violet-500">
-                  <Loader2 className="animate-spin" size={16} />
-                  <span className="text-xs font-medium">Transcribing...</span>
-                </div>
-              )}
-              {localSearchQuery && !isSearching && !isTranscribing && (
-                <button 
-                  onClick={() => performAISearch(localSearchQuery)}
-                  className="w-9 h-9 flex items-center justify-center text-violet-500 hover:text-violet-700 rounded-lg hover:bg-violet-50 transition-colors"
-                  title="Search with AI (Enter)"
-                  aria-label="Search with AI"
-                  disabled={!isOnline}
-                >
-                  <Wand2 size={16} />
-                </button>
-              )}
-              {isSearching && (
-                <div className="w-9 h-9 flex items-center justify-center">
-                  <Loader2 className="animate-spin text-violet-500" size={16} />
-                </div>
-              )}
-              {localSearchQuery && !isSearching && !isTranscribing && (
-                <button 
-                  onClick={() => {
-                    setLocalSearchQuery('');
-                    setSearchResults(null);
-                    setSearchError(null);
-                  }}
-                  className="w-9 h-9 flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors"
-                  title="Clear search"
-                  aria-label="Clear search"
-                >
-                  <X size={16} />
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+          isOnline={isOnline}
+          isRecording={isRecording}
+          isTranscribing={isTranscribing}
+          isSearching={isSearching}
+          onToggleRecording={toggleRecording}
+          onSearchWithAI={() => performAISearch(localSearchQuery)}
+          onClear={() => {
+            setLocalSearchQuery('');
+            setSearchResults(null);
+            setSearchError(null);
+          }}
+        />
+      </NotebookHeader>
 
       {/* Batch Import Progress Banner */}
-      {batchImportProgress?.isRunning && (
-        <div className="sticky top-[72px] z-[9] bg-indigo-500 text-white px-4 py-3 shadow-md">
-          <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Loader2 className="animate-spin" size={18} />
-              <div>
-                <p className="font-medium text-sm">Importing words...</p>
-                <p className="text-xs text-indigo-200">
-                  {batchImportProgress.current}/{batchImportProgress.total} done
-                  {batchImportProgress.saved > 0 && ` · ${batchImportProgress.saved} saved`}
-                  {batchImportProgress.skipped > 0 && ` · ${batchImportProgress.skipped} skipped`}
-                </p>
-              </div>
-            </div>
-            <div className="w-24 h-2 bg-indigo-400 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-white transition-all duration-300"
-                style={{ width: `${batchImportProgress.total > 0 ? (batchImportProgress.current / batchImportProgress.total) * 100 : 0}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {batchImportProgress?.isRunning && <BatchImportBanner progress={batchImportProgress} />}
 
       {/* AI Search Results */}
       {searchError && (
-        <div className="px-4 py-3 mx-3 mt-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm flex items-center justify-between gap-3">
-          <span>{searchError}</span>
-          {localSearchQuery.trim() && (
-            <button 
-              onClick={() => performAISearch(localSearchQuery)}
-              className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 rounded-lg text-rose-700 text-xs font-semibold transition-colors shrink-0"
-            >
-              Retry
-            </button>
-          )}
-        </div>
+        <SearchErrorBanner
+          message={searchError}
+          onRetry={localSearchQuery.trim() ? () => performAISearch(localSearchQuery) : undefined}
+        />
       )}
       
       {searchResults && searchResults.vocabs && searchResults.vocabs.length > 0 && (
@@ -891,19 +589,14 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
 
       {/* Compare floating action button */}
       {compareMode && selectedForCompare.length >= 2 && (
-        <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] left-0 right-0 flex justify-center z-20 pointer-events-none">
-          <button
-            onClick={() => {
-              onCompare(selectedForCompare);
-              setCompareMode(false);
-              setSelectedForCompare([]);
-            }}
-            className="pointer-events-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-full shadow-lg hover:shadow-xl transition-all flex items-center gap-2 duration-200"
-          >
-            <Scale size={18} />
-            Compare {selectedForCompare.length} Words
-          </button>
-        </div>
+        <CompareSelectedButton
+          count={selectedForCompare.length}
+          onCompare={() => {
+            onCompare(selectedForCompare);
+            setCompareMode(false);
+            setSelectedForCompare([]);
+          }}
+        />
       )}
     </div>
   );
