@@ -1,14 +1,10 @@
-import { StoredItem } from '../types';
+import { getItemTitle, type StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 import { warn } from './logger';
 import { getItemContentHash, isItemDirty } from './itemHash';
+import { getServerImageVersion } from './libraryImages';
 import { isSameJson } from './sameJson';
 import type { SaveItemsResult } from './api';
-
-// Polyfill structuredClone for iOS < 15.4
-const clone = typeof structuredClone === 'function'
-  ? structuredClone
-  : <T>(obj: T): T => JSON.parse(JSON.stringify(obj));
 
 // MIRRORS keepServerOwnedData in server/src/db.ts. Only server-side jobs write these fields, and the server
 // keeps them when a save leaves them out (a fresh AI result saved over the card, say).
@@ -80,6 +76,7 @@ interface MergePair {
   keepsLocalFlag: (flag: 'isDeleted' | 'isArchived') => boolean;
 }
 
+/** The comparisons every step makes, worked out once. */
 const describePair = (localItem: StoredItem, remoteItem: StoredItem): MergePair => {
   const localRevision = localItem.serverRevision ?? 0;
   const remoteRevision = remoteItem.serverRevision ?? 0;
@@ -105,23 +102,27 @@ const describePair = (localItem: StoredItem, remoteItem: StoredItem): MergePair 
   };
 };
 
-/** 0. Deletions: the merged item when a deletion settles the pair, else undefined. */
+// When the revisions don't decide (the same revision on both copies, or none), a deletion wins unless the other
+// copy changed more than this much later.
+const DELETION_GRACE_MS = 5000;
+
+/**
+ * 0. Deletions: the merged item when a deletion settles the pair, else undefined, and the content step decides.
+ * A deletion wins unless the other copy is newer: by revision, or, when the revisions don't decide, by more
+ * than DELETION_GRACE_MS. Of two deletions the newer one is kept.
+ */
 const resolveDeletion = (
   { local: localItem, remote: remoteItem, revisionsDecide, localWinsRevision, rebasesLocalEdits, keepsLocalFlag }: MergePair,
 ): StoredItem | undefined => {
-  // 0. Respect Deletions (ENHANCED - deletion always wins unless there's a much newer update)
-  const DELETION_GRACE_PERIOD = 5000; // 5 seconds grace period for deletions
-
   if (remoteItem.isDeleted && !localItem.isDeleted && !rebasesLocalEdits) {
     const remoteTime = remoteItem.updatedAt || 0;
     const localTime = localItem.updatedAt || 0;
     // Deletion wins if remote is newer OR within grace period
-    if ((!revisionsDecide && remoteTime >= localTime - DELETION_GRACE_PERIOD) ||
+    if ((!revisionsDecide && remoteTime >= localTime - DELETION_GRACE_MS) ||
         (revisionsDecide && !localWinsRevision)) {
       return remoteItem;
     }
-    // If local update is SIGNIFICANTLY newer (>5s), keep the local update
-    // This handles the edge case of offline edits happening after deletion
+    // The local copy is newer, an edit made offline after the deletion, say: the content step decides.
     warn(`⚠️ Deletion conflict: Remote deleted at ${remoteTime}, but local updated at ${localTime}. Keeping local update.`);
   }
 
@@ -129,72 +130,67 @@ const resolveDeletion = (
     const remoteTime = remoteItem.updatedAt || 0;
     const localTime = localItem.updatedAt || 0;
     // Deletion wins if local is newer OR within grace period
-    if ((!revisionsDecide && localTime >= remoteTime - DELETION_GRACE_PERIOD) ||
+    if ((!revisionsDecide && localTime >= remoteTime - DELETION_GRACE_MS) ||
         (revisionsDecide && localWinsRevision)) {
       // Keep local deletion
       return localItem;
     }
     if (keepsLocalFlag('isDeleted')) {
       // On top of the server's revision, so the push that carries the deletion is accepted.
-      return { ...clone(remoteItem), isDeleted: true, updatedAt: localTime, lastSyncedHash: localItem.lastSyncedHash };
+      return { ...structuredClone(remoteItem), isDeleted: true, updatedAt: localTime, lastSyncedHash: localItem.lastSyncedHash };
     }
-    // If remote update is SIGNIFICANTLY newer, keep the remote update
+    // The server copy is newer: the content step decides.
     warn(`⚠️ Deletion conflict: Local deleted at ${localTime}, but remote updated at ${remoteTime}. Keeping remote update.`);
   }
 
-  // If BOTH are deleted, use the newest deletion timestamp
+  // Both deleted: keep the newer deletion, and merge nothing else.
   if (localItem.isDeleted && remoteItem.isDeleted) {
     const remoteTime = remoteItem.updatedAt || 0;
     const localTime = localItem.updatedAt || 0;
-    // Don't merge further for deleted items
     return (revisionsDecide ? !localWinsRevision : remoteTime > localTime) ? remoteItem : localItem;
   }
   return undefined;
+};
+
+// Builds before dba596d kept a stripped copy of the library in localStorage (no definitions, examples or
+// history) and could write it back to IndexedDB after iOS cleared the database. Records written that way can
+// still be on a device, and a tab that hasn't reloaded since can write more, so a copy without its content
+// never replaces one that has it.
+const hasFullContent = (item: StoredItem): boolean => {
+  const data = item.data as any;
+  if (item.type === 'sentence') return typeof data.text === 'string' && data.text.trim().length > 0;
+  if (item.type === 'phrase') {
+    return typeof data.grammar === 'string' || Array.isArray(data.vocabs);
+  }
+  return typeof data.definition === 'string' || Array.isArray(data.examples);
 };
 
 /** A. Content: a copy of the server's item carrying the content, timestamps and flags that win. */
 const mergeContent = (
   { local: localItem, remote: remoteItem, localRevision, remoteRevision, revisionsDecide, localWinsRevision, rebasesLocalEdits, keepsLocalFlag }: MergePair,
 ): StoredItem => {
-  // 1. Smart Field-Level Merging
-  // Instead of picking one winner, we merge the best parts of both.
-
+  // Unlike the deletion rule, a copy without updatedAt falls back to when it was saved.
   const localTime = localItem.updatedAt || localItem.savedAt || 0;
   const remoteTime = remoteItem.updatedAt || remoteItem.savedAt || 0;
 
-  // Deep clone to avoid mutation
-  const mergedItem: StoredItem = clone(remoteItem);
+  // A copy, so neither input is mutated.
+  const mergedItem: StoredItem = structuredClone(remoteItem);
 
-  // A. DATA MERGE (Content - Word/Definition)
-  // SAFETY: Never replace full content with lightweight cache data.
-  // The localStorage cache strips most fields (definition, history, examples, etc.)
-  // to fit within Safari's 5MB limit. If those stripped items enter the merge
-  // (e.g., after iOS clears IDB under storage pressure), we must detect and
-  // preserve the version that has full content.
-  const hasFullContent = (item: StoredItem): boolean => {
-    const data = item.data as any;
-    if (item.type === 'sentence') return typeof data.text === 'string' && data.text.trim().length > 0;
-    if (item.type === 'phrase') {
-      return typeof data.grammar === 'string' || Array.isArray(data.vocabs);
-    }
-    return typeof data.definition === 'string' || Array.isArray(data.examples);
-  };
   const localHasContent = hasFullContent(localItem);
   const remoteHasContent = hasFullContent(remoteItem);
 
   // Equal revisions share a base, so the local copy holds any unsynced edits on top of it.
   // Timestamps decide only for items that never received a revision.
   if (rebasesLocalEdits || (revisionsDecide ? localWinsRevision : (localRevision > 0 || localTime > remoteTime))) {
-    // Only use local data if it has full content, OR remote also lacks content
     if (localHasContent || !remoteHasContent) {
       const remoteData = mergedItem.data;
-      mergedItem.data = clone(localItem.data);
+      mergedItem.data = structuredClone(localItem.data);
       // The server's copy of the same base kept the server-owned fields a save here left out.
       if (!localWinsRevision && remoteRevision > 0 && localItem.type === remoteItem.type) {
         mergedItem.data = withServerOwnedData(mergedItem.data, remoteData, remoteItem.type);
       }
     }
-    // else: local is stripped cache data but remote has full content — keep remote data
+    // Otherwise the local copy is stripped (see hasFullContent) and the server's content stays.
     mergedItem.updatedAt = localTime;
     mergedItem.savedAt = localItem.savedAt;
     mergedItem.isDeleted = localItem.isDeleted;
@@ -210,16 +206,11 @@ const mergeSchedule = ({ local: localItem, remote: remoteItem, localRevision, re
   const localHistory = localItem.srs?.totalReviews || 0;
   const remoteHistory = remoteItem.srs?.totalReviews || 0;
 
-  // B. SRS MERGE (Learning Progress)
   // A copy with no unsynced change holds only what the server sent or accepted, so the server's schedule
   // at the same or a newer revision replaces it, even an older one: another device undid a review.
-  // Otherwise, priority: most recent lastReviewDate wins.
-  // Rationale: lastReviewDate is set to Date.now() on each review and reset, so a more
-  // recent value definitively means "this device studied more recently."
-  // The overdue penalty can DECREASE totalReviews (e.g., 4→2 after 90+ days),
-  // so using totalReviews as primary key would cause old remote data (higher
-  // reviews) to overwrite a just-studied local item (lower reviews after penalty).
-  // Fallback to totalReviews only when lastReviewDate is equal (same review).
+  // Otherwise the newer lastReviewDate wins: each review stamps it with the time of the review.
+  // A reset sets totalReviews to 0 and stamps lastReviewDate with the reset time (SRSAlgorithm.reset), so
+  // totalReviews can't lead: the newer lastReviewDate wins, and totalReviews only breaks a tie.
   const localReview = localItem.srs?.lastReviewDate || 0;
   const remoteReview = remoteItem.srs?.lastReviewDate || 0;
 
@@ -227,18 +218,15 @@ const mergeSchedule = ({ local: localItem, remote: remoteItem, localRevision, re
     // The server's schedule is already in mergedItem.
   } else if (localReview > remoteReview) {
     // Local was reviewed more recently — local SRS wins
-    mergedItem.srs = clone(localItem.srs);
+    mergedItem.srs = structuredClone(localItem.srs);
   } else if (localReview === remoteReview) {
     // Same review timestamp — use totalReviews as tiebreaker
     if (localHistory > remoteHistory) {
-      mergedItem.srs = clone(localItem.srs);
+      mergedItem.srs = structuredClone(localItem.srs);
     }
-  } else if (remoteReview > localReview && localHistory !== remoteHistory) {
-    // Remote reviewed more recently — keep remote SRS (already in mergedItem)
-    // Log when this causes a totalReviews decrease (potential regression)
-    if (localHistory > remoteHistory) {
-      console.error(`[MERGE] "${(localItem.data as any).word || (localItem.data as any).query}" SRS: keeping remote (reviewed more recently) reviews ${localHistory}→${remoteHistory}, localReview=${new Date(localReview).toISOString()}, remoteReview=${new Date(remoteReview).toISOString()}`);
-    }
+  } else if (localHistory > remoteHistory) {
+    // The server's newer review (already in mergedItem) wins with fewer repetitions: a reset elsewhere, say.
+    warn(`[MERGE] "${getItemTitle(localItem)}" SRS: keeping remote (reviewed more recently) reviews ${localHistory}→${remoteHistory}, localReview=${new Date(localReview).toISOString()}, remoteReview=${new Date(remoteReview).toISOString()}`);
   }
 
   // Passive sentence exposure has its own conflict clock. It must survive merges without being
@@ -260,12 +248,10 @@ const mergeSchedule = ({ local: localItem, remote: remoteItem, localRevision, re
 
 /** C. Pictures: the image markers that win, set on `mergedItem`'s data. */
 const mergeImages = ({ local: localItem, remote: remoteItem }: MergePair, mergedItem: StoredItem): void => {
-  // C. IMAGE MERGE (Preservation for Offline)
-  // PRIORITY: Local images ALWAYS win over remote
-  // This is critical because:
-  // 1. Base64 images work offline (URLs don't)
-  // 2. Remote list responses intentionally strip images; preserve a local image when present.
-  // 3. Local IndexedDB has no size limit and stores full images
+  // Items carry image markers, not pictures: 'idb:stored' for one stored on this device, and
+  // 'server:has_image:<version>' for one on the server. The list endpoint never sends pictures, so a local
+  // marker is kept unless the server's copy is current and carries a versioned marker, which replaces it so the
+  // stored picture is checked against that version.
   const finalData = mergedItem.data as any;
   const localData = localItem.data as any;
   const remoteData = remoteItem.data as any;
@@ -277,11 +263,9 @@ const mergeImages = ({ local: localItem, remote: remoteItem }: MergePair, merged
       : (remoteItem.updatedAt || 0) >= (localItem.updatedAt || 0);
   const remoteCanInvalidateImageCache = (imageUrl: unknown): imageUrl is string =>
     typeof imageUrl === 'string' &&
-    imageUrl.startsWith('server:has_image:') &&
+    getServerImageVersion(imageUrl) !== undefined &&
     remoteImageRevisionIsCurrent;
 
-  // A newer versioned server marker must replace the local marker so IndexedDB can refresh.
-  // Otherwise preserve the local/offline image as before.
   if (remoteCanInvalidateImageCache(remoteData.imageUrl)) {
     finalData.imageUrl = remoteData.imageUrl;
   } else if (localData.imageUrl) {
@@ -341,7 +325,10 @@ export const mergeItem = (local: StoredItem, remote: StoredItem): StoredItem => 
   return isSameJson(mergedItem, localItem) ? localItem : mergedItem;
 };
 
-// Smart Merge: Combines Local and Remote data
+/**
+ * The library merged with server copies: each server item merges with the local copy of the same id
+ * (mergeItem), or is appended when there is none. Local items keep their order; items without an id drop out.
+ */
 export const mergeDatasets = (local: StoredItem[], remote: StoredItem[]): StoredItem[] => {
   const map = new Map<string, StoredItem>();
 
@@ -426,7 +413,7 @@ export const reconcileReviewedItem = (
         serverRevision: serverItem.serverRevision,
         updatedAt: Math.max(local.updatedAt || 0, serverItem.updatedAt || 0),
       }
-    : mergeDatasets([local], [serverItem])[0];
+    : mergeItem(local, serverItem);
   return { ...reconciled, srs: serverItem.srs, lastSyncedHash: getItemContentHash(serverItem) };
 };
 
@@ -452,7 +439,7 @@ export const applyServerSave = (
       // The server kept its own content (a conflict or a server-side enrichment): adopt it like a pull.
       if ((canonical.serverRevision ?? 0) < localRevision) return item;
       changed = true;
-      return { ...mergeDatasets([item], [canonical])[0], lastSyncedHash: getItemContentHash(canonical) };
+      return { ...mergeItem(item, canonical), lastSyncedHash: getItemContentHash(canonical) };
     }
     const revision = result.revisions.get(item.data.id);
     if (revision === undefined || revision < localRevision ||
