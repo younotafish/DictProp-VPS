@@ -3,7 +3,7 @@ import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type Sente
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { stopCurrent } from '../../services/lazyTts';
 import { error as logError } from '../../services/logger';
-import { isRealLifeProgressItem } from '../../services/realLifeProgress';
+import { isRealLifeProgressItem } from '../../services/realLifeProgressIdentity';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
 import type { SavedSentenceIndex } from './useSavedSentenceIndex';
