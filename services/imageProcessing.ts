@@ -22,6 +22,11 @@ async function optimizeImageDataUri(dataUri: string): Promise<string> {
     canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) return dataUri;
+    // An opaque canvas starts black, so a transparent picture (a pasted sticker or diagram) is flattened onto
+    // white first, which sits well in the light frames pictures show in. An opaque picture covers every pixel, so
+    // it comes out the same.
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     let optimized = canvas.toDataURL('image/webp', WEBP_QUALITY);
     // Browsers that can't encode WebP (older Safari) hand back a PNG instead, often several times the
