@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getItemContentHash, isItemDirty } from '../../services/itemHash.ts';
-import { mergeDatasets } from '../../services/sync.ts';
+import { mergeDatasets, mergeItem } from '../../services/sync.ts';
 import type { SearchResult, SentenceData, SRSData, StoredItem, VocabCard } from '../../types.ts';
 
 // Characterization of the per-pair merge: what one local copy and one server copy of the same item merge to.
@@ -12,7 +12,12 @@ const realNow = Date.now;
 Date.now = () => 1_700_000_000_000;
 test.after(() => { Date.now = realNow; });
 
-const merge = (local: StoredItem, remote: StoredItem): StoredItem => mergeDatasets([local], [remote])[0];
+// Each case runs through the pair merge and through the library merge, which must agree.
+const merge = (local: StoredItem, remote: StoredItem): StoredItem => {
+  const merged = mergeItem(local, remote);
+  assert.deepEqual(mergeDatasets([local], [remote]), [merged]);
+  return merged;
+};
 
 const schedule = (id: string, type: StoredItem['type'], fields: Partial<SRSData> = {}): SRSData => ({
   id, type, nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews: 0, correctStreak: 0,
