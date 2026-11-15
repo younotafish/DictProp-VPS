@@ -16,7 +16,7 @@ interface ExampleSentencePreviewProps {
 /** An example sentence opened from the word card, reviewed over it as a sentence review of its own. */
 export function ExampleSentencePreview({ viewProps, sourceGroup, sentence, saved, onClose }: ExampleSentencePreviewProps) {
   const {
-    onSave, onDelete, onArchive, onUnarchive, savedItems, savedSentenceItems, onSearch, onRefresh, onLazyLoadImage,
+    onSave, onDelete, onArchive, onUnarchive, onResetSRS, savedItems, savedSentenceItems, onSearch, onRefresh, onLazyLoadImage,
     onUpdateSRS, onCompare, comparisons, onOpenComparison, onSaveSentence, isSentenceSaved, isVocabSaved,
     onRemoveVocabFromPhrase, findSaved, onOpenCard, interactionLocked, onAttachImage,
   } = viewProps;
@@ -36,6 +36,7 @@ export function ExampleSentencePreview({ viewProps, sourceGroup, sentence, saved
         onDelete={(id) => { onDelete(id); onClose(); }}
         onArchive={onArchive}
         onUnarchive={onUnarchive}
+        onResetSRS={onResetSRS}
         savedItems={savedItems}
         savedSentenceItems={savedSentenceItems}
         onSearch={onSearch}
