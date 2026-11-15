@@ -57,15 +57,17 @@ COMBINED_ANALYSIS_CACHE="$ROOT/combined-analysis-cache.json"
 RECONCILIATION="$ROOT/final-reconciliation"
 IMAGE_ROOT="$ROOT/final-images"
 IMAGE_TARGETS="$IMAGE_ROOT/cycle-targets.json"
-PUBLISH_STATE="$ROOT/publish-state-coverage-v2"
-ANALYSIS_PUBLISH_STATE="$ROOT/analysis-publish-state-coverage-v2"
+# Each stage publishes from a wave-state root of its own per cycle, publish-state/<stage>/<cycle>, where
+# <cycle> is CYCLE_ID, the run id of the cycle's corpus export. A dispatcher counts only the waves
+# published after its stage's input was made, so an earlier cycle's waves would never count anyway. The
+# image loops keep their working state per cycle too, in streaming-quality/<cycle> under each image root.
+PUBLISH_STATE_ROOT="$ROOT/publish-state"
 SAVED_ROOT="$ROOT/saved-sentences"
 SAVED_SOURCE="$SAVED_ROOT/source.json"
 SAVED_CYCLE_SOURCE="$SAVED_ROOT/cycle-source.json"
 SAVED_BASE_ANALYSIS="$SAVED_ROOT/current-base-analysis.json"
 SAVED_ANALYSIS_CACHE="$SAVED_ROOT/analysis-cache.json"
 SAVED_RECONCILIATION="$SAVED_ROOT/final-reconciliation"
-SAVED_PUBLISH_STATE="$SAVED_ROOT/publish-state-detailed-v1"
 VOCAB_ROOT="$ROOT/vocabulary"
 VOCAB_SOURCE="$VOCAB_ROOT/source.json"
 VOCAB_COMPLETED="$VOCAB_ROOT/completed.json"
@@ -191,9 +193,12 @@ done
 # repository; this deletes publisher releases idle for six hours, which none of this cycle's publishers
 # would still hold, and clears failed waves after a week and published waves' archives. It also removes
 # the plaintext temp files a killed decryption leaves under data/offline-backfill once they are a day old.
+# The last five roots are the ones cycles shared until 2026-11-15, still swept for what they hold.
 if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" GITHUB_REPOSITORY="$REPO" scripts/offline/sweep-bridge-leftovers.sh \
-  "$PUBLISH_STATE" "$ANALYSIS_PUBLISH_STATE" "$SAVED_PUBLISH_STATE" \
-  "$VOCAB_ROOT/publish-state" "$ITEM_IMAGE_ROOT/publish-state"; then
+  "$PUBLISH_STATE_ROOT/vocabulary" "$PUBLISH_STATE_ROOT/saved-sentences" "$PUBLISH_STATE_ROOT/item-images" \
+  "$PUBLISH_STATE_ROOT/example-analyses" "$PUBLISH_STATE_ROOT/example-enrichments" \
+  "$ROOT/publish-state-coverage-v2" "$ROOT/analysis-publish-state-coverage-v2" \
+  "$SAVED_ROOT/publish-state-detailed-v1" "$VOCAB_ROOT/publish-state" "$ITEM_IMAGE_ROOT/publish-state"; then
   log "the sweep of bridge leftovers did not finish; the next cycle tries again"
 fi
 
@@ -230,6 +235,7 @@ if [ -z "$EXPORT_RUN_ID" ]; then
   echo "Could not identify the dispatched corpus export workflow" >&2
   exit 1
 fi
+CYCLE_ID="$EXPORT_RUN_ID"
 
 log "waiting for corpus export run $EXPORT_RUN_ID"
 EXPORT_DEADLINE="$(deadline_after "$CORPUS_EXPORT_WAIT_SECONDS")"
@@ -274,11 +280,9 @@ if [ "$VOCAB_COUNT" -gt 0 ]; then
     "$NODE_BIN" scripts/offline/complete-corpus-fields.mjs \
       "$VOCAB_SOURCE" "$VOCAB_COMPLETED" "$VOCAB_ROOT/work" || STAGE_STATUS=$?
   if check_stage "vocabulary completion" "$STAGE_STATUS"; then
-    VOCAB_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
-      "$VOCAB_COMPLETED")"
     log "publishing locally completed vocabulary records"
     # Later stages build on the completed records only once production has them.
-    if CORPUS_AUDIT_WAVE_STATE_ROOT="$VOCAB_ROOT/publish-state/$VOCAB_FINGERPRINT" \
+    if CORPUS_AUDIT_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/vocabulary/$CYCLE_ID" \
       CORPUS_AUDIT_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
       scripts/offline/dispatch-staged-corpus-audit.sh \
         "$VOCAB_COMPLETED" 100 "$REQUIRED_DEPLOY_SHA"; then
@@ -343,7 +347,7 @@ if [ "$SAVED_COUNT" -gt 0 ]; then
     mv "$SAVED_ANALYSIS_CACHE.tmp" "$SAVED_ANALYSIS_CACHE"
     log "publishing detailed saved-sentence analyses"
     if ! REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 \
-      SAVED_SENTENCE_ANALYSIS_STATE_ROOT="$SAVED_PUBLISH_STATE" \
+      SAVED_SENTENCE_ANALYSIS_STATE_ROOT="$PUBLISH_STATE_ROOT/saved-sentences/$CYCLE_ID" \
       SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
       scripts/offline/dispatch-staged-saved-sentence-analyses.sh \
         "$SAVED_ANALYSIS_CACHE" 2000 "$REQUIRED_DEPLOY_SHA"; then
@@ -369,8 +373,6 @@ if [ -s "$SAVED_ANALYSIS_CACHE" ]; then SAVED_ANALYSIS_INPUT="$SAVED_ANALYSIS_CA
 ITEM_IMAGE_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-image-targets \
   "$FAILURE_LEDGER" item-image "$ITEM_IMAGE_ROOT/targets.json" "$ITEM_IMAGE_TARGETS")"
 if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
-  ITEM_IMAGE_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
-    "$ITEM_IMAGE_TARGETS")"
   log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
   STAGE_STATUS=0
   run_stage "$IMAGE_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
@@ -378,7 +380,7 @@ if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
     IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
       "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
-      "$ITEM_IMAGE_ROOT/streaming-quality/$ITEM_IMAGE_FINGERPRINT" 1024 576 "$IMAGE_STEPS" 1 64 || STAGE_STATUS=$?
+      "$ITEM_IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64 || STAGE_STATUS=$?
   # Deferred images go into the failure ledger, so later cycles stop rendering them every time.
   "$NODE_BIN" scripts/offline/failure-ledger.mjs record-image-outcomes \
     "$FAILURE_LEDGER" item-image "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/images" "$STAGE_STATUS"
@@ -392,7 +394,7 @@ if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
     "$ITEM_IMAGE_ROOT")"
   if [ "$ITEM_IMAGE_READY" -gt 0 ]; then
     log "publishing $ITEM_IMAGE_READY locally generated saved-word/phrase/sentence image(s)"
-    if ! OFFLINE_IMAGE_WAVE_STATE_ROOT="$ITEM_IMAGE_ROOT/publish-state/$ITEM_IMAGE_FINGERPRINT" \
+    if ! OFFLINE_IMAGE_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/item-images/$CYCLE_ID" \
       OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
       scripts/offline/dispatch-staged-offline-images.sh \
         "$ITEM_IMAGE_ROOT" 100 "$REQUIRED_DEPLOY_SHA"; then
@@ -476,7 +478,7 @@ mv "$ANALYSIS_CACHE.next" "$ANALYSIS_CACHE"
   "$SOURCE" "$RECONCILIATION/final-analysis.json"
 log "publishing validated explanations before their images"
 if ! REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 \
-  EXAMPLE_ANALYSIS_WAVE_STATE_ROOT="$ANALYSIS_PUBLISH_STATE" \
+  EXAMPLE_ANALYSIS_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/example-analyses/$CYCLE_ID" \
   EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
   scripts/offline/dispatch-staged-example-analyses.sh "$ROOT" 2000 "$REQUIRED_DEPLOY_SHA"; then
   stage_failed "example-sentence analysis publication"
@@ -500,8 +502,6 @@ if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
     # coverage reports, but must not permanently starve every example discovered afterwards.
     log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
   fi
-  TARGET_FINGERPRINT="$($NODE_BIN -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex").slice(0,16))' \
-    "$IMAGE_TARGETS")"
   log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
   STAGE_STATUS=0
   run_stage "$IMAGE_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
@@ -510,7 +510,7 @@ if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
     IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
     bash scripts/offline/run-streaming-image-quality-loop.sh \
     "$IMAGE_TARGETS" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
-    "$IMAGE_ROOT/streaming-quality/$TARGET_FINGERPRINT" 1024 576 "$IMAGE_STEPS" 1 64 || STAGE_STATUS=$?
+    "$IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64 || STAGE_STATUS=$?
   "$NODE_BIN" scripts/offline/failure-ledger.mjs record-image-outcomes \
     "$FAILURE_LEDGER" example-image "$IMAGE_TARGETS" "$IMAGE_ROOT/images" "$STAGE_STATUS"
   if [ "$STAGE_STATUS" -ne 0 ]; then
@@ -527,7 +527,7 @@ ALLOW_DEFERRED_IMAGES=1 \
   "$SOURCE" "$RECONCILIATION/final-analysis.json" "$IMAGE_ROOT"
 log "publishing verified incremental explanation-image pairs"
 if ! ALLOW_DEFERRED_IMAGES=1 \
-  EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT="$PUBLISH_STATE" \
+  EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/example-enrichments/$CYCLE_ID" \
   EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
   scripts/offline/dispatch-staged-example-enrichments.sh "$ROOT" 100 "$REQUIRED_DEPLOY_SHA"; then
   stage_failed "example enrichment publication"

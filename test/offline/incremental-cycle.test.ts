@@ -317,9 +317,15 @@ const cycle = (name: string): Promise<CycleResult> => {
   return result;
 };
 
-// The calls every cycle makes before its first stage.
+const C = '<root>/<scenario>/cycle';
+// Each stage's wave-state root for this cycle, named for its corpus export run, 101.
+const STATE = `${C}/publish-state`;
+
+// The calls every cycle makes before its first stage. The sweep gets each stage's root of per-cycle roots,
+// then the roots cycles shared before.
 const START = [
-  'sweep-bridge-leftovers.sh <root>/<scenario>/cycle/publish-state-coverage-v2 <root>/<scenario>/cycle/analysis-publish-state-coverage-v2 <root>/<scenario>/cycle/saved-sentences/publish-state-detailed-v1 <root>/<scenario>/cycle/vocabulary/publish-state <root>/<scenario>/cycle/item-images/publish-state',
+  `sweep-bridge-leftovers.sh ${STATE}/vocabulary ${STATE}/saved-sentences ${STATE}/item-images ${STATE}/example-analyses ${STATE}/example-enrichments `
+    + `${C}/publish-state-coverage-v2 ${C}/analysis-publish-state-coverage-v2 ${C}/saved-sentences/publish-state-detailed-v1 ${C}/vocabulary/publish-state ${C}/item-images/publish-state`,
   'check-structured-model.mjs',
   'gh run list --repo younotafish/DictProp-VPS --workflow sentence-backfill.yml --event workflow_dispatch --limit 1 --json databaseId --jq if length == 0 then 0 else .[0].databaseId end',
   'gh workflow run sentence-backfill.yml --repo younotafish/DictProp-VPS --ref main -f operation=corpus-export',
@@ -334,7 +340,6 @@ const START_LOG = [
   'waiting for corpus export run 101',
 ];
 
-const C = '<root>/<scenario>/cycle';
 const LEDGER = `${C}/failure-ledger.json`;
 const vocabSource = `prepare-incremental-vocab-source.mjs ${C}/current-corpus.json ${C}/vocabulary/source.json.tmp 100 168 ''`
   + `  [ENRICHMENT_FAILURE_LEDGER=${LEDGER} ENRICHMENT_FAILURE_STAGE=vocab]`;
@@ -377,26 +382,23 @@ test('a cycle with nothing new exports the corpus, checks every stage and publis
 test('a full cycle completes, reconciles and publishes every stage in order', async () => {
   const result = await cycle('full');
   assert.equal(result.status, 0, result.stderr.join('\n'));
-  const vocabFingerprint = '6d8b71adfa8981ce';
-  const itemFingerprint = 'f3b49576bbf580fa';
-  const exampleFingerprint = '6798e2f79b2143b9';
   assert.deepEqual(result.trace, [
     ...START,
     vocabSource,
     `complete-corpus-fields.mjs ${C}/vocabulary/source.json ${C}/vocabulary/completed.json ${C}/vocabulary/work  [CODEX_CONCURRENCY=16 VOCAB_COMPLETION_BATCH_SIZE=8 ENRICHMENT_FAILURE_LEDGER=${LEDGER} ENRICHMENT_FAILURE_STAGE=vocab]`,
-    `dispatch-staged-corpus-audit.sh ${C}/vocabulary/completed.json 100 <head>  [CORPUS_AUDIT_WAVE_STATE_ROOT=${C}/vocabulary/publish-state/${vocabFingerprint} CORPUS_AUDIT_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-corpus-audit.sh ${C}/vocabulary/completed.json 100 <head>  [CORPUS_AUDIT_WAVE_STATE_ROOT=${STATE}/vocabulary/101 CORPUS_AUDIT_WAVE_COOLDOWN_SECONDS=30]`,
     savedSource('-'),
     savedFilter,
     `reconcile-sentence-analyses.mjs ${C}/saved-sentences/cycle-source.json ${C}/saved-sentences/analysis-cache.json ${C}/saved-sentences/final-reconciliation`,
     `enrich-sentences.mjs ${C}/saved-sentences/final-reconciliation/missing-source.json ${C}/saved-sentences/new-analysis.json ${C}/saved-sentences/analysis-work ${C}/saved-sentences/current-base-analysis.json  [CODEX_CONCURRENCY=16 SENTENCE_ANALYSIS_BATCH_SIZE=1 ENRICHMENT_FAILURE_LEDGER=${LEDGER} ENRICHMENT_FAILURE_STAGE=saved-sentence]`,
     savedFilter,
     `reconcile-sentence-analyses.mjs ${C}/saved-sentences/cycle-source.json ${C}/saved-sentences/analysis-cache.json ${C}/saved-sentences/final-reconciliation ${C}/saved-sentences/new-analysis.json`,
-    `dispatch-staged-saved-sentence-analyses.sh ${C}/saved-sentences/analysis-cache.json 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 SAVED_SENTENCE_ANALYSIS_STATE_ROOT=${C}/saved-sentences/publish-state-detailed-v1 SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-saved-sentence-analyses.sh ${C}/saved-sentences/analysis-cache.json 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 SAVED_SENTENCE_ANALYSIS_STATE_ROOT=${STATE}/saved-sentences/101 SAVED_SENTENCE_ANALYSIS_COOLDOWN_SECONDS=30]`,
     itemImagePrep(`${C}/saved-sentences/analysis-cache.json`, `${C}/vocabulary/completed.json`),
     itemImageFilter,
-    `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/${itemFingerprint} 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
+    `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/101 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
     `failure-ledger.mjs record-image-outcomes ${LEDGER} item-image ${C}/item-images/cycle-targets.json ${C}/item-images/images 0`,
-    `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${C}/item-images/publish-state/${itemFingerprint} OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${STATE}/item-images/101 OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
     pool(`${C}/vocabulary/completed.json`),
     exampleSource,
     exampleFilter,
@@ -407,13 +409,13 @@ test('a full cycle completes, reconciles and publishes every stage in order', as
     `reconcile-sentence-analyses.mjs ${C}/source.json ${C}/combined-analysis-cache.json ${C}/final-reconciliation ${C}/new-analysis.json  [ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1]`,
     `merge-sentence-analysis-manifests.mjs ${C}/analysis-cache.json.next ${C}/analysis-cache.json ${C}/final-reconciliation/final-analysis.json`,
     `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json`,
-    `dispatch-staged-example-analyses.sh ${C} 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 EXAMPLE_ANALYSIS_WAVE_STATE_ROOT=${C}/analysis-publish-state-coverage-v2 EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-example-analyses.sh ${C} 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 EXAMPLE_ANALYSIS_WAVE_STATE_ROOT=${STATE}/example-analyses/101 EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30]`,
     `prepare-sentence-images.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images krea/Krea-2-Turbo <root>/base/final-images/images`,
     `failure-ledger.mjs filter-image-targets ${LEDGER} example-image ${C}/final-images/targets.json ${C}/final-images/cycle-targets.json`,
-    `run-streaming-image-quality-loop.sh ${C}/final-images/cycle-targets.json ${C}/final-images/candidates ${C}/final-images/images ${C}/final-images/streaming-quality/${exampleFingerprint} 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
+    `run-streaming-image-quality-loop.sh ${C}/final-images/cycle-targets.json ${C}/final-images/candidates ${C}/final-images/images ${C}/final-images/streaming-quality/101 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
     `failure-ledger.mjs record-image-outcomes ${LEDGER} example-image ${C}/final-images/cycle-targets.json ${C}/final-images/images 0`,
     `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images  [ALLOW_DEFERRED_IMAGES=1]`,
-    `dispatch-staged-example-enrichments.sh ${C} 100 <head>  [ALLOW_DEFERRED_IMAGES=1 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT=${C}/publish-state-coverage-v2 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-example-enrichments.sh ${C} 100 <head>  [ALLOW_DEFERRED_IMAGES=1 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT=${STATE}/example-enrichments/101 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30]`,
     summary,
   ]);
   assert.deepEqual(result.log, [
@@ -441,7 +443,6 @@ test('a full cycle completes, reconciles and publishes every stage in order', as
 test('stages that fail let the rest of the cycle run, and the cycle exits 1 naming them', async () => {
   const result = await cycle('failures');
   assert.equal(result.status, 1, result.stderr.join('\n'));
-  const itemFingerprint = 'f3b49576bbf580fa';
   assert.deepEqual(result.trace, [
     ...START,
     vocabSource,
@@ -456,10 +457,10 @@ test('stages that fail let the rest of the cycle run, and the cycle exits 1 nami
     `reconcile-sentence-analyses.mjs ${C}/saved-sentences/cycle-source.json ${C}/saved-sentences/analysis-cache.json ${C}/saved-sentences/final-reconciliation`,
     itemImagePrep(`${C}/saved-sentences/analysis-cache.json`, '-'),
     itemImageFilter,
-    `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/${itemFingerprint} 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
+    `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/101 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
     `failure-ledger.mjs record-image-outcomes ${LEDGER} item-image ${C}/item-images/cycle-targets.json ${C}/item-images/images 1`,
     'check-structured-model.mjs',
-    `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${C}/item-images/publish-state/${itemFingerprint} OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${STATE}/item-images/101 OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
     pool('-'),
     exampleSource,
     exampleFilter,
@@ -467,11 +468,11 @@ test('stages that fail let the rest of the cycle run, and the cycle exits 1 nami
     `reconcile-sentence-analyses.mjs ${C}/source.json ${C}/combined-analysis-cache.json ${C}/final-reconciliation  [ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1]`,
     `merge-sentence-analysis-manifests.mjs ${C}/analysis-cache.json.next ${C}/analysis-cache.json ${C}/final-reconciliation/final-analysis.json`,
     `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json`,
-    `dispatch-staged-example-analyses.sh ${C} 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 EXAMPLE_ANALYSIS_WAVE_STATE_ROOT=${C}/analysis-publish-state-coverage-v2 EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-example-analyses.sh ${C} 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 EXAMPLE_ANALYSIS_WAVE_STATE_ROOT=${STATE}/example-analyses/101 EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30]`,
     `prepare-sentence-images.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images krea/Krea-2-Turbo <root>/base/final-images/images`,
     `failure-ledger.mjs filter-image-targets ${LEDGER} example-image ${C}/final-images/targets.json ${C}/final-images/cycle-targets.json`,
     `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images  [ALLOW_DEFERRED_IMAGES=1]`,
-    `dispatch-staged-example-enrichments.sh ${C} 100 <head>  [ALLOW_DEFERRED_IMAGES=1 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT=${C}/publish-state-coverage-v2 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-example-enrichments.sh ${C} 100 <head>  [ALLOW_DEFERRED_IMAGES=1 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT=${STATE}/example-enrichments/101 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30]`,
     summary,
   ]);
   assert.deepEqual(result.log, [
@@ -559,7 +560,6 @@ test('another local job defers the cycle, and a busy image pipeline queues the e
   assert.equal(text.lock, false);
 
   assert.equal(image.status, 0, image.stderr.join('\n'));
-  const itemFingerprint = '15b403ddea73170d';
   assert.deepEqual(image.trace, [
     ...START,
     vocabSource,
@@ -567,9 +567,9 @@ test('another local job defers the cycle, and a busy image pipeline queues the e
     savedFilter,
     itemImagePrep('-', '-'),
     itemImageFilter,
-    `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/${itemFingerprint} 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
+    `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/101 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= KREA_SHARD_COUNT=1 IMAGE_QUALITY_DEFER_AFTER=8]`,
     `failure-ledger.mjs record-image-outcomes ${LEDGER} item-image ${C}/item-images/cycle-targets.json ${C}/item-images/images 0`,
-    `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${C}/item-images/publish-state/${itemFingerprint} OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${STATE}/item-images/101 OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
     pool('-'),
     exampleSource,
     exampleFilter,
@@ -577,7 +577,7 @@ test('another local job defers the cycle, and a busy image pipeline queues the e
     `reconcile-sentence-analyses.mjs ${C}/source.json ${C}/combined-analysis-cache.json ${C}/final-reconciliation  [ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1]`,
     `merge-sentence-analysis-manifests.mjs ${C}/analysis-cache.json.next ${C}/analysis-cache.json ${C}/final-reconciliation/final-analysis.json`,
     `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json`,
-    `dispatch-staged-example-analyses.sh ${C} 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 EXAMPLE_ANALYSIS_WAVE_STATE_ROOT=${C}/analysis-publish-state-coverage-v2 EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30]`,
+    `dispatch-staged-example-analyses.sh ${C} 2000 <head>  [REQUIRE_DETAILED_SENTENCE_ANALYSIS=1 EXAMPLE_ANALYSIS_WAVE_STATE_ROOT=${STATE}/example-analyses/101 EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS=30]`,
     `prepare-sentence-images.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images krea/Krea-2-Turbo <root>/base/final-images/images`,
     `failure-ledger.mjs filter-image-targets ${LEDGER} example-image ${C}/final-images/targets.json ${C}/final-images/cycle-targets.json`,
     summary,
