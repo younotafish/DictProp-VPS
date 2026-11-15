@@ -309,11 +309,14 @@ jobs:
             RELEASE_LIVE=1
             echo "Release is healthy"
             # Every release pulls a new image, so drop the earlier releases and the rollback tags failed
-            # deploys left, keeping only the image now running.
+            # deploys left, keeping only the image now running. dictprop-vps:local is a July image built on the
+            # server; while it exists, a `docker compose up` without DICTPROP_IMAGE would start it instead of
+            # failing. Untagged images belong to no release either.
             docker image ls --format '{{.Repository}}:{{.Tag}}' \
-              | grep -E '^(ghcr\.io/younotafish/dictprop-vps:|dictprop-vps:rollback-)' \
+              | grep -E '^(ghcr\.io/younotafish/dictprop-vps:|dictprop-vps:rollback-|dictprop-vps:local$)' \
               | grep -vxF "$RELEASE_IMAGE" \
               | xargs -r docker image rm >/dev/null || true
+            docker image prune -f >/dev/null || true
             echo "=== DISK AFTER DEPLOY ==="
             df -h . || true
             docker system df || true

@@ -189,6 +189,9 @@ case "$1 $2" in
     echo '2026-10-01T00:00:02Z Error: could not save "a private sentence"'
     echo "2026-10-01T00:00:03Z Error: no entry for 'another private sentence'"
     echo '2026-10-01T00:00:04Z Server running on port 3000' ;;
+  'image ls')
+    printf '%s\n' "$RELEASE_IMAGE" ghcr.io/younotafish/dictprop-vps:0123abc dictprop-vps:rollback-77 dictprop-vps:local \
+      dictprop-vps:local-test node:22-alpine '<none>:<none>' ;;
 esac`);
   stub(bin, 'curl', String.raw`
 if [ "$(cat "$RUNNING")" = "$RELEASE_IMAGE" ]; then [ -z "$FAIL_HEALTH" ]; else [ -z "$FAIL_ROLLBACK" ]; fi`);
@@ -307,6 +310,28 @@ test('a release that will not start rolls back on the checkout it came from, and
     assert.equal(server.branch(), 'main');
     assert.equal(composeUps(retry).length, 1);
     assert.ok(composeUps(retry)[0].endsWith(`| image=${RELEASE_IMAGE} config= head=${fixed}`));
+  } finally {
+    server.remove();
+  }
+});
+
+test('a healthy release drops the images no release runs, and nothing else', () => {
+  const server = makeServer();
+  try {
+    server.publish('broken release');
+    const failed = server.deploy('release', { FAIL_UP: '1' });
+    assert.equal(failed.status, 1, failed.output);
+    const cleanup = (calls: string[]) => calls.filter(call => /^docker image (?:ls|rm|prune) /.test(call)).map(call => call.split(' | ')[0]);
+    assert.deepEqual(cleanup(failed.calls), [], 'a failed release keeps every image');
+
+    server.publish('next release');
+    const run = server.deploy('release');
+    assert.equal(run.status, 0, run.output);
+    assert.deepEqual(cleanup(run.calls), [
+      'docker image ls --format {{.Repository}}:{{.Tag}}',
+      'docker image rm ghcr.io/younotafish/dictprop-vps:0123abc dictprop-vps:rollback-77 dictprop-vps:local',
+      'docker image prune -f',
+    ]);
   } finally {
     server.remove();
   }
