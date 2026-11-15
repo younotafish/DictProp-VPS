@@ -243,6 +243,7 @@ function bridgeFixture(prefix: string) {
   writeExecutable(join(bin, 'git'), '#!/bin/sh\nexit 1\n');
   writeExecutable(join(bin, 'curl'), `#!/usr/bin/env bash
 if [[ "$*" == *githubstatus.com* ]]; then
+  if [ "$FAKE_STATUS_PAGE" = down ]; then exit 7; fi
   printf '{"components":[{"name":"API Requests","status":"operational"},{"name":"Actions","status":"%s"}]}\n' "$FAKE_ACTIONS_STATUS"
 fi
 `);
@@ -262,6 +263,7 @@ fi
       FAKE_GH_STATE: fakeState,
       FAKE_IMPORT_CONCLUSIONS: '',
       FAKE_REAL_SLEEP: '',
+      FAKE_STATUS_PAGE: '',
       GH_BIN: join(bin, 'gh'),
       PATH: `${bin}:${process.env.PATH ?? ''}`,
       PUBLISH_STATE_DIR: stateDir,
@@ -454,6 +456,21 @@ test('a deploy SHA that is neither known here nor complete, or a poll interval t
     assert.equal(poll.status, 2);
     assert.match(poll.stderr, /poll-seconds must be a non-negative integer: soon/);
     assert.equal(fixture.ghLog(), '');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a status page that cannot be read does not hold publication back', () => {
+  const fixture = bridgeFixture('dictprop-publisher-status-down-');
+  try {
+    const result = fixture.publish({ FAKE_STATUS_PAGE: 'down', FAKE_IMPORT_CONCLUSIONS: 'failure,success' });
+    assert.equal(result.status, 0, result.stderr);
+    // Said once, though the loop passed the check on every round.
+    assert.equal(result.stdout.match(/GitHub status unknown \(API=unknown, Actions=unknown\); carrying on/g)?.length, 1);
+    assert.doesNotMatch(result.stdout, /GitHub not ready/);
+    assert.equal(fixture.dispatches(), 2);
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

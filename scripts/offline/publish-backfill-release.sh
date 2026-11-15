@@ -24,6 +24,7 @@ STATE_KEY="$(printf '%s' "$RELEASE_TAG" | tr -c 'A-Za-z0-9._-' '_')"
 STATE_DIR="${PUBLISH_STATE_DIR:-${TMPDIR:-/tmp}/dictprop-publish-${STATE_KEY}}"
 PUBLISH_DEADLINE_SECONDS="${PUBLISH_DEADLINE_SECONDS:-14400}"
 CLOCK_SKEW_SECONDS=120
+NODE_BIN="${NODE_BIN:-node}"
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
 
@@ -61,20 +62,30 @@ log() {
 }
 cap_publish_deadline
 
+# Prints "<API Requests>|<Actions>" with each component's status on githubstatus.com, or unknown for one the
+# page doesn't give, on exactly one line.
 component_states() {
-  curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 \
-    https://www.githubstatus.com/api/v2/components.json 2>/dev/null \
-    | python3 -c '
-import json
-import sys
-
-try:
-    data = json.load(sys.stdin)
-    by_name = {component["name"]: component["status"] for component in data["components"]}
-    print(by_name.get("API Requests", "unknown") + "|" + by_name.get("Actions", "unknown"))
-except Exception:
-    print("unknown|unknown")
-'
+  local body states
+  body="$(curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 \
+    https://www.githubstatus.com/api/v2/components.json 2>/dev/null)" || body=""
+  states="$(printf '%s' "$body" | "$NODE_BIN" -e '
+let input = "";
+process.stdin.on("data", chunk => { input += chunk; }).on("end", () => {
+  let api = "unknown";
+  let actions = "unknown";
+  try {
+    const status = new Map(JSON.parse(input).components.map(component => [component.name, component.status]));
+    api = status.get("API Requests") ?? api;
+    actions = status.get("Actions") ?? actions;
+  } catch {
+    // Not the page we expected: both stay unknown.
+  }
+  console.log(`${api}|${actions}`);
+});' 2>/dev/null)" || states=""
+  case "$states" in
+    *"|"*) printf '%s\n' "$states" ;;
+    *) printf 'unknown|unknown\n' ;;
+  esac
 }
 
 sleep_for_poll() {
@@ -169,16 +180,26 @@ discover_dispatched_import() {
     2>/dev/null | sort -n || true)
 }
 
+# Publication waits out a declared major outage of the API or of Actions. A status page that can't be read
+# says nothing about GitHub itself, so publication carries on: the calls that follow retry when they fail.
+LAST_UNKNOWN_STATE=""
 github_ready() {
   local component_state api_state actions_state
-  component_state="$(component_states || printf 'unknown|unknown\n')"
+  component_state="$(component_states)"
   api_state="${component_state%%|*}"
   actions_state="${component_state#*|}"
-  if [ "$api_state" = "unknown" ] || [ "$api_state" = "major_outage" ] \
-    || [ "$actions_state" = "unknown" ] || [ "$actions_state" = "major_outage" ]; then
+  if [ "$api_state" = "major_outage" ] || [ "$actions_state" = "major_outage" ]; then
     log "GitHub not ready (API=$api_state, Actions=$actions_state); checking again later"
     sleep_for_poll
     return 1
+  fi
+  if [ "$api_state" = "unknown" ] || [ "$actions_state" = "unknown" ]; then
+    if [ "$component_state" != "$LAST_UNKNOWN_STATE" ]; then
+      log "GitHub status unknown (API=$api_state, Actions=$actions_state); carrying on"
+    fi
+    LAST_UNKNOWN_STATE="$component_state"
+  else
+    LAST_UNKNOWN_STATE=""
   fi
 }
 
