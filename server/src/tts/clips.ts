@@ -3,7 +3,7 @@
 import { mkdirSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
-import { alignAudioLocally, type AlignmentPriority } from '../local-whisper.js';
+import { alignAudioLocally, promoteAlignment, type AlignmentPriority } from '../local-whisper.js';
 import type { WordTiming } from '../tts-alignment.js';
 import {
   audioPath,
@@ -30,14 +30,18 @@ export interface ClipDependencies {
   synthClear(text: string, voice: string): Promise<Buffer>;
   synthCasual(spoken: string): Promise<Buffer>;
   reduce(sentence: string): Promise<string | null>;
-  align(audio: Buffer, priority: AlignmentPriority): Promise<WordTiming[]>;
+  /** Word timings for the clip `key`, queued at `priority`. */
+  align(audio: Buffer, priority: AlignmentPriority, key: string): Promise<WordTiming[]>;
+  /** Moves the clip's queued alignment ahead of background work. */
+  promote(key: string): void;
 }
 
 export const defaultClipDependencies: ClipDependencies = {
   synthClear,
   synthCasual,
   reduce: reduceToCasual,
-  align: (audio, priority) => alignAudioLocally(audio, { priority }),
+  align: (audio, priority, key) => alignAudioLocally(audio, { priority, key }),
+  promote: promoteAlignment,
 };
 
 export interface ClipStore {
@@ -50,7 +54,7 @@ export interface ClipStore {
 export function createClipStore(deps: ClipDependencies): ClipStore {
   // In-flight dedupe so concurrent requests for the same key generate (or align) only once.
   const audioInFlight = new Map<string, Promise<Buffer | null>>();
-  const timingsInFlight = new Map<string, Promise<void>>();
+  const timingsInFlight = new Map<string, { job: Promise<void>; priority: AlignmentPriority }>();
 
   // Synthesize + store a clip's audio unless it already exists. `voice` doubles as the style: the
   // CASUAL_STYLE sentinel runs the casual recipe (AI-reduce the text, then voice-design TTS); any other
@@ -93,22 +97,30 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
   // stores nothing, so a later request retries it. `fresh` saves re-reading audio just synthesized.
   function ensureTimings(key: string, priority: AlignmentPriority, fresh?: Buffer | null): Promise<void> {
     const existing = timingsInFlight.get(key);
-    if (existing) return existing;
-    const job = (async () => {
+    if (existing) {
+      // Someone is waiting on this clip now: its alignment, queued or about to be, goes ahead of background work.
+      if (priority === 'interactive' && existing.priority === 'background') {
+        existing.priority = 'interactive';
+        deps.promote(key);
+      }
+      return existing.job;
+    }
+    const entry = { job: Promise.resolve(), priority };
+    entry.job = (async () => {
       const tp = timingsPath(key);
       if (await fileExists(tp)) return;
       const audio = fresh ?? (await readFile(audioPath(key)));
       let words: WordTiming[];
       try {
-        words = await deps.align(audio, priority);
+        words = await deps.align(audio, entry.priority, key);
       } catch (error) {
         console.warn('[tts] local whisper alignment failed:', (error as Error | undefined)?.message);
         return;
       }
       await publishOnce(tp, JSON.stringify(words));
     })().finally(() => timingsInFlight.delete(key));
-    timingsInFlight.set(key, job);
-    return job;
+    timingsInFlight.set(key, entry);
+    return entry.job;
   }
 
   // Word timings for BOTH styles. The casual audio's reduced text keeps word order, so index-aligned

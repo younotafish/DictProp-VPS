@@ -60,29 +60,43 @@ async function alignOnce(audio: Buffer): Promise<WordTiming[]> {
 
 export type AlignmentPriority = 'interactive' | 'background';
 
+export interface PriorityQueue {
+  /** Queues a task; `key` names it for promote. */
+  <T>(task: () => Promise<T>, priority?: AlignmentPriority, key?: string): Promise<T>;
+  /** Moves a waiting background task ahead of the other background work: someone is waiting on it now. */
+  promote(key: string): void;
+}
+
 // Runs one task at a time; an interactive task (a clip someone is waiting on) is taken before any
 // queued background work, so a live request never waits behind a backfill run.
-export function createPriorityQueue() {
-  const waiting: Record<AlignmentPriority, Array<() => void>> = { interactive: [], background: [] };
+export function createPriorityQueue(): PriorityQueue {
+  const waiting: Record<AlignmentPriority, Array<{ key?: string; start: () => void }>> = { interactive: [], background: [] };
   let running = false;
   const next = () => {
     if (running) return;
-    const start = waiting.interactive.shift() ?? waiting.background.shift();
-    if (!start) return;
+    const entry = waiting.interactive.shift() ?? waiting.background.shift();
+    if (!entry) return;
     running = true;
-    start();
+    entry.start();
   };
-  return function schedule<T>(task: () => Promise<T>, priority: AlignmentPriority = 'background'): Promise<T> {
-    return new Promise<T>((resolvePromise, reject) => {
-      waiting[priority].push(() => {
-        Promise.resolve()
-          .then(task)
-          .then(resolvePromise, reject)
-          .finally(() => { running = false; next(); });
+  const schedule = <T>(task: () => Promise<T>, priority: AlignmentPriority = 'background', key?: string): Promise<T> =>
+    new Promise<T>((resolvePromise, reject) => {
+      waiting[priority].push({
+        key,
+        start: () => {
+          Promise.resolve()
+            .then(task)
+            .then(resolvePromise, reject)
+            .finally(() => { running = false; next(); });
+        },
       });
       next();
     });
+  const promote = (key: string): void => {
+    const index = waiting.background.findIndex(entry => entry.key === key);
+    if (index >= 0) waiting.interactive.push(...waiting.background.splice(index, 1));
   };
+  return Object.assign(schedule, { promote });
 }
 
 // A tiny model still uses a meaningful amount of memory. Serialize alignment so two backfill workers
@@ -90,7 +104,12 @@ export function createPriorityQueue() {
 const alignmentQueue = createPriorityQueue();
 export function alignAudioLocally(
   audio: Buffer,
-  options: { priority?: AlignmentPriority } = {},
+  options: { priority?: AlignmentPriority; key?: string } = {},
 ): Promise<WordTiming[]> {
-  return alignmentQueue(() => alignOnce(audio), options.priority ?? 'background');
+  return alignmentQueue(() => alignOnce(audio), options.priority ?? 'background', options.key);
+}
+
+/** Moves the queued alignment of the clip `key` ahead of background work, if it is waiting. */
+export function promoteAlignment(key: string): void {
+  alignmentQueue.promote(key);
 }

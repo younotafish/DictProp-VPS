@@ -215,3 +215,21 @@ test('the alignment queue runs one task at a time and takes interactive work bef
   await assert.rejects(schedule(async () => { throw new Error('boom'); }), /boom/);
   assert.equal(await schedule(async () => 'after'), 'after');
 });
+
+test('a waiting background task someone now waits on runs after the interactive work, ahead of other background work', async () => {
+  const schedule = createPriorityQueue();
+  const order: string[] = [];
+  const busy = deferred();
+  const results = Promise.all([
+    schedule(async () => { await busy.promise; order.push('running'); }, 'background', 'running'),
+    schedule(async () => { order.push('a'); }, 'background', 'a'),
+    schedule(async () => { order.push('b'); }, 'background', 'b'),
+    schedule(async () => { order.push('live'); }, 'interactive', 'live'),
+  ]);
+  schedule.promote('b');
+  schedule.promote('running'); // already running: nothing to move
+  schedule.promote('missing');
+  busy.release();
+  await results;
+  assert.deepEqual(order, ['running', 'live', 'b', 'a']);
+});

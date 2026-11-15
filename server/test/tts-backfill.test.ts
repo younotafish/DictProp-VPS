@@ -38,6 +38,7 @@ function harness(texts: BackfillTexts, { reduceBatch = respellAll, deps = {}, ow
     synthCasual: async (spoken) => { calls.casual.push(spoken); events.push(`casual ${spoken}`); return Buffer.from(`ID3 casual ${spoken}`); },
     reduce: async (sentence) => { calls.reduce.push(sentence); return `${sentence} (casual)`; },
     align: async () => { calls.align++; return TIMING; },
+    promote: () => {},
     ...deps,
   };
   const backfill = createBackfill({
