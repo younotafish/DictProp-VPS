@@ -25,6 +25,7 @@ import { StudyCard } from '../components/study/StudyCard';
 import { StudySummary } from '../components/study/StudySummary';
 import { useEscapeLayer } from '../components/escapeStack';
 import { isDialogOpenOutside, isKeyboardFocusedControl, isTypingTarget } from '../components/keyboardTarget';
+import { warn } from '../services/logger';
 
 interface StudyEnhancedProps {
   items: StoredItem[];
@@ -41,7 +42,8 @@ interface StudyEnhancedProps {
 }
 
 interface LastGrade extends SessionGrade {
-  status: 'syncing' | 'ready' | 'waiting' | 'undoing';
+  /** An undo of this grade is under way. */
+  undoing: boolean;
 }
 
 const keyboardRatings: Partial<Record<string, ReviewRating>> = Object.fromEntries(
@@ -90,7 +92,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     if (!session || !currentItem || !session.revealed) return;
     const eventId = crypto.randomUUID();
     const { grade: sessionGrade, itemIds } = gradeSessionCard(session, currentItem, rating, eventId, Date.now());
-    const grade: LastGrade = { ...sessionGrade, status: 'syncing' };
+    const grade: LastGrade = { ...sessionGrade, undoing: false };
     setLastGrade(grade);
     setUndoError('');
     void onReview(currentItem.data.id, rating, {
@@ -98,27 +100,21 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       durationMs: grade.durationMs,
       sessionId: session.id,
       eventId,
-    }).then(synced => {
-      setLastGrade(current => current?.eventId === eventId
-        ? { ...current, status: synced ? 'ready' : 'waiting' }
-        : current);
-    }).catch(() => {
-      setLastGrade(current => current?.eventId === eventId ? { ...current, status: 'waiting' } : current);
-    });
+    }).catch(error => warn('Review failed:', error));
     setSession(current => current ? advanceSession(current, itemIds, rating, Date.now()) : null);
   };
 
   const undoLastGrade = async () => {
     const grade = lastGrade;
-    if (!grade || !session || grade.sessionId !== session.id || grade.status === 'undoing') return;
-    setLastGrade(current => current?.eventId === grade.eventId ? { ...current, status: 'undoing' } : current);
+    if (!grade || !session || grade.sessionId !== session.id || grade.undoing) return;
+    setLastGrade(current => current?.eventId === grade.eventId ? { ...current, undoing: true } : current);
     setUndoError('');
     try {
       await onUndoReview(grade.eventId);
       setSession(current => current ? undoSessionGrade(current, grade, Date.now()) : null);
       setLastGrade(null);
     } catch (error) {
-      setLastGrade(current => current?.eventId === grade.eventId ? { ...current, status: 'waiting' } : current);
+      setLastGrade(current => current?.eventId === grade.eventId ? { ...current, undoing: false } : current);
       setUndoError(error instanceof Error ? error.message : 'The review could not be undone.');
     }
   };
@@ -153,7 +149,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         if (session.revealed) gradeCurrent(rating);
         return;
       }
-      if (event.key.toLowerCase() === 'u' && lastGrade && lastGrade.status !== 'undoing') {
+      if (event.key.toLowerCase() === 'u' && lastGrade && !lastGrade.undoing) {
         event.preventDefault();
         event.stopImmediatePropagation();
         void undoLastGrade();
@@ -185,7 +181,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   if (session) {
     const undo = () => void undoLastGrade();
-    const undoing = lastGrade?.status === 'undoing';
+    const undoing = lastGrade?.undoing ?? false;
     if (!currentItem) {
       return (
         <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-24">
