@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
 import {
   NOTHING_SUCCEEDED_EXIT_CODE,
   ledgerFromEnvironment,
@@ -13,11 +11,22 @@ import {
   updateLedger,
 } from './failure-ledger.mjs';
 import {
-  hasCurrentLocalAdvancedEnrichment,
-  markLocalAdvancedEnrichment,
-} from './local-advanced-enrichment.mjs';
+  batchFiles,
+  batchFingerprint,
+  createStageLifecycle,
+  jitteredDelay,
+  runCachedModelBatch,
+  runPool,
+  runSplittingBatches,
+  stageSettings,
+} from './model-stage.mjs';
 import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
-import { missingCardFields } from './vocab-card-contract.mjs';
+import {
+  applyCompletions,
+  collectCompletionTasks,
+  compactTask,
+  readCompletionResults,
+} from './vocab-completion.mjs';
 
 const [inputArg, outputArg, workArg] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
@@ -26,15 +35,8 @@ if (!inputArg || !outputArg) {
 
 const MODEL_CONFIG = resolveStructuredModel();
 const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
-const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 40);
-const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
-  ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
-  : 40) * 60 * 1_000;
-const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 5_000)));
-const REQUIRED_TEXT_FIELDS = ['sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt'];
-const activeChildren = new Set();
-let aborting = false;
-installCodexSignalCleanup(activeChildren, () => { aborting = true; });
+const { timeoutMs: MODEL_TIMEOUT_MS, retryDelayMs, concurrency } = stageSettings({ defaultTimeoutMinutes: 40 });
+const lifecycle = createStageLifecycle();
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'completion-work'));
@@ -106,8 +108,6 @@ const completionSchema = {
     },
   },
 };
-const schemaPath = join(workDir, 'output-schema.json');
-writeFileSync(schemaPath, `${JSON.stringify(completionSchema, null, 2)}\n`, { mode: 0o600 });
 
 const instruction = `You are a senior American English lexicographer creating the advanced enrichment layer for vocabulary cards used by a Chinese-speaking ESL learner. Work on the EXACT supplied sense. Do not add, remove, merge, or change meanings. Some inputs contain a basic server-generated draft; produce a complete, polished replacement for the learning metadata while preserving the headword, identity, and exact sense.
 
@@ -129,298 +129,82 @@ For every input:
 
 Preserve the headword's capitalization only when it is a proper name. Use General American English. Everything must be English except chinese and wordFamily.chinese. Copy each itemIndex exactly, return every input once, and output only schema-valid JSON.`;
 
-const tasks = [];
-for (const entry of source.entries) {
-  const cards = entry.type === 'vocab'
-    ? [entry.data]
-    : entry.type === 'phrase' && Array.isArray(entry.data?.vocabs)
-      ? entry.data.vocabs
-      : [];
-  for (let cardIndex = 0; cardIndex < cards.length; cardIndex++) {
-    const card = cards[cardIndex];
-    const missing = missingCardFields(card);
-    const refreshAll = !hasCurrentLocalAdvancedEnrichment(card);
-    if (missing.length === 0 && !refreshAll) continue;
-    tasks.push({
-      parentId: entry.id,
-      parentType: entry.type,
-      parentQuery: entry.type === 'phrase' ? entry.data.query : undefined,
-      cardIndex,
-      cardId: card.id || entry.id,
-      missing,
-      refreshAll,
-      card,
-    });
-  }
-}
-
+const tasks = collectCompletionTasks(source.entries);
 if (tasks.length === 0) {
   writeFileSync(outputPath, `${JSON.stringify(source, null, 2)}\n`, { mode: 0o600 });
   process.stderr.write('No incomplete vocabulary cards found\n');
   process.exit(0);
 }
 
-const compactTask = (task, itemIndex) => ({
-  itemIndex,
-  parentType: task.parentType,
-  parentQuery: task.parentQuery,
-  missingFields: task.missing,
-  mode: task.refreshAll ? 'advanced_rewrite' : 'repair_missing_fields',
-  word: task.card.word,
-  sense: task.card.sense,
-  chinese: task.card.chinese,
-  ipa: task.card.ipa,
-  definition: task.card.definition,
-  forms: task.card.forms,
-  wordFamily: task.card.wordFamily,
-  synonyms: task.card.synonyms,
-  antonyms: task.card.antonyms,
-  confusables: task.card.confusables,
-  examples: task.card.examples,
-  history: task.card.history,
-  register: task.card.register,
-  mnemonic: task.card.mnemonic,
-  imagePrompt: task.card.imagePrompt,
-  usageAudit: task.card.usageAudit,
-});
-
 const batches = [];
 const batchSize = Math.max(1, Math.min(20, Number(process.env.VOCAB_COMPLETION_BATCH_SIZE || 8)));
 for (let index = 0; index < tasks.length; index += batchSize) batches.push(tasks.slice(index, index + batchSize));
 
-const FIELD_PROBLEMS = {
-  chinese: 'chinese must be a Simplified Chinese equivalent',
-  ipa: 'IPA must be one General American transcription enclosed in a single pair of slashes',
-  imagePrompt: 'image prompt is missing or shorter than 50 characters',
-  wordFamily: 'every wordFamily entry needs a word, a part of speech, and Simplified Chinese',
-  examples: 'examples must be two sentences of at least 20 characters, each with exactly one target use in double curly braces',
-  usageAudit: 'usage audit is invalid',
-};
-
-// The result is checked against the same contract the selector uses, so an accepted card is never
-// selected again for the same gap.
-function validateCompletion(result, task) {
-  if (!result || typeof result !== 'object') throw new Error(`${task.cardId}: result is not an object`);
-  const missing = missingCardFields({ ...result, word: task.card.word }, { requireAuditedAt: false });
-  if (missing.length > 0) {
-    throw new Error(`${task.cardId}: ${missing.map(field => FIELD_PROBLEMS[field] || `${field} is missing or too short`).join('; ')}`);
-  }
-  if (result.synonyms.length === 0) throw new Error(`${task.cardId}: synonyms are empty`);
+function filesFor(batch, batchIndex) {
+  return batchFiles(workDir, batchIndex, batchFingerprint({
+    provider: MODEL_CONFIG.cacheKey, model: MODEL, reasoningEffort: REASONING_EFFORT, records: batch.map(compactTask),
+  }));
 }
 
-function normalizeCompletion(result) {
-  if (!result || typeof result !== 'object') return result;
-  const ipa = String(result.ipa || '').trim();
-  const transcriptions = ipa.match(/\/[^/\n]+\//g) || [];
-  const annotations = ipa.replace(/\/[^/\n]+\//g, '').replace(/[\s;,()\[\]–—-]/g, '');
-  if (transcriptions.length > 1 && !annotations) {
-    return {
-      ...result,
-      ipa: `/${transcriptions.map(value => value.slice(1, -1).trim()).join('; ')}/`,
-    };
-  }
-  return result;
+function askModel({ prompt, resultPath }) {
+  return runStructuredModel(MODEL_CONFIG, {
+    prompt, schema: completionSchema, resultPath, timeoutMs: MODEL_TIMEOUT_MS, activeChildren: lifecycle.activeChildren,
+  });
 }
 
-function batchFingerprint(batch) {
-  return createHash('sha256')
-    .update(JSON.stringify({
-      provider: MODEL_CONFIG.cacheKey, model: MODEL, reasoningEffort: REASONING_EFFORT, records: batch.map(compactTask),
-    }))
-    .digest('hex')
-    .slice(0, 16);
-}
-
-async function runBatch(batch, batchIndex) {
+function runBatch(batch, batchIndex) {
   const compact = batch.map(compactTask);
-  const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${batchFingerprint(batch)}.json`);
-  let correction = '';
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      if (!existsSync(resultPath)) {
-        const prompt = `${instruction}${correction}\n\nCOMPLETE THESE CARDS:\n${JSON.stringify(compact)}`;
-        await runStructuredModel(MODEL_CONFIG, {
-          prompt, schema: completionSchema, schemaPath, resultPath, timeoutMs: MODEL_TIMEOUT_MS, activeChildren,
-        });
-      }
-      const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
-      if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) {
-        throw new Error('Model returned the wrong result count');
-      }
-      const byIndex = new Map(parsed.results.map(result => [result.itemIndex, result]));
-      if (byIndex.size !== batch.length) throw new Error('Model returned duplicate item indexes');
-      return batch.map((task, itemIndex) => {
-        const completion = normalizeCompletion(byIndex.get(itemIndex));
-        if (!completion) throw new Error(`Model omitted item index ${itemIndex}`);
-        validateCompletion(completion, task);
-        return { task, completion };
-      });
-    } catch (error) {
-      if (aborting || attempt === 2) throw error;
-      correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Return every itemIndex and two natural examples per item, each at least 20 characters long with exactly one target use wrapped in double curly braces.`;
-      if (existsSync(resultPath)) unlinkSync(resultPath);
-      // Exponential and jittered, so parallel workers that failed together do not retry together.
-      const delay = retryDelayMs * 4 ** attempt * (0.5 + Math.random());
-      await new Promise(resolvePromise => setTimeout(resolvePromise, delay));
-    }
-  }
-  throw new Error(`Completion batch ${batchIndex + 1} exhausted retries`);
+  return runCachedModelBatch({
+    resultPath: filesFor(batch, batchIndex).result,
+    prompt: correction => `${instruction}${correction}\n\nCOMPLETE THESE CARDS:\n${JSON.stringify(compact)}`,
+    correction: message => `\n\nYour previous response failed validation: ${message}. Return every itemIndex and two natural examples per item, each at least 20 characters long with exactly one target use wrapped in double curly braces.`,
+    ask: askModel,
+    validate: parsed => readCompletionResults(parsed, batch),
+    retryDelay: attempt => jitteredDelay(retryDelayMs, attempt),
+    lifecycle,
+  });
 }
 
 // A batch that keeps failing is halved until the failure is pinned to single cards, so one card the
 // model cannot complete no longer takes its batch-mates down with it.
-async function runBatchResilient(batch, batchIndex, depth = 0) {
-  const splitMarkerPath = join(
-    workDir,
-    `split-${String(batchIndex + 1).padStart(4, '0')}-${batchFingerprint(batch)}.json`,
-  );
-  // A batch that failed on an earlier run goes straight to its halves, whose results are cached.
-  if (batch.length === 1 || !existsSync(splitMarkerPath)) {
-    try {
-      return { results: await runBatch(batch, batchIndex), failures: [] };
-    } catch (error) {
-      if (aborting) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      if (batch.length === 1) {
-        process.stderr.write(`Card ${batch[0].cardId} of ${batch[0].parentId} failed on its own: ${message}\n`);
-        return { results: [], failures: [{ task: batch[0], error: message }] };
-      }
-      writeFileSync(splitMarkerPath, `${JSON.stringify({
-        version: 1,
-        batchIndex,
-        depth,
-        cardIds: batch.map(task => task.cardId),
-        error: message,
-        splitAt: new Date().toISOString(),
-      }, null, 2)}\n`, { mode: 0o600 });
-      process.stderr.write(`Completion batch ${batchIndex + 1} failed (${message}); splitting ${batch.length} cards\n`);
-    }
-  }
-  const midpoint = Math.ceil(batch.length / 2);
-  const left = await runBatchResilient(batch.slice(0, midpoint), batchIndex, depth + 1);
-  const right = await runBatchResilient(batch.slice(midpoint), batchIndex, depth + 1);
-  return { results: [...left.results, ...right.results], failures: [...left.failures, ...right.failures] };
+function runBatchResilient(batch, batchIndex) {
+  return runSplittingBatches(batch, {
+    run: part => runBatch(part, batchIndex),
+    markerPath: part => filesFor(part, batchIndex).splitMarker,
+    marker: (part, error, depth) => ({
+      version: 1,
+      batchIndex,
+      depth,
+      cardIds: part.map(task => task.cardId),
+      error,
+      splitAt: new Date().toISOString(),
+    }),
+    onSplit: ({ batch: part, error, resumed }) => {
+      if (!resumed) process.stderr.write(`Completion batch ${batchIndex + 1} failed (${error}); splitting ${part.length} cards\n`);
+    },
+    onSingletonFailure: (task, error) => {
+      process.stderr.write(`Card ${task.cardId} of ${task.parentId} failed on its own: ${error}\n`);
+      return { task, error };
+    },
+    lifecycle,
+  });
 }
 
 const completedTasks = [];
 const failures = [];
-let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(16, Number(process.env.CODEX_CONCURRENCY || 4)));
-async function worker() {
-  for (;;) {
-    const index = nextBatch++;
-    if (index >= batches.length) return;
-    process.stderr.write(`Completing corpus batch ${index + 1}/${batches.length}\n`);
-    const outcome = await runBatchResilient(batches[index], index);
-    completedTasks.push(...outcome.results);
-    failures.push(...outcome.failures);
-  }
-}
-
-async function terminateActiveChildren() {
-  aborting = true;
-  for (const child of activeChildren) killCodex(child, 'SIGTERM');
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000));
-  for (const child of activeChildren) killCodex(child, 'SIGKILL');
-}
-
-try {
-  await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => worker()));
-} catch (error) {
-  await terminateActiveChildren();
-  throw error;
-}
+await runPool(batches.length, concurrency, lifecycle, async index => {
+  process.stderr.write(`Completing corpus batch ${index + 1}/${batches.length}\n`);
+  const outcome = await runBatchResilient(batches[index], index);
+  completedTasks.push(...outcome.results);
+  failures.push(...outcome.failures);
+});
 
 const generatedAt = Date.now();
-const completionByCard = new Map();
-for (const { task, completion } of completedTasks) {
-  completionByCard.set(`${task.parentId}\u0000${task.cardIndex}`, completion);
-}
-// A parent is published whole or not at all, so one failed card holds back only its own item.
-const failedParents = new Map();
-for (const { task, error } of failures) {
-  if (!failedParents.has(task.parentId)) failedParents.set(task.parentId, `${task.cardId}: ${error}`);
-}
-
-function withoutImageFields(value) {
-  if (Array.isArray(value)) return value.map(withoutImageFields);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => key !== 'imageUrl')
-    .map(([key, child]) => [key, withoutImageFields(child)]));
-}
-
-function corpusHash(data) {
-  return createHash('sha256').update(JSON.stringify(withoutImageFields(data))).digest('hex');
-}
-
-function fillCard(card, completion) {
-  const next = { ...card };
-  const missing = new Set(missingCardFields(card));
-  const refreshAll = !hasCurrentLocalAdvancedEnrichment(card);
-  for (const field of REQUIRED_TEXT_FIELDS) {
-    if (refreshAll || missing.has(field)) next[field] = completion[field].trim();
-  }
-  for (const field of ['forms', 'wordFamily', 'synonyms', 'antonyms', 'confusables']) {
-    if (refreshAll || missing.has(field)) next[field] = completion[field];
-  }
-  if (refreshAll || missing.has('examples')) {
-    next.examples = completion.examples;
-  }
-  if (refreshAll || missing.has('usageAudit')) {
-    next.usageAudit = { ...completion.usageAudit, auditedAt: generatedAt };
-  }
-  const filled = markLocalAdvancedEnrichment(next, MODEL, generatedAt, MODEL_CONFIG.marker);
-  const stillMissing = missingCardFields(filled);
-  if (stillMissing.length > 0) {
-    throw new Error(`${card.id || card.word}: still missing ${stillMissing.join(', ')} after completion`);
-  }
-  return filled;
-}
-
-let completedCards = 0;
-const entries = [];
-for (const entry of source.entries) {
-  if (failedParents.has(entry.id)) continue;
-  const originalData = entry.data;
-  let data = originalData;
-  let appliedCards = 0;
-  try {
-    if (entry.type === 'vocab') {
-      const completion = completionByCard.get(`${entry.id}\u00000`);
-      if (completion) {
-        data = fillCard(originalData, completion);
-        appliedCards++;
-      }
-    } else if (entry.type === 'phrase' && Array.isArray(originalData.vocabs)) {
-      let changed = false;
-      const vocabs = originalData.vocabs.map((card, cardIndex) => {
-        const completion = completionByCard.get(`${entry.id}\u0000${cardIndex}`);
-        if (!completion) return card;
-        changed = true;
-        appliedCards++;
-        return fillCard(card, completion);
-      });
-      if (changed) data = { ...originalData, vocabs };
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Vocabulary item ${entry.id} failed its completion check: ${message}\n`);
-    failedParents.set(entry.id, message);
-    continue;
-  }
-  completedCards += appliedCards;
-  const nextEntry = {
-    ...entry,
-    // The previous audited target is the source for this second, resumable completion pass.
-    sourceHash: corpusHash(originalData),
-    data,
-  };
-  if (entry.type === 'vocab' && data.usageAudit) {
-    nextEntry.archiveForUsage = data.usageAudit.confidence !== 'low' &&
-      ['british_only', 'rare_or_dated', 'narrow_specialized'].includes(data.usageAudit.status);
-  }
-  entries.push(nextEntry);
+const { entries, failedParents, checkFailures, completedCards } = applyCompletions(
+  source.entries, completedTasks, failures, { model: MODEL, provider: MODEL_CONFIG.marker, generatedAt },
+);
+for (const { id, message } of checkFailures) {
+  process.stderr.write(`Vocabulary item ${id} failed its completion check: ${message}\n`);
 }
 
 const expectedCards = tasks.filter(task => !failedParents.has(task.parentId)).length;

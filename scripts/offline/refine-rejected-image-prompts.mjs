@@ -1,9 +1,17 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { readRefinements, refinementRecords } from './image-review.mjs';
+import {
+  batchFiles,
+  batchFingerprint,
+  createStageLifecycle,
+  jitteredDelay,
+  runCachedModelBatch,
+  runPool,
+  stageSettings,
+} from './model-stage.mjs';
 import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
 
 const [targetsArg, outputArg, workArg] = process.argv.slice(2);
@@ -13,14 +21,8 @@ if (!targetsArg || !outputArg || !workArg) {
 
 const MODEL_CONFIG = resolveStructuredModel();
 const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
-const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 20);
-const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
-  ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
-  : 20) * 60 * 1_000;
-const retryDelayMs = Math.max(0, Math.min(60_000, Number(process.env.CODEX_RETRY_DELAY_MS || 5_000)));
-const activeChildren = new Set();
-let aborting = false;
-installCodexSignalCleanup(activeChildren, () => { aborting = true; });
+const { timeoutMs: MODEL_TIMEOUT_MS, retryDelayMs, concurrency } = stageSettings({ defaultTimeoutMinutes: 20 });
+const lifecycle = createStageLifecycle();
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
 if (!Array.isArray(payload.targets)) throw new Error('Rejected target manifest is invalid');
 const workDir = resolve(workArg);
@@ -51,8 +53,6 @@ const schema = {
     },
   },
 };
-const schemaPath = join(workDir, 'refinement-schema.json');
-writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
 
 const PROMPT_POLICY_VERSION = 3;
 
@@ -67,90 +67,33 @@ for (let index = 0; index < payload.targets.length; index += 20) {
   batches.push(payload.targets.slice(index, index + 20));
 }
 
-async function refineBatch(batch, batchIndex) {
-  const records = batch.map((target, itemIndex) => ({
-    itemIndex,
-    learningTarget: target.learningTarget,
-    rejectedBrief: target.prompt,
-    rejectionReason: target.rejectionReason || 'The previous image did not communicate the exact meaning clearly enough.',
-  }));
-  const fingerprint = createHash('sha256')
-    .update(JSON.stringify({
-      provider: MODEL_CONFIG.cacheKey,
-      promptPolicyVersion: PROMPT_POLICY_VERSION,
-      model: MODEL,
-      reasoningEffort: REASONING_EFFORT,
-      records,
-    }))
-    .digest('hex')
-    .slice(0, 16);
-  const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
-  let correction = '';
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      if (!existsSync(resultPath)) {
-        await runStructuredModel(MODEL_CONFIG, {
-          prompt: `${instruction}${correction}\n\nREFINE THESE REJECTED TARGETS:\n${JSON.stringify(records)}`,
-          schema,
-          schemaPath,
-          resultPath,
-          timeoutMs: MODEL_TIMEOUT_MS,
-          activeChildren,
-        });
-      }
-      const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
-      if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) {
-        throw new Error(`Batch ${batchIndex + 1} returned the wrong result count`);
-      }
-      const byIndex = new Map(parsed.results.map(result => [result.itemIndex, result]));
-      if (byIndex.size !== batch.length) throw new Error(`Batch ${batchIndex + 1} returned duplicate indexes`);
-      return batch.map((target, itemIndex) => {
-        const result = byIndex.get(itemIndex);
-        if (!result || typeof result.prompt !== 'string' || result.prompt.trim().length < 40) {
-          throw new Error(`Batch ${batchIndex + 1} omitted index ${itemIndex}`);
-        }
-        return {
-          ...target,
-          originalPrompt: target.originalPrompt || target.prompt,
-          prompt: result.prompt.trim(),
-          promptRefinement: result.change.trim(),
-        };
-      });
-    } catch (error) {
-      if (aborting || attempt === 2) throw error;
-      correction = `\n\nYour previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Return every itemIndex exactly once.`;
-      if (existsSync(resultPath)) unlinkSync(resultPath);
-      // Exponential and jittered, so parallel workers that failed together do not retry together.
-      const delay = retryDelayMs * 4 ** attempt * (0.5 + Math.random());
-      await new Promise(resolvePromise => setTimeout(resolvePromise, delay));
-    }
-  }
-  throw new Error(`Prompt-refinement batch ${batchIndex + 1} exhausted retries`);
+function refineBatch(batch, batchIndex) {
+  const records = refinementRecords(batch);
+  const fingerprint = batchFingerprint({
+    provider: MODEL_CONFIG.cacheKey,
+    promptPolicyVersion: PROMPT_POLICY_VERSION,
+    model: MODEL,
+    reasoningEffort: REASONING_EFFORT,
+    records,
+  });
+  return runCachedModelBatch({
+    resultPath: batchFiles(workDir, batchIndex, fingerprint).result,
+    prompt: correction => `${instruction}${correction}\n\nREFINE THESE REJECTED TARGETS:\n${JSON.stringify(records)}`,
+    correction: message => `\n\nYour previous response failed validation: ${message}. Return every itemIndex exactly once.`,
+    ask: ({ prompt, resultPath }) => runStructuredModel(MODEL_CONFIG, {
+      prompt, schema, resultPath, timeoutMs: MODEL_TIMEOUT_MS, activeChildren: lifecycle.activeChildren,
+    }),
+    validate: parsed => readRefinements(parsed, batch, batchIndex + 1),
+    retryDelay: attempt => jitteredDelay(retryDelayMs, attempt),
+    lifecycle,
+  });
 }
 
 const results = new Array(batches.length);
-let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(16, Number(process.env.CODEX_CONCURRENCY || 4)));
-async function worker() {
-  for (;;) {
-    const index = nextBatch++;
-    if (index >= batches.length) return;
-    process.stderr.write(`Refining rejected prompt batch ${index + 1}/${batches.length}\n`);
-    results[index] = await refineBatch(batches[index], index);
-  }
-}
-async function terminateActiveChildren() {
-  aborting = true;
-  for (const child of activeChildren) killCodex(child, 'SIGTERM');
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000));
-  for (const child of activeChildren) killCodex(child, 'SIGKILL');
-}
-try {
-  await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => worker()));
-} catch (error) {
-  await terminateActiveChildren();
-  throw error;
-}
+await runPool(batches.length, concurrency, lifecycle, async index => {
+  process.stderr.write(`Refining rejected prompt batch ${index + 1}/${batches.length}\n`);
+  results[index] = await refineBatch(batches[index], index);
+});
 
 writeFileSync(resolve(outputArg), `${JSON.stringify({
   ...payload,

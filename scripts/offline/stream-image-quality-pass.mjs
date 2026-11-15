@@ -3,6 +3,8 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { DETACHED_PROCESS_GROUPS, killProcessGroup } from './codex-process.mjs';
+import { candidateFile } from './image-review.mjs';
 
 const [targetsArg, candidatesArg, imagesArg, workArg, outputArg, candidateArg, chunkSizeArg] = process.argv.slice(2);
 if (!targetsArg || !candidatesArg || !imagesArg || !workArg || !outputArg) {
@@ -41,40 +43,20 @@ mkdirSync(workDir, { recursive: true });
 mkdirSync(dirname(outputPath), { recursive: true });
 
 const sleep = milliseconds => new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds));
-const detachedProcessGroups = process.platform !== 'win32';
 let activeChild = null;
 let handlingSignal = false;
-
-function killActiveChild(signal) {
-  if (!activeChild?.pid) return;
-  try {
-    if (detachedProcessGroups) process.kill(-activeChild.pid, signal);
-    else activeChild.kill(signal);
-  } catch (error) {
-    if (error?.code === 'ESRCH') return;
-    if (detachedProcessGroups && error?.code === 'EPERM') {
-      try {
-        activeChild.kill(signal);
-      } catch (childError) {
-        if (childError?.code !== 'ESRCH' && childError?.code !== 'EPERM') throw childError;
-      }
-      return;
-    }
-    throw error;
-  }
-}
 
 function forwardSignal(signal) {
   const exitCode = signal === 'SIGINT' ? 130 : 143;
   if (handlingSignal) {
-    killActiveChild('SIGKILL');
+    killProcessGroup(activeChild, 'SIGKILL');
     process.exit(exitCode);
   }
   handlingSignal = true;
   if (!activeChild?.pid) process.exit(exitCode);
-  killActiveChild(signal);
+  killProcessGroup(activeChild, signal);
   setTimeout(() => {
-    killActiveChild('SIGKILL');
+    killProcessGroup(activeChild, 'SIGKILL');
     process.exit(exitCode);
   }, 3_000);
 }
@@ -82,7 +64,7 @@ process.on('SIGINT', () => forwardSignal('SIGINT'));
 process.on('SIGTERM', () => forwardSignal('SIGTERM'));
 
 function candidatePath(target) {
-  return join(candidateDir, target.filename.replace(/(\.[^.]+)$/, `-${candidateNumber}$1`));
+  return candidateFile(candidateDir, target.filename, candidateNumber);
 }
 
 function fileReady(path) {
@@ -124,7 +106,7 @@ function run(command, args) {
     const child = spawn(command, args, {
       stdio: 'inherit',
       env: process.env,
-      detached: detachedProcessGroups,
+      detached: DETACHED_PROCESS_GROUPS,
     });
     activeChild = child;
     child.on('error', reject);

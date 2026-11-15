@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import { candidateFile, judgmentRecords, readVerdicts } from './image-review.mjs';
+import {
+  batchFiles,
+  batchFingerprint,
+  createStageLifecycle,
+  runCachedModelBatch,
+  runPool,
+  stageSettings,
+} from './model-stage.mjs';
 import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
 
 const [targetsArg, candidatesArg, imagesArg, workArg, candidateNumberArg] = process.argv.slice(2);
@@ -17,14 +24,13 @@ if (!Number.isSafeInteger(candidateNumber) || candidateNumber < 1 || candidateNu
 
 const MODEL_CONFIG = resolveStructuredModel();
 const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
-const requestedTimeoutMinutes = Number(process.env.CODEX_TIMEOUT_MINUTES || 20);
-const MODEL_TIMEOUT_MS = (Number.isFinite(requestedTimeoutMinutes)
-  ? Math.max(5, Math.min(60, requestedTimeoutMinutes))
-  : 20) * 60 * 1_000;
+const { timeoutMs: MODEL_TIMEOUT_MS, concurrency } = stageSettings({
+  defaultTimeoutMinutes: 20,
+  maxConcurrency: 8,
+  concurrencyVariables: ['CODEX_IMAGE_CONCURRENCY', 'CODEX_CONCURRENCY'],
+});
 const JUDGMENT_POLICY_VERSION = 4;
-const activeChildren = new Set();
-let aborting = false;
-installCodexSignalCleanup(activeChildren, () => { aborting = true; });
+const lifecycle = createStageLifecycle();
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
 if (!Array.isArray(payload.targets)) throw new Error('Target manifest is invalid');
 const candidateDir = resolve(candidatesArg);
@@ -58,88 +64,43 @@ const schema = {
     },
   },
 };
-const schemaPath = join(workDir, 'judgment-schema.json');
-writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
+
+// The prompt is JUDGMENT_INTRODUCTION, the batch's records, then JUDGMENT_POLICY.
+const JUDGMENT_INTRODUCTION = 'Act as a rigorous but practical visual editor for an American English learning app. Each attached image corresponds, in attachment order, to the itemIndex record below:';
+const JUDGMENT_POLICY = 'Judge each image independently against learningTarget.text, learningTarget.sense, and learningTarget.definition. The brief describes one possible composition; it is guidance, not a shot-list contract. For a concrete, directly photographable target, accept when a learner can infer the core contextual meaning at a glance, the image does not contradict that meaning, and the scene is realistic and visually coherent. For an abstract, rhetorical, figurative, relational, or logical target that cannot be uniquely photographed, accept a coherent, memorable concrete scenario or visual metaphor that reinforces the intended meaning when shown beside the sentence; do not require the image alone to name the formal concept or encode every logical step without its accompanying sentence. Semantic usefulness outweighs literal compliance with incidental staging. Do not reject solely because of an omitted secondary action, exact person count, camera angle, accessory, facial micro-expression, or precise body position when the central teaching meaning remains clear. Reject semantic mismatches, genuinely ambiguous generic stock imagery, misleading literal depictions of figurative language, materially broken anatomy or objects, empty decorative symbolism, animation, illustration, or distracting visible text/logos. A minor cosmetic flaw is not enough to reject an otherwise accurate teaching image. Copy every itemIndex exactly and return only schema-valid JSON.';
 
 const pending = payload.targets.filter(target => !existsSync(join(imageDir, target.filename)));
 const batches = [];
 for (let index = 0; index < pending.length; index += 8) batches.push(pending.slice(index, index + 8));
 
-async function judgeBatch(batch, batchIndex) {
-  const records = batch.map((target, itemIndex) => ({
-    itemIndex,
-    candidateNumber,
-    learningTarget: target.learningTarget,
-    brief: target.prompt,
-  }));
-  const fingerprint = createHash('sha256')
-    .update(JSON.stringify({
-      judgmentPolicyVersion: JUDGMENT_POLICY_VERSION,
-      model: MODEL,
-      reasoningEffort: REASONING_EFFORT,
-      records,
-    }))
-    .digest('hex')
-    .slice(0, 16);
-  const resultPath = join(workDir, `batch-${String(batchIndex + 1).padStart(4, '0')}-${fingerprint}.json`);
-  const candidates = batch.map(target => join(
-    candidateDir,
-    target.filename.replace(/(\.[^.]+)$/, `-${candidateNumber}$1`),
-  ));
+function judgeBatch(batch, batchIndex) {
+  const records = judgmentRecords(batch, candidateNumber);
+  const fingerprint = batchFingerprint({
+    judgmentPolicyVersion: JUDGMENT_POLICY_VERSION,
+    model: MODEL,
+    reasoningEffort: REASONING_EFFORT,
+    records,
+  });
+  const candidates = batch.map(target => candidateFile(candidateDir, target.filename, candidateNumber));
   if (candidates.some(path => !existsSync(path))) throw new Error(`Batch ${batchIndex + 1} is missing a candidate image`);
-  let correction = '';
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      if (!existsSync(resultPath)) {
-        const prompt = `Act as a rigorous but practical visual editor for an American English learning app. Each attached image corresponds, in attachment order, to the itemIndex record below:\n${JSON.stringify(records)}\n\nJudge each image independently against learningTarget.text, learningTarget.sense, and learningTarget.definition. The brief describes one possible composition; it is guidance, not a shot-list contract. For a concrete, directly photographable target, accept when a learner can infer the core contextual meaning at a glance, the image does not contradict that meaning, and the scene is realistic and visually coherent. For an abstract, rhetorical, figurative, relational, or logical target that cannot be uniquely photographed, accept a coherent, memorable concrete scenario or visual metaphor that reinforces the intended meaning when shown beside the sentence; do not require the image alone to name the formal concept or encode every logical step without its accompanying sentence. Semantic usefulness outweighs literal compliance with incidental staging. Do not reject solely because of an omitted secondary action, exact person count, camera angle, accessory, facial micro-expression, or precise body position when the central teaching meaning remains clear. Reject semantic mismatches, genuinely ambiguous generic stock imagery, misleading literal depictions of figurative language, materially broken anatomy or objects, empty decorative symbolism, animation, illustration, or distracting visible text/logos. A minor cosmetic flaw is not enough to reject an otherwise accurate teaching image. Copy every itemIndex exactly and return only schema-valid JSON.${correction}`;
-        await runStructuredModel(MODEL_CONFIG, {
-          prompt, schema, schemaPath, resultPath, images: candidates, timeoutMs: MODEL_TIMEOUT_MS, activeChildren,
-        });
-      }
-      const parsed = JSON.parse(readFileSync(resultPath, 'utf8'));
-      if (!Array.isArray(parsed.results) || parsed.results.length !== batch.length) throw new Error(`Batch ${batchIndex + 1} returned the wrong result count`);
-      const byIndex = new Map(parsed.results.map(result => [result.itemIndex, result]));
-      if (byIndex.size !== batch.length) throw new Error(`Batch ${batchIndex + 1} returned duplicate indexes`);
-      return batch.map((target, itemIndex) => {
-        const result = byIndex.get(itemIndex);
-        if (!result || typeof result.acceptable !== 'boolean') throw new Error(`Batch ${batchIndex + 1} omitted index ${itemIndex}`);
-        return { target, result, candidate: candidates[itemIndex] };
-      });
-    } catch (error) {
-      if (aborting || attempt === 2) throw error;
-      correction = ` Your previous response failed validation: ${error instanceof Error ? error.message : String(error)}. Return every itemIndex exactly once.`;
-      if (existsSync(resultPath)) unlinkSync(resultPath);
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000 * (attempt + 1)));
-    }
-  }
-  throw new Error(`Image judgment batch ${batchIndex + 1} exhausted retries`);
+  return runCachedModelBatch({
+    resultPath: batchFiles(workDir, batchIndex, fingerprint).result,
+    prompt: correction => `${JUDGMENT_INTRODUCTION}\n${JSON.stringify(records)}\n\n${JUDGMENT_POLICY}${correction}`,
+    correction: message => ` Your previous response failed validation: ${message}. Return every itemIndex exactly once.`,
+    ask: ({ prompt, resultPath }) => runStructuredModel(MODEL_CONFIG, {
+      prompt, schema, resultPath, images: candidates, timeoutMs: MODEL_TIMEOUT_MS, activeChildren: lifecycle.activeChildren,
+    }),
+    validate: parsed => readVerdicts(parsed, batch, candidates, batchIndex + 1),
+    retryDelay: attempt => 1_000 * (attempt + 1),
+    lifecycle,
+  });
 }
 
 const results = new Array(batches.length);
-let nextBatch = 0;
-const concurrency = Math.max(1, Math.min(8, Number(
-  process.env.CODEX_IMAGE_CONCURRENCY || process.env.CODEX_CONCURRENCY || 4,
-)));
-async function worker() {
-  for (;;) {
-    const index = nextBatch++;
-    if (index >= batches.length) return;
-    process.stderr.write(`Judging image batch ${index + 1}/${batches.length}\n`);
-    results[index] = await judgeBatch(batches[index], index);
-  }
-}
-async function terminateActiveChildren() {
-  aborting = true;
-  for (const child of activeChildren) killCodex(child, 'SIGTERM');
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000));
-  for (const child of activeChildren) killCodex(child, 'SIGKILL');
-}
-try {
-  await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => worker()));
-} catch (error) {
-  await terminateActiveChildren();
-  throw error;
-}
+await runPool(batches.length, concurrency, lifecycle, async index => {
+  process.stderr.write(`Judging image batch ${index + 1}/${batches.length}\n`);
+  results[index] = await judgeBatch(batches[index], index);
+});
 
 const rejected = [];
 for (const batch of results) {
