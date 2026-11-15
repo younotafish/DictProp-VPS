@@ -7,15 +7,13 @@ import { detectImageMimeType } from '../image-format.js';
 import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
 import { fetchPublicHttpUrl } from '../safe-url.js';
 import { sentenceLookupHash } from '../sentence-enrichment.js';
+import { isReviewRating, isReviewTaskType } from '../shared/review.js';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 const IMAGE_FETCH_TIMEOUT_MS = 30_000;
-const REVIEW_RATINGS = ['again', 'hard', 'good', 'easy'];
-const REVIEW_TASKS = ['meaning', 'production', 'cloze', 'listening', 'quick'];
-
 function hasValidReviewMetadata(event: any): boolean {
-  return (event.rating === undefined || REVIEW_RATINGS.includes(event.rating)) &&
-    (event.taskType === undefined || REVIEW_TASKS.includes(event.taskType)) &&
+  return (event.rating === undefined || isReviewRating(event.rating)) &&
+    (event.taskType === undefined || isReviewTaskType(event.taskType)) &&
     (event.durationMs === undefined || (Number.isInteger(event.durationMs) && event.durationMs >= 0 && event.durationMs <= 86_400_000)) &&
     (event.sessionId === undefined || (typeof event.sessionId === 'string' && event.sessionId.length <= 200));
 }

@@ -7,6 +7,9 @@ import { hasImageSignature } from './image-format.js';
 import { advanceReviewSrs } from './srs.js';
 import { sentenceLookupHash, type SentenceEnrichmentEntry } from './sentence-enrichment.js';
 import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
+import { serverImageMarker } from './shared/image-markers.js';
+import type { ReviewRating, ReviewTaskType } from './shared/review.js';
+import { keepServerOwnedData } from './shared/server-owned-data.js';
 
 // Ensure data directory exists
 mkdirSync(env.DATA_DIR, { recursive: true });
@@ -712,8 +715,8 @@ function rowsToItems(rows: ItemRow[], userId: string) {
   }
   const markerFor = (id: unknown, url: unknown): string | null => {
     const version = typeof id === 'string' ? versions.get(id) : undefined;
-    if (version) return `server:has_image:${version}`;
-    return typeof url === 'string' && url.startsWith('data:image/') ? 'server:has_image:inline' : null;
+    if (version) return serverImageMarker(version);
+    return typeof url === 'string' && url.startsWith('data:image/') ? serverImageMarker('inline') : null;
   };
   return parsed.map(({ row, data }) => {
     const topMarker = markerFor(data.id, data.imageUrl);
@@ -805,47 +808,6 @@ export interface UpsertOptions {
    * stored row. Only the corpus-audit import writes items this way: its data must match audited hashes.
    */
   replaceServerFields?: boolean;
-}
-
-// Only server-side jobs write these. A client or importer can write from a copy made before a job ran.
-const SERVER_OWNED_FIELDS = ['usageAudit', 'advancedEnrichment', 'localImageEnrichment'] as const;
-
-function withServerOwnedFields(target: any, stored: any): any {
-  if (!stored || typeof stored !== 'object') return target;
-  let result = target;
-  for (const field of SERVER_OWNED_FIELDS) {
-    if (result[field] === undefined && stored[field] !== undefined) {
-      if (result === target) result = { ...target };
-      result[field] = stored[field];
-    }
-  }
-  return result;
-}
-
-/**
- * Keep the server-owned fields a current write omits: the item's own, each phrase vocab's by id, and a
- * sentence's analysis while its text is unchanged (an analysis of other text would be wrong).
- */
-function keepServerOwnedData(data: any, type: string, stored: any, storedType: string): any {
-  if (type !== storedType || !stored || typeof stored !== 'object') return data;
-  let result = withServerOwnedFields(data, stored);
-  if (type === 'sentence' && result.analysis === undefined && stored.analysis !== undefined &&
-      result.text === stored.text) {
-    result = { ...result, analysis: stored.analysis, analysisGeneratedAt: stored.analysisGeneratedAt };
-  }
-  if (type === 'phrase' && Array.isArray(result.vocabs) && Array.isArray(stored.vocabs)) {
-    const storedVocabs = new Map<string, any>();
-    for (const vocab of stored.vocabs) if (typeof vocab?.id === 'string') storedVocabs.set(vocab.id, vocab);
-    let changed = false;
-    const vocabs = result.vocabs.map((vocab: any) => {
-      if (!vocab || typeof vocab !== 'object' || typeof vocab.id !== 'string') return vocab;
-      const kept = withServerOwnedFields(vocab, storedVocabs.get(vocab.id));
-      if (kept !== vocab) changed = true;
-      return kept;
-    });
-    if (changed) result = { ...result, vocabs };
-  }
-  return result;
 }
 
 function writeItem(item: any, userId: string, options: UpsertOptions): UpsertResult & { enriched: boolean } {
@@ -1019,8 +981,8 @@ export interface ReviewEventRow {
   reviewedAt: number;
   previousStep: number;
   nextStep: number;
-  rating?: 'again' | 'hard' | 'good' | 'easy';
-  taskType?: 'meaning' | 'production' | 'cloze' | 'listening' | 'quick';
+  rating?: ReviewRating;
+  taskType?: ReviewTaskType;
   durationMs?: number;
   sessionId?: string;
 }

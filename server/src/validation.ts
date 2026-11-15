@@ -1,5 +1,5 @@
 import { isSentenceAnalysis } from './sentence-analysis.js';
-import { isUsageAudit } from './usage-audit.js';
+import { isUsageAudit } from './shared/usage-audit.js';
 
 const ITEM_TYPES = new Set(['vocab', 'phrase', 'sentence']);
 const MAX_ID_LENGTH = 200;

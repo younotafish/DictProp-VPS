@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { isUsageAudit, resolveUsageArchive, shouldArchiveUsage } from './usage-audit.js';
+import { isUsageAudit, resolveUsageArchive, shouldArchiveUsage } from './shared/usage-audit.js';
 
 export type CorpusItemType = 'vocab' | 'phrase' | 'sentence';
 
