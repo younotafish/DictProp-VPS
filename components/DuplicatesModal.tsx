@@ -3,6 +3,7 @@ import { X, GitMerge, AlertTriangle, ArrowRight } from 'lucide-react';
 import { StoredItem, VocabCard } from '../types';
 import { Button } from './Button';
 import { Modal } from './Modal';
+import { cardBase } from '../services/wordMatch';
 
 // One cluster of variant-duplicate words (e.g. base words ["run","running"]) plus the
 // actual saved cards involved and a suggested canonical headword.
@@ -40,11 +41,12 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
     onMerge(merges);
   };
 
-  // Count cards per base word inside a cluster (for the little badges).
+  // Count cards per base word inside a cluster (for the little badges), by the normalized base the clusters are
+  // made of (cardBase, cached per card), so "don’t" with a curly apostrophe counts under its "don't" chip.
   const countByWord = (cluster: DuplicateClusterView) => {
     const counts = new Map<string, number>();
     for (const it of cluster.items) {
-      const w = ((it.data as VocabCard).word || '').toLowerCase().trim();
+      const w = cardBase(it.data as VocabCard);
       counts.set(w, (counts.get(w) || 0) + 1);
     }
     return counts;
@@ -108,6 +110,7 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
                           key={bw}
                           onClick={() => setCanonical(cluster.id, bw)}
                           disabled={!include}
+                          aria-pressed={isCanon}
                           className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
                             isCanon
                               ? 'bg-indigo-500 text-white border-indigo-500 shadow-sm'
