@@ -219,6 +219,11 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 ### Stale Closure Prevention
 `hooks/useLibrary.ts` owns `latestItemsRef`. Every library change goes through `updateItems()`/`replaceItem()`, which set the ref before returning, so the next handler, IndexedDB write or push sees the change. Always read `latestItemsRef.current` in event handlers and async work, not a closure-captured `savedItems`.
 
+### Sharing code between client and server
+- Runtime code both sides run lives in `server/src/shared/` and imports nothing, so the client bundle, the server and plain-node offline scripts all load it (see its README for the import forms). The client reaches the rest of `server/src` only through `import type` / `export type`, which the bundler erases.
+- A contract that needs a dependency (FSRS through ts-fsrs, the TTS key's hash) keeps two implementations and a behavioral parity test. A server module that an offline script imports has no relative imports, because plain Node can't map `./x.js` to `x.ts`.
+- `test/contracts/shared-contracts.test.ts` checks the folder's modules, the client's imports and the Dockerfile's copy of the folder ahead of the client build.
+
 ### Storage Keys (per-origin)
 - IndexedDB: `PopDictDB` v4 → `items_v2` per-item records; `item_updates` is the rollback-compatible journal
 - localStorage holds only small state (the `review_mutations_pending_*` outbox, settings); never mirror the library there — it doesn't fit, and stripped copies once overwrote full items on the server

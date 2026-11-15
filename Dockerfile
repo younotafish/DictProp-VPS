@@ -26,7 +26,7 @@ RUN mkdir -p /src /models \
     -o /models/ggml-tiny.en.bin \
   && echo "${WHISPER_TINY_EN_SHA256}  /models/ggml-tiny.en.bin" | sha256sum -c -
 
-# The client bundle. A change to server code doesn't touch this stage.
+# The client bundle. A change to server code outside server/src/shared/ doesn't touch this stage.
 FROM ${NODE_IMAGE} AS client-build
 
 WORKDIR /app
@@ -47,6 +47,9 @@ COPY services/ ./services/
 COPY components/ ./components/
 COPY hooks/ ./hooks/
 COPY vite.config.ts ./
+# Runtime code the client shares with the server (server/src/shared/README.md); the rest of server/src stays out,
+# so a change there reuses this stage.
+COPY server/src/shared/ ./server/src/shared/
 RUN npm run build
 
 # The server's JavaScript. A change to client code doesn't touch this stage. tsc needs only the packages'
