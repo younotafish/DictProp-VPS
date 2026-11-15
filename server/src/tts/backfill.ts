@@ -8,7 +8,7 @@ import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
 import { stripSentenceMarkers } from '../shared/sentence-markers.js';
 import { audioPath, CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, ttsKey } from './cache.js';
-import { reduceCasualBatch, RESPELLING_BATCH_SIZE } from './casual.js';
+import { reduceCasualBatch, RESPELLING_BATCH_SIZE, respellingUnavailable } from './casual.js';
 import type { ClipStore } from './clips.js';
 import { runPool } from './pool.js';
 
@@ -116,6 +116,11 @@ export function createBackfill({
   const retry = (operation: () => Promise<void>) =>
     retryBackfillOperation(operation, BACKFILL_GENERATION_ATTEMPTS, retryDelayMs);
 
+  // Set when a respelling batch fails for a reason that lasts the whole run (a spent balance, a missing or refused
+  // key). The run's remaining casual clips that need audio then count as failed without each paying for calls that
+  // cannot succeed; the next run tries again.
+  let respellingHalted = false;
+
   const record = (result: Awaited<ReturnType<typeof retry>>, label: string) => {
     if (result.succeeded) backfill.generated++;
     else {
@@ -156,12 +161,24 @@ export function createBackfill({
     // Missing-audio: batch-reduce the spoken text (cheap throughput), then synth + align each clip.
     for (let i = 0; i < needAudio.length; i += RESPELLING_BATCH_SIZE) {
       const chunk = needAudio.slice(i, i + RESPELLING_BATCH_SIZE);
-      let reduced: Array<string | null>;
-      try {
-        reduced = await reduceBatch(chunk);
-      } catch (e) {
-        console.warn('[tts] backfill reduce batch failed, respelling each clip separately:', (e as Error)?.message);
-        reduced = chunk.map(() => null); // a missing respelling is retried per clip, never voiced as-is
+      let reduced: Array<string | null> = [];
+      if (!respellingHalted) {
+        try {
+          reduced = await reduceBatch(chunk);
+        } catch (e) {
+          if (respellingUnavailable(e)) {
+            respellingHalted = true;
+            console.warn(`[tts] backfill: casual respelling unavailable (${e.kind}: ${e.message}); this run skips the casual clips that still need audio`);
+          } else {
+            console.warn('[tts] backfill reduce batch failed, respelling each clip separately:', (e as Error)?.message);
+            reduced = chunk.map(() => null); // a missing respelling is retried per clip, never voiced as-is
+          }
+        }
+      }
+      if (respellingHalted) {
+        backfill.failed += chunk.length;
+        backfill.done += chunk.length;
+        continue;
       }
       await runPool(chunk, BACKFILL_CONCURRENCY, async (text, k) => {
         record(await retry(() => clips.generateAndVerify(text, CASUAL_STYLE, reduced[k] ?? undefined)), 'casual item');
@@ -172,6 +189,7 @@ export function createBackfill({
 
   async function runBackfill(): Promise<void> {
     if (backfill.running) return;
+    respellingHalted = false;
     // Synchronous setup (runs before the first await, so a non-awaiting caller still sees `total`).
     let catalogTexts: string[];
     let libraryTexts: string[];

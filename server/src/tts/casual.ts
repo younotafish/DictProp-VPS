@@ -6,6 +6,7 @@
 // AI produces (e.g. "reaching"->"reachin'", "to him"->"ta 'im"). Vocabulary words are preserved; only
 // pronunciation changes. Both clear and casual clips receive locally generated word timings.
 import {
+  AiError,
   classifyAiError,
   createChatClient,
   createChatTextClient,
@@ -43,6 +44,11 @@ export function cleanCasualRespelling(value: unknown): string | null {
   const wrapped = /^["\u201c\u201d]([\s\S]*)["\u201c\u201d]$/.exec(text);
   if (wrapped) text = wrapped[1].trim();
   return text || null;
+}
+
+/** True when no respelling can succeed for the rest of a run: the provider's balance is spent, or the key is missing or refused. */
+export function respellingUnavailable(error: unknown): error is AiError {
+  return error instanceof AiError && (error.kind === 'quota' || error.kind === 'config');
 }
 
 // Respell ONE sentence into its casual spoken form (vocabulary preserved). Null when the respelling
@@ -83,8 +89,8 @@ export async function reduceCasualBatch(sentences: string[], chat: ChatJson = ch
       label: 'casual respelling batch',
     });
   } catch (error) {
+    if (respellingUnavailable(error)) throw error;
     const failure = classifyAiError(error);
-    if (failure.kind === 'quota' || failure.kind === 'config') throw failure;
     console.warn(`[tts] casual respelling batch failed (${failure.kind}): ${failure.message}`);
     return sentences.map(() => null);
   }
