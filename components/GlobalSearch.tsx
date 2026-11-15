@@ -2,10 +2,9 @@ import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredVa
 import { SearchResult, VocabCard, StoredItem, ComparisonResult } from '../types';
 import { analyzeInput } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
-import { speakWord, prefetchTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
+import { speakWord, prefetchTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent } from '../services/lazyTts';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { useSentenceSearch } from '../services/sentenceSearch';
-import type { ZoneFlash } from './EyesFreeZones';
 import { warn } from '../services/logger';
 import { describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../services/searchRecovery';
 import { useEscapeLayer } from './escapeStack';
@@ -15,13 +14,14 @@ import { useOverlay } from './overlayStack';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../services/queryMode';
 import { useSearchQueue } from './search/useSearchQueue';
+import { useSheetPlayback } from './search/useSheetPlayback';
+import { useTimedMessage } from './search/useTimedMessage';
+import type { SearchMode } from './search/searchViewing';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
 import { SearchVocabPane } from './search/SearchVocabPane';
 import { SearchFab } from './search/SearchFab';
-
-type Mode = 'idle' | 'input' | 'viewing';
 
 interface Props {
   onSave: (item: StoredItem) => void;
@@ -46,9 +46,8 @@ interface Props {
 }
 
 export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
-  const [mode, setMode] = useState<Mode>('idle');
+  const [mode, setMode] = useState<SearchMode>('idle');
   const [query, setQuery] = useState('');
-  const [error, setError] = useState<SearchErrorToast | null>(null);
   // Viewing state: which queue item and which vocab within it
   const [viewingQueueIdx, setViewingQueueIdx] = useState(0);
   const [viewingVocabIdx, setViewingVocabIdx] = useState(0);
@@ -57,56 +56,20 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const inputRef = useRef<HTMLInputElement>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_THRESHOLD = 50;
-  // Eyes-free zone tap-confirmation flash (see EyesFreeZones).
-  const [zoneFlash, setZoneFlash] = useState<ZoneFlash | null>(null);
-  const zoneFlashN = useRef(0);
-  const zoneFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashZone = useCallback((zone: number) => {
-    zoneFlashN.current += 1;
-    setZoneFlash({ zone, n: zoneFlashN.current });
-    if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current);
-    zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
-  }, []);
-  useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
-
-  // Hold the audio session open while the results popup is open (once, on the first playback gesture) so
-  // the media route stays "hot" across the word→sentence hop and iOS doesn't re-ramp (heard as a fade-in)
-  // when the sentence <audio> starts after the word played on the speechSynthesis path. Closing the popup
-  // lets go, or the silent keep-alive would run for the rest of the session.
-  const keepAliveHeldRef = useRef(false);
-  const holdKeepAlive = useCallback(() => {
-    if (keepAliveHeldRef.current) return;
-    keepAliveHeldRef.current = true;
-    acquireKeepAlive();
-  }, []);
-  const letGoKeepAlive = useCallback(() => {
-    if (!keepAliveHeldRef.current) return;
-    keepAliveHeldRef.current = false;
-    releaseKeepAlive();
-  }, []);
-  useEffect(() => { if (mode !== 'viewing') letGoKeepAlive(); }, [mode, letGoKeepAlive]);
-  useEffect(() => letGoKeepAlive, [letGoKeepAlive]);
+  const { zoneFlash, flashZone, holdKeepAlive } = useSheetPlayback(mode);
 
   // Surface a failed search as an auto-dismissing toast. The floating search has no inline results
   // area, so without this a failed queue item just vanishes (the bug behind silent search failures).
-  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { message: error, show: showErrorToast, clear: clearError } = useTimedMessage<SearchErrorToast>(6000);
   const showError = useCallback((msg: string, query?: string, analyzeMode?: 'batch') => {
-    setError({ msg, query, analyzeMode });
-    if (errorTimer.current) clearTimeout(errorTimer.current);
     // Search failures remain actionable until retried. Informational failures can still expire.
-    errorTimer.current = query ? null : setTimeout(() => setError(null), 6000);
-  }, []);
-  useEffect(() => () => { if (errorTimer.current) clearTimeout(errorTimer.current); }, []);
+    showErrorToast({ msg, query, analyzeMode }, { untilCleared: !!query });
+  }, [showErrorToast]);
 
   // Neutral status pill (top-center) — "scanning…/found N expressions" notices that aren't errors.
-  const [statusToast, setStatusToast] = useState<string | null>(null);
-  const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showStatus = useCallback((msg: string) => {
-    setStatusToast(msg);
-    if (statusTimer.current) clearTimeout(statusTimer.current);
-    statusTimer.current = setTimeout(() => setStatusToast(null), 3500);
-  }, []);
-  useEffect(() => () => { if (statusTimer.current) clearTimeout(statusTimer.current); }, []);
+  const { message: statusToast, show: showStatus } = useTimedMessage<string>(3500);
+  // The save confirmation pill.
+  const { message: saveToast, show: showSaveToast } = useTimedMessage<string>(2000);
 
   // Fuzzy autocomplete over SAVED SENTENCES: as you type, suggest matching saved sentences. Navigate
   // them with ↑/↓ or the mouse, and open one for review with Enter (on a highlight) or a click. Plain
@@ -147,7 +110,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     onOpenSentence(suggestions, idx);
   }, [suggestions, onOpenSentence]);
 
-  const clearError = useCallback(() => setError(null), []);
   const {
     queue, readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, finalizeResult,
   } = useSearchQueue({
@@ -249,16 +211,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setQuery('');
     setMode('idle'); // Go back to idle — spinner shows on floating button
   }, [query, isOnline, submitQuery, findSavedByWord, showError]);
-
-  // One timer for the save toast, so an earlier save's timer can't cut a newer message short.
-  const [saveToast, setSaveToast] = useState<string | null>(null);
-  const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showSaveToast = useCallback((msg: string) => {
-    setSaveToast(msg);
-    if (saveToastTimer.current) clearTimeout(saveToastTimer.current);
-    saveToastTimer.current = setTimeout(() => setSaveToast(null), 2000);
-  }, []);
-  useEffect(() => () => { if (saveToastTimer.current) clearTimeout(saveToastTimer.current); }, []);
 
   // Save a single vocab
   const saveOneVocab = useCallback((vocab: VocabCard) => {
@@ -462,7 +414,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
   // The error toast's retry: replays the query the failure carries.
   const retryFailedSearch = (failed: SearchErrorToast) => {
-    const q = failed.query; const mode = failed.analyzeMode; setError(null);
+    const q = failed.query; const mode = failed.analyzeMode; clearError();
     if (!q) return;
     // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
     // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
@@ -476,7 +428,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         statusToast={statusToast}
         error={error}
         onRetry={retryFailedSearch}
-        onDismissError={() => setError(null)}
+        onDismissError={clearError}
       />
 
       {/* Input overlay */}
