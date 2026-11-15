@@ -1,7 +1,7 @@
 import { isPhraseItem, isVocabItem, type SearchResult, type StoredItem, type VocabCard } from '../types';
 import { loadItemImage } from './api';
 import { log } from './logger';
-import { saveImage } from './storage';
+import { saveImage } from './imageStore';
 
 // Pictures stay out of the library in memory: each card carries a marker, and the picture lives in
 // IndexedDB and on the server.

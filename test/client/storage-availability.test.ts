@@ -33,7 +33,8 @@ let now = 1_000_000;
 Date.now = () => now;
 test.after(() => { Date.now = realNow; });
 
-const { loadData, saveData, getAllStoredImageIds } = await import('../../services/storage.ts');
+const { loadData, saveData } = await import('../../services/libraryStore.ts');
+const { getAllStoredImageIds } = await import('../../services/imageStore.ts');
 
 const item = (id: string) => ({
   type: 'vocab' as const,

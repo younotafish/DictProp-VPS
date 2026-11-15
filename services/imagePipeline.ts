@@ -1,6 +1,6 @@
 import { uploadImages } from './api';
 import { optimizeImages } from './imageProcessing';
-import { saveImagesBatch } from './storage';
+import { saveImagesBatch } from './imageStore';
 import { warn } from './logger';
 
 async function uploadWithRetry(images: Array<{ id: string; base64: string }>): Promise<void> {

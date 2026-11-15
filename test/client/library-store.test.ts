@@ -4,7 +4,7 @@ import { IDBDatabase as FakeIDBDatabase, IDBKeyRange, forceCloseDatabase, indexe
 
 Object.assign(globalThis, { indexedDB, IDBKeyRange });
 
-const { loadData, saveData, saveItemUpdates, deleteItemRecords, storeMissingItemHashes, subscribeLibraryWriteFailures } = await import('../../services/storage.ts');
+const { loadData, saveData, saveItemUpdates, deleteItemRecords, storeMissingItemHashes, subscribeLibraryWriteFailures } = await import('../../services/libraryStore.ts');
 const { getItemContentHash, ITEM_HASH_VERSION } = await import('../../services/itemHash.ts');
 
 const item = (id: string, reviews: number) => ({
@@ -72,13 +72,13 @@ test('unchanged full-state saves do not rewrite per-item records', async () => {
   });
 
   await saveData(items, userId);
-  const record = await new Promise<any>((resolve, reject) => {
+  const record = await new Promise<{ sentinel?: string }>((resolve, reject) => {
     const tx = db.transaction('items_v2', 'readonly');
     const request = tx.objectStore('items_v2').get(`${userId}:stable`);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
-  const journal = await new Promise<any>((resolve, reject) => {
+  const journal = await new Promise<unknown>((resolve, reject) => {
     const tx = db.transaction('item_updates', 'readonly');
     const request = tx.objectStore('item_updates').get(`${userId}:stable`);
     request.onsuccess = () => resolve(request.result);
