@@ -326,13 +326,10 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
   });
 
   return (
-    <div
-      className={`bg-white rounded-2xl p-5 pb-8 md:pb-4 shadow-md border border-slate-100 flex flex-col select-text ${className}`}
-      style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
-    >
+    <div className={`bg-white rounded-2xl p-5 pb-8 md:pb-4 shadow-md border border-slate-100 flex flex-col select-text ${className}`}>
       {/* Header — title is selectable/copyable; only the action buttons opt out of selection */}
       <div className="flex justify-between items-start mb-3 shrink-0">
-        <div className="select-text min-w-0" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+        <div className="select-text min-w-0">
           <h3 className="text-2xl xl:text-3xl font-bold text-slate-800 tracking-tight break-words">{data.word || ''}</h3>
           {/* Sense/Meaning Label */}
           {data.sense && (
@@ -401,7 +398,7 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
 
         <div className="md:flex-1 md:min-w-0">
           {/* Core Meaning */}
-          <div className="mb-4 md:mb-2 shrink-0" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+          <div className="mb-4 md:mb-2 shrink-0">
         <p className="text-xl xl:text-2xl text-slate-700 font-medium leading-relaxed select-text">{data.chinese}</p>
         <p className="text-slate-500 xl:text-lg mt-1 italic leading-relaxed select-text">{data.definition}</p>
         <div className="flex flex-wrap gap-2 mt-2">
@@ -466,7 +463,7 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
         </div>
       )}
 
-      <div className="space-y-4 md:space-y-2" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+      <div className="space-y-4 md:space-y-2">
         {/* Example Sentences */}
         <div className="bg-slate-50 p-3 rounded-xl select-text">
           <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase mb-2">
@@ -554,7 +551,7 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
         
          {/* The server drops a register too short to say anything, so a card can come without one. */}
          {data.register?.trim() && (
-         <div className="text-xs xl:text-sm text-slate-400 pt-2 border-t border-slate-100 select-text" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+         <div className="text-xs xl:text-sm text-slate-400 pt-2 border-t border-slate-100 select-text">
             <span className="font-semibold">Register:</span> {data.register}
          </div>
          )}
