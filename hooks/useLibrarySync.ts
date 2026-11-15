@@ -109,17 +109,21 @@ export function useLibrarySync(
   // sends them first. Items the server refused don't count: they wait for the next edit.
   useEffect(() => setReloadGuard({ hasUnsentChanges, beforeReload: sendUnsentChanges }), [hasUnsentChanges, sendUnsentChanges]);
 
+  // Saves the library on this device at once, for moments when a later save may never come: the page going
+  // away or into the background, or a link about to open outside the app. Only items replaced since their last
+  // write are written, so this is cheap when nothing changed. False when there's nothing to save.
+  const saveNow = useCallback((when: string): boolean => {
+    const currentItems = latestItemsRef.current;
+    if (!isLoaded || currentItems.length === 0) return false;
+    userSaveData(currentItems).catch(e => warn(`Failed to save ${when}:`, e));
+    return true;
+  }, [isLoaded, userSaveData]);
+
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      const currentItems = latestItemsRef.current;
-      if (isLoaded && currentItems.length > 0) {
-        // Reviews are already in the synchronous outbox; IndexedDB may not finish but is worth trying.
-        // Only items replaced since their last write are written, so this is cheap when nothing changed.
-        userSaveData(currentItems).catch(e => warn("Failed to save on beforeunload:", e));
-      }
-    };
+    // Reviews are already in the synchronous outbox; IndexedDB may not finish but is worth trying.
+    const handleBeforeUnload = () => { saveNow('on beforeunload'); };
 
     // iOS Safari often skips beforeunload; pagehide fires there as the page goes away.
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -128,43 +132,34 @@ export function useLibrarySync(
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('pagehide', handleBeforeUnload);
     };
-  }, [isLoaded, userSaveData]);
+  }, [saveNow]);
 
   // Save data when app goes to background. Returning triggers the delta pull below.
   useEffect(() => {
-      const handleVisibilityChange = () => {
-          if (document.visibilityState === 'visible') {
-              window.speechSynthesis?.cancel();
-          } else {
-              const currentItems = latestItemsRef.current;
-              if (isLoaded && currentItems.length > 0) {
-                  userSaveData(currentItems).catch(e => {
-                      warn("Failed to save on visibility change:", e);
-                  });
-                  // Best-effort server push before the OS suspends the page
-                  pushDirtyItems().catch(e => {
-                      warn("Server push on background failed:", e);
-                  });
-              }
-          }
-      };
-
-      const handleBeforeExternalNav = () => {
-        const currentItems = latestItemsRef.current;
-        if (!isLoaded || currentItems.length === 0) return;
-        log("💾 Saving state before external navigation...");
-        userSaveData(currentItems).catch(e => {
-          warn("Failed to save to IDB before external nav:", e);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        window.speechSynthesis?.cancel();
+      } else if (saveNow('on visibility change')) {
+        // Best-effort server push before the OS suspends the page
+        pushDirtyItems().catch(e => {
+          warn("Server push on background failed:", e);
         });
-      };
+      }
+    };
 
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      window.addEventListener('dictprop:before-external-nav', handleBeforeExternalNav);
-      return () => {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('dictprop:before-external-nav', handleBeforeExternalNav);
-      };
-  }, [isLoaded, userSaveData, pushDirtyItems]);
+    // The card views announce a link they're about to open in a new window: on iOS the installed app may
+    // reload when the user comes back, and this runs before the app goes to the background.
+    const handleBeforeExternalNav = () => {
+      if (saveNow('to IDB before external nav')) log("💾 Saving state before external navigation...");
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('dictprop:before-external-nav', handleBeforeExternalNav);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('dictprop:before-external-nav', handleBeforeExternalNav);
+    };
+  }, [saveNow, pushDirtyItems]);
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
