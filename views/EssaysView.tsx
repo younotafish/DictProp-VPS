@@ -19,13 +19,9 @@ import {
   type Essay,
   type EssaySentence,
 } from '../services/essayCatalog';
-import {
-  buildEssayStudyItems,
-  getEssayProgress,
-  indexEssayProgress,
-  type EssayProgress,
-} from '../services/essayProgress';
-import { needsReview, sentenceReviewState } from '../services/sentenceReviewState';
+import { buildEssayStudyItems, indexEssayProgress } from '../services/essayProgress';
+import { sentencesToStudy, summarizeCatalogProgress } from '../services/catalogProgress';
+import { sentenceReviewState, type ReviewSummary } from '../services/sentenceReviewState';
 
 interface EssaysViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
@@ -67,7 +63,7 @@ let loadedEssays: readonly Essay[] = ESSAYS;
 
 const EssayTile: React.FC<{
   essay: Essay;
-  progress: EssayProgress;
+  progress: ReviewSummary;
   onOpen: () => void;
 }> = ({ essay, progress, onOpen }) => {
   const style = essayStyle[essay.accent];
@@ -134,8 +130,8 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
   const now = useNow(progressItems);
   const progressIndex = useMemo(() => indexEssayProgress(progressItems), [progressItems]);
   const progressByEssay = useMemo(
-    () => new Map(essays.map(essay => [essay.id, getEssayProgress(essay, progressItems, now)])),
-    [essays, now, progressItems],
+    () => new Map(essays.map(essay => [essay.id, summarizeCatalogProgress(essay.sentences, progressIndex, now)])),
+    [essays, now, progressIndex],
   );
   const classicEssays = useMemo(() => essays.filter(essay => essay.collection === 'classic'), [essays]);
   const modernEssays = useMemo(() => essays.filter(essay => essay.collection === 'modern'), [essays]);
@@ -174,13 +170,11 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
 
   const openSentence = (essay: Essay, sentence: EssaySentence) => {
     const index = essay.sentences.findIndex(candidate => candidate.id === sentence.id);
-    onOpenSentence(buildEssayStudyItems(essay.sentences, progressItems, Date.now()), Math.max(0, index));
+    onOpenSentence(buildEssayStudyItems(essay.sentences, progressIndex, Date.now()), Math.max(0, index));
   };
 
-  const startReview = (essay: Essay) => {
-    const actionable = essay.sentences.filter(sentence => needsReview(progressIndex.get(sentence.id)?.srs, now));
-    const sentences = actionable.length > 0 ? actionable : essay.sentences;
-    onOpenSentence(buildEssayStudyItems(sentences, progressItems, Date.now()), 0);
+  const startStudy = (essay: Essay) => {
+    onOpenSentence(buildEssayStudyItems(sentencesToStudy(essay.sentences, progressIndex, now), progressIndex, Date.now()), 0);
   };
 
   if (!selectedEssay) {
@@ -299,7 +293,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
           </div>
           <button
             type="button"
-            onClick={() => startReview(selectedEssay)}
+            onClick={() => startStudy(selectedEssay)}
             className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white transition-colors hover:bg-slate-700 sm:px-4"
             title={`Review ${selectedEssay.title}`}
           >

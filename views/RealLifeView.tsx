@@ -30,13 +30,12 @@ import {
 import {
   buildRealLifeStudyItems,
   createRealLifeProgressItem,
-  getRealLifeCollectionProgress,
   indexRealLifeProgress,
-  type RealLifeCollectionProgress,
 } from '../services/realLifeProgress';
 import { realLifeProgressItemId } from '../services/realLifeProgressIdentity';
+import { sentencesToStudy, summarizeCatalogProgress } from '../services/catalogProgress';
 import type { SentenceReviewFilter } from '../services/sentenceOrdering';
-import { matchesReviewFilter, needsReview, sentenceReviewState } from '../services/sentenceReviewState';
+import { matchesReviewFilter, sentenceReviewState, type ReviewSummary } from '../services/sentenceReviewState';
 import { useLatest } from '../hooks/useStableValue';
 import { useNow } from '../hooks/useNow';
 
@@ -89,7 +88,7 @@ const collectionStyle = {
 
 const CollectionTile: React.FC<{
   collection: RealLifeCollection;
-  progress: RealLifeCollectionProgress;
+  progress: ReviewSummary;
   onOpen: () => void;
 }> = ({ collection, progress, onOpen }) => {
   const style = collectionStyle[collection.accent];
@@ -278,13 +277,13 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
 
   const selectedCollection = REAL_LIFE_COLLECTIONS.find(collection => collection.id === selectedCollectionId) ?? null;
   const now = useNow(progressItems);
-  const progressBySentence = useMemo(() => indexRealLifeProgress(progressItems), [progressItems]);
+  const progressIndex = useMemo(() => indexRealLifeProgress(progressItems), [progressItems]);
   const collectionProgress = useMemo(
     () => new Map(REAL_LIFE_COLLECTIONS.map(collection => [
       collection.id,
-      getRealLifeCollectionProgress(collection, progressItems, now),
+      summarizeCatalogProgress(collection.sentences, progressIndex, now),
     ])),
-    [now, progressItems],
+    [now, progressIndex],
   );
 
   const filtered = useMemo(() => {
@@ -292,13 +291,13 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
     const normalizedQuery = deferredQuery.trim().toLocaleLowerCase('en-US');
     return selectedCollection.sentences.filter(sentence => {
       if (sectionId !== 'all' && sentence.sectionId !== sectionId) return false;
-      if (!matchesReviewFilter(progressBySentence.get(sentence.id)?.srs, reviewFilter, now)) return false;
+      if (!matchesReviewFilter(progressIndex.get(sentence.id)?.srs, reviewFilter, now)) return false;
       if (!normalizedQuery) return true;
       return `${sentence.text} ${sentence.focus} ${sentence.sectionTitle}`
         .toLocaleLowerCase('en-US')
         .includes(normalizedQuery);
     });
-  }, [deferredQuery, now, progressBySentence, reviewFilter, sectionId, selectedCollection]);
+  }, [deferredQuery, now, progressIndex, reviewFilter, sectionId, selectedCollection]);
 
   const openCollection = (collection: RealLifeCollection) => {
     setSelectedCollectionId(collection.id);
@@ -314,14 +313,13 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
     setQuery('');
   };
 
-  const openSentence = (ordered: RealLifeSentence[], index: number) => {
-    onOpenSentence(buildRealLifeStudyItems(ordered, progressItems, Date.now()), index);
+  const openSentence = (ordered: readonly RealLifeSentence[], index: number) => {
+    onOpenSentence(buildRealLifeStudyItems(ordered, progressIndex, Date.now()), index);
   };
 
   const startStudy = () => {
     if (!selectedCollection) return;
-    const actionable = selectedCollection.sentences.filter(sentence => needsReview(progressBySentence.get(sentence.id)?.srs, now));
-    openSentence(actionable.length > 0 ? actionable : selectedCollection.sentences, 0);
+    openSentence(sentencesToStudy(selectedCollection.sentences, progressIndex, now), 0);
   };
 
   // Row callbacks stay stable, so typing in the search box doesn't re-render the rows on screen.
@@ -335,7 +333,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
   }, [onUpdateSRS]);
   const softClass = selectedCollection ? collectionStyle[selectedCollection.accent].soft : '';
   const renderSentence = useCallback((_index: number, sentence: RealLifeSentence) => {
-    const progressItem = progressBySentence.get(sentence.id);
+    const progressItem = progressIndex.get(sentence.id);
     const state = sentenceReviewState(progressItem?.srs, now);
     return (
       <RealLifeSentenceRow
@@ -351,7 +349,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
         onOpenCard={onOpenCard}
       />
     );
-  }, [now, progressBySentence, softClass, isSentenceSaved, openFromList, markReviewed, findSaved, onOpenCard]);
+  }, [now, progressIndex, softClass, isSentenceSaved, openFromList, markReviewed, findSaved, onOpenCard]);
 
   if (!selectedCollection) {
     return (

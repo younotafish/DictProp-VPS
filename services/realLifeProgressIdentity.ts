@@ -1,15 +1,13 @@
-import type { SentenceData, StoredItem } from '../types';
+import type { StoredItem } from '../types';
+import { catalogProgressItemId, catalogProgressKind } from './catalogProgress';
 
-/** Kept catalog-free so the app shell can classify progress records without loading the Real Life catalog. */
-export const REAL_LIFE_PROGRESS_PREFIX = 'real-life-sentence:';
+// The Real Life half of catalogProgress, for the modules that import it from here. Catalog-free, like it, so
+// the app shell can classify progress records without loading the Real Life catalog.
 
 export function realLifeProgressItemId(catalogSentenceId: string): string {
-  return `${REAL_LIFE_PROGRESS_PREFIX}${catalogSentenceId}`;
+  return catalogProgressItemId('real-life', catalogSentenceId);
 }
 
 export function isRealLifeProgressItem(item: StoredItem): boolean {
-  if (item.type !== 'sentence' || !item.data.id.startsWith(REAL_LIFE_PROGRESS_PREFIX)) return false;
-  const data = item.data as SentenceData;
-  return !!data.catalogSentenceId && !!data.catalogCollectionId &&
-    realLifeProgressItemId(data.catalogSentenceId) === item.data.id;
+  return catalogProgressKind(item) === 'real-life';
 }

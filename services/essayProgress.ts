@@ -1,24 +1,19 @@
-import type { SentenceData, StoredItem } from '../types';
+import type { StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
-import { summarizeReviewStates } from './sentenceReviewState';
-import type { Essay, EssaySentence } from './essayCatalog';
-import { essayProgressItemId, isEssayProgressItem } from './essayProgressIdentity';
+import type { EssaySentence } from './essayCatalog';
+import {
+  catalogProgressItemId,
+  catalogStudyItems,
+  indexCatalogProgress,
+  type CatalogProgressIndex,
+} from './catalogProgress';
 
-export interface EssayProgress {
-  total: number;
-  reviewed: number;
-  unreviewed: number;
-  due: number;
-  memorized: number;
-  toReview: number;
-  masteryScore: number;
-}
-
+/** A new progress record for an essay sentence, as it stands before its first review. */
 export function createEssayProgressItem(
   sentence: EssaySentence,
   savedAt: number = Date.now(),
 ): StoredItem {
-  const id = essayProgressItemId(sentence.id);
+  const id = catalogProgressItemId('essay', sentence.id);
   return {
     type: 'sentence',
     data: {
@@ -36,30 +31,15 @@ export function createEssayProgressItem(
   };
 }
 
-export function indexEssayProgress(items: readonly StoredItem[]): Map<string, StoredItem> {
-  const progress = new Map<string, StoredItem>();
-  for (const item of items) {
-    if (!item.isDeleted && isEssayProgressItem(item)) {
-      progress.set((item.data as SentenceData).catalogSentenceId!, item);
-    }
-  }
-  return progress;
+export function indexEssayProgress(items: readonly StoredItem[]): CatalogProgressIndex {
+  return indexCatalogProgress(items, 'essay');
 }
 
+/** The items a run over essay sentences opens; a sentence never stored gets a new record saved at `savedAt`. */
 export function buildEssayStudyItems(
   sentences: readonly EssaySentence[],
-  progressItems: readonly StoredItem[],
+  index: CatalogProgressIndex,
   savedAt: number = Date.now(),
 ): StoredItem[] {
-  const progress = indexEssayProgress(progressItems);
-  return sentences.map(sentence => progress.get(sentence.id) ?? createEssayProgressItem(sentence, savedAt));
-}
-
-export function getEssayProgress(
-  essay: Essay,
-  progressItems: readonly StoredItem[],
-  now: number = Date.now(),
-): EssayProgress {
-  const progress = indexEssayProgress(progressItems);
-  return summarizeReviewStates(essay.sentences.map(sentence => progress.get(sentence.id)?.srs), now);
+  return catalogStudyItems(sentences, index, sentence => createEssayProgressItem(sentence, savedAt));
 }
