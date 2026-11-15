@@ -7,12 +7,13 @@ import { deleteUnreferencedBlobs, imageStmts } from './images.js';
 
 const sentenceEnrichmentStmts = {
   get: db.prepare(`SELECT * FROM sentence_enrichments WHERE lookup_hash = ?`),
+  // length(data) comes from the record header; byte_length sits after the blob (see image_blobs in schema.ts).
   hasImage: db.prepare(`
     SELECT EXISTS (
       SELECT 1
       FROM sentence_enrichments e
       JOIN image_blobs b ON b.content_hash = e.image_content_hash
-      WHERE e.lookup_hash = ? AND b.byte_length > 0
+      WHERE e.lookup_hash = ? AND length(b.data) > 0
     ) AS has_image
   `),
   getImage: db.prepare(`
