@@ -60,8 +60,9 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
     color: MASTERY_SHADES[level.key],
   }));
 
-  // Max reviews for chart scaling
+  // Max reviews for chart scaling, at least 1
   const maxReviews = Math.max(...stats.last7Days.map(d => d.reviews), 1);
+  const last7DaysTotal = stats.last7Days.reduce((sum, d) => sum + d.reviews, 0);
 
   return (
     <div 
@@ -139,7 +140,7 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
           {/* Stacked Progress Bar */}
           <div className="h-4 rounded-full overflow-hidden flex bg-slate-100 mb-3">
             {masteryData.map((level, idx) => {
-              const percentage = stats.total > 0 ? (level.count / stats.total) * 100 : 0;
+              const percentage = (level.count / stats.total) * 100;
               if (percentage === 0) return null;
               return (
                 <div
@@ -175,7 +176,7 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         {/* Mini Bar Chart */}
         <div className="flex items-end justify-between gap-1 h-20 mb-2">
           {stats.last7Days.map((day, idx) => {
-            const height = maxReviews > 0 ? (day.reviews / maxReviews) * 100 : 0;
+            const height = (day.reviews / maxReviews) * 100;
             const isToday = idx === 6;
             return (
               <div key={idx} className="flex-1 flex flex-col items-center gap-1">
@@ -202,9 +203,9 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         
         {/* Summary row */}
         <div className="flex justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
-          <span>Total: {stats.last7Days.reduce((sum, d) => sum + d.reviews, 0)} reviews</span>
+          <span>Total: {last7DaysTotal} reviews</span>
           <span>
-            Avg: {Math.round(stats.last7Days.reduce((sum, d) => sum + d.reviews, 0) / 7)}/day
+            Avg: {Math.round(last7DaysTotal / 7)}/day
           </span>
         </div>
       </section>
