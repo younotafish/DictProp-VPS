@@ -1,5 +1,6 @@
 import { getItemSpelling, type ReviewHistory, type StoredItem } from '../types';
 import { masteryLevelFor, type MasteryKey } from './srsAlgorithm';
+import { isDueForReview } from './studySession';
 
 export interface StudyStats {
   /** Distinct due spellings: the review session buries same-spelling senses, so the count follows it. */
@@ -43,8 +44,7 @@ export function computeStudyStats(
 
   for (const item of items) {
     const srs = item.srs;
-    // New cards wait in a queue of their own, so as in the review session only studied cards fall due.
-    if ((srs?.totalReviews ?? 0) > 0 && (srs?.nextReview ?? 0) <= now) {
+    if (isDueForReview(item, now)) {
       const spelling = getItemSpelling(item);
       if (spelling) dueSpellings.add(spelling);
     }

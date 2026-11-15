@@ -6,6 +6,7 @@ import {
   createClozePrompt,
   findSessionCard,
   formatReviewInterval,
+  isDueForReview,
   requeueLapse,
   selectReviewTask,
 } from '../../services/studySession.ts';
@@ -66,6 +67,14 @@ test('review queue prioritizes due cards, limits new cards, and buries same-spel
   ], 1_000, 40, 1);
 
   assert.deepEqual(queue.map(item => item.data.id), ['lead-guide', 'other-due', 'fresh']);
+});
+
+test('a card is due once studied and its next review has come; a never-studied card waits with the new ones', () => {
+  assert.equal(isDueForReview(vocab('due', 'a', { reviews: 1, nextReview: 1_000 }), 1_000), true);
+  assert.equal(isDueForReview(vocab('later', 'a', { reviews: 3, nextReview: 1_001 }), 1_000), false);
+  assert.equal(isDueForReview(vocab('new', 'a', { nextReview: 0 }), 1_000), false);
+  const withoutSrs = { ...vocab('bare', 'a'), srs: undefined } as unknown as StoredItem;
+  assert.equal(isDueForReview(withoutSrs, 1_000), false);
 });
 
 test('review task selection increases recall difficulty only when the prompt contains the answer', () => {

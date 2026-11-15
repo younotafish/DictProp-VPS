@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { previewRatings } from '../services/fsrsScheduler';
 import { speakNatural } from '../services/lazyTts';
-import { createClozePrompt, findSessionCard, formatReviewInterval, getStudyContent, requeueLapse, selectReviewTask, stripStudyMarkers } from '../services/studySession';
+import { createClozePrompt, findSessionCard, formatReviewInterval, getStudyContent, requeueLapse, selectReviewTask } from '../services/studySession';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { StudyDashboard } from '../components/StudyDashboard';
 import { useEscapeLayer } from '../components/escapeStack';
 import { isDialogOpenOutside, isImeKey, isKeyboardFocusedControl, isTypingTarget } from '../components/keyboardTarget';
@@ -288,7 +289,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
     const task = selectReviewTask(currentItem);
     const content = getStudyContent(currentItem);
-    const example = stripStudyMarkers(content.example);
+    const example = stripSentenceMarkers(content.example);
     const previews = previewRatings(currentItem.srs);
     const prompt = task === 'meaning'
       ? content.word

@@ -7,6 +7,7 @@ import {
   isPhraseItem,
   isVocabItem,
 } from '../types';
+import { stripSentenceMarkers } from './sentenceMarkers';
 
 export interface StudyContent {
   word: string;
@@ -15,8 +16,12 @@ export interface StudyContent {
   example: string;
 }
 
-export function stripStudyMarkers(text: string): string {
-  return (text || '').replace(/\{\{(.+?)\}\}/g, '$1').replace(/\[\[(.+?)\]\]/g, '$1');
+/**
+ * Whether a card is due: studied before, and its next review has come. Never-studied cards wait in the new
+ * cards' queue instead, so the dashboard's due count and the review queue both leave them out.
+ */
+export function isDueForReview(item: StoredItem, now: number): boolean {
+  return (item.srs?.totalReviews ?? 0) > 0 && (item.srs?.nextReview ?? 0) <= now;
 }
 
 export function getStudyContent(item: StoredItem): StudyContent {
@@ -44,7 +49,7 @@ export function getStudyContent(item: StoredItem): StudyContent {
 
 export function createClozePrompt(sentence: string, word: string): string {
   const markedCloze = (sentence || '').replace(/\{\{(.+?)\}\}/g, '_____');
-  const plain = stripStudyMarkers(markedCloze);
+  const plain = stripSentenceMarkers(markedCloze);
   if (plain.includes('_____')) return plain;
   if (!word.trim()) return plain;
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -70,7 +75,7 @@ export function buildReviewQueue(
   newLimit = 10,
 ): StoredItem[] {
   const due = items
-    .filter(item => (item.srs?.totalReviews || 0) > 0 && (item.srs?.nextReview || 0) <= now)
+    .filter(item => isDueForReview(item, now))
     .sort((a, b) => (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0));
   const fresh = items
     .filter(item => (item.srs?.totalReviews || 0) === 0)
