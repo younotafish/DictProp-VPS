@@ -51,7 +51,9 @@ export const PronunciationBlock: React.FC<PronunciationBlockProps> = ({
         onEnd: () => { utteranceRef.current = null; setIsPlaying(false); },
         onError: (event) => {
           utteranceRef.current = null;
-          logError('Speech synthesis error', event);
+          // Another word, a sentence or a stop cutting this one off arrives as an 'interrupted' or 'canceled'
+          // error (Chrome): routine, so only real failures are logged.
+          if (event.error !== 'interrupted' && event.error !== 'canceled') logError('Speech synthesis error', event);
           setIsPlaying(false);
         },
       });
