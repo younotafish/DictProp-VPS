@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { findInDetailContext, withoutCard, withoutSentence, type DetailContext } from '../../hooks/useDetailView.ts';
+import { findInDetailContext, syntheticSourceItem, withoutCard, withoutSentence, type DetailContext } from '../../hooks/useDetailView.ts';
 import type { ItemGroup, StoredItem } from '../../types.ts';
 
 const srs = (id: string) => ({
@@ -78,4 +78,14 @@ test('withoutSentence drops the sentence with its aligned group, back to the fir
 
   const wordCards = cards([group('a', card('a1'))]);
   assert.equal(withoutSentence(wordCards, 'a1'), wordCards);
+});
+
+test('a sentence whose word is gone opens on a stand-in card with the word, the sense and the sentence as its example', () => {
+  const stand = syntheticSourceItem('s9', 'ephemeral', 'adjective: brief', 'An ephemeral fame.');
+  assert.equal(stand.type, 'vocab');
+  assert.equal(stand.data.id, 'sentence-src:s9');
+  assert.equal(stand.srs.id, 'sentence-src:s9');
+  const vocab = stand.data as { word: string; sense?: string; examples: string[] };
+  assert.deepEqual([vocab.word, vocab.sense, vocab.examples], ['ephemeral', 'adjective: brief', ['An ephemeral fame.']]);
+  assert.equal((syntheticSourceItem('s9', '', undefined, 'x').data as { word: string }).word, '(unknown word)');
 });

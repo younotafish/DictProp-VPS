@@ -1,8 +1,9 @@
 import { useCallback, useRef, useState, type RefObject } from 'react';
-import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type SentenceData, type StoredItem, type VocabCard } from '../../types';
+import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type SentenceData, type StoredItem } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { stopCurrent } from '../../services/lazyTts';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
+import { syntheticSourceItem } from '../../hooks/useDetailView';
 import { SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
 import { isCatalogProgressItem, type SavedSentenceIndex } from './useSavedSentenceIndex';
 import type { DetailViewProps } from './types';
@@ -48,32 +49,8 @@ export function useExampleSentencePreview({
     const candidates = savedItemsRef.current.filter(item =>
       item.type === 'vocab' && getItemSpelling(item) === spelling
     );
-    let source = (sense ? candidates.find(item => getItemSense(item) === sense) : undefined) || candidates[0];
-    if (!source) {
-      const synthetic: VocabCard = {
-        id: `sentence-src:${sentence.data.id}`,
-        word: word || '(unknown word)',
-        sense,
-        chinese: '',
-        ipa: '',
-        definition: '',
-        forms: [],
-        wordFamily: [],
-        synonyms: [],
-        antonyms: [],
-        confusables: [],
-        examples: [text],
-        history: '',
-        register: '',
-        mnemonic: '',
-      };
-      source = {
-        data: synthetic,
-        type: 'vocab',
-        savedAt: Date.now(),
-        srs: SRSAlgorithm.createNew(synthetic.id, 'vocab'),
-      };
-    }
+    const source = (sense ? candidates.find(item => getItemSense(item) === sense) : undefined) || candidates[0] ||
+      syntheticSourceItem(sentence.data.id, word, sense, text);
     stopAutoPlay();
     stopCurrent();
     setExampleSentencePreview({

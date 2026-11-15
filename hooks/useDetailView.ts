@@ -76,6 +76,31 @@ export const withoutSentence = (context: DetailContext, sentenceId: string): Det
   return { ...context, groups: newGroups, sentenceItems: newSentenceItems, groupIndex: newGroupIndex, itemIndex: 0 };
 };
 
+/**
+ * The stand-in source card for a sentence whose word isn't in the notebook: the word and sense, with the sentence
+ * as its one example. Sentence review and the word card's example preview both open on it.
+ */
+export const syntheticSourceItem = (sentenceId: string, word: string | undefined, sense: string | undefined, text: string): StoredItem => {
+  const synthetic: VocabCard = {
+    id: `sentence-src:${sentenceId}`,
+    word: word || '(unknown word)',
+    sense,
+    chinese: '',
+    ipa: '',
+    definition: '',
+    forms: [],
+    wordFamily: [],
+    synonyms: [],
+    antonyms: [],
+    confusables: [],
+    examples: [text],
+    history: '',
+    register: '',
+    mnemonic: '',
+  };
+  return { data: synthetic, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(synthetic.id, 'vocab') };
+};
+
 const NO_GROUPS: ItemGroup[] = [];
 const sameGroupItems = (a: ItemGroup, b: ItemGroup): boolean => a === b ||
   (a.title === b.title && a.items.length === b.items.length && a.items.every((item, index) => item === b.items[index]));
@@ -163,27 +188,7 @@ export function useDetailView(
     const findSource = sentenceSourceResolver(latestItemsRef.current);
     const groups: ItemGroup[] = ordered.map(s => {
       const d = s.data as SentenceData;
-      let resolved = findSource(d.sourceWord, d.sourceSense);
-      if (!resolved) {
-        const synthetic: VocabCard = {
-          id: `sentence-src:${d.id}`,
-          word: d.sourceWord || '(unknown word)',
-          sense: d.sourceSense,
-          chinese: '',
-          ipa: '',
-          definition: '',
-          forms: [],
-          wordFamily: [],
-          synonyms: [],
-          antonyms: [],
-          confusables: [],
-          examples: [d.text],
-          history: '',
-          register: '',
-          mnemonic: '',
-        };
-        resolved = { data: synthetic, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(synthetic.id, 'vocab') };
-      }
+      const resolved = findSource(d.sourceWord, d.sourceSense) ?? syntheticSourceItem(d.id, d.sourceWord, d.sourceSense, d.text);
       return { title: getItemTitle(resolved), items: [resolved] };
     });
     const safeIndex = Math.min(Math.max(0, index), groups.length - 1);
