@@ -25,6 +25,7 @@ import {
   indexEssayProgress,
   type EssayProgress,
 } from '../services/essayProgress';
+import { needsReview, sentenceReviewState } from '../services/sentenceReviewState';
 
 interface EssaysViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
@@ -177,10 +178,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
   };
 
   const startReview = (essay: Essay) => {
-    const actionable = essay.sentences.filter(sentence => {
-      const item = progressIndex.get(sentence.id);
-      return (item?.srs?.totalReviews ?? 0) === 0 || (item?.srs?.nextReview ?? 0) <= now;
-    });
+    const actionable = essay.sentences.filter(sentence => needsReview(progressIndex.get(sentence.id)?.srs, now));
     const sentences = actionable.length > 0 ? actionable : essay.sentences;
     onOpenSentence(buildEssayStudyItems(sentences, progressItems, Date.now()), 0);
   };
@@ -346,12 +344,10 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
               return (
                 <p key={paragraph.id} className="mb-6 indent-7 sm:mb-7 sm:indent-10">
                   {paragraph.sentences.map((sentence, sentenceIndex) => {
-                    const item = progressIndex.get(sentence.id);
-                    const reviews = item?.srs?.totalReviews ?? 0;
-                    const due = reviews > 0 && (item?.srs?.nextReview ?? 0) <= now;
-                    const stateClass = due
+                    const state = sentenceReviewState(progressIndex.get(sentence.id)?.srs, now);
+                    const stateClass = state === 'due'
                       ? 'decoration-orange-400 decoration-2 underline underline-offset-4'
-                      : reviews > 0
+                      : state === 'memorized'
                         ? 'decoration-emerald-300 underline underline-offset-4'
                         : '';
                     return (

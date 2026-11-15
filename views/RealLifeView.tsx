@@ -36,6 +36,7 @@ import {
 } from '../services/realLifeProgress';
 import { realLifeProgressItemId } from '../services/realLifeProgressIdentity';
 import type { SentenceReviewFilter } from '../services/sentenceOrdering';
+import { matchesReviewFilter, needsReview, sentenceReviewState } from '../services/sentenceReviewState';
 import { useLatest } from '../hooks/useStableValue';
 import { useNow } from '../hooks/useNow';
 
@@ -286,21 +287,12 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
     [now, progressItems],
   );
 
-  const matchesReviewFilter = (sentence: RealLifeSentence, filter: SentenceReviewFilter): boolean => {
-    if (filter === 'all') return true;
-    const item = progressBySentence.get(sentence.id);
-    const reviews = item?.srs?.totalReviews ?? 0;
-    if (filter === 'unreviewed') return reviews === 0;
-    if (filter === 'due') return reviews > 0 && (item?.srs?.nextReview ?? 0) <= now;
-    return reviews > 0 && (item?.srs?.nextReview ?? 0) > now;
-  };
-
   const filtered = useMemo(() => {
     if (!selectedCollection) return [];
     const normalizedQuery = deferredQuery.trim().toLocaleLowerCase('en-US');
     return selectedCollection.sentences.filter(sentence => {
       if (sectionId !== 'all' && sentence.sectionId !== sectionId) return false;
-      if (!matchesReviewFilter(sentence, reviewFilter)) return false;
+      if (!matchesReviewFilter(progressBySentence.get(sentence.id)?.srs, reviewFilter, now)) return false;
       if (!normalizedQuery) return true;
       return `${sentence.text} ${sentence.focus} ${sentence.sectionTitle}`
         .toLocaleLowerCase('en-US')
@@ -328,10 +320,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
 
   const startStudy = () => {
     if (!selectedCollection) return;
-    const actionable = selectedCollection.sentences.filter(sentence => {
-      const item = progressBySentence.get(sentence.id);
-      return (item?.srs?.totalReviews ?? 0) === 0 || (item?.srs?.nextReview ?? 0) <= now;
-    });
+    const actionable = selectedCollection.sentences.filter(sentence => needsReview(progressBySentence.get(sentence.id)?.srs, now));
     openSentence(actionable.length > 0 ? actionable : selectedCollection.sentences, 0);
   };
 
@@ -347,14 +336,14 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
   const softClass = selectedCollection ? collectionStyle[selectedCollection.accent].soft : '';
   const renderSentence = useCallback((_index: number, sentence: RealLifeSentence) => {
     const progressItem = progressBySentence.get(sentence.id);
-    const reviews = progressItem?.srs?.totalReviews ?? 0;
+    const state = sentenceReviewState(progressItem?.srs, now);
     return (
       <RealLifeSentenceRow
         sentence={sentence}
         softClass={softClass}
         saved={isSentenceSaved(sentence.text)}
-        reviewed={reviews > 0}
-        actionable={reviews === 0 || (progressItem?.srs?.nextReview ?? 0) <= now}
+        reviewed={state !== 'unreviewed'}
+        actionable={state !== 'memorized'}
         masteryPercent={progressItem?.srs ? Math.round(SRSAlgorithm.getMasteryLevel(progressItem.srs).percentage) : 0}
         onOpen={openFromList}
         onMarkReviewed={markReviewed}

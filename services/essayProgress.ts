@@ -1,5 +1,6 @@
 import type { SentenceData, StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
+import { summarizeReviewStates } from './sentenceReviewState';
 import type { Essay, EssaySentence } from './essayCatalog';
 import { essayProgressItemId, isEssayProgressItem } from './essayProgressIdentity';
 
@@ -60,30 +61,5 @@ export function getEssayProgress(
   now: number = Date.now(),
 ): EssayProgress {
   const progress = indexEssayProgress(progressItems);
-  let reviewed = 0;
-  let due = 0;
-  let memorized = 0;
-  let strength = 0;
-
-  for (const sentence of essay.sentences) {
-    const item = progress.get(sentence.id);
-    const reviews = item?.srs?.totalReviews ?? 0;
-    if (reviews === 0) continue;
-    reviewed += 1;
-    strength += Math.max(0, Math.min(100, item?.srs?.memoryStrength ?? 0));
-    if ((item?.srs?.nextReview ?? 0) <= now) due += 1;
-    else memorized += 1;
-  }
-
-  const total = essay.sentences.length;
-  const unreviewed = total - reviewed;
-  return {
-    total,
-    reviewed,
-    unreviewed,
-    due,
-    memorized,
-    toReview: unreviewed + due,
-    masteryScore: total === 0 ? 0 : Math.round(strength / total),
-  };
+  return summarizeReviewStates(essay.sentences.map(sentence => progress.get(sentence.id)?.srs), now);
 }

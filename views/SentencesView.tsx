@@ -9,6 +9,7 @@ import {
   orderSentencesForReview,
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
+import { summarizeReviewStates } from '../services/sentenceReviewState';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
 import { useNow } from '../hooks/useNow';
@@ -164,20 +165,8 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   const deferredQuery = useDeferredValue(searchQuery);
   const runSentenceSearch = useSentenceSearch(items);
 
-  // Bucket each active sentence by review state — every sentence is exactly one of:
-  //   unreviewed — never tapped "Reviewed" (totalReviews 0)
-  //   due        — reviewed before and due again now (nextReview ≤ now)
-  //   memorized  — reviewed and resting; nextReview is in the future, so no action needed right now
-  const counts = useMemo(() => {
-    let unreviewed = 0, due = 0, memorized = 0;
-    for (const s of activeItems) {
-      const reviews = s.srs?.totalReviews ?? 0;
-      if (reviews === 0) unreviewed++;
-      else if ((s.srs?.nextReview ?? 0) <= now) due++;
-      else memorized++;
-    }
-    return { all: activeItems.length, unreviewed, due, memorized };
-  }, [activeItems, now]);
+  // How many active sentences are in each review state (unreviewed, due, memorized), for the chips and header.
+  const counts = useMemo(() => summarizeReviewStates(activeItems.map(item => item.srs), now), [activeItems, now]);
 
   // Least-memorized first. Among equally strong sentences, untouched/least-recently heard comes first,
   // then most-recently added. Passive listening therefore rotates a card down without inflating mastery.
@@ -225,9 +214,9 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               <h2 className="font-bold text-slate-800">Sentences</h2>
               <span className="text-xs text-slate-400">{activeItems.length} saved</span>
             </div>
-            {(counts.unreviewed + counts.due) > 0 && (
+            {counts.toReview > 0 && (
               <span className="text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">
-                {counts.unreviewed + counts.due} to review
+                {counts.toReview} to review
               </span>
             )}
           </div>
@@ -262,7 +251,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
           {/* Review-state filters — default 'all' (current status) */}
           <div className="flex items-center gap-1.5 mt-2 overflow-x-auto no-scrollbar">
             {([
-              ['all', 'All', counts.all],
+              ['all', 'All', counts.total],
               ['unreviewed', 'Unreviewed', counts.unreviewed],
               ['due', 'Due', counts.due],
               ['memorized', 'Memorized', counts.memorized],
