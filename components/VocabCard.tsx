@@ -24,6 +24,11 @@ interface Props {
   data: VocabType;
   onSave?: () => void;
   isSaved?: boolean;
+  /**
+   * Added after the card's own classes, but Tailwind's stylesheet order, not the attribute's, settles a
+   * conflict, and it orders utilities by name: a class setting something the card already sets wins or
+   * loses alphabetically (bg-transparent loses to bg-white, border-indigo-200 to border-slate-100).
+   */
   className?: string;
   showSave?: boolean;
   onSearch?: (term: string) => void;
