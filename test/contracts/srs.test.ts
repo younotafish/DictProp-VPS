@@ -90,6 +90,11 @@ test('the device and the server schedule every kind of card alike, for every rat
       id: 'card', type: 'phrase', nextReview: 30 * DAY, interval: 3 * 1440, memoryStrength: 25,
       lastReviewDate: 0, totalReviews: 2, correctStreak: 2, stability: 3,
     }, 32 * DAY],
+    // Malformed: the server's validation requires both. The device used to compute a NaN schedule from it.
+    ['row missing its interval and review date', {
+      id: 'card', type: 'vocab', nextReview: 30 * DAY, memoryStrength: 20, lastReviewDate: 0, totalReviews: 2,
+      correctStreak: 2, stability: 3,
+    } as Omit<SRSData, 'interval'> as SRSData, 32 * DAY],
     ['reset', SRSAlgorithm.reset('card', 'vocab', T0 + 30 * DAY), T0 + 30 * DAY + HOUR],
     ['sentence never reviewed, with a leftover stability', {
       ...SRSAlgorithm.createNew('card', 'sentence', T0), stability: 9, memoryStrength: 42,

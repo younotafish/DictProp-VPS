@@ -34,18 +34,18 @@ const ratingMap: Record<ReviewRating, Grade> = {
 };
 
 function toFsrsCard(srs: SRSData, now: number): CardInput {
-  if ((srs.totalReviews || 0) === 0) return createEmptyCard(new Date(srs.nextReview || now));
-  const lastReview = srs.lastReviewDate || Math.max(0, now - Math.max(1, srs.interval) * 60_000);
+  if ((Number(srs.totalReviews) || 0) === 0) return createEmptyCard(new Date(srs.nextReview || now));
+  const lastReview = Number(srs.lastReviewDate) || Math.max(0, now - Math.max(1, Number(srs.interval) || 0) * 60_000);
   return {
     due: new Date(srs.nextReview || now),
     stability: Math.max(0.1, Number(srs.stability) || 0.5),
     difficulty: Math.min(10, Math.max(1, Number(srs.difficulty) || 5)),
     // CardInput still requires the deprecated elapsed_days, but the scheduler recomputes it from last_review.
     elapsed_days: 0,
-    scheduled_days: Math.max(0, srs.scheduledDays ?? Math.round((srs.interval || 0) / 1440)),
-    learning_steps: Math.max(0, srs.learningSteps || 0),
-    reps: Math.max(1, srs.totalReviews || 0),
-    lapses: Math.max(0, srs.lapses || 0),
+    scheduled_days: Math.max(0, srs.scheduledDays ?? Math.round((Number(srs.interval) || 0) / 1440)),
+    learning_steps: Math.max(0, Number(srs.learningSteps) || 0),
+    reps: Math.max(1, Number(srs.totalReviews) || 0),
+    lapses: Math.max(0, Number(srs.lapses) || 0),
     state: srs.fsrsState ?? State.Review,
     last_review: new Date(lastReview),
   };
@@ -60,7 +60,7 @@ function fromFsrsCard(previous: SRSData, card: Card, rating: ReviewRating, revie
     memoryStrength: SRSAlgorithm.stabilityToDisplayStrength(card.stability),
     lastReviewDate: reviewedAt,
     totalReviews: card.reps,
-    correctStreak: rating === 'again' ? 0 : (previous.correctStreak || 0) + 1,
+    correctStreak: rating === 'again' ? 0 : (Number(previous.correctStreak) || 0) + 1,
     stability: card.stability,
     scheduler: 'fsrs-v6',
     difficulty: card.difficulty,
