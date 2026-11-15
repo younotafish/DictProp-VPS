@@ -11,7 +11,7 @@ import { ProcessError, runProcess } from './process.js';
 
 const MIMO_URL = 'https://api.deepinfra.com/v1/inference/XiaomiMiMo/MiMo-V2.5-tts';
 const VOICEDESIGN_URL = 'https://api.deepinfra.com/v1/inference/XiaomiMiMo/MiMo-V2.5-tts-voicedesign';
-export const GEN_TIMEOUT_MS = 90_000;
+const GEN_TIMEOUT_MS = 90_000;
 // ffmpeg turns a sentence clip around in well under a second; a wedged process must not hold the
 // request (or a backfill worker) forever.
 const FFMPEG_TIMEOUT_MS = 60_000;

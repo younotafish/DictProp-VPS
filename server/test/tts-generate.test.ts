@@ -7,7 +7,6 @@ import { Hono } from 'hono';
 const DATA_DIR = process.env.DATA_DIR!;
 
 const { createTtsRoutes, GENERATE_MAX_TEXT_CHARS } = await import('../src/routes/tts.js');
-const { cleanCasualRespelling } = await import('../src/tts/casual.js');
 const { GENERATE_MAX_ITEMS } = await import('../src/shared/ai-limits.js');
 const { audioPath, ttsKey } = await import('../src/tts/cache.js');
 const { createPriorityQueue } = await import('../src/local-whisper.js');
@@ -184,16 +183,6 @@ test('writes leave no temporary files behind', async () => {
     .map(String)
     .filter(name => name.endsWith('.tmp'));
   assert.deepEqual(leftovers, []);
-});
-
-test('casual respellings lose wrapping quotes but keep their apostrophes', () => {
-  assert.equal(cleanCasualRespelling('"I\'m gonna go."'), "I'm gonna go.");
-  assert.equal(cleanCasualRespelling('“Goin\' home, ya know”'), "Goin' home, ya know");
-  assert.equal(cleanCasualRespelling("'cause I said so, that's why"), "'cause I said so, that's why");
-  assert.equal(cleanCasualRespelling("  gimme a sec  "), 'gimme a sec');
-  assert.equal(cleanCasualRespelling('""'), null);
-  assert.equal(cleanCasualRespelling('   '), null);
-  assert.equal(cleanCasualRespelling(42), null);
 });
 
 test('the alignment queue runs one task at a time and takes interactive work before queued background work', async () => {

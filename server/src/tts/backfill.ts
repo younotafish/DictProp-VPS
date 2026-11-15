@@ -8,7 +8,7 @@ import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
 import { stripSentenceMarkers } from '../shared/sentence-markers.js';
 import { audioPath, CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, ttsKey } from './cache.js';
-import { reduceCasualBatch } from './casual.js';
+import { reduceCasualBatch, RESPELLING_BATCH_SIZE } from './casual.js';
 import type { ClipStore } from './clips.js';
 
 const BACKFILL_STATUS_PATH = resolve(env.DATA_DIR, 'tts-backfill-status.json');
@@ -170,14 +170,13 @@ export function createBackfill({
     }
 
     // Missing-audio: batch-reduce the spoken text (cheap throughput), then synth + align each clip.
-    const CHUNK = 20;
-    for (let i = 0; i < needAudio.length; i += CHUNK) {
-      const chunk = needAudio.slice(i, i + CHUNK);
+    for (let i = 0; i < needAudio.length; i += RESPELLING_BATCH_SIZE) {
+      const chunk = needAudio.slice(i, i + RESPELLING_BATCH_SIZE);
       let reduced: Array<string | null>;
       try {
         reduced = await reduceBatch(chunk);
-      } catch (e: any) {
-        console.warn('[tts] backfill reduce batch failed, respelling each clip separately:', e?.message);
+      } catch (e) {
+        console.warn('[tts] backfill reduce batch failed, respelling each clip separately:', (e as Error)?.message);
         reduced = chunk.map(() => null); // a missing respelling is retried per clip, never voiced as-is
       }
       let j = 0;

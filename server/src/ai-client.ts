@@ -166,6 +166,9 @@ export interface ChatRequest {
 /** One JSON-object reply from the chat model, or an AiError. */
 export type ChatJson = (ctx: AiRequestContext, request: ChatRequest) => Promise<Record<string, unknown>>;
 
+/** One plain-text reply from the chat model, or an AiError. */
+export type ChatText = (ctx: AiRequestContext, request: ChatRequest) => Promise<string>;
+
 /** The parts of a chat-completion response the client reads. */
 interface ChatEnvelope {
   error?: unknown;
@@ -196,12 +199,33 @@ function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export function createChatClient(options: ChatClientOptions = {}): ChatJson {
+/** The JSON object in a model reply, or an 'invalid' AiError (which the client retries once). */
+function parseJsonObject(content: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = parseModelJson(content);
+  } catch (error) {
+    throw new AiError('invalid', (error instanceof Error && error.message) || 'Failed to parse JSON from DeepSeek response');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new AiError('invalid', 'DeepSeek returned JSON that is not an object');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+type ReplyFormat = 'json' | 'text';
+
+/**
+ * Calls the chat model inside the request's budget and turns its reply into a result with `parse`: one request,
+ * plus one retry of a transient failure. In JSON mode the model is asked for a JSON object.
+ */
+function createChatCaller(options: ChatClientOptions) {
   const doFetch = options.fetch ?? proxyFetch;
   const apiKey = options.apiKey ?? (() => env.DEEPINFRA_API_KEY);
   const retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS;
 
-  async function callOnce(ctx: AiRequestContext, request: ChatRequest, withMaxTokens: boolean): Promise<Record<string, unknown>> {
+  /** One request; resolves the reply's content. */
+  async function callOnce(ctx: AiRequestContext, request: ChatRequest, format: ReplyFormat, withMaxTokens: boolean): Promise<string> {
     const key = apiKey();
     if (!key) throw new AiError('config', 'DEEPINFRA_API_KEY not configured');
     ctx.signal.throwIfAborted();
@@ -216,7 +240,7 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
       body: JSON.stringify({
         model: DEEPSEEK_MODEL,
         messages: [{ role: 'system', content: request.system }, { role: 'user', content: request.user }],
-        response_format: { type: 'json_object' },
+        ...(format === 'json' ? { response_format: { type: 'json_object' } } : {}),
         temperature: request.temperature ?? DEFAULT_TEMPERATURE,
         ...(withMaxTokens ? { max_tokens: request.maxTokens } : {}),
       }),
@@ -227,7 +251,7 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
       console.warn(`DeepSeek ${label} error ${response.status}: ${text.slice(0, 300)}`);
       // A provider that caps output below our max_tokens rejects the whole call; fall back to its default cap.
       if (withMaxTokens && response.status === 400 && /max[_ ]?(?:completion[_ ]?)?tokens/i.test(text)) {
-        return callOnce(ctx, request, false);
+        return callOnce(ctx, request, format, false);
       }
       throw providerError(response.status, text);
     }
@@ -244,23 +268,14 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
     }
     const content = choice?.message?.content;
     if (typeof content !== 'string' || !content.trim()) throw new AiError('invalid', 'DeepSeek returned empty response');
-    let parsed: unknown;
-    try {
-      parsed = parseModelJson(content);
-    } catch (error) {
-      throw new AiError('invalid', (error instanceof Error && error.message) || 'Failed to parse JSON from DeepSeek response');
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new AiError('invalid', 'DeepSeek returned JSON that is not an object');
-    }
-    return parsed as Record<string, unknown>;
+    return content;
   }
 
-  return async function chatJson(ctx, request) {
+  return async function call<T>(ctx: AiRequestContext, request: ChatRequest, format: ReplyFormat, parse: (content: string) => T): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       let failure: AiError;
       try {
-        return await callOnce(ctx, request, true);
+        return parse(await callOnce(ctx, request, format, true));
       } catch (error) {
         failure = classifyAiError(error, ctx.clientSignal);
       }
@@ -278,6 +293,17 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
       }
     }
   };
+}
+
+export function createChatClient(options: ChatClientOptions = {}): ChatJson {
+  const call = createChatCaller(options);
+  return (ctx, request) => call(ctx, request, 'json', parseJsonObject);
+}
+
+/** A chat client for plain-text replies: the same request, envelope handling and retry, no JSON mode. */
+export function createChatTextClient(options: ChatClientOptions = {}): ChatText {
+  const call = createChatCaller(options);
+  return (ctx, request) => call(ctx, request, 'text', content => content);
 }
 
 // ============================================================================
