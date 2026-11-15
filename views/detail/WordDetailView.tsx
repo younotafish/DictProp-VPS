@@ -163,8 +163,8 @@ export function WordDetailView(props: DetailViewBodyProps) {
     handleSaveVocab, handleToggleSave, handleSaveShortcut, handleDeleteItem, handleArchiveItem, handleUnarchiveItem,
     handleResetSRS, handleRemember,
   } = useWordActions({
-    data, type, title, savedItemMatch, isSaved, savedItemsRef, onSave, onDelete, onArchive, onUnarchive, onResetSRS,
-    onUpdateSRS, setShowActionMenu, rememberingRef, showRemembered,
+    data, type, title, savedItemMatch, isSaved, savedItemsRef, isVocabSaved, onSave, onDelete, onArchive, onUnarchive,
+    onResetSRS, onUpdateSRS, setShowActionMenu, rememberingRef, showRemembered,
   });
 
   // Navigation handlers for keyboard

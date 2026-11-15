@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import { getItemSense, getItemSpelling, getItemTitle, type ReviewRating, type SRSData, type StoredItem, type VocabCard } from '../../types';
+import { getItemSense, getItemTitle, isVocabItem, savedVocabKey, type ReviewRating, type SRSData, type StoredItem, type VocabCard } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
+import { makeVocabStoredItem } from '../../services/items';
 import { updateAfterRating } from '../../services/fsrsScheduler';
 import { log, warn } from '../../services/logger';
 import { isTypingTarget } from '../../components/keyboardTarget';
@@ -15,6 +16,8 @@ interface WordActionsOptions {
   savedItemMatch: StoredItem | undefined;
   isSaved: boolean;
   savedItemsRef: RefObject<StoredItem[]>;
+  /** Whether a word and sense is in the notebook: what a phrase's key-vocab bookmark shows. */
+  isVocabSaved: (vocab: VocabCard) => boolean;
   onSave: (item: StoredItem) => void;
   onDelete: (id: string) => void;
   onArchive?: (id: string) => void;
@@ -28,34 +31,21 @@ interface WordActionsOptions {
 
 /** What the word card does to the library: save, delete, archive and unarchive, reset, remember, and a phrase's key-vocab saves. */
 export function useWordActions({
-  data, type, title, savedItemMatch, isSaved, savedItemsRef, onSave, onDelete, onArchive, onUnarchive, onResetSRS,
-  onUpdateSRS, setShowActionMenu, rememberingRef, showRemembered,
+  data, type, title, savedItemMatch, isSaved, savedItemsRef, isVocabSaved, onSave, onDelete, onArchive, onUnarchive,
+  onResetSRS, onUpdateSRS, setShowActionMenu, rememberingRef, showRemembered,
 }: WordActionsOptions) {
-  // A phrase's key-vocab cards save and unsave themselves. This handler goes to the memoized word cards, so it
-  // keeps one identity across renders and a card renders again only when something it shows changes.
+  // A phrase's key-vocab cards save and unsave themselves, by the same word-and-sense rule their bookmark shows
+  // (a missing sense is the empty one, and only words count). This handler goes to the memoized word cards, so it
+  // changes identity only when the notebook's words do.
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
-    const vocabSpelling = (vocab.word || '').toLowerCase().trim();
-    const items = savedItemsRef.current;
-    const isAlreadySaved = items.some(i =>
-      getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
-    );
-
-    if (isAlreadySaved) {
-      const existingItem = items.find(i =>
-        getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
-      );
-      if (existingItem) {
-        onDelete(existingItem.data.id);
-      }
+    if (isVocabSaved(vocab)) {
+      const key = savedVocabKey(vocab);
+      const existingItem = savedItemsRef.current.find(i => !i.isDeleted && isVocabItem(i) && savedVocabKey(i.data) === key);
+      if (existingItem) onDelete(existingItem.data.id);
     } else {
-      onSave({
-        data: vocab,
-        type: 'vocab',
-        savedAt: Date.now(),
-        srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
-      });
+      onSave(makeVocabStoredItem(vocab));
     }
-  }, [onDelete, onSave, savedItemsRef]);
+  }, [isVocabSaved, onDelete, onSave, savedItemsRef]);
 
   const handleToggleSave = useCallback(() => {
     if (isSaved && savedItemMatch) {
