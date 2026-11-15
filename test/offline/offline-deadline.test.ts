@@ -66,12 +66,14 @@ test('run_bounded kills a command that ignores TERM together with the processes 
   try {
     const pidFile = join(root, 'grandchild.pid');
     const started = Date.now();
+    // The grace between TERM and KILL is five seconds unless set; one keeps the test quick.
     const result = bash(`status=0
 run_bounded 1 bash -c 'trap "" TERM; sleep 60 & echo $! > "$0"; wait' "$PID_FILE" || status=$?
-echo "status=$status"`, { PID_FILE: pidFile });
+echo "status=$status"`, { PID_FILE: pidFile, RUN_BOUNDED_KILL_GRACE_SECONDS: '1' });
     const elapsed = Date.now() - started;
     assert.equal(result.stdout.trim(), 'status=124', result.stderr);
-    assert.ok(elapsed >= 5_000 && elapsed < 15_000, `took ${elapsed}ms`);
+    // A one-second limit, then a one-second grace.
+    assert.ok(elapsed >= 2_000 && elapsed < 15_000, `took ${elapsed}ms`);
     const grandchild = Number(readFileSync(pidFile, 'utf8').trim());
     await waitFor(() => !processAlive(grandchild), 5_000);
   } finally {
@@ -100,7 +102,10 @@ trap 'exit 143' TERM
 run_stage 60 bash -c 'echo $$ > "$0"; trap "" TERM; exec sleep 30' "$3"
 echo unreachable
 `);
-    const child = spawn('/bin/bash', [harness, deadlineScript, lock, stagePidFile], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('/bin/bash', [harness, deadlineScript, lock, stagePidFile], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, RUN_BOUNDED_KILL_GRACE_SECONDS: '1' },
+    });
     let stdout = '';
     child.stdout.on('data', chunk => { stdout += chunk; });
     const closed = new Promise<number | null>(resolvePromise => child.on('close', code => resolvePromise(code)));

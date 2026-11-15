@@ -17,8 +17,10 @@ deadline_passed() {
   [ "$(date +%s)" -ge "$1" ]
 }
 
-# The command runs in its own process group, so a timeout also stops the renderers and model CLIs it
-# started instead of leaving them to finish after the cycle lock is released.
+# The command runs in its own process group, so a timeout also stops what it started, the renderers among
+# them, instead of leaving it to finish after the cycle lock is released. The model CLIs run in detached
+# process groups of their own; the stage's signal handler stops them within the grace between TERM and KILL,
+# RUN_BOUNDED_KILL_GRACE_SECONDS (5 unless set to a positive integer).
 RUN_BOUNDED_PERL='
   use strict;
   use warnings;
@@ -28,6 +30,7 @@ RUN_BOUNDED_PERL='
     print STDERR "run_bounded: usage: run_bounded SECONDS COMMAND [ARG...]\n";
     exit 2;
   }
+  my $grace = ($ENV{RUN_BOUNDED_KILL_GRACE_SECONDS} // "") =~ /^[1-9][0-9]*$/ ? $ENV{RUN_BOUNDED_KILL_GRACE_SECONDS} : 5;
   my $pid = fork;
   die "run_bounded: fork failed: $!\n" unless defined $pid;
   if (!$pid) {
@@ -40,7 +43,7 @@ RUN_BOUNDED_PERL='
   # Set the group from both sides so a signal sent right after fork cannot miss it.
   setpgrp($pid, $pid);
   my ($expired, $stopping) = (0, 0);
-  # The group gets TERM, or the signal this process received, and KILL five seconds later.
+  # The group gets TERM, or the signal this process received, and KILL once the grace has passed.
   $SIG{ALRM} = sub {
     if ($expired || $stopping) {
       kill("KILL", -$pid);
@@ -48,12 +51,12 @@ RUN_BOUNDED_PERL='
     }
     $expired = 1;
     kill("TERM", -$pid);
-    alarm 5;
+    alarm $grace;
   };
   for my $name (qw(TERM INT HUP)) {
     $SIG{$name} = sub {
       kill($name, -$pid);
-      alarm 5 unless $stopping++;
+      alarm $grace unless $stopping++;
     };
   }
   alarm $seconds;
