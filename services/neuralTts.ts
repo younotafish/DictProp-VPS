@@ -107,7 +107,12 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   const markStart = () => { if (!isCurrent()) return; setPlaybackState({ status: 'playing' }); };
   const markEnd = () => { if (!isCurrent()) return; endPlayback(); onEnd?.(); };
   const markError = (e: unknown) => { if (!isCurrent()) return; endPlayback(); onError?.(e); };
-  const systemFallback = () => playSpeech(plain, { rate: getPlaybackRate(), onStart: markStart, onEnd: markEnd, onError: markError });
+  const systemFallback = () => {
+    // A browser without a speech engine would otherwise leave the read loading for good.
+    if (!playSpeech(plain, { rate: getPlaybackRate(), onStart: markStart, onEnd: markEnd, onError: markError })) {
+      markError(new Error('This browser has no speech engine'));
+    }
+  };
 
   // Resolve per-word timings to trim the quiet lead-in, but WITHOUT blocking the tap on the fetch: we
   // already hold the audio, so a slow/stalled timings round-trip must not hold up playback (the "takes

@@ -279,16 +279,17 @@ test('a seek while the system voice reads leaves it alone', async () => {
   assert.equal(engine.getPlaybackState().status, 'paused', 'it still shows the voice paused');
 });
 
-test('without a speech engine a miss stays loading', async () => {
+test('without a speech engine a miss fails the read instead of loading for good', async () => {
   const text = await sentence(false);
   const speechSynthesis = (globalThis as unknown as { window: { speechSynthesis?: unknown } }).window;
   const synth = speechSynthesis.speechSynthesis;
   speechSynthesis.speechSynthesis = undefined;
+  const callbacks = reads();
   try {
-    engine.speakNatural(text, { allowDownload: true });
-    await until(() => server.generated.some(item => item.text === text), 'the miss is reached');
-    await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(engine.getPlaybackState(), { text, status: 'loading' });
+    engine.speakNatural(text, { allowDownload: true, onEnd: callbacks.onEnd, onError: callbacks.onError });
+    await until(() => callbacks.heard.length > 0, 'the read fails');
+    assert.deepEqual(callbacks.heard, ['error']);
+    assert.deepEqual(engine.getPlaybackState(), { text: null, status: 'idle' });
   } finally {
     speechSynthesis.speechSynthesis = synth;
   }
