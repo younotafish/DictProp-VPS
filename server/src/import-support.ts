@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, renameSync, rmSync, statfsSync, statSync } from 'fs';
 import { resolve } from 'path';
-import { db, upsertItem } from './db.js';
+import { db, upsertItem, type ItemRead } from './db.js';
 import { env } from './env.js';
 
 const BACKUP_PREFIX = 'pre-';
@@ -92,7 +92,7 @@ export function recordStale(result: { stale: number; staleIds: string[] }, id: s
  * Write new data over an item the caller read inside its current transaction, carrying that row's
  * revision, so an import never replaces a copy committed after it read.
  */
-export function writeOverLiveItem(live: any, ownerId: string, data: any): void {
+export function writeOverLiveItem(live: ItemRead, ownerId: string, data: object): void {
   const { conflicted } = upsertItem({
     ...live,
     data,

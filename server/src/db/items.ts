@@ -1,6 +1,7 @@
 import { ConflictError } from '../errors.js';
 import { serverImageMarker } from '../shared/image-markers.js';
 import { keepServerOwnedData } from '../shared/server-owned-data.js';
+import type { ItemType } from '../validation-helpers.js';
 import { db, writeTransaction } from './connection.js';
 import {
   getItemImagesBatch, hasItemImage, imageStmts, linkSentenceEnrichmentImage, storeImage, upsertItemImageBinary,
@@ -8,11 +9,10 @@ import {
 import {
   isJsonObject, isStaleContent, resolveSrs, sameJson, splitInlineImages, withPoolAnalysis, type InlineImage, type JsonObject,
 } from './item-write.js';
-import type { ItemType } from '../validation-helpers.js';
 import { allocateRevision, headRevision } from './revisions.js';
 import { getSentenceEnrichmentForText } from './sentence-enrichments.js';
 
-// ─── Item prepared statements ───
+// The library's item rows and every read and write of them.
 
 export const stmts = {
   getAllChunk: db.prepare(`SELECT rowid AS _rowid, * FROM items WHERE user_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`),
@@ -76,8 +76,6 @@ function rowToItem(row: ItemRow, data: any = JSON.parse(row.data)) {
 
 /** An item as the API sends it. */
 export type ItemRead = ReturnType<typeof rowToItem>;
-
-// ─── Item CRUD (all scoped by userId) ───
 
 /**
  * Rows → StoredItem JSON without image bytes. An image in item_images (post-migration) or still

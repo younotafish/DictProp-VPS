@@ -1,7 +1,6 @@
 import { db } from './connection.js';
 
 // Word comparisons, one per user and word set (see the comparisons table in schema.ts).
-
 const compStmts = {
   getAll: db.prepare(`SELECT key, words, data, updated_at FROM comparisons WHERE user_id = ?`),
   upsert: db.prepare(`

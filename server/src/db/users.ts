@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { db, writeTransaction } from './connection.js';
 
-// ─── User / Session prepared statements ───
+// Accounts and sign-in sessions.
 
 const userStmts = {
   findByGoogleId: db.prepare(`SELECT * FROM users WHERE google_id = ?`),
@@ -40,8 +40,6 @@ export interface UserRow {
   created_at: number;
 }
 
-// ─── User CRUD ───
-
 export function findUserByGoogleId(googleId: string): UserRow | null {
   return (userStmts.findByGoogleId.get(googleId) as UserRow) || null;
 }
@@ -78,8 +76,6 @@ export const createUserAndClaimItems = writeTransaction((opts: {
 export function listAllUsers(): UserRow[] {
   return userStmts.listAll.all() as UserRow[];
 }
-
-// ─── Session CRUD ───
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const sessionTokenHash = (token: string): string => createHash('sha256').update(token).digest('hex');

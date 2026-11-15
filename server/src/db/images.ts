@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { isSupportedImageMime, isValidImage, parseImageDataUri } from '../image-format.js';
 import { db, writeTransaction } from './connection.js';
 
-// ─── Image (item_images) prepared statements ───
+// Image storage: item_images maps an item or phrase vocab id to a blob in image_blobs (see schema.ts).
 
 export const imageStmts = {
   upsertBlob: db.prepare(`INSERT OR IGNORE INTO image_blobs (content_hash, data, byte_length, created_at)
