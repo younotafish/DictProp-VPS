@@ -14,7 +14,7 @@ import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../services/queryMode';
-import type { QueueItem } from './search/searchQueue';
+import { busyCountOf, findLiveComparison, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer, type QueueItem } from './search/searchQueue';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
@@ -154,8 +154,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [suggestions, onOpenSentence]);
 
   // Derived state — searches AND comparisons are both queue items, so all counts include both.
-  const readyItems = useMemo(() => queue.filter(q => q.status === 'ready'), [queue]);
-  const busyCount = queue.filter(q => q.status === 'searching' || q.status === 'pending').length;
+  const readyItems = useMemo(() => readyItemsOf(queue), [queue]);
+  const busyCount = busyCountOf(queue);
   const readyCount = readyItems.length;
   const isBusy = busyCount > 0 || scanning; // scanning = sentence→expression scan before items are enqueued
 
@@ -166,17 +166,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     if (!trimmed) return;
     const forceAI = !!opts?.forceAI;
     const analyzeMode = opts?.analyzeMode;
+    const id = `q-${++queueIdCounter}`;
     setQueue(prev => {
-      const dup = prev.some(item => item.query.toLowerCase() === trimmed.toLowerCase() && item.status !== 'failed');
-      if (dup && !forceAI) {
-        log('🔍 Queue: skipping duplicate "' + trimmed + '"');
-        return prev;
-      }
-      const base = forceAI
-        ? prev.filter(item => item.query.toLowerCase() !== trimmed.toLowerCase())
-        : prev;
-      log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : '') + (analyzeMode ? ' (' + analyzeMode + ')' : ''));
-      return [...base, { id: `q-${++queueIdCounter}`, kind: 'search' as const, query: trimmed, status: 'pending', results: null, forceAI, analyzeMode }];
+      const next = searchQueueReducer(prev, { type: 'add-search', id, query: trimmed, forceAI, analyzeMode });
+      if (next === prev) log('🔍 Queue: skipping duplicate "' + trimmed + '"');
+      else log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : '') + (analyzeMode ? ' (' + analyzeMode + ')' : ''));
+      return next;
     });
   }, []);
 
@@ -195,17 +190,14 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const clean = words.map(w => w.trim()).filter(Boolean);
     if (clean.length < 2) return;
     const key = comparisonKey(clean);
-    const existing = queueRef.current.find(q => q.kind === 'compare' && comparisonKey(q.words || []) === key && q.status !== 'failed');
+    const existing = findLiveComparison(queueRef.current, key);
     if (existing) {
       if (existing.status === 'ready') setPendingOpenId(existing.id); // already done → just open it
       return; // already queued/generating → don't duplicate
     }
     const id = `q-${++queueIdCounter}`;
     log('⚖️ Queue: comparing "' + clean.join(' vs ') + '"' + (cachedResult ? ' (saved)' : ''));
-    setQueue(prev => [...prev, {
-      id, kind: 'compare' as const, query: clean.join(' vs '), words: clean,
-      status: cachedResult ? 'ready' as const : 'pending' as const, results: null, comparison: cachedResult ?? null,
-    }]);
+    setQueue(queueUpdate({ type: 'add-compare', id, words: clean, cached: cachedResult ?? null }));
     if (cachedResult) setPendingOpenId(id); // saved comparison → open instantly in the popup
   }, []);
 
@@ -264,15 +256,15 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
     // Comparison items run compareWords (the heavy call uses curl server-side) and persist on success.
     if (item.kind === 'compare') {
-      setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'searching' as const } : q));
+      setQueue(queueUpdate({ type: 'start', id: itemId }));
       log('⚖️ Queue: generating comparison "' + item.query + '"');
       compareWords(item.words || []).then(result => {
         setError(null);
-        setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, comparison: result } : q));
+        setQueue(queueUpdate({ type: 'compare-ready', id: itemId, comparison: result }));
         onCompareReady?.(item.words || [], result); // persist (server + local) for the word pages
       }).catch(err => {
         warn('⚖️ Queue: compare failed "' + item.query + '":', err?.message);
-        setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
+        setQueue(queueUpdate({ type: 'fail', id: itemId }));
         showError(describeSearchError(item.query, err), undefined);
       }).finally(done);
       return;
@@ -283,34 +275,24 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const savedVocabs = item.forceAI ? [] : findSavedByWord(item.query);
     if (savedVocabs.length > 0) {
       log('🔍 Queue: "' + item.query + '" already saved (' + savedVocabs.length + ' meanings), skipping API');
-      const cachedResult: SearchResult = {
-        id: 'saved-' + itemId,
-        query: item.query,
-        translation: '',
-        grammar: '',
-        visualKeyword: savedVocabs[0].word,
-        pronunciation: savedVocabs[0].ipa || '',
-        vocabs: savedVocabs,
-        timestamp: Date.now(),
-      };
-      setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: cachedResult } : q));
+      setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: savedCardsResult(itemId, item.query, savedVocabs, Date.now()) }));
       if (!item.analyzeMode) setPendingOpenId(itemId); // direct DB hit auto-opens; sentence-expanded items just accumulate
       done();
       return;
     }
 
     // Mark as searching
-    setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'searching' as const } : q));
+    setQueue(queueUpdate({ type: 'start', id: itemId }));
 
     log('🔍 Queue: searching "' + item.query + '"' + (item.analyzeMode ? ' (' + item.analyzeMode + ')' : ''));
     analyzeInput(item.query, item.analyzeMode ? { mode: item.analyzeMode } : undefined).then(result => {
       setError(null); // a fresh success clears any lingering failure toast
-      setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'ready' as const, results: result } : q));
+      setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: result }));
       if (item.forceAI) setPendingOpenId(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
       finalizeResult(itemId, item.query, result); // prepare audio, replace saved card, stream images
     }).catch(err => {
       warn('🔍 Queue: failed "' + item.query + '":', err?.message);
-      setQueue(prev => prev.map(q => q.id === itemId ? { ...q, status: 'failed' as const } : q));
+      setQueue(queueUpdate({ type: 'fail', id: itemId }));
       if (isAuthenticationError(err)) rememberSearchRetry({ query: item.query, analyzeMode: item.analyzeMode });
       showError(describeSearchError(item.query, err), isRetryableSearchError(err) ? item.query : undefined, item.analyzeMode);
     }).finally(done);
@@ -515,7 +497,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
   // Remove a single item from queue
   const dismissQueueItem = useCallback((id: string) => {
-    setQueue(prev => prev.filter(q => q.id !== id));
+    setQueue(queueUpdate({ type: 'dismiss', id }));
     // Adjust viewing index if needed
     setViewingQueueIdx(prev => {
       const newReady = queue.filter(q => q.id !== id && q.status === 'ready');
@@ -530,7 +512,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
   // Clear all completed items
   const clearQueue = useCallback(() => {
-    setQueue(prev => prev.filter(q => q.status === 'pending' || q.status === 'searching'));
+    setQueue(queueUpdate({ type: 'clear-finished' }));
     setMode('idle');
     setViewingQueueIdx(0);
     setViewingVocabIdx(0);
@@ -610,15 +592,15 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     if (!trimmed || !item || item.refreshing) return;
     const id = item.id;
     const analyzeMode = item.analyzeMode;
-    setQueue(prev => prev.map(q => q.id === id ? { ...q, refreshing: true } : q)); // keep results visible
+    setQueue(queueUpdate({ type: 'refresh-start', id })); // keep results visible
     // An expression taken from a sentence is refreshed as the same unit, not re-split into its words.
     analyzeInput(trimmed, analyzeMode ? { mode: analyzeMode } : undefined).then(result => {
-      setQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'ready' as const, results: result, query: trimmed, refreshing: false } : q));
+      setQueue(queueUpdate({ type: 'refresh-ready', id, query: trimmed, results: result }));
       setViewingVocabIdx(0);
       finalizeResult(id, trimmed, result);
     }).catch(err => {
       warn('🔍 Refresh failed "' + trimmed + '":', err?.message);
-      setQueue(prev => prev.map(q => q.id === id ? { ...q, refreshing: false } : q));
+      setQueue(queueUpdate({ type: 'refresh-fail', id }));
       if (isAuthenticationError(err)) rememberSearchRetry({ query: trimmed, analyzeMode });
       showError(describeSearchError(trimmed, err), isRetryableSearchError(err) ? trimmed : undefined, analyzeMode);
     });
