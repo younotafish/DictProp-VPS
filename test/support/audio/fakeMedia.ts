@@ -221,11 +221,11 @@ export class FakeTtsServer {
   }
 }
 
-/** Let queued promise callbacks and tasks run until `check` holds (or fail after a bounded wait). */
+/** Let queued promise callbacks and tasks run until `check` holds, failing after five seconds. */
 export const until = async (check: () => boolean, what: string): Promise<void> => {
-  for (let attempt = 0; attempt < 500; attempt++) {
-    if (check()) return;
+  const deadline = performance.now() + 5000;
+  while (!check()) {
+    if (performance.now() > deadline) throw new Error(`timed out waiting until ${what}`);
     await new Promise<void>(resolve => setImmediate(resolve));
   }
-  throw new Error(`timed out waiting until ${what}`);
 };
