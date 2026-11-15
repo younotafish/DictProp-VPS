@@ -46,6 +46,11 @@ interface Props {
   onOpenSentence?: (ordered: StoredItem[], index: number) => void;
 }
 
+/**
+ * The search button and everything it opens: the search box, the results sheet and the search's notices. The
+ * queue of lookups and comparisons lives in search/useSearchQueue; this component holds what's on screen (the
+ * mode, the open result and meaning, the query) and the actions on it, and composes the pieces in search/.
+ */
 export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
   const [mode, setMode] = useState<SearchMode>('idle');
   const [query, setQuery] = useState('');
