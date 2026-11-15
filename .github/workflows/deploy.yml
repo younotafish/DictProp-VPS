@@ -174,16 +174,30 @@ jobs:
               fi
               BACKUP_NAME="dictprop-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.sha }}.db"
               BACKUP_TEMP="$BACKUP_NAME.partial"
-              if [ -n "$(docker compose ps -q app 2>/dev/null)" ]; then
+              # Only a running app takes the online copy: a container in its restart backoff is listed, but refuses exec.
+              APP_CONTAINER="$(docker compose ps -q app 2>/dev/null | head -n 1)"
+              APP_STATE=""
+              if [ -n "$APP_CONTAINER" ]; then
+                APP_STATE="$(docker inspect --format '{{.State.Running}}/{{.State.Restarting}}' "$APP_CONTAINER" 2>/dev/null || true)"
+              fi
+              ONLINE_COPY=0
+              if [ "$APP_STATE" = "true/false" ]; then
                 # One step copies one consistent snapshot. Stepwise copying restarts whenever the server commits.
-                docker compose exec -T -e BACKUP_PATH="/app/data/backups/$BACKUP_TEMP" app node -e '
+                if docker compose exec -T -e BACKUP_PATH="/app/data/backups/$BACKUP_TEMP" app node -e '
                   const Database = require("/app/server/node_modules/better-sqlite3");
                   const db = new Database("/app/data/dictprop.db", { readonly: true });
                   db.backup(process.env.BACKUP_PATH, { progress: () => 0x7fffffff })
                     .then(() => db.close())
                     .catch((error) => { console.error(error); process.exit(1); });
-                '
-              else
+                '; then
+                  ONLINE_COPY=1
+                else
+                  echo "The online copy failed, so the host copies the database instead"
+                  rm -f "data/backups/$BACKUP_TEMP"
+                fi
+              fi
+              # The host's copy is one step too, under one read snapshot, so an app restarting meanwhile can't tear it.
+              if [ "$ONLINE_COPY" -eq 0 ]; then
                 python3 -c 'import sqlite3, sys; source = sqlite3.connect(sys.argv[1]); target = sqlite3.connect(sys.argv[2]); source.backup(target); target.close(); source.close()' \
                   data/dictprop.db "data/backups/$BACKUP_TEMP"
               fi

@@ -76,14 +76,18 @@ case "$1 $2" in
     shift
     echo "docker compose exec $backup_path" >> "$CALLS"
     [ "$1 $2" = 'node -e' ] || { echo "unexpected docker compose exec $*" >&2; exit 97; }
-    [ -z "$FAIL_EXEC" ] || exit 1
+    # A copy that fails partway can leave its partial file behind.
+    [ -z "$FAIL_EXEC" ] || { echo partial > "$backup_path"; exit 1; }
     script="$(printf '%s' "$3" | sed -e "s#/app/server/node_modules/better-sqlite3#$BETTER_SQLITE3#g" -e "s#/app/data/#$PWD/data/#g")"
     BACKUP_PATH="$PWD/$backup_path" exec "$NODE" --require "$BACKUP_SPY" -e "$script" ;;
+  'inspect --format')
+    [ "$3 $4" = '{{.State.Running}}/{{.State.Restarting}} app-container' ] || { echo "unexpected docker $*" >&2; exit 97; }
+    echo "$FAKE_APP_STATE" ;;
   'system df') ;;
   *) echo "unexpected docker $*" >&2; exit 97 ;;
 esac`);
   stub(bin, 'df', String.raw`
-printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda2 61000000 1000 %s 1%% /\n' "$AVAILABLE_KB"`);
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda2 61000000 1000 %s 1%% /\n' "$FAKE_AVAILABLE_KB"`);
   stub(bin, 'python3', String.raw`
 echo python3 >> "$CALLS"
 PATH="$REAL_PATH" exec python3 "$@"`);
@@ -142,7 +146,8 @@ PATH="$REAL_PATH" exec find "$@"`);
         BETTER_SQLITE3: repoPath('server/node_modules/better-sqlite3'),
         BACKUP_SPY: spy,
         BACKUP_SPY_LOG: spyLog,
-        AVAILABLE_KB: '50000000',
+        FAKE_AVAILABLE_KB: '50000000',
+        FAKE_APP_STATE: 'true/false',
         ...variables,
       }),
     });
@@ -233,7 +238,7 @@ test('a backup that would not fit is refused before anything is written, and the
     createDatabase(server.database);
     const old = 'dictprop-20261114T000000Z-0123abc.db';
     server.copy(old, 13);
-    const run = server.run({ AVAILABLE_KB: '1000' });
+    const run = server.run({ FAKE_AVAILABLE_KB: '1000' });
     assert.equal(run.status, 1, run.output);
     assert.match(run.output, /::error::Not deploying: a database backup needs \d+KB free and 1000KB are/);
     assert.deepEqual(run.calls, []);
@@ -253,5 +258,28 @@ test('without a database there is nothing to back up', { skip }, () => {
     assert.deepEqual(server.listing(), ['dictprop-20261114T000000Z-0123abc.db']);
   } finally {
     server.remove();
+  }
+});
+
+// A crash-looping app is listed as running but refuses exec, and the deploy that ships its fix must still get its copy.
+test('a restarting app, or an online copy that fails, leaves the copy to the host', { skip }, () => {
+  for (const [label, variables, calls] of [
+    ['restarting', { FAKE_APP_STATE: 'true/true' }, ['python3']],
+    ['paused or stopping', { FAKE_APP_STATE: 'false/false' }, ['python3']],
+    ['the online copy failed', { FAIL_EXEC: '1' }, ['docker compose exec', 'python3']],
+  ] as const) {
+    const server = makeDeployDir();
+    try {
+      createDatabase(server.database);
+      const run = server.run(variables);
+      assert.equal(run.status, 0, `${label}: ${run.output}`);
+      const [fresh, ...rest] = server.listing();
+      assert.match(fresh, FRESH_COPY, label);
+      assert.deepEqual(rest, [], `${label}: no partial copy is left behind`);
+      assert.deepEqual(run.calls.map(call => call.replace(/ data\/backups\/.*$/, '')), calls, label);
+      assert.equal(rowsIn(join(server.backups, fresh)), ROWS, label);
+    } finally {
+      server.remove();
+    }
   }
 });
