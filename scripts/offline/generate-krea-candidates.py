@@ -113,6 +113,8 @@ def main() -> None:
 
     output = Path(args.output_directory)
     output.mkdir(parents=True, exist_ok=True)
+    # Earlier versions listed failed candidates here, unread; the FAILED lines and the exit status carry them.
+    (output / "failures.json").unlink(missing_ok=True)
 
     def target_needs_generation(target: dict) -> bool:
         target_path = Path(target["filename"])
@@ -142,7 +144,7 @@ def main() -> None:
         model = ZImage(model_config=ModelConfig.z_image_turbo(), quantize=args.quantize)
     else:
         model = Krea2(model_config=ModelConfig.krea2(), quantize=args.quantize)
-    failures = []
+    failure_count = 0
     quality_suffix = (
         " Keep the one defining action or relationship large and central, with realistic anatomy and objects. "
         "No visible text, illustration, animation, 3D render, collage, logos, or watermark."
@@ -219,7 +221,7 @@ def main() -> None:
             except Exception as error:  # Continue so a long batch remains resumable.
                 temporary_path = output / f".{path.name}.tmp"
                 temporary_path.unlink(missing_ok=True)
-                failures.append({"imageId": target["imageId"], "candidate": candidate_number, "error": str(error)})
+                failure_count += 1
                 print(f"FAILED {target['imageId']} candidate {candidate_number}: {error}", flush=True)
             finally:
                 prompt_cache = getattr(model, "prompt_cache", None)
@@ -228,9 +230,8 @@ def main() -> None:
                 gc.collect()
                 mx.clear_cache()
 
-    if failures:
-        (output / "failures.json").write_text(json.dumps(failures, indent=2) + "\n")
-        raise RuntimeError(f"{len(failures)} candidate generation(s) failed")
+    if failure_count:
+        raise RuntimeError(f"{failure_count} candidate generation(s) failed")
 
 
 if __name__ == "__main__":
