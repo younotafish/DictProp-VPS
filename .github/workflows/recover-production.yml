@@ -26,36 +26,11 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
-          command_timeout: 10m
+          # Up to 120 health checks of up to five seconds each, after the restart.
+          command_timeout: 15m
           script: |
             set -e
             cd /opt/dictprop-vps
-            echo 'Creating image-version covering index'
-            docker compose exec -T app node -e '
-              const Database = require("/app/server/node_modules/better-sqlite3");
-              const db = new Database("/app/data/dictprop.db");
-              db.pragma("busy_timeout = 300000");
-              db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_user_versions
-                ON item_images(user_id, id, content_hash, updated_at)`);
-              db.pragma("wal_checkpoint(TRUNCATE)");
-              db.close();
-              console.log("Image-version index and WAL checkpoint complete");
-            '
-            docker compose restart app
-            consecutive=0
-            for attempt in $(seq 1 30); do
-              if curl --max-time 3 -sf http://localhost:3000/api/health >/dev/null; then
-                consecutive=$((consecutive + 1))
-                if [ "$consecutive" -ge 3 ]; then
-                  echo "Production app recovered"
-                  exit 0
-                fi
-              else
-                consecutive=0
-              fi
-              sleep 2
-            done
-            echo "::error::The app did not become healthy after the restart"
             # Prints the app container's state and a short excerpt of its log. Failed requests can log words and
             # sentences, and this run log is public, so the excerpt keeps only startup and error lines with quoted
             # text masked. The whole tail goes to a root-only file on the server.
@@ -80,5 +55,29 @@ jobs:
               # Keep the ten newest logs.
               ls -1t data/deploy-logs/*.log | tail -n +11 | xargs -r rm -f
             }
+            # The deploy's own health wait: cold SQLite page-cache work can occupy the single Node thread for a while.
+            wait_for_health() {
+              consecutive=0
+              for attempt in $(seq 1 120); do
+                if curl --max-time 3 -sf http://localhost:3000/api/health >/dev/null; then
+                  consecutive=$((consecutive + 1))
+                  if [ "$consecutive" -ge 3 ]; then return 0; fi
+                else
+                  consecutive=0
+                fi
+                sleep 2
+              done
+              return 1
+            }
+            # The restart resets the container's state, so record why it needed one first.
+            report_container before || true
+            # Restarting needs nothing from inside the container, which may be stopped or crash-looping: the server
+            # creates its indexes when it starts and closes the database when it stops.
+            docker compose restart app
+            if wait_for_health; then
+              echo "Production app recovered"
+              exit 0
+            fi
+            echo "::error::The app did not become healthy after the restart"
             report_container recover || true
             exit 1
