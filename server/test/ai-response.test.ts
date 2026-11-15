@@ -192,6 +192,17 @@ test('example markup slips are repaired without changing the wording', () => {
     ['We banked on the weather holding for the picnic.', 'bank on', ['banks on', 'banked on'], 'We {{banked on}} the weather holding for the picnic.'],
     ['A [[a1]] [[b2]] [[c3]] [[d4]] [[e5]] {{bank}} sentence here.', 'bank', [], 'A [[a1]] [[b2]] [[c3]] [[d4]] e5 {{bank}} sentence here.'],
     ['I went to the {{}} [[ ]] {{bank}} to deposit cash today.', 'bank', [], 'I went to the {{bank}} to deposit cash today.'],
+    // A fragment marked first never takes the target from the item itself.
+    ['{{In}} the end, she {{indeed}} showed up on time.', 'indeed', [], '[[In]] the end, she {{indeed}} showed up on time.'],
+    ['{{A}} friend of mine owes me {{a lot}} of money, honestly.', 'a lot', [], '[[A]] friend of mine owes me {{a lot}} of money, honestly.'],
+    // A phrase split over two targets becomes one target, an object and all.
+    ['She was totally {{run}} {{down}} after that trip.', 'run down', [], 'She was totally {{run down}} after that trip.'],
+    ['He {{turned}} it {{down}} without a second thought.', 'turn down', ['turns down', 'turned down'], 'He {{turned it down}} without a second thought.'],
+    ['I {{turned}} the offer {{down}} flat, honestly.', 'turn down', ['turned down'], 'I {{turned the offer down}} flat, honestly.'],
+    // Too far apart to be one phrase: the target stays on the verb.
+    ['I {{turned}} that whole crazy job offer {{down}} last week.', 'turn down', ['turned down'], 'I {{turned}} that whole crazy job offer [[down]] last week.'],
+    // An inflection the forms don't list still beats another marked word.
+    ['The {{river}} rose over its {{banks}} overnight, no joke.', 'bank', [], 'The [[river]] rose over its {{banks}} overnight, no joke.'],
   ];
   for (const [input, word, forms, expected] of cases) {
     const repaired = repairGeneratedExample(input, word, forms);

@@ -257,11 +257,71 @@ export function repairIpa(value: string, word: string): string {
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const MARKER_SLOT = /\u0000(\d+)\u0000/g;
 
+const wordsOf = (text: string): string[] => text.trim().toLowerCase().split(/\s+/).filter(Boolean);
+// A candidate as whole words in a text (its words may be split by any whitespace); `wordEnd` false also matches it at
+// the start of a longer word, as an inflection ('banks' for 'bank').
+const candidatePattern = (candidate: string, wordEnd = true): RegExp => new RegExp(
+  `(?<![\\p{L}\\p{N}_])(${escapeRegExp(candidate).replace(/\s+/g, '\\s+')})${wordEnd ? '(?![\\p{L}\\p{N}_])' : ''}`,
+  'iu',
+);
+
+// A multi-word target the model split ('{{turned}} it {{down}}', '{{run}} {{down}}') becomes one target over the span,
+// the form the prompt asks for ('{{turned it down}}'): consecutive targets made only of one multi-word candidate's
+// words, naming all of them between them, at most three words more than the candidate apart and no lookup between.
+function mergeSplitTarget(s: string, candidates: string[]): string {
+  const targets = [...s.matchAll(/\{\{([^{}]+)\}\}/g)];
+  if (targets.length < 2) return s;
+  for (const candidate of candidates) {
+    const candidateWords = wordsOf(candidate);
+    if (candidateWords.length < 2) continue;
+    const within = (target: RegExpMatchArray) => wordsOf(target[1]).every(word => candidateWords.includes(word));
+    for (let first = 0; first < targets.length;) {
+      if (!within(targets[first])) {
+        first++;
+        continue;
+      }
+      let last = first;
+      while (last + 1 < targets.length && within(targets[last + 1])) last++;
+      const start = targets[first].index ?? 0;
+      const end = (targets[last].index ?? 0) + targets[last][0].length;
+      const span = s.slice(start, end);
+      const plain = span.replace(/\{\{|\}\}/g, '');
+      const named = new Set(targets.slice(first, last + 1).flatMap(target => wordsOf(target[1])));
+      if (last > first && !span.includes('[[') && wordsOf(plain).length <= candidateWords.length + 3 &&
+          candidateWords.every(word => named.has(word))) {
+        return `${s.slice(0, start)}{{${plain}}}${s.slice(end)}`;
+      }
+      first = last + 1;
+    }
+  }
+  return s;
+}
+
+// Which of several targets is the studied item: one equal to a candidate; else one holding a candidate as whole words;
+// else one with a candidate starting a word (an inflection the forms don't list); else a whole word of three or more
+// letters of a multi-word candidate ('down' of 'turn down'); else the first.
+function chooseTarget(targets: string[], candidates: string[]): number {
+  const lower = targets.map(target => target.trim().toLowerCase());
+  const tiers: Array<(target: string) => boolean> = [
+    target => candidates.includes(target),
+    target => candidates.some(candidate => candidatePattern(candidate).test(target)),
+    target => candidates.some(candidate => candidatePattern(candidate, false).test(target)),
+    target => target.replace(/[^\p{L}]/gu, '').length >= 3 &&
+      candidates.some(candidate => wordsOf(candidate).length > 1 && wordsOf(candidate).includes(target)),
+  ];
+  for (const tier of tiers) {
+    const index = lower.findIndex(tier);
+    if (index >= 0) return index;
+  }
+  return 0;
+}
+
 /**
  * Fix the example markup slips the model makes most often, before validation: a lookup nested in the
- * target, stray brackets, two targets (the one that is not the headword becomes a lookup), no target
- * (a lookup naming the headword is promoted, else the headword or a listed form is marked), and more
- * than four lookups (the extras are unwrapped). Wording is never changed.
+ * target, stray brackets, a phrase split over two targets (joined into one), two targets (the one that
+ * is not the headword becomes a lookup), no target (a lookup naming the headword is promoted, else the
+ * headword or a listed form is marked), and more than four lookups (the extras are unwrapped). Wording
+ * is never changed.
  */
 export function repairGeneratedExample(example: string, word: string, forms: string[] = []): string {
   let s = example.trim().replace(/\{\{([^{}]*)\}\}/g, (_match, inner: string) => `{{${inner.replace(/\[\[|\]\]/g, '')}}}`);
@@ -276,13 +336,10 @@ export function repairGeneratedExample(example: string, word: string, forms: str
 
   const candidates = [word, ...forms].map(form => form.trim()).filter(Boolean);
   const lowerCandidates = candidates.map(form => form.toLowerCase());
-  const namesHeadword = (text: string) => {
-    const lower = text.trim().toLowerCase();
-    return lowerCandidates.some(form => lower === form || lower.includes(form) || form.includes(lower));
-  };
+  s = mergeSplitTarget(s, lowerCandidates);
   const targets = [...s.matchAll(/\{\{([^{}]+)\}\}/g)];
   if (targets.length > 1) {
-    const keep = Math.max(0, targets.findIndex(target => namesHeadword(target[1])));
+    const keep = chooseTarget(targets.map(target => target[1]), lowerCandidates);
     let index = -1;
     s = s.replace(/\{\{([^{}]+)\}\}/g, (_match, inner: string) => (++index === keep ? `{{${inner}}}` : `[[${inner}]]`));
   } else if (targets.length === 0) {
@@ -297,7 +354,7 @@ export function repairGeneratedExample(example: string, word: string, forms: str
       const lookups: string[] = [];
       let masked = s.replace(/\[\[[^[\]]+\]\]/g, match => `\u0000${lookups.push(match) - 1}\u0000`);
       for (const candidate of [...candidates].sort((a, b) => b.length - a.length)) {
-        const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(${escapeRegExp(candidate).replace(/\s+/g, '\\s+')})(?![\\p{L}\\p{N}_])`, 'iu');
+        const pattern = candidatePattern(candidate);
         if (pattern.test(masked)) {
           masked = masked.replace(pattern, '{{$1}}');
           break;
