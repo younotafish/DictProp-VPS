@@ -27,3 +27,44 @@ export function writeCachedComparisons(userId: string, list: readonly StoredComp
     (storage ?? localStorage).setItem(cacheKey(userId), JSON.stringify(list));
   } catch { /* ignore */ }
 }
+
+/** Whether `entry` looks like a stored comparison: a key, its words, the result, and when it was made. */
+const isStoredComparison = (entry: unknown): entry is StoredComparison => {
+  if (!entry || typeof entry !== 'object') return false;
+  const { key, words, data, updatedAt } = entry as Partial<StoredComparison>;
+  return typeof key === 'string' && key !== ''
+    && Array.isArray(words) && words.every(word => typeof word === 'string')
+    && !!data && typeof data === 'object'
+    && Number.isFinite(updatedAt);
+};
+
+/**
+ * The comparison list once the server's list has arrived: the server's copies, each replaced by this device's copy
+ * when that one is newer, then the comparisons only this device has (one that finished while the list was
+ * loading, or one whose save failed). A tie goes to the server's copy, and a malformed local entry is dropped.
+ * `toUpload` lists the local copies the server lacks or holds an older version of.
+ */
+export function mergeComparisons(
+  local: readonly StoredComparison[],
+  server: readonly StoredComparison[],
+): { merged: StoredComparison[]; toUpload: StoredComparison[] } {
+  const localOnly = new Map<string, StoredComparison>();
+  for (const entry of local) if (isStoredComparison(entry)) localOnly.set(entry.key, entry);
+  const merged: StoredComparison[] = [];
+  const toUpload: StoredComparison[] = [];
+  for (const entry of server) {
+    const mine = localOnly.get(entry.key);
+    localOnly.delete(entry.key);
+    if (mine && mine.updatedAt > entry.updatedAt) {
+      merged.push(mine);
+      toUpload.push(mine);
+    } else {
+      merged.push(entry);
+    }
+  }
+  for (const entry of localOnly.values()) {
+    merged.push(entry);
+    toUpload.push(entry);
+  }
+  return { merged, toUpload };
+}
