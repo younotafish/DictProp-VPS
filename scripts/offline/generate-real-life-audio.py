@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -54,6 +55,11 @@ STYLE_WPM_NORMALIZATION_TARGETS = {
 }
 
 
+def default_ffmpeg() -> str:
+    # FFMPEG_BIN, else the ffmpeg on PATH, else the one this tool first ran with.
+    return os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg") or "/Users/cjs/.local/bin/ffmpeg"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate Qwen3-TTS Real Life audio with word alignment")
     parser.add_argument("--catalog", default="content/real-life-catalog.json")
@@ -65,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=0, help="Limit unique sentences before expanding styles")
     parser.add_argument("--batch-size", type=int, default=0, help="Generate at most this many new clips")
     parser.add_argument("--attempts", type=int, default=3)
-    parser.add_argument("--ffmpeg", default=os.environ.get("FFMPEG_BIN", "/Users/cjs/.local/bin/ffmpeg"))
+    parser.add_argument("--ffmpeg", default=default_ffmpeg())
     return parser.parse_args()
 
 

@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -86,6 +87,11 @@ RECIPES = [
 ]
 
 
+def default_ffmpeg() -> str:
+    # FFMPEG_BIN, else the ffmpeg on PATH, else the one this study first ran with.
+    return os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg") or "/Users/cjs/.local/bin/ffmpeg"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate Qwen connected-speech listening samples")
     parser.add_argument("--output", default="data/offline-backfill/tts-naturalness-benchmark/qwen")
@@ -93,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sentence-limit", type=int, default=0)
     parser.add_argument("--recipe", action="append", default=[], help="Recipe id; repeat to select several")
     parser.add_argument("--force", action="store_true", help="Regenerate existing clips")
-    parser.add_argument("--ffmpeg", default=os.environ.get("FFMPEG_BIN", "/Users/cjs/.local/bin/ffmpeg"))
+    parser.add_argument("--ffmpeg", default=default_ffmpeg())
     return parser.parse_args()
 
 
@@ -121,15 +127,22 @@ def render(model: Any, text: str, recipe: dict[str, Any], seed: int) -> tuple[np
 
 
 def transcode(wav_path: Path, mp3_path: Path, ffmpeg: str) -> None:
-    subprocess.run(
-        [
-            ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav_path),
-            "-af", "loudnorm=I=-18:TP=-2:LRA=7", "-ar", "24000", "-ac", "1", "-b:a", "96k",
-            str(mp3_path),
-        ],
-        check=True,
-        timeout=90,
-    )
+    # The clip takes its final name only once ffmpeg has finished it, so a timeout or Ctrl-C never leaves a cut-off
+    # clip that the next run would take as done.
+    temporary = mp3_path.with_suffix(".mp3.tmp")
+    try:
+        subprocess.run(
+            [
+                ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav_path),
+                "-af", "loudnorm=I=-18:TP=-2:LRA=7", "-ar", "24000", "-ac", "1", "-b:a", "96k",
+                "-f", "mp3", str(temporary),
+            ],
+            check=True,
+            timeout=90,
+        )
+        os.replace(temporary, mp3_path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -141,32 +154,48 @@ def main() -> None:
     if unknown:
         raise SystemExit(f"Unknown recipe(s): {', '.join(sorted(unknown))}")
     sentences = TEST_SENTENCES[: args.sentence_limit or None]
-    print(f"Loading {args.model}", flush=True)
-    model = load_tts_model(args.model)
+    clips = []
+    for sentence_index, text in enumerate(sentences):
+        for recipe in selected:
+            identity = f"{args.model}\n{recipe['id']}\n{text}"
+            digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            seed_digest = hashlib.sha256(f"{recipe['id']}\n{text}".encode("utf-8")).hexdigest()
+            output_path = root / f"{digest}.mp3"
+            clips.append({
+                "sentence_index": sentence_index,
+                "text": text,
+                "recipe": recipe,
+                "digest": digest,
+                "seed": int(seed_digest[:12], 16),
+                "output_path": output_path,
+                "render": args.force or not output_path.exists(),
+            })
+    # Loading the model takes a while, so a rerun that only rebuilds the manifest skips it.
+    model = None
+    if any(clip["render"] for clip in clips):
+        print(f"Loading {args.model}", flush=True)
+        model = load_tts_model(args.model)
     entries: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="dictprop-qwen-listening-") as temporary_root:
         temporary = Path(temporary_root)
-        for sentence_index, text in enumerate(sentences):
-            for recipe in selected:
-                identity = f"{args.model}\n{recipe['id']}\n{text}"
-                digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-                seed_digest = hashlib.sha256(f"{recipe['id']}\n{text}".encode("utf-8")).hexdigest()
-                output_path = root / f"{digest}.mp3"
-                if args.force or not output_path.exists():
-                    audio, sample_rate = render(model, text, recipe, int(seed_digest[:12], 16))
-                    wav_path = temporary / f"{digest}.wav"
-                    sf.write(wav_path, audio, sample_rate, subtype="PCM_16")
-                    transcode(wav_path, output_path, args.ffmpeg)
-                duration = float(sf.info(output_path).duration)
-                entries.append({
-                    "sentenceIndex": sentence_index,
-                    "text": text,
-                    "recipe": recipe["id"],
-                    "speaker": recipe["speaker"],
-                    "file": output_path.name,
-                    "durationSeconds": round(duration, 3),
-                })
-                print(f"[{sentence_index + 1}/{len(sentences)}] {recipe['id']} {duration:.2f}s", flush=True)
+        for clip in clips:
+            sentence_index, text, recipe = clip["sentence_index"], clip["text"], clip["recipe"]
+            output_path = clip["output_path"]
+            if clip["render"]:
+                audio, sample_rate = render(model, text, recipe, clip["seed"])
+                wav_path = temporary / f"{clip['digest']}.wav"
+                sf.write(wav_path, audio, sample_rate, subtype="PCM_16")
+                transcode(wav_path, output_path, args.ffmpeg)
+            duration = float(sf.info(output_path).duration)
+            entries.append({
+                "sentenceIndex": sentence_index,
+                "text": text,
+                "recipe": recipe["id"],
+                "speaker": recipe["speaker"],
+                "file": output_path.name,
+                "durationSeconds": round(duration, 3),
+            })
+            print(f"[{sentence_index + 1}/{len(sentences)}] {recipe['id']} {duration:.2f}s", flush=True)
     manifest = {
         "version": 1,
         "generatedAt": int(time.time() * 1000),

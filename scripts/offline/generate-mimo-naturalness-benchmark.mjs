@@ -4,9 +4,12 @@
 // These clips are paired with generate-qwen-naturalness-benchmark.py for blinded human listening.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { writePrivateJson } from './offline-io.mjs';
 
@@ -33,9 +36,23 @@ function envValue(name) {
   return line.slice(name.length + 1).trim().replace(/^(['"])(.*)\1$/, '$2');
 }
 
+// The ffmpeg on PATH, else the one this study first ran with.
+function defaultFfmpeg() {
+  for (const directory of (process.env.PATH || '').split(delimiter).filter(Boolean)) {
+    const candidate = join(directory, 'ffmpeg');
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Not in this directory.
+    }
+  }
+  return '/Users/cjs/.local/bin/ffmpeg';
+}
+
 const outputRoot = resolve(option('--output', 'data/offline-backfill/tts-naturalness-benchmark/mimo'));
 const sentenceLimit = Math.max(0, Number(option('--sentence-limit', '0')) || 0);
-const ffmpeg = option('--ffmpeg', process.env.FFMPEG_BIN || '/Users/cjs/.local/bin/ffmpeg');
+const ffmpeg = option('--ffmpeg', process.env.FFMPEG_BIN || defaultFfmpeg());
 const apiKey = envValue('DEEPINFRA_API_KEY');
 if (!apiKey) throw new Error('DEEPINFRA_API_KEY is required');
 mkdirSync(outputRoot, { recursive: true });
@@ -63,12 +80,19 @@ try {
       if (!encoded) throw new Error('MiMo returned no audio');
       const wavPath = resolve(outputRoot, `${digest}.wav`);
       writeFileSync(wavPath, Buffer.from(encoded, 'base64'), { mode: 0o600 });
+      // A clip appears under its final name only once ffmpeg has finished it, so a timeout or Ctrl-C never leaves a
+      // cut-off clip that the next run would take as done.
+      const temporaryAudioPath = `${audioPath}.tmp`;
       const transcode = spawnSync(ffmpeg, [
         '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', wavPath,
-        '-af', 'loudnorm=I=-18:TP=-2:LRA=7', '-ar', '24000', '-ac', '1', '-b:a', '96k', audioPath,
+        '-af', 'loudnorm=I=-18:TP=-2:LRA=7', '-ar', '24000', '-ac', '1', '-b:a', '96k', '-f', 'mp3', temporaryAudioPath,
       ], { encoding: 'utf8', timeout: 90_000 });
       unlinkSync(wavPath);
-      if (transcode.status !== 0) throw new Error(`ffmpeg failed: ${transcode.stderr.slice(-1_000)}`);
+      if (transcode.status !== 0) {
+        rmSync(temporaryAudioPath, { force: true });
+        throw new Error(`ffmpeg failed: ${transcode.error?.message ?? transcode.stderr.slice(-1_000)}`);
+      }
+      renameSync(temporaryAudioPath, audioPath);
     }
     entries.push({ sentenceIndex, text, recipe: 'mimo-v2.5-mia', file: audioPath.split('/').at(-1) });
     process.stderr.write(`[${sentenceIndex + 1}/${sentenceLimit || TEST_SENTENCES.length}] MiMo Mia\n`);

@@ -20,8 +20,13 @@ appendFileSync(process.env.FAKE_CURL_LOG, JSON.stringify({ args, headerFiles }) 
 process.stdout.write(JSON.stringify({ audio: 'data:audio/wav;base64,' + Buffer.from('wav bytes').toString('base64') }));
 `;
 const fakeFfmpeg = `#!/usr/bin/env node
-const { copyFileSync } = require('node:fs');
+const { appendFileSync, copyFileSync, writeFileSync } = require('node:fs');
 const args = process.argv.slice(2);
+if (process.env.FAKE_FFMPEG_LOG) appendFileSync(process.env.FAKE_FFMPEG_LOG, JSON.stringify(args) + '\\n');
+if (process.env.FAKE_FFMPEG_FAIL) {
+  writeFileSync(args.at(-1), 'half a clip');
+  process.exit(1);
+}
 copyFileSync(args[args.indexOf('-i') + 1], args.at(-1));
 `;
 
@@ -63,4 +68,30 @@ test('the MiMo benchmark hands curl its API key in a private file, never on the 
   assert.equal(manifest.entries.length, 2);
   for (const entry of manifest.entries) assert.equal(readFileSync(join(output, entry.file), 'utf8'), 'wav bytes');
   assert.equal(existsSync(join(output, `${manifest.entries[0].file}.tmp`)), false);
+});
+
+test('the MiMo benchmark keeps a clip only once ffmpeg finishes it, and finds ffmpeg on PATH by default', () => {
+  const { root, bin, log, output } = setup();
+  const ffmpegLog = join(root, 'ffmpeg.jsonl');
+  const run = (env: Record<string, string>) => spawnSync(process.execPath, [script, '--output', output, '--sentence-limit', '1'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env, PATH: `${bin}:${process.env.PATH}`, DEEPINFRA_API_KEY: 'secret-key', FAKE_CURL_LOG: log,
+      FAKE_FFMPEG_LOG: ffmpegLog, FFMPEG_BIN: '', ...env,
+    },
+  });
+
+  const failed = run({ FAKE_FFMPEG_FAIL: '1' });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /ffmpeg failed/);
+  assert.deepEqual(readdirSync(output), []);
+
+  const finished = run({});
+  assert.equal(finished.status, 0, finished.stderr);
+  const [args] = readFileSync(ffmpegLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]);
+  assert.deepEqual(args.slice(-3), ['-f', 'mp3', args.at(-1)]);
+  assert.match(args.at(-1) ?? '', /\.mp3\.tmp$/);
+  assert.equal(readdirSync(output).filter(name => name.endsWith('.mp3')).length, 1);
+  assert.deepEqual(readdirSync(output).filter(name => name.endsWith('.tmp')), []);
 });
