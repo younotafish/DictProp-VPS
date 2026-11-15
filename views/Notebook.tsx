@@ -102,7 +102,9 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     changeQuery(text);
     performAISearch(text);
   }, [changeQuery, performAISearch]);
-  const { isRecording, isTranscribing, toggleRecording } = useVoiceSearch(isOnline, handleTranscript, setSearchError);
+  const { state: voiceState, toggleRecording } = useVoiceSearch(isOnline, handleTranscript, setSearchError);
+  const isRecording = voiceState === 'recording';
+  const isTranscribing = voiceState === 'transcribing';
 
   // Touch swipe handling to clear search: a swipe to the right across the search bar
   const clearSwipe = useHorizontalSwipe({

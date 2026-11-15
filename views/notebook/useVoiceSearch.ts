@@ -2,50 +2,65 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { transcribeAudio } from '../../services/api';
 import { error as logError } from '../../services/logger';
 
+/** Where voice search is: waiting for the microphone, recording, or transcribing what it recorded. */
+export type VoiceSearchState = 'idle' | 'starting' | 'recording' | 'transcribing';
+
+// The formats to record in, best first. A browser that supports none of them records in its own default.
+const RECORDING_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+
+// The microphone was refused, by the user or the site's settings ('PermissionDeniedError' is older browsers' name).
+const isPermissionError = (err: unknown): boolean => {
+  const name = typeof err === 'object' && err !== null ? (err as { name?: unknown }).name : undefined;
+  return name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError';
+};
+
 /**
  * The search bar's microphone: records until tapped again, transcribes the recording, and hands the text to
- * `onTranscript`. Failures go to `reportError`, which a new transcription clears.
+ * `onTranscript`. Failures go to `reportError`, which a new transcription clears. A tap while the microphone is
+ * starting or a recording is being transcribed does nothing. Hiding the tab stops a recording, which is still
+ * transcribed, and releases the microphone.
  */
 export function useVoiceSearch(
   isOnline: boolean,
   onTranscript: (text: string) => void,
   reportError: (message: string | null) => void,
 ) {
-  // Voice recording state
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [state, setState] = useState<VoiceSearchState>('idle');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  // False while the tab is hidden or the notebook is gone, so a microphone granted meanwhile isn't kept.
+  const activeRef = useRef(false);
 
-  // Clean up MediaRecorder and release microphone on unmount
   useEffect(() => {
+    activeRef.current = true;
     return () => {
+      activeRef.current = false;
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      }
+      mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+      mediaRecorderRef.current = null;
+      mediaStreamRef.current = null;
     };
   }, []);
 
-  // Voice recording functions
   const startRecording = useCallback(async () => {
     if (!isOnline) return;
+    setState('starting');
 
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!activeRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        setState('idle');
+        return;
+      }
       mediaStreamRef.current = stream;
 
-      // Try to use audio/webm with opus codec, fallback to default
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : 'audio/mp4';
-
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const mimeType = RECORDING_TYPES.find(type => MediaRecorder.isTypeSupported(type));
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -55,18 +70,23 @@ export function useVoiceSearch(
         }
       };
 
+      const recordedStream = stream;
       mediaRecorder.onstop = async () => {
         // Stop all tracks to release microphone
-        stream.getTracks().forEach(track => track.stop());
-        mediaStreamRef.current = null;
+        recordedStream.getTracks().forEach(track => track.stop());
+        if (mediaStreamRef.current === recordedStream) mediaStreamRef.current = null;
+        if (mediaRecorderRef.current === mediaRecorder) mediaRecorderRef.current = null;
 
-        if (audioChunksRef.current.length === 0) return;
+        if (audioChunksRef.current.length === 0) {
+          setState('idle');
+          return;
+        }
 
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || mimeType });
         audioChunksRef.current = [];
 
         // Transcribe the audio
-        setIsTranscribing(true);
+        setState('transcribing');
         reportError(null);
 
         try {
@@ -81,32 +101,34 @@ export function useVoiceSearch(
             ? 'Voice transcription quota exceeded. Please type your search.'
             : 'Voice transcription failed. Please try again.');
         } finally {
-          setIsTranscribing(false);
+          setState('idle');
         }
       };
 
       mediaRecorder.start();
-      setIsRecording(true);
+      setState('recording');
     } catch (err) {
       logError('Failed to start recording:', err);
-      reportError('Microphone access denied. Please enable microphone permissions.');
+      stream?.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+      mediaRecorderRef.current = null;
+      setState('idle');
+      reportError(isPermissionError(err)
+        ? 'Microphone access denied. Please enable microphone permissions.'
+        : "Voice search isn't available in this browser.");
     }
   }, [isOnline, onTranscript, reportError]);
 
+  // The recorder's stop event ends the recording: it releases the microphone and moves on to transcribing.
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  }, [isRecording]);
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+  }, []);
 
   const toggleRecording = useCallback(() => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  }, [isRecording, startRecording, stopRecording]);
+    if (state === 'recording') stopRecording();
+    else if (state === 'idle') startRecording();
+  }, [state, startRecording, stopRecording]);
 
-  return { isRecording, isTranscribing, toggleRecording };
+  return { state, toggleRecording };
 }
