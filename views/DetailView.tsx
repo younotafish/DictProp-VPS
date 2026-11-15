@@ -27,7 +27,11 @@ import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../s
 import { log, warn, error as logError } from '../services/logger';
 import { isRealLifeProgressItem } from '../services/realLifeProgress';
 import { normalizeSentenceIdentity } from '../services/sentenceIdentity';
-import { copyTextToClipboard, extractImageFromTransfer, fileToDataUri, formatRelativeTime, hasDetailedSentenceAnalysis, mergePreparedSentence, readImageFromSystemClipboard, SENTENCE_PREFETCH_AHEAD, serverImageVersion } from './detail/detailUtils';
+import { copyTextToClipboard, extractImageFromTransfer, fileToDataUri, formatRelativeTime, hasDetailedSentenceAnalysis, mergePreparedSentence, readImageFromSystemClipboard, SENTENCE_PREFETCH_AHEAD } from './detail/detailUtils';
+import { autoPlayTexts, exampleAt, preloadSession, readableExamples, wordZoneBands as countWordZoneBands, zoneText } from './detail/cardReading';
+import { sentenceTouchAction, touchFacts, wordTouchAction } from './detail/touchGestures';
+import { resolveSentenceUnderReview } from './detail/sentenceUnderReview';
+import { PLATFORM } from './detail/platform';
 import { GrammarNotes } from './detail/GrammarNotes';
 import { LibraryCounts } from './detail/LibraryCounts';
 import { PhraseVocabCard } from './detail/PhraseVocabCard';
@@ -129,12 +133,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   // The page behind goes inert while a card is open; closing it gives focus back to what opened it.
   useOverlay();
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const isAndroid = /Android/.test(navigator.userAgent);
-  const isMobile = isIOS || isAndroid;
-  // iPadOS commonly reports MacIntel, so exclude touch devices before enabling laptop-only Command
-  // interactions. Checking both fields covers current Chromium/Safari and older Firefox builds.
-  const isMacDesktop = !isMobile && /Mac/i.test(`${navigator.platform} ${navigator.userAgent}`);
+  const { isMobile, isMacDesktop } = PLATFORM;
 
   // State for 2D navigation
   const [currentGroupIndex, setCurrentGroupIndex] = useState(initialGroupIndex);
@@ -378,45 +377,20 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   // even when the local index is briefly stale relative to the latest sentenceItems.
   const sentenceIndex = sentenceMode ? Math.min(currentGroupIndex, sentenceItems!.length - 1) : 0;
   const currentSentenceSnapshot = sentenceMode ? (sentenceItems![sentenceIndex] ?? null) : null;
-  const catalogSentencePreview = !!(currentSentenceSnapshot &&
-    (currentSentenceSnapshot.data as SentenceData).catalogSentenceId);
-  const catalogPreviewKind = currentSentenceSnapshot
-    ? ((currentSentenceSnapshot.data as SentenceData).catalogKind ?? 'real-life')
-    : undefined;
   const [preparedSentenceById, setPreparedSentenceById] = useState<Record<string, StoredItem>>({});
   const [preparingSentenceId, setPreparingSentenceId] = useState<string | null>(null);
   const preparationRequestsRef = useRef(new Set<string>());
   const checkedSentenceEnrichmentsRef = useRef(new Set<string>());
-  const preparedSentenceSnapshot = currentSentenceSnapshot
-    ? mergePreparedSentence(
-        currentSentenceSnapshot,
-        preparedSentenceById[currentSentenceSnapshot.data.id],
-      )
-    : null;
-  const currentSentenceData = currentSentenceSnapshot?.data as SentenceData | undefined;
-  const savedCurrentSentence = currentSentenceSnapshot
-    ? catalogSentencePreview
-      ? savedSentenceItems.find(item => item.type === 'sentence' && !item.isDeleted && (
-          item.data.id === currentSentenceSnapshot.data.id ||
-          ((item.data as SentenceData).catalogSentenceId === currentSentenceData?.catalogSentenceId &&
-            (item.data as SentenceData).catalogCollectionId === currentSentenceData?.catalogCollectionId)
-        ))
-      : currentSentenceSnapshot.data.id.startsWith('sentence-preview:')
-        ? savedSentenceIndex.byIdentity.get(normalizeSentenceIdentity(currentSentenceData?.text ?? ''))?.[0]
-        : undefined
-    : undefined;
-  const readOnlySentencePreview = sentencePreviewOnly || (catalogSentencePreview && !savedCurrentSentence);
-  const currentSentence = savedCurrentSentence && preparedSentenceSnapshot
-    ? mergePreparedSentence(savedCurrentSentence, preparedSentenceSnapshot)
-    : preparedSentenceSnapshot;
-  const isSentencePreview = !savedCurrentSentence && !!currentSentenceSnapshot &&
-    (readOnlySentencePreview || currentSentenceSnapshot.data.id.startsWith('sentence-preview:'));
+  const {
+    currentSentence, catalogSentencePreview, catalogPreviewKind, readOnlySentencePreview, isSentencePreview, sentenceExitLabel,
+  } = resolveSentenceUnderReview(
+    currentSentenceSnapshot,
+    currentSentenceSnapshot ? preparedSentenceById[currentSentenceSnapshot.data.id] : undefined,
+    savedSentenceItems,
+    text => savedSentenceIndex.byIdentity.get(normalizeSentenceIdentity(text))?.[0],
+    sentencePreviewOnly,
+  );
   const currentSentenceText = currentSentence ? (currentSentence.data as SentenceData).text : '';
-  const sentenceExitLabel = catalogSentencePreview
-    ? catalogPreviewKind === 'essay' ? 'Essays' : 'Real Life'
-    : isSentencePreview
-      ? 'Word'
-      : 'Sentences';
 
   // Current sentence plus the five immediately ahead. The item JSON is already resident, but catalog
   // enrichment is fetched separately, so warm it before those sentences become visible. This also
@@ -782,17 +756,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
   }, []);
   useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
-  // Show the word/phrase-view guides wherever taps are possible. The zones fire from touchend, so gate
-  // on touch CAPABILITY (maxTouchPoints) — NOT a pointer media query: iPadOS Safari defaults to
-  // "desktop-class" browsing and then reports (any-pointer: coarse) as false even though touch works,
-  // which would hide the guides on the exact device they're meant for. matchMedia is an OR fallback.
-  const touchCapable = useMemo(
-    () =>
-      typeof navigator !== 'undefined' &&
-      ((navigator.maxTouchPoints ?? 0) > 0 ||
-        (typeof window !== 'undefined' && !!window.matchMedia?.('(any-pointer: coarse)')?.matches)),
-    [],
-  );
+  // Show the word/phrase-view guides wherever taps are possible (see PLATFORM.isTouchCapable).
+  const touchCapable = PLATFORM.isTouchCapable;
 
   const onContentTouchStart = (e: React.TouchEvent) => {
     const touch = e.touches[0];
@@ -820,40 +785,12 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     
     const diffX = e.changedTouches[0].clientX - touchStartX.current;
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
-    const absX = Math.abs(diffX);
-    const absY = Math.abs(diffY);
-    const swipeThreshold = 50;
-    
-    // Check scroll position for edge-based navigation
+    // Edges are measured on the page the touch moved: the analysis page, or the card's scroller.
     const container = sentenceMode && sentencePage === 'analysis'
       ? document.querySelector<HTMLElement>('[data-sentence-analysis]')
       : scrollContainerRef.current;
-    const scrollTop = container?.scrollTop || 0;
-    const scrollHeight = container?.scrollHeight || 0;
-    const clientHeight = container?.clientHeight || 0;
-    const isAtTop = scrollTop <= 5;
-    const isAtBottom = scrollTop + clientHeight >= scrollHeight - 5;
-    
-    // Vertical Swipe (Groups/Words) - edge-based detection
-    const isVerticalSwipe = absY > absX * 1.5 && absY > swipeThreshold;
-    
-    // Use distance to distinguish short vs long swipes
-    // Short swipe down (50-120px): show header
-    // Long swipe down (>120px): navigate to previous/next word
-    const shortSwipeMin = 50;
-    const shortSwipeMax = 120;
-    const longSwipeMin = 120;
-    const horizontalSwipeMin = 60; // More sensitive for horizontal navigation
-    const isShortSwipe = absY >= shortSwipeMin && absY < shortSwipeMax;
-    const isLongSwipe = absY >= longSwipeMin;
-    
-    // Horizontal Swipe (Meanings) - more sensitive threshold
-    const isHorizontalSwipe = absX > absY * 1.5 && absX > horizontalSwipeMin;
-
-    // Tap detection (shared by sentence + word/phrase eyes-free zones). A "still" tap is a finger that
-    // essentially didn't move; controls keep their own handlers so normal tapping still works.
-    const TAP_MOVE_MAX = 10;     // px — finger essentially didn't move → it's a tap, not a swipe/scroll
-    const isStillTap = absX <= TAP_MOVE_MAX && absY <= TAP_MOVE_MAX;
+    const facts = touchFacts(diffX, diffY, container);
+    // Controls keep their own handlers, so taps on them aren't gestures.
     const tapTarget = e.target as HTMLElement | null;
     const onControl = !!tapTarget?.closest(
       'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]'
@@ -865,144 +802,84 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     // (same as the item-review double-click). Clickable words and controls keep their own handlers;
     // ↑/↓ swipes still switch sentences. ──
     if (sentenceMode) {
-      if (isHorizontalSwipe) {
-        if (sentencePage === 'analysis') setSentencePage('sentence');
-        else if (diffX < 0) setSentencePage('analysis');
-        else if (isSentenceAutoPlayingRef.current) setShowSentenceAutoPlayPanel(true);
-        else onClose();
-        touchStartX.current = null;
-        touchStartY.current = null;
-        return;
-      }
-      // Match word review: normal drags only scroll. A long swipe changes sentences only after the
-      // analysis has reached the corresponding boundary (or when the content is shorter than the page).
-      if (sentencePage === 'analysis') {
-        if (isStillTap && !onControl && !onSentenceWord) {
+      switch (sentenceTouchAction(facts, {
+        onAnalysisPage: sentencePage === 'analysis',
+        autoPlaying: isSentenceAutoPlayingRef.current,
+        onControl,
+        onSentenceWord,
+      })) {
+        case 'show-sentence': setSentencePage('sentence'); break;
+        case 'show-analysis': setSentencePage('analysis'); break;
+        case 'open-auto-play-panel': setShowSentenceAutoPlayPanel(true); break;
+        case 'close': onClose(); break;
+        case 'surface-tap':
           suppressSentenceSurfaceClickUntilRef.current = Date.now() + 500;
           queueSentenceSurfaceTap(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
-        } else if (isVerticalSwipe && isLongSwipe) {
-          if (diffY < -longSwipeMin && (isAtBottom || scrollHeight <= clientHeight)) {
-            goToSentence(currentGroupIndexRef.current + 1);
-          } else if (diffY > longSwipeMin && isAtTop) {
-            goToSentence(currentGroupIndexRef.current - 1);
-          }
-        }
-        touchStartX.current = null;
-        touchStartY.current = null;
-        return;
-      }
-      if (isStillTap && !onControl && !onSentenceWord) {
-        suppressSentenceSurfaceClickUntilRef.current = Date.now() + 500;
-        queueSentenceSurfaceTap(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
-      } else if (isVerticalSwipe && isLongSwipe) {
-        if (diffY < -longSwipeMin && (isAtBottom || scrollHeight <= clientHeight)) {
-          goToSentence(currentGroupIndexRef.current + 1);      // swipe up → next sentence
-        } else if (diffY > longSwipeMin && isAtTop) {
-          goToSentence(currentGroupIndexRef.current - 1);      // swipe down → previous sentence
-        }
+          break;
+        case 'next': goToSentence(currentGroupIndexRef.current + 1); break;      // swipe up → next sentence
+        case 'previous': goToSentence(currentGroupIndexRef.current - 1); break;  // swipe down → previous sentence
       }
       touchStartX.current = null;
       touchStartY.current = null;
       return;
     }
 
-    // ── Eyes-free zone tap (word-card / phrase view): a still one-finger tap on blank space reads by a
-    // fixed SCREEN ZONE confined to the TOP HALF — top quarter = 1st example sentence, second quarter =
-    // 2nd; the bottom half is left as empty/safe space (a tap there does nothing). Phrase → top quarter
-    // = the phrase itself, second quarter = its first Key Vocabulary example (matching the on-screen
-    // layout: phrase up top, vocab examples below). The zones are whole, fixed bands anchored to the top
-    // edge (not small, position-shifting icons), so they work on an iPad without looking. Clickable
-    // words, buttons and links are excluded so normal tapping still works; tapping the same zone again
-    // pauses/resumes. ──
-    if (isStillTap) {
-      if (!onControl) {
-        // Two stacked bands in the top half; the bottom half (zone -1) is inert empty space.
-        const y = e.changedTouches[0].clientY;
-        const zone = y < window.innerHeight / 4 ? 0 : y < window.innerHeight / 2 ? 1 : -1;
-        if (zone >= 0) {
-          flashZone(zone);
-          if (currentItem && isPhraseItem(currentItem)) {
-            const phrase = currentItem.data as SearchResult;
-            const firstVocabExample = (phrase.vocabs || [])
-              .flatMap(v => v.examples || [])
-              .map(s => stripSentenceMarkers(s || '').trim())
-              .find(Boolean);
-            toggleSpeak(zone === 0 ? phrase.query : (firstVocabExample || phrase.query));
-          } else {
-            const count = examplesOf(currentItem).length;
-            if (count > 0) {
-              speakSentenceAt(Math.min(zone, count - 1)); // single example → either zone reads it
-            }
-          }
-        }
+    // ── Word card / phrase view: eyes-free zone taps (see wordTouchAction), the header, and swipes between
+    // words and meanings. ──
+    const action = wordTouchAction(facts, {
+      onControl,
+      y: e.changedTouches[0].clientY,
+      viewportHeight: window.innerHeight,
+      hasNextGroup,
+      hasPrevGroup,
+      hasPrevItem,
+    });
+    switch (action?.kind) {
+      case 'read-zone': {
+        flashZone(action.zone);
+        const text = zoneText(currentItem, action.zone);
+        if (text !== null) toggleSpeak(text);
+        break;
       }
-      touchStartX.current = null;
-      touchStartY.current = null;
-      return;
-    }
-
-    // Short swipe down at top -> show header bar
-    if (isVerticalSwipe && isShortSwipe && diffY > 0 && isAtTop) {
-      setShowHeader(true);
-      touchStartX.current = null;
-      touchStartY.current = null;
-      return;
-    }
-    
-    // Skip if swipe is too short for navigation
-    if (!isLongSwipe && isVerticalSwipe) {
-      touchStartX.current = null;
-      touchStartY.current = null;
-      return;
-    }
-
-    if (isVerticalSwipe && isLongSwipe && groups) {
-      // Swipe UP -> Next Group (Word) - only when at bottom or content is short
-      if (diffY < -longSwipeMin && hasNextGroup && (isAtBottom || scrollHeight <= clientHeight)) {
+      case 'reveal-header':
+        setShowHeader(true);
+        break;
+      case 'next-word':
         setIsAutoPlaying(false);
         setShowHeader(false); // Hide header on navigation
         setCurrentGroupIndex(prev => prev + 1);
         setCurrentItemIndex(0); // Reset to first meaning
-      }
-      // Swipe DOWN -> Previous Group (Word) - only when at top
-      else if (diffY > longSwipeMin && hasPrevGroup && isAtTop) {
+        break;
+      case 'previous-word':
         setIsAutoPlaying(false);
         setShowHeader(false); // Hide header on navigation
         setCurrentGroupIndex(prev => prev - 1);
         setCurrentItemIndex(0); // Reset to first meaning
-      }
-    }
-    else if (isHorizontalSwipe) {
-      const totalItems = currentGroup ? currentGroup.items.length : 0;
-      
-      // Swipe LEFT -> Next Item (Meaning)
-      if (diffX < -horizontalSwipeMin && totalItems >= 1) {
+        break;
+      case 'next-meaning': {
         setIsAutoPlaying(false);
+        const totalItems = currentGroup.items.length;
         if (totalItems === 1) {
           // Single meaning: just pronounce, no scroll/animation reset
-          if (currentItem) {
-            const wordToSpeak = currentItem.type === 'phrase'
-              ? (currentItem.data as SearchResult).query
-              : (currentItem.data as VocabCard).word;
-            if (wordToSpeak) speakWord(wordToSpeak);
-          }
+          const wordToSpeak = currentItem.type === 'phrase'
+            ? (currentItem.data as SearchResult).query
+            : (currentItem.data as VocabCard).word;
+          if (wordToSpeak) speakWord(wordToSpeak);
         } else {
           setShowHeader(false);
           setCurrentItemIndex(prev => (prev + 1) % totalItems);
         }
+        break;
       }
-      
-      // Swipe RIGHT -> Prev Item (Meaning) or Close
-      if (diffX > horizontalSwipeMin) {
+      case 'previous-meaning':
         setIsAutoPlaying(false);
-        if (hasPrevItem) {
-          setShowHeader(false); // Hide header on navigation
-          setCurrentItemIndex(prev => prev - 1);
-        } else {
-          // Close view if swiping right with no previous item
-          onClose();
-        }
-      }
+        setShowHeader(false); // Hide header on navigation
+        setCurrentItemIndex(prev => prev - 1);
+        break;
+      case 'close':
+        setIsAutoPlaying(false);
+        onClose(); // Swiping right past the first meaning closes the view
+        break;
     }
     
     touchStartX.current = null;
@@ -1303,35 +1180,12 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     if (!isSentenceAutoPlaying) setShowSentenceAutoPlayPanel(false);
   }, [isSentenceAutoPlaying]);
 
-  // Sentences to read for a card during auto-play: a phrase's query, or a vocab card's example
-  // sentences (capped at 2 for E/autoplay and eyes-free zones). Direct Cmd+1–4 playback uses the
-  // complete example list through speakSentenceAt below. Stripped, empties dropped.
-  const examplesOf = (item: StoredItem | null): string[] => {
-    if (!item) return [];
-    if (isPhraseItem(item)) {
-      const q = stripSentenceMarkers((item.data as SearchResult).query || '');
-      return q ? [q] : [];
-    }
-    const ex = (item.data as VocabCard).examples;
-    return (Array.isArray(ex) ? ex.slice(0, 2) : []).map(stripSentenceMarkers).filter(Boolean);
-  };
-
   // The session to preload once sentence auto-play starts (see SessionPreload): the saved sentences in
   // sentence mode, else every card's example sentences, and the pictures the session shows.
-  const getPreloadSession = (): PreloadSession => {
-    const sessionItems = sentenceMode ? (sentenceItems ?? []) : (groups ?? []).flatMap(g => g.items);
-    const texts = sentenceMode
-      ? sessionItems.map(s => (s.data as SentenceData).text || '')
-      : sessionItems.flatMap(item => examplesOf(item));
-    const images = new Map<string, string | undefined>();
-    for (const item of sessionItems) {
-      const imageUrl = getItemImageUrl(item);
-      if (imageUrl === 'idb:stored' || imageUrl?.startsWith('server:has_image:')) {
-        images.set(item.data.id, serverImageVersion(imageUrl));
-      }
-    }
-    return { texts, images };
-  };
+  const getPreloadSession = (): PreloadSession => preloadSession(
+    sentenceMode ? (sentenceItems ?? []) : (groups ?? []).flatMap(g => g.items),
+    sentenceMode,
+  );
 
   const sentenceGapRef = useRef(sentenceGap);
   useEffect(() => { sentenceGapRef.current = sentenceGap; }, [sentenceGap]);
@@ -1399,7 +1253,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     // sentences (both) in turn, then advance to the next card.
     const sentences = sentenceMode
       ? [stripSentenceMarkers(currentSentenceText)].filter(Boolean)
-      : examplesOf(currentItem);
+      : autoPlayTexts(currentItem);
     let cancelGap: (() => void) | undefined; // background-safe inter-read gap (afterGap) — see neuralTts
     let handle: SpeakHandle | undefined;
     let idx = 0;
@@ -1505,10 +1359,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     } else {
       const item = currentItemRef.current;
       if (!item) return;
-      const ex = isPhraseItem(item)
-        ? [(item.data as SearchResult).query]
-        : ((item.data as VocabCard).examples || []);
-      sentences = (ex as string[]).slice(0, 2).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean);
+      sentences = readableExamples(item);
     }
     if (!sentences.length) return;
 
@@ -1572,10 +1423,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   const speakSentenceAt = useCallback((index: number) => {
     const item = currentItemRef.current;
     if (!item) return;
-    const ex = isPhraseItem(item)
-      ? [(item.data as SearchResult).query]
-      : ((item.data as VocabCard).examples || []);
-    toggleSpeak((ex as string[])[index] || '');
+    toggleSpeak(exampleAt(item, index));
   }, [toggleSpeak]);
 
   // ── Sentence review mode: speak the saved sentence, or switch to another and speak it immediately ──
@@ -2141,18 +1989,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [title, showActionMenu, detailInteractionLocked, handleRemember, handleResetSRS, handleToggleSave, isSaved, savedItemMatch, onUnarchive, cycleSpeed, readBothSentences, speakSentenceAt, sentenceMode, isSentencePreview, catalogSentencePreview, isSentenceAutoPlaying, toggleSentenceAutoPlay, toggleAutoPlay]);
 
-  // Eyes-free read-zone band counts — how many of the two quarter-bands actually read something
-  // (so the guides only draw the bands that do something). A phrase always has band 1 (the phrase
-  // itself) and gets band 2 when a Key-Vocabulary example exists; a vocab card mirrors its example count.
-  const wordZoneBands = (() => {
-    if (sentenceMode || !currentItem) return 0;
-    if (isPhraseItem(currentItem)) {
-      const phrase = currentItem.data as SearchResult;
-      const hasVocabEx = (phrase.vocabs || []).some(v => (v.examples || []).some(s => stripSentenceMarkers(s || '').trim()));
-      return hasVocabEx ? 2 : 1;
-    }
-    return Math.min(2, examplesOf(currentItem).length);
-  })();
+  // Eyes-free read-zone band counts, so the guides only draw the bands that read something.
+  const wordZoneBands = sentenceMode ? 0 : countWordZoneBands(currentItem);
 
   return (
     <div

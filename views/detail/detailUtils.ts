@@ -120,8 +120,3 @@ export const mergePreparedSentence = (snapshot: StoredItem, prepared?: StoredIte
     },
   };
 };
-
-export const serverImageVersion = (imageUrl: string | undefined): string | undefined =>
-  imageUrl?.startsWith('server:has_image:')
-    ? imageUrl.slice('server:has_image:'.length)
-    : undefined;
