@@ -10,6 +10,8 @@ import { isRecord } from '../validation-helpers.js';
 import { MAX_IMAGE_BYTES } from './item-images.js';
 
 const IMAGE_FETCH_TIMEOUT_MS = 30_000;
+const MAX_IMPORT_IMAGES = 100;
+const IMAGE_FETCH_CONCURRENCY = 5;
 
 async function readLimitedBody(response: Response, maxBytes: number): Promise<Buffer | null> {
   if (!response.body) return Buffer.alloc(0);
@@ -40,7 +42,10 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
       return undefined;
     }
     const declaredLength = Number(response.headers.get('content-length') || '0');
-    if (declaredLength > MAX_IMAGE_BYTES) return undefined;
+    if (declaredLength > MAX_IMAGE_BYTES) {
+      await response.body?.cancel();
+      return undefined;
+    }
     const bytes = await readLimitedBody(response, MAX_IMAGE_BYTES);
     if (!bytes) return undefined;
     const mimeType = detectImageMimeType(bytes);
@@ -118,54 +123,33 @@ export function createImportRoutes({ fetchImage = fetchImageAsBase64 }: ImportRo
       return c.json({ error: 'No valid items found' }, 400);
     }
 
-    // Fetch HTTP image URLs → base64 (concurrently, max 5 at a time)
-    let imagesFetched = 0;
-    const remoteImageItems = items.filter(i => {
-      const url = i.data?.imageUrl;
-      return url && typeof url === 'string' && url.startsWith('http');
-    });
-    const imageItems = remoteImageItems.slice(0, 100);
-    for (const item of remoteImageItems.slice(100)) delete item.data.imageUrl;
-
-    // Process in batches of 5
-    for (let i = 0; i < imageItems.length; i += 5) {
-      const batch = imageItems.slice(i, i + 5);
-      await Promise.all(
-        batch.map(async item => {
-          const base64 = await fetchImage(item.data.imageUrl as string);
-          if (base64) {
-            item.data.imageUrl = base64;
-            imagesFetched++;
-          } else {
-            // Clear failed URL so it doesn't break the frontend
-            delete item.data.imageUrl;
-          }
-        })
-      );
-    }
-
-    // Also handle imageUrl on nested vocabs (for phrase/SearchResult items)
-    let nestedImagesAttempted = imageItems.length;
+    // Every remote image URL, the items' own first and then their phrase vocabs', in order. The first 100 are
+    // fetched into data URIs, a few at a time; the rest, and any that fail, lose their URL so it doesn't break
+    // the client.
+    const isRemote = (url: unknown): url is string => !!url && typeof url === 'string' && url.startsWith('http');
+    const holders: Array<{ imageUrl?: unknown }> = items.filter(item => isRemote(item.data?.imageUrl)).map(item => item.data);
     for (const item of items) {
       if (Array.isArray(item.data?.vocabs)) {
-        for (const vocab of item.data.vocabs) {
-          if (vocab.imageUrl && typeof vocab.imageUrl === 'string' && vocab.imageUrl.startsWith('http')) {
-            if (nestedImagesAttempted >= 100) {
-              delete vocab.imageUrl;
-              continue;
-            }
-            nestedImagesAttempted++;
-            const base64 = await fetchImage(vocab.imageUrl);
-            if (base64) {
-              vocab.imageUrl = base64;
-              imagesFetched++;
-            } else {
-              delete vocab.imageUrl;
-            }
-          }
-        }
+        for (const vocab of item.data.vocabs) if (isRemote(vocab.imageUrl)) holders.push(vocab);
       }
     }
+    for (const holder of holders.slice(MAX_IMPORT_IMAGES)) delete holder.imageUrl;
+    const fetching = holders.slice(0, MAX_IMPORT_IMAGES);
+    let imagesFetched = 0;
+    let next = 0;
+    const worker = async () => {
+      while (next < fetching.length) {
+        const holder = fetching[next++];
+        const base64 = await fetchImage(holder.imageUrl as string);
+        if (base64) {
+          holder.imageUrl = base64;
+          imagesFetched++;
+        } else {
+          delete holder.imageUrl;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: IMAGE_FETCH_CONCURRENCY }, worker));
 
     upsertMany(items, userId);
     return c.json({

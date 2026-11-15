@@ -83,3 +83,29 @@ test('an import with no valid entry, or with too many, is refused', async () => 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: 'Import is limited to 5000 items' });
 });
+
+test('nested images are fetched five at a time, like the items\' own', async () => {
+  let inFlight = 0;
+  let mostInFlight = 0;
+  const slowApp = new Hono<AppEnv>();
+  slowApp.use('*', async (c, next) => {
+    c.set('user', { id: USER, email: '', displayName: null, photoUrl: null, isAdmin: true });
+    await next();
+  });
+  slowApp.route('/api', createImportRoutes({
+    fetchImage: async () => {
+      mostInFlight = Math.max(mostInFlight, ++inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight--;
+      return `data:image/png;base64,${png.toString('base64')}`;
+    },
+  }));
+  const vocabs = Array.from({ length: 12 }, (_, index) => ({ id: `pooled-${index}`, word: 'w', imageUrl: `https://img.example/ok/pooled-${index}` }));
+  const response = await slowApp.request('/api/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([{ type: 'phrase', data: { id: 'pooled-phrase', query: 'q', vocabs }, srs: srs('pooled-phrase', 'phrase'), savedAt: 1 }]),
+  });
+  assert.deepEqual(await response.json(), { ok: true, imported: 1, skipped: 0, imagesFetched: 12 });
+  assert.equal(mostInFlight, 5);
+});
