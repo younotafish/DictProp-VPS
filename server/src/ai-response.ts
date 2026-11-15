@@ -23,6 +23,47 @@ export interface NormalizedUsageAudit {
   auditedAt: number;
 }
 
+export interface WordFamilyEntry {
+  word: string;
+  pos: string;
+  chinese: string;
+}
+
+/** A vocab card as normalization builds it: exactly the schema's fields, each one present. */
+export interface GeneratedVocabCard {
+  word: string;
+  sense: string;
+  chinese: string;
+  ipa: string;
+  definition: string;
+  forms: string[];
+  wordFamily: WordFamilyEntry[];
+  synonyms: string[];
+  antonyms: string[];
+  confusables: string[];
+  examples: string[];
+  history: string;
+  register: string;
+  mnemonic: string;
+  imagePrompt: string;
+  usageAudit: NormalizedUsageAudit;
+}
+
+/** A normalized analysis answer: the sentence-level fields (empty for a word) and the cards. */
+export interface AnalysisData {
+  query: string;
+  translation: string;
+  grammar: string;
+  visualKeyword: string;
+  pronunciation: string;
+  vocabs: GeneratedVocabCard[];
+}
+
+type JsonObject = Record<string, unknown>;
+
+const isConfidence = (value: unknown): value is NormalizedUsageAudit['confidence'] =>
+  value === 'high' || value === 'medium' || value === 'low';
+
 const USAGE_STATUSES = new Set<UsageStatus>([
   'modern_american',
   'current_general',
@@ -47,9 +88,8 @@ const stringArray = (value: unknown): string[] => {
   return values
     .map(entry => {
       if (typeof entry === 'string') return entry.trim();
-      if (entry && typeof entry === 'object' && typeof (entry as any).sentence === 'string') {
-        return (entry as any).sentence.trim();
-      }
+      const sentence = entry && typeof entry === 'object' ? (entry as JsonObject).sentence : undefined;
+      if (typeof sentence === 'string') return sentence.trim();
       return '';
     })
     .filter(Boolean);
@@ -83,11 +123,12 @@ const FIELD_MINIMUMS = [
 
 function metadataIssues(value: unknown, options: VocabValidationOptions): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['the card must be a JSON object'];
-  const vocab = value as any;
+  const vocab = value as JsonObject;
   const issues: string[] = [];
   for (const [field, minimum] of FIELD_MINIMUMS) {
-    if (field === 'register' && options.optionalRegister && vocab.register === '') continue;
-    if (typeof vocab[field] !== 'string' || vocab[field].trim().length < minimum) {
+    const text = vocab[field];
+    if (field === 'register' && options.optionalRegister && text === '') continue;
+    if (typeof text !== 'string' || text.trim().length < minimum) {
       issues.push(`"${field}" must be a string of at least ${minimum} characters`);
     }
   }
@@ -98,15 +139,19 @@ function metadataIssues(value: unknown, options: VocabValidationOptions): string
     issues.push('"ipa" must be exactly one American IPA transcription wrapped in slashes, like /ˈbæŋk/');
   }
   for (const field of ['forms', 'synonyms', 'antonyms', 'confusables'] as const) {
-    if (!Array.isArray(vocab[field]) || !vocab[field].every((entry: unknown) =>
+    const list = vocab[field];
+    if (!Array.isArray(list) || !list.every((entry: unknown) =>
       typeof entry === 'string' && entry.trim().length > 0)) {
       issues.push(`"${field}" must be an array of non-empty strings`);
     }
   }
-  if (!Array.isArray(vocab.wordFamily) || !vocab.wordFamily.every((entry: any) =>
-    entry && typeof entry.word === 'string' && entry.word.trim() &&
-    typeof entry.pos === 'string' && entry.pos.trim() &&
-    typeof entry.chinese === 'string' && /[\u3400-\u9fff]/u.test(entry.chinese))) {
+  const family = vocab.wordFamily;
+  if (!Array.isArray(family) || !family.every((entry: unknown) => {
+    if (!entry || typeof entry !== 'object') return false;
+    const { word, pos, chinese } = entry as JsonObject;
+    return typeof word === 'string' && word.trim() && typeof pos === 'string' && pos.trim() &&
+      typeof chinese === 'string' && /[\u3400-\u9fff]/u.test(chinese);
+  })) {
     issues.push('every "wordFamily" entry must have "word", "pos" and a Chinese "chinese"');
   }
   if (!isValidUsageAudit(vocab.usageAudit)) issues.push('"usageAudit" must have a valid status, reason and confidence');
@@ -120,7 +165,7 @@ export function hasCompleteGeneratedVocabMetadata(value: unknown, options: Vocab
 /** Every reason a generated card fails validation (metadata and examples). Empty when the card is usable. */
 export function vocabValidationIssues(value: unknown, options: VocabValidationOptions = {}): string[] {
   const issues = metadataIssues(value, options);
-  if (value && typeof value === 'object' && !Array.isArray(value)) issues.push(...exampleSetIssues((value as any).examples));
+  if (value && typeof value === 'object' && !Array.isArray(value)) issues.push(...exampleSetIssues((value as JsonObject).examples));
   return issues;
 }
 
@@ -148,7 +193,7 @@ function inferUsageStatus(registerNote: string): UsageStatus {
 }
 
 function normalizeUsageAudit(raw: unknown, register: string, auditedAt: number): NormalizedUsageAudit {
-  const rawObject: any = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const rawObject: JsonObject = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as JsonObject : {};
   const explicitStatus = parseUsageStatus(
     typeof raw === 'string' ? raw : rawObject.status ?? rawObject.label ?? rawObject.category,
   );
@@ -159,8 +204,8 @@ function normalizeUsageAudit(raw: unknown, register: string, auditedAt: number):
     : register
       ? `Automatically classified from the register note: ${register}`
       : 'No usage classification was supplied; retained as current general English for review.';
-  const confidence = ['high', 'medium', 'low'].includes(rawObject.confidence)
-    ? rawObject.confidence as NormalizedUsageAudit['confidence']
+  const confidence = isConfidence(rawObject.confidence)
+    ? rawObject.confidence
     : explicitStatus
       ? 'medium'
       : 'low';
@@ -172,16 +217,17 @@ function normalizeUsageAudit(raw: unknown, register: string, auditedAt: number):
   };
 }
 
-function normalizeWordFamily(value: unknown): Array<{ word: string; pos: string; chinese: string }> {
+function normalizeWordFamily(value: unknown): WordFamilyEntry[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap(entry => {
+  return value.flatMap((entry: unknown) => {
     if (!entry || typeof entry !== 'object') return [];
-    const word = stringValue((entry as any).word);
+    const source = entry as JsonObject;
+    const word = stringValue(source.word);
     if (!word) return [];
     return [{
       word,
-      pos: stringValue((entry as any).pos ?? (entry as any).partOfSpeech),
-      chinese: stringValue((entry as any).chinese ?? (entry as any).translation),
+      pos: stringValue(source.pos ?? source.partOfSpeech),
+      chinese: stringValue(source.chinese ?? source.translation),
     }];
   });
 }
@@ -197,7 +243,7 @@ export function repairIpa(value: string, word: string): string {
   const trimmed = value.trim();
   const groups = [...trimmed.matchAll(/\/([^/]+)\//g)].map(match => match[1].trim()).filter(Boolean);
   if (groups.length === 0) {
-    const bracketed = trimmed.match(/^\[([^\[\]]+)\]$/);
+    const bracketed = trimmed.match(/^\[([^[\]]+)\]$/);
     if (bracketed) return `/${bracketed[1].trim()}/`;
     return trimmed && !trimmed.includes('/') && IPA_CHARACTER.test(trimmed) ? `/${trimmed}/` : trimmed;
   }
@@ -222,11 +268,11 @@ export function repairGeneratedExample(example: string, word: string, forms: str
 
   // Keep well-formed markers, drop empty ones, and strip every other brace or bracket.
   const markers: string[] = [];
-  s = s.replace(/\{\{([^{}\[\]]*)\}\}|\[\[([^\[\]{}]*)\]\]/g, (match, target?: string, lookup?: string) => {
+  s = s.replace(/\{\{([^{}[\]]*)\}\}|\[\[([^[\]{}]*)\]\]/g, (match, target?: string, lookup?: string) => {
     const inner = target ?? lookup ?? '';
     return inner.trim() ? `\u0000${markers.push(match) - 1}\u0000` : inner;
   });
-  s = s.replace(/[{}\[\]]/g, '').replace(MARKER_SLOT, (_match, index: string) => markers[Number(index)]);
+  s = s.replace(/[{}[\]]/g, '').replace(MARKER_SLOT, (_match, index: string) => markers[Number(index)]);
 
   const candidates = [word, ...forms].map(form => form.trim()).filter(Boolean);
   const lowerCandidates = candidates.map(form => form.toLowerCase());
@@ -241,7 +287,7 @@ export function repairGeneratedExample(example: string, word: string, forms: str
     s = s.replace(/\{\{([^{}]+)\}\}/g, (_match, inner: string) => (++index === keep ? `{{${inner}}}` : `[[${inner}]]`));
   } else if (targets.length === 0) {
     let promoted = false;
-    s = s.replace(/\[\[([^\[\]]+)\]\]/g, (match, inner: string) => {
+    s = s.replace(/\[\[([^[\]]+)\]\]/g, (match, inner: string) => {
       if (promoted || !lowerCandidates.includes(inner.trim().toLowerCase())) return match;
       promoted = true;
       return `{{${inner}}}`;
@@ -249,7 +295,7 @@ export function repairGeneratedExample(example: string, word: string, forms: str
     if (!promoted) {
       // Mark the first plain-text occurrence of the longest candidate; lookups are masked so none is matched inside one.
       const lookups: string[] = [];
-      let masked = s.replace(/\[\[[^\[\]]+\]\]/g, match => `\u0000${lookups.push(match) - 1}\u0000`);
+      let masked = s.replace(/\[\[[^[\]]+\]\]/g, match => `\u0000${lookups.push(match) - 1}\u0000`);
       for (const candidate of [...candidates].sort((a, b) => b.length - a.length)) {
         const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(${escapeRegExp(candidate).replace(/\s+/g, '\\s+')})(?![\\p{L}\\p{N}_])`, 'iu');
         if (pattern.test(masked)) {
@@ -262,15 +308,15 @@ export function repairGeneratedExample(example: string, word: string, forms: str
   }
 
   let lookupCount = 0;
-  s = s.replace(/\[\[([^\[\]]+)\]\]/g, (match, inner: string) => (++lookupCount <= 4 ? match : inner));
+  s = s.replace(/\[\[([^[\]]+)\]\]/g, (match, inner: string) => (++lookupCount <= 4 ? match : inner));
   return s.replace(/[ \t]{2,}/g, ' ');
 }
 
 // Only the fields the card schema defines are kept: a stray model key must not be stored on the card
 // or spoof a pipeline marker such as advancedEnrichment.
-export function normalizeVocabCard(raw: unknown, fallbackWord: string, auditedAt: number): any | null {
+export function normalizeVocabCard(raw: unknown, fallbackWord: string, auditedAt: number): GeneratedVocabCard | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const source = raw as any;
+  const source = raw as JsonObject;
   const word = stringValue(source.word ?? source.term ?? source.headword ?? source.phrase) || fallbackWord.trim();
   const definition = stringValue(
     source.definition ?? source.meaning ?? source.originalMeaning ?? source.original_meaning ?? source.gloss,
@@ -305,11 +351,11 @@ export function normalizeVocabCard(raw: unknown, fallbackWord: string, auditedAt
 
 export function isValidUsageAudit(value: unknown): value is NormalizedUsageAudit {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const audit = value as any;
-  return USAGE_STATUSES.has(audit.status) &&
+  const audit = value as JsonObject;
+  return USAGE_STATUSES.has(audit.status as UsageStatus) &&
     typeof audit.reason === 'string' && audit.reason.length > 0 &&
-    ['high', 'medium', 'low'].includes(audit.confidence) &&
-    Number.isFinite(audit.auditedAt) && audit.auditedAt > 0;
+    isConfidence(audit.confidence) &&
+    typeof audit.auditedAt === 'number' && Number.isFinite(audit.auditedAt) && audit.auditedAt > 0;
 }
 
 export function sortVocabsByUsage<T extends { usageAudit?: { status?: UsageStatus } }>(vocabs: T[]): T[] {
@@ -326,8 +372,8 @@ export function sortVocabsByUsage<T extends { usageAudit?: { status?: UsageStatu
 export function normalizeAnalysisResponse(
   raw: unknown,
   options: { fallbackQuery: string; auditedAt?: number },
-): { data: any; inputCards: number; droppedCards: number } {
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as any : {};
+): { data: AnalysisData; inputCards: number; droppedCards: number } {
+  const source: JsonObject = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as JsonObject : {};
   const auditedAt = options.auditedAt ?? Date.now();
   const query = stringValue(source.query, options.fallbackQuery);
   const possibleCards = source.vocabs ?? source.vocabularyCards ?? source.vocabulary_cards ?? source.cards ?? source.meanings;
@@ -336,7 +382,7 @@ export function normalizeAnalysisResponse(
     : source.vocab && typeof source.vocab === 'object'
       ? [source.vocab]
       : [];
-  const vocabs: any[] = sortVocabsByUsage<any>(
+  const vocabs = sortVocabsByUsage(
     rawVocabs.flatMap((vocab: unknown) => {
       const normalized = normalizeVocabCard(vocab, query || options.fallbackQuery, auditedAt);
       return normalized ? [normalized] : [];

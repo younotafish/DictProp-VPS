@@ -29,9 +29,9 @@ test('the server keeps the same register minimum as the local cycle\'s card cont
 test('a live card keeps a full register note and drops a shorter label instead of failing', () => {
   const short = 'r'.repeat(REGISTER_MINIMUM - 1);
   const full = 'r'.repeat(REGISTER_MINIMUM);
-  assert.equal(normalizeVocabCard(raw(short), 'bank', 1234).register, '');
-  assert.equal(normalizeVocabCard(raw(`  ${short}  `), 'bank', 1234).register, '');
-  assert.equal(normalizeVocabCard(raw(full), 'bank', 1234).register, full);
+  assert.equal(normalizeVocabCard(raw(short), 'bank', 1234)!.register, '');
+  assert.equal(normalizeVocabCard(raw(`  ${short}  `), 'bank', 1234)!.register, '');
+  assert.equal(normalizeVocabCard(raw(full), 'bank', 1234)!.register, full);
 
   const dropped = normalizeVocabCard(raw('formal'), 'bank', 1234);
   assert.deepEqual(vocabValidationIssues(dropped, { optionalRegister: true }), []);

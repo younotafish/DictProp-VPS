@@ -84,13 +84,13 @@ test('normalization keeps usable siblings, drops unusable cards, and orders sens
 
   assert.equal(result.inputCards, 4);
   assert.equal(result.droppedCards, 1);
-  assert.deepEqual(result.data.vocabs.map((vocab: any) => vocab.sense), [
+  assert.deepEqual(result.data.vocabs.map(vocab => vocab.sense), [
     'common meaning',
     'British meaning',
     'obsolete meaning',
   ]);
-  assert.ok(result.data.vocabs.every((vocab: any) => isValidUsageAudit(vocab.usageAudit)));
-  assert.ok(result.data.vocabs.every((vocab: any) => vocab.usageAudit.auditedAt === 5678));
+  assert.ok(result.data.vocabs.every(vocab => isValidUsageAudit(vocab.usageAudit)));
+  assert.ok(result.data.vocabs.every(vocab => vocab.usageAudit.auditedAt === 5678));
 });
 
 test('normalization accepts common model aliases for essential fields', () => {
@@ -192,6 +192,7 @@ test('only schema fields survive normalization, so a stray key cannot spoof a pi
     imageUrl: 'data:image/png;base64,AAAA',
     srs: { nextReview: 0 },
   }), 'bank', 1234);
+  assert.ok(normalized);
   assert.deepEqual(Object.keys(normalized).sort(), [
     'antonyms', 'chinese', 'confusables', 'definition', 'examples', 'forms', 'history', 'imagePrompt',
     'ipa', 'mnemonic', 'register', 'sense', 'synonyms', 'usageAudit', 'word', 'wordFamily',
@@ -201,6 +202,7 @@ test('only schema fields survive normalization, so a stray key cannot spoof a pi
 test('a register label shorter than 10 characters is dropped; live analysis accepts the card without one', () => {
   const card = normalizeVocabCard(completeCard({ register: 'formal' }), 'bank', 1234);
   assert.equal(REGISTER_MINIMUM, 10);
+  assert.ok(card);
   assert.equal(card.register, '');
   assert.deepEqual(vocabValidationIssues(card, { optionalRegister: true }), []);
   assert.deepEqual(vocabValidationIssues(card), ['"register" must be a string of at least 10 characters']);

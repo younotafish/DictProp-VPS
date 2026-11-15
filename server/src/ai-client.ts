@@ -62,18 +62,26 @@ const NETWORK_CODES = new Set([
   'UND_ERR_SOCKET', 'UND_ERR_CLOSED',
 ]);
 
+/** The parts of a thrown fetch, undici or curl error that tell a timeout from a network failure. */
+interface ErrorLike {
+  name?: unknown;
+  message?: unknown;
+  code?: unknown;
+  cause?: { code?: unknown; cause?: { code?: unknown } };
+}
+
 /** Map any failure from a model call to an AiError. A disconnected client wins over whatever the abort looked like. */
 export function classifyAiError(error: unknown, clientSignal?: AbortSignal): AiError {
   if (error instanceof AiError) return error;
   if (clientSignal?.aborted) return new AiError('cancelled', 'The client closed the request');
-  const err = error as any;
+  const err = error as ErrorLike | null | undefined;
   const codes = [err?.code, err?.cause?.code, err?.cause?.cause?.code].filter(Boolean);
   const message = String(err?.message ?? error ?? '');
   if (err?.name === 'TimeoutError' || err?.name === 'AbortError' ||
-      codes.some(code => TIMEOUT_CODES.has(code)) || /curl exited 28\b/.test(message)) {
+      codes.some(code => TIMEOUT_CODES.has(String(code))) || /curl exited 28\b/.test(message)) {
     return new AiError('timeout', 'The AI service timed out');
   }
-  if (codes.some(code => NETWORK_CODES.has(code)) || message === 'fetch failed' || /curl exited (?:6|7|35|52|56)\b/.test(message)) {
+  if (codes.some(code => NETWORK_CODES.has(String(code))) || message === 'fetch failed' || /curl exited (?:6|7|35|52|56)\b/.test(message)) {
     return new AiError('unavailable', `The AI service is unreachable: ${message}`);
   }
   return new AiError('internal', message || 'Unexpected AI failure');
@@ -156,7 +164,13 @@ export interface ChatRequest {
 }
 
 /** One JSON-object reply from the chat model, or an AiError. */
-export type ChatJson = (ctx: AiRequestContext, request: ChatRequest) => Promise<Record<string, any>>;
+export type ChatJson = (ctx: AiRequestContext, request: ChatRequest) => Promise<Record<string, unknown>>;
+
+/** The parts of a chat-completion response the client reads. */
+interface ChatEnvelope {
+  error?: unknown;
+  choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }>;
+}
 
 export interface ChatClientOptions {
   fetch?: FetchLike;
@@ -187,7 +201,7 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
   const apiKey = options.apiKey ?? (() => env.DEEPINFRA_API_KEY);
   const retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS;
 
-  async function callOnce(ctx: AiRequestContext, request: ChatRequest, withMaxTokens: boolean): Promise<Record<string, any>> {
+  async function callOnce(ctx: AiRequestContext, request: ChatRequest, withMaxTokens: boolean): Promise<Record<string, unknown>> {
     const key = apiKey();
     if (!key) throw new AiError('config', 'DEEPINFRA_API_KEY not configured');
     ctx.signal.throwIfAborted();
@@ -217,7 +231,7 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
       }
       throw providerError(response.status, text);
     }
-    let data: any;
+    let data: ChatEnvelope | null;
     try {
       data = JSON.parse(text);
     } catch {
@@ -233,13 +247,13 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
     let parsed: unknown;
     try {
       parsed = parseModelJson(content);
-    } catch (error: any) {
-      throw new AiError('invalid', error?.message || 'Failed to parse JSON from DeepSeek response');
+    } catch (error) {
+      throw new AiError('invalid', (error instanceof Error && error.message) || 'Failed to parse JSON from DeepSeek response');
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new AiError('invalid', 'DeepSeek returned JSON that is not an object');
     }
-    return parsed as Record<string, any>;
+    return parsed as Record<string, unknown>;
   }
 
   return async function chatJson(ctx, request) {
@@ -331,7 +345,7 @@ function stripTrailingCommas(json: string): string {
  * top-level object, largest first (a short draft before the answer loses); then the outermost
  * {...} slice. Every candidate is retried once with trailing commas removed.
  */
-export function parseModelJson(content: string): any {
+export function parseModelJson(content: string): unknown {
   const text = content.trim();
   const candidates = [text];
   const fence = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);

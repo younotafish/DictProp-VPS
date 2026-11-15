@@ -12,6 +12,8 @@ import {
   normalizeVocabCard,
   sortVocabsByUsage,
   vocabValidationIssues,
+  type AnalysisData,
+  type GeneratedVocabCard,
 } from '../ai-response.js';
 import { isWordOrPhrase } from '../shared/query-mode.js';
 import {
@@ -63,15 +65,15 @@ export function routeQuery(text: string, mode: unknown): QueryRoute {
   };
 }
 
-const cardKey = (card: any): string =>
-  `${trimmedString(card?.word).toLowerCase()}|${trimmedString(card?.sense).toLowerCase()}`;
+const cardKey = (card: GeneratedVocabCard): string =>
+  `${trimmedString(card.word).toLowerCase()}|${trimmedString(card.sense).toLowerCase()}`;
 
 // A live card may go without a register note (normalization drops one under the stored-corpus minimum and
 // the local cycle writes it later); every other field keeps the stored-corpus minimums.
 const liveIssues = (card: unknown): string[] => vocabValidationIssues(card, { optionalRegister: true });
 
 interface CardSlot {
-  card: any;
+  card: GeneratedVocabCard;
   /** Position in the model's (usage-sorted) answer, so a repaired card keeps its place. */
   index: number;
 }
@@ -125,7 +127,7 @@ async function repairCards(
  * The model's order (repaired cards in their original places), one card per word and sense, sorted by usage,
  * and at most MAX_CARDS_PER_HEADWORD for any one headword.
  */
-function finalizeCards(slots: CardSlot[]): any[] {
+function finalizeCards(slots: CardSlot[]): GeneratedVocabCard[] {
   const seen = new Set<string>();
   const cards = [...slots].sort((a, b) => a.index - b.index).map(slot => slot.card).filter(card => {
     const key = cardKey(card);
@@ -135,7 +137,7 @@ function finalizeCards(slots: CardSlot[]): any[] {
   });
   const perHeadword = new Map<string, number>();
   return sortVocabsByUsage(cards).filter(card => {
-    const headword = trimmedString(card?.word).toLowerCase();
+    const headword = trimmedString(card.word).toLowerCase();
     const count = (perHeadword.get(headword) ?? 0) + 1;
     perHeadword.set(headword, count);
     return count <= MAX_CARDS_PER_HEADWORD;
@@ -143,7 +145,7 @@ function finalizeCards(slots: CardSlot[]): any[] {
 }
 
 export interface AnalysisResult {
-  data: any;
+  data: AnalysisData;
   /** The headword or sentence the model analyzed (the English it chose for a Chinese input). */
   resolvedQuery: string;
 }
@@ -169,7 +171,7 @@ export async function generateAnalysisData(
       console.warn(`Analysis: ${remainingMs(ctx)}ms left, too little for another full attempt`);
       break;
     }
-    let modelData: Record<string, any>;
+    let modelData: Record<string, unknown>;
     try {
       modelData = await chat(ctx, { system: prompts.system, user: prompts.user + feedback, maxTokens: ANALYSIS_MAX_TOKENS, label: `analysis ${attempt}` });
     } catch (error) {
@@ -192,7 +194,7 @@ export async function generateAnalysisData(
 
     const passing: CardSlot[] = [];
     let failing: FailingCard[] = [];
-    data.vocabs.forEach((card: any, index: number) => {
+    data.vocabs.forEach((card, index) => {
       const issues = liveIssues(card);
       if (issues.length === 0) passing.push({ card, index });
       else failing.push({ card, index, issues });

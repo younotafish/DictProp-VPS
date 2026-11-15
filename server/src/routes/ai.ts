@@ -128,9 +128,9 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
         return c.json({
           translation: '',
           grammar: '',
-          visualKeyword: data.vocabs?.[0]?.word || resolvedQuery,
-          pronunciation: data.vocabs?.[0]?.ipa || '',
-          vocabs: data.vocabs || [],
+          visualKeyword: data.vocabs[0]?.word || resolvedQuery,
+          pronunciation: data.vocabs[0]?.ipa || '',
+          vocabs: data.vocabs,
           originalQuery: route.originalQuery,
           query: resolvedQuery,
         });
@@ -221,7 +221,7 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
       });
       const bodyText = await response.text();
       if (!response.ok) throw providerError(response.status, bodyText);
-      let data: any;
+      let data: { text?: unknown } | null;
       try {
         data = JSON.parse(bodyText);
       } catch {

@@ -15,23 +15,45 @@ function stringMap(value: unknown): Record<string, string> {
   }));
 }
 
+export interface ComparisonDimension {
+  label: string;
+  analysis: string;
+  perWord: Record<string, string>;
+}
+
+export interface ComparisonExample {
+  context: string;
+  sentences: Record<string, string>;
+}
+
+export interface Comparison {
+  words: string[];
+  summary: string;
+  dimensions: ComparisonDimension[];
+  examples: ComparisonExample[];
+  commonMistakes: string[];
+  verdict: string;
+}
+
 /**
  * Keep only what the comparison view can render: string-only per-word maps, dimensions with a label
  * and some content, examples with at least one sentence. Null when no dimension survives.
  */
-export function sanitizeComparison(raw: Record<string, any>, requestedWords: string[]) {
-  const dimensions = (Array.isArray(raw.dimensions) ? raw.dimensions : []).flatMap((dimension: any) => {
+export function sanitizeComparison(raw: Record<string, unknown>, requestedWords: string[]): Comparison | null {
+  const dimensions = (Array.isArray(raw.dimensions) ? raw.dimensions : []).flatMap((dimension: unknown) => {
     if (!dimension || typeof dimension !== 'object') return [];
-    const label = trimmedString(dimension.label);
-    const analysis = trimmedString(dimension.analysis);
-    const perWord = stringMap(dimension.perWord);
+    const fields = dimension as Record<string, unknown>;
+    const label = trimmedString(fields.label);
+    const analysis = trimmedString(fields.analysis);
+    const perWord = stringMap(fields.perWord);
     return label && (analysis || Object.keys(perWord).length > 0) ? [{ label, analysis, perWord }] : [];
   });
   if (dimensions.length === 0) return null;
-  const examples = (Array.isArray(raw.examples) ? raw.examples : []).flatMap((example: any) => {
+  const examples = (Array.isArray(raw.examples) ? raw.examples : []).flatMap((example: unknown) => {
     if (!example || typeof example !== 'object') return [];
-    const sentences = stringMap(example.sentences);
-    return Object.keys(sentences).length > 0 ? [{ context: trimmedString(example.context), sentences }] : [];
+    const fields = example as Record<string, unknown>;
+    const sentences = stringMap(fields.sentences);
+    return Object.keys(sentences).length > 0 ? [{ context: trimmedString(fields.context), sentences }] : [];
   });
   const modelWords = Array.isArray(raw.words) ? raw.words.map(trimmedString) : [];
   return {
