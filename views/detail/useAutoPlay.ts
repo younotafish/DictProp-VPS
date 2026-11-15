@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { primeKeepAlive } from '../../services/lazyTts';
+import { useLatest } from '../../hooks/useStableValue';
 
 // The settings each auto-play control cycles through.
 const SPEED_PRESETS = [1000, 1500, 2000, 3000, 5000];   // ms each slide shows
@@ -25,8 +26,7 @@ export function useAutoPlay() {
   const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
   const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(20);
   const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
-  const isSentenceAutoPlayingRef = useRef(isSentenceAutoPlaying);
-  useEffect(() => { isSentenceAutoPlayingRef.current = isSentenceAutoPlaying; }, [isSentenceAutoPlaying]);
+  const isSentenceAutoPlayingRef = useLatest(isSentenceAutoPlaying);
   const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between every read (repeats + distinct sentences)
   const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
 
@@ -67,8 +67,7 @@ export function useAutoPlay() {
   }, [isAutoPlaying, isSentenceAutoPlaying]);
 
   // Auto-play slideshow effect
-  const autoPlaySpeedRef = useRef(autoPlaySpeed);
-  useEffect(() => { autoPlaySpeedRef.current = autoPlaySpeed; }, [autoPlaySpeed]);
+  const autoPlaySpeedRef = useLatest(autoPlaySpeed);
 
   const cycleSpeed = useCallback(() => {
     setAutoPlaySpeed(prev => nextPreset(SPEED_PRESETS, prev));
@@ -109,10 +108,8 @@ export function useAutoPlay() {
     primeKeepAlive();
   }, []);
 
-  const sentenceGapRef = useRef(sentenceGap);
-  useEffect(() => { sentenceGapRef.current = sentenceGap; }, [sentenceGap]);
-  const sentenceRepeatsRef = useRef(sentenceRepeats);
-  useEffect(() => { sentenceRepeatsRef.current = sentenceRepeats; }, [sentenceRepeats]);
+  const sentenceGapRef = useLatest(sentenceGap);
+  const sentenceRepeatsRef = useLatest(sentenceRepeats);
 
   // Timer: stamp start time on play, clear on stop (covers both word- and sentence-autoplay)
   useEffect(() => {

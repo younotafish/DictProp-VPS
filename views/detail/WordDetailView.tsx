@@ -10,6 +10,7 @@ import { useEscapeLayer } from '../../components/escapeStack';
 import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation, useWarmImages } from '../../hooks';
+import { useLatest } from '../../hooks/useStableValue';
 import { prefetchTTS, speakWord, stopCurrent } from '../../services/lazyTts';
 import { autoPlayTexts, preloadSession, wordZoneBands as countWordZoneBands } from './cardReading';
 import { findSavedCard } from './savedCard';
@@ -95,8 +96,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   const { showSuccessAnim, rememberInfo, rememberingRef, showRemembered } = useRememberToast();
 
   // Keep a ref to savedItems so callbacks always see fresh data without re-creating
-  const savedItemsRef = useRef(savedItems);
-  useEffect(() => { savedItemsRef.current = savedItems; }, [savedItems]);
+  const savedItemsRef = useLatest(savedItems);
   // Preview lookups run on every render, so index saved sentences once instead of re-normalizing all of them.
   const savedSentenceIndex = useSavedSentenceIndex(savedSentenceItems);
 
@@ -112,8 +112,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   const type = currentItem.type;
 
   // The lock screen's next and previous read where the view is (see useAutoPlayReader).
-  const currentGroupIndexRef = useRef(currentGroupIndex);
-  useEffect(() => { currentGroupIndexRef.current = currentGroupIndex; });
+  const currentGroupIndexRef = useLatest(currentGroupIndex);
 
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
 
@@ -236,8 +235,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   });
 
   // Fresh ref to the on-screen card so the keyboard readers below read current data without re-subscribing.
-  const currentItemRef = useRef(currentItem);
-  useEffect(() => { currentItemRef.current = currentItem; });
+  const currentItemRef = useLatest(currentItem);
 
   const { readCardExamples, toggleSpeak, speakSentenceAt } = useExampleSpeech({
     currentItemRef, isSentenceAutoPlayingRef, sentenceReview: false, stopAutoPlay,

@@ -8,6 +8,7 @@ import { useEscapeLayer } from '../../components/escapeStack';
 import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { useKeyboardNavigation, useWarmImages } from '../../hooks';
+import { useLatest } from '../../hooks/useStableValue';
 import { ensureTimings, prefetchTTS, preloadAudio, stopCurrent } from '../../services/lazyTts';
 import { setTtsStyle, type TtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
@@ -91,12 +92,10 @@ export function SentenceReviewView({
   const speechStyle = useSpeechStyle();
   const { showSuccessAnim, rememberInfo, rememberingRef, showRemembered } = useRememberToast();
 
-  const savedSentenceItemsRef = useRef(savedSentenceItems);
-  useEffect(() => { savedSentenceItemsRef.current = savedSentenceItems; }, [savedSentenceItems]);
+  const savedSentenceItemsRef = useLatest(savedSentenceItems);
   // Preview lookups run on every render, so index saved sentences once instead of re-normalizing all of them.
   const savedSentenceIndex = useSavedSentenceIndex(savedSentenceItems);
-  const onSaveRef = useRef(onSave);
-  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+  const onSaveRef = useLatest(onSave);
 
   // The sentence's source card.
   const data = currentItem.data;
@@ -125,15 +124,12 @@ export function SentenceReviewView({
   const sentenceImageUrl = currentSentence ? getItemImageUrl(currentSentence) : undefined;
   const hasSentenceImage = !!sentenceImageUrl;
 
-  // Refs so the post-remember timer and key handlers read fresh sentence state without re-subscribing.
+  // Refs so the post-remember timer and key handlers read fresh sentence state without re-subscribing. A review
+  // or a listen writes its updated sentence to currentSentenceRef at once, so the next one builds on it.
   const currentSentenceRef = useRef(currentSentence);
-  const sentenceItemsRef = useRef<StoredItem[] | undefined>(sentenceItems);
-  const currentGroupIndexRef = useRef(currentGroupIndex);
-  useEffect(() => {
-    currentSentenceRef.current = currentSentence;
-    sentenceItemsRef.current = sentenceItems;
-    currentGroupIndexRef.current = currentGroupIndex;
-  });
+  useEffect(() => { currentSentenceRef.current = currentSentence; });
+  const sentenceItemsRef = useLatest<StoredItem[] | undefined>(sentenceItems);
+  const currentGroupIndexRef = useLatest(currentGroupIndex);
 
   const currentSentenceSpeechStyle = currentSentence
     ? (currentSentence.data as SentenceData).preferredSpeechStyle
@@ -158,7 +154,7 @@ export function SentenceReviewView({
     };
     currentSentenceRef.current = updated;
     onSaveRef.current(updated);
-  }, [isSentencePreview]);
+  }, [isSentencePreview, onSaveRef]);
 
   // Sentence stats (mirror the word-card stats, computed across the saved sentences).
   const sentenceMastery = !isSentencePreview && currentSentence?.srs
@@ -260,8 +256,7 @@ export function SentenceReviewView({
   });
 
   // Fresh ref to the source card so the Cmd/Ctrl+1–4 readers read current data without re-subscribing.
-  const currentItemRef = useRef(currentItem);
-  useEffect(() => { currentItemRef.current = currentItem; });
+  const currentItemRef = useLatest(currentItem);
 
   const { speakSentenceAt } = useExampleSpeech({
     currentItemRef, isSentenceAutoPlayingRef, sentenceReview: true, stopAutoPlay,
@@ -271,8 +266,8 @@ export function SentenceReviewView({
   // shared speech session untouched.
   const navLeft = useCallback(() => setSentencePage('sentence'), []);
   const navRight = useCallback(() => setSentencePage('analysis'), []);
-  const navUp = useCallback(() => goToSentence(currentGroupIndexRef.current - 1), [goToSentence]);
-  const navDown = useCallback(() => goToSentence(currentGroupIndexRef.current + 1), [goToSentence]);
+  const navUp = useCallback(() => goToSentence(currentGroupIndexRef.current - 1), [goToSentence, currentGroupIndexRef]);
+  const navDown = useCallback(() => goToSentence(currentGroupIndexRef.current + 1), [goToSentence, currentGroupIndexRef]);
 
   // Sentence review's auto-play is locked on, so leaving it opens the panel with its Stop button.
   const requestSentenceExit = useCallback(() => {
