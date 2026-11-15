@@ -125,6 +125,22 @@ export function createApp(options: AppOptions = {}) {
     return next();
   });
 
+  // Sign-in runs before there is a user to key a limit on, so these count per client address.
+  app.use('/api/auth/login', createClientRateLimit(20, 60_000));
+  app.use('/api/auth/callback', createClientRateLimit(10, 60_000));
+  app.route('/api/auth', authRoutes);
+  // An unknown sign-in path, or a known one with the wrong method, is a 404 here, before the session gate.
+  app.all('/api/auth/*', c => c.json({ error: 'Not found' }, 404));
+  app.get('/api/health', c => {
+    const database = isDatabaseReady();
+    return c.json(
+      { status: database ? 'ok' : 'unavailable', database: database ? 'ok' : 'unavailable', timestamp: Date.now() },
+      database ? 200 : 503,
+    );
+  });
+  // Everything after this needs the owner's session.
+  app.use('/api/*', requireAuth);
+  // Body limits run after the session gate, so an anonymous upload is refused before any of it is read.
   const smallJsonLimit = bodyLimit({
     maxSize: 512 * 1024,
     onError: c => c.json({ error: 'Request body too large' }, 413),
@@ -154,22 +170,6 @@ export function createApp(options: AppOptions = {}) {
     maxSize: 25 * 1024 * 1024,
     onError: c => c.json({ error: 'Import is too large' }, 413),
   }));
-
-  // Sign-in runs before there is a user to key a limit on, so these count per client address.
-  app.use('/api/auth/login', createClientRateLimit(20, 60_000));
-  app.use('/api/auth/callback', createClientRateLimit(10, 60_000));
-  app.route('/api/auth', authRoutes);
-  // An unknown sign-in path, or a known one with the wrong method, is a 404 here, before the session gate.
-  app.all('/api/auth/*', c => c.json({ error: 'Not found' }, 404));
-  app.get('/api/health', c => {
-    const database = isDatabaseReady();
-    return c.json(
-      { status: database ? 'ok' : 'unavailable', database: database ? 'ok' : 'unavailable', timestamp: Date.now() },
-      database ? 200 : 503,
-    );
-  });
-  // Everything after this needs the owner's session.
-  app.use('/api/*', requireAuth);
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
   app.use('/api/import', createConcurrencyLimit(1, 'Another data import is already running. Try again shortly.'));
   app.route('/api', sentenceEnrichmentRoutes);
