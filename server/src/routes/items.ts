@@ -24,6 +24,8 @@ function streamAllItems(c: Context<AppEnv>, userId: string) {
         }
       }
       if (!page.hasMore) break;
+      // A client that went away gets no more pages.
+      if (output.aborted) return;
       if (page.cursor.revision === cursor.revision && page.cursor.id === cursor.id) {
         throw new Error('Item stream cursor did not advance');
       }
