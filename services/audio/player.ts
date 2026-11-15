@@ -188,8 +188,8 @@ export const seekCurrent = (timeSec: number): void => {
 // playbackRate to defaultPlaybackRate, so we set both. Vendor-prefixed field covers older Safari.
 const applyRate = (el: HTMLAudioElement): void => {
   try {
-    (el as any).preservesPitch = true;
-    (el as any).webkitPreservesPitch = true;
+    el.preservesPitch = true;
+    (el as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
     el.defaultPlaybackRate = getPlaybackRate();
     el.playbackRate = getPlaybackRate();
   } catch { /* ignore */ }

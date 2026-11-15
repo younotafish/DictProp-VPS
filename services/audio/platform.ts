@@ -3,14 +3,14 @@
 // ---------------------------------------------------------------------------
 /** navigator.userAgentData only exists on Chromium — our proxy for "WebGPU is reliable here". */
 const isChromium = (): boolean =>
-  typeof navigator !== 'undefined' && !!(navigator as any).userAgentData;
+  typeof navigator !== 'undefined' && !!(navigator as Navigator & { userAgentData?: unknown }).userAgentData;
 
 /**
  * WebGPU is only reliable through onnxruntime-web on Chromium. Safari exposes navigator.gpu
  * (iOS/iPadOS/macOS 26+) but its WebGPU breaks our ONNX runtime, so we keep Apple on WASM.
  */
 export const canUseWebGPU = (): boolean =>
-  typeof navigator !== 'undefined' && !!(navigator as any).gpu && isChromium();
+  typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu && isChromium();
 
 /**
  * True when the device can run Kokoro at all. WASM runs anywhere with WebAssembly (every modern

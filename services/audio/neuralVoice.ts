@@ -3,13 +3,13 @@
  * (Named for what it is rather than "kokoro…": the build marks chunks starting with "kokoro" as optional
  * downloads, and this module ships with the engine.)
  */
-import type { KokoroDevice, KokoroRequest, KokoroResponse } from '../kokoroWorker';
+import type { KokoroDevice, KokoroRequest, KokoroResponse, KokoroVoice } from '../kokoroWorker';
 import { log, warn } from '../logger';
 import { canUseWebGPU, isMobile, isNeuralSupported } from './platform';
 import { playUrl } from './player';
 import { MAX_KOKORO_URLS, UrlLru } from './urlLru';
 
-export const DEFAULT_VOICE = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
+export const DEFAULT_VOICE: KokoroVoice = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
 
 const CONSENT_KEY = 'tts_neural_consent'; // mobile one-time download consent
 
@@ -103,7 +103,7 @@ const getWorker = (): Worker => {
 
 const kokoroUrls = new UrlLru(MAX_KOKORO_URLS); // `${voice}:${text}` -> object URL
 
-const synthesize = async (text: string, voice: string): Promise<string> => {
+const synthesize = async (text: string, voice: KokoroVoice): Promise<string> => {
   const key = `${voice}:${text}`;
   const cached = kokoroUrls.get(key);
   if (cached) return cached;

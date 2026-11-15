@@ -28,7 +28,9 @@ const buildSilentWavUrl = (seconds: number): string => {
 /** Lazily create the single shared keep-alive AudioContext (reused across autoplay runs). */
 const getKeepAliveCtx = (): AudioContext | null => {
   try {
-    const Ctx = typeof window !== 'undefined' && ((window as any).AudioContext || (window as any).webkitAudioContext);
+    type AudioContexts = { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+    const page = typeof window !== 'undefined' ? window as Window & AudioContexts : undefined;
+    const Ctx = page && (page.AudioContext || page.webkitAudioContext);
     if (!Ctx) return null;
     if (!keepAliveCtx) keepAliveCtx = new Ctx();
     return keepAliveCtx;
@@ -51,7 +53,7 @@ const ensureKeepAliveRunning = (): void => {
       keepAliveEl = new Audio(buildSilentWavUrl(2));
       keepAliveEl.loop = true;
       keepAliveEl.volume = 0;
-      (keepAliveEl as any).playsInline = true;
+      (keepAliveEl as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
     }
     void keepAliveEl.play().catch(() => { /* retried on the next start */ });
   } catch { /* ignore */ }

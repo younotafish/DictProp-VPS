@@ -6,14 +6,16 @@
  * One request at a time, since a model session runs one inference at once. A request that a newer one
  * replaced while it waited is dropped unheard: only the latest speech is ever played.
  */
-import { KokoroTTS } from 'kokoro-js';
+import { KokoroTTS, type GenerateOptions } from 'kokoro-js';
 import { env } from '@huggingface/transformers';
 // The only runtime file the default onnxruntime-web build fetches (its JS glue is bundled into it).
 import ortWasmUrl from '../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm?url';
 
 export type KokoroDevice = 'webgpu' | 'wasm';
+/** One of Kokoro's voices, such as 'af_heart'. */
+export type KokoroVoice = NonNullable<GenerateOptions['voice']>;
 /** Synthesize `text`, loading the model on the first of `devices` that works if it isn't loaded yet. */
-export interface KokoroRequest { id: number; text: string; voice: string; devices: KokoroDevice[] }
+export interface KokoroRequest { id: number; text: string; voice: KokoroVoice; devices: KokoroDevice[] }
 export type KokoroResponse =
   | { type: 'ready'; device: KokoroDevice }
   | { type: 'loadFailed'; device: KokoroDevice; message: string }
@@ -74,7 +76,7 @@ const synthesize = async ({ id, text, voice, devices }: KokoroRequest): Promise<
   }
   try {
     const tts = await loadModel(devices);
-    const audio = await tts.generate(text, { voice: voice as any });
+    const audio = await tts.generate(text, { voice });
     post({ type: 'audio', id, audio: audio.toBlob() });
   } catch (error) {
     post({ type: 'error', id, message: String(error) });
