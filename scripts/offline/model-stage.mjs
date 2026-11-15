@@ -79,9 +79,20 @@ export async function runPool(count, concurrency, lifecycle, work) {
 }
 
 // A batch's result is cached, and a failed batch marked for splitting, under names that carry the batch's
-// position and a fingerprint of everything that shaped its request.
-export function batchFingerprint(request) {
-  return createHash('sha256').update(JSON.stringify(request)).digest('hex').slice(0, 16);
+// position and a fingerprint of everything that shaped its request: the provider and model, the
+// instruction, the schema and the records. Editing a prompt therefore never reuses an answer to the old one.
+export function batchFingerprint(config, { instruction, schema, records }) {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      provider: config.cacheKey,
+      model: config.model,
+      reasoningEffort: config.reasoningEffort,
+      instruction,
+      schema,
+      records,
+    }))
+    .digest('hex')
+    .slice(0, 16);
 }
 
 export function batchFiles(workDir, batchIndex, fingerprint) {

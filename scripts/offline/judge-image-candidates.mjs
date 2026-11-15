@@ -23,13 +23,11 @@ if (!Number.isSafeInteger(candidateNumber) || candidateNumber < 1 || candidateNu
 }
 
 const MODEL_CONFIG = resolveStructuredModel();
-const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
 const { timeoutMs: MODEL_TIMEOUT_MS, retryDelayMs, concurrency } = stageSettings({
   defaultTimeoutMinutes: 20,
   maxConcurrency: 8,
   concurrencyVariables: ['CODEX_IMAGE_CONCURRENCY', 'CODEX_CONCURRENCY'],
 });
-const JUDGMENT_POLICY_VERSION = 4;
 const lifecycle = createStageLifecycle();
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
 if (!Array.isArray(payload.targets)) throw new Error('Target manifest is invalid');
@@ -75,11 +73,8 @@ for (let index = 0; index < pending.length; index += 8) batches.push(pending.sli
 
 function judgeBatch(batch, batchIndex) {
   const records = judgmentRecords(batch, candidateNumber);
-  const fingerprint = batchFingerprint({
-    judgmentPolicyVersion: JUDGMENT_POLICY_VERSION,
-    model: MODEL,
-    reasoningEffort: REASONING_EFFORT,
-    records,
+  const fingerprint = batchFingerprint(MODEL_CONFIG, {
+    instruction: [JUDGMENT_INTRODUCTION, JUDGMENT_POLICY], schema, records,
   });
   const candidates = batch.map(target => candidateFile(candidateDir, target.filename, candidateNumber));
   if (candidates.some(path => !existsSync(path))) throw new Error(`Batch ${batchIndex + 1} is missing a candidate image`);

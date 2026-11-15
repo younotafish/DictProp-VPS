@@ -68,10 +68,21 @@ test('retry delays grow fourfold per attempt with up to half again of jitter eit
   assert.equal(jitteredDelay(0, 2), 0);
 });
 
-test('batch files carry the position and a fingerprint of the request', () => {
-  const request = { provider: 'claude-code-v1', model: 'm', records: [{ itemIndex: 0 }] };
-  assert.equal(batchFingerprint(request), sha256(JSON.stringify(request)).slice(0, 16));
-  assert.notEqual(batchFingerprint(request), batchFingerprint({ ...request, model: 'n' }));
+test('batch files carry the position and a fingerprint of everything that shaped the request', () => {
+  const config = { cacheKey: 'claude-code-v1', model: 'claude-opus-5-5', reasoningEffort: 'xhigh' };
+  const request = { instruction: 'Do the thing.', schema: { type: 'object' }, records: [{ itemIndex: 0 }] };
+  assert.equal(batchFingerprint(config, request), sha256(JSON.stringify({
+    provider: 'claude-code-v1', model: 'claude-opus-5-5', reasoningEffort: 'xhigh', ...request,
+  })).slice(0, 16));
+  const others = [
+    batchFingerprint({ ...config, cacheKey: 'codex-cli-v2' }, request),
+    batchFingerprint({ ...config, model: 'other' }, request),
+    batchFingerprint({ ...config, reasoningEffort: 'max' }, request),
+    batchFingerprint(config, { ...request, instruction: 'Do the thing well.' }),
+    batchFingerprint(config, { ...request, schema: { type: 'array' } }),
+    batchFingerprint(config, { ...request, records: [{ itemIndex: 1 }] }),
+  ];
+  assert.equal(new Set([batchFingerprint(config, request), ...others]).size, 7);
   assert.deepEqual(batchFiles('/work', 6, 'abc'), {
     result: join('/work', 'batch-0007-abc.json'),
     splitMarker: join('/work', 'split-0007-abc.json'),

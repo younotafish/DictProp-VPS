@@ -140,8 +140,8 @@ const batchSize = Math.max(1, Math.min(20, Number(process.env.VOCAB_COMPLETION_B
 for (let index = 0; index < tasks.length; index += batchSize) batches.push(tasks.slice(index, index + batchSize));
 
 function filesFor(batch, batchIndex) {
-  return batchFiles(workDir, batchIndex, batchFingerprint({
-    provider: MODEL_CONFIG.cacheKey, model: MODEL, reasoningEffort: REASONING_EFFORT, records: batch.map(compactTask),
+  return batchFiles(workDir, batchIndex, batchFingerprint(MODEL_CONFIG, {
+    instruction, schema: completionSchema, records: batch.map(compactTask),
   }));
 }
 

@@ -19,7 +19,6 @@ if (!targetsArg || !outputArg || !workArg) {
 }
 
 const MODEL_CONFIG = resolveStructuredModel();
-const { model: MODEL, reasoningEffort: REASONING_EFFORT } = MODEL_CONFIG;
 const { timeoutMs: MODEL_TIMEOUT_MS, retryDelayMs, concurrency } = stageSettings({ defaultTimeoutMinutes: 20 });
 const lifecycle = createStageLifecycle();
 const payload = JSON.parse(readFileSync(resolve(targetsArg), 'utf8'));
@@ -53,8 +52,6 @@ const schema = {
   },
 };
 
-const PROMPT_POLICY_VERSION = 3;
-
 const instruction = `You are a visual prompt editor for a modern American English learning app. Rewrite each rejected brief for one realistic, photorealistic 16:9 image.
 
 The revised scene must teach the exact learning target at a glance and directly fix the judge's semantic concern. Reduce it to one iconic, observable moment instead of accumulating details from earlier briefs. Use one focal subject or relationship and at most two prominent people; a third is allowed only when the meaning inherently requires a three-party relationship. Background people must remain incidental. Never require multiple people to perform separate simultaneous gestures, or one person to perform both a visible and a concealed action. Make one diagnostic action, relationship, contrast, cause, or consequence large and unmistakable in a close or medium foreground composition. Do not try to render thoughts, rumors, identity, or intent directly; show one visible discovery, choice, or consequence from which the learner can infer it. Preserve only the context needed to distinguish this sense. For an abstract or figurative sense, show one everyday situation that demonstrates it; never use decorative symbolism or a misleading literal origin. Do not depend on readable documents, labels, signs, captions, typography, thought bubbles, arrows, split screens, collages, or before/after panels. Require authentic anatomy, objects, materials, and natural lighting. Explicitly prohibit illustration, animation, 3D rendering, visible text, logos, and watermarks. Keep each prompt under 70 words.
@@ -68,13 +65,7 @@ for (let index = 0; index < payload.targets.length; index += 20) {
 
 function refineBatch(batch, batchIndex) {
   const records = refinementRecords(batch);
-  const fingerprint = batchFingerprint({
-    provider: MODEL_CONFIG.cacheKey,
-    promptPolicyVersion: PROMPT_POLICY_VERSION,
-    model: MODEL,
-    reasoningEffort: REASONING_EFFORT,
-    records,
-  });
+  const fingerprint = batchFingerprint(MODEL_CONFIG, { instruction, schema, records });
   return runCachedModelBatch({
     resultPath: batchFiles(workDir, batchIndex, fingerprint).result,
     prompt: correction => `${instruction}${correction}\n\nREFINE THESE REJECTED TARGETS:\n${JSON.stringify(records)}`,

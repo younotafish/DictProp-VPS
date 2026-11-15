@@ -90,11 +90,8 @@ for (let index = 0; index < source.sentences.length; index += batchSize) {
 }
 
 function filesFor(batch, batchIndex) {
-  return batchFiles(workDir, batchIndex, batchFingerprint({
-    provider: MODEL_CONFIG.cacheKey,
-    model: MODEL,
-    reasoningEffort: REASONING_EFFORT,
-    records: analysisRecords(batch, baseAnalysisById),
+  return batchFiles(workDir, batchIndex, batchFingerprint(MODEL_CONFIG, {
+    instruction, schema, records: analysisRecords(batch, baseAnalysisById),
   }));
 }
 
