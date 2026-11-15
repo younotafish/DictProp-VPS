@@ -1,12 +1,11 @@
-import { db, getAllItems, listAllUsers } from '../db.js';
+import { db, getAllItems } from '../db.js';
 import { findStalledEnrichment } from '../enrichment-stall.js';
 import {
   summarizeExampleEnrichmentCoverage,
   type StoredSentenceEnrichmentRecord,
 } from '../example-enrichment-coverage.js';
-import { env } from '../env.js';
 import { summarizeIncrementalEnrichmentBacklog } from '../incremental-enrichment.js';
-import { isOwnerUser } from '../owner-access.js';
+import { requireOwner } from './support/run.js';
 
 const HOUR_MS = 60 * 60 * 1_000;
 const numberFromEnv = (name: string, fallback: number, min: number, max: number): number => {
@@ -16,9 +15,7 @@ const numberFromEnv = (name: string, fallback: number, min: number, max: number)
 const lookbackHours = numberFromEnv('INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS', 24, 1, 168);
 const prioritySince = Date.now() - lookbackHours * HOUR_MS;
 
-const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
-if (!owner) throw new Error('Owner account not found');
-
+const owner = requireOwner();
 const items = getAllItems(owner.id);
 const topLevel = summarizeIncrementalEnrichmentBacklog(items, prioritySince);
 // Streamed on each read: the stored analyses run to several kilobytes apiece, tens of thousands of them.

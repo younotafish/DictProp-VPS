@@ -1,20 +1,18 @@
 import { createHash } from 'crypto';
 import { db, getAllItems, getImageManifest, listAllUsers } from '../db.js';
 import { detectImageMimeType } from '../image-format.js';
-import { env } from '../env.js';
 import {
   summarizeExampleEnrichmentCoverage,
   type StoredSentenceEnrichmentRecord,
 } from '../example-enrichment-coverage.js';
 import { normalizeLabel, sentenceIdentityKey, sentenceTextKey, vocabSenseKey } from '../library-identity.js';
-import { isOwnerUser } from '../owner-access.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../usage-audit.js';
 import { validateStoredItem } from '../validation.js';
+import { requireOwner } from './support/run.js';
 
 const users = listAllUsers();
-const owner = users.find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
-if (!owner) throw new Error('Owner account not found');
+const owner = requireOwner(users);
 
 const allItems = getAllItems(owner.id) as any[];
 const liveItems = allItems.filter(item => !item.isDeleted);

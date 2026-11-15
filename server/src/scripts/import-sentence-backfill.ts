@@ -1,34 +1,19 @@
-import { readFileSync } from 'fs';
-import { dirname, resolve, sep } from 'path';
-import {
-  db,
-  getItemById,
-  hasItemImage,
-  listAllUsers,
-  upsertItemImageBinary,
-} from '../db.js';
-import { env } from '../env.js';
-import { detectImageMimeType } from '../image-format.js';
-import { backupBeforeWrite, checkpointAfterWrite, recordStale, StaleEntryError, writeOverLiveItem } from '../import-support.js';
-import { isOwnerUser } from '../owner-access.js';
+import { db, getItemById, hasItemImage, upsertItemImageBinary } from '../db.js';
+import { backupBeforeWrite, recordStale, StaleEntryError, writeOverLiveItem } from '../import-support.js';
 import {
   validateSentenceBackfillBundle,
   type SentenceBackfillBundle,
 } from '../sentence-backfill.js';
 import { sentenceTextHash } from '../sentence-lookup.js';
+import { errorMessage, readBundleImage, readBundleManifest, resolveInBundle } from './support/bundle.js';
+import { finishImport, requireOwner } from './support/run.js';
 
-const manifestPath = process.argv[2];
-if (!manifestPath) throw new Error('Usage: import-sentence-backfill <manifest.json>');
+const { bundle, bundleRoot } = readBundleManifest<SentenceBackfillBundle>(
+  'Usage: import-sentence-backfill <manifest.json>',
+  validateSentenceBackfillBundle,
+);
+const owner = requireOwner();
 
-const resolvedManifest = resolve(manifestPath);
-const bundle = JSON.parse(readFileSync(resolvedManifest, 'utf8')) as SentenceBackfillBundle;
-const validationError = validateSentenceBackfillBundle(bundle);
-if (validationError) throw new Error(validationError);
-
-const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
-if (!owner) throw new Error('Owner account not found');
-
-const bundleRoot = dirname(resolvedManifest);
 const backup = await backupBeforeWrite('sentence-backfill');
 const result = {
   total: bundle.entries.length,
@@ -46,20 +31,14 @@ type Entry = SentenceBackfillBundle['entries'][number];
 type PreparedEntry = { entry: Entry; image: Buffer | null; mimeType: string | null };
 type Outcome = { id: string; image: 'added' | 'replaced' | 'preserved' | null; imageError?: string };
 
-const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
-
 // Only images that will be written are read, and only for the current chunk.
 const prepare = (entry: Entry): PreparedEntry => {
   if (!entry.imageFile || (entry.replaceImage !== true && hasItemImage(entry.id, owner.id))) {
     return { entry, image: null, mimeType: null };
   }
-  const imagePath = resolve(bundleRoot, entry.imageFile);
-  if (!imagePath.startsWith(`${bundleRoot}${sep}`)) throw new Error('image path escapes bundle root');
-  const image = readFileSync(imagePath);
-  if (image.length === 0 || image.length > 10 * 1024 * 1024) throw new Error('image size is invalid');
-  const mimeType = detectImageMimeType(image);
-  if (!mimeType) throw new Error('image format is invalid');
-  return { entry, image, mimeType };
+  const imagePath = resolveInBundle(bundleRoot, entry.imageFile);
+  if (!imagePath) throw new Error('image path escapes bundle root');
+  return { entry, ...readBundleImage(imagePath) };
 };
 
 // A savepoint per sentence, checked against its live row: the analysis is written over what is stored
@@ -139,6 +118,4 @@ for (let start = 0; start < bundle.entries.length; start += 100) {
   }
 }
 
-checkpointAfterWrite();
-process.stdout.write(`${JSON.stringify({ ...result, backup })}\n`);
-if (result.errors.length > 0) process.exitCode = 1;
+finishImport(result, backup);

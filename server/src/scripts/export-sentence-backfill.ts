@@ -1,12 +1,10 @@
-import { getAllItems, listAllUsers } from '../db.js';
-import { env } from '../env.js';
-import { isOwnerUser } from '../owner-access.js';
+import { getAllItems } from '../db.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import type { SentenceExportRecord } from '../sentence-backfill.js';
 import { sentenceTextHash } from '../sentence-lookup.js';
+import { requireOwner } from './support/run.js';
 
-const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
-if (!owner) throw new Error('Owner account not found');
+const owner = requireOwner();
 
 const sentences: SentenceExportRecord[] = getAllItems(owner.id)
   .filter(item => item.type === 'sentence' && !item.isDeleted)

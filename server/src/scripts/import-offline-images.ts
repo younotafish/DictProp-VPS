@@ -1,25 +1,16 @@
-import { readFileSync } from 'fs';
-import { dirname, resolve, sep } from 'path';
 import { corpusSourceHash } from '../corpus-audit.js';
-import { db, getItemById, listAllUsers, upsertItemImageBinary } from '../db.js';
-import { env } from '../env.js';
-import { detectImageMimeType } from '../image-format.js';
-import { backupBeforeWrite, checkpointAfterWrite, recordStale, StaleEntryError, writeOverLiveItem } from '../import-support.js';
+import { db, getItemById, upsertItemImageBinary } from '../db.js';
+import { backupBeforeWrite, recordStale, StaleEntryError, writeOverLiveItem } from '../import-support.js';
 import { validateOfflineImageBundle, type OfflineImageBundle } from '../offline-image-import.js';
-import { isOwnerUser } from '../owner-access.js';
+import { errorMessage, readBundleImage, readBundleManifest, resolveInBundle } from './support/bundle.js';
+import { finishImport, requireOwner } from './support/run.js';
 
-const manifestPath = process.argv[2];
-if (!manifestPath) throw new Error('Usage: import-offline-images <manifest.json>');
+const { bundle, bundleRoot } = readBundleManifest<OfflineImageBundle>(
+  'Usage: import-offline-images <manifest.json>',
+  validateOfflineImageBundle,
+);
+const owner = requireOwner();
 
-const resolvedManifest = resolve(manifestPath);
-const bundle = JSON.parse(readFileSync(resolvedManifest, 'utf8')) as OfflineImageBundle;
-const validationError = validateOfflineImageBundle(bundle);
-if (validationError) throw new Error(validationError);
-
-const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
-if (!owner) throw new Error('Owner account not found');
-
-const bundleRoot = dirname(resolvedManifest);
 const backup = await backupBeforeWrite('offline-images');
 const result = {
   total: bundle.entries.length,
@@ -35,13 +26,9 @@ type PreparedEntry = { entry: Entry; image: Buffer; mimeType: string };
 type Failure = { id: string; error: unknown };
 
 const readImage = (entry: Entry): PreparedEntry => {
-  const imagePath = resolve(bundleRoot, entry.imageFile);
-  if (!imagePath.startsWith(`${bundleRoot}${sep}`)) throw new Error('image path escapes bundle root');
-  const image = readFileSync(imagePath);
-  if (image.length === 0 || image.length > 10 * 1024 * 1024) throw new Error('image size is invalid');
-  const mimeType = detectImageMimeType(image);
-  if (!mimeType) throw new Error('image format is invalid');
-  return { entry, image, mimeType };
+  const imagePath = resolveInBundle(bundleRoot, entry.imageFile);
+  if (!imagePath) throw new Error('image path escapes bundle root');
+  return { entry, ...readBundleImage(imagePath) };
 };
 
 const withImageMarkers = (data: any, entries: PreparedEntry[]) => {
@@ -120,7 +107,7 @@ const applyChunk = db.transaction((parents: Array<[string, PreparedEntry[]]>) =>
 
 const recordFailure = ({ id, error }: Failure) => {
   result.skipped++;
-  result.errors.push({ id, error: error instanceof Error ? error.message : String(error) });
+  result.errors.push({ id, error: errorMessage(error) });
 };
 
 // A parent's entries stay in one chunk: the first marker written changes the hash the rest are checked by.
@@ -167,6 +154,4 @@ for (const chunk of chunks) {
   }
 }
 
-checkpointAfterWrite();
-process.stdout.write(`${JSON.stringify({ ...result, backup })}\n`);
-if (result.errors.length > 0) process.exitCode = 1;
+finishImport(result, backup);

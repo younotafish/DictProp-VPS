@@ -1,22 +1,17 @@
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
 import { corpusAuditImportState, validateCorpusAuditBundle, type CorpusAuditBundle } from '../corpus-audit.js';
-import { getAllItems, listAllUsers, upsertMany } from '../db.js';
-import { env } from '../env.js';
-import { backupBeforeWrite, checkpointAfterWrite, recordStale } from '../import-support.js';
-import { isOwnerUser } from '../owner-access.js';
+import { getAllItems, upsertMany } from '../db.js';
+import { backupBeforeWrite, recordStale } from '../import-support.js';
 import { isSentenceAnalysis } from '../sentence-analysis.js';
 import { validateStoredItem } from '../validation.js';
+import { errorMessage, readBundleManifest } from './support/bundle.js';
+import { finishImport, requireOwner } from './support/run.js';
+import { finiteNonNegative, nextUpdatedAt, normalizedSrs } from './support/stored-item.js';
 
-const manifestPath = process.argv[2];
-if (!manifestPath) throw new Error('Usage: import-corpus-audit <manifest.json>');
-
-const bundle = JSON.parse(readFileSync(resolve(manifestPath), 'utf8')) as CorpusAuditBundle;
-const validationError = validateCorpusAuditBundle(bundle);
-if (validationError) throw new Error(validationError);
-
-const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
-if (!owner) throw new Error('Owner account not found');
+const { bundle } = readBundleManifest<CorpusAuditBundle>(
+  'Usage: import-corpus-audit <manifest.json>',
+  validateCorpusAuditBundle,
+);
+const owner = requireOwner();
 
 const backup = await backupBeforeWrite('corpus-audit');
 const result = {
@@ -36,8 +31,6 @@ const archivedForUsageById = new Set<string>();
 const archivedOnRequestById = new Set<string>();
 const unarchivedById = new Set<string>();
 const currentById = new Map(getAllItems(owner.id).map(item => [item.data.id, item]));
-const finiteNonNegative = (value: unknown, fallback: number): number =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
 for (const entry of bundle.entries) {
   try {
     const current = currentById.get(entry.id) as any;
@@ -64,7 +57,6 @@ for (const entry of bundle.entries) {
       throw new Error('entry would drop the item\'s usage audit');
     }
 
-    const { project: _legacyProject, ...currentWithoutProject } = current;
     const currentSrs = current.srs && typeof current.srs === 'object' ? current.srs : {};
     const preservedSentenceAnalysis = entry.type === 'sentence' && isSentenceAnalysis(current.data.analysis)
       ? {
@@ -78,24 +70,14 @@ for (const entry of bundle.entries) {
       (current.data.preferredSpeechStyle === 'clear' || current.data.preferredSpeechStyle === 'casual')
       ? { preferredSpeechStyle: current.data.preferredSpeechStyle }
       : {};
+    // current is the entry's own item (looked up by its id, its type checked above), so its identity is the entry's.
     const candidate = {
-      ...currentWithoutProject,
+      ...current,
       data: { ...entry.data, ...preservedSentenceAnalysis, ...preservedSentenceSpeechStyle },
-      srs: {
-        ...currentSrs,
-        id: entry.id,
-        type: entry.type,
-        nextReview: finiteNonNegative(currentSrs.nextReview, 0),
-        interval: finiteNonNegative(currentSrs.interval, 0),
-        memoryStrength: finiteNonNegative(currentSrs.memoryStrength, 0),
-        lastReviewDate: finiteNonNegative(currentSrs.lastReviewDate, 0),
-        totalReviews: finiteNonNegative(currentSrs.totalReviews, 0),
-        correctStreak: finiteNonNegative(currentSrs.correctStreak, 0),
-        stability: finiteNonNegative(currentSrs.stability, 0),
-      },
+      srs: normalizedSrs(current, currentSrs),
       savedAt: finiteNonNegative(current.savedAt, Date.now()),
       isArchived: nextArchived,
-      updatedAt: Math.max(Date.now(), Number(current.updatedAt || 0) + 1),
+      updatedAt: nextUpdatedAt(current.updatedAt),
     };
     const itemError = validateStoredItem(candidate);
     if (itemError) throw new Error(itemError);
@@ -106,7 +88,7 @@ for (const entry of bundle.entries) {
     if (current.isArchived && !nextArchived) unarchivedById.add(entry.id);
   } catch (error) {
     result.skipped++;
-    result.errors.push({ id: entry.id, error: error instanceof Error ? error.message : String(error) });
+    result.errors.push({ id: entry.id, error: errorMessage(error) });
   }
 }
 
@@ -139,15 +121,10 @@ for (let index = 0; index < pending.length; index += 500) {
         recordWrite(candidate, new Set(write.conflicts));
       } catch (error) {
         result.skipped++;
-        result.errors.push({
-          id: candidate.data.id,
-          error: error instanceof Error ? error.message : String(error || batchError),
-        });
+        result.errors.push({ id: candidate.data.id, error: errorMessage(error || batchError) });
       }
     }
   }
 }
 
-checkpointAfterWrite();
-process.stdout.write(`${JSON.stringify({ ...result, backup })}\n`);
-if (result.errors.length > 0) process.exitCode = 1;
+finishImport(result, backup);

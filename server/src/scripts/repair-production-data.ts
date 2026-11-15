@@ -1,12 +1,11 @@
-import { db, deleteUnreferencedBlobs, getAllItems, listAllUsers, softDeleteItem, upsertItem } from '../db.js';
-import { env } from '../env.js';
+import { db, deleteUnreferencedBlobs, getAllItems, softDeleteItem, upsertItem } from '../db.js';
 import { backupBeforeWrite, checkpointAfterWrite } from '../import-support.js';
 import { normalizeLabel, vocabSenseKey } from '../library-identity.js';
-import { isOwnerUser } from '../owner-access.js';
+import { requireOwner } from './support/run.js';
+import { finiteNonNegative, nextUpdatedAt, normalizedSrs, SRS_COUNTERS } from './support/stored-item.js';
 
 const apply = process.argv.includes('--apply');
-const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
-if (!owner) throw new Error('Owner account not found');
+const owner = requireOwner();
 // Taken before the library is read, so the copy holds exactly what the repair starts from.
 const backup = apply ? await backupBeforeWrite('repair', { reuseRecent: false }) : null;
 
@@ -89,8 +88,6 @@ const julySentenceKey = (data: { text?: unknown; sourceWord?: unknown; sourceSen
   normalizeLabel(data.sourceWord),
   normalizeLabel(data.sourceSense),
 ].join('\u0000');
-const finite = (value: unknown, fallback = 0) =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
 
 function contentScore(item: any): number {
   const data = item.data || {};
@@ -108,9 +105,9 @@ function contentScore(item: any): number {
 
 function learningScore(item: any): [number, number, number] {
   return [
-    finite(item.srs?.lastReviewDate),
-    finite(item.srs?.totalReviews),
-    finite(item.srs?.stability),
+    finiteNonNegative(item.srs?.lastReviewDate),
+    finiteNonNegative(item.srs?.totalReviews),
+    finiteNonNegative(item.srs?.stability),
   ];
 }
 
@@ -161,7 +158,7 @@ const duplicatePlans = duplicateGroups.flatMap(({ ids, semantic, preferredSurviv
     Number(right.data.id === preferredSurvivorId) - Number(left.data.id === preferredSurvivorId) ||
     contentScore(right) - contentScore(left) ||
     compareTuple(learningScore(right), learningScore(left)) ||
-    finite(left.savedAt) - finite(right.savedAt) ||
+    finiteNonNegative(left.savedAt) - finiteNonNegative(right.savedAt) ||
     String(left.data.id).localeCompare(String(right.data.id)),
   )[0];
   const learning = [...live].sort((left, right) =>
@@ -181,11 +178,11 @@ const consolidatedIds = new Set([
   ...loserIds,
   ...duplicatePlans.map(plan => plan.survivor.data.id),
 ]);
-const invalidSrsItems = items.filter(item =>
+// Consolidation normalizes each survivor's SRS and deletes every loser, so neither needs a repair of its own.
+const invalidSrsItems = items.filter(item => !consolidatedIds.has(item.data.id) && (
   !item.srs || item.srs.id !== item.data.id || item.srs.type !== item.type ||
-  ['nextReview', 'interval', 'memoryStrength', 'lastReviewDate', 'totalReviews', 'correctStreak', 'stability']
-    .some(field => finite(item.srs?.[field], -1) < 0),
-);
+  SRS_COUNTERS.some(field => finiteNonNegative(item.srs?.[field], -1) < 0)
+));
 
 // Only an image no item row refers to is stale. A deleted item keeps its picture: saving it again brings
 // the row back, and the VPS never generates a replacement image.
@@ -198,21 +195,6 @@ for (const item of items) {
 }
 const itemRowExists = db.prepare('SELECT 1 FROM items WHERE id = ?');
 const staleImageIds = [...imageIds].filter(id => !referencedImageIds.has(id) && !itemRowExists.get(id));
-
-function normalizedSrs(item: any, source = item.srs || {}): any {
-  return {
-    ...source,
-    id: item.data.id,
-    type: item.type,
-    nextReview: finite(source.nextReview),
-    interval: finite(source.interval),
-    memoryStrength: finite(source.memoryStrength),
-    lastReviewDate: finite(source.lastReviewDate),
-    totalReviews: finite(source.totalReviews),
-    correctStreak: finite(source.correctStreak),
-    stability: finite(source.stability),
-  };
-}
 
 function mergedExamplesFor(plan: (typeof duplicatePlans)[number]): string[] {
   const examples: string[] = [];
@@ -260,8 +242,8 @@ const applyRepair = db.transaction(() => {
       ...survivor,
       data: mergedData,
       srs: normalizedSrs(survivor, plan.learning.srs),
-      savedAt: Math.min(...[survivor, ...plan.losers].map(item => finite(item.savedAt, now))),
-      updatedAt: Math.max(now, finite(survivor.updatedAt) + 1),
+      savedAt: Math.min(...[survivor, ...plan.losers].map(item => finiteNonNegative(item.savedAt, now))),
+      updatedAt: nextUpdatedAt(survivor.updatedAt, now),
     };
     const imageDonor = [survivor, ...plan.losers].find(item => imageIds.has(item.data.id));
     if (!imageIds.has(survivor.data.id) && imageDonor) {
@@ -278,7 +260,7 @@ const applyRepair = db.transaction(() => {
           sourceSense: survivor.data.sense,
         },
         srs: normalizedSrs(sentence),
-        updatedAt: Math.max(now, finite(sentence.updatedAt) + 1),
+        updatedAt: nextUpdatedAt(sentence.updatedAt, now),
       }, owner.id);
       if (sentenceResult.conflicted) {
         throw new Error(`Linked sentence changed during duplicate repair: ${sentence.data.id}`);
@@ -288,12 +270,10 @@ const applyRepair = db.transaction(() => {
   }
 
   for (const item of invalidSrsItems) {
-    // Duplicate consolidation above normalizes the survivor and deletes every loser.
-    if (consolidatedIds.has(item.data.id)) continue;
     const result = upsertItem({
       ...item,
       srs: normalizedSrs(item),
-      updatedAt: Math.max(now, finite(item.updatedAt) + 1),
+      updatedAt: nextUpdatedAt(item.updatedAt, now),
     }, owner.id);
     if (result.conflicted) throw new Error(`SRS item changed during repair: ${item.data.id}`);
   }
@@ -323,8 +303,8 @@ process.stdout.write(`${JSON.stringify({
     loserIds: plan.losers.map((item: any) => item.data.id),
     semantic: plan.semantic,
   })),
-  invalidSrsCount: invalidSrsItems.filter(item => !consolidatedIds.has(item.data.id)).length,
-  invalidSrsIds: invalidSrsItems.filter(item => !consolidatedIds.has(item.data.id)).map(item => item.data.id),
+  invalidSrsCount: invalidSrsItems.length,
+  invalidSrsIds: invalidSrsItems.map(item => item.data.id),
   staleImageReferenceCount: staleImageIds.length,
   staleImageReferenceIds: staleImageIds.slice(0, 100),
   ...(apply ? { deletedBlobCount, backup } : {}),
