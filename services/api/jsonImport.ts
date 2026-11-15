@@ -11,7 +11,7 @@ const IMPORT_TIMEOUT_MS = 10 * 60_000;
  * the import dialog reads, or a sentence when the server never answered in time.
  */
 export const importJSON = async (
-  items: any[],
+  items: unknown[],
 ): Promise<{ ok: boolean; imported: number; skipped: number; imagesFetched: number }> => {
   const init: RequestInit = {
     method: 'POST',

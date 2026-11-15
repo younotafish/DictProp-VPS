@@ -1,4 +1,4 @@
-import type { ComparisonResult, SearchResult } from '../../types';
+import type { ComparisonResult, SearchResult, VocabCard } from '../../types';
 import { bytesToBase64 } from '../dataUri';
 import { HttpError, jsonRequest, requestJson } from '../http';
 import { log, logError } from '../logger';
@@ -25,9 +25,34 @@ const toAiError = (error: unknown): unknown => {
   return new HttpError('The AI provider rate-limited this request. Try again shortly.', 429, error.responseBody);
 };
 
-const postAi = async (path: string, body: unknown, label: string, timeoutMs: number): Promise<any> => {
+// The replies as the code reads them. The server sends an analysis normalized by server/src/ai-response.ts, and
+// each word in it, like every field of a scan or transcription reply, is checked again here before use.
+interface AnalysisReply {
+  query: string;
+  translation: string;
+  grammar: string;
+  visualKeyword: string;
+  pronunciation: string;
+  vocabs?: Omit<VocabCard, 'id'>[];
+  originalQuery?: string;
+}
+
+interface ScanReply {
+  words?: unknown;
+  translation?: unknown;
+  sourceLang?: unknown;
+}
+
+interface DetectedWordReply {
+  word?: unknown;
+  context?: unknown;
+  level?: unknown;
+  reason?: unknown;
+}
+
+const postAi = async <T>(path: string, body: unknown, label: string, timeoutMs: number): Promise<T> => {
   try {
-    return await requestJson<any>(path, jsonRequest('POST', body), label, timeoutMs);
+    return await requestJson<T>(path, jsonRequest('POST', body), label, timeoutMs);
   } catch (error) {
     throw toAiError(error);
   }
@@ -39,7 +64,7 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
   }
 
   try {
-    const data = await postAi(
+    const data = await postAi<AnalysisReply>(
       '/api/analyze',
       { text, ...(options?.mode ? { mode: options.mode } : {}) },
       'Analysis',
@@ -47,8 +72,8 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
     );
 
     const vocabs = sortVocabCardsByUsage((data.vocabs || [])
-      .filter((v: any) => v && typeof v.word === 'string' && v.word.trim().length > 0)
-      .map((v: any) => ({ ...v, id: crypto.randomUUID() })));
+      .filter(v => v && typeof v.word === 'string' && v.word.trim().length > 0)
+      .map(v => ({ ...v, id: crypto.randomUUID() })));
 
     return {
       id: crypto.randomUUID(),
@@ -61,8 +86,9 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
       timestamp: Date.now(),
       originalQuery: data.originalQuery,
     };
-  } catch (error: any) {
-    const msg = error.message || '';
+  } catch (error) {
+    // Everything the request and the reading above throw is an Error (a timeout's DOMException is one).
+    const msg = (error as Error).message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
     if (error instanceof HttpError) throw error;
 
@@ -70,10 +96,10 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
     // The server already waits a full window and retries transient upstream errors internally, so a
     // client-side retry would just double an already-long wait for a busy model. Surface it instead —
     // callers must show this so the search no longer fails silently.
-    if (msg.includes('timed out') || msg.includes('504') || error.name === 'AbortError') {
-      throw new Error('The model did not finish this search before the timeout. Please retry it.');
+    if (msg.includes('timed out') || msg.includes('504') || (error as Error).name === 'AbortError') {
+      throw new Error('The model did not finish this search before the timeout. Please retry it.', { cause: error });
     }
-    throw new Error(msg || 'Search failed. Please try again.');
+    throw new Error(msg || 'Search failed. Please try again.', { cause: error });
   }
 };
 
@@ -97,19 +123,23 @@ export const detectVocabulary = async (text: string): Promise<VocabularyScan> =>
     throw new Error('Please provide some text to analyze.');
   }
 
-  let data: any;
+  let data: ScanReply;
   try {
-    data = await postAi('/api/extract-vocabulary', { text }, 'Vocabulary detection', EXTRACT_TIMEOUT_MS);
-  } catch (error: any) {
-    if (error?.name === 'TimeoutError') {
-      throw new Error('The model did not finish scanning this text before the timeout. Try a shorter text.');
+    data = await postAi<ScanReply>('/api/extract-vocabulary', { text }, 'Vocabulary detection', EXTRACT_TIMEOUT_MS);
+  } catch (error) {
+    if ((error as Error)?.name === 'TimeoutError') {
+      throw new Error(
+        'The model did not finish scanning this text before the timeout. Try a shorter text.',
+        { cause: error },
+      );
     }
     throw error;
   }
   return {
     words: (Array.isArray(data.words) ? data.words : [])
-      .filter((w: any) => w && typeof w.word === 'string' && w.word.trim())
-      .map((w: any) => ({
+      .filter((w: DetectedWordReply | null): w is DetectedWordReply & { word: string } =>
+        !!w && typeof w.word === 'string' && w.word.trim() !== '')
+      .map(w => ({
         word: w.word.trim(),
         context: textOrEmpty(w.context),
         level: textOrEmpty(w.level) || 'C1',
@@ -125,17 +155,17 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
 
   const base64 = bytesToBase64(new Uint8Array(await audioBlob.arrayBuffer()));
 
-  let data: any;
+  let data: { text?: unknown };
   try {
-    data = await postAi(
+    data = await postAi<{ text?: unknown }>(
       '/api/transcribe',
       { audio: base64, mimeType: audioBlob.type || 'audio/webm' },
       'Transcription',
       TRANSCRIBE_TIMEOUT_MS,
     );
-  } catch (error: any) {
-    if (error?.message === 'QUOTA_EXCEEDED') throw error;
-    throw new Error('Transcription failed');
+  } catch (error) {
+    if ((error as Error)?.message === 'QUOTA_EXCEEDED') throw error;
+    throw new Error('Transcription failed', { cause: error });
   }
 
   log('[transcribeAudio] Transcription successful:', data.text);
@@ -160,18 +190,19 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
   }
 
   try {
-    const data = await postAi('/api/compare', { words: uniqueWords }, 'Comparison', COMPARE_TIMEOUT_MS);
+    const data = await postAi<unknown>('/api/compare', { words: uniqueWords }, 'Comparison', COMPARE_TIMEOUT_MS);
     return sanitizeComparisonResult(data, uniqueWords);
-  } catch (error: any) {
-    const msg = error.message || '';
+  } catch (error) {
+    // As in analyzeInput, everything thrown above is an Error.
+    const msg = (error as Error).message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
     if (error instanceof HttpError) throw error;
 
     logError('Word comparison failed', error);
     // See analyzeInput: the server owns the timeout + transient-retry, so don't double the wait here.
-    if (msg.includes('timed out') || msg.includes('504') || error.name === 'AbortError') {
-      throw new Error('The model did not finish this comparison before the timeout. Please retry it.');
+    if (msg.includes('timed out') || msg.includes('504') || (error as Error).name === 'AbortError') {
+      throw new Error('The model did not finish this comparison before the timeout. Please retry it.', { cause: error });
     }
-    throw new Error(msg || 'Word comparison failed. Please try again.');
+    throw new Error(msg || 'Word comparison failed. Please try again.', { cause: error });
   }
 };
