@@ -1,6 +1,6 @@
 import { useMemo, useCallback } from 'react';
 import Fuse from 'fuse.js';
-import { StoredItem, SentenceData, isSentenceItem } from '../types';
+import { type StoredItem, isSentenceItem } from '../types';
 import { stripSentenceMarkers } from './sentenceMarkers';
 
 /**
@@ -20,7 +20,7 @@ import { stripSentenceMarkers } from './sentenceMarkers';
 /** Lowercase + strip diacritics so "saute" matches "sauté"/"sautéed" and "cafe" matches "café", and
  *  straighten curly apostrophes, which phone keyboards type, so "don’t" matches "don't". */
 const normalize = (s: string): string =>
-  s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[‘’]/g, "'");
+  s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\u2018\u2019]/g, "'");
 
 const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}]/u.test(ch);
 // Scripts written without spaces between words, where a word can start at any character.
@@ -39,7 +39,7 @@ const queryToken = (text: string): QueryToken => ({
 });
 
 /** 2 if `token` is a whole word of `hay`, 1 if it only starts words ("ice" in "iced"), 0 if it starts none. */
-function wordMatch(hay: string, token: QueryToken): 0 | 1 | 2 {
+function wordStartMatch(hay: string, token: QueryToken): 0 | 1 | 2 {
   let found: 0 | 1 = 0;
   for (let at = hay.indexOf(token.text); at !== -1; at = hay.indexOf(token.text, at + 1)) {
     if (!token.anywhere && isWordChar(hay[at - 1])) continue;
@@ -66,43 +66,60 @@ interface SentenceRecord {
 }
 
 export interface SentenceIndex {
-  records: SentenceRecord[];
-  fuse: Fuse<SentenceRecord>;
+  /** The searchable sentences, built on first use. */
+  readonly records: readonly SentenceRecord[];
+  /** The fuzzy fallback over the records, built on first use. */
+  readonly fuse: Fuse<SentenceRecord>;
 }
 
-/** Build the search records (stripped text + normalized haystack) and their Fuse fallback index. */
-export function buildSentenceIndex(sentenceItems: StoredItem[]): SentenceIndex {
-  const records: SentenceRecord[] = [];
-  for (const item of sentenceItems) {
-    if (!isSentenceItem(item)) continue;
-    const d = item.data as SentenceData;
-    const text = stripSentenceMarkers(d.text || '');
-    records.push({
-      stored: item,
-      text,
-      norm: normalize(`${text}\n${d.sourceWord || ''}`),
-    });
-  }
-  // Fuse searches the normalized haystack so the fuzzy fallback is also accent-insensitive.
-  const fuse = new Fuse(records, {
-    keys: ['norm'],
-    threshold: 0.3,
-    ignoreLocation: true,
-    minMatchCharLength: 2,
-  });
-  return { records, fuse };
-}
+// Fuse searches the normalized haystack so the fuzzy fallback is also accent-insensitive.
+const FUSE_OPTIONS = {
+  keys: ['norm'],
+  threshold: 0.3,
+  ignoreLocation: true,
+  minMatchCharLength: 2,
+};
 
 /**
- * Search the index for a query. Returns matching StoredItems (best first). `limit` caps the count for
- * the dropdown; omit it (Sentences-tab filter) to get every match.
+ * The search records (stripped text + normalized haystack) and their Fuse fallback for these sentences.
+ * Both are built on first use, the records by the first search and Fuse by the first fuzzy one, so an
+ * index nobody searches costs nothing: the sentence list changes on every review or listen while both
+ * search boxes usually sit empty.
  */
-export function searchSentences(query: string, index: SentenceIndex, limit?: number): StoredItem[] {
-  const q = normalize(query.trim()).replace(/\s+/g, ' ');
+export function buildSentenceIndex(sentenceItems: readonly StoredItem[]): SentenceIndex {
+  let records: SentenceRecord[] | undefined;
+  let fuse: Fuse<SentenceRecord> | undefined;
+  const getRecords = () => {
+    if (!records) {
+      records = [];
+      for (const item of sentenceItems) {
+        if (!isSentenceItem(item)) continue;
+        const text = stripSentenceMarkers(item.data.text || '');
+        records.push({ stored: item, text, norm: normalize(`${text}\n${item.data.sourceWord || ''}`) });
+      }
+    }
+    return records;
+  };
+  return {
+    get records() { return getRecords(); },
+    get fuse() { return (fuse ??= new Fuse(getRecords(), FUSE_OPTIONS)); },
+  };
+}
+
+const normalizeQuery = (query: string): string => normalize(query.trim()).replace(/\s+/g, ' ');
+
+const capped = (out: StoredItem[], limit?: number) => (typeof limit === 'number' ? out.slice(0, limit) : out);
+
+/**
+ * The literal tiers (word starts, then substrings). Returns [] for a blank query, the matches (best first,
+ * capped by `limit`) when there are any, and null when nothing matches literally, which is when a caller
+ * falls back to searchSentencesFuzzy.
+ */
+export function searchSentencesLiteral(query: string, index: SentenceIndex, limit?: number): StoredItem[] | null {
+  const q = normalizeQuery(query);
   if (!q) return [];
   const tokens = q.split(' ').map(queryToken);
   const phrase = queryToken(q);
-  const capped = (out: StoredItem[]) => (typeof limit === 'number' ? out.slice(0, limit) : out);
 
   // Tier 1 — word starts: keep sentences where EVERY typed word starts a word of the normalized
   // haystack, in any order (so "break ice" finds "break the ice"). Rank the whole query as a phrase
@@ -112,7 +129,7 @@ export function searchSentences(query: string, index: SentenceIndex, limit?: num
   for (const record of index.records) {
     let wholeWords = 0;
     const matched = tokens.every(token => {
-      const match = wordMatch(record.norm, token);
+      const match = wordStartMatch(record.norm, token);
       if (match === 2) wholeWords++;
       return match > 0;
     });
@@ -124,36 +141,52 @@ export function searchSentences(query: string, index: SentenceIndex, limit?: num
       || b.wholeWords - a.wholeWords
       || (a.phraseAt !== -1 && b.phraseAt !== -1 ? a.phraseAt - b.phraseAt : 0)
       || a.record.text.length - b.record.text.length);
-    return capped(byWord.map(entry => entry.record.stored));
+    return capped(byWord.map(entry => entry.record.stored), limit);
   }
 
   // Tier 2 — literal: keep sentences whose normalized haystack contains EVERY typed word, inside
   // words too, for a fragment like "tion" that starts no word. Still no spelling-neighbor noise.
-  const literal = index.records.filter(r => tokens.every(t => r.norm.includes(t.text)));
+  const literal = index.records
+    .filter(r => tokens.every(t => r.norm.includes(t.text)))
+    .map(record => ({ record, at: record.norm.indexOf(q) }));
   if (literal.length > 0) {
     // Rank: a contiguous whole-query phrase first, then earliest occurrence, then shorter (more
     // focused) sentences.
     literal.sort((a, b) => {
-      const ia = a.norm.indexOf(q);
-      const ib = b.norm.indexOf(q);
-      const pa = ia === -1 ? 1 : 0;
-      const pb = ib === -1 ? 1 : 0;
+      const pa = a.at === -1 ? 1 : 0;
+      const pb = b.at === -1 ? 1 : 0;
       if (pa !== pb) return pa - pb;
-      if (ia !== -1 && ib !== -1 && ia !== ib) return ia - ib;
-      return a.text.length - b.text.length;
+      if (a.at !== -1 && b.at !== -1 && a.at !== b.at) return a.at - b.at;
+      return a.record.text.length - b.record.text.length;
     });
-    return capped(literal.map(r => r.stored));
+    return capped(literal.map(entry => entry.record.stored), limit);
   }
-
-  // Tier 3 — fuzzy fallback: only when NOTHING matched literally (a typo, or words not present as
-  // typed), so fuzzy never dilutes good literal results. Here a broad net is desirable ("did you mean").
-  return capped(index.fuse.search(q).map(r => r.item.stored));
+  return null;
 }
 
 /**
- * Hook: memoize the index over the given sentence items (rebuilt only when they change), and return a
- * stable search function. Pass the SAME memoized `sentenceItems` array (e.g. App's `sentenceItems`
- * memo) so the index isn't rebuilt on every render.
+ * Tier 3 — the fuzzy fallback (a typo, or words not present as typed), for when nothing matched
+ * literally, so fuzzy never dilutes good literal results. Here a broad net is desirable ("did you mean").
+ * It scans every sentence, which is far slower than the literal tiers.
+ */
+export function searchSentencesFuzzy(query: string, index: SentenceIndex, limit?: number): StoredItem[] {
+  const q = normalizeQuery(query);
+  if (!q) return [];
+  return capped(index.fuse.search(q).map(r => r.item.stored), limit);
+}
+
+/**
+ * Search the index for a query. Returns matching StoredItems (best first). `limit` caps the count for
+ * the dropdown; omit it (Sentences-tab filter) to get every match.
+ */
+export function searchSentences(query: string, index: SentenceIndex, limit?: number): StoredItem[] {
+  return searchSentencesLiteral(query, index, limit) ?? searchSentencesFuzzy(query, index, limit);
+}
+
+/**
+ * Hook: memoize the index over the given sentence items (rebuilt only when they change, and built only
+ * when searched), and return a stable search function. Pass the SAME memoized `sentenceItems` array
+ * (e.g. App's `sentenceItems` memo) so the index isn't rebuilt on every render.
  */
 export function useSentenceSearch(
   sentenceItems: StoredItem[]

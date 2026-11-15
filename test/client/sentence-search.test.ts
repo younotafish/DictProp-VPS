@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSentenceIndex, searchSentences } from '../../services/sentenceSearch.ts';
+import { buildSentenceIndex, searchSentences, searchSentencesFuzzy, searchSentencesLiteral } from '../../services/sentenceSearch.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import type { StoredItem } from '../../types.ts';
 
@@ -82,4 +82,37 @@ test('inside-word matches and then fuzzy matches are fallbacks, and the limit ca
   assert.deepEqual(search(items, 'appke').sort(), ['a', 'b', 'c']);
   assert.equal(search(items, 'apple', 2).length, 2);
   assert.deepEqual(search(items, '   '), []);
+});
+
+test('the literal tiers report a miss as null, so a caller can defer the slower fuzzy tier', () => {
+  const index = buildSentenceIndex([
+    sentence('a', 'An apple a day keeps the doctor away.'),
+    sentence('b', 'Apples are sweet.'),
+    sentence('c', 'He ate an apple pie.'),
+  ]);
+  const ids = (items: StoredItem[] | null) => items?.map(item => item.data.id).sort() ?? null;
+  assert.equal(searchSentencesLiteral('appke', index), null);
+  assert.deepEqual(ids(searchSentencesFuzzy('appke', index)), ['a', 'b', 'c']);
+  assert.deepEqual(ids(searchSentencesLiteral('apple', index)), ['a', 'b', 'c']);
+  assert.deepEqual(searchSentencesLiteral('   ', index), []);
+  assert.deepEqual(searchSentencesFuzzy('   ', index), []);
+  assert.equal(searchSentencesFuzzy('appke', index, 1).length, 1);
+});
+
+test('the index reads no sentence until the first non-blank search, and then reads the items it was given', () => {
+  let reads = 0;
+  const counted = (item: StoredItem): StoredItem => {
+    const { data } = item;
+    return Object.defineProperty({ ...item }, 'data', { get: () => { reads++; return data; } }) as StoredItem;
+  };
+  const items = [counted(sentence('ice', 'He tried to break the ice.')), counted(sentence('tea', 'Iced tea, please.'))];
+  const index = buildSentenceIndex(items);
+  assert.deepEqual(searchSentences('  ', index), []);
+  assert.equal(reads, 0);
+  assert.equal(searchSentences('ice', index).length, 2);
+  const firstSearch = reads;
+  assert.ok(firstSearch > 0);
+  searchSentences('tea', index);
+  searchSentences('qqq', index);
+  assert.equal(reads, firstSearch, 'later searches, fuzzy ones included, reuse the records');
 });
