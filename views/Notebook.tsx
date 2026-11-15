@@ -9,7 +9,7 @@ import {
   buildNotebookRows, countSavedSpellings, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats,
   type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
 } from '../services/notebookList';
-import { isTypingTarget } from '../components/keyboardTarget';
+import { isImeKey, isTypingTarget } from '../components/keyboardTarget';
 import { NotebookGroup } from './notebook/NotebookGroup';
 import { SearchResultsCarousel } from './notebook/SearchResultsCarousel';
 import { NotebookHeader } from './notebook/NotebookHeader';
@@ -108,8 +108,10 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     },
   });
 
-  // Handle keyboard Enter to trigger AI search
+  // Handle keyboard Enter to trigger AI search. While an input method is composing (pinyin, say), Enter commits
+  // the composition and Escape dismisses its candidates; both belong to the input method.
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isImeKey(e.nativeEvent)) return;
     if (e.key === 'Enter' && localSearchQuery.trim()) {
       e.preventDefault();
       performAISearch(localSearchQuery);
