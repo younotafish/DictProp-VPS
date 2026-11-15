@@ -27,10 +27,10 @@ interface Props {
   className?: string;
   showSave?: boolean;
   onSearch?: (term: string) => void;
+  /** @deprecated Ignored: nothing renders from it. Still passed by DetailView until it drops the prop. */
   onExpand?: () => void;
+  /** @deprecated Ignored: the card never scrolls or clips itself. Still passed by every caller until they drop it. */
   scrollable?: boolean;
-  showAudio?: boolean;
-  showPronunciation?: boolean;
   showRefresh?: boolean;
   /** Real refresh: re-run the AI for this word (bypassing the saved-card reuse). Falls back to onSearch. */
   onRefresh?: (term: string) => void;
@@ -57,10 +57,6 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
   className = '',
   showSave = true,
   onSearch,
-  onExpand,
-  scrollable = true,
-  showAudio = true,
-  showPronunciation = true,
   showRefresh = true,
   onRefresh,
   onCompare,
@@ -169,7 +165,7 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
 
   return (
     <div
-      className={`bg-white rounded-2xl p-5 pb-8 md:pb-4 shadow-md border border-slate-100 flex flex-col select-text ${scrollable ? 'overflow-y-auto' : 'overflow-hidden'} ${className}`}
+      className={`bg-white rounded-2xl p-5 pb-8 md:pb-4 shadow-md border border-slate-100 flex flex-col select-text ${className}`}
       style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
     >
       {/* Header — title is selectable/copyable; only the action buttons opt out of selection */}
@@ -208,9 +204,8 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               )}
             </div>
           )}
-          {showPronunciation && (
           <div className="flex items-center gap-2 mt-1 text-slate-500">
-            {showAudio && data.ipa && (
+            {data.ipa && (
               <PronunciationBlock
                 text={data.word}
                 ipa={data.ipa}
@@ -226,7 +221,6 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
               className={YOUGLISH_CLASS}
             />
           </div>
-          )}
         </div>
         <div className="flex items-center gap-1 select-none">
             {showRefresh && (onRefresh || onSearch) && (
@@ -239,17 +233,6 @@ export const VocabCardDisplay: React.FC<Props> = memo(({
                  >
                     <RefreshCw size={18} className="text-slate-400 hover:text-indigo-600" />
                  </button>
-            )}
-            {onExpand && (
-                <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onExpand(); }}
-                    title="View Details"
-                    aria-label="View details"
-                    className="w-11 h-11 shrink-0 rounded-full bg-white/80 shadow-sm hover:bg-white flex items-center justify-center"
-                >
-                    <Maximize2 size={20} className="text-slate-400 hover:text-indigo-600" />
-                </button>
             )}
             {showSave && onSave && (
             <button
