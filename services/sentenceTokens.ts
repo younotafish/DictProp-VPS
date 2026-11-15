@@ -116,7 +116,10 @@ export function tokenizeSentence(text: string, { itemWord, findSaved, lookupAnyW
     if (!tokenize) {
       if (!wordLower) return run;
       const escaped = wordLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return run.split(new RegExp(`\\b(${escaped})\\b`, 'gi')).map((s, k): SentenceUnit =>
+      // The item as a whole word: not inside a longer word, with accented letters counted as letters,
+      // which \b doesn't do.
+      const wholeWord = new RegExp(`(?<![\\p{L}\\p{N}_])(${escaped})(?![\\p{L}\\p{N}_])`, 'giu');
+      return run.split(wholeWord).map((s, k): SentenceUnit =>
         s.toLowerCase() === wordLower ? { kind: 'emphasis', key: `${key}-${k}`, text: s } : { kind: 'text', key: `${key}-${k}`, text: s },
       );
     }

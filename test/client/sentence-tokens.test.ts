@@ -18,6 +18,9 @@ const findSavedFrom = (words: string[]) => {
   return (term: string) => items.get(term.toLowerCase().replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')) ?? null;
 };
 
+const unitsOfRun = (pieces: SentencePiece[]): SentenceUnit[] =>
+  pieces.flatMap(piece => (piece.kind === 'run' && typeof piece.content !== 'string' ? piece.content : []));
+
 const unitsOf = (pieces: SentencePiece[]): SentenceUnit[] =>
   pieces.flatMap(piece => (piece.kind === 'run' ? (typeof piece.content === 'string' ? [] : piece.content) : [piece]));
 
@@ -97,6 +100,17 @@ test('an unmarked run emphasizes the studied item wherever it appears as a whole
   // A multi-word item and regex characters in it are matched literally.
   const [phraseRun] = tokenizeSentence('We broke the ice (finally).', { itemWord: 'broke the ice', lookupAnyWord: false });
   assert.deepEqual(((phraseRun as Extract<SentencePiece, { kind: 'run' }>).content as SentenceUnit[]).filter(u => u.kind === 'emphasis').map(u => u.text), ['broke the ice']);
+});
+
+test('in an unmarked run the item matches as a whole word even when it starts or ends with an accented letter', () => {
+  const emphasized = (text: string, itemWord: string) =>
+    unitsOfRun(tokenizeSentence(text, { itemWord, lookupAnyWord: false })).filter(u => u.kind === 'emphasis').map(u => u.text);
+  assert.deepEqual(emphasized('Café time at the café, then touché.', 'café'), ['Café', 'café']);
+  assert.deepEqual(emphasized('Pure élan!', 'élan'), ['élan']);
+  assert.deepEqual(emphasized('Not cafés, nor écafé.', 'café'), []);
+  assert.deepEqual(emphasized('A list, etc. and so on', 'etc.'), ['etc.']);
+  // ASCII words match as they always did.
+  assert.deepEqual(emphasized('I need my coffee. Coffee, not coffees or coffee_cups!', 'coffee'), ['coffee', 'Coffee']);
 });
 
 test('saved lookup takes the longest saved phrase, then single saved words, keeping whitespace as it is', () => {
