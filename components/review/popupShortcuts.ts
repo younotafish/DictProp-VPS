@@ -25,7 +25,7 @@ export type PopupKey = Pick<KeyboardEvent, 'key' | 'shiftKey' | 'metaKey' | 'ctr
 export interface PopupKeyState {
   /** The key is going into a text field, which keeps it. */
   typing: boolean;
-  /** Space and Enter should press the focused control rather than act as shortcuts. */
+  /** The keyboard moved focus to a control, which Space and Enter should press rather than act as shortcuts. */
   onControl: boolean;
   /** How many meanings the popup pages through. */
   pageCount: number;

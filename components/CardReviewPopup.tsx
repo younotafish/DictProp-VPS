@@ -12,7 +12,7 @@ import { formatTimeUntil } from '../services/studySession';
 import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/lazyTts';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';
-import { isTypingTarget } from './keyboardTarget';
+import { isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
 import { resolvePopupShortcut } from './review/popupShortcuts';
@@ -41,10 +41,6 @@ interface CardReviewPopupProps {
   /** Save a not-yet-saved sense into the library. */
   onSaveVocab?: (vocab: VocabCard) => void;
 }
-
-// Space and Enter press whatever control has focus (Close, Got it, a toggle), not the popup's shortcuts.
-const isOnControl = (target: EventTarget | null): boolean =>
-  target instanceof Element && !!target.closest('button, a[href], summary, [role="button"], [role="link"], [role="switch"], [role="checkbox"], [role="tab"]');
 
 /**
  * The full review card for a saved word, shown in an overlay — opened by tapping a saved word in a
@@ -245,7 +241,9 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     const onKey = (e: KeyboardEvent) => {
       const action = resolvePopupShortcut(e, {
         typing: isTypingTarget(e.target),
-        onControl: isOnControl(e.target),
+        // Space and Enter press a control the keyboard moved to (Close, Got it, a toggle). A clicked one keeps
+        // focus too, but then they are the shortcuts, so a click followed by Space never presses it again.
+        onControl: isKeyboardFocusedControl(e.target),
         pageCount: count,
         saved: !!currentSaved,
       });
