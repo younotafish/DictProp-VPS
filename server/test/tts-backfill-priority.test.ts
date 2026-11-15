@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { partitionBackfillTexts, retryBackfillOperation } from '../src/routes/tts.js';
+import { partitionBackfillTexts, retryBackfillOperation } from '../src/tts/backfill.js';
 
 test('TTS backfill keeps product catalogs ahead of the general library', () => {
   const queue = partitionBackfillTexts(

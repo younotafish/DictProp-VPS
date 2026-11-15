@@ -7,12 +7,9 @@ import { Hono } from 'hono';
 
 const DATA_DIR = process.env.DATA_DIR!;
 
-const {
-  cleanCasualRespelling,
-  GENERATE_MAX_TEXT_CHARS,
-  setTtsDependenciesForTest,
-  ttsRoutes,
-} = await import('../src/routes/tts.js');
+const { GENERATE_MAX_TEXT_CHARS, ttsRoutes } = await import('../src/routes/tts.js');
+const { cleanCasualRespelling } = await import('../src/tts/casual.js');
+const { setTtsDependenciesForTest } = await import('../src/tts/clips.js');
 const { GENERATE_MAX_ITEMS } = await import('../src/shared/ai-limits.js');
 const { createPriorityQueue } = await import('../src/local-whisper.js');
 type Dependencies = Parameters<typeof setTtsDependenciesForTest>[0];

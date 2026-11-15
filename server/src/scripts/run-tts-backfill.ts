@@ -1,7 +1,7 @@
 import { open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { env } from '../env.js';
-import { getBackfillStatus, runBackfill } from '../routes/tts.js';
+import { getBackfillStatus, runBackfill } from '../tts/backfill.js';
 
 const lockPath = join(env.DATA_DIR, 'tts-backfill.lock');
 const statusPath = join(env.DATA_DIR, 'tts-backfill-status.json');
