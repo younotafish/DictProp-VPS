@@ -43,8 +43,8 @@ IMAGE_MODEL_QUANTIZE="${IMAGE_MODEL_QUANTIZE:-}"
 IMAGE_STEPS="${IMAGE_STEPS:-8}"
 VOCAB_COMPLETION_BATCH_SIZE="${VOCAB_COMPLETION_BATCH_SIZE:-8}"
 SENTENCE_ANALYSIS_BATCH_SIZE="${SENTENCE_ANALYSIS_BATCH_SIZE:-4}"
-INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-${LOCAL_VOCAB_BATCH_SIZE:-100}}"
-INCREMENTAL_VOCAB_LOOKBACK_HOURS="${INCREMENTAL_VOCAB_LOOKBACK_HOURS:-${LOCAL_VOCAB_LOOKBACK_HOURS:-168}}"
+INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-100}"
+INCREMENTAL_VOCAB_LOOKBACK_HOURS="${INCREMENTAL_VOCAB_LOOKBACK_HOURS:-168}"
 INCREMENTAL_VOCAB_PROVIDER_FILTER="${INCREMENTAL_VOCAB_PROVIDER_FILTER:-}"
 # Every wait below holds the cycle lock, so each one ends. A stage that runs out of time keeps the work
 # it finished for the next cycle. The publishers' own limits suit a supervised bulk run; a cycle is
@@ -398,11 +398,7 @@ stage_example_sentences() {
   # The unfiltered source carries each sentence's first identity to the next cycle. source.json, which the
   # verifier and the publishers read, leaves out sentences waiting out a failure backoff.
   PREVIOUS_SOURCE=""
-  if [ -s "$UNFILTERED_SOURCE" ]; then
-    PREVIOUS_SOURCE="$UNFILTERED_SOURCE"
-  elif [ -s "$SOURCE" ]; then
-    PREVIOUS_SOURCE="$SOURCE"
-  fi
+  if [ -s "$UNFILTERED_SOURCE" ]; then PREVIOUS_SOURCE="$UNFILTERED_SOURCE"; fi
   "$NODE_BIN" scripts/offline/prepare-incremental-example-source.mjs \
     "$CURRENT_POOL" "$BASE_SOURCE" "$SOURCE.tmp" ${PREVIOUS_SOURCE:+"$PREVIOUS_SOURCE"}
   mv "$SOURCE.tmp" "$UNFILTERED_SOURCE"
@@ -532,11 +528,21 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# 75 (EX_TEMPFAIL) marks a refusal in the LaunchAgent log; the next cycle checks again.
-if ! require_vetted_checkout; then
-  log "refusing to run code that differs from vps/main; exiting 75"
-  exit 75
-fi
+# 75 (EX_TEMPFAIL) marks a cycle that stopped before starting in the LaunchAgent log; the next cycle checks
+# again, and after a fast-forward that changed this code, it runs the new code.
+VETTED_STATUS=0
+require_vetted_checkout || VETTED_STATUS=$?
+case "$VETTED_STATUS" in
+  0) ;;
+  2)
+    log "the fast-forward changed code the cycle runs; exiting 75 so the next cycle runs the new code"
+    exit 75
+    ;;
+  *)
+    log "refusing to run code that differs from vps/main; exiting 75"
+    exit 75
+    ;;
+esac
 # The publishers wait for this commit's deployment, and HEAD is vps/main now that the guard passed.
 REQUIRED_DEPLOY_SHA="${REQUIRED_DEPLOY_SHA:-$(git rev-parse HEAD)}"
 

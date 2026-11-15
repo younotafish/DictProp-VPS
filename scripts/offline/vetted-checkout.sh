@@ -14,9 +14,9 @@ VETTED_PATHS=(
 
 # Run from the repository root, as the cycle is. Logs why and returns 1 when VETTED_PATHS has uncommitted
 # changes or HEAD is not vps/main. A clean main that is behind vps/main is fast-forwarded to it first.
-# This run started from the old code, so it still returns 1 when the move changed code the cycle runs,
-# and the next cycle runs the new code. A failed fetch is logged and the check uses the vps/main fetched
-# last. Needs the caller's log function and deadline.sh's run_bounded.
+# This run started from the old code, so it returns 2 when the move changed code the cycle runs: the
+# caller stops, and the next cycle runs the new code. A failed fetch is logged and the check uses the
+# vps/main fetched last. Needs the caller's log function and deadline.sh's run_bounded.
 require_vetted_checkout() {
   local changed head upstream branch output moved
   if ! changed="$(GIT_OPTIONAL_LOCKS=0 git status --porcelain --untracked-files=no -- "${VETTED_PATHS[@]}")"; then
@@ -59,7 +59,6 @@ require_vetted_checkout() {
   moved="$(git rev-parse --verify --quiet 'HEAD^{commit}')"
   log "fast-forwarded main from ${head:0:12} to vps/main (${moved:0:12})"
   if ! git diff --quiet "$head" "$moved" -- "${VETTED_PATHS[@]}"; then
-    log "the fast-forward changed code the cycle runs; the next cycle runs the updated code"
-    return 1
+    return 2
   fi
 }

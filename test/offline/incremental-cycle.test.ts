@@ -166,6 +166,8 @@ interface Scenario {
   model?: number[];
   dispatch?: Record<string, number>;
   busy?: 'image' | 'text';
+  // Files an earlier cycle left in the cycle root.
+  seed?: string[];
 }
 
 const writeFile = (path: string, value: unknown) => {
@@ -232,6 +234,7 @@ async function runCycle(fixture: Fixture, name: string, scenario: Scenario) {
   const trace = join(scenarioRoot, 'trace.log');
   writeJson(scenarioFile, scenario);
   writeFileSync(trace, '');
+  for (const path of scenario.seed ?? []) writeFile(join(scenarioRoot, 'cycle', path), { earlierCycle: true });
   const child = spawn('/bin/bash', [
     'scripts/offline/run-incremental-example-enrichment.sh',
     join(scenarioRoot, 'cycle'),
@@ -299,6 +302,9 @@ const SCENARIOS: Record<string, Scenario> = {
   'model-down': { vocab: 1, vocabStatus: 124, model: [0, 1] },
   'text-busy': { busy: 'text' },
   'image-busy': { examples: [1], exampleMissing: [0], exampleImages: 1, itemImages: 1, busy: 'image' },
+  previous: {
+    seed: ['unfiltered-source.json', 'source.json', 'saved-sentences/source.json', 'saved-sentences/analysis-cache.json'],
+  },
 };
 
 let fixture: Fixture;
@@ -532,6 +538,25 @@ test('the example stage ends the cycle when every sentence is backing off or rec
     'stages that did not complete this cycle: example-sentence reconciliation',
   ]);
   assert.deepEqual(incomplete.stderr, ['Incremental sentence analysis reconciliation is incomplete']);
+});
+
+test('a cycle builds its sources on what the previous cycle left', async () => {
+  const result = await cycle('previous');
+  assert.equal(result.status, 0, result.stderr.join('\n'));
+  // The unfiltered example source carries each sentence's first identity over; the filtered source.json is
+  // only this cycle's work list, so it is never passed on.
+  assert.deepEqual(result.trace, [
+    ...START,
+    vocabSource,
+    savedSource(`${C}/saved-sentences/source.json`),
+    savedFilter,
+    itemImagePrep(`${C}/saved-sentences/analysis-cache.json`, '-'),
+    itemImageFilter,
+    pool('-'),
+    `${exampleSource} ${C}/unfiltered-source.json`,
+    exampleFilter,
+    summary,
+  ]);
 });
 
 test('a model that stops answering after a failed stage ends the cycle there', async () => {

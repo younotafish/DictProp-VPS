@@ -136,14 +136,12 @@ test('a clean main behind vps/main is fast-forwarded, and passes only when no co
   assert.equal(git(work, 'rev-parse', 'HEAD'), docs);
   assert.equal(readFileSync(join(work, 'notes.md'), 'utf8'), 'newer notes\n');
 
-  // A push that changes a script: main moves, but this run started from the old code, so it is refused.
+  // A push that changes a script: main moves, but this run started from the old code, so it must stop,
+  // which status 2 tells the cycle apart from a refusal.
   const code = pushElsewhere(root, remote, 'scripts/offline/stage.sh', 'echo newer\n');
   const refused = guard(work);
-  assert.equal(refused.status, 1);
-  assert.equal(refused.log, [
-    `fast-forwarded main from ${docs.slice(0, 12)} to vps/main (${code.slice(0, 12)})`,
-    'the fast-forward changed code the cycle runs; the next cycle runs the updated code',
-  ].join('\n'));
+  assert.equal(refused.status, 2);
+  assert.equal(refused.log, `fast-forwarded main from ${docs.slice(0, 12)} to vps/main (${code.slice(0, 12)})`);
   assert.equal(git(work, 'rev-parse', 'HEAD'), code);
   assert.equal(readFileSync(join(work, 'scripts/offline/stage.sh'), 'utf8'), 'echo newer\n');
 
@@ -246,8 +244,9 @@ test('the cycle moves main up to a newer vps/main, and exits 75 when that change
   const refused = runCycle(root, work);
   assert.equal(refused.status, 75, refused.stderr);
   assert.match(refused.stdout, /fast-forwarded main from [0-9a-f]{12} to vps\/main \([0-9a-f]{12}\)/);
-  assert.match(refused.stdout, /the fast-forward changed code the cycle runs; the next cycle runs the updated code/);
-  assert.match(refused.stdout, /refusing to run code that differs from vps\/main; exiting 75/);
+  assert.match(refused.stdout, /the fast-forward changed code the cycle runs; exiting 75 so the next cycle runs the new code/);
+  // The checkout is vetted now, so the cycle does not call it a refusal.
+  assert.doesNotMatch(refused.stdout, /refusing to run/);
   assert.equal(git(work, 'rev-parse', 'HEAD'), code);
   assert.equal(existsSync(join(root, 'cycle', '.cycle.lock')), false);
 
