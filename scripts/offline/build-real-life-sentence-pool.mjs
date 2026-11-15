@@ -23,15 +23,15 @@ const selectedCollectionIds = new Set(
 const sentences = [];
 const seenLookupHashes = new Set();
 for (const collection of catalog.collections) {
-  if (selectedCollectionIds.size > 0 && !selectedCollectionIds.has(collection.id)) continue;
   if (!collection?.id || !collection.title || !Array.isArray(collection.sections)) {
     throw new Error('Real Life catalog contains an invalid collection');
   }
+  if (selectedCollectionIds.size > 0 && !selectedCollectionIds.has(collection.id)) continue;
   for (const section of collection.sections) {
-    if (sectionArg && section.id !== sectionArg) continue;
     if (!section?.id || !section.title || !Array.isArray(section.sentences)) {
       throw new Error(`${collection.id} contains an invalid section`);
     }
+    if (sectionArg && section.id !== sectionArg) continue;
     section.sentences.forEach((entry, index) => {
       const text = String(entry?.text || '').trim();
       const focus = String(entry?.focus || '').trim();

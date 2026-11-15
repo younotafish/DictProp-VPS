@@ -20,10 +20,10 @@ const selectedEssayIds = new Set(
 
 const byLookupHash = new Map();
 for (const essay of catalog.essays) {
-  if (selectedEssayIds.size > 0 && !selectedEssayIds.has(essay.id)) continue;
   if (!essay?.id || !essay.title || !essay.author || !Array.isArray(essay.paragraphs)) {
     throw new Error('Essay catalog contains an invalid essay');
   }
+  if (selectedEssayIds.size > 0 && !selectedEssayIds.has(essay.id)) continue;
   const orderedEssaySentences = essay.paragraphs.flatMap(paragraph =>
     paragraph.kind === 'body' && Array.isArray(paragraph.sentences) ? paragraph.sentences : []);
   const contextBySentenceId = new Map(orderedEssaySentences.map((sentence, index) => [
