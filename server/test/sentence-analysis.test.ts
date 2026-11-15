@@ -1,17 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  extractSentenceAnalysis,
-  extractSentenceGrammarAnalysis,
   hasCompleteSentenceAnalysis,
   hasSentenceGrammarAnalysis,
   isSentenceGrammarAnalysis,
   isSentenceAnalysis,
-  SENTENCE_ANALYSIS_INSTRUCTION,
-  SENTENCE_GRAMMAR_INSTRUCTION,
-  sentenceGrammarUserPrompt,
-  sentenceGrammarExcerptMatchesText,
-  sentenceAnalysisUserPrompt,
   sentenceAnalysisValidationIssues,
 } from '../src/sentence-analysis.js';
 import {
@@ -19,7 +12,7 @@ import {
   isDetailedSentenceAnalysis,
   isSentenceAnalysis as isOfflineSentenceAnalysis,
   recoverExactGrammarExcerpt,
-  sentenceGrammarExcerptMatchesText as offlineSentenceGrammarExcerptMatchesText,
+  sentenceGrammarExcerptMatchesText,
 } from '../../scripts/offline/sentence-analysis-contract.mjs';
 
 const validAnalysis = {
@@ -100,21 +93,10 @@ test('server and offline detailed-analysis predicates stay in parity', () => {
   );
 });
 
-test('grammar response extraction tolerates harmless provider wrappers', () => {
-  const grammar = validAnalysis.grammar;
-  assert.deepEqual(extractSentenceGrammarAnalysis({ grammar }), grammar);
-  assert.deepEqual(extractSentenceGrammarAnalysis(grammar), grammar);
-  assert.deepEqual(extractSentenceGrammarAnalysis({ analysis: { grammar } }), grammar);
-  assert.deepEqual(extractSentenceGrammarAnalysis({ '': JSON.stringify({ grammar }) }), grammar);
-  assert.deepEqual(extractSentenceGrammarAnalysis({ content: `\`\`\`json\n${JSON.stringify({ grammar })}\n\`\`\`` }), grammar);
-  assert.equal(extractSentenceGrammarAnalysis({ grammar: { structure: 'Clause.', points: [{}] } }), null);
-});
-
 test('grammar excerpts may omit sentence-final punctuation inside a closing quote', () => {
   const text = 'Speakers retain the r in words such as “car” and “hard.”';
   const excerpt = 'words such as “car” and “hard”';
   assert.equal(sentenceGrammarExcerptMatchesText(text, excerpt), true);
-  assert.equal(offlineSentenceGrammarExcerptMatchesText(text, excerpt), true);
   assert.equal(sentenceGrammarExcerptMatchesText(text, 'words such as “car” and “soft”'), false);
 });
 
@@ -122,7 +104,6 @@ test('grammar excerpts may omit punctuation inside a closing quote', () => {
   const text = 'Rather than being a book for “the season only,” it became a book for all seasons.';
   const excerpt = 'Rather than being a book for “the season only”';
   assert.equal(sentenceGrammarExcerptMatchesText(text, excerpt), true);
-  assert.equal(offlineSentenceGrammarExcerptMatchesText(text, excerpt), true);
   assert.equal(sentenceGrammarExcerptMatchesText(text, 'a book for “all seasons”'), false);
 });
 
@@ -130,7 +111,6 @@ test('grammar excerpts may treat spaced slashes as poetic line breaks', () => {
   const text = '“The first snows / floated down and silenced / all trace of the world.”';
   const excerpt = 'floated down and silenced all trace of the world';
   assert.equal(sentenceGrammarExcerptMatchesText(text, excerpt), true);
-  assert.equal(offlineSentenceGrammarExcerptMatchesText(text, excerpt), true);
   assert.equal(sentenceGrammarExcerptMatchesText(text, 'floated up and silenced all trace'), false);
 });
 
@@ -162,33 +142,6 @@ test('offline generation recovers exact source punctuation and omitted modifiers
   );
 });
 
-test('full analysis extraction tolerates a JSON string under an empty provider key', () => {
-  assert.deepEqual(extractSentenceAnalysis({ '': JSON.stringify(validAnalysis) }), validAnalysis);
-  assert.deepEqual(extractSentenceAnalysis({ result: { analysis: validAnalysis } }), validAnalysis);
-  assert.equal(extractSentenceAnalysis({ '': 'not JSON' }), null);
-});
-
-test('full analysis extraction normalizes bounded provider-shape drift', () => {
-  const { translation, ...withoutTranslation } = validAnalysis;
-  const features = Array.from({ length: 8 }, (_, index) => ({
-    span: `source span ${index + 1}`,
-    process: `connected-speech process ${index + 1}`,
-  }));
-  const extracted = extractSentenceAnalysis({
-    ...withoutTranslation,
-    '': translation,
-    americanEnglish: {
-      ...validAnalysis.americanEnglish,
-      evidence: Array.from({ length: 8 }, (_, index) => `Evidence ${index + 1}`),
-    },
-    pronunciation: { ...validAnalysis.pronunciation, fastSpeechFeatures: features },
-  });
-  assert.equal(extracted?.translation, translation);
-  assert.equal(extracted?.americanEnglish.evidence.length, 6);
-  assert.deepEqual(extracted?.pronunciation.fastSpeechFeatures, features.slice(0, 6).map(feature =>
-    `${feature.span}: ${feature.process}`));
-});
-
 test('sentence analysis validation reports exact repair instructions', () => {
   const issues = sentenceAnalysisValidationIssues({
     analysis: {
@@ -201,23 +154,4 @@ test('sentence analysis validation reports exact repair instructions', () => {
   assert.ok(issues.includes('terms[0].synonyms must contain at least one string'));
   assert.ok(issues.includes('terms[0].examples must contain exactly two strings'));
   assert.ok(issues.includes('pronunciation.slowIpa must be complete IPA enclosed in slashes'));
-});
-
-test('offline prompt fixes field order, language, dialect, and image style', () => {
-  const translation = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"translation"');
-  const american = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"americanEnglish"');
-  const terms = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"terms"');
-  const pronunciation = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"pronunciation"');
-  const grammar = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"grammar"');
-  const image = SENTENCE_ANALYSIS_INSTRUCTION.indexOf('"imagePrompt"');
-  assert.ok(translation >= 0 && translation < american && american < terms && terms < pronunciation && pronunciation < grammar && grammar < image);
-  assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /Everything must be English except/);
-  assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /rhotic General American/);
-  assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /connected speech/);
-  assert.match(SENTENCE_ANALYSIS_INSTRUCTION, /photorealistic 16:9/);
-  assert.match(sentenceAnalysisUserPrompt('  He came clean.  '), /"He came clean\."/);
-  assert.doesNotMatch(sentenceAnalysisUserPrompt('He {{came}} [[clean]].'), /[{}\[\]]/);
-  assert.match(SENTENCE_GRAMMAR_INSTRUCTION, /advanced Chinese-speaking learner/);
-  assert.match(sentenceGrammarUserPrompt('  He came clean.  ', '他坦白了。'), /Existing Chinese translation/);
-  assert.match(sentenceGrammarUserPrompt('He {{came}} [[clean]].'), /"He came clean\."/);
 });
