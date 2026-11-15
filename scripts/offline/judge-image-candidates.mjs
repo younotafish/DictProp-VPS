@@ -2,7 +2,7 @@
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { copyFileAtomic, writeJsonAtomic } from './atomic-file.mjs';
+import { copyFileAtomic, fileReady, writeJsonAtomic } from './atomic-file.mjs';
 import { candidateFile, judgmentRecords, readVerdicts } from './image-review.mjs';
 import {
   batchFiles,
@@ -68,7 +68,8 @@ const schema = {
 const JUDGMENT_INTRODUCTION = 'Act as a rigorous but practical visual editor for an American English learning app. Each attached image corresponds, in attachment order, to the itemIndex record below:';
 const JUDGMENT_POLICY = 'Judge each image independently against learningTarget.text, learningTarget.sense, and learningTarget.definition. The brief describes one possible composition; it is guidance, not a shot-list contract. For a concrete, directly photographable target, accept when a learner can infer the core contextual meaning at a glance, the image does not contradict that meaning, and the scene is realistic and visually coherent. For an abstract, rhetorical, figurative, relational, or logical target that cannot be uniquely photographed, accept a coherent, memorable concrete scenario or visual metaphor that reinforces the intended meaning when shown beside the sentence; do not require the image alone to name the formal concept or encode every logical step without its accompanying sentence. Semantic usefulness outweighs literal compliance with incidental staging. Do not reject solely because of an omitted secondary action, exact person count, camera angle, accessory, facial micro-expression, or precise body position when the central teaching meaning remains clear. Reject semantic mismatches, genuinely ambiguous generic stock imagery, misleading literal depictions of figurative language, materially broken anatomy or objects, empty decorative symbolism, animation, illustration, or distracting visible text/logos. A minor cosmetic flaw is not enough to reject an otherwise accurate teaching image. Copy every itemIndex exactly and return only schema-valid JSON.';
 
-const pending = payload.targets.filter(target => !existsSync(join(imageDir, target.filename)));
+// Like every other stage, an empty file is no accepted image.
+const pending = payload.targets.filter(target => !fileReady(join(imageDir, target.filename)));
 const batches = [];
 for (let index = 0; index < pending.length; index += 8) batches.push(pending.slice(index, index + 8));
 
