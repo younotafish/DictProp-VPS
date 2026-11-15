@@ -57,9 +57,12 @@ export interface ImageToStore {
 
 const toBlob = (image: Blob | string): Blob => typeof image === 'string' ? dataUriToBlob(image) : image;
 
-/** Writes pictures to IDB in one transaction. A failed write only costs the offline copy, so it's logged. */
-const putImages = async (images: Array<{ id: string; blob: Blob; version?: string }>): Promise<void> => {
-  if (!(await checkIndexedDBAvailability())) return;
+/**
+ * Writes pictures to IDB in one transaction. Resolves false when they weren't stored: IndexedDB doesn't work here, or
+ * the write failed (logged). What that costs is the caller's to judge.
+ */
+const putImages = async (images: Array<{ id: string; blob: Blob; version?: string }>): Promise<boolean> => {
+  if (!(await checkIndexedDBAvailability())) return false;
   try {
     await withDB(db => {
       const tx = db.transaction(IMAGES_STORE, 'readwrite');
@@ -69,8 +72,10 @@ const putImages = async (images: Array<{ id: string; blob: Blob; version?: strin
       }
       return transactionDone(tx);
     });
+    return true;
   } catch (e) {
     warn("Failed to save images to IDB", e);
+    return false;
   }
 };
 
@@ -87,16 +92,16 @@ export const saveImage = (itemId: string, image: Blob | string, version?: string
 };
 
 /**
- * Stores pictures in IDB. `remember` also puts them in the memory cache; bulk downloads skip it so they
- * don't push out the pictures of the cards just viewed.
+ * Stores pictures in IDB, resolving whether they were stored. `remember` also puts them in the memory cache, even
+ * when IDB fails; bulk downloads skip it so they don't push out the pictures of the cards just viewed.
  */
-export const saveImagesBatch = async (images: ImageToStore[], { remember = true } = {}): Promise<void> => {
-  if (images.length === 0) return;
+export const saveImagesBatch = async (images: ImageToStore[], { remember = true } = {}): Promise<boolean> => {
+  if (images.length === 0) return true;
   const blobs = images.map(({ id, image, version }) => ({ id, blob: toBlob(image), version }));
   if (remember) {
     for (const { id, blob, version } of blobs) rememberImage(id, URL.createObjectURL(blob), version);
   }
-  await putImages(blobs);
+  return putImages(blobs);
 };
 
 // One IDB read per picture at a time. Two concurrent reads would each mint a blob URL, and caching the
@@ -270,13 +275,16 @@ export const getAllStoredImageIds = async (): Promise<Set<string>> => {
   return found;
 };
 
-/** Batch-load stored pictures (files, or data URIs from older records) for the given ids; missing ids are omitted. */
-export const loadImagesByIds = async (ids: string[]): Promise<Map<string, Blob | string>> => {
+/**
+ * The stored pictures (files, or data URIs from older records) for the given ids, missing ids omitted. `complete` is
+ * false when IDB couldn't be read, so a missing id may still be stored.
+ */
+export const readStoredImages = async (ids: string[]): Promise<{ images: Map<string, Blob | string>; complete: boolean }> => {
   const result = new Map<string, Blob | string>();
-  if (ids.length === 0) return result;
+  if (ids.length === 0) return { images: result, complete: true };
 
   const idbAvailable = await checkIndexedDBAvailability();
-  if (!idbAvailable) return result;
+  if (!idbAvailable) return { images: result, complete: false };
 
   try {
     await withDB(db => {
@@ -293,6 +301,11 @@ export const loadImagesByIds = async (ids: string[]): Promise<Map<string, Blob |
     });
   } catch (e) {
     warn("Failed to load images by ids", e);
+    return { images: result, complete: false };
   }
-  return result;
+  return { images: result, complete: true };
 };
+
+/** Batch-load stored pictures (files, or data URIs from older records) for the given ids; missing ids are omitted. */
+export const loadImagesByIds = async (ids: string[]): Promise<Map<string, Blob | string>> =>
+  (await readStoredImages(ids)).images;

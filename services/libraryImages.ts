@@ -1,7 +1,9 @@
 import { isPhraseItem, isVocabItem, type SearchResult, type StoredItem, type VocabCard } from '../types';
 import { loadItemImage } from './api/images';
-import { log } from './logger';
+import type { Offload } from './imagePipeline';
 import { saveImage } from './imageStore';
+import { readPendingImageUploads } from './imageUploadQueue';
+import { log, warn } from './logger';
 
 // Pictures stay out of the library in memory: each card carries a marker, and the picture lives in
 // IndexedDB and on the server.
@@ -12,9 +14,29 @@ export interface InlineImage {
   base64: string;
 }
 
-export const offloadImages = async (images: InlineImage[]): Promise<void> => {
+/**
+ * Stores pictures on this device and starts their upload (imagePipeline.offloadAndUpload, loaded on first use).
+ * With a user id, pictures stored here whose upload fails are retried by retryPendingImageUploads.
+ */
+export const offloadImages = async (images: InlineImage[], userId?: string): Promise<Offload> => {
   const { offloadAndUpload } = await import('./imagePipeline');
-  await offloadAndUpload(images);
+  return offloadAndUpload(images, userId);
+};
+
+let pendingUploadRun: Promise<void> | null = null;
+
+/**
+ * Uploads the pictures whose upload failed after offloadImages stored them, one run at a time. Costs a storage read
+ * when nothing waits: the upload code loads only when something does.
+ */
+export const retryPendingImageUploads = (userId: string): Promise<void> => {
+  if (pendingUploadRun) return pendingUploadRun;
+  if (readPendingImageUploads(userId).length === 0) return Promise.resolve();
+  pendingUploadRun = import('./imagePipeline')
+    .then(({ uploadPendingImages }) => uploadPendingImages(userId))
+    .catch(error => warn('Pending image uploads wait for the next try:', error))
+    .finally(() => { pendingUploadRun = null; });
+  return pendingUploadRun;
 };
 
 // A picture already downloading is shared, so a card and the warm-up around it fetch it once, and a
@@ -123,8 +145,10 @@ export function extractInlineImages(
  * Versioned server markers stay in state so OfflineImage can invalidate an older IDB entry.
  * Replaces base64 with a tiny marker so layout checks (imageUrl truthy) still work.
  * This keeps ~143MB of image data out of React state.
+ * Waits for the device's copy, never the network. Throws when the pictures couldn't be stored, since markers would
+ * then point at nothing here: the caller keeps the items inline and the next launch tries again.
  */
-export async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
+export async function stripAndStoreImages(items: StoredItem[], userId?: string): Promise<StoredItem[]> {
   const imagesToSave: InlineImage[] = [];
 
   const stripped = items.map(item => {
@@ -135,7 +159,8 @@ export async function stripAndStoreImages(items: StoredItem[]): Promise<StoredIt
 
   if (imagesToSave.length > 0) {
     log(`🖼️ Offloading ${imagesToSave.length} images to IDB + server`);
-    await offloadImages(imagesToSave);
+    const { stored } = await offloadImages(imagesToSave, userId);
+    if (!stored) throw new Error('The pictures could not be stored on this device');
   }
 
   return stripped;

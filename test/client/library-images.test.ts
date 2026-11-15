@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
+import { IDBDatabase as FakeIDBDatabase, IDBKeyRange, indexedDB } from 'fake-indexeddb';
 import type { SearchResult, StoredItem, VocabCard } from '../../types.ts';
+import { MemoryStorage } from '../support/memory-storage.ts';
 
-Object.assign(globalThis, { indexedDB, IDBKeyRange });
+Object.assign(globalThis, { indexedDB, IDBKeyRange, localStorage: new MemoryStorage() });
 
 // The server, as far as pictures go: downloads answer per id, and every upload succeeds, so the upload retry
 // never waits. In Node createImageBitmap is missing, so the optimizer hands each picture back as it came.
@@ -21,9 +22,10 @@ globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
 
 const {
   IMAGE_IDB_MARKER, extractInlineImages, getServerImageVersion, isImageMarker, isLazyImageMarker, lazyLoadImage,
-  picturesOf, restoreInlineImages, stripAndStoreImages,
+  picturesOf, restoreInlineImages, retryPendingImageUploads, stripAndStoreImages,
 } = await import('../../services/libraryImages.ts');
 const { getStoredImageIds, peekImage } = await import('../../services/imageStore.ts');
+const { addPendingImageUploads, readPendingImageUploads } = await import('../../services/imageUploadQueue.ts');
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 const MARKER = 'server:has_image:aaaaaaaaaaaaaaaaaaaa';
@@ -162,4 +164,31 @@ test('a failed offload puts back only the pictures it was given, on cards still 
   // Nothing to restore keeps the item, so replacing it changes nothing in the library.
   const nothingToRestore = phraseItem('q', IMAGE_IDB_MARKER, [card('c', IMAGE_IDB_MARKER)]);
   assert.equal(restoreInlineImages(nothingToRestore, images), nothingToRestore);
+});
+
+test('launch keeps the pictures inline when this device cannot store them, so no marker points at nothing', async () => {
+  const prototype = FakeIDBDatabase.prototype as unknown as IDBDatabase;
+  const original = prototype.transaction;
+  prototype.transaction = function (this: IDBDatabase, stores: string | string[], mode?: IDBTransactionMode, ...rest: unknown[]) {
+    if ([stores].flat().includes('images') && mode === 'readwrite') throw new DOMException('Full', 'QuotaExceededError');
+    return (original as (...args: unknown[]) => IDBTransaction).call(this, stores, mode, ...rest);
+  } as IDBDatabase['transaction'];
+  try {
+    await assert.rejects(stripAndStoreImages([vocabItem('unstorable', PNG)], 'user'), /could not be stored on this device/);
+  } finally {
+    prototype.transaction = original;
+  }
+  assert.deepEqual(readPendingImageUploads('user'), [], 'a picture not stored here is never listed for a retry');
+});
+
+test('listed uploads are retried one run at a time, and nothing loads when nothing waits', async () => {
+  assert.equal(await retryPendingImageUploads('nobody'), undefined);
+
+  addPendingImageUploads('user', ['launch-v']);
+  const before = requests.filter(request => request === 'PUT /api/items/launch-v/image').length;
+  const run = retryPendingImageUploads('user');
+  assert.equal(retryPendingImageUploads('user'), run, 'a second call joins the run under way');
+  await run;
+  assert.equal(requests.filter(request => request === 'PUT /api/items/launch-v/image').length, before + 1);
+  assert.deepEqual(readPendingImageUploads('user'), []);
 });
