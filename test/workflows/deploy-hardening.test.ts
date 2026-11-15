@@ -18,12 +18,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { writeExecutable } from '../support/fs.ts';
-import { readRepoFile, repoPath } from '../support/paths.ts';
+import { readRepoFile } from '../support/paths.ts';
+import { block, entry, loadWorkflows, readWorkflow as workflow, settings, steps } from './support/workflow.ts';
 
-const workflow = (name: string): string => readRepoFile(`.github/workflows/${name}`);
-const workflows = readdirSync(repoPath('.github/workflows'))
-  .filter(name => name.endsWith('.yml'))
-  .map(name => ({ name, text: workflow(name) }));
+const workflows = loadWorkflows();
 /** The workflows that act on production and print to a public run log. */
 const productionWorkflows = [
   'deploy.yml',
@@ -37,37 +35,6 @@ const hasPython = spawnSync('python3', ['--version']).status === 0;
 /** ssh runs a remote script in root's login shell on the VPS, which is zsh, so these tests run it there too.
  *  -f leaves out this machine's zsh startup files. A step's run block runs in bash on the runner. */
 const REMOTE_SHELL = ['zsh', '-f'] as const;
-
-/** Splits a workflow into steps: each starts at a "- name:" or "- uses:" list item and runs to the next one. */
-const steps = (text: string): string[] => text.split(/\n(?=\s+- (?:name|uses):)/);
-
-/** The lines under `key:` at the given indentation, up to the next line indented no deeper. */
-function entry(text: string, key: string, indent: number): string {
-  const lines = text.split('\n');
-  const head = `${' '.repeat(indent)}${key}:`;
-  const start = lines.findIndex(line => line === head || line.startsWith(`${head} `));
-  assert.notEqual(start, -1, `${key}: at indentation ${indent}`);
-  const end = lines.findIndex((line, index) => index > start && line.trim() !== '' && !line.startsWith(' '.repeat(indent + 1)));
-  return lines.slice(start + 1, end === -1 ? undefined : end).join('\n');
-}
-
-/** A mapping's settings, without comments. */
-const settings = (body: string): string[] => body.split('\n')
-  .map(line => line.trim())
-  .filter(line => line !== '' && !line.startsWith('#'));
-
-/** The literal block under `key: |`, dedented, with the given workflow expressions filled in. */
-function block(text: string, key: string, values: Record<string, string> = {}): string {
-  const head = new RegExp(`^( *)${key}: \\|\\n`, 'm').exec(text);
-  assert.ok(head, `${key}: | block`);
-  const lines = text.slice(head.index + head[0].length).split('\n');
-  const indent = lines[0].length - lines[0].trimStart().length;
-  const end = lines.findIndex(line => line.trim() !== '' && !line.startsWith(' '.repeat(indent)));
-  return lines.slice(0, end === -1 ? undefined : end)
-    .map(line => line.slice(indent))
-    .join('\n')
-    .replace(/\$\{\{\s*([\w.]+)\s*\}\}/g, (expression, name: string) => values[name] ?? expression);
-}
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'deploy-hardening-'));
 

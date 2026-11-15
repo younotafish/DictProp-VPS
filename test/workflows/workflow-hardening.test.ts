@@ -1,15 +1,8 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { loadWorkflows, steps } from './support/workflow.ts';
 
-const workflowsDir = fileURLToPath(new URL('../../.github/workflows/', import.meta.url));
-const workflows = readdirSync(workflowsDir)
-  .filter(name => name.endsWith('.yml'))
-  .map(name => ({ name, text: readFileSync(`${workflowsDir}${name}`, 'utf8') }));
-
-/** Splits a workflow into steps: each starts at a "- name:" or "- uses:" list item and runs to the next one. */
-const steps = (text: string): string[] => text.split(/\n(?=\s+- (?:name|uses):)/);
+const workflows = loadWorkflows();
 
 test('every action is pinned to a full commit SHA', () => {
   for (const { name, text } of workflows) {

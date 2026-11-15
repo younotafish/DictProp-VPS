@@ -8,8 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { readRepoFile } from '../support/paths.ts';
+import { block, jobs, readWorkflow, runs } from './support/workflow.ts';
 
-const workflow = readRepoFile('.github/workflows/sentence-backfill.yml');
+const workflow = readWorkflow('sentence-backfill.yml');
 
 // Each import job, the release asset it decrypts, and the server script that imports the bundle.
 const imports = [
@@ -25,41 +26,6 @@ const exports = [
   { op: 'export', artifact: 'sentence-export', exporter: 'export-sentence-backfill.js' },
   { op: 'corpus-export', artifact: 'corpus-export', exporter: 'export-corpus-audit.js' },
 ];
-
-/** The workflow's jobs by id: each runs from its two-space-indented key to the next one. */
-function jobs(text: string): Map<string, string> {
-  const body = text.slice(text.indexOf('\njobs:\n'));
-  const result = new Map<string, string>();
-  const keys = [...body.matchAll(/^ {2}([A-Za-z0-9_-]+):\s*$/gm)];
-  keys.forEach((match, index) => {
-    result.set(match[1], body.slice(match.index, keys[index + 1]?.index ?? body.length));
-  });
-  return result;
-}
-
-/** A `key: |` block scalar, dedented. */
-function block(text: string, key: string): string {
-  const lines = text.split('\n');
-  const start = lines.findIndex(line => new RegExp(`^\\s*(?:- )?${key}: \\|\\s*$`).test(line));
-  assert.notEqual(start, -1, `${key} block`);
-  const keyIndent = lines[start].search(/\S/);
-  const content: string[] = [];
-  for (const line of lines.slice(start + 1)) {
-    if (line.trim() && line.search(/\S/) <= keyIndent) break;
-    content.push(line);
-  }
-  const indent = Math.min(...content.filter(line => line.trim()).map(line => line.search(/\S/)));
-  return content.map(line => line.slice(indent)).join('\n').trimEnd() + '\n';
-}
-
-/** Every `run:` value in the text, inline or block. */
-function runs(text: string): string[] {
-  const values: string[] = [];
-  for (const match of text.matchAll(/^([ \t]*)(?:- )?run: (.*)$/gm)) {
-    values.push(match[2].trim() === '|' ? block(text.slice(match.index), 'run') : match[2]);
-  }
-  return values;
-}
 
 const jobsById = jobs(workflow);
 const job = (id: string) => {
