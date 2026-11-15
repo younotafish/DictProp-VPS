@@ -22,28 +22,19 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.firebase/
 .env
 data/
-tts-samples/
-server/dist/
-server/node_modules/
 __pycache__/
 *.pyc
 
-# Playwright
-.playwright/
-test-results/
-playwright-report/
+# The repository is public. The owner's personal folder, the audit worktrees and ledgers under tmp/, and any book
+# or document dropped at the root stay out of it (processed book output lives under the ignored data/).
+/personal_1/
+/tmp/
+/*.pdf
+/*.mobi
+/*.epub
 
-# Local upload helper: session cookie + chatbot-generated import data
-.session
-import*.json
-popdict_all_books/
-popdict_all_books*.zip
-scripts/.upload-books-state.json
-scripts/.DS_Store
-
-# Owner-provided copyrighted source books; processed output remains under ignored data/.
-/dokumen.pub_the-anthropocene-reviewed-essays-on-a-human-centered-planet-signed-0525555218-9780525555216.mobi
-/When_Breath_Becomes_Air_By_Paul_Kalanithi_\(z-lib.org\).pdf
+# Local tools, the GitHub CLI binary (.tools/gh) among them, never enter the repository's history.
+/.tools/
+/.gh

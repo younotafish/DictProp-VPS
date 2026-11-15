@@ -50,9 +50,9 @@ git add <files> && git commit -m "description" && git push vps main
 
 To check deploy status:
 ```bash
-/Users/cjs/DictProp-VPS/.gh run list --repo younotafish/DictProp-VPS --limit 1
-/Users/cjs/DictProp-VPS/.gh run view <RUN_ID> --repo younotafish/DictProp-VPS     # lists the job IDs
-/Users/cjs/DictProp-VPS/.gh api repos/younotafish/DictProp-VPS/actions/jobs/<JOB_ID>/logs
+/Users/cjs/DictProp-VPS/.tools/gh run list --repo younotafish/DictProp-VPS --limit 1
+/Users/cjs/DictProp-VPS/.tools/gh run view <RUN_ID> --repo younotafish/DictProp-VPS     # lists the job IDs
+/Users/cjs/DictProp-VPS/.tools/gh api repos/younotafish/DictProp-VPS/actions/jobs/<JOB_ID>/logs
 ```
 `run view --log` prints nothing from this sandbox, so fetch a job's log through the API instead.
 
@@ -61,7 +61,7 @@ To check deploy status:
 - `vps` = https://github.com/younotafish/DictProp-VPS.git (VPS fork)
 
 ### GitHub CLI
-- Located at `/Users/cjs/DictProp-VPS/.gh` (not on PATH)
+- Located at `/Users/cjs/DictProp-VPS/.tools/gh` (not on PATH; `.tools/` is ignored, so the binary stays out of the public repo's history)
 - Authenticated as `younotafish` with `workflow` scope
 - Use for: checking deploy status, managing secrets, repo operations
 
@@ -106,7 +106,7 @@ npx tsc --noEmit         # Server type-check (frontend: use `npm run build`)
 git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 
 # Check deploy status
-/Users/cjs/DictProp-VPS/.gh run list --repo younotafish/DictProp-VPS --limit 1
+/Users/cjs/DictProp-VPS/.tools/gh run list --repo younotafish/DictProp-VPS --limit 1
 ```
 
 ### IMPORTANT: Type-checking
@@ -196,8 +196,8 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 
 - **Exports** (production → Mac): `sentence-backfill.yml` leaves an encrypted artifact that expires within a day; the run's log shows only its size and hash.
   ```bash
-  ./.gh workflow run sentence-backfill.yml --repo younotafish/DictProp-VPS --ref main -f operation=corpus-export   # saved sentences: operation=export
-  (umask 077 && GH_BIN=./.gh scripts/offline/fetch-workflow-export.sh <run-id> corpus-export <out.json>)       # saved sentences: sentence-export
+  .tools/gh workflow run sentence-backfill.yml --repo younotafish/DictProp-VPS --ref main -f operation=corpus-export   # saved sentences: operation=export
+  (umask 077 && GH_BIN=.tools/gh scripts/offline/fetch-workflow-export.sh <run-id> corpus-export <out.json>)       # saved sentences: sentence-export
   ```
   The fetch decrypts the artifact and checks the JSON, then deletes the artifact and the run's log. An export is plaintext production data: keep it out of the repository and delete it when done.
 - **Imports** (Mac → production): the publisher uploads an encrypted release asset; the workflow decrypts it on the runner, for that operation and release tag only, and streams it to the VPS through `scripts/offline/vps-ssh.sh`, which trusts only the pinned host keys.
