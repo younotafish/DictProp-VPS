@@ -281,9 +281,6 @@ const applyRepair = db.transaction(() => {
   for (const id of staleImageIds) deleteImage.run(id, owner.id);
   // Prepared example sentences reference blobs too; the shared helper checks both tables.
   deletedBlobCount = deleteUnreferencedBlobs();
-  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now);
-  db.prepare('UPDATE items SET project = NULL WHERE project IS NOT NULL').run();
-  db.prepare('DELETE FROM projects').run();
 });
 
 if (apply) {
