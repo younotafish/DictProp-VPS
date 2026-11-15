@@ -14,22 +14,6 @@ export const loadPrivateEssayCatalog = async (): Promise<RawEssayCatalog> =>
 // Items API
 // ============================================================================
 
-/** The whole library, plus the cursor after its last change, where the next delta pull starts. */
-export const loadAllItems = async (): Promise<{ items: StoredItem[]; cursor: RevisionCursor }> => {
-  const items: StoredItem[] = [];
-  let cursor: RevisionCursor = { revision: 0, id: '' };
-  for (let pageNumber = 0; pageNumber < 100_000; pageNumber++) {
-    const page = await loadItemChanges(cursor);
-    items.push(...page.items);
-    if (!page.hasMore) return { items, cursor: page.cursor };
-    if (page.cursor.revision === cursor.revision && page.cursor.id === cursor.id) {
-      throw new Error('Load items cursor did not advance');
-    }
-    cursor = page.cursor;
-  }
-  throw new Error('Load items exceeded its page limit');
-};
-
 export interface ItemChanges {
   items: StoredItem[];
   cursor: RevisionCursor;
@@ -38,13 +22,54 @@ export interface ItemChanges {
   headRevision?: number;
 }
 
-export const loadItemChanges = async (cursor: RevisionCursor, limit = 500): Promise<ItemChanges> => {
+// The most changes the server sends in one page (server/src/db.ts getItemsAfterRevision caps the limit at 500).
+const ITEM_PAGE_SIZE = 500;
+const MAX_ITEM_PAGES = 100_000;
+
+export const loadItemChanges = async (cursor: RevisionCursor, limit = ITEM_PAGE_SIZE): Promise<ItemChanges> => {
   const params = new URLSearchParams({
     afterRevision: String(cursor.revision),
     afterId: cursor.id,
     limit: String(limit),
   });
   return requestJson<ItemChanges>(`/api/items?${params}`, undefined, 'Load item changes');
+};
+
+const isAfter = (a: RevisionCursor, b: RevisionCursor): boolean =>
+  a.revision > b.revision || (a.revision === b.revision && a.id > b.id);
+
+export interface ItemChangesSince {
+  items: StoredItem[];
+  /** After the last change, where the next pull starts. */
+  cursor: RevisionCursor;
+  /**
+   * The server's newest revision is older than the starting cursor: its database was replaced, so only a full
+   * snapshot can reconcile. No items come back then, and the cursor is the starting one.
+   */
+  serverBehind: boolean;
+}
+
+/** Every change after `from`, page after page. Throws when a page that promises more doesn't move the cursor on. */
+export const loadItemChangesSince = async (from: RevisionCursor): Promise<ItemChangesSince> => {
+  const items: StoredItem[] = [];
+  let cursor = from;
+  for (let pageNumber = 0; pageNumber < MAX_ITEM_PAGES; pageNumber++) {
+    const page = await loadItemChanges(cursor);
+    if (page.headRevision !== undefined && page.headRevision < from.revision) {
+      return { items: [], cursor: from, serverBehind: true };
+    }
+    items.push(...page.items);
+    if (!page.hasMore) return { items, cursor: page.cursor, serverBehind: false };
+    if (!isAfter(page.cursor, cursor)) throw new Error('Load items cursor did not advance');
+    cursor = page.cursor;
+  }
+  throw new Error('Load items exceeded its page limit');
+};
+
+/** The whole library, plus the cursor after its last change, where the next delta pull starts. */
+export const loadAllItems = async (): Promise<{ items: StoredItem[]; cursor: RevisionCursor }> => {
+  const { items, cursor } = await loadItemChangesSince({ revision: 0, id: '' });
+  return { items, cursor };
 };
 
 /** What the server kept for a push: new revisions, plus its own copy wherever it kept different content. */
