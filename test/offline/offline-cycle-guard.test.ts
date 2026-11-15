@@ -8,6 +8,14 @@ import test from 'node:test';
 
 const offlineDir = fileURLToPath(new URL('../../scripts/offline/', import.meta.url));
 const hasShlock = spawnSync('/bin/sh', ['-c', 'command -v shlock'], { encoding: 'utf8' }).status === 0;
+// Linux, where CI runs, has no shlock, so there the cycle takes its lock with this stand-in for
+// `shlock -f FILE -p PID`, which succeeds only when FILE did not exist.
+const SHLOCK_STAND_IN = `#!/bin/sh
+while getopts f:p: opt; do
+  case "$opt" in f) file=$OPTARG ;; p) pid=$OPTARG ;; *) exit 2 ;; esac
+done
+( set -C; printf '%s\\n' "$pid" > "$file" ) 2>/dev/null
+`;
 
 // The user's own git configuration (signing, hooks, default branch) must not reach these repositories.
 const gitEnv = {
@@ -207,15 +215,21 @@ test('a failed fetch falls back to the vps/main fetched last, and no fetched vps
 
 // Runs the cycle in the checkout. It finds no inputs, so once past the guard it stops at its next check.
 function runCycle(root: string, work: string, env: Record<string, string> = {}) {
+  let path = process.env.PATH ?? '/usr/bin:/bin';
+  if (!hasShlock) {
+    mkdirSync(join(root, 'bin'), { recursive: true });
+    writeFileSync(join(root, 'bin', 'shlock'), SHLOCK_STAND_IN, { mode: 0o755 });
+    path = `${join(root, 'bin')}:${path}`;
+  }
   return spawnSync('/bin/bash', ['scripts/offline/run-incremental-example-enrichment.sh', join(root, 'cycle')], {
     cwd: work,
     encoding: 'utf8',
-    env: { ...gitEnv, GH_BIN: join(root, 'no-gh'), SENTENCE_BRIDGE_KEY_FILE: join(root, 'no-key'), ...env },
+    env: { ...gitEnv, PATH: path, GH_BIN: join(root, 'no-gh'), SENTENCE_BRIDGE_KEY_FILE: join(root, 'no-key'), ...env },
     timeout: 60_000,
   });
 }
 
-test('the cycle exits 75 on an unvetted checkout before doing anything else, and releases its lock', { skip: !hasShlock }, t => {
+test('the cycle exits 75 on an unvetted checkout before doing anything else, and releases its lock', t => {
   const { root, work } = setup(t);
   const cycleRoot = join(root, 'cycle');
   const run = (env: Record<string, string> = {}) => runCycle(root, work, env);
@@ -238,7 +252,7 @@ test('the cycle exits 75 on an unvetted checkout before doing anything else, and
   assert.equal(existsSync(join(cycleRoot, '.cycle.lock')), false);
 });
 
-test('the cycle moves main up to a newer vps/main, and exits 75 when that changed its own code', { skip: !hasShlock }, t => {
+test('the cycle moves main up to a newer vps/main, and exits 75 when that changed its own code', t => {
   const { root, remote, work } = setup(t);
   const code = pushElsewhere(root, remote, 'scripts/offline/stage.sh', 'echo newer\n');
   const refused = runCycle(root, work);
