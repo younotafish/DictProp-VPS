@@ -32,9 +32,9 @@ import {
   createRealLifeProgressItem,
   getRealLifeCollectionProgress,
   indexRealLifeProgress,
-  realLifeProgressItemId,
   type RealLifeCollectionProgress,
 } from '../services/realLifeProgress';
+import { realLifeProgressItemId } from '../services/realLifeProgressIdentity';
 import type { SentenceReviewFilter } from '../services/sentenceOrdering';
 import { useLatest } from '../hooks/useStableValue';
 import { useNow } from '../hooks/useNow';

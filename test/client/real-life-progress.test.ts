@@ -5,9 +5,8 @@ import {
   buildRealLifeStudyItems,
   createRealLifeProgressItem,
   getRealLifeCollectionProgress,
-  isRealLifeProgressItem,
-  realLifeProgressItemId,
 } from '../../services/realLifeProgress.ts';
+import { isRealLifeProgressItem, realLifeProgressItemId } from '../../services/realLifeProgressIdentity.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 
 const NOW = 2_000_000;

@@ -4,10 +4,9 @@ import { ESSAYS } from '../../services/essayCatalog.ts';
 import {
   buildEssayStudyItems,
   createEssayProgressItem,
-  essayProgressItemId,
   getEssayProgress,
-  isEssayProgressItem,
 } from '../../services/essayProgress.ts';
+import { essayProgressItemId, isEssayProgressItem } from '../../services/essayProgressIdentity.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 
 const NOW = 2_000_000;

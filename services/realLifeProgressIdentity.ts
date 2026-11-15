@@ -1,6 +1,6 @@
 import type { SentenceData, StoredItem } from '../types';
 
-/** Kept catalog-free so the app shell can classify progress records without loading 720 sentences. */
+/** Kept catalog-free so the app shell can classify progress records without loading the Real Life catalog. */
 export const REAL_LIFE_PROGRESS_PREFIX = 'real-life-sentence:';
 
 export function realLifeProgressItemId(catalogSentenceId: string): string {

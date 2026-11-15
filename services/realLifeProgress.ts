@@ -3,11 +3,9 @@ import { SRSAlgorithm } from './srsAlgorithm';
 import type { RealLifeCollection, RealLifeSentence } from './realLifeCatalog';
 import { isRealLifeProgressItem, realLifeProgressItemId } from './realLifeProgressIdentity';
 
-export {
-  REAL_LIFE_PROGRESS_PREFIX,
-  isRealLifeProgressItem,
-  realLifeProgressItemId,
-} from './realLifeProgressIdentity';
+// DetailView still imports this from here. This module reads only the catalog's types, so that import doesn't
+// load the catalog; new code imports it from realLifeProgressIdentity.
+export { isRealLifeProgressItem } from './realLifeProgressIdentity';
 
 export interface RealLifeCollectionProgress {
   total: number;

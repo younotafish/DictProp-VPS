@@ -3,12 +3,6 @@ import { SRSAlgorithm } from './srsAlgorithm';
 import type { Essay, EssaySentence } from './essayCatalog';
 import { essayProgressItemId, isEssayProgressItem } from './essayProgressIdentity';
 
-export {
-  ESSAY_PROGRESS_PREFIX,
-  essayProgressItemId,
-  isEssayProgressItem,
-} from './essayProgressIdentity';
-
 export interface EssayProgress {
   total: number;
   reviewed: number;
