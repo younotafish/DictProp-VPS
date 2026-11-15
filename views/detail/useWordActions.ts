@@ -1,0 +1,198 @@
+import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { getItemSense, getItemSpelling, getItemTitle, type ReviewRating, type SRSData, type StoredItem, type VocabCard } from '../../types';
+import { SRSAlgorithm } from '../../services/srsAlgorithm';
+import { updateAfterRating } from '../../services/fsrsScheduler';
+import { log, warn } from '../../services/logger';
+import { isTypingTarget } from '../../components/keyboardTarget';
+import type { DetailViewProps } from './types';
+
+interface WordActionsOptions {
+  /** The card on screen. */
+  data: StoredItem['data'];
+  type: StoredItem['type'];
+  title: string;
+  /** The card's saved copy (findSavedCard), if it's in the library. */
+  savedItemMatch: StoredItem | undefined;
+  isSaved: boolean;
+  savedItemsRef: RefObject<StoredItem[]>;
+  onSave: (item: StoredItem) => void;
+  onDelete: (id: string) => void;
+  onArchive?: (id: string) => void;
+  onUnarchive?: (id: string) => void;
+  onResetSRS?: DetailViewProps['onResetSRS'];
+  onUpdateSRS?: (itemId: string, rating?: ReviewRating, context?: { seedItem?: StoredItem }) => void | Promise<boolean>;
+  setShowActionMenu: Dispatch<SetStateAction<boolean>>;
+  rememberingRef: RefObject<boolean>;
+  showRemembered: (next: SRSData, now: number) => void;
+}
+
+/** What the word card does to the library: save, delete, archive and unarchive, reset, remember, and a phrase's key-vocab saves. */
+export function useWordActions({
+  data, type, title, savedItemMatch, isSaved, savedItemsRef, onSave, onDelete, onArchive, onUnarchive, onResetSRS,
+  onUpdateSRS, setShowActionMenu, rememberingRef, showRemembered,
+}: WordActionsOptions) {
+  // A phrase's key-vocab cards save and unsave themselves. This handler goes to the memoized word cards, so it
+  // keeps one identity across renders and a card renders again only when something it shows changes.
+  const handleSaveVocab = useCallback((vocab: VocabCard) => {
+    const vocabSpelling = (vocab.word || '').toLowerCase().trim();
+    const items = savedItemsRef.current;
+    const isAlreadySaved = items.some(i =>
+      getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
+    );
+
+    if (isAlreadySaved) {
+      const existingItem = items.find(i =>
+        getItemSpelling(i) === vocabSpelling && getItemSense(i) === vocab.sense
+      );
+      if (existingItem) {
+        onDelete(existingItem.data.id);
+      }
+    } else {
+      onSave({
+        data: vocab,
+        type: 'vocab',
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.createNew(vocab.id, 'vocab')
+      });
+    }
+  }, [onDelete, onSave, savedItemsRef]);
+
+  const handleToggleSave = useCallback(() => {
+    if (isSaved && savedItemMatch) {
+      onDelete(savedItemMatch.data.id);
+    } else {
+      if (!data.id) return;
+      
+      onSave({
+        data: data,
+        type: type,
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.createNew(data.id, type)
+      });
+    }
+  }, [isSaved, savedItemMatch, data, type, onDelete, onSave]);
+
+  // Cmd/Ctrl+S only ever saves: it does nothing on a card that's already saved or while typing.
+  const handleSaveShortcut = useCallback(() => {
+    if (isSaved || isTypingTarget(document.activeElement)) return;
+    handleToggleSave();
+  }, [isSaved, handleToggleSave]);
+
+  const handleDeleteItem = () => {
+    // Use savedItemMatch ID if available, otherwise use currentItem's ID
+    const idToDelete = savedItemMatch?.data.id || data.id;
+    if (!idToDelete) {
+      warn('Delete failed: No valid ID found');
+      return;
+    }
+
+    log('🗑️ DetailView: Deleting item:', idToDelete, title);
+    setShowActionMenu(false);
+
+    // App.tsx handles updating detailContext and navigation
+    onDelete(idToDelete);
+  };
+
+  const handleArchiveItem = () => {
+    if (!onArchive) return;
+    
+    // Use savedItemMatch ID if available, otherwise use currentItem's ID
+    const idToArchive = savedItemMatch?.data.id || data.id;
+    if (!idToArchive) {
+      warn('Archive failed: No valid ID found');
+      return;
+    }
+    
+    log('📦 DetailView: Archiving item:', idToArchive, title);
+    setShowActionMenu(false);
+    
+    // App.tsx handles updating detailContext and navigation
+    onArchive(idToArchive);
+  };
+
+  const handleUnarchiveItem = () => {
+    if (!onUnarchive || !savedItemMatch?.isArchived) return;
+    setShowActionMenu(false);
+    onUnarchive(savedItemMatch.data.id);
+  };
+
+  const handleResetSRS = useCallback(() => {
+    // Reset only the current sense. Cards with the same spelling learn independently.
+    if (!data.id) return;
+
+    log('🔄 DetailView: Resetting SRS for item:', data.id, title);
+
+    const targetTitle = (title || '').toLowerCase().trim();
+    const targetSense = type === 'vocab' ? (data as VocabCard).sense || '' : '';
+    const target = savedItemsRef.current.find(item => item.data.id === data.id) ??
+      savedItemsRef.current.find(item =>
+        !item.isDeleted &&
+        item.type === type &&
+        getItemTitle(item).toLowerCase().trim() === targetTitle &&
+        (type !== 'vocab' || getItemSense(item) === targetSense)
+      );
+
+    if (target) {
+      if (!onResetSRS?.(target.data.id)) onSave({ ...target, srs: SRSAlgorithm.reset(target.data.id, target.type) });
+    } else {
+      // The save list can lag briefly after opening a freshly generated result.
+      onSave({
+        data,
+        type,
+        savedAt: Date.now(),
+        srs: SRSAlgorithm.reset(data.id, type),
+      });
+    }
+
+    setShowActionMenu(false);
+  }, [data, title, type, onSave, onResetSRS, savedItemsRef, setShowActionMenu]);
+
+  const handleRemember = useCallback(() => {
+    // Ignore re-entry while a remember is mid-animation — a touch double-tap and the synthesized
+    // dblclick can both land, and we must not score the same card twice.
+    if (rememberingRef.current) return;
+    rememberingRef.current = true;
+
+    log('🧠 DetailView: Marking as remembered via shortcut/gesture');
+
+    const targetTitle = (title || '').toLowerCase().trim();
+    const saved = savedItemsRef.current.find(item => item.data.id === data.id) ??
+      savedItemsRef.current.find(item =>
+        !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle &&
+        getItemSense(item) === (type === 'vocab' ? (data as VocabCard).sense || '' : '')
+      );
+
+    const now = Date.now();
+    if (saved) {
+      // Compute preview SRS to show next review date in the animation
+      const previewSRS = updateAfterRating(SRSAlgorithm.ensure(saved.srs, saved.data.id, saved.type), 'good', now);
+      showRemembered(previewSRS, now);
+
+      if (onUpdateSRS) {
+        log('🧠 DetailView: applying FSRS review to this sense');
+        onUpdateSRS(saved.data.id);
+      } else {
+        log('🧠 DetailView: Using onSave fallback for SRS update');
+        onSave({ ...saved, srs: { ...previewSRS, id: saved.data.id } });
+      }
+    } else {
+      // Create new item and immediately mark as remembered
+      if (!data.id) { rememberingRef.current = false; return; }
+
+      const newSRS = updateAfterRating(SRSAlgorithm.createNew(data.id, type), 'good', now);
+      showRemembered(newSRS, now);
+
+      onSave({
+        data: data,
+        type: type,
+        savedAt: now,
+        srs: newSRS
+      });
+    }
+  }, [data, type, onSave, onUpdateSRS, title, savedItemsRef, rememberingRef, showRemembered]);
+
+  return {
+    handleSaveVocab, handleToggleSave, handleSaveShortcut, handleDeleteItem, handleArchiveItem, handleUnarchiveItem,
+    handleResetSRS, handleRemember,
+  };
+}
