@@ -9,20 +9,17 @@ import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { MasteryBadge, getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { formatTimeUntil } from '../services/studySession';
-import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
+import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/lazyTts';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';
 import { isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
+import { resolvePopupShortcut } from './review/popupShortcuts';
+import { edgeZoneAt, gutterZoneAt } from './review/readZones';
+import { usePopupPlayback } from './review/usePopupPlayback';
+import { useSensePages } from './review/useSensePages';
 import { ZoneGuides } from './review/ZoneGuides';
-
-const senseKey = (s?: string) => (s || '').trim().toLowerCase();
-
-// One page of the popup: a saved sense (with SRS) or an AI sense not yet in the library.
-type Page =
-  | { kind: 'saved'; item: StoredItem; vocab: VocabCard; sense: string }
-  | { kind: 'unsaved'; vocab: VocabCard; sense: string };
 
 interface CardReviewPopupProps {
   /** Every saved sense of the tapped word (≥1). */
@@ -45,6 +42,10 @@ interface CardReviewPopupProps {
   onSaveVocab?: (vocab: VocabCard) => void;
 }
 
+// Space and Enter press whatever control has focus (Close, Got it, a toggle), not the popup's shortcuts.
+const isOnControl = (target: EventTarget | null): boolean =>
+  target instanceof Element && !!target.closest('button, a[href], summary, [role="button"], [role="link"], [role="switch"], [role="checkbox"], [role="tab"]');
+
 /**
  * The full review card for a saved word, shown in an overlay — opened by tapping a saved word in a
  * sentence. Pages through ALL of the word's meanings: saved senses (with the SRS row — mastery, Got it /
@@ -53,9 +54,12 @@ interface CardReviewPopupProps {
  *
  * Cross-device: bottom-sheet on phone, centered modal on tablet/desktop; header + action row are a
  * sticky top bar (only the card body scrolls). It owns the keyboard while open (Esc, ←/→, R/Shift+R, D,
- * P, E, Cmd/Ctrl+1–4, Space) and traps Tab; the parent disables the underlying view via interactionLocked.
- * On ≥sm the left/right gutters beside the card are eyes-free read zones (top quarter = example 1, 2nd =
- * example 2), responding to tap or mouse.
+ * P, E, Cmd/Ctrl+1–4, Space; see review/popupShortcuts) and traps Tab; the parent disables the underlying
+ * view via interactionLocked. On ≥sm the left/right gutters beside the card are eyes-free read zones (top
+ * quarter = example 1, 2nd = example 2), responding to tap or mouse.
+ *
+ * The pages come from review/useSensePages, the audio from review/usePopupPlayback, and where a tap reads
+ * from review/readZones.
  */
 export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   items,
@@ -78,79 +82,31 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   useOverlay();
   // Focus the panel on open, keep Tab inside it, and restore focus on close.
   useModalFocus(panelRef);
-  const popupPlaybackRef = useRef<ReturnType<typeof speakNatural> | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  // Turning to another meaning disarms a delete armed on this one.
+  const disarmDelete = useCallback(() => setConfirmDel(false), []);
 
-  const speakPopupWord = useCallback((text: string) => {
-    const handle = speakWord(text);
-    popupPlaybackRef.current = handle;
-    return handle;
-  }, []);
-  const speakPopupNatural = useCallback((text: string, options?: Parameters<typeof speakNatural>[1]) => {
-    const handle = speakNatural(text, options);
-    popupPlaybackRef.current = handle;
-    return handle;
-  }, []);
-
-  const word = (items[0]?.data as VocabCard)?.word || '';
   // Paging to another saved meaning shows its picture at once.
   useWarmImages(items, onLazyLoadImage);
 
-  // Fetch the word's other AI senses on open (cached per session in App) so we can page saved + unsaved.
-  const [aiVocabs, setAiVocabs] = useState<VocabCard[]>([]);
-  const [loadingSenses, setLoadingSenses] = useState(false);
-  useEffect(() => {
-    if (!onFetchSenses || !word) return;
-    let alive = true;
-    setLoadingSenses(true);
-    onFetchSenses(word)
-      .then(vs => { if (alive) setAiVocabs(Array.isArray(vs) ? vs : []); })
-      .catch(() => { /* offline / failed → just the saved senses */ })
-      .finally(() => { if (alive) setLoadingSenses(false); });
-    return () => { alive = false; };
-  }, [word, onFetchSenses]);
-
-  // Merge saved senses (with SRS) + AI senses not already saved, deduped by sense label.
-  const pages = useMemo<Page[]>(() => {
-    const seen = new Set<string>();
-    const out: Page[] = [];
-    for (const it of items) {
-      const v = it.data as VocabCard;
-      const s = senseKey(v.sense);
-      if (!seen.has(s)) { seen.add(s); out.push({ kind: 'saved', item: it, vocab: v, sense: s }); }
-    }
-    for (const v of aiVocabs) {
-      const s = senseKey(v.sense);
-      if (!seen.has(s)) { seen.add(s); out.push({ kind: 'unsaved', vocab: v, sense: s }); }
-    }
-    return out;
-  }, [items, aiVocabs]);
-
-  // Track the shown sense by its label so it survives saving/refreshing (an unsaved page becoming saved
-  // keeps the same sense), unlike an id which changes when a sense is saved.
-  const [currentSense, setCurrentSense] = useState<string>(() => {
-    const init = initialId ? items.find(i => i.data.id === initialId) : undefined;
-    return senseKey((init?.data as VocabCard)?.sense ?? (items[0]?.data as VocabCard)?.sense);
-  });
-  const current = pages.find(p => p.sense === currentSense) ?? pages[0];
-  useEffect(() => {
-    if (current && current.sense !== currentSense) setCurrentSense(current.sense);
-  }, [current, currentSense]);
-
+  const { word, current, currentSense, count, idx, goPrev, goNext, loadingSenses } =
+    useSensePages(items, initialId, onFetchSenses, disarmDelete);
   const vocab = current?.vocab ?? ({} as VocabCard);
   const currentSaved = current?.kind === 'saved' ? current.item : null;
 
-  const count = pages.length;
-  const idx = Math.max(0, pages.findIndex(p => p.sense === current?.sense));
-  const goTo = useCallback((delta: number) => {
-    if (count <= 1) return;
-    setConfirmDel(false);
-    const next = pages[(((idx + delta) % count) + count) % count];
-    setCurrentSense(next.sense); // auto-pronounce happens in the effect below (post-commit), NOT here
-  }, [pages, idx, count]);
-  const goPrev = useCallback(() => goTo(-1), [goTo]);
-  const goNext = useCallback(() => goTo(1), [goTo]);
+  const shortcutExamples = useMemo(
+    () => (vocab.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
+    [vocab],
+  );
+
+  // E and eyes-free zones intentionally remain capped at the first two examples.
+  const examplesList = useMemo(
+    () => shortcutExamples.slice(0, 2),
+    [shortcutExamples],
+  );
+
+  const { speakPopupWord, speakPopupNatural, holdKeepAlive, toggleSpeak, readBothExamples } = usePopupPlayback(examplesList);
 
   // Auto-pronounce the word on each meaning switch. This MUST run as an effect (after the new sense has
   // committed), not synchronously inside goTo: switching remounts <VocabCardDisplay> via its `key`, and
@@ -241,61 +197,6 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     return type ? type !== 'mouse' : isTouch;
   }, [isTouch]);
 
-  const shortcutExamples = useMemo(
-    () => (vocab.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean),
-    [vocab],
-  );
-
-  // E and eyes-free zones intentionally remain capped at the first two examples.
-  const examplesList = useMemo(
-    () => shortcutExamples.slice(0, 2),
-    [shortcutExamples],
-  );
-
-  // Hold the audio session open for the life of this popup (once, on the first playback gesture) so the
-  // media route stays "hot" across the word→sentence hop and iOS doesn't re-ramp the route (heard as a
-  // fade-in) when the sentence <audio> starts after the word played on the speechSynthesis path.
-  const keepAliveHeldRef = useRef(false);
-  const holdKeepAlive = useCallback(() => {
-    if (keepAliveHeldRef.current) return;
-    keepAliveHeldRef.current = true;
-    acquireKeepAlive();
-  }, []);
-  useEffect(() => () => { if (keepAliveHeldRef.current) releaseKeepAlive(); }, []);
-
-  // Toggle natural-voice playback for one sentence (same clip → pause / resume / restart-near-end).
-  const toggleSpeak = useCallback((raw: string) => {
-    const sentence = stripSentenceMarkers(raw || '').trim();
-    if (!sentence) return;
-    holdKeepAlive();
-    const pb = getPlaybackState();
-    if (pb.text === sentence) {
-      if (pb.status === 'loading') return;
-      if (pb.status === 'paused') { resumeCurrent(); return; }
-      if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
-    }
-    speakPopupNatural(sentence, { allowDownload: true });
-  }, [holdKeepAlive, speakPopupNatural]);
-
-  // E: read both example sentences in turn; press again to pause / resume.
-  const readBothExamples = useCallback(() => {
-    if (!examplesList.length) return;
-    holdKeepAlive();
-    const pb = getPlaybackState();
-    if (pb.text && examplesList.includes(pb.text) && (pb.status === 'playing' || pb.status === 'paused')) {
-      if (pb.status === 'playing') pauseCurrent(); else resumeCurrent();
-      return;
-    }
-    let i = 0;
-    let handle: ReturnType<typeof speakNatural> | undefined;
-    const playNext = () => {
-      if (i >= examplesList.length) return;
-      if (handle && !handle.isActive()) return;
-      handle = speakPopupNatural(examplesList[i++], { allowDownload: true, onEnd: () => setTimeout(playNext, 400), onError: () => setTimeout(playNext, 400) });
-    };
-    playNext();
-  }, [examplesList, holdKeepAlive, speakPopupNatural]);
-
   // Eyes-free zone tap-confirmation flash (mirrors DetailView).
   const [zoneFlash, setZoneFlash] = useState<{ zone: number; n: number } | null>(null);
   const zoneFlashN = useRef(0);
@@ -319,10 +220,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return;
     const rect = scrollBodyRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const relX = e.clientX - rect.left, relY = e.clientY - rect.top;
-    const onSide = relX < rect.width * 0.28 || relX > rect.width * 0.72;
-    if (!onSide || relY >= rect.height * 0.5) return;
-    const z = relY < rect.height * 0.25 ? 0 : 1;
+    const z = edgeZoneAt(rect, e.clientX, e.clientY);
+    if (z === null) return;
     if (z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); }
   }, [isTouchClick, examplesList, toggleSpeak, flashZone]);
 
@@ -332,13 +231,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const onBackdrop = useCallback((e: React.MouseEvent) => {
     if (isTouchClick(e) && window.innerWidth >= 640 && examplesList.length > 0) {
       const rect = panelRef.current?.getBoundingClientRect();
-      if (rect && (e.clientX < rect.left || e.clientX > rect.right)) {
-        const h = window.innerHeight;
-        if (e.clientY < h * 0.5) {
-          const z = e.clientY < h * 0.25 ? 0 : 1;
-          if (z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); return; }
-        }
-      }
+      const z = rect ? gutterZoneAt(rect, window.innerHeight, e.clientX, e.clientY) : null;
+      if (z !== null && z < examplesList.length) { toggleSpeak(examplesList[z]); flashZone(z); return; }
     }
     onClose();
   }, [isTouchClick, examplesList, toggleSpeak, flashZone, onClose]);
@@ -349,56 +243,36 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   // Keyboard ownership while open (the parent gates the underlying view via interactionLocked).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      // Space and Enter press whatever control has focus (Close, Got it, a toggle), not the shortcuts below.
-      const onControl = t instanceof Element && !!t.closest('button, a[href], summary, [role="button"], [role="link"], [role="switch"], [role="checkbox"], [role="tab"]');
-
-      if (isTypingTarget(e.target)) return;
-
-      // ← / → page between this word's meanings.
-      if (count > 1 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        e.preventDefault();
-        if (e.key === 'ArrowLeft') goPrev(); else goNext();
-        return;
+      const action = resolvePopupShortcut(e, {
+        typing: isTypingTarget(e.target),
+        onControl: isOnControl(e.target),
+        pageCount: count,
+        saved: !!currentSaved,
+      });
+      if (!action) return;
+      e.preventDefault();
+      switch (action.type) {
+        case 'prev': goPrev(); break;
+        case 'next': goNext(); break;
+        case 'togglePlayback': {
+          const st = getPlaybackState().status;
+          if (st === 'playing') pauseCurrent();
+          else if (st === 'paused') resumeCurrent();
+          else if (examplesList[0]) { holdKeepAlive(); speakPopupNatural(examplesList[0], { allowDownload: true }); }
+          break;
+        }
+        case 'pronounce': if (vocab.word) { holdKeepAlive(); speakPopupWord(vocab.word); } break;
+        case 'readExample': { const s = shortcutExamples[action.index]; if (s) toggleSpeak(s); break; }
+        case 'readBoth': readBothExamples(); break;
+        case 'gotIt': handleGotIt(); break;
+        case 'reset': handleReset(); break;
+        case 'save': handleSaveThis(); break;
+        case 'delete': handleDelete(); break;
       }
-      if (e.key === ' ') {
-        if (onControl) return;
-        e.preventDefault();
-        const st = getPlaybackState().status;
-        if (st === 'playing') pauseCurrent();
-        else if (st === 'paused') resumeCurrent();
-        else if (examplesList[0]) { holdKeepAlive(); speakPopupNatural(examplesList[0], { allowDownload: true }); }
-        return;
-      }
-      if (e.key === 'p' || e.key === 'P') { e.preventDefault(); if (vocab.word) { holdKeepAlive(); speakPopupWord(vocab.word); } return; }
-      // Cmd/Ctrl+1–4 → read the corresponding example sentence.
-      if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
-        e.preventDefault();
-        const s = shortcutExamples[Number(e.key) - 1];
-        if (s) toggleSpeak(s);
-        return;
-      }
-      if (e.key === 'e' || e.key === 'E') {
-        if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); readBothExamples(); }
-        return;
-      }
-      // Review keys act on a SAVED sense; on an unsaved one R/Enter saves it.
-      if (e.key === 'r' || e.key === 'R') {
-        e.preventDefault();
-        if (currentSaved) { if (e.shiftKey) handleReset(); else handleGotIt(); }
-        else handleSaveThis();
-        return;
-      }
-      if (e.key === 'Enter') { if (!currentSaved && !onControl) { e.preventDefault(); handleSaveThis(); } return; }
-      if (e.key === 'd' || e.key === 'D') { if (currentSaved && !e.metaKey && !e.ctrlKey) { e.preventDefault(); handleDelete(); } return; }
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
   }, [vocab, currentSaved, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, shortcutExamples, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive, speakPopupNatural, speakPopupWord]);
-
-  // Do not stop a sentence that was already playing beneath the popup. The handle is token-scoped,
-  // so cleanup only stops audio this popup actually started and is still responsible for.
-  useEffect(() => () => { popupPlaybackRef.current?.stop(); }, []);
 
   return (
     <div
