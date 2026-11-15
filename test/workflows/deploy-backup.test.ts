@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { repoPath } from '../support/paths.ts';
-import { deployScript, REMOTE_SHELL, scriptEnv, stub } from './support/deploy.ts';
+import { deployScript, GNU_STAT, REMOTE_SHELL, scriptEnv, stub } from './support/deploy.ts';
 
 // deploy.yml's database backup, run in zsh as on the VPS against a real SQLite database. docker and df are stood in
 // for. The VPS has GNU find and stat, which macOS lacks, so the two forms the script uses are stood in for too.
@@ -91,12 +91,7 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda2 610
   stub(bin, 'python3', String.raw`
 echo python3 >> "$CALLS"
 PATH="$REAL_PATH" exec python3 "$@"`);
-  stub(bin, 'stat', String.raw`
-case "$1 $2" in
-  '-c %Y') exec perl -e 'my @s = stat($ARGV[0]) or exit 1; print "$s[9]\n"' "$3" ;;
-  '-c %s') exec perl -e 'my @s = stat($ARGV[0]) or exit 1; print "$s[7]\n"' "$3" ;;
-  *) echo "unexpected stat $*" >&2; exit 97 ;;
-esac`);
+  stub(bin, 'stat', GNU_STAT);
   // find DIR -maxdepth 1 -type f \( -name GLOB -o -name GLOB \) -printf '%T@ %p\n'; every other form is the real find.
   stub(bin, 'find', String.raw`
 for arg in "$@"; do

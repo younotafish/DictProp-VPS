@@ -27,6 +27,14 @@ export const scriptEnv = (bin: string, variables: Record<string, string>): NodeJ
   ...variables,
 });
 
+/** Stands in for the GNU stat forms the VPS scripts use, `stat -c %Y FILE` and `stat -c %s FILE`, which macOS lacks. */
+export const GNU_STAT = String.raw`
+case "$1 $2" in
+  '-c %Y') exec perl -e 'my @s = stat($ARGV[0]) or exit 1; print "$s[9]\n"' "$3" ;;
+  '-c %s') exec perl -e 'my @s = stat($ARGV[0]) or exit 1; print "$s[7]\n"' "$3" ;;
+  *) echo "unexpected stat $*" >&2; exit 97 ;;
+esac`;
+
 export const RUN_ID = '4242';
 export const RELEASE_IMAGE = 'ghcr.io/younotafish/dictprop-vps:candidate';
 

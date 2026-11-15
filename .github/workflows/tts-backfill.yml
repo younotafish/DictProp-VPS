@@ -32,7 +32,15 @@ jobs:
           script: |
             set -e
             cd /opt/dictprop-vps
+            STARTED_AT="$(date +%s)"
             docker compose exec -d app nice -n 10 node server/dist/scripts/run-tts-backfill.js
-            sleep 3
-            docker compose exec -T app sh -c \
-              'cat /app/data/tts-backfill-status.json 2>/dev/null || echo "{\"status\":\"starting\"}"'
+            # A worker writes its status once it has started, and a running one rewrites it every 30 seconds, so
+            # a status older than this step is an earlier run's.
+            for attempt in $(seq 1 30); do
+              if [ -f data/tts-backfill-status.json ] && [ "$(stat -c %Y data/tts-backfill-status.json)" -ge "$STARTED_AT" ]; then
+                cat data/tts-backfill-status.json
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "The TTS worker was started, or was already running, but has not written a status yet"

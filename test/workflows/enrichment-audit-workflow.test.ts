@@ -47,12 +47,12 @@ const COVERAGE = 'Report content coverage';
 
 test('the coverage summary holds exactly the audit report, whatever else the step captured', () => {
   const line = report([]);
-  const run = runStep(COVERAGE, { ENRICHMENT_STDOUT: captured('Container dictprop-vps-app-1 Running', line), ENRICHMENT_STDERR: '' });
+  const run = runStep(COVERAGE, { ENRICHMENT_STDOUT: captured('Container dictprop-vps-app-1 Running', line) });
   assert.equal(run.status, 0, run.output);
   assert.equal(run.summary, `### Content enrichment audit (no generation)\n\`\`\`json\n${line}\n\`\`\`\n`);
 
   // Without a report the summary is empty but the step still passes; the alert step is the one that fails.
-  const missing = runStep(COVERAGE, { ENRICHMENT_STDOUT: captured('Container dictprop-vps-app-1 Running'), ENRICHMENT_STDERR: '' });
+  const missing = runStep(COVERAGE, { ENRICHMENT_STDOUT: captured('Container dictprop-vps-app-1 Running') });
   assert.equal(missing.status, 0, missing.output);
   assert.equal(missing.summary, '### Content enrichment audit (no generation)\n```json\n```\n');
 });

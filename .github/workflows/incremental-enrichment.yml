@@ -43,14 +43,12 @@ jobs:
               -e INCREMENTAL_ENRICHMENT_LOOKBACK_HOURS=24 \
               app nice -n 10 node server/dist/scripts/audit-enrichment.js || true
 
+      # The audit step's log already shows its whole output, so this step only puts the report in the summary.
       - name: Report content coverage
         if: always()
         env:
           ENRICHMENT_STDOUT: ${{ steps.audit.outputs.stdout }}
-          ENRICHMENT_STDERR: ${{ steps.audit.outputs.stderr }}
         run: |
-          printf '%s\n' "$ENRICHMENT_STDOUT"
-          printf '%s\n' "$ENRICHMENT_STDERR" >&2
           {
             echo '### Content enrichment audit (no generation)'
             echo '```json'

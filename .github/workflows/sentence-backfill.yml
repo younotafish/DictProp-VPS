@@ -66,8 +66,8 @@ jobs:
             exit 1
           fi
 
+      # Each step's log shows the script's report.
       - name: Preview production repairs
-        id: repair_preview
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: 107.152.47.101
@@ -75,20 +75,13 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 15m
-          capture_stdout: true
           script: |
             set -e
             cd /opt/dictprop-vps
             docker compose exec -T app node server/dist/scripts/repair-production-data.js
 
-      - name: Report repair preview
-        env:
-          REPAIR_PREVIEW: ${{ steps.repair_preview.outputs.stdout }}
-        run: printf '%s\n' "$REPAIR_PREVIEW"
-
       - name: Apply production repairs
         if: inputs.operation == 'repair-apply'
-        id: repair_apply
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: 107.152.47.101
@@ -96,19 +89,12 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 30m
-          capture_stdout: true
           script: |
             set -e
             cd /opt/dictprop-vps
             # The script first copies the database to data/backups/pre-repair-<time>.db. The repair is
             # one transaction, so a failure cannot leave a partially consolidated library.
             docker compose exec -T app node server/dist/scripts/repair-production-data.js --apply
-
-      - name: Report applied repairs
-        if: inputs.operation == 'repair-apply'
-        env:
-          REPAIR_OUTPUT: ${{ steps.repair_apply.outputs.stdout }}
-        run: printf '%s\n' "$REPAIR_OUTPUT"
 
   audit:
     if: inputs.operation == 'audit'
@@ -118,8 +104,8 @@ jobs:
       group: dictprop-production-read
       cancel-in-progress: false
     steps:
+      # The step's log shows the audit's report.
       - name: Audit production data
-        id: production_audit
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: 107.152.47.101
@@ -127,16 +113,10 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           fingerprint: ${{ env.VPS_SSH_FINGERPRINT }}
           command_timeout: 60m
-          capture_stdout: true
           script: |
             set -e
             cd /opt/dictprop-vps
             docker compose exec -T app nice -n 19 node server/dist/scripts/audit-production-data.js
-
-      - name: Report production audit
-        env:
-          AUDIT_OUTPUT: ${{ steps.production_audit.outputs.stdout }}
-        run: printf '%s\n' "$AUDIT_OUTPUT"
 
   # Exports leave the runner only as this run's encrypted artifact, which the local cycle downloads,
   # decrypts and then deletes together with the run's log.
