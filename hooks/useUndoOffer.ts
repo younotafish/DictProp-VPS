@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
 import { getItemTitle, type StoredItem } from '../types';
-import { saveItemUpdates } from '../services/storage';
 import { error as logError } from '../services/logger';
 import { findInDetailContext, nextDetailKey, type DetailContext, type DetailViewState } from './useDetailView';
 import type { Library } from './useLibrary';
@@ -18,8 +17,8 @@ export interface UndoOffer {
 }
 
 export function useUndoOffer(
-  { undoOfferRef, pushDirtyItems, replaceItem, latestItemsRef, currentUserIdRef }: Pick<Library,
-    'undoOfferRef' | 'pushDirtyItems' | 'replaceItem' | 'latestItemsRef' | 'currentUserIdRef'>,
+  { undoOfferRef, pushDirtyItems, replaceItem, latestItemsRef, storeItemUpdates }: Pick<Library,
+    'undoOfferRef' | 'pushDirtyItems' | 'replaceItem' | 'latestItemsRef' | 'storeItemUpdates'>,
   { detailVersionRef, updateDetailContext }: Pick<DetailViewState, 'detailVersionRef' | 'updateDetailContext'>,
 ) {
   const [undoMessage, setUndoMessage] = useState<string | null>(null);
@@ -59,10 +58,10 @@ export function useUndoOffer(
     // Undone, the item usually matches the server copy again, so closing the offer finds nothing to push.
     closeUndoOffer();
     if (restored) {
-      await saveItemUpdates([restored], currentUserIdRef.current)
+      await storeItemUpdates([restored])
         .catch(error => logError('Undo: failed to save the local update', error));
     }
-  }, [replaceItem, closeUndoOffer, updateDetailContext]);
+  }, [replaceItem, closeUndoOffer, updateDetailContext, storeItemUpdates]);
 
   return { undoMessage, closeUndoOffer, offerUndo, undoLastChange };
 }

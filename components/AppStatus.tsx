@@ -34,7 +34,7 @@ export const AppBanners: React.FC<{ showOffline: boolean; writeFailed: boolean; 
 );
 
 interface AppStatusPillsProps {
-  userId: string | undefined;
+  userId: string;
   onViewRefusedReviews: () => void;
   imagePrefetchProgress: { done: number; total: number } | null;
   onStopImageDownload: () => void;

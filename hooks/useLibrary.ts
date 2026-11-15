@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
 import type { RevisionCursor, StoredItem } from '../types';
-import type { AuthUser } from '../services/auth';
 import { deleteItemRecords, saveData, saveItemUpdates } from '../services/storage';
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../services/sync';
 import { getItemContentHash } from '../services/itemHash';
@@ -12,8 +11,12 @@ import { selectUnsent } from '../services/unsentChanges';
 import { log, warn, error as logError } from '../services/logger';
 import type { UndoOffer } from './useUndoOffer';
 
-/** The library in memory, and the pulls and pushes that keep it in step with the server. */
-export function useLibrary(user: AuthUser | null) {
+/**
+ * The library of account `userId` in memory, and the pulls and pushes that keep it in step with the server.
+ * The id holds for the hook's lifetime (App mounts the signed-in app per account), so every write, including
+ * the ones async work finishes after a session lapses, is stored under it.
+ */
+export function useLibrary(userId: string) {
   // The library. IndexedDB is the only local copy.
   const [savedItems, setSavedItems] = useState<StoredItem[]>([]);
   // The library as of the latest change, for handlers and async work that outlive a render.
@@ -53,13 +56,10 @@ export function useLibrary(user: AuthUser | null) {
     return replaced;
   }, [updateItems]);
 
-  // The account whose library is in memory. A session that lapses keeps it, so the library is never saved
-  // under another name while the sign-in screen shows.
-  const currentUserIdRef = useRef(user?.id || 'vps');
-  if (user) currentUserIdRef.current = user.id;
-
   // User-scoped saveData wrapper — all saves go through this
-  const userSaveData = useCallback((items: StoredItem[]) => saveData(items, currentUserIdRef.current), []);
+  const userSaveData = useCallback((items: StoredItem[]) => saveData(items, userId), [userId]);
+  /** Stores a few replaced items on this device at once, under the library's account. */
+  const storeItemUpdates = useCallback((items: StoredItem[]) => saveItemUpdates(items, userId), [userId]);
 
   const initialServerSyncDoneRef = useRef(false);
   // A launch whose first sync failed (offline, say) leaves the push of changes made before it, and the
@@ -82,11 +82,11 @@ export function useLibrary(user: AuthUser | null) {
     const refused = refusedPushesRef.current;
     const unsent = selectUnsent(latestItemsRef.current, { heldId: undoOfferRef.current?.id ?? null, refused }, ids);
     // Items with an unsent review wait for the review outbox, which applies the review atomically.
-    const toPush = excludePendingReviewItems(unsent, currentUserIdRef.current);
+    const toPush = excludePendingReviewItems(unsent, userId);
     if (toPush.length === 0) return 0;
     const result = await saveItems(toPush);
     const next = updateItems(items => applyServerSave(items, toPush, result));
-    await saveData(next, currentUserIdRef.current);
+    await saveData(next, userId);
     for (const [id, reason] of result.rejected ?? []) {
       const item = toPush.find(candidate => candidate.data.id === id);
       if (item) refused.set(id, getItemContentHash(item));
@@ -94,7 +94,7 @@ export function useLibrary(user: AuthUser | null) {
     }
     if (result.error) throw result.error;
     return toPush.length;
-  }, [updateItems]);
+  }, [updateItems, userId]);
 
   const pushDirtyItems = useCallback(
     (ids?: ReadonlySet<string>) => inSyncLane(() => pushNow(ids)),
@@ -119,10 +119,10 @@ export function useLibrary(user: AuthUser | null) {
       return pruned.items;
     });
     serverCursorRef.current = cursor;
-    await deleteItemRecords(droppedIds, currentUserIdRef.current)
+    await deleteItemRecords(droppedIds, userId)
       .catch(error => warn('Expired deletions stay stored until the next launch:', error));
-    await saveData(merged, currentUserIdRef.current, cursor);
-  }, [updateItems]);
+    await saveData(merged, userId, cursor);
+  }, [updateItems, userId]);
 
   /**
    * Merges the server changes after `from`. False when the server is behind the cursor: its database
@@ -167,7 +167,7 @@ export function useLibrary(user: AuthUser | null) {
   const persistChangedItems = useCallback(async (items: StoredItem[], label: string): Promise<void> => {
     if (items.length === 0) return;
     try {
-      await saveItemUpdates(items, currentUserIdRef.current);
+      await storeItemUpdates(items);
     } catch (error) {
       logError(`${label}: failed to save the local update`, error);
     }
@@ -177,10 +177,10 @@ export function useLibrary(user: AuthUser | null) {
     } catch (error) {
       logError(`${label}: immediate server sync failed`, error);
     }
-  }, [pushDirtyItems]);
+  }, [storeItemUpdates, pushDirtyItems]);
 
   return {
-    savedItems, latestItemsRef, serverCursorRef, updateItems, replaceItem, currentUserIdRef, userSaveData,
+    savedItems, latestItemsRef, serverCursorRef, updateItems, replaceItem, userSaveData, storeItemUpdates,
     initialServerSyncDoneRef, initialSyncIncompleteRef, inSyncLane, refusedPushesRef, undoOfferRef,
     pushNow, pushDirtyItems, syncFullSnapshot, syncWithServer, persistChangedItems,
   };

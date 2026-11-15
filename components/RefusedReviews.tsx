@@ -20,9 +20,9 @@ export function useRefusedReviews(userId: string | undefined): RefusedReviewLog 
 }
 
 /** Tells of reviews the server refused since this was last dismissed, and offers the list. */
-export const RefusedReviewsNotice: React.FC<{ userId: string | undefined; onView: () => void }> = ({ userId, onView }) => {
+export const RefusedReviewsNotice: React.FC<{ userId: string; onView: () => void }> = ({ userId, onView }) => {
   const unseen = unseenRefusedReviews(useRefusedReviews(userId));
-  if (!userId || unseen === 0) return null;
+  if (unseen === 0) return null;
   return (
     <div role="status" className="pointer-events-auto max-w-[calc(100vw-2rem)] bg-amber-600 text-white rounded-full shadow-xl pl-4 pr-1.5 py-1.5 flex items-center gap-2 text-sm font-medium fade-in">
       <span className="truncate">{unseen === 1 ? '1 review wasn’t accepted' : `${unseen} reviews weren’t accepted`}</span>

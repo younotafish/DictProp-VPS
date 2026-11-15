@@ -1,7 +1,5 @@
 import { useCallback, useRef } from 'react';
 import { getItemTitle, type ReviewEvent, type ReviewRating, type ReviewTaskType, type StoredItem } from '../types';
-import type { AuthUser } from '../services/auth';
-import { saveItemUpdates } from '../services/storage';
 import { reconcileReviewedItem } from '../services/sync';
 import { getItemContentHash, isItemDirty } from '../services/itemHash';
 import { applyReviewMutation, undoReviewMutation } from '../services/api';
@@ -24,10 +22,10 @@ export const loadFsrsScheduler = () => import('../services/fsrsScheduler').then(
  * outbox applies it on the server atomically, so a reload, a crash or going offline doesn't lose it.
  */
 export function useReviewOutbox(
-  user: AuthUser | null,
-  { latestItemsRef, currentUserIdRef, updateItems }: Pick<Library, 'latestItemsRef' | 'currentUserIdRef' | 'updateItems'>,
+  userId: string,
+  { latestItemsRef, updateItems, storeItemUpdates }: Pick<Library, 'latestItemsRef' | 'updateItems' | 'storeItemUpdates'>,
 ) {
-  const { reviewHistory, recordReview, removeReview } = useReviewHistory(user?.id);
+  const { reviewHistory, recordReview, removeReview } = useReviewHistory(userId);
   const reviewFlushPromiseRef = useRef<Promise<void> | null>(null);
 
   const reconcileAppliedReview = useCallback(async (
@@ -40,23 +38,19 @@ export function useReviewOutbox(
       const serverItem = byId.get(local.data.id);
       return serverItem ? reconcileReviewedItem(local, serverItem, baseRevisions[local.data.id]) : local;
     }));
-    await saveItemUpdates(
-      nextItems.filter(item => byId.has(item.data.id)),
-      currentUserIdRef.current,
-    );
-  }, [updateItems]);
+    await storeItemUpdates(nextItems.filter(item => byId.has(item.data.id)));
+  }, [updateItems, storeItemUpdates]);
 
   const markItemsUnsynced = useCallback(async (itemIds: readonly string[]) => {
     const ids = new Set(itemIds);
     const nextItems = updateItems(items => items.map(item =>
       ids.has(item.data.id) && item.lastSyncedHash !== undefined ? { ...item, lastSyncedHash: undefined } : item,
     ));
-    await saveItemUpdates(nextItems.filter(item => ids.has(item.data.id)), currentUserIdRef.current);
-  }, [updateItems]);
+    await storeItemUpdates(nextItems.filter(item => ids.has(item.data.id)));
+  }, [updateItems, storeItemUpdates]);
 
   const flushPendingReviews = useCallback(async () => {
-    const userId = user?.id;
-    if (!userId || !navigator.onLine) return;
+    if (!navigator.onLine) return;
     if (reviewFlushPromiseRef.current) return reviewFlushPromiseRef.current;
     const runFlush = async () => {
       try {
@@ -93,11 +87,9 @@ export function useReviewOutbox(
     } finally {
       if (reviewFlushPromiseRef.current === flush) reviewFlushPromiseRef.current = null;
     }
-  }, [user?.id, markItemsUnsynced, reconcileAppliedReview]);
+  }, [userId, markItemsUnsynced, reconcileAppliedReview]);
 
   const undoSRSReview = useCallback(async (eventId: string): Promise<void> => {
-    const userId = user?.id;
-    if (!userId) throw new Error('Sign in again before undoing this review.');
     await flushPendingReviews();
     if (readPendingReviewMutations(userId).some(mutation => mutation.event.id === eventId)) {
       throw new Error(navigator.onLine ? 'This review is still syncing. Try undo again.' : 'Reconnect to undo this review.');
@@ -105,7 +97,7 @@ export function useReviewOutbox(
     const response = await undoReviewMutation(eventId);
     await reconcileAppliedReview(response.items, response.baseRevisions);
     removeReview(eventId);
-  }, [user?.id, flushPendingReviews, reconcileAppliedReview, removeReview]);
+  }, [userId, flushPendingReviews, reconcileAppliedReview, removeReview]);
 
   // SRS update for one sense/item. The server applies the same FSRS transition atomically.
   //
@@ -125,7 +117,6 @@ export function useReviewOutbox(
   ): Promise<boolean> => {
     const { updateAfterRating } = fsrsScheduler ?? await loadFsrsScheduler();
     const now = Date.now();
-    const userId = currentUserIdRef.current;
 
     const savedItem = latestItemsRef.current.find(i => i.data.id === itemId);
     const requestedSeed = context?.seedItem;
@@ -182,14 +173,14 @@ export function useReviewOutbox(
     // CRITICAL: save to IndexedDB immediately (primary persistence — never lose progress on a quick
     // refresh / app switch).
     try {
-      await saveItemUpdates([reviewedItem], userId);
+      await storeItemUpdates([reviewedItem]);
     } catch (e) {
       logError('💾 Failed to save SRS update to IndexedDB:', e);
     }
 
     await flushPendingReviews();
     return !readPendingReviewMutations(userId).some(mutation => mutation.event.id === reviewEvent.id);
-  }, [user?.id, recordReview, updateItems, flushPendingReviews]);
+  }, [userId, recordReview, updateItems, storeItemUpdates, flushPendingReviews]);
 
   return { reviewHistory, flushPendingReviews, undoSRSReview, updateSRS };
 }

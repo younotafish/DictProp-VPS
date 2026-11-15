@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StoredItem, SyncStatus } from '../types';
-import { logout, type AuthUser } from '../services/auth';
+import { logout } from '../services/auth';
 import { deleteItemRecords, loadData, saveData, storeMissingItemHashes, subscribeLibraryWriteFailures } from '../services/storage';
 import { dropExpiredTombstones } from '../services/sync';
 import { isItemDirty } from '../services/itemHash';
@@ -37,7 +37,7 @@ const SIGN_OUT_FLUSH_MS = 10_000;
  * sync, the background pulls, the debounced pushes, and sending what's unsent before a sign-out or a reload.
  */
 export function useLibrarySync(
-  user: AuthUser | null,
+  userId: string,
   library: Library,
   { flushPendingReviews, closeUndoOffer, prefetchImages }: {
     flushPendingReviews: () => Promise<void>;
@@ -46,7 +46,7 @@ export function useLibrarySync(
   },
 ) {
   const {
-    savedItems, latestItemsRef, serverCursorRef, updateItems, currentUserIdRef, userSaveData, initialServerSyncDoneRef,
+    savedItems, latestItemsRef, serverCursorRef, updateItems, userSaveData, initialServerSyncDoneRef,
     initialSyncIncompleteRef, inSyncLane, refusedPushesRef, undoOfferRef, pushNow, pushDirtyItems, syncFullSnapshot, syncWithServer,
   } = library;
   // Becomes true once IndexedDB has been read (or failed), whether or not it held any items.
@@ -111,10 +111,10 @@ export function useLibrarySync(
     hasUnsentChanges: () => hasUnsentChanges(
       latestItemsRef.current,
       { heldId: undoOfferRef.current?.id ?? null, refused: refusedPushesRef.current },
-      () => readPendingReviewMutations(currentUserIdRef.current).length,
+      () => readPendingReviewMutations(userId).length,
     ),
     beforeReload: sendUnsentChanges,
-  }), [sendUnsentChanges]);
+  }), [userId, sendUnsentChanges]);
 
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
@@ -175,8 +175,6 @@ export function useLibrarySync(
 
   // 1. Initialize Local Storage (Load from IndexedDB) + Auto-migrate SRS
   useEffect(() => {
-    if (!user) return;
-    const userId = user.id;
     const initStorage = async () => {
         try {
             clearLegacyLibraryCaches();
@@ -213,7 +211,7 @@ export function useLibrarySync(
         }
     };
     initStorage();
-  }, [user?.id, libraryLoadAttempt]);
+  }, [userId, libraryLoadAttempt]);
 
   // 2. SERVER SYNC — once local data is loaded, pull what changed since it was stored
   useEffect(() => {
@@ -234,15 +232,15 @@ export function useLibrarySync(
       } finally {
         initialServerSyncDoneRef.current = true;
       }
-      storeMissingItemHashes(currentUserIdRef.current)
+      storeMissingItemHashes(userId)
         .catch(error => warn('Storing item hashes will retry on the next launch:', error));
     };
     void syncFromServer();
-  }, [isLoaded, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages]);
+  }, [isLoaded, userId, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages]);
 
   const deltaPullInProgressRef = useRef(false);
   const pullServerChanges = useCallback(async () => {
-    if (!user || !initialServerSyncDoneRef.current || deltaPullInProgressRef.current ||
+    if (!initialServerSyncDoneRef.current || deltaPullInProgressRef.current ||
         !navigator.onLine || document.visibilityState !== 'visible') return;
     deltaPullInProgressRef.current = true;
     try {
@@ -259,10 +257,10 @@ export function useLibrarySync(
     } finally {
       deltaPullInProgressRef.current = false;
     }
-  }, [user?.id, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages]);
+  }, [flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages]);
 
   useEffect(() => {
-    if (!isLoaded || !user) return;
+    if (!isLoaded) return;
     const tick = () => { void pullServerChanges(); };
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') tick();
@@ -280,7 +278,7 @@ export function useLibrarySync(
       window.removeEventListener('focus', tick);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [isLoaded, user?.id, pullServerChanges]);
+  }, [isLoaded, pullServerChanges]);
 
   // 3. SAVE EFFECTS (Persistence + Server Sync)
   // Changes reach this device's storage a moment after they settle, so closing the page, a crash or the OS

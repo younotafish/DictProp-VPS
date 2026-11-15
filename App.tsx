@@ -4,7 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { getItemContentHash } from './services/itemHash';
 import { analyzeInput } from './services/api';
 import { lazyLoadImage } from './services/libraryImages';
-import { loginRedirect, logout } from './services/auth';
+import { loginRedirect, logout, type AuthState, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
@@ -57,51 +57,33 @@ const TAB_SCREENS = {
   essays: EssaysView,
 } satisfies Record<ViewState, { preload: () => void }>;
 
-const App: React.FC = () => {
-  const authState = useAuthState();
+/** The tab showing when the app last closed: the notebook if there's none, or one the app no longer has. */
+const readSavedView = (): ViewState => {
+  let saved: string | null = null;
+  try { saved = localStorage.getItem('app_current_view'); } catch { /* storage unavailable */ }
+  // Default to notebook, and handle legacy 'search' value from old localStorage
+  if (!saved || saved === 'search' || !['notebook', 'study', 'sentences', 'real-life', 'essays'].includes(saved)) {
+    return 'notebook';
+  }
+  return saved as ViewState;
+};
 
-  useEffect(() => {
-    void import('./services/audioCache').then(({ requestPersistentStorage }) => requestPersistentStorage());
-  }, []);
-
-  const [currentView, setCurrentView] = useState<ViewState>(() => {
-    let saved: string | null = null;
-    try { saved = localStorage.getItem('app_current_view'); } catch { /* storage unavailable */ }
-    // Default to notebook, and handle legacy 'search' value from old localStorage
-    if (!saved || saved === 'search' || !['notebook', 'study', 'sentences', 'real-life', 'essays'].includes(saved)) {
-      return 'notebook';
-    }
-    return saved as ViewState;
-  });
-
-  // Fetch screen code ahead of use. A screen whose code isn't in yet shows its fallback for at least 300 ms
-  // (React holds a fallback that long once it's shown), so the first screen's code is fetched while the
-  // library loads, and the code of everything a tap can open once the first screen is up. That's what lets
-  // the app, a card, a tab or a popup appear on the first frame.
-  useEffect(() => {
-    for (const screen of [TAB_SCREENS[currentView], AppNavigation, GlobalSearch]) screen.preload();
-    const preloadRest = () => {
-      for (const screen of [DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal]) {
-        screen.preload();
-      }
-      loadFsrsScheduler().catch(error => warn('The review scheduler will load with the first review:', error));
-    };
-    if (typeof window.requestIdleCallback === 'function') {
-      const handle = window.requestIdleCallback(preloadRest, { timeout: 2_000 });
-      return () => window.cancelIdleCallback(handle);
-    }
-    const timer = window.setTimeout(preloadRest, 1_000);
-    return () => window.clearTimeout(timer);
-  }, []);
+/**
+ * The app for the signed-in account: its library, the tabs, and everything that opens over them. App mounts
+ * it per account, so the account id holds for its whole life, and unmounts it if the session lapses: the
+ * library's unmount flush then saves it under that account, and signing in again reloads the page.
+ */
+function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState }) {
+  const [currentView, setCurrentView] = useState<ViewState>(readSavedView);
 
   // Persist current view
   useEffect(() => {
     try { localStorage.setItem('app_current_view', currentView); } catch { /* storage full or unavailable */ }
   }, [currentView]);
 
-  const library = useLibrary(authState.user);
+  const library = useLibrary(user.id);
   const { latestItemsRef } = library;
-  const { reviewHistory, flushPendingReviews, undoSRSReview, updateSRS } = useReviewOutbox(authState.user, library);
+  const { reviewHistory, flushPendingReviews, undoSRSReview, updateSRS } = useReviewOutbox(user.id, library);
   const { comparisons, handleCompareReady, handleCompare, handleOpenComparison } = useComparisons(authState);
   const libraryViews = useLibraryViews(library.savedItems);
   const {
@@ -187,11 +169,9 @@ const App: React.FC = () => {
   const { isOnline, showOfflineBanner } = useOnlineStatus();
   const offlineImages = useOfflineImages(library);
   const { imagePrefetchProgress, imageRestoreProgress, stopImageDownload, handleDownloadOfflineImages, handleRestoreImagesToServer } = offlineImages;
-  // Signing out from the pending-approval screen needs the server; offline it says so instead of doing nothing.
-  const [signOutFailed, setSignOutFailed] = useState(false);
   const {
     isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, syncStatus, libraryWriteFailed, handleForceSync, handleSignOut,
-  } = useLibrarySync(authState.user, library, { flushPendingReviews, closeUndoOffer, prefetchImages: offlineImages.prefetchImages });
+  } = useLibrarySync(user.id, library, { flushPendingReviews, closeUndoOffer, prefetchImages: offlineImages.prefetchImages });
 
   const speech = useSpeechBackfill(overlays);
   const { ttsGenProgress, ttsGenAbortRef, handleGenerateAllSpeech } = speech;
@@ -203,10 +183,10 @@ const App: React.FC = () => {
   } = actions;
   const { batchImportProgress, handleBatchImport } = useBatchImport(library, overlays, actions, speech);
 
-  const notebookUser = useMemo(() => {
-    const user = authState.user;
-    return user ? { uid: user.id, displayName: user.displayName, photoURL: user.photoUrl, email: user.email } : null;
-  }, [authState.user]);
+  const notebookUser = useMemo(
+    () => ({ uid: user.id, displayName: user.displayName, photoURL: user.photoUrl, email: user.email }),
+    [user],
+  );
   // Footnote popup: fetch a word's full set of AI senses (cached per session) so the popup can page
   // through saved + not-yet-saved meanings; and save a chosen sense.
   const senseCacheRef = useRef<Map<string, VocabCard[]>>(new Map());
@@ -239,19 +219,6 @@ const App: React.FC = () => {
   const handleRefreshViaGlobal = useCallback((text: string) => {
       window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text, forceAI: true } }));
   }, []);
-
-  // Auth gate: show login/pending/loading before the main app
-  if (authState.loading) {
-    return <AuthLoadingScreen />;
-  }
-
-  if (!authState.user) {
-    return <SignInScreen onSignIn={loginRedirect} />;
-  }
-
-  if (authState.pending) {
-    return <PendingApprovalScreen onSignOut={async () => setSignOutFailed(!(await logout()))} signOutFailed={signOutFailed} />;
-  }
 
   if (libraryReadFailed) {
     return (
@@ -302,7 +269,7 @@ const App: React.FC = () => {
       )}
 
       <AppStatusPills
-        userId={authState.user?.id}
+        userId={user.id}
         onViewRefusedReviews={openRefusedReviews}
         imagePrefetchProgress={imagePrefetchProgress}
         onStopImageDownload={stopImageDownload}
@@ -501,14 +468,60 @@ const App: React.FC = () => {
         {showKeyboardHelp && <KeyboardHelpModal onClose={() => setShowKeyboardHelp(false)} />}
       </Suspense>
       <Suspense fallback={null}>
-        {showRefusedReviews && authState.user && (
-          <RefusedReviewsDialog userId={authState.user.id} onClose={() => setShowRefusedReviews(false)} />
+        {showRefusedReviews && (
+          <RefusedReviewsDialog userId={user.id} onClose={() => setShowRefusedReviews(false)} />
         )}
       </Suspense>
       </>
       )}
     </div>
   );
+}
+
+const App: React.FC = () => {
+  const authState = useAuthState();
+
+  useEffect(() => {
+    void import('./services/audioCache').then(({ requestPersistentStorage }) => requestPersistentStorage());
+  }, []);
+
+  // Fetch screen code ahead of use. A screen whose code isn't in yet shows its fallback for at least 300 ms
+  // (React holds a fallback that long once it's shown), so the first screen's code is fetched while the
+  // library loads, and the code of everything a tap can open once the first screen is up. That's what lets
+  // the app, a card, a tab or a popup appear on the first frame. It runs on the sign-in screen too.
+  useEffect(() => {
+    for (const screen of [TAB_SCREENS[readSavedView()], AppNavigation, GlobalSearch]) screen.preload();
+    const preloadRest = () => {
+      for (const screen of [DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal]) {
+        screen.preload();
+      }
+      loadFsrsScheduler().catch(error => warn('The review scheduler will load with the first review:', error));
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const handle = window.requestIdleCallback(preloadRest, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(preloadRest, 1_000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // Signing out from the pending-approval screen needs the server; offline it says so instead of doing nothing.
+  const [signOutFailed, setSignOutFailed] = useState(false);
+
+  // Auth gate: show login/pending/loading before the main app
+  if (authState.loading) {
+    return <AuthLoadingScreen />;
+  }
+
+  if (!authState.user) {
+    return <SignInScreen onSignIn={loginRedirect} />;
+  }
+
+  if (authState.pending) {
+    return <PendingApprovalScreen onSignOut={async () => setSignOutFailed(!(await logout()))} signOutFailed={signOutFailed} />;
+  }
+
+  return <SignedInApp key={authState.user.id} user={authState.user} authState={authState} />;
 };
 
 export default App;
