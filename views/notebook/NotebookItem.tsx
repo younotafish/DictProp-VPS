@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Trash2, RefreshCw, Archive, ArchiveRestore, MoreHorizontal } from 'lucide-react';
 import type { StoredItem } from '../../types';
 import { PronunciationBlock } from '../../components/PronunciationBlock';
+import { useLongPress } from './useLongPress';
 
 interface NotebookItemProps {
   item: StoredItem;
@@ -17,61 +18,9 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
   item, onDelete, onViewDetail, onArchive, onUnarchive, totalInGroup = 1
 }) => {
   const [showActions, setShowActions] = useState(false);
-  const longPressTimer = useRef<number | null>(null);
-  const pressStart = useRef<{ x: number; y: number } | null>(null);
-  const longPressFired = useRef(false);
-  // A mouse press held long enough to open the actions ends in a click, which would close them again.
-  const ignoreClicksUntil = useRef(0);
-  const LONG_PRESS_MS = 500;
-  const MOVE_TOLERANCE_PX = 10;
+  const { pressHandlers, isClickSuppressed } = useLongPress(() => setShowActions(true));
   const actionsRef = useRef<HTMLDivElement>(null);
   const focusActionsOnOpen = useRef(false);
-
-  const handlePressStart = (e: React.PointerEvent) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
-    pressStart.current = { x: e.clientX, y: e.clientY };
-    longPressFired.current = false;
-    longPressTimer.current = window.setTimeout(() => {
-      longPressTimer.current = null;
-      longPressFired.current = true;
-      setShowActions(true);
-    }, LONG_PRESS_MS);
-  };
-
-  const handlePressEnd = () => {
-    if (longPressTimer.current) {
-      window.clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-    if (longPressFired.current) ignoreClicksUntil.current = Date.now() + 400;
-    longPressFired.current = false;
-    pressStart.current = null;
-  };
-
-  // A finger that moves is scrolling or swiping to another meaning, not holding.
-  const handlePressMove = (e: React.PointerEvent) => {
-    const start = pressStart.current;
-    if (start && longPressTimer.current && Math.hypot(e.clientX - start.x, e.clientY - start.y) > MOVE_TOLERANCE_PX) {
-      handlePressEnd();
-    }
-  };
-
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
-    // A touch long press can raise the context menu before the timer runs out.
-    if (pressStart.current) longPressFired.current = true;
-    setShowActions(true);
-  };
-
-  // Clean up timer on unmount
-  useEffect(() => {
-    return () => {
-      if (longPressTimer.current) {
-        window.clearTimeout(longPressTimer.current);
-      }
-    };
-  }, []);
 
   // The more button goes away as the actions open, so the keyboard's focus moves on to the first of them.
   useEffect(() => {
@@ -81,7 +30,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
   }, [showActions]);
 
   const handleClick = () => {
-    if (Date.now() < ignoreClicksUntil.current) return;
+    if (isClickSuppressed()) return;
     if (showActions) {
       setShowActions(false);
       return;
@@ -121,12 +70,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
         tabIndex={0}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
-        onPointerDown={handlePressStart}
-        onPointerMove={handlePressMove}
-        onPointerUp={handlePressEnd}
-        onPointerLeave={handlePressEnd}
-        onPointerCancel={handlePressEnd}
-        onContextMenu={handleContextMenu}
+        {...pressHandlers}
         className="bg-white p-4 relative cursor-pointer select-none [-webkit-touch-callout:none]"
         style={{ touchAction: 'pan-y' }}
       >

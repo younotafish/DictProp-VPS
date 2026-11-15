@@ -4,14 +4,11 @@ import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } f
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
 import { JSONImport } from '../components/JSONImport';
-import { analyzeInput, transcribeAudio } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
 import {
-  buildNotebookList, buildNotebookRows, countSavedSpellings, findFuzzyMatches, findLiteralMatches, listNoteFor, nextNotebookFilter,
-  nextNotebookSort, notebookStats, type NotebookFilter, type NotebookList, type NotebookRow, type NotebookSection, type NotebookSort,
+  buildNotebookRows, countSavedSpellings, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats,
+  type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
 } from '../services/notebookList';
-import { speakWord, ensureTTS } from '../services/lazyTts';
-import { error as logError } from '../services/logger';
 import { isTypingTarget } from '../components/keyboardTarget';
 import { NotebookGroup } from './notebook/NotebookGroup';
 import { SearchResultsCarousel } from './notebook/SearchResultsCarousel';
@@ -23,6 +20,10 @@ import { CompareBanner, CompareRow, CompareSelectedButton } from './notebook/Com
 import { EmptyNotebook } from './notebook/EmptyNotebook';
 import { BatchImportBanner, type BatchImportProgress } from './notebook/BatchImportBanner';
 import { SearchErrorBanner } from './notebook/SearchErrorBanner';
+import { useAutoHidingHeader } from './notebook/useAutoHidingHeader';
+import { useNotebookAISearch } from './notebook/useNotebookAISearch';
+import { useVoiceSearch } from './notebook/useVoiceSearch';
+import { useNotebookSearch } from './notebook/useNotebookSearch';
 
 const virtualRowKey = (_index: number, row: NotebookRow) => row.key;
 
@@ -72,20 +73,14 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [sortMode, setSortMode] = useState<NotebookSort>('familiarity');
   const [filterMode, setFilterMode] = useState<NotebookFilter>('vocab'); // Default to vocab only
   const [localSearchQuery, setLocalSearchQuery] = useState('');
-  // Defer the heavy grouping/search pipeline so typing stays responsive on large libraries: the input
-  // updates immediately (localSearchQuery) while the filtered/grouped list catches up a tick behind.
-  const deferredSearchQuery = React.useDeferredValue(localSearchQuery);
   const [showArchived, setShowArchived] = useState(false);
-  const lastScrollY = useRef(0);
-  // Hidden and shown by class, so scrolling never re-renders the notebook.
-  const headerRef = useRef<HTMLDivElement>(null);
-  
+  const { headerRef, handleScroll } = useAutoHidingHeader(onScroll);
+
   // AI Search state
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const searchGenerationIdRef = useRef(0); // Incremented on each search to discard stale analysis results
-  
+  const {
+    isSearching, searchResults, searchError, setSearchError, performAISearch, clearSearchResults,
+  } = useNotebookAISearch(isOnline, localSearchQuery);
+
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
@@ -95,24 +90,12 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
 
-  // Voice recording state
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-
-  // Clean up MediaRecorder and release microphone on unmount
-  useEffect(() => {
-    return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
+  // Voice search: the transcript becomes the query and is looked up with AI.
+  const handleTranscript = useCallback((text: string) => {
+    setLocalSearchQuery(text);
+    performAISearch(text);
+  }, [performAISearch]);
+  const { isRecording, isTranscribing, toggleRecording } = useVoiceSearch(isOnline, handleTranscript, setSearchError);
 
   // Touch swipe handling to clear search
   const touchStart = useRef<{x: number, y: number} | null>(null);
@@ -141,47 +124,10 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     // and swipe is to the right (positive diffX)
     if (diffX > 0 && absX > absY * 1.5 && absX > SWIPE_THRESHOLD && localSearchQuery.trim()) {
       setLocalSearchQuery('');
-      setSearchResults(null);
-      setSearchError(null);
+      clearSearchResults();
     }
     touchStart.current = null;
   };
-
-  // AI Search function
-  const performAISearch = useCallback(async (query: string) => {
-    if (!query.trim() || !isOnline) return;
-
-    setIsSearching(true);
-    setSearchError(null);
-    setSearchResults(null);
-
-    // Increment generation ID so a superseded search's result is discarded when it lands
-    const currentGenId = ++searchGenerationIdRef.current;
-
-    try {
-      const result = await analyzeInput(query.trim());
-      if (searchGenerationIdRef.current !== currentGenId) return; // Superseded by new search
-      setSearchResults(result);
-
-      // Prepare the API audio for the example sentences up front (generate if needed) so the first
-      // tap plays instantly from the cache instead of hitting a cache-miss fallback.
-      ensureTTS((result.vocabs || []).flatMap(v => v.examples || []));
-
-      // Auto-pronounce the word once when results arrive
-      if (result.vocabs && result.vocabs.length > 0) {
-        const wordToSpeak = result.vocabs[0].word || query.trim();
-        setTimeout(() => speakWord(wordToSpeak), 100);
-
-        // The immediate result is intentionally text-only. The Mac's local enrichment cycle creates
-        // the advanced metadata and image after the item is saved.
-      }
-    } catch (err: any) {
-      logError('AI Search failed:', err);
-      setSearchError(err.message || 'Search failed. Please try again.');
-    } finally {
-      setIsSearching(false);
-    }
-  }, [isOnline]);
 
   // Handle keyboard Enter to trigger AI search
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -200,85 +146,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     }
   };
 
-  // Voice recording functions
-  const startRecording = useCallback(async () => {
-    if (!isOnline) return;
-    
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-      
-      // Try to use audio/webm with opus codec, fallback to default
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-        ? 'audio/webm;codecs=opus' 
-        : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : 'audio/mp4';
-      
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-      
-      mediaRecorder.onstop = async () => {
-        // Stop all tracks to release microphone
-        stream.getTracks().forEach(track => track.stop());
-        mediaStreamRef.current = null;
-        
-        if (audioChunksRef.current.length === 0) return;
-        
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        audioChunksRef.current = [];
-        
-        // Transcribe the audio
-        setIsTranscribing(true);
-        setSearchError(null);
-        
-        try {
-          const transcribedText = await transcribeAudio(audioBlob);
-          if (transcribedText.trim()) {
-            setLocalSearchQuery(transcribedText.trim());
-            // Auto-search after transcription
-            performAISearch(transcribedText.trim());
-          }
-        } catch (err: any) {
-          logError('Transcription failed:', err);
-          setSearchError(err.message === 'QUOTA_EXCEEDED' 
-            ? 'Voice transcription quota exceeded. Please type your search.' 
-            : 'Voice transcription failed. Please try again.');
-        } finally {
-          setIsTranscribing(false);
-        }
-      };
-      
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch (err: any) {
-      logError('Failed to start recording:', err);
-      setSearchError('Microphone access denied. Please enable microphone permissions.');
-    }
-  }, [isOnline, performAISearch]);
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  }, [isRecording]);
-
-  const toggleRecording = useCallback(() => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  }, [isRecording, startRecording, stopRecording]);
-
   // Global Escape (works even when the input is not focused) clears the search, and a second one leaves compare
   // mode. It's the notebook's own Escape, so it stands down while an overlay (DetailView, a modal) is open and
   // for an Escape something else already used, such as closing the tools menu.
@@ -291,8 +158,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         e.preventDefault();
         e.stopPropagation();
         setLocalSearchQuery('');
-        setSearchResults(null);
-        setSearchError(null);
+        clearSearchResults();
       } else if (compareMode) {
         e.preventDefault();
         setCompareMode(false);
@@ -301,59 +167,14 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [localSearchQuery, searchResults, compareMode, hasOverlay]);
-
-  // Clear search results when query is cleared
-  useEffect(() => {
-    if (!localSearchQuery.trim()) {
-      setSearchResults(null);
-      setSearchError(null);
-    }
-  }, [localSearchQuery]);
+  }, [localSearchQuery, searchResults, compareMode, hasOverlay, clearSearchResults]);
 
   // Save a vocab from search results into the unified notebook.
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
     onSave(makeVocabStoredItem(vocab));
   }, [onSave]);
 
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const currentScrollY = e.currentTarget.scrollTop;
-
-    // Top buffer zone
-    if (currentScrollY < 50) {
-      headerRef.current?.classList.remove('-translate-y-full');
-    } else if (Math.abs(currentScrollY - lastScrollY.current) > 10) {
-      headerRef.current?.classList.toggle('-translate-y-full', currentScrollY > lastScrollY.current);
-    }
-
-    lastScrollY.current = currentScrollY;
-    onScroll(e);
-  }, [onScroll]);
-  
-  const searchQuery = deferredSearchQuery.trim();
-  // A query no word contains, as each keystroke of a word the notebook doesn't have yet is, falls back to a
-  // fuzzy scan of every spelling that takes tens of ms. It waits for typing to pause, and until then the
-  // list keeps its last results rather than flash empty.
-  const [pausedQuery, setPausedQuery] = useState(searchQuery);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setPausedQuery(searchQuery), 300);
-    return () => window.clearTimeout(timer);
-  }, [searchQuery]);
-  const literalMatches = useMemo(
-    () => (searchQuery ? findLiteralMatches(items, searchQuery) : null),
-    [items, searchQuery],
-  );
-  const fuzzyReady = !!searchQuery && !literalMatches && pausedQuery === searchQuery;
-  const shownList = useRef<NotebookList | null>(null);
-  const list = useMemo(() => {
-    if (!searchQuery) return buildNotebookList(items, null, sortMode, filterMode);
-    const matches = literalMatches ?? (fuzzyReady ? findFuzzyMatches(items, searchQuery) : null);
-    if (!matches && shownList.current) return shownList.current;
-    return buildNotebookList(items, matches ?? [], sortMode, filterMode);
-  }, [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode]);
-  useEffect(() => { shownList.current = list; }, [list]);
-  // The list shows this query's results, not the last query's kept on screen while the fuzzy scan waits.
-  const searchSettled = !!searchQuery && (!!literalMatches || fuzzyReady);
+  const { searchQuery, list, searchSettled } = useNotebookSearch(items, localSearchQuery, sortMode, filterMode);
 
   // "N saved" counts the notebook's spellings under the current filter, not the search results. Outside a
   // search they're the listed groups; during one they're counted apart, once per search rather than per key.
@@ -523,8 +344,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           onSearchWithAI={() => performAISearch(localSearchQuery)}
           onClear={() => {
             setLocalSearchQuery('');
-            setSearchResults(null);
-            setSearchError(null);
+            clearSearchResults();
           }}
         />
       </NotebookHeader>
