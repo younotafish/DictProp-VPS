@@ -5,7 +5,7 @@ import { createReadStream, mkdtempSync, readdirSync, readFileSync, rmSync, statS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import test from 'node:test';
 import {
@@ -185,6 +185,27 @@ test('gunzip runs only after the blob authenticates', async () => {
     const notGzip = await encryptBytes(dir, Buffer.from('plain text, not gzip'));
     await assert.rejects(decryptBytes(dir, notGzip, { gunzip: true }), /incorrect header check|Z_DATA_ERROR/);
     assert.deepEqual(leftovers(dir, ['blob.dpb', 'input.dpb']), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('importing the library installs no process-exiting signal handlers', () => {
+  const dir = tempDir();
+  try {
+    // A fresh process, since an earlier CLI-style test in this one could have installed them already.
+    const probe = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { Readable } from 'node:stream';
+      const { decryptFile, encryptFile } = await import(${JSON.stringify(pathToFileURL(script).href)});
+      const counts = () => ['SIGHUP', 'SIGINT', 'SIGTERM'].map(signal => process.listenerCount(signal));
+      const before = counts();
+      const options = { passphrase: 'key', purpose: 'probe' };
+      await encryptFile({ ...options, input: Readable.from([Buffer.from('{}')]), output: process.argv[1] + '/blob' });
+      await decryptFile({ ...options, input: (await import('node:fs')).createReadStream(process.argv[1] + '/blob'), output: process.argv[1] + '/plain' });
+      process.stdout.write(JSON.stringify({ before, after: counts() }));
+    `, dir], { encoding: 'utf8' });
+    assert.equal(probe.status, 0, probe.stderr);
+    assert.deepEqual(JSON.parse(probe.stdout), { before: [0, 0, 0], after: [0, 0, 0] });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

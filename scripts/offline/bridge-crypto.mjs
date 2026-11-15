@@ -120,8 +120,9 @@ export async function* decryptChunks(source, { passphrase, purpose }) {
   if (last.length) yield last;
 }
 
-// Temp files are created exclusively and private, and removed on failure and on SIGINT/SIGTERM/SIGHUP,
-// so an interrupted run leaves neither plaintext nor a half-written blob behind.
+// Temp files are created exclusively and private, and removed on failure. The CLI also removes them on
+// SIGINT, SIGTERM or SIGHUP, so an interrupted run leaves neither plaintext nor a half-written blob behind;
+// a program that imports these functions keeps its own signal handling.
 const liveTempFiles = new Set();
 const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 let signalHandlersInstalled = false;
@@ -173,7 +174,6 @@ function discard(tempPath) {
 export async function encryptFile({ input, output, passphrase, purpose }) {
   checkPurpose(purpose);
   const outputPath = resolve(output);
-  installSignalCleanup();
   const tempPath = await writePrivately(outputPath, 'encrypting', sink =>
     pipeline(input ?? process.stdin, source => encryptChunks(source, { passphrase, purpose }), sink));
   commit(tempPath, outputPath);
@@ -185,7 +185,6 @@ export async function encryptFile({ input, output, passphrase, purpose }) {
 export async function decryptFile({ input, output, passphrase, purpose, gunzip = false }) {
   checkPurpose(purpose);
   const outputPath = resolve(output);
-  installSignalCleanup();
   const authenticated = await writePrivately(outputPath, 'decrypting', sink =>
     pipeline(input ?? process.stdin, source => decryptChunks(source, { passphrase, purpose }), sink));
   if (!gunzip) {
@@ -236,6 +235,7 @@ export async function main(argv) {
     const passphrase = loadKey({ keyFile: values['key-file'] });
     const input = values.in ? createReadStream(values.in) : process.stdin;
     const options = { input, output: values.out, passphrase, purpose: values.purpose };
+    installSignalCleanup();
     const outputPath = command === 'encrypt'
       ? await encryptFile(options)
       : await decryptFile({ ...options, gunzip: values.gunzip });
