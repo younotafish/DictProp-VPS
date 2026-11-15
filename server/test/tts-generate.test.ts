@@ -179,10 +179,11 @@ test('writes leave no temporary files behind', async () => {
   assert.deepEqual(await (await generate([{ text }, { text, voice: 'casual' }])).json(), { generated: 2, skipped: 0, failed: 0 });
   await waitFor(() => existsSync(`${clipPath(text)}.json`) && existsSync(`${clipPath(text, 'casual')}.json`), 'both timings files');
   assert.ok(existsSync(`${clipPath(text, 'casual')}.txt`));
-  const leftovers = readdirSync(join(DATA_DIR, 'tts'), { recursive: true })
+  // A file is linked into place from its temp name, which goes a moment later.
+  const leftovers = () => readdirSync(join(DATA_DIR, 'tts'), { recursive: true })
     .map(String)
     .filter(name => name.endsWith('.tmp'));
-  assert.deepEqual(leftovers, []);
+  await waitFor(() => leftovers().length === 0, 'no temporary files');
 });
 
 test('the alignment queue runs one task at a time and takes interactive work before queued background work', async () => {
