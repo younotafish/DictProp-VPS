@@ -1,4 +1,6 @@
 import type { WordTiming } from './api';
+import type { MediaSessionHandlers, PlaybackState, SpeakHandle, SpeakOptions } from './neuralTts';
+export type { MediaSessionHandlers, PlaybackState, PlaybackStatus, SpeakHandle, SpeakOptions } from './neuralTts';
 
 type Engine = typeof import('./neuralTts');
 let engine: Engine | null = null;
@@ -21,24 +23,6 @@ function loadEngine(): Promise<Engine> {
   return enginePromise;
 }
 
-export interface SpeakHandle {
-  stop: () => void;
-  pause: () => void;
-  resume: () => void;
-  isPaused: () => boolean;
-  isActive: () => boolean;
-}
-export interface SpeakOptions {
-  voice?: string; rate?: number; allowDownload?: boolean; startAt?: number;
-  onStart?: () => void; onEnd?: () => void; onError?: (event: any) => void;
-}
-export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused';
-export interface PlaybackState { status: PlaybackStatus; text: string | null }
-export interface MediaSessionHandlers {
-  onPlay?: () => void; onPause?: () => void; onStop?: () => void;
-  onNext?: () => void; onPrev?: () => void;
-}
-
 function deferredSpeak(method: 'speakNatural' | 'speakWord', text: string, options?: SpeakOptions): SpeakHandle {
   let handle: SpeakHandle | null = null;
   let cancelled = false;
@@ -56,7 +40,6 @@ function deferredSpeak(method: 'speakNatural' | 'speakWord', text: string, optio
 
 export const speakNatural = (text: string, options: SpeakOptions = {}) => deferredSpeak('speakNatural', text, options);
 export const speakWord = (text: string) => deferredSpeak('speakWord', text);
-export const isNeuralSupported = () => typeof navigator !== 'undefined' && typeof WebAssembly !== 'undefined';
 export const getPlaybackState = () => engine?.getPlaybackState() ?? playbackState;
 export const subscribePlayback = (listener: (state: PlaybackState) => void) => {
   playbackListeners.add(listener); listener(getPlaybackState());
