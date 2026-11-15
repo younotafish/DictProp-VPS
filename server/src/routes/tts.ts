@@ -17,6 +17,7 @@ import {
   ttsKey,
 } from '../tts/cache.js';
 import { createClipStore, defaultClipDependencies, type ClipDependencies } from '../tts/clips.js';
+import { runPool } from '../tts/pool.js';
 
 // Covers every study sentence: essay-catalog sentences run to ~600 characters and examples to 1000.
 export const GENERATE_MAX_TEXT_CHARS = 1000;
@@ -43,7 +44,7 @@ export function createTtsRoutes(deps: TtsRouteDependencies = {}) {
   routes.post('/tts/backfill', async (c) => {
     const detached = await getDetachedBackfillStatus();
     if (detached) return c.json(detached);
-    backfill.run().catch((e) => console.warn('[tts] backfill error:', e?.message));
+    backfill.run().catch((e: unknown) => console.warn('[tts] backfill error:', (e as Error | undefined)?.message));
     return c.json(backfill.status());
   });
   routes.get('/tts/backfill', async (c) => c.json((await getDetachedBackfillStatus()) ?? backfill.status()));
@@ -110,18 +111,14 @@ export function createTtsRoutes(deps: TtsRouteDependencies = {}) {
         if (await isComplete(key)) { skipped++; return; }
         const fresh = await clips.ensureAudio(text, voice);
         void clips.ensureTimings(key, priority, fresh)
-          .catch((e: any) => console.warn('[tts] word timings failed:', e?.message));
+          .catch((e: unknown) => console.warn('[tts] word timings failed:', (e as Error | undefined)?.message));
         generated++;
-      } catch (e: any) {
-        console.warn('[tts] generate failed:', e?.message);
+      } catch (e) {
+        console.warn('[tts] generate failed:', (e as Error | undefined)?.message);
         failed++;
       }
     };
-    let next = 0;
-    const worker = async () => {
-      while (next < items.length && !signal.aborted) await generateOne(items[next++]);
-    };
-    await Promise.all(Array.from({ length: Math.min(GENERATE_CONCURRENCY, items.length) }, () => worker()));
+    await runPool(items, GENERATE_CONCURRENCY, generateOne, signal);
     return c.json({ generated, skipped, failed });
   });
 

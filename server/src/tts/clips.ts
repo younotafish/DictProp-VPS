@@ -98,8 +98,8 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
       let words: WordTiming[];
       try {
         words = await deps.align(audio, priority);
-      } catch (error: any) {
-        console.warn('[tts] local whisper alignment failed:', error?.message);
+      } catch (error) {
+        console.warn('[tts] local whisper alignment failed:', (error as Error | undefined)?.message);
         return;
       }
       await writeFileAtomic(tp, JSON.stringify(words));

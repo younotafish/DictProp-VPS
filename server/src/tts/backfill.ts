@@ -10,6 +10,7 @@ import { stripSentenceMarkers } from '../shared/sentence-markers.js';
 import { audioPath, CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, ttsKey } from './cache.js';
 import { reduceCasualBatch, RESPELLING_BATCH_SIZE } from './casual.js';
 import type { ClipStore } from './clips.js';
+import { runPool } from './pool.js';
 
 const BACKFILL_STATUS_PATH = resolve(env.DATA_DIR, 'tts-backfill-status.json');
 
@@ -115,27 +116,23 @@ export function createBackfill({
   const retry = (operation: () => Promise<void>) =>
     retryBackfillOperation(operation, BACKFILL_GENERATION_ATTEMPTS, retryDelayMs);
 
+  const record = (result: Awaited<ReturnType<typeof retry>>, label: string) => {
+    if (result.succeeded) backfill.generated++;
+    else {
+      backfill.failed++;
+      console.warn(`[tts] backfill ${label} failed after ${result.attempts} attempts:`, (result.error as Error | undefined)?.message);
+    }
+  };
+
   async function runBackfillGroup(texts: string[]): Promise<void> {
     if (texts.length === 0) return;
     // ── Clear pass: per-item parallel (each item also runs a whisper alignment). ──
-    let idx = 0;
-    const clearWorker = async () => {
-      while (idx < texts.length) {
-        const text = texts[idx++];
-        const key = ttsKey(text, MIMO_VOICE);
-        if (!(await isComplete(key))) {
-          const result = await retry(() => clips.generateAndVerify(text, MIMO_VOICE));
-          if (result.succeeded) backfill.generated++;
-          else {
-            const e = result.error as any;
-            backfill.failed++;
-            console.warn(`[tts] backfill clear item failed after ${result.attempts} attempts:`, e?.message);
-          }
-        }
-        backfill.done++;
+    await runPool(texts, BACKFILL_CONCURRENCY, async (text) => {
+      if (!(await isComplete(ttsKey(text, MIMO_VOICE)))) {
+        record(await retry(() => clips.generateAndVerify(text, MIMO_VOICE)), 'clear item');
       }
-    };
-    await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => clearWorker()));
+      backfill.done++;
+    });
 
     // ── Casual pass ──
     // Split work: clips MISSING audio need a (batched) reduce + voice-design synth; clips that already
@@ -151,23 +148,10 @@ export function createBackfill({
     backfill.done += texts.length - needAudio.length - needTimingsOnly.length; // already-complete casual
 
     // Timings-only: cheap, parallel (generateAndVerify skips synth, just aligns + writes timings).
-    {
-      let t = 0;
-      const timingsWorker = async () => {
-        while (t < needTimingsOnly.length) {
-          const text = needTimingsOnly[t++];
-          const result = await retry(() => clips.generateAndVerify(text, CASUAL_STYLE));
-          if (result.succeeded) backfill.generated++;
-          else {
-            const e = result.error as any;
-            backfill.failed++;
-            console.warn(`[tts] backfill casual timings failed after ${result.attempts} attempts:`, e?.message);
-          }
-          backfill.done++;
-        }
-      };
-      await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => timingsWorker()));
-    }
+    await runPool(needTimingsOnly, BACKFILL_CONCURRENCY, async (text) => {
+      record(await retry(() => clips.generateAndVerify(text, CASUAL_STYLE)), 'casual timings');
+      backfill.done++;
+    });
 
     // Missing-audio: batch-reduce the spoken text (cheap throughput), then synth + align each clip.
     for (let i = 0; i < needAudio.length; i += RESPELLING_BATCH_SIZE) {
@@ -179,23 +163,10 @@ export function createBackfill({
         console.warn('[tts] backfill reduce batch failed, respelling each clip separately:', (e as Error)?.message);
         reduced = chunk.map(() => null); // a missing respelling is retried per clip, never voiced as-is
       }
-      let j = 0;
-      const casualWorker = async () => {
-        while (j < chunk.length) {
-          const k = j++;
-          const result = await retry(
-            () => clips.generateAndVerify(chunk[k], CASUAL_STYLE, reduced[k] ?? undefined),
-          );
-          if (result.succeeded) backfill.generated++;
-          else {
-            const e = result.error as any;
-            backfill.failed++;
-            console.warn(`[tts] backfill casual item failed after ${result.attempts} attempts:`, e?.message);
-          }
-          backfill.done++;
-        }
-      };
-      await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => casualWorker()));
+      await runPool(chunk, BACKFILL_CONCURRENCY, async (text, k) => {
+        record(await retry(() => clips.generateAndVerify(text, CASUAL_STYLE, reduced[k] ?? undefined)), 'casual item');
+        backfill.done++;
+      });
     }
   }
 
@@ -207,8 +178,8 @@ export function createBackfill({
     try {
       const { catalog, library } = sentenceTexts();
       ({ catalog: catalogTexts, library: libraryTexts } = partitionBackfillTexts(catalog, library));
-    } catch (e: any) {
-      console.warn('[tts] backfill: failed to read items:', e?.message);
+    } catch (e) {
+      console.warn('[tts] backfill: failed to read items:', (e as Error | undefined)?.message);
       return;
     }
     const sentenceCount = catalogTexts.length + libraryTexts.length;
