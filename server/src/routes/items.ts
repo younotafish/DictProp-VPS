@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
-import { db, getItemsAfterRevision, upsertMany, getItemById, getItemImageBinary, getImageManifest, addReviewEvent, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
+import { db, getItemsAfterRevision, upsertMany, getItemById, getItemImageBinary, getImageManifest, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { detectImageMimeType } from '../image-format.js';
 import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
@@ -353,21 +353,7 @@ itemsRoutes.get('/reviews/history', (c) => {
   return c.json(getReviewHistory(userId, recentSince));
 });
 
-itemsRoutes.post('/reviews', async (c) => {
-  const userId = c.get('user').id;
-  const event = await c.req.json().catch(() => null);
-  if (!event || typeof event.id !== 'string' || typeof event.itemId !== 'string' ||
-      !['vocab', 'phrase', 'sentence'].includes(event.itemType) ||
-      !Number.isFinite(event.reviewedAt) || !Number.isInteger(event.previousStep) ||
-      !Number.isInteger(event.nextStep) || !hasValidReviewMetadata(event)) {
-    return c.json({ error: 'Invalid review event' }, 400);
-  }
-  addReviewEvent(event, userId);
-  return c.json({ ok: true }, 201);
-});
-
 // Atomically append an idempotent review event and advance the latest server schedule.
-// Older clients may keep using POST /reviews + PUT /items during the compatibility window.
 itemsRoutes.post('/reviews/apply', async (c) => {
   const userId = c.get('user').id;
   const body = await c.req.json().catch(() => null);

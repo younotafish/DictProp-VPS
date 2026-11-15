@@ -110,20 +110,30 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
 });
 
 test('review history sends recent reviews in full and older ones as times and a count', async () => {
-  // Long before the other tests' reviews, which happen now.
+  const historyItem = { ...item, data: { ...item.data, id: 'history-item' }, srs: { ...item.srs, id: 'history-item' } };
+  let response = await app.request('/api/items', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([historyItem]),
+  });
+  assert.equal(response.status, 200);
+  // Long before the other tests' reviews, which happen now, and oldest first, as the schedule only moves forward.
   const at = (days: number) => 1_700_000_000_000 + days * 86_400_000;
-  for (const [id, days] of [['history-400', -400], ['history-30', -30], ['history-9', -9], ['history-1', -1]] as const) {
-    const response = await app.request('/api/reviews', {
+  for (const [id, days, step] of [['history-400', -400, 0], ['history-30', -30, 1], ['history-9', -9, 2], ['history-1', -1, 3]] as const) {
+    response = await app.request('/api/reviews/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id, itemId: item.data.id, itemType: 'vocab', reviewedAt: at(days), previousStep: 0, nextStep: 1, rating: 'good',
+        event: {
+          id, itemId: 'history-item', itemType: 'vocab', reviewedAt: at(days), previousStep: step, nextStep: step + 1, rating: 'good',
+        },
+        itemIds: ['history-item'],
       }),
     });
     assert.equal(response.status, 201);
   }
 
-  let response = await app.request(`/api/reviews/history?recentSince=${at(-8)}`);
+  response = await app.request(`/api/reviews/history?recentSince=${at(-8)}`);
   assert.equal(response.status, 200);
   const history = await response.json() as any;
   assert.deepEqual(

@@ -1045,15 +1045,6 @@ const reviewStmts = {
   markUndone: db.prepare(`UPDATE review_events SET undone_at = ? WHERE id = ? AND user_id = ? AND undone_at IS NULL`),
 };
 
-export function addReviewEvent(event: ReviewEventRow, userId: string): void {
-  reviewStmts.insert.run({
-    id: event.id, user_id: userId, item_id: event.itemId, item_type: event.itemType,
-    reviewed_at: event.reviewedAt, previous_step: event.previousStep, next_step: event.nextStep,
-    rating: event.rating || 'good', task_type: event.taskType || null,
-    duration_ms: event.durationMs ?? null, session_id: event.sessionId || null,
-  });
-}
-
 export function getReviewEvents(userId: string, since: number): ReviewEventRow[] {
   return (reviewStmts.recent.all(userId, since) as any[]).map(row => ({
     id: row.id, itemId: row.item_id, itemType: row.item_type, reviewedAt: row.reviewed_at,

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { enrichmentId } from '../src/example-enrichment-coverage.js';
 
-const { getItemById, getItemsAfterRevision, upsertItem, touchItemRevisions, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
+const { getItemById, getItemsAfterRevision, upsertItem, touchItemRevisions, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const makeItem = (
@@ -275,12 +275,13 @@ test('server revisions reject stale content independently of device clocks', () 
 });
 
 test('review events are idempotent and user scoped', () => {
+  upsertItem(makeItem('review-scope-item', 'reviewed once', 1_000, 0, 0), 'user-a');
   const event = {
-    id: 'review-1', itemId: 'revision-item', itemType: 'vocab' as const,
+    id: 'review-1', itemId: 'review-scope-item', itemType: 'vocab' as const,
     reviewedAt: 5_000, previousStep: 0, nextStep: 1, rating: 'good' as const,
   };
-  addReviewEvent(event, 'user-a');
-  addReviewEvent(event, 'user-a');
+  assert.equal(applyReviewEvent(event, [event.itemId], 'user-a')?.applied, true);
+  assert.equal(applyReviewEvent(event, [event.itemId], 'user-a')?.applied, false);
   assert.deepEqual(getReviewEvents('user-a', 0), [event]);
   assert.deepEqual(getReviewEvents('user-b', 0), []);
 });
