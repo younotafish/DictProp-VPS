@@ -287,7 +287,8 @@ const applyRepair = db.transaction(() => {
 });
 
 if (apply) {
-  applyRepair();
+  // The write lock comes first, so the repair waits for a save the live app is making instead of failing at once.
+  applyRepair.immediate();
   checkpointAfterWrite();
 }
 
