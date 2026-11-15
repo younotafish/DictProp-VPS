@@ -229,11 +229,6 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
           error: (err as Error).message || 'Failed',
         }]);
       }
-
-      // Small delay between API calls to avoid rate-limiting
-      if (i < wordsToAnalyze.length - 1 && !abortRef.current) {
-        await new Promise(r => setTimeout(r, 800));
-      }
     }
 
     setStep('done');
