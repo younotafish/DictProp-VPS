@@ -1,6 +1,6 @@
 /**
- * Checks the views' window-level keyboard shortcuts share: whether a key is being typed or composed, whether
- * it should press the control the keyboard focused, and whether a dialog outside the view has the keys.
+ * Checks the window-level keyboard shortcuts share: whether a key is being typed or composed, whether it should
+ * press the control the keyboard focused, and whether a dialog outside the view has the keys.
  */
 
 /** A key pressed in a text field, select or editable region is typing, not a shortcut. */

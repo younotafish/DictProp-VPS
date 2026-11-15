@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, ChevronDown, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { SentenceData } from '../types';
-import { stripSentenceMarkers } from './HighlightedSentence';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 
 interface SentenceAnalysisViewProps {
   sentence: SentenceData;

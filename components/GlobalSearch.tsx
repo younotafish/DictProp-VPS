@@ -7,12 +7,13 @@ import { ComparisonBody } from './ComparisonBody';
 import { ErrorBoundary } from './ErrorBoundary';
 import { makeVocabStoredItem } from '../services/items';
 import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
-import { stripSentenceMarkers } from './HighlightedSentence';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { useSentenceSearch } from '../services/sentenceSearch';
 import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';
 import { log, warn } from '../services/logger';
 import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../services/searchRecovery';
 import { useEscapeLayer } from './escapeStack';
+import { isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
@@ -387,8 +388,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       }
       // Arrow key navigation in viewing mode — stop propagation so background carousel doesn't also move
       if (mode === 'viewing' && readyItems.length > 0) {
-        const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+        if (isTypingTarget(e.target)) return;
         const currentResult = readyItems[viewingQueueIdx]?.results;
         const vocabCount = currentResult?.vocabs?.length || 0;
 

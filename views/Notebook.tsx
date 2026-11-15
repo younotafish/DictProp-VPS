@@ -16,7 +16,7 @@ import { makeVocabStoredItem } from '../services/items';
 import { buildNotebookList, findFuzzyMatches, findLiteralMatches, type NotebookFilter, type NotebookList, type NotebookSort } from '../services/notebookList';
 import { speakWord, ensureTTS } from '../services/lazyTts';
 import { error as logError } from '../services/logger';
-import { isDialogOpenOutside, isTypingTarget } from './keyboardTarget';
+import { isDialogOpenOutside, isTypingTarget } from '../components/keyboardTarget';
 
 type NotebookSection = 'main' | 'due' | 'archived';
 
@@ -856,8 +856,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (hasOverlay) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (isTypingTarget(e.target)) return;
       if (localSearchQuery || searchResults) {
         e.preventDefault();
         e.stopPropagation();

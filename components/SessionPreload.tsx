@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { preloadAudio } from '../services/lazyTts';
 import { getStoredImageIds } from '../services/storage';
 import { useLatest } from '../hooks/useStableValue';
-import { stripSentenceMarkers } from './HighlightedSentence';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 
 export interface PreloadSession {
   /** The sentences to voice. */

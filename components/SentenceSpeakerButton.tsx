@@ -11,7 +11,7 @@ import {
   type SpeakHandle,
   type PlaybackState,
 } from '../services/lazyTts';
-import { stripSentenceMarkers } from './HighlightedSentence';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { error as logError } from '../services/logger';
 
 // A second tap once the clip is this far in restarts from the top instead of pausing the last sliver.

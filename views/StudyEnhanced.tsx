@@ -19,7 +19,7 @@ import { speakNatural } from '../services/lazyTts';
 import { createClozePrompt, findSessionCard, formatReviewInterval, getStudyContent, requeueLapse, selectReviewTask, stripStudyMarkers } from '../services/studySession';
 import { StudyDashboard } from '../components/StudyDashboard';
 import { useEscapeLayer } from '../components/escapeStack';
-import { isDialogOpenOutside, isImeKey, isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
+import { isDialogOpenOutside, isImeKey, isKeyboardFocusedControl, isTypingTarget } from '../components/keyboardTarget';
 
 interface StudyEnhancedProps {
   items: StoredItem[];

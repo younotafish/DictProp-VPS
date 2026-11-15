@@ -8,7 +8,8 @@ import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
 import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../components/PlaybackSpeedToggle';
-import { HighlightedSentence, stripSentenceMarkers } from '../components/HighlightedSentence';
+import { HighlightedSentence } from '../components/HighlightedSentence';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import { SentenceAnalysisView } from '../components/SentenceAnalysisView';
 import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
@@ -32,7 +33,7 @@ import { LibraryCounts } from './detail/LibraryCounts';
 import { PhraseVocabCard } from './detail/PhraseVocabCard';
 import { RememberToast } from './detail/RememberToast';
 import { DetailActionMenu } from './detail/DetailActionMenu';
-import { isDialogOpenOutside, isImeKey, isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
+import { isDialogOpenOutside, isImeKey, isKeyboardFocusedControl, isTypingTarget } from '../components/keyboardTarget';
 
 interface DetailViewProps {
   groups?: ItemGroup[];
@@ -653,8 +654,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     if (!onAttachImage) return;
     const onPaste = (e: ClipboardEvent) => {
       if (!sentenceModeRef.current || detailInteractionLocked || showActionMenu) return;
-      const ae = document.activeElement as HTMLElement | null;
-      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      if (isTypingTarget(document.activeElement)) return;
       const file = extractImageFromTransfer(e.clipboardData);
       if (!file) return;                              // no image → let the paste proceed normally
       e.preventDefault();

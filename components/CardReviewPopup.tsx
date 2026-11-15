@@ -7,7 +7,7 @@ import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { getMasteryColors } from './mastery';
-import { stripSentenceMarkers } from './HighlightedSentence';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';

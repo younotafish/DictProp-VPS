@@ -39,9 +39,6 @@ const MAX_SAVED_PHRASE_WORDS = 6;
 // Strip leading/trailing punctuation for a saved-phrase lookup, keeping internal apostrophes (couldn't).
 const stripEdgePunct = (s: string): string => s.replace(/^[^\w']+|[^\w']+$/g, '');
 
-// In a module of its own, so the services that only strip markers don't load this component.
-export { stripSentenceMarkers } from '../services/sentenceMarkers';
-
 interface HighlightedSentenceProps {
   text: string;
   /** The studied word/phrase — emphasized as the item and matched in legacy plain text. */
