@@ -39,16 +39,20 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
     [onViewDetail, group, section],
   );
 
-  // Left swipe -> next meaning, right swipe -> previous, both looping
+  // One meaning on or back, looping, from the meaning shown: deleting the last one leaves currentIndex past the end.
+  const step = (delta: 1 | -1) =>
+    setCurrentIndex((prev) => (Math.min(prev, totalItems - 1) + delta + totalItems) % totalItems);
+
+  // Left swipe -> next meaning, right swipe -> previous
   const swipe = useHorizontalSwipe({
-    onSwipeLeft: () => setCurrentIndex((prev) => (prev + 1) % totalItems),
-    onSwipeRight: () => setCurrentIndex((prev) => (prev - 1 + totalItems) % totalItems),
+    onSwipeLeft: () => step(1),
+    onSwipeRight: () => step(-1),
   });
 
   // Trackpad wheel navigation for carousel
   useWheelNavigation({
-    onScrollLeft: () => setCurrentIndex((prev) => (prev - 1 + totalItems) % totalItems),
-    onScrollRight: () => setCurrentIndex((prev) => (prev + 1) % totalItems),
+    onScrollLeft: () => step(-1),
+    onScrollRight: () => step(1),
     containerRef: carouselRef,
     threshold: 80,
     enabled: totalItems > 1,
@@ -80,7 +84,9 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
       {index < totalItems - 1 && <CarouselArrow direction="next" onClick={() => setCurrentIndex(index + 1)} />}
       {/* Card */}
       <div className="w-full" onTouchStart={swipe.onTouchStart} onTouchEnd={swipe.onTouchEnd}>
+        {/* Keyed by sense, so an actions panel or a long press left open on one meaning doesn't carry over to the next */}
         <NotebookItem
+          key={currentItem.data.id}
           item={currentItem}
           isDue={isDueAt(currentItem, now)}
           itemIndex={index}
