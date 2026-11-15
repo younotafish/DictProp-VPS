@@ -7,8 +7,9 @@ import {
   dismissRefusedReviews,
   readRefusedReviews,
   recordRefusedReview,
+  subscribeRefusedReviews,
   unseenRefusedReviews,
-} from '../../services/reviewQueue.ts';
+} from '../../services/refusedReviews.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 const refusal = (n: number) => ({ itemId: `item-${n}`, word: `word ${n}`, reviewedAt: 1_000 + n, reason: 'The card isn’t on the server' });
@@ -70,4 +71,27 @@ test('a refusal is described in words, with what the server said', () => {
   assert.equal(describeRefusedReview(new HttpError('Apply review failed (409)', 409, '')), 'It clashed with a newer change');
   assert.equal(describeRefusedReview(new HttpError('Apply review failed (418)', 418, '')), 'Refused (418)');
   assert.equal(describeRefusedReview(new Error('boom')), 'boom');
+});
+
+test('the refusal log tells its listeners about changes here and in other tabs', () => {
+  const tabs = new EventTarget();
+  const globals = globalThis as unknown as { window?: EventTarget };
+  const realWindow = globals.window;
+  globals.window = tabs;
+  try {
+    let calls = 0;
+    const unsubscribe = subscribeRefusedReviews(() => { calls++; });
+    recordRefusedReview('user', refusal(1), new MemoryStorage());
+    assert.equal(calls, 1, 'a change in this tab');
+    const otherTab = (key: string | null) => tabs.dispatchEvent(Object.assign(new Event('storage'), { key }));
+    otherTab('review_refusals_user');
+    otherTab(null);
+    otherTab('review_mutations_pending_user:event');
+    assert.equal(calls, 3, 'a change to the log in another tab, or storage cleared there, but not the outbox');
+    unsubscribe();
+    otherTab('review_refusals_user');
+    assert.equal(calls, 3);
+  } finally {
+    globals.window = realWindow;
+  }
 });
