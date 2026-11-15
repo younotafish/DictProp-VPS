@@ -37,6 +37,45 @@ export const findInDetailContext = (context: DetailContext, id: string): { group
   return null;
 };
 
+/**
+ * `context` without the card `id`, or `context` itself when the card isn't in it; null when it was the last card.
+ * Sentence review is left to withoutSentence, since its groups hold source cards rather than the sentences.
+ * groupIndex and itemIndex stay in range: they're where the view opens, and an open view reads them again only
+ * when navigationKey changes.
+ */
+export const withoutCard = (context: DetailContext, id: string): DetailContext | null => {
+  if (context.sentenceItems) return context; // sentence mode → withoutSentence handles it
+  if (!context.groups.some(group => group.items.some(item => item.data.id === id))) return context;
+
+  const newGroups = context.groups.map(group => ({
+    ...group,
+    items: group.items.filter(item => item.data.id !== id)
+  })).filter(group => group.items.length > 0);
+
+  if (newGroups.length === 0) return null;
+
+  const newGroupIndex = Math.min(context.groupIndex, newGroups.length - 1);
+  let newItemIndex = Math.min(context.itemIndex, newGroups[newGroupIndex].items.length - 1);
+  newItemIndex = Math.max(0, newItemIndex);
+
+  return { ...context, groups: newGroups, groupIndex: newGroupIndex, itemIndex: newItemIndex };
+};
+
+/**
+ * Sentence review without the sentence `sentenceId` and its aligned group, keeping `groups` and `sentenceItems`
+ * in lockstep; null when it was the last sentence. Anything else comes back as it was.
+ */
+export const withoutSentence = (context: DetailContext, sentenceId: string): DetailContext | null => {
+  if (!context.sentenceItems) return context;
+  const idx = context.sentenceItems.findIndex(s => s.data.id === sentenceId);
+  if (idx === -1) return context;
+  const newSentenceItems = context.sentenceItems.filter((_, i) => i !== idx);
+  const newGroups = context.groups.filter((_, i) => i !== idx);
+  if (newSentenceItems.length === 0) return null; // reviewed/deleted the last one → close
+  const newGroupIndex = Math.min(context.groupIndex, newGroups.length - 1);
+  return { ...context, groups: newGroups, sentenceItems: newSentenceItems, groupIndex: newGroupIndex, itemIndex: 0 };
+};
+
 const NO_GROUPS: ItemGroup[] = [];
 const sameGroupItems = (a: ItemGroup, b: ItemGroup): boolean => a === b ||
   (a.title === b.title && a.items.length === b.items.length && a.items.every((item, index) => item === b.items[index]));
@@ -90,51 +129,24 @@ export function useDetailView(
   const liveDetailGroups = useStableArray(resolvedDetailGroups, sameGroupItems);
   const closeDetail = useCallback(() => updateDetailContext(null), [updateDetailContext]);
 
-  // Helper to remove an item from detailContext groups and adjust indices
-  const removeItemFromDetailContext = (id: string) => {
-    updateDetailContext(prev => {
-      if (!prev) return null;
-      if (prev.sentenceItems) return prev; // sentence mode → removeSentenceFromDetailContext handles it
-      if (!prev.groups.some(group => group.items.some(item => item.data.id === id))) return prev;
-
-      const newGroups = prev.groups.map(group => ({
-        ...group,
-        items: group.items.filter(item => item.data.id !== id)
-      })).filter(group => group.items.length > 0);
-
-      if (newGroups.length === 0) return null;
-
-      const newGroupIndex = Math.min(prev.groupIndex, newGroups.length - 1);
-      let newItemIndex = Math.min(prev.itemIndex, newGroups[newGroupIndex].items.length - 1);
-      newItemIndex = Math.max(0, newItemIndex);
-
-      return { ...prev, groups: newGroups, groupIndex: newGroupIndex, itemIndex: newItemIndex };
-    });
-  };
+  // Remove a card from the open view (see withoutCard).
+  const removeItemFromDetailContext = useCallback((id: string) => {
+    updateDetailContext(prev => prev && withoutCard(prev, id));
+  }, [updateDetailContext]);
 
   // Sentence-mode counterpart: a sentence's group is keyed by its source-word card id, so the
-  // sentence's own id never matches in removeItemFromDetailContext. Remove the sentence and its
-  // aligned group together, keeping `groups` and `sentenceItems` in lockstep. No-op outside sentence mode.
-  const removeSentenceFromDetailContext = (sentenceId: string) => {
-    updateDetailContext(prev => {
-      if (!prev || !prev.sentenceItems) return prev;
-      const idx = prev.sentenceItems.findIndex(s => s.data.id === sentenceId);
-      if (idx === -1) return prev;
-      const newSentenceItems = prev.sentenceItems.filter((_, i) => i !== idx);
-      const newGroups = prev.groups.filter((_, i) => i !== idx);
-      if (newSentenceItems.length === 0) return null; // reviewed/deleted the last one → close
-      const newGroupIndex = Math.min(prev.groupIndex, newGroups.length - 1);
-      return { ...prev, groups: newGroups, sentenceItems: newSentenceItems, groupIndex: newGroupIndex, itemIndex: 0 };
-    });
-  };
+  // sentence's own id never matches in removeItemFromDetailContext (see withoutSentence).
+  const removeSentenceFromDetailContext = useCallback((sentenceId: string) => {
+    updateDetailContext(prev => prev && withoutSentence(prev, sentenceId));
+  }, [updateDetailContext]);
 
   // Runs `remove` on the open card view and, if that changed it, returns the view as it was for the undo.
-  const removeFromDetailView = (remove: () => void): UndoOffer['view'] => {
+  const removeFromDetailView = useCallback((remove: () => void): UndoOffer['view'] => {
     const before = detailContextRef.current;
     const version = detailVersionRef.current;
     remove();
     return before && detailVersionRef.current !== version ? { before, version: detailVersionRef.current } : undefined;
-  };
+  }, []);
 
   // Updated handler to support groups
   const handleViewStoredItem = useCallback((groups: ItemGroup[], groupIndex: number, itemIndex: number) => {
@@ -176,7 +188,7 @@ export function useDetailView(
     });
     const safeIndex = Math.min(Math.max(0, index), groups.length - 1);
     updateDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered, openId: nextDetailKey() });
-  }, [updateDetailContext]);
+  }, [updateDetailContext, latestItemsRef]);
 
   // Resolve an example to a sentence card without changing the notebook. Prepared analysis and its
   // image are global source material, so previewing can read them before the user explicitly saves.
@@ -211,7 +223,7 @@ export function useDetailView(
         ...(enrichment ?? {}),
       },
     };
-  }, []);
+  }, [latestItemsRef]);
 
   const handleOpenStudyExample = useCallback(async (text: string, sourceWord: string, sourceSense?: string) => {
     const sentence = await prepareExampleSentence(text, sourceWord, sourceSense);
