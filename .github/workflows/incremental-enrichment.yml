@@ -16,7 +16,7 @@ env:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 20
     # The audit only reads production, so it queues apart from deploys and imports and never cancels one
     # that is waiting.
     concurrency:

@@ -14,6 +14,7 @@ env:
 jobs:
   restart:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     concurrency:
       group: dictprop-production
       cancel-in-progress: false

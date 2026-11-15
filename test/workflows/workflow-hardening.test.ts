@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { loadWorkflows, steps } from './support/workflow.ts';
+import { jobs, loadWorkflows, steps } from './support/workflow.ts';
 
 const workflows = loadWorkflows();
+
+// Without one, GitHub lets a wedged job hold its runner, and any concurrency group it joins, for six hours.
+test('every job has a time limit', () => {
+  for (const { name, text } of workflows) {
+    for (const [id, job] of jobs(text)) assert.match(job, /^ {4}timeout-minutes: \d+$/m, `${name}: ${id}`);
+  }
+});
 
 test('every action is pinned to a full commit SHA', () => {
   for (const { name, text } of workflows) {
