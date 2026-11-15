@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseModelJson } from '../src/routes/ai.js';
+import { parseModelJson } from '../src/ai-client.js';
 
 test('malformed embedded model JSON uses the retryable parser error', () => {
   assert.deepEqual(parseModelJson('preface {"query":"bank"} suffix'), { query: 'bank' });

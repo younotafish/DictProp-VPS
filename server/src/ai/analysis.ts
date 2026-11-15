@@ -15,14 +15,12 @@ import {
 } from '../ai-response.js';
 import { isWordOrPhrase } from '../shared/query-mode.js';
 import {
-  BATCH_WORD_MODE_INSTRUCTION,
-  CARD_REPAIR_INSTRUCTION,
+  analysisPrompts,
   MAX_CARDS_PER_HEADWORD,
   reaskFeedback,
-  repairPrompt,
-  SENTENCE_MODE_INSTRUCTION,
+  repairPrompts,
   TRUNCATION_FEEDBACK,
-  WORD_MODE_INSTRUCTION,
+  type AnalysisMode,
 } from './prompts.js';
 import { trimmedString } from './sanitize.js';
 
@@ -38,8 +36,31 @@ const MIN_ANALYSIS_ATTEMPT_WINDOW_MS = 60_000;
 const MAX_REPAIR_ROUNDS = 2;
 const MIN_REPAIR_WINDOW_MS = 20_000;
 
-export function containsChinese(text: string): boolean {
+function containsChinese(text: string): boolean {
   return /[\u4e00-\u9fff]/.test(text);
+}
+
+/** How one analysis request is answered, decided once for the log line, the prompt and the response. */
+export interface QueryRoute {
+  /** The input, trimmed. */
+  query: string;
+  mode: AnalysisMode;
+  /** One dictionary entry (a word, phrase or batch item) rather than a sentence. */
+  isWord: boolean;
+  /** The input as typed when it contains Chinese, so the client can show what was asked. */
+  originalQuery?: string;
+}
+
+export function routeQuery(text: string, mode: unknown): QueryRoute {
+  // A batch item was picked out by a vocabulary scan, so it is always one entry, however it reads.
+  const isBatch = mode === 'batch';
+  const isWord = isBatch || isWordOrPhrase(text);
+  return {
+    query: text.trim(),
+    mode: isBatch ? 'batch' : isWord ? 'word' : 'sentence',
+    isWord,
+    originalQuery: containsChinese(text) ? text : undefined,
+  };
 }
 
 const cardKey = (card: any): string =>
@@ -72,8 +93,7 @@ async function repairCards(
   round: number,
 ): Promise<{ fixed: CardSlot[]; stillFailing: FailingCard[] }> {
   const raw = await chat(ctx, {
-    system: CARD_REPAIR_INSTRUCTION,
-    user: repairPrompt(headword, failing),
+    ...repairPrompts(headword, failing),
     maxTokens: REPAIR_MAX_TOKENS,
     temperature: REPAIR_TEMPERATURE,
     label: `card repair ${round}`,
@@ -123,9 +143,8 @@ function finalizeCards(slots: CardSlot[]): any[] {
 }
 
 export interface AnalysisResult {
-  rawData: any;
-  isWord: boolean;
-  originalQuery?: string;
+  data: any;
+  /** The headword or sentence the model analyzed (the English it chose for a Chinese input). */
   resolvedQuery: string;
 }
 
@@ -138,20 +157,10 @@ export interface AnalysisResult {
 export async function generateAnalysisData(
   chat: ChatJson,
   ctx: AiRequestContext,
-  text: string,
-  mode?: 'batch',
+  route: QueryRoute,
 ): Promise<AnalysisResult> {
-  const query = text.trim();
-  const isBatch = mode === 'batch';
-  const originalQuery = containsChinese(text) ? text : undefined;
-  const isWord = isBatch || isWordOrPhrase(query);
-  // The input is embedded as a JSON string so quotes or newlines in it cannot rewrite the instructions.
-  const userPrompt = isWord
-    ? (isBatch
-      ? `Analyze this pre-identified vocabulary item (given as a JSON string) for a C1 learner. Treat it as a SINGLE phrase — do NOT split into component words. Create vocabulary cards for ALL its meanings: ${JSON.stringify(query)}`
-      : `Analyze this word or phrase (given as a JSON string) for a C1 learner. Create vocabulary cards for ALL its meanings: ${JSON.stringify(query)}`)
-    : `Analyze this sentence (given as a JSON string) for a C1 learner: ${JSON.stringify(query)}`;
-  const system = isWord ? (isBatch ? BATCH_WORD_MODE_INSTRUCTION : WORD_MODE_INSTRUCTION) : SENTENCE_MODE_INSTRUCTION;
+  const { query, isWord } = route;
+  const prompts = analysisPrompts(query, route.mode);
   let feedback = '';
   let lastFailure: AiError | undefined;
 
@@ -162,7 +171,7 @@ export async function generateAnalysisData(
     }
     let modelData: Record<string, any>;
     try {
-      modelData = await chat(ctx, { system, user: userPrompt + feedback, maxTokens: ANALYSIS_MAX_TOKENS, label: `analysis ${attempt}` });
+      modelData = await chat(ctx, { system: prompts.system, user: prompts.user + feedback, maxTokens: ANALYSIS_MAX_TOKENS, label: `analysis ${attempt}` });
     } catch (error) {
       const failure = classifyAiError(error, ctx.clientSignal);
       if (failure.kind !== 'truncated') throw failure;
@@ -218,7 +227,7 @@ export async function generateAnalysisData(
 
     data.vocabs = finalizeCards(passing);
     const usable = isWord ? data.vocabs.length > 0 : Boolean(data.translation.trim()) || data.vocabs.length > 0;
-    if (usable) return { rawData: data, isWord, originalQuery, resolvedQuery: data.query || query };
+    if (usable) return { data, resolvedQuery: data.query || query };
 
     if (isWord && normalized.inputCards === 0) {
       lastFailure = new AiError('not_found', `The model returned no cards for ${JSON.stringify(query)}`);

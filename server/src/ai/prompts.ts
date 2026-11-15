@@ -69,7 +69,7 @@ If the input is not a real English word or phrase and not a recognizable misspel
 keyboard mashing such as "asdfgh" or "qwxzv"), do not invent a meaning. Respond with exactly
 {"notFound": true, "query": <the input exactly as given>} and nothing else.`;
 
-export const WORD_MODE_INSTRUCTION = `
+const WORD_MODE_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach.
 The user has entered a SINGLE WORD or SHORT PHRASE (not a full sentence).
 
@@ -164,7 +164,7 @@ The usageAudit is mandatory and applies to the specific sense, not merely to the
 
 ${WORD_MODE_JSON_SCHEMA}`;
 
-export const BATCH_WORD_MODE_INSTRUCTION = `
+const BATCH_WORD_MODE_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach.
 The user has provided a WORD or PHRASE that has already been identified as an uncommon/advanced vocabulary item worth studying.
 
@@ -215,7 +215,7 @@ Each card MUST have:
 
 ${WORD_MODE_JSON_SCHEMA}`;
 
-export const SENTENCE_MODE_INSTRUCTION = `
+const SENTENCE_MODE_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach.
 The user has entered a SENTENCE or longer text.
 
@@ -283,7 +283,7 @@ Be thorough - the user should get the same quality whether they search a word di
 ${SENTENCE_MODE_JSON_SCHEMA}`;
 
 // Targeted re-ask: only the cards that failed validation, each with the validator's reasons.
-export const CARD_REPAIR_INSTRUCTION = `
+const CARD_REPAIR_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach.
 Some vocabulary cards you wrote failed our automatic checks. Rewrite ONLY the cards you are given, fixing every listed problem.
 - Keep each card's "word" and "sense" exactly as given, so each rewritten card replaces its original.
@@ -297,7 +297,7 @@ You MUST respond with valid JSON in this exact format:
   "vocabs": [ one complete vocab object for each card you were given ]
 }`;
 
-export const TEXT_DETECT_INSTRUCTION = `
+const TEXT_DETECT_INSTRUCTION = `
 You are PopDict, an expert ESL vocabulary scanner.
 
 Scan the user's text and identify all rare, advanced (C1/C2+), idiomatic, or interesting English vocabulary that would be worth studying for an intermediate-to-advanced learner.
@@ -356,7 +356,7 @@ You MUST respond with valid JSON in this exact format:
 Return ONLY the word list (plus sourceLang and translation). Do NOT provide full definitions, examples, etymology, or detailed analysis.
 This is a quick scan — the user will choose which words to study in depth.`;
 
-export const COMPARE_WORDS_INSTRUCTION = `
+const COMPARE_WORDS_INSTRUCTION = `
 You are PopDict, an expert C1 Advanced ESL coach specializing in vocabulary nuance.
 The user will give you TWO TO ${MAX_COMPARE_WORDS} English words that are similar in meaning (often 2-3).
 There may be more than three words — the "word1"/"word2"/"word3" keys below are just examples; include an
@@ -420,8 +420,39 @@ field brief (a definition of at most 25 words, a history of at most 2 sentences,
 short examples), merge near-duplicate senses, and if the item has more than ${MAX_CARDS_PER_HEADWORD} distinct meanings, give the
 ${MAX_CARDS_PER_HEADWORD} most useful.`;
 
-// Targeted re-ask of the cards that failed validation, each with the validator's reasons.
-export function repairPrompt(headword: string, failing: ReadonlyArray<{ card: { sense?: unknown }; issues: string[] }>): string {
+/** A system prompt and the user message that goes with it. */
+export interface Prompts {
+  system: string;
+  user: string;
+}
+
+/** Which instructions an analysis uses: a word or phrase, an item a vocabulary scan already picked out, or a sentence. */
+export type AnalysisMode = 'word' | 'batch' | 'sentence';
+
+// Each user prompt embeds the input as JSON, so quotes or newlines in it cannot rewrite the instructions.
+
+export function analysisPrompts(query: string, mode: AnalysisMode): Prompts {
+  switch (mode) {
+    case 'batch':
+      return {
+        system: BATCH_WORD_MODE_INSTRUCTION,
+        user: `Analyze this pre-identified vocabulary item (given as a JSON string) for a C1 learner. Treat it as a SINGLE phrase — do NOT split into component words. Create vocabulary cards for ALL its meanings: ${JSON.stringify(query)}`,
+      };
+    case 'word':
+      return {
+        system: WORD_MODE_INSTRUCTION,
+        user: `Analyze this word or phrase (given as a JSON string) for a C1 learner. Create vocabulary cards for ALL its meanings: ${JSON.stringify(query)}`,
+      };
+    case 'sentence':
+      return {
+        system: SENTENCE_MODE_INSTRUCTION,
+        user: `Analyze this sentence (given as a JSON string) for a C1 learner: ${JSON.stringify(query)}`,
+      };
+  }
+}
+
+/** Targeted re-ask of the cards that failed validation, each with the validator's reasons. */
+export function repairPrompts(headword: string, failing: ReadonlyArray<{ card: { sense?: unknown }; issues: string[] }>): Prompts {
   const sections = failing.map((entry, position) => [
     `Card ${position + 1} (sense: ${JSON.stringify(entry.card.sense)})`,
     'Problems:',
@@ -429,9 +460,21 @@ export function repairPrompt(headword: string, failing: ReadonlyArray<{ card: { 
     'Card as written:',
     JSON.stringify(entry.card),
   ].join('\n'));
-  return `Headword: ${JSON.stringify(headword)}\n\n${sections.join('\n\n')}`;
+  return { system: CARD_REPAIR_INSTRUCTION, user: `Headword: ${JSON.stringify(headword)}\n\n${sections.join('\n\n')}` };
 }
 
+export function vocabularyScanPrompts(text: string): Prompts {
+  return {
+    system: TEXT_DETECT_INSTRUCTION,
+    user: `Scan this text (given as a JSON string) and identify all rare, advanced, or interesting vocabulary worth studying:\n\n${JSON.stringify(text)}`,
+  };
+}
+
+export function comparisonPrompts(words: string[]): Prompts {
+  return { system: COMPARE_WORDS_INSTRUCTION, user: `Compare these words (given as a JSON array): ${JSON.stringify(words)}` };
+}
+
+/** What a full re-ask adds to the analysis prompt when the previous answer had nothing usable. */
 export function reaskFeedback(isWord: boolean, inputCards: number, issues: string[]): string {
   const reasons = [...new Set(issues)].slice(0, 12).map(issue => `- ${issue}`).join('\n');
   if (isWord && inputCards === 0) {

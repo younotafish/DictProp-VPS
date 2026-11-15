@@ -1,4 +1,7 @@
-import { Hono } from 'hono';
+// The AI routes: analysis of a word, phrase or sentence, vocabulary scans, comparisons and transcription. Each
+// request runs inside one budget (shared/ai-limits.ts) through the chat client in ai-client.ts; the prompts, card
+// generation and output sanitizing live in server/src/ai/.
+import { Hono, type Context } from 'hono';
 import { env } from '../env.js';
 import { proxyFetch } from '../proxy-fetch.js';
 import {
@@ -10,19 +13,16 @@ import {
   type AiErrorMessages,
   type FetchLike,
 } from '../ai-client.js';
-import { containsChinese, generateAnalysisData } from '../ai/analysis.js';
-import { COMPARE_WORDS_INSTRUCTION, TEXT_DETECT_INSTRUCTION } from '../ai/prompts.js';
-import { sanitizeComparison, sanitizeDetectedWords, trimmedString } from '../ai/sanitize.js';
+import { generateAnalysisData, routeQuery } from '../ai/analysis.js';
+import { comparisonPrompts, vocabularyScanPrompts } from '../ai/prompts.js';
+import { sanitizeComparison, sanitizeDetectedWords, trimmedString, uniqueCompareWords } from '../ai/sanitize.js';
 import {
   ANALYSIS_BUDGET_MS,
   COMPARE_BUDGET_MS,
   EXTRACT_BUDGET_MS,
   TRANSCRIBE_BUDGET_MS,
 } from '../shared/ai-limits.js';
-import { isWordOrPhrase, MAX_COMPARE_WORDS } from '../shared/query-mode.js';
-
-// The JSON extractor lives with the chat client; re-exported for existing callers and tests.
-export { parseModelJson } from '../ai-client.js';
+import { MAX_COMPARE_WORDS } from '../shared/query-mode.js';
 
 // ============================================================================
 // Limits (the request budgets live in shared/ai-limits.ts, where the client can read them too)
@@ -30,8 +30,33 @@ export { parseModelJson } from '../ai-client.js';
 
 const COMPARE_MAX_TOKENS = 8_000;
 const EXTRACT_MAX_TOKENS = 8_000;
+// The longest text a request carries: /analyze refuses a longer one, /extract-vocabulary scans its beginning.
+const MAX_INPUT_CHARS = 5000;
 
 const DEEPINFRA_WHISPER_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo';
+
+// ============================================================================
+// Error messages
+// ============================================================================
+
+const MISSING_KEY = 'DEEPINFRA_API_KEY not configured';
+
+const ANALYSIS_ERRORS: AiErrorMessages = {
+  label: 'Analysis',
+  failed: 'Analysis failed. Please try again.',
+  notFound: 'No dictionary entry found. Check the spelling and try again.',
+};
+const EXTRACT_ERRORS: AiErrorMessages = {
+  label: 'Vocabulary detection',
+  failed: 'Vocabulary detection failed. Please try again.',
+  timeout: 'Timed out. Try a shorter text.',
+};
+const COMPARE_ERRORS: AiErrorMessages = {
+  label: 'Comparison',
+  failed: 'Comparison failed. Please try again.',
+  timeout: 'Timed out. Please try again.',
+};
+const TRANSCRIBE_ERRORS: AiErrorMessages = { label: 'Transcription', failed: 'Transcription failed. Please try again.' };
 
 function errorResponse(msg: string, status: number) {
   return { error: msg, status };
@@ -41,18 +66,22 @@ function errorResponse(msg: string, status: number) {
 // Routes
 // ============================================================================
 
-const ANALYSIS_ERRORS: AiErrorMessages = {
-  label: 'Analysis',
-  failed: 'Analysis failed. Please try again.',
-  notFound: 'No dictionary entry found. Check the spelling and try again.',
-};
-
 export interface AiRouteDependencies {
   /** Outbound HTTP; proxyFetch unless a test injects a stub. */
   fetch?: FetchLike;
   apiKey?: () => string | undefined;
   retryDelayMs?: number;
   budgetsMs?: Partial<Record<'analyze' | 'compare' | 'extract' | 'transcribe', number>>;
+}
+
+/** What an AI route's handler works with. */
+interface AiRequest {
+  c: Context;
+  /** The request's JSON body. */
+  body: Record<string, unknown>;
+  /** Aborts when the client disconnects. */
+  clientSignal: AbortSignal;
+  apiKey: string;
 }
 
 export function createAiRoutes(deps: AiRouteDependencies = {}) {
@@ -67,64 +96,63 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
   };
   const routes = new Hono();
 
-  // POST /api/analyze — analyze a word/phrase/sentence
-  routes.post('/analyze', async (c) => {
-    // Read the disconnect signal first: the Node adapter only aborts it once it has been accessed.
-    const clientSignal = c.req.raw.signal;
-    if (!apiKey()) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
+  /** Registers a POST route that needs the API key: without one it answers 500 before reading the body. */
+  const aiRoute = (path: string, handle: (request: AiRequest) => Promise<Response>) => {
+    routes.post(path, async (c) => {
+      // Read the disconnect signal first: the Node adapter only aborts it once it has been accessed.
+      const clientSignal = c.req.raw.signal;
+      const key = apiKey();
+      if (!key) return c.json(errorResponse(MISSING_KEY, 500), 500);
+      const body = await c.req.json().catch(() => ({}));
+      return handle({ c, body, clientSignal, apiKey: key });
+    });
+  };
 
-    const { text, mode } = await c.req.json().catch(() => ({}));
+  // POST /api/analyze — analyze a word/phrase/sentence
+  aiRoute('/analyze', async ({ c, body, clientSignal }) => {
+    const { text, mode } = body;
     if (typeof text !== 'string' || text.trim().length === 0) {
       return c.json(errorResponse('Missing "text" field', 400), 400);
     }
-    if (text.trim().length > 5000) {
-      return c.json(errorResponse('Text is too long (maximum 5000 characters).', 400), 400);
+    if (text.trim().length > MAX_INPUT_CHARS) {
+      return c.json(errorResponse(`Text is too long (maximum ${MAX_INPUT_CHARS} characters).`, 400), 400);
     }
 
-    const isBatch = mode === 'batch';
-    const originalQuery = containsChinese(text) ? text : undefined;
-    // In batch mode, always treat input as a word/phrase (it's a pre-identified vocabulary item)
-    const isWord = isBatch || isWordOrPhrase(text);
-    console.log(`Analyze request: ${text.length} chars, ${isWord ? 'word/phrase' : 'sentence'}${isBatch ? ', batch' : ''}${originalQuery ? ', Chinese' : ''}`);
+    const route = routeQuery(text, mode);
+    console.log(`Analyze request: ${text.length} chars, ${route.isWord ? 'word/phrase' : 'sentence'}${route.mode === 'batch' ? ', batch' : ''}${route.originalQuery ? ', Chinese' : ''}`);
 
     const ctx = createRequestContext(clientSignal, budgets.analyze);
     try {
-      const { rawData, resolvedQuery } = await generateAnalysisData(chat, ctx, text, isBatch ? 'batch' : undefined);
-      if (isWord) {
+      const { data, resolvedQuery } = await generateAnalysisData(chat, ctx, route);
+      if (route.isWord) {
         return c.json({
           translation: '',
           grammar: '',
-          visualKeyword: rawData.vocabs?.[0]?.word || resolvedQuery,
-          pronunciation: rawData.vocabs?.[0]?.ipa || '',
-          vocabs: rawData.vocabs || [],
-          originalQuery,
+          visualKeyword: data.vocabs?.[0]?.word || resolvedQuery,
+          pronunciation: data.vocabs?.[0]?.ipa || '',
+          vocabs: data.vocabs || [],
+          originalQuery: route.originalQuery,
           query: resolvedQuery,
         });
       }
-      return c.json({ ...rawData, originalQuery, query: resolvedQuery });
+      return c.json({ ...data, originalQuery: route.originalQuery, query: resolvedQuery });
     } catch (error) {
       return aiErrorResponse(c, error, ANALYSIS_ERRORS, clientSignal);
     }
   });
 
   // POST /api/extract-vocabulary — detect interesting words in text
-  routes.post('/extract-vocabulary', async (c) => {
-    const clientSignal = c.req.raw.signal;
-    if (!apiKey()) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
-
-    const { text } = await c.req.json().catch(() => ({}));
+  aiRoute('/extract-vocabulary', async ({ c, body, clientSignal }) => {
+    const { text } = body;
     // Low floor (not 10): the main search routes short sentences (e.g. "Go away!", brief Chinese) here too.
     if (!text || typeof text !== 'string' || text.trim().length < 2) {
       return c.json(errorResponse('Please provide some text to analyze.', 400), 400);
     }
 
-    const maxChars = 5000;
-    const truncatedText = text.length > maxChars ? text.substring(0, maxChars) + '...' : text;
-    const userPrompt = `Scan this text (given as a JSON string) and identify all rare, advanced, or interesting vocabulary worth studying:\n\n${JSON.stringify(truncatedText)}`;
-
+    const scanned = text.length > MAX_INPUT_CHARS ? text.substring(0, MAX_INPUT_CHARS) + '...' : text;
     const ctx = createRequestContext(clientSignal, budgets.extract);
     try {
-      const rawData = await chat(ctx, { system: TEXT_DETECT_INSTRUCTION, user: userPrompt, maxTokens: EXTRACT_MAX_TOKENS, label: 'vocabulary scan' });
+      const rawData = await chat(ctx, { ...vocabularyScanPrompts(scanned), maxTokens: EXTRACT_MAX_TOKENS, label: 'vocabulary scan' });
       if (!Array.isArray(rawData.words) || rawData.words.length === 0) {
         return c.json(errorResponse('No interesting vocabulary found in the text.', 404), 404);
       }
@@ -138,32 +166,17 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
         sourceLang: rawData.sourceLang === 'zh' ? 'zh' : 'en',
       });
     } catch (error) {
-      return aiErrorResponse(c, error, {
-        label: 'Vocabulary detection',
-        failed: 'Vocabulary detection failed. Please try again.',
-        timeout: 'Timed out. Try a shorter text.',
-      }, clientSignal);
+      return aiErrorResponse(c, error, EXTRACT_ERRORS, clientSignal);
     }
   });
 
   // POST /api/compare — compare 2 to MAX_COMPARE_WORDS words
-  routes.post('/compare', async (c) => {
-    const clientSignal = c.req.raw.signal;
-    if (!apiKey()) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
-
-    const { words } = await c.req.json().catch(() => ({}));
+  aiRoute('/compare', async ({ c, body, clientSignal }) => {
+    const { words } = body;
     if (!Array.isArray(words)) {
       return c.json(errorResponse('Please provide at least 2 words to compare.', 400), 400);
     }
-    const seen = new Set<string>();
-    const cleanWords = words
-      .map((w: unknown) => trimmedString(w))
-      .filter((w: string) => {
-        const key = w.toLowerCase();
-        if (!w || w.length > 100 || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+    const cleanWords = uniqueCompareWords(words);
     if (cleanWords.length < 2) {
       return c.json(errorResponse('Please provide at least 2 different words to compare.', 400), 400);
     }
@@ -171,35 +184,20 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
       return c.json(errorResponse(`You can compare up to ${MAX_COMPARE_WORDS} words at a time.`, 400), 400);
     }
 
-    const userPrompt = `Compare these words (given as a JSON array): ${JSON.stringify(cleanWords)}`;
     const ctx = createRequestContext(clientSignal, budgets.compare);
     try {
-      const rawData = await chat(ctx, {
-        system: COMPARE_WORDS_INSTRUCTION,
-        user: userPrompt,
-        maxTokens: COMPARE_MAX_TOKENS,
-        timeoutMs: budgets.compare,
-        label: 'comparison',
-      });
+      const rawData = await chat(ctx, { ...comparisonPrompts(cleanWords), maxTokens: COMPARE_MAX_TOKENS, label: 'comparison' });
       const comparison = sanitizeComparison(rawData, cleanWords);
       if (!comparison) throw new AiError('invalid', 'The comparison had no usable dimensions');
       return c.json(comparison);
     } catch (error) {
-      return aiErrorResponse(c, error, {
-        label: 'Comparison',
-        failed: 'Comparison failed. Please try again.',
-        timeout: 'Timed out. Please try again.',
-      }, clientSignal);
+      return aiErrorResponse(c, error, COMPARE_ERRORS, clientSignal);
     }
   });
 
   // POST /api/transcribe — speech-to-text with Whisper
-  routes.post('/transcribe', async (c) => {
-    const clientSignal = c.req.raw.signal;
-    const key = apiKey();
-    if (!key) return c.json(errorResponse('DEEPINFRA_API_KEY not configured', 500), 500);
-
-    const { audio, mimeType = 'audio/webm' } = await c.req.json().catch(() => ({}));
+  aiRoute('/transcribe', async ({ c, body, clientSignal, apiKey: key }) => {
+    const { audio, mimeType = 'audio/webm' } = body;
     if (typeof audio !== 'string' || audio.length === 0 || audio.length > 24 * 1024 * 1024 ||
         !/^[A-Za-z0-9+/]*={0,2}$/.test(audio)) {
       return c.json(errorResponse('Missing "audio" base64 data.', 400), 400);
@@ -231,7 +229,7 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
       }
       return c.json({ text: trimmedString(data?.text) });
     } catch (error) {
-      return aiErrorResponse(c, error, { label: 'Transcription', failed: 'Transcription failed. Please try again.' }, clientSignal);
+      return aiErrorResponse(c, error, TRANSCRIBE_ERRORS, clientSignal);
     }
   });
 

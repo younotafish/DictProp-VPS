@@ -14,8 +14,8 @@ import { proxyFetch } from './proxy-fetch.js';
 export const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
 export const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
 const DEFAULT_TEMPERATURE = 0.7;
-// A single model call never waits longer than this, even inside a larger budget.
-export const MAX_CALL_TIMEOUT_MS = 300_000;
+// One extra attempt for a transient failure (5xx, burst 429, network, malformed reply). Never for timeouts.
+const TRANSIENT_RETRIES = 1;
 const RETRY_DELAY_MS = 2_000;
 // A retry that cannot get this long a window would only turn the real error into a timeout.
 const MIN_RETRY_WINDOW_MS = 15_000;
@@ -38,24 +38,22 @@ export type AiErrorKind =
 
 export class AiError extends Error {
   readonly kind: AiErrorKind;
-  readonly providerStatus?: number;
 
-  constructor(kind: AiErrorKind, message: string, providerStatus?: number) {
+  constructor(kind: AiErrorKind, message: string) {
     super(message);
     this.name = 'AiError';
     this.kind = kind;
-    this.providerStatus = providerStatus;
   }
 }
 
 /** Classify a non-2xx provider response. A 429 whose body names billing is an exhausted balance, not a burst limit. */
 export function providerError(status: number, bodyText: string): AiError {
   if (status === 402 || (status === 429 && /quota|insufficient|balance|billing|payment|credit/i.test(bodyText))) {
-    return new AiError('quota', `Provider quota exhausted (${status})`, status);
+    return new AiError('quota', `Provider quota exhausted (${status})`);
   }
-  if (status === 429) return new AiError('rate_limited', `Provider rate limit (${status})`, status);
-  if (status >= 500) return new AiError('unavailable', `Provider unavailable (${status})`, status);
-  return new AiError('config', `Provider rejected the request (${status}): ${bodyText.slice(0, 200)}`, status);
+  if (status === 429) return new AiError('rate_limited', `Provider rate limit (${status})`);
+  if (status >= 500) return new AiError('unavailable', `Provider unavailable (${status})`);
+  return new AiError('config', `Provider rejected the request (${status}): ${bodyText.slice(0, 200)}`);
 }
 
 const TIMEOUT_CODES = new Set(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT']);
@@ -100,7 +98,6 @@ export interface AiErrorMessages {
   label: string;
   failed: string;
   timeout?: string;
-  invalid?: string;
   notFound?: string;
 }
 
@@ -114,7 +111,7 @@ export function aiErrorBody(error: AiError, messages: AiErrorMessages): { error:
     case 'timeout': return { error: messages.timeout ?? 'The AI service timed out. Please try again.', status };
     case 'cancelled': return { error: 'Request cancelled.', status };
     case 'truncated': return { error: 'The AI response was cut off before it finished. Please try again.', status };
-    case 'invalid': return { error: messages.invalid ?? 'The AI returned an unusable response. Please try again.', status };
+    case 'invalid': return { error: 'The AI returned an unusable response. Please try again.', status };
     case 'not_found': return { error: messages.notFound ?? 'No dictionary entry found.', status };
     default: return { error: messages.failed, status };
   }
@@ -155,10 +152,6 @@ export interface ChatRequest {
   user: string;
   maxTokens: number;
   temperature?: number;
-  /** Per-call ceiling; the request budget still applies. */
-  timeoutMs?: number;
-  /** Extra attempts for transient failures (5xx, burst 429, network, malformed JSON). Never for timeouts. */
-  retries?: number;
   label?: string;
 }
 
@@ -198,7 +191,8 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
     const key = apiKey();
     if (!key) throw new AiError('config', 'DEEPINFRA_API_KEY not configured');
     ctx.signal.throwIfAborted();
-    const window = Math.min(request.timeoutMs ?? MAX_CALL_TIMEOUT_MS, remainingMs(ctx));
+    // A call may use whatever is left of the request's budget.
+    const window = remainingMs(ctx);
     if (window <= 0) throw new AiError('timeout', 'The request budget is exhausted');
     const label = request.label ?? 'chat';
     console.log(`DeepSeek ${label}: calling API (window ${window}ms, max_tokens ${withMaxTokens ? request.maxTokens : 'default'})`);
@@ -249,7 +243,6 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
   }
 
   return async function chatJson(ctx, request) {
-    const retries = request.retries ?? 1;
     for (let attempt = 0; ; attempt++) {
       let failure: AiError;
       try {
@@ -260,7 +253,7 @@ export function createChatClient(options: ChatClientOptions = {}): ChatJson {
       // Retry fast transient failures only. A timeout already burned its window, a cut-off reply would be
       // cut off again, and quota/config errors do not change on a retry.
       const retryable = failure.kind === 'unavailable' || failure.kind === 'rate_limited' || failure.kind === 'invalid';
-      if (!retryable || attempt >= retries || ctx.signal.aborted || remainingMs(ctx) < retryDelayMs + MIN_RETRY_WINDOW_MS) {
+      if (!retryable || attempt >= TRANSIENT_RETRIES || ctx.signal.aborted || remainingMs(ctx) < retryDelayMs + MIN_RETRY_WINDOW_MS) {
         throw failure;
       }
       console.warn(`DeepSeek ${request.label ?? 'chat'} attempt ${attempt + 1} failed (${failure.kind}: ${failure.message}); retrying`);

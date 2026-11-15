@@ -68,3 +68,16 @@ export function sanitizeDetectedWords(value: unknown): DetectedWord[] {
   }
   return words;
 }
+
+/** The words a comparison covers: trimmed, at most 100 characters each, the same word (ignoring case) once. */
+export function uniqueCompareWords(words: unknown[]): string[] {
+  const seen = new Set<string>();
+  return words
+    .map((w: unknown) => trimmedString(w))
+    .filter((w: string) => {
+      const key = w.toLowerCase();
+      if (!w || w.length > 100 || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
