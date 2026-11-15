@@ -1,4 +1,6 @@
-// Model output reduced to what the client can render: comparisons and vocabulary-scan entries.
+// Model output reduced to what the client can render: comparisons and vocabulary-scan entries. The accept functions
+// turn a reply into a route's result, or reject it as unusable so the chat client asks once more.
+import { AiError } from '../ai-client.js';
 
 // A vocabulary scan returns at most this many expressions (the scan prompt asks for no more than 12).
 export const MAX_EXTRACTED_WORDS = 12;
@@ -102,4 +104,31 @@ export function uniqueCompareWords(words: unknown[]): string[] {
       seen.add(key);
       return true;
     });
+}
+
+/** A comparison the view can render; a reply with no usable dimension is unusable. */
+export const acceptComparison = (requestedWords: string[]) => (reply: Record<string, unknown>): Comparison => {
+  const comparison = sanitizeComparison(reply, requestedWords);
+  if (!comparison) throw new AiError('invalid', 'The comparison had no usable dimensions');
+  return comparison;
+};
+
+export interface VocabularyScan {
+  /** Empty when the text has nothing worth studying. */
+  words: DetectedWord[];
+  /** The English the model scanned when the input was Chinese, else ''. */
+  translation: string;
+  sourceLang: 'zh' | 'en';
+}
+
+/** A vocabulary scan; a reply without a words list, or whose every entry is malformed, is unusable. */
+export function acceptVocabularyScan(reply: Record<string, unknown>): VocabularyScan {
+  if (!Array.isArray(reply.words)) throw new AiError('invalid', 'The vocabulary scan had no "words" array');
+  const words = sanitizeDetectedWords(reply.words);
+  if (words.length === 0 && reply.words.length > 0) throw new AiError('invalid', 'Every detected word was malformed');
+  return {
+    words,
+    translation: typeof reply.translation === 'string' ? reply.translation : '',
+    sourceLang: reply.sourceLang === 'zh' ? 'zh' : 'en',
+  };
 }

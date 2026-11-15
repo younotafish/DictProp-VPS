@@ -247,11 +247,14 @@ test('comparison output keeps only renderable strings and dimensions with conten
   });
 });
 
-test('a comparison with no usable dimension is a 502', async () => {
-  const h = harness([reply(comparison({ dimensions: [{ label: 'Empty', analysis: '', perWord: { fleeting: 5 } }] }))]);
+test('a comparison with no usable dimension is asked for once more, then a 502', async () => {
+  const unusable = reply(comparison({ dimensions: [{ label: 'Empty', analysis: '', perWord: { fleeting: 5 } }] }));
+  const h = harness([unusable]);
   const response = await h.post('/compare', { words: ['fleeting', 'transient'] });
   assert.equal(response.status, 502);
-  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests.length, 2);
+  const recovered = harness([unusable, reply(comparison())]);
+  assert.equal((await recovered.post('/compare', { words: ['fleeting', 'transient'] })).status, 200);
 });
 
 // ── /extract-vocabulary ─────────────────────────────────────────────────────
@@ -276,11 +279,25 @@ test('extraction drops malformed entries, keeps each expression once and returns
   assert.equal(body.sourceLang, 'en');
 });
 
-test('extraction reports nothing found as 404 and an all-malformed list as 502', async () => {
+test('extraction reports an empty list as 404 and a reply without a usable list, asked for twice, as 502', async () => {
   const none = harness([reply({ words: [] })]);
   assert.equal((await none.post('/extract-vocabulary', { text: 'Hello there.' })).status, 404);
+  assert.equal(none.requests.length, 1);
   const malformed = harness([reply({ words: [{ word: 1 }, null] })]);
   assert.equal((await malformed.post('/extract-vocabulary', { text: 'Hello there.' })).status, 502);
+  assert.equal(malformed.requests.length, 2);
+  const renamed = harness([reply({ vocabulary: [{ word: 'hello', context: 'c', level: 'A1', reason: 'r' }] })]);
+  assert.equal((await renamed.post('/extract-vocabulary', { text: 'Hello there.' })).status, 502);
+  assert.equal(renamed.requests.length, 2);
+});
+
+test('a scan reply without a words list is asked for once more and the second answer is used', async () => {
+  const entry = { word: 'hello', context: 'Hello there.', level: 'A1', reason: 'A greeting.' };
+  const h = harness([reply({ vocabulary: [entry] }), reply({ sourceLang: 'en', translation: '', words: [entry] })]);
+  const response = await h.post('/extract-vocabulary', { text: 'Hello there.' });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { words: [entry], translation: '', sourceLang: 'en' });
+  assert.equal(h.requests.length, 2);
 });
 
 // ── /transcribe ─────────────────────────────────────────────────────────────

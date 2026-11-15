@@ -116,6 +116,19 @@ test('unparseable content is retried once, then reported as invalid', async () =
   assert.equal(bodies.length, 2);
 });
 
+test('a reply the caller can\'t use is asked for once more, like an unparseable one', async () => {
+  const accept = (reply: Record<string, unknown>): string[] => {
+    if (!Array.isArray(reply.words)) throw new AiError('invalid', 'no words');
+    return reply.words.map(String);
+  };
+  const recovered = stubFetch(reply({ vocabulary: [] }), reply({ words: ['tenacity'] }));
+  assert.deepEqual(await client(recovered.fetch)(createRequestContext(undefined, 60_000), { ...REQUEST, accept }), ['tenacity']);
+  assert.equal(recovered.bodies.length, 2);
+  const never = stubFetch(reply({ vocabulary: [] }));
+  await assert.rejects(client(never.fetch)(createRequestContext(undefined, 60_000), { ...REQUEST, accept }), kindOf('invalid'));
+  assert.equal(never.bodies.length, 2);
+});
+
 test('no retry starts when the budget cannot fit a useful window', async () => {
   const { fetch, bodies } = stubFetch(status(500));
   await assert.rejects(client(fetch)(createRequestContext(undefined, 10_000), REQUEST), kindOf('unavailable'));

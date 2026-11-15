@@ -163,8 +163,16 @@ export interface ChatRequest {
   label?: string;
 }
 
-/** One JSON-object reply from the chat model, or an AiError. */
-export type ChatJson = (ctx: AiRequestContext, request: ChatRequest) => Promise<Record<string, unknown>>;
+export interface JsonChatRequest<T> extends ChatRequest {
+  /**
+   * Turns the reply object into the caller's result, throwing AiError('invalid') for a reply it can't use. That
+   * throw happens inside the client, which retries it once, as it does a reply that isn't JSON.
+   */
+  accept?: (reply: Record<string, unknown>) => T;
+}
+
+/** One JSON-object reply from the chat model (or what `accept` makes of it), or an AiError. */
+export type ChatJson = <T = Record<string, unknown>>(ctx: AiRequestContext, request: JsonChatRequest<T>) => Promise<T>;
 
 /** One plain-text reply from the chat model, or an AiError. */
 export type ChatText = (ctx: AiRequestContext, request: ChatRequest) => Promise<string>;
@@ -297,7 +305,11 @@ function createChatCaller(options: ChatClientOptions) {
 
 export function createChatClient(options: ChatClientOptions = {}): ChatJson {
   const call = createChatCaller(options);
-  return (ctx, request) => call(ctx, request, 'json', parseJsonObject);
+  // Without `accept`, T is its default, the reply object itself.
+  return <T>(ctx: AiRequestContext, request: JsonChatRequest<T>) => call(ctx, request, 'json', (content): T => {
+    const reply = parseJsonObject(content);
+    return request.accept ? request.accept(reply) : reply as T;
+  });
 }
 
 /** A chat client for plain-text replies: the same request, envelope handling and retry, no JSON mode. */

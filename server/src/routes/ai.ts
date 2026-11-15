@@ -15,7 +15,7 @@ import {
 } from '../ai-client.js';
 import { generateAnalysisData, routeQuery } from '../ai/analysis.js';
 import { comparisonPrompts, vocabularyScanPrompts } from '../ai/prompts.js';
-import { sanitizeComparison, sanitizeDetectedWords, trimmedString, uniqueCompareWords } from '../ai/sanitize.js';
+import { acceptComparison, acceptVocabularyScan, trimmedString, uniqueCompareWords } from '../ai/sanitize.js';
 import {
   ANALYSIS_BUDGET_MS,
   COMPARE_BUDGET_MS,
@@ -160,19 +160,19 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
     const scanned = text.length > MAX_INPUT_CHARS ? text.substring(0, MAX_INPUT_CHARS) + '...' : text;
     const ctx = createRequestContext(clientSignal, budgets.extract);
     try {
-      const rawData = await chat(ctx, { ...vocabularyScanPrompts(scanned), maxTokens: EXTRACT_MAX_TOKENS, label: 'vocabulary scan' });
-      if (!Array.isArray(rawData.words) || rawData.words.length === 0) {
+      const scan = await chat(ctx, {
+        ...vocabularyScanPrompts(scanned),
+        maxTokens: EXTRACT_MAX_TOKENS,
+        label: 'vocabulary scan',
+        accept: acceptVocabularyScan,
+      });
+      // A 404 means only this: the text had nothing worth studying.
+      if (scan.words.length === 0) {
         return c.json(errorResponse('No interesting vocabulary found in the text.', 404), 404);
       }
-      const words = sanitizeDetectedWords(rawData.words);
-      if (words.length === 0) throw new AiError('invalid', 'Every detected word was malformed');
-      return c.json({
-        words,
-        // Surface the translate-first step: when the input was Chinese, the model returns the English it
-        // actually scanned. The client shows this (Text Analyzer) and uses it in the search status toast.
-        translation: typeof rawData.translation === 'string' ? rawData.translation : '',
-        sourceLang: rawData.sourceLang === 'zh' ? 'zh' : 'en',
-      });
+      // `translation` surfaces the translate-first step: when the input was Chinese, the model returns the English
+      // it actually scanned. The client shows this (Text Analyzer) and uses it in the search status toast.
+      return c.json({ words: scan.words, translation: scan.translation, sourceLang: scan.sourceLang });
     } catch (error) {
       return aiErrorResponse(c, error, EXTRACT_ERRORS, clientSignal);
     }
@@ -194,9 +194,12 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
 
     const ctx = createRequestContext(clientSignal, budgets.compare);
     try {
-      const rawData = await chat(ctx, { ...comparisonPrompts(cleanWords), maxTokens: COMPARE_MAX_TOKENS, label: 'comparison' });
-      const comparison = sanitizeComparison(rawData, cleanWords);
-      if (!comparison) throw new AiError('invalid', 'The comparison had no usable dimensions');
+      const comparison = await chat(ctx, {
+        ...comparisonPrompts(cleanWords),
+        maxTokens: COMPARE_MAX_TOKENS,
+        label: 'comparison',
+        accept: acceptComparison(cleanWords),
+      });
       return c.json(comparison);
     } catch (error) {
       return aiErrorResponse(c, error, COMPARE_ERRORS, clientSignal);
