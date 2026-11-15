@@ -1,11 +1,11 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { randomUUID } from 'crypto';
 import { env } from '../env.js';
 import { proxyFetch, type FetchLike } from '../proxy-fetch.js';
 import { resolveSession, SESSION_COOKIE } from '../middleware/auth.js';
 import { createPkcePair, verifyGoogleIdToken, type GoogleIdentity } from '../google-auth.js';
-import { CANONICAL_ORIGIN, isWwwHost, requestedHost } from '../canonical-host.js';
+import { CANONICAL_ORIGIN, forwardedHost, forwardedProto, isWwwHost } from '../canonical-host.js';
 import {
   findUserByGoogleId,
   createUserAndClaimItems,
@@ -27,24 +27,23 @@ export interface AuthRouteDependencies {
   verifyIdToken?: (idToken: string, audience: string) => Promise<GoogleIdentity>;
 }
 
-function getRedirectUri(c: any): string {
+/** A local development server's origin, when the request came to one; a request without a Host header did. */
+function localDevOrigin(c: Context): string | undefined {
+  const host = forwardedHost(c.req, { keepPort: true, fallback: 'localhost:3001' });
+  return forwardedProto(c.req) === 'http' && /^(?:localhost|127\.0\.0\.1):(?:3000|3001|3002)$/.test(host)
+    ? `http://${host}`
+    : undefined;
+}
+
+// Google sends the sign-in back to this URI: PUBLIC_ORIGIN's when set, else a local server's, else the canonical one.
+function getRedirectUri(c: Context): string {
   if (env.PUBLIC_ORIGIN) return `${env.PUBLIC_ORIGIN}/api/auth/callback`;
-  const proto = c.req.header('x-forwarded-proto') || 'http';
-  const host = c.req.header('x-forwarded-host') || c.req.header('host') || 'localhost:3001';
-  const normalizedHost = host.split(',')[0].trim().toLowerCase();
-  if (proto === 'https' && normalizedHost === 'dictprop.online') {
-    return 'https://dictprop.online/api/auth/callback';
-  }
-  if (proto === 'http' && /^(?:localhost|127\.0\.0\.1):(?:3000|3001|3002)$/.test(normalizedHost)) {
-    return `http://${normalizedHost}/api/auth/callback`;
-  }
-  return 'https://dictprop.online/api/auth/callback';
+  return `${localDevOrigin(c) ?? CANONICAL_ORIGIN}/api/auth/callback`;
 }
 
 // Cookies are Secure whenever the sign-in round trip runs on https, even if a proxy leaves out the header.
-function isSecure(c: any): boolean {
-  const proto = c.req.header('x-forwarded-proto') || 'http';
-  return proto === 'https' || getRedirectUri(c).startsWith('https://');
+function isSecure(c: Context): boolean {
+  return forwardedProto(c.req) === 'https' || getRedirectUri(c).startsWith('https://');
 }
 
 export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
@@ -199,7 +198,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     if (env.DEV_AUTH_BYPASS) return c.body(null, 204);
 
     const returnTo = sanitizeAuthReturnTo(c.req.query('returnTo'));
-    if (isWwwHost(requestedHost(c.req))) {
+    if (isWwwHost(forwardedHost(c.req))) {
       // Caddy's handle_path strips the site prefix from X-Forwarded-Uri; then the site root is the way back.
       const forwardedUri = sanitizeAuthReturnTo(c.req.header('x-forwarded-uri'));
       c.header('Cache-Control', 'private, no-store');

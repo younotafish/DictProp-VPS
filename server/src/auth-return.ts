@@ -1,4 +1,5 @@
-const AUTH_RETURN_ORIGIN = 'https://dictprop.online';
+import { CANONICAL_ORIGIN } from './canonical-host.js';
+
 /** The private static sites behind Caddy's forward-auth gate: the trip site and the SD flashcards. */
 const PRIVATE_SITE_ROOTS = ['/lake-loop-26', '/sd-cards'];
 
@@ -11,12 +12,12 @@ export function sanitizeAuthReturnTo(value: string | null | undefined): string {
 
   let target: URL;
   try {
-    target = new URL(value, AUTH_RETURN_ORIGIN);
+    target = new URL(value, CANONICAL_ORIGIN);
   } catch {
     return '/';
   }
 
-  if (target.origin !== AUTH_RETURN_ORIGIN) return '/';
+  if (target.origin !== CANONICAL_ORIGIN) return '/';
   const { pathname } = target;
   if (!PRIVATE_SITE_ROOTS.some(root => pathname === root || pathname.startsWith(`${root}/`))) {
     return '/';

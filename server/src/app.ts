@@ -11,7 +11,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { requireAuth, type AppEnv } from './middleware/auth.js';
 import { createClientRateLimit, createConcurrencyLimit, createRateLimit } from './middleware/rate-limit.js';
-import { CANONICAL_ORIGIN, isWwwHost, requestedHost } from './canonical-host.js';
+import { CANONICAL_ORIGIN, forwardedHost, isWwwHost } from './canonical-host.js';
 import { isDatabaseReady } from './db.js';
 import { env } from './env.js';
 import { ConflictError } from './errors.js';
@@ -30,18 +30,16 @@ export interface AppOptions {
   aiRouter?: Hono;
 }
 
-const ALLOWED_ORIGINS = [
-  'https://dictprop.online',
-  // Local development origins. Production is served same-origin behind Caddy and never needs them.
-  ...(env.IS_PRODUCTION ? [] : [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:3002',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001',
-    'http://127.0.0.1:3002',
-  ]),
+// Local development origins. Production is served same-origin behind Caddy and never needs them.
+const LOCAL_DEV_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:3002',
 ];
+const ALLOWED_ORIGINS = [CANONICAL_ORIGIN, ...(env.IS_PRODUCTION ? [] : LOCAL_DEV_ORIGINS)];
 const ALLOWED_ORIGIN_SET = new Set(ALLOWED_ORIGINS);
 // Query strings can carry OAuth codes and state, so request logs keep only the path.
 const logWithoutQuery = (message: string, ...rest: string[]) =>
@@ -95,7 +93,7 @@ export function createApp(options: AppOptions = {}) {
   }));
   // The gate answers Caddy's forward_auth subrequest, whose path isn't the visitor's: it redirects www itself.
   app.use('*', async (c, next) => {
-    if (c.req.path === '/api/auth/gate' || !isWwwHost(requestedHost(c.req))) return next();
+    if (c.req.path === '/api/auth/gate' || !isWwwHost(forwardedHost(c.req))) return next();
     const url = new URL(c.req.url);
     return c.redirect(`${CANONICAL_ORIGIN}${url.pathname}${url.search}`, 308);
   });
