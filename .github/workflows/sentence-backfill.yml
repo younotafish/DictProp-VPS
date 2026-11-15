@@ -121,7 +121,9 @@ jobs:
   # Exports leave the runner only as this run's encrypted artifact, which the local cycle downloads,
   # decrypts and then deletes together with the run's log.
   export:
-    if: inputs.operation == 'export'
+    # The cycle and the corrections publisher find their export's job by its name, the operation.
+    name: ${{ inputs.operation }}
+    if: inputs.operation == 'export' || inputs.operation == 'corpus-export'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -141,21 +143,33 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
-      - name: Export encrypted sentence records
+      - name: Export the encrypted ${{ inputs.operation }} records
+        id: export
         timeout-minutes: 15
         env:
+          OPERATION: ${{ inputs.operation }}
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          REMOTE_SCRIPT: |
+          # Runs on the VPS, in root's login shell, zsh, after the line that names the operation's exporter.
+          EXPORT_SCRIPT: |
             set -eo pipefail
             cd /opt/dictprop-vps
-            docker compose exec -T app node server/dist/scripts/export-sentence-backfill.js | gzip -9
-        run: bash scripts/offline/bridge-export.sh sentence-export "$RUNNER_TEMP/sentence-export.dpb"
+            docker compose exec -T app node "server/dist/scripts/$EXPORTER" | gzip -9
+        run: |
+          # Each export's artifact, and the server script that writes its records.
+          case "$OPERATION" in
+            export) artifact=sentence-export exporter=export-sentence-backfill.js ;;
+            corpus-export) artifact=corpus-export exporter=export-corpus-audit.js ;;
+            *) echo "::error::$OPERATION is not an export" >&2; exit 1 ;;
+          esac
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          REMOTE_SCRIPT="EXPORTER=$exporter"$'\n'"$EXPORT_SCRIPT" \
+            bash scripts/offline/bridge-export.sh "$artifact" "$RUNNER_TEMP/$artifact.dpb"
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: sentence-export
-          path: ${{ runner.temp }}/sentence-export.dpb
+          name: ${{ steps.export.outputs.artifact }}
+          path: ${{ runner.temp }}/${{ steps.export.outputs.artifact }}.dpb
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -166,14 +180,14 @@ jobs:
   # remote script's EXIT trap removes the unpacked bundle from the container however the script ends:
   # after an import that succeeds or fails, or an unpacking cut short.
   import:
-    if: inputs.operation == 'import'
+    # The publishers find their import's job by its name, the operation.
+    name: ${{ inputs.operation }}
+    if: inputs.operation == 'import' || endsWith(inputs.operation, '-import')
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: ${{ inputs.operation == 'corpus-import' && 90 || inputs.operation == 'essay-import' && 30 || 75 }}
     concurrency:
       group: dictprop-production
       cancel-in-progress: false
-    permissions:
-      contents: read
     steps:
       - name: Validate import input
         env:
@@ -194,309 +208,59 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
-      - name: Import encrypted sentence enrichment
-        timeout-minutes: 60
+      - name: Import the encrypted ${{ inputs.operation }} bundle
+        timeout-minutes: ${{ inputs.operation == 'essay-import' && 15 || 60 }}
         env:
+          OPERATION: ${{ inputs.operation }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          REMOTE_SCRIPT: |
+          # Runs on the VPS, in root's login shell, zsh, after the line that sets the operation's values below.
+          IMPORT_SCRIPT: |
             set -eo pipefail
             exec 3<&0 < /dev/null
             cd /opt/dictprop-vps
-            trap 'docker compose exec -T app rm -rf /tmp/sentence-backfill' EXIT
-            docker compose exec -T app sh -c \
-              'rm -rf /tmp/sentence-backfill && mkdir -p /tmp/sentence-backfill && tar -xz -C /tmp/sentence-backfill' <&3
+            if [ -n "$MIN_FREE_KB" ]; then
+              AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')
+              echo "$CAPACITY capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
+              test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
+            fi
+            trap "docker compose exec -T app rm -rf $BUNDLE" EXIT
+            docker compose exec -T app sh -c "rm -rf $BUNDLE && mkdir -p $BUNDLE && tar -xz -C $BUNDLE" <&3
             exec 3<&-
-            docker compose exec -T app nice -n 10 node server/dist/scripts/import-sentence-backfill.js \
-              /tmp/sentence-backfill/manifest.json
-        run: bash scripts/offline/bridge-import.sh import sentence-backfill.enc
-
-  enrichment-import:
-    if: inputs.operation == 'enrichment-import'
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    concurrency:
-      group: dictprop-production
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    steps:
-      - name: Validate enrichment input
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
+            if [ -n "$NICENESS" ]; then
+              docker compose exec -T app nice -n "$NICENESS" node "server/dist/scripts/$IMPORTER" "$BUNDLE/$INPUT"
+            else
+              docker compose exec -T app node "server/dist/scripts/$IMPORTER" "$BUNDLE/$INPUT"
+            fi
         run: |
-          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
-
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/offline/bridge-crypto.mjs
-            scripts/offline/bridge-import.sh
-            scripts/offline/vps-ssh.sh
-          sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Import encrypted example enrichments
-        timeout-minutes: 60
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          REMOTE_SCRIPT: |
-            set -eo pipefail
-            exec 3<&0 < /dev/null
-            cd /opt/dictprop-vps
-            AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')
-            MIN_FREE_KB=$((5 * 1024 * 1024))
-            echo "example-enrichment capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
-            test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
-            trap 'docker compose exec -T app rm -rf /tmp/sentence-enrichments' EXIT
-            docker compose exec -T app sh -c \
-              'rm -rf /tmp/sentence-enrichments && mkdir -p /tmp/sentence-enrichments && tar -xz -C /tmp/sentence-enrichments' <&3
-            exec 3<&-
-            docker compose exec -T app nice -n 10 node server/dist/scripts/import-sentence-enrichments.js \
-              /tmp/sentence-enrichments/manifest.json
-        run: bash scripts/offline/bridge-import.sh enrichment-import sentence-enrichments.enc
-
-  essay-import:
-    if: inputs.operation == 'essay-import'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    concurrency:
-      group: dictprop-production
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    steps:
-      - name: Validate private essay input
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
-
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/offline/bridge-crypto.mjs
-            scripts/offline/bridge-import.sh
-            scripts/offline/vps-ssh.sh
-          sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Import encrypted private essay catalog
-        timeout-minutes: 15
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          REMOTE_SCRIPT: |
-            set -eo pipefail
-            exec 3<&0 < /dev/null
-            cd /opt/dictprop-vps
-            trap 'docker compose exec -T app rm -rf /tmp/private-essay-catalog' EXIT
-            docker compose exec -T app sh -c \
-              'rm -rf /tmp/private-essay-catalog && mkdir -p /tmp/private-essay-catalog && tar -xz -C /tmp/private-essay-catalog' <&3
-            exec 3<&-
-            docker compose exec -T app node server/dist/scripts/import-private-essay-catalog.js \
-              /tmp/private-essay-catalog/catalog.json
-        run: bash scripts/offline/bridge-import.sh essay-import private-essay-catalog.enc
-
-  corpus-export:
-    if: inputs.operation == 'corpus-export'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    concurrency:
-      group: dictprop-production-read
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/offline/bridge-crypto.mjs
-            scripts/offline/bridge-export.sh
-            scripts/offline/vps-ssh.sh
-          sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Export encrypted corpus
-        timeout-minutes: 15
-        env:
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          REMOTE_SCRIPT: |
-            set -eo pipefail
-            cd /opt/dictprop-vps
-            docker compose exec -T app node server/dist/scripts/export-corpus-audit.js | gzip -9
-        run: bash scripts/offline/bridge-export.sh corpus-export "$RUNNER_TEMP/corpus-export.dpb"
-
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: corpus-export
-          path: ${{ runner.temp }}/corpus-export.dpb
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
-  corpus-import:
-    if: inputs.operation == 'corpus-import'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    concurrency:
-      group: dictprop-production
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    steps:
-      - name: Validate import input
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
-
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/offline/bridge-crypto.mjs
-            scripts/offline/bridge-import.sh
-            scripts/offline/vps-ssh.sh
-          sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Import encrypted corpus audit
-        timeout-minutes: 60
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          REMOTE_SCRIPT: |
-            set -eo pipefail
-            exec 3<&0 < /dev/null
-            cd /opt/dictprop-vps
-            trap 'docker compose exec -T app rm -rf /tmp/corpus-audit' EXIT
-            docker compose exec -T app sh -c \
-              'rm -rf /tmp/corpus-audit && mkdir -p /tmp/corpus-audit && tar -xz -C /tmp/corpus-audit' <&3
-            exec 3<&-
-            docker compose exec -T app node server/dist/scripts/import-corpus-audit.js \
-              /tmp/corpus-audit/manifest.json
-        run: bash scripts/offline/bridge-import.sh corpus-import corpus-audit.enc
-
-  image-import:
-    if: inputs.operation == 'image-import'
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    concurrency:
-      group: dictprop-production
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    steps:
-      - name: Validate import input
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
-
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/offline/bridge-crypto.mjs
-            scripts/offline/bridge-import.sh
-            scripts/offline/vps-ssh.sh
-          sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Import locally generated images
-        timeout-minutes: 60
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          REMOTE_SCRIPT: |
-            set -eo pipefail
-            exec 3<&0 < /dev/null
-            cd /opt/dictprop-vps
-            trap 'docker compose exec -T app rm -rf /tmp/offline-images' EXIT
-            docker compose exec -T app sh -c \
-              'rm -rf /tmp/offline-images && mkdir -p /tmp/offline-images && tar -xz -C /tmp/offline-images' <&3
-            exec 3<&-
-            docker compose exec -T app nice -n 10 node server/dist/scripts/import-offline-images.js \
-              /tmp/offline-images/manifest.json
-        run: bash scripts/offline/bridge-import.sh image-import offline-images.enc
-
-  audio-import:
-    if: inputs.operation == 'audio-import'
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    concurrency:
-      group: dictprop-production
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    steps:
-      - name: Validate audio import input
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]{1,200}$ ]]
-
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/offline/bridge-crypto.mjs
-            scripts/offline/bridge-import.sh
-            scripts/offline/vps-ssh.sh
-          sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Import locally generated audio
-        timeout-minutes: 60
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          REMOTE_SCRIPT: |
-            set -eo pipefail
-            exec 3<&0 < /dev/null
-            cd /opt/dictprop-vps
-            AVAILABLE_KB=$(df -Pk /opt/dictprop-vps | awk 'NR == 2 { print $4 }')
-            MIN_FREE_KB=$((5 * 1024 * 1024))
-            echo "offline-audio capacity: ${AVAILABLE_KB}KB free; floor ${MIN_FREE_KB}KB"
-            test "$AVAILABLE_KB" -ge "$MIN_FREE_KB"
-            trap 'docker compose exec -T app rm -rf /tmp/offline-audio' EXIT
-            docker compose exec -T app sh -c \
-              'rm -rf /tmp/offline-audio && mkdir -p /tmp/offline-audio && tar -xz -C /tmp/offline-audio' <&3
-            exec 3<&-
-            docker compose exec -T app nice -n 10 node server/dist/scripts/import-offline-tts.js \
-              /tmp/offline-audio/manifest.json
-        run: bash scripts/offline/bridge-import.sh audio-import offline-audio.enc
+          # Each operation's release asset, then the values its remote script runs with: where the bundle unpacks
+          # in the container, the importer and the file it reads, the niceness it runs at, if lowered, and the free
+          # disk the import needs, if it has a floor, with the name the capacity check reports it under.
+          case "$OPERATION" in
+            import)
+              asset=sentence-backfill.enc
+              values='BUNDLE=/tmp/sentence-backfill IMPORTER=import-sentence-backfill.js INPUT=manifest.json NICENESS=10' ;;
+            enrichment-import)
+              asset=sentence-enrichments.enc
+              values='BUNDLE=/tmp/sentence-enrichments IMPORTER=import-sentence-enrichments.js INPUT=manifest.json NICENESS=10'
+              values="$values MIN_FREE_KB=$((5 * 1024 * 1024)) CAPACITY=example-enrichment" ;;
+            essay-import)
+              asset=private-essay-catalog.enc
+              values='BUNDLE=/tmp/private-essay-catalog IMPORTER=import-private-essay-catalog.js INPUT=catalog.json' ;;
+            corpus-import)
+              asset=corpus-audit.enc
+              values='BUNDLE=/tmp/corpus-audit IMPORTER=import-corpus-audit.js INPUT=manifest.json' ;;
+            image-import)
+              asset=offline-images.enc
+              values='BUNDLE=/tmp/offline-images IMPORTER=import-offline-images.js INPUT=manifest.json NICENESS=10' ;;
+            audio-import)
+              asset=offline-audio.enc
+              values='BUNDLE=/tmp/offline-audio IMPORTER=import-offline-tts.js INPUT=manifest.json NICENESS=10'
+              values="$values MIN_FREE_KB=$((5 * 1024 * 1024)) CAPACITY=offline-audio" ;;
+            *) echo "::error::$OPERATION is not an import" >&2; exit 1 ;;
+          esac
+          # The values line starts empty, so nothing the remote shell inherits can fill a value an operation leaves out.
+          REMOTE_SCRIPT="NICENESS= MIN_FREE_KB= CAPACITY= $values"$'\n'"$IMPORT_SCRIPT" \
+            bash scripts/offline/bridge-import.sh "$OPERATION" "$asset"

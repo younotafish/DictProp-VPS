@@ -31,7 +31,8 @@ test('the static sites queue apart from the jobs that change production', () => 
 // Without one, GitHub lets a wedged job hold its runner, and any concurrency group it joins, for six hours.
 test('every job has a time limit', () => {
   for (const { name, text } of workflows) {
-    for (const [id, job] of jobs(text)) assert.match(job, /^ {4}timeout-minutes: \d+$/m, `${name}: ${id}`);
+    // A number, or an expression that picks one per operation (bridge-workflow.test.ts evaluates the bridge's).
+    for (const [id, job] of jobs(text)) assert.match(job, /^ {4}timeout-minutes: (?:\d+|\$\{\{ .+ \}\})$/m, `${name}: ${id}`);
   }
 });
 
