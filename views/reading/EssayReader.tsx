@@ -1,11 +1,58 @@
-import React, { Fragment, useMemo } from 'react';
+import React, { Fragment, useCallback, useMemo } from 'react';
 import { ArrowLeft, Clock3, ExternalLink, Play } from 'lucide-react';
 import type { StoredItem } from '../../types';
-import type { Essay, EssaySentence } from '../../services/essayCatalog';
+import type { Essay, EssayBodyParagraph, EssaySentence } from '../../services/essayCatalog';
 import { buildEssayStudyItems } from '../../services/essayProgress';
 import { sentencesToStudy, summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
-import { sentenceReviewState } from '../../services/sentenceReviewState';
+import { sentenceReviewState, type SentenceReviewState } from '../../services/sentenceReviewState';
+import { useLatest } from '../../hooks/useStableValue';
 import { essayStyle } from './essayStyle';
+
+// A paragraph's review states as one letter per sentence, so it re-renders only when one of its own changes.
+const STATE_LETTER: Record<SentenceReviewState, string> = { unreviewed: 'u', due: 'd', memorized: 'm' };
+const STATE_UNDERLINE: Record<string, string> = {
+  u: '',
+  d: 'decoration-orange-400 decoration-2 underline underline-offset-4',
+  m: 'decoration-emerald-300 underline underline-offset-4',
+};
+
+interface EssayParagraphProps {
+  paragraph: EssayBodyParagraph;
+  /** Each sentence's review state, one letter apiece: u(nreviewed), d(ue) or m(emorized). */
+  states: string;
+  sentenceCount: number;
+  onOpenSentence: (sentence: EssaySentence) => void;
+}
+
+/** A body paragraph, each sentence a button underlined by its review state. */
+const EssayParagraph = React.memo(function EssayParagraph({
+  paragraph,
+  states,
+  sentenceCount,
+  onOpenSentence,
+}: EssayParagraphProps) {
+  return (
+    <p className="mb-6 indent-7 sm:mb-7 sm:indent-10">
+      {paragraph.sentences.map((sentence, sentenceIndex) => {
+        const stateClass = STATE_UNDERLINE[states[sentenceIndex]];
+        return (
+          <Fragment key={sentence.id}>
+            <button
+              type="button"
+              onClick={() => onOpenSentence(sentence)}
+              className={`inline cursor-pointer rounded px-0.5 text-left font-inherit text-inherit transition-colors hover:bg-indigo-100 hover:text-indigo-950 focus-visible:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${stateClass}`}
+              title={`Open sentence ${sentence.position} of ${sentenceCount}`}
+              aria-label={`Open sentence ${sentence.position}: ${sentence.text}`}
+            >
+              {sentence.text}
+            </button>
+            {sentenceIndex < paragraph.sentences.length - 1 ? ' ' : ''}
+          </Fragment>
+        );
+      })}
+    </p>
+  );
+});
 
 interface EssayReaderProps {
   essay: Essay;
@@ -26,10 +73,13 @@ export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence,
     [essay, now, progressIndex],
   );
 
-  const openSentence = (sentence: EssaySentence) => {
+  // Read when tapped, so the paragraphs' callback stays the same while progress changes.
+  const latest = useLatest({ essay, progressIndex, onOpenSentence });
+  const openSentence = useCallback((sentence: EssaySentence) => {
+    const { essay, progressIndex, onOpenSentence } = latest.current;
     const index = essay.sentences.findIndex(candidate => candidate.id === sentence.id);
     onOpenSentence(buildEssayStudyItems(essay.sentences, progressIndex, Date.now()), Math.max(0, index));
-  };
+  }, [latest]);
 
   const startStudy = () => {
     onOpenSentence(buildEssayStudyItems(sentencesToStudy(essay.sentences, progressIndex, now), progressIndex, Date.now()), 0);
@@ -99,30 +149,15 @@ export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence,
                 );
               }
               return (
-                <p key={paragraph.id} className="mb-6 indent-7 sm:mb-7 sm:indent-10">
-                  {paragraph.sentences.map((sentence, sentenceIndex) => {
-                    const state = sentenceReviewState(progressIndex.get(sentence.id)?.srs, now);
-                    const stateClass = state === 'due'
-                      ? 'decoration-orange-400 decoration-2 underline underline-offset-4'
-                      : state === 'memorized'
-                        ? 'decoration-emerald-300 underline underline-offset-4'
-                        : '';
-                    return (
-                      <Fragment key={sentence.id}>
-                        <button
-                          type="button"
-                          onClick={() => openSentence(sentence)}
-                          className={`inline cursor-pointer rounded px-0.5 text-left font-inherit text-inherit transition-colors hover:bg-indigo-100 hover:text-indigo-950 focus-visible:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${stateClass}`}
-                          title={`Open sentence ${sentence.position} of ${essay.sentenceCount}`}
-                          aria-label={`Open sentence ${sentence.position}: ${sentence.text}`}
-                        >
-                          {sentence.text}
-                        </button>
-                        {sentenceIndex < paragraph.sentences.length - 1 ? ' ' : ''}
-                      </Fragment>
-                    );
-                  })}
-                </p>
+                <EssayParagraph
+                  key={paragraph.id}
+                  paragraph={paragraph}
+                  states={paragraph.sentences
+                    .map(sentence => STATE_LETTER[sentenceReviewState(progressIndex.get(sentence.id)?.srs, now)])
+                    .join('')}
+                  sentenceCount={essay.sentenceCount}
+                  onOpenSentence={openSentence}
+                />
               );
             })}
           </div>
