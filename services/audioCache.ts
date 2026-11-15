@@ -116,6 +116,33 @@ export const getAudioBlob = async (key: string): Promise<Blob | null> => {
   }
 };
 
+// Which of `keys` the store holds, from one read-only transaction that reads no values.
+const storedKeysIn = async (store: string, keys: readonly string[]): Promise<Set<string>> => {
+  const found = new Set<string>();
+  if (!keys.length || !(await audioCacheReady())) return found;
+  try {
+    const db = await getDB();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(store, 'readonly');
+      const objectStore = tx.objectStore(store);
+      for (const key of keys) {
+        const req = objectStore.getKey(key);
+        req.onsuccess = () => { if (req.result !== undefined) found.add(key); };
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  } catch { /* best-effort: what wasn't confirmed counts as missing */ }
+  return found;
+};
+
+/** Which of `keys` have a stored clip. Reads no audio and doesn't count as a use. Empty when unavailable. */
+export const getStoredAudioKeys = (keys: readonly string[]): Promise<Set<string>> => storedKeysIn(AUDIO, keys);
+
+/** Which of `keys` have stored word timings. Empty when unavailable. */
+export const getStoredTimingKeys = (keys: readonly string[]): Promise<Set<string>> => storedKeysIn(TIMINGS, keys);
+
 /** The cached per-word timings for `key`, or null on miss / error. */
 export const getTimings = async (key: string): Promise<WordTiming[] | null> => {
   if (!(await audioCacheReady())) return null;
@@ -276,6 +303,35 @@ const touch = (key: string): void => {
       if (m) store.put({ size: m.size, at: now() } as MetaRecord, key);
     };
   }).catch(() => { /* best-effort */ });
+};
+
+// A clip marked as used this recently keeps its mark: eviction only needs to know it's in use, not when exactly.
+const RECENT_USE_MS = 60 * 60 * 1000;
+
+/**
+ * Mark the stored clips among `keys` as used now, in one transaction, so eviction keeps them; clips marked
+ * within the last hour are left as they are. For warm-ups that check clips exist rather than reading them.
+ */
+export const markAudioUsed = async (keys: readonly string[]): Promise<void> => {
+  if (!keys.length || !(await audioCacheReady())) return;
+  try {
+    const db = await getDB();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(META, 'readwrite');
+      const store = tx.objectStore(META);
+      const at = Date.now();
+      for (const key of keys) {
+        const g = store.get(key);
+        g.onsuccess = () => {
+          const m = g.result as MetaRecord | undefined;
+          if (m && at - m.at >= RECENT_USE_MS) store.put({ size: m.size, at } as MetaRecord, key);
+        };
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  } catch { /* best-effort */ }
 };
 
 // ── Misc ─────────────────────────────────────────────────────────────────────

@@ -188,3 +188,23 @@ test('without IndexedDB every call is a no-op, and the cache is tried again a mi
     Object.assign(globalThis, { indexedDB: factory });
   }
 });
+
+test('stored keys are found without reading a clip, and a bulk mark refreshes only clips not marked within the hour', async () => {
+  const cache = await freshCache();
+  now = 6_000_000;
+  await cache.putAudioBlob('a', clip(8));
+  await cache.putAudioBlob('b', clip(8));
+  await cache.putTimings('a', timings);
+  assert.deepEqual([...await cache.getStoredAudioKeys(['a', 'b', 'c'])].sort(), ['a', 'b']);
+  assert.deepEqual([...await cache.getStoredTimingKeys(['a', 'b', 'c'])], ['a']);
+  assert.deepEqual([...await cache.getStoredAudioKeys([])], []);
+  assert.equal((await metaOf('a'))?.at, 6_000_000, 'checking is not a use');
+  now = 6_000_000 + 30 * 60 * 1000;
+  await cache.markAudioUsed(['a', 'c']);
+  assert.equal((await metaOf('a'))?.at, 6_000_000, 'marked within the hour: left alone');
+  now = 6_000_000 + 60 * 60 * 1000;
+  await cache.markAudioUsed(['a', 'c']);
+  assert.equal((await metaOf('a'))?.at, now);
+  assert.equal((await metaOf('b'))?.at, 6_000_000, 'only the given clips');
+  assert.equal(await metaOf('c'), undefined, 'a clip that is not stored is not created');
+});

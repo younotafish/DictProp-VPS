@@ -79,5 +79,8 @@ export const getTimingsFor = (text: string): Promise<WordTiming[] | null> => loa
 export const ensureTimings = (text: string): Promise<void> => loadEngine().then(module => module.ensureTimings(text));
 export const prefetchTTS = (texts: string[]) => { void loadEngine().then(module => module.prefetchTTS(texts)); };
 export const ensureTTS = (texts: string[]): Promise<void> => loadEngine().then(module => module.ensureTTS(texts));
-export const preloadAudio = (texts: string[], onProgress?: (done: number, total: number) => void) =>
-  loadEngine().then(module => module.preloadAudio(texts, onProgress));
+export const preloadAudio = (
+  texts: string[],
+  onProgress?: (done: number, total: number) => void,
+  options?: { intoMemory?: boolean; signal?: AbortSignal },
+) => loadEngine().then(module => module.preloadAudio(texts, onProgress, options));

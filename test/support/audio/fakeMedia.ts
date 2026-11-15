@@ -196,24 +196,38 @@ export class FakeTtsServer {
   readonly timings = new Map<string, Timing[]>();
   readonly generated: Array<{ text: string; voice?: string }> = [];
   readonly requests: string[] = [];
+  /** Awaited before a clip or timings request is answered, so a test can hold requests in flight. */
+  latency: (() => Promise<void>) | null = null;
+  /** Runs when a generation request arrives, before it's answered (to add the clips it makes, say). */
+  onGenerate: ((items: Array<{ text: string; voice?: string }>) => Promise<void> | void) | null = null;
+  inFlight = 0;
+  maxInFlight = 0;
 
   install(): void {
     globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = String(input instanceof Request ? input.url : input);
       this.requests.push(url);
       const clip = url.match(/\/api\/tts\/([0-9a-f]{64})\.mp3$/);
-      if (clip) {
-        const blob = this.clips.get(clip[1]);
-        return blob ? new Response(blob) : new Response('Not found', { status: 404 });
-      }
       const timings = url.match(/\/api\/tts\/([0-9a-f]{64})\/timings$/);
-      if (timings) {
-        const found = this.timings.get(timings[1]);
-        return found ? Response.json(found) : new Response('Not found', { status: 404 });
+      if (clip || timings) {
+        this.inFlight++;
+        this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+        try {
+          await this.latency?.();
+          if (clip) {
+            const blob = this.clips.get(clip[1]);
+            return blob ? new Response(blob) : new Response('Not found', { status: 404 });
+          }
+          const found = this.timings.get(timings![1]);
+          return found ? Response.json(found) : new Response('Not found', { status: 404 });
+        } finally {
+          this.inFlight--;
+        }
       }
       if (url.endsWith('/api/tts/generate')) {
         const items = (JSON.parse(String(init?.body)) as { items: Array<{ text: string; voice?: string }> }).items;
         this.generated.push(...items);
+        await this.onGenerate?.(items);
         return Response.json({ generated: items.length, skipped: 0, failed: 0 });
       }
       return new Response('Unexpected request', { status: 500 });

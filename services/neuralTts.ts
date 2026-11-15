@@ -50,7 +50,8 @@ export {
 } from './audio/player';
 export { setMediaMetadata, type MediaSessionHandlers } from './audio/mediaSession';
 export { primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap } from './audio/keepAlive';
-export { getTimingsFor, ensureTimings, prefetchTTS, ensureTTS, preloadAudio } from './audio/clipStore';
+export { getTimingsFor, ensureTimings } from './audio/clipStore';
+export { prefetchTTS, ensureTTS, preloadAudio } from './audio/clipWarmers';
 
 // ---------------------------------------------------------------------------
 // Public API

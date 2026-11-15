@@ -23,8 +23,13 @@ const ttsTimingsCache = new Lru<WordTiming[]>(MAX_TIMINGS);
 const clipLoads = new Map<string, Promise<string | null>>();
 const timingsLoads = new Map<string, Promise<WordTiming[] | null>>();
 
+/** Whether clip `key` is open in memory, without counting as a use. */
+export const hasClipInMemory = (key: string): boolean => ttsUrlCache.has(key);
+/** Whether clip `key`'s timings are in memory, without counting as a use. */
+export const hasTimingsInMemory = (key: string): boolean => ttsTimingsCache.has(key);
+
 /** Ready-to-play object URL for clip `key` (memory → IDB → server, write-through). Null on a true miss. */
-const loadClipUrl = (key: string): Promise<string | null> => {
+export const loadClipUrl = (key: string): Promise<string | null> => {
   const mem = ttsUrlCache.get(key); // a hit marks the clip most recently used
   if (mem) return Promise.resolve(mem);
   const pending = clipLoads.get(key);
@@ -60,7 +65,7 @@ export const resolveCachedClip = async (text: string, style: TtsStyle): Promise<
 };
 
 /** Per-word timings for clip `key` (memory → IDB → server, write-through). Null when none exist. */
-const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => {
+export const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => {
   const mem = ttsTimingsCache.get(key);
   if (mem) return Promise.resolve(mem);
   const pending = timingsLoads.get(key);
@@ -96,98 +101,6 @@ export const ensureTimings = async (text: string): Promise<void> => {
   if (t) return;
   const plain = stripSentenceMarkers(text).trim();
   if (plain) requestTTSGeneration([{ text: plain, voice: STYLE_VOICES[getTtsStyle()].generate }]).catch(() => { /* best-effort backfill */ });
-};
-
-/**
- * Prefetch cached clips for the given texts into the device-local cache so a later tap is instant
- * (and plays through the iOS-unlocked <audio> element, avoiding the gesture-after-await problem).
- * Fetch-only — never triggers generation.
- */
-export const prefetchTTS = (texts: string[]): void => {
-  const style = getTtsStyle();
-  for (const raw of texts) {
-    const plain = stripSentenceMarkers(raw || '').trim();
-    if (!plain) continue;
-    (async () => {
-      const clip = await resolveCachedClip(plain, style);
-      if (clip) await loadTimingsCached(clip.key);
-    })().catch(() => { /* best-effort */ });
-  }
-};
-
-/**
- * Like prefetchTTS, but GENERATES any clip that isn't cached yet (then pulls it into the device cache),
- * so a later tap plays the API voice instantly instead of hitting a cache-miss fallback. Use this when
- * fresh AI results arrive (search / refresh) to prepare the audio up front. Fire-and-forget.
- */
-export const ensureTTS = async (texts: string[]): Promise<void> => {
-  try {
-    const style = getTtsStyle();
-    const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
-    if (!plains.length) return;
-
-    // Pull anything already cached (memory → IDB → server) into the device cache; collect true misses.
-    const missing: string[] = [];
-    await Promise.all(plains.map(async (plain) => {
-      if (!(await resolveCachedClip(plain, style))) missing.push(plain);
-    }));
-    if (missing.length) {
-      // Generate the missing clips server-side (one batch), then pull them into the device cache.
-      const generationToken = STYLE_VOICES[style].generate;
-      await requestTTSGeneration(missing.map(text => ({ text, voice: generationToken })));
-      await Promise.all(missing.map(async (plain) => { await loadClipUrl(await ttsKey(plain, generationToken)); }));
-    }
-    // Warm per-word timings (both styles have them now) so tap-to-seek is ready on the first tap.
-    await Promise.all(plains.map(async (plain) => {
-      const clip = await resolveCachedClip(plain, style);
-      if (clip) await loadTimingsCached(clip.key);
-    }));
-  } catch {
-    /* best-effort — speakNatural still falls back at play time */
-  }
-};
-
-/**
- * Like ensureTTS, but reports progress (done/total over the de-duplicated set) so a UI can show a
- * "preloading N/M" indicator. Used to warm the WHOLE review session up front (audio clips + per-word
- * timings) so an unstable network can't interrupt playback mid-session. Best-effort per item: a
- * failure still ticks progress and never rejects the whole batch.
- */
-export const preloadAudio = async (
-  texts: string[],
-  onProgress?: (done: number, total: number) => void,
-): Promise<void> => {
-  const style = getTtsStyle();
-  const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
-  const total = plains.length;
-  onProgress?.(0, total);
-  if (!total) return;
-  let done = 0;
-  const tick = () => onProgress?.(++done, total);
-
-  // 1) Pull anything already cached (memory → IDB → server) + warm its timings; collect true misses.
-  const missing: string[] = [];
-  await Promise.all(plains.map(async (plain) => {
-    try {
-      const clip = await resolveCachedClip(plain, style);
-      if (clip) { await loadTimingsCached(clip.key); tick(); return; }
-      missing.push(plain); // absent everywhere → generate below
-    } catch { tick(); }
-  }));
-
-  // 2) Generate the missing clips server-side (one batch), then pull them into the device cache.
-  if (missing.length) {
-    const generationToken = STYLE_VOICES[style].generate;
-    try { await requestTTSGeneration(missing.map(text => ({ text, voice: generationToken }))); } catch { /* best-effort */ }
-    await Promise.all(missing.map(async (plain) => {
-      try {
-        const key = await ttsKey(plain, generationToken);
-        await loadClipUrl(key);
-        await loadTimingsCached(key);
-      } catch { /* ignore */ }
-      tick();
-    }));
-  }
 };
 
 // MiMo clips carry a quiet ~100ms lead-in (a soft breath/onset) before speech — heard as "starts quiet,

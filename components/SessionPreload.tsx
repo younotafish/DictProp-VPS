@@ -24,9 +24,9 @@ const IMAGE_CONCURRENCY = 4;
 
 /**
  * Once auto-play is requested, preloads the whole session so a poor or unstable network can't interrupt
- * review: every sentence's audio and timings, and every picture the session shows. Best-effort and
- * cancellable; failures still advance the progress, so it always completes. The progress pill keeps its
- * state here, so the card doesn't re-render for every clip and picture that arrives.
+ * review: every sentence's audio and timings (into IndexedDB, a few at a time), and every picture the session
+ * shows. Best-effort and cancellable; failures still advance the progress, so it always completes. The
+ * progress pill keeps its state here, so the card doesn't re-render for every clip and picture that arrives.
  */
 export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionPreloadProps) {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -36,6 +36,7 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
+    const audioStop = new AbortController();
     const { texts, images } = getSessionRef.current();
     const loadImage = onLazyLoadImageRef.current;
     const ids = [...images.keys()];
@@ -54,7 +55,7 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
     report();
 
     // Audio: one progress-reporting batch, which dedupes and generates what's missing itself.
-    preloadAudio(texts, done => { audioDone = done; report(); }).catch(() => {});
+    preloadAudio(texts, done => { audioDone = done; report(); }, { intoMemory: false, signal: audioStop.signal }).catch(() => {});
 
     // Pictures already in IndexedDB only need an existence check (opening each would churn the memory
     // cache); the rest download a few at a time.
@@ -83,6 +84,7 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
 
     return () => {
       cancelled = true;
+      audioStop.abort();
       setProgress(null);
     };
   }, [active, getSessionRef, onLazyLoadImageRef]);

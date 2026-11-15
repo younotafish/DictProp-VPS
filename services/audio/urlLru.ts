@@ -17,6 +17,9 @@ export class Lru<V> {
 
   get size(): number { return this.entries.size; }
 
+  /** Whether `key` is cached, without counting as a use. */
+  has(key: string): boolean { return this.entries.has(key); }
+
   get(key: string): V | undefined {
     const value = this.entries.get(key);
     if (value !== undefined) {
