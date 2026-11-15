@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { alignWordsToStripped, seekTimeForOffset } from '../../services/ttsAlignment.ts';
+import { alignWordsToStripped, leadInSkip, seekTimeForOffset } from '../../services/ttsAlignment.ts';
 
 const words = (...entries: Array<[string, number]>) => entries.map(([text, start]) => ({ text, start, end: start + 0.2 }));
 
@@ -47,4 +47,12 @@ test('a misheard short word can anchor inside a later word', () => {
   const aligned = alignWordsToStripped('Put the hat on it', words(['Put', 0.1], ['a', 0.3], ['hat', 0.5], ['on', 0.7], ['it', 0.9]));
   assert.deepEqual(aligned.map(anchor => anchor.charOffset), [0, 9, 12, 15]);
   assert.equal(seekTimeForOffset(aligned, 8), 0.1, 'a click on "hat" starts back at "Put"');
+});
+
+test('playback skips the quiet lead-in, starting 30 ms before the first word, and from 0 without timings', () => {
+  assert.ok(Math.abs(leadInSkip(words(['Hello', 0.13])) - 0.1) < 1e-9);
+  assert.equal(leadInSkip(words(['Hello', 0.01])), 0, 'never before the start');
+  assert.equal(leadInSkip(words(['Hello', 0])), 0);
+  assert.equal(leadInSkip([]), 0);
+  assert.equal(leadInSkip(null), 0);
 });

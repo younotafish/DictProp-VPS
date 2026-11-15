@@ -103,16 +103,6 @@ export const ensureTimings = async (text: string): Promise<void> => {
   if (plain) requestTTSGeneration([{ text: plain, voice: STYLE_VOICES[getTtsStyle()].generate }]).catch(() => { /* best-effort backfill */ });
 };
 
-// MiMo clips carry a quiet ~100ms lead-in (a soft breath/onset) before speech — heard as "starts quiet,
-// then louder". When the caller hasn't asked for a specific start, begin at the first word's timestamp
-// (less a small preroll so a soft onset isn't clipped) to drop that lead-in. Falls back to 0 when
-// timings aren't warm yet, so it degrades to the old behaviour rather than guessing a fixed offset.
-const LEAD_IN_PREROLL = 0.03; // seconds kept before the first word, as a safety margin vs clipping the onset
-export const leadInSkip = (timings: WordTiming[] | null): number => {
-  const first = timings?.[0]?.start;
-  return first && isFinite(first) ? Math.max(0, first - LEAD_IN_PREROLL) : 0;
-};
-
 // Resolve word timings for playback WITHOUT letting a cold/slow network stall the tap. Trimming the
 // ~100ms lead-in is a nice-to-have; the audio clip is already in hand, so a slow (or wedged, un-timed-out)
 // timings round-trip must NEVER hold up playback — that is the "sentence audio takes forever to load even
