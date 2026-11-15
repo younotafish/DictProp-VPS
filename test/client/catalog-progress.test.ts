@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  catalogProgressItemId,
-  catalogProgressKind,
   catalogStudyItems,
   indexCatalogProgress,
-  isCatalogProgressItem,
   sentencesToStudy,
   summarizeCatalogProgress,
-  type CatalogKind,
 } from '../../services/catalogProgress.ts';
+import {
+  catalogProgressItemId,
+  catalogProgressKind,
+  isCatalogProgressItem,
+  type CatalogKind,
+} from '../../services/catalogProgressIdentity.ts';
 import { isEssayProgressItem } from '../../services/essayProgressIdentity.ts';
 import { isRealLifeProgressItem } from '../../services/realLifeProgressIdentity.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';

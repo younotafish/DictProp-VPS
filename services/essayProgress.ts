@@ -1,12 +1,8 @@
 import type { StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 import type { EssaySentence } from './essayCatalog';
-import {
-  catalogProgressItemId,
-  catalogStudyItems,
-  indexCatalogProgress,
-  type CatalogProgressIndex,
-} from './catalogProgress';
+import { catalogProgressItemId } from './catalogProgressIdentity';
+import { catalogStudyItems, indexCatalogProgress, type CatalogProgressIndex } from './catalogProgress';
 
 /** A new progress record for an essay sentence, as it stands before its first review. */
 export function createEssayProgressItem(
