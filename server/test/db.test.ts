@@ -384,3 +384,16 @@ test('session bearer tokens are hashed at rest and remain revocable', () => {
   deleteSession(session.token);
   assert.equal(getSessionUser(session.token), null);
 });
+
+test('a sign-in deletes expired sessions, and looking a session up writes nothing', () => {
+  const user = createUserAndClaimItems({ googleId: 'sweep-google-id', email: 'sweep@example.com', displayName: null, photoUrl: null });
+  const sessions = () => (db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(user.id) as { n: number }).n;
+  const expired = createSession(user.id);
+  db.prepare('UPDATE sessions SET expires_at = ? WHERE user_id = ?').run(Date.now() - 1, user.id);
+  assert.equal(getSessionUser(expired.token), null);
+  assert.equal(sessions(), 1);
+
+  const fresh = createSession(user.id);
+  assert.equal(sessions(), 1);
+  assert.equal(getSessionUser(fresh.token)?.id, user.id);
+});

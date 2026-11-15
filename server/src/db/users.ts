@@ -89,17 +89,18 @@ export function createSession(userId: string): { token: string; expiresAt: numbe
   const now = Date.now();
   const expiresAt = now + THIRTY_DAYS_MS;
   sessionStmts.create.run({ token: sessionTokenHash(token), user_id: userId, created_at: now, expires_at: expiresAt });
+  // Lookups already ignore expired sessions; a sign-in, which writes anyway, deletes them, so the request path
+  // stays read-only. A busy database never fails a sign-in over this.
+  try {
+    sessionStmts.deleteExpired.run(now);
+  } catch (error) {
+    console.warn('Expired sessions were left for the next sign-in:', error instanceof Error ? error.message : error);
+  }
   return { token, expiresAt };
 }
 
-let lastSessionCleanup = 0;
 export function getSessionUser(token: string): UserRow | null {
-  // Periodically clean expired sessions (at most once per hour)
   const now = Date.now();
-  if (now - lastSessionCleanup > 3600_000) {
-    sessionStmts.deleteExpired.run(now);
-    lastSessionCleanup = now;
-  }
   // Only the hash of a cookie is ever looked up, so a copy of the sessions table can't be replayed as a cookie.
   return (sessionStmts.getUser.get(sessionTokenHash(token), now) as UserRow | undefined) || null;
 }
