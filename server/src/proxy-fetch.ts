@@ -11,6 +11,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
+/** The fetch signature outbound callers accept, so tests can pass a fake in place of proxyFetch. */
+export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
 const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
 
 /** The proxy's address for the log, without a user name or password it may carry. */
@@ -158,8 +161,15 @@ export async function proxyFetch(url: string, options: RequestInit = {}, direct:
     if (typeof options.body === 'string' && Buffer.byteLength(options.body) >= CURL_BODY_THRESHOLD) {
       return curlFetch(url, options);
     }
-    // undici fetch with proxy dispatcher
-    return await undiciFetch(url, { ...(await encodeFormDataBody(options)), dispatcher } as any) as unknown as Response;
   }
-  return await undiciFetch(url, { ...(await encodeFormDataBody(options)), dispatcher: getDirectAgent(direct.lookup) } as any) as unknown as Response;
+  return undiciFetchAsGlobal(url, await encodeFormDataBody(options), dispatcher ?? getDirectAgent(direct.lookup));
+}
+
+/**
+ * npm undici's RequestInit and Response are its own types, not the globals Node ships, though they describe the
+ * same objects. Callers keep the global types, and this function is the one place that casts between them.
+ */
+async function undiciFetchAsGlobal(url: string, options: RequestInit, dispatcher: Agent | ProxyAgent): Promise<Response> {
+  const init = { ...options, dispatcher } as unknown as Parameters<typeof undiciFetch>[1];
+  return await undiciFetch(url, init) as unknown as Response;
 }

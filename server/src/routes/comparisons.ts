@@ -3,9 +3,9 @@
 // (mounted on /api/*) gates these — comparisons are per-user.
 import { Hono } from 'hono';
 import { getComparisons, upsertComparison } from '../db.js';
-import type { AuthVariables } from '../middleware/auth.js';
+import type { AppEnv } from '../middleware/auth.js';
 
-export const comparisonsRoutes = new Hono<{ Variables: AuthVariables }>();
+export const comparisonsRoutes = new Hono<AppEnv>();
 
 // A comparison covers two or three words of at most 100 characters (see /api/compare); these caps leave
 // room for that and stop a client from storing arbitrary keys.

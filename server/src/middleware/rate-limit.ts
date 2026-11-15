@@ -1,11 +1,10 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import type { IncomingMessage } from 'http';
 import { isIP } from 'net';
-import type { AuthVariables } from './auth.js';
+import type { AppEnv } from './auth.js';
 import { isPrivateNetworkAddress, parseIpv6 } from '../safe-url.js';
 
-type AppEnv = { Variables: AuthVariables };
-
+/** A fixed-window limit per signed-in user and path. */
 export function createRateLimit(limit: number, windowMs: number): MiddlewareHandler<AppEnv> {
   const buckets = new Map<string, { count: number; resetAt: number }>();
   return async (c, next) => {
@@ -30,12 +29,13 @@ export function createRateLimit(limit: number, windowMs: number): MiddlewareHand
   };
 }
 
-export function createConcurrencyLimit(maxConcurrent: number): MiddlewareHandler<AppEnv> {
+/** At most `maxConcurrent` requests in the handler at once; one more is told `busyMessage` with a 503. */
+export function createConcurrencyLimit(maxConcurrent: number, busyMessage: string): MiddlewareHandler<AppEnv> {
   let active = 0;
   return async (c, next) => {
     if (active >= maxConcurrent) {
       c.header('Retry-After', '5');
-      return c.json({ error: 'Another data import is already running. Try again shortly.' }, 503);
+      return c.json({ error: busyMessage }, 503);
     }
     active++;
     try {

@@ -9,8 +9,8 @@ import { secureHeaders } from 'hono/secure-headers';
 import { randomUUID } from 'crypto';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { requireAuth, type AuthVariables } from './middleware/auth.js';
-import { createClientRateLimit, createConcurrencyLimit, createRateLimit } from './middleware/runtime.js';
+import { requireAuth, type AppEnv } from './middleware/auth.js';
+import { createClientRateLimit, createConcurrencyLimit, createRateLimit } from './middleware/rate-limit.js';
 import { CANONICAL_ORIGIN, isWwwHost, requestedHost } from './canonical-host.js';
 import { isDatabaseReady } from './db.js';
 import { env } from './env.js';
@@ -48,7 +48,7 @@ const logWithoutQuery = (message: string, ...rest: string[]) =>
   console.log(message.replace(/\?\S*/, ''), ...rest);
 
 export function createApp(options: AppOptions = {}) {
-  const app = new Hono<{ Variables: AuthVariables }>();
+  const app = new Hono<AppEnv>();
 
   app.onError((error, c) => {
     if (error instanceof HTTPException) return error.getResponse();
@@ -152,16 +152,8 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/auth/login', createClientRateLimit(20, 60_000));
   app.use('/api/auth/callback', createClientRateLimit(10, 60_000));
   app.route('/api/auth', authRoutes);
-  app.use('/api/*', requireAuth);
-  // Model requests are remote I/O. Let the configured providers own capacity instead of rejecting or
-  // queueing a few concurrent interactive requests locally before they ever reach the provider.
-  app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
-  app.use('/api/import', createConcurrencyLimit(1));
-  app.route('/api', itemsRoutes);
-  app.route('/api', essaysRoutes);
-  app.route('/api', options.aiRouter ?? aiRoutes);
-  app.route('/api', ttsRoutes);
-  app.route('/api', comparisonsRoutes);
+  // An unknown sign-in path, or a known one with the wrong method, is a 404 here, before the session gate.
+  app.all('/api/auth/*', c => c.json({ error: 'Not found' }, 404));
   app.get('/api/health', c => {
     const database = isDatabaseReady();
     return c.json(
@@ -169,6 +161,15 @@ export function createApp(options: AppOptions = {}) {
       database ? 200 : 503,
     );
   });
+  // Everything after this needs the owner's session.
+  app.use('/api/*', requireAuth);
+  app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
+  app.use('/api/import', createConcurrencyLimit(1, 'Another data import is already running. Try again shortly.'));
+  app.route('/api', itemsRoutes);
+  app.route('/api', essaysRoutes);
+  app.route('/api', options.aiRouter ?? aiRoutes);
+  app.route('/api', ttsRoutes);
+  app.route('/api', comparisonsRoutes);
   // An unknown API path is an error, not a page: without this the static fallback answers it with the app shell.
   app.all('/api/*', c => c.json({ error: 'Not found' }, 404));
 

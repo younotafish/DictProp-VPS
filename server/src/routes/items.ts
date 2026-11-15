@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
 import { getItemsAfterRevision, upsertMany, getItemById, getItemImageBinary, getImageManifest, getReviewHistory, applyReviewEvent, undoReviewEvent, storeItemImage, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
-import type { AuthVariables } from '../middleware/auth.js';
+import type { AppEnv } from '../middleware/auth.js';
 import { detectImageMimeType, isSupportedImageMime } from '../image-format.js';
 import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
 import { fetchPublicHttpUrl } from '../safe-url.js';
@@ -83,9 +83,8 @@ function wrapVocabCard(card: any): any {
   };
 }
 
-type ItemsEnv = { Variables: AuthVariables };
 
-export const itemsRoutes = new Hono<ItemsEnv>();
+export const itemsRoutes = new Hono<AppEnv>();
 
 // Prepared example metadata is global source material. Looking it up must not create a user item:
 // expanding an example is a read-only action, while bookmarking remains an explicit save.
@@ -120,7 +119,7 @@ itemsRoutes.get('/sentence-enrichments/:lookupHash/image', (c) => {
   });
 });
 
-function streamAllItems(c: Context<ItemsEnv>, userId: string) {
+function streamAllItems(c: Context<AppEnv>, userId: string) {
   c.header('Content-Type', 'application/json; charset=UTF-8');
   return stream(c, async output => {
     let cursor = { revision: 0, id: '' };

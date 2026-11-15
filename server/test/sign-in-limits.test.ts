@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 process.env.OWNER_GOOGLE_EMAIL = 'owner@example.com';
 
 const { createApp } = await import('../src/app.js');
-const { clientAddress, createClientRateLimit } = await import('../src/middleware/runtime.js');
+const { clientAddress, createClientRateLimit } = await import('../src/middleware/rate-limit.js');
 
 // @hono/node-server hands every handler the socket as env.incoming; Caddy is the peer in production.
 const from = (remoteAddress?: string) => ({ incoming: { socket: { remoteAddress } } });

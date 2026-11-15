@@ -1,10 +1,8 @@
 import { Hono } from 'hono';
-import type { AuthVariables } from '../middleware/auth.js';
 import { getPrivateEssayCatalog } from '../essay-catalog.js';
+import type { AppEnv } from '../middleware/auth.js';
 
-type EssaysEnv = { Variables: AuthVariables };
-
-export const essaysRoutes = new Hono<EssaysEnv>();
+export const essaysRoutes = new Hono<AppEnv>();
 
 // The static public-domain collection ships with the client. This endpoint contains only the
 // owner-private catalog stored on the VPS data volume, so it remains behind requireAuth.

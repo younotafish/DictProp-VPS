@@ -1,4 +1,4 @@
-import { Context, Next } from 'hono';
+import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { getSessionUser, UserRow } from '../db.js';
 import { env } from '../env.js';
@@ -16,6 +16,9 @@ export type AuthVariables = {
   user: AuthUser;
   requestId: string;
 };
+
+/** The app's Hono environment: what middleware sets on the context for the routes after it. */
+export type AppEnv = { Variables: AuthVariables };
 
 // Synthetic user used ONLY when DEV_AUTH_BYPASS=1 (local development). Never enabled in prod.
 export const DEV_AUTH_USER: AuthUser = {
@@ -36,14 +39,8 @@ function userRowToAuthUser(row: UserRow): AuthUser {
   };
 }
 
-export async function requireAuth(c: Context, next: Next) {
-  const path = c.req.path;
-
-  // Skip auth for public routes
-  if (path === '/api/health' || path.startsWith('/api/auth/')) {
-    return next();
-  }
-
+/** The session gate for every API route after it: health and the sign-in routes are registered before it. */
+export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   // Local dev only (DEV_AUTH_BYPASS=1): skip Google auth and act as a synthetic admin user.
   if (env.DEV_AUTH_BYPASS) {
     c.set('user', DEV_AUTH_USER);
@@ -66,4 +63,4 @@ export async function requireAuth(c: Context, next: Next) {
 
   c.set('user', userRowToAuthUser(userRow));
   return next();
-}
+};
