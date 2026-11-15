@@ -61,6 +61,25 @@ test('initial JavaScript over 100 kB gzip fails the check, which still reports t
   assert.match(result.stdout, /^Offline core graph: 4 hashed assets/m);
 });
 
+test('a core file that statically imports the voice runtime fails the check: offline, it could not load', () => {
+  const runtime = { 'assets/transformers.web-i9.js': 'export const p=1;' };
+  for (const statement of ['import{p}from"./transformers.web-i9.js";', 'import"./transformers.web-i9.js";']) {
+    const result = checkBundle(writeBuild({ ...BUILD, ...runtime, 'assets/Lazy-d4.js': `${statement}${BUILD['assets/Lazy-d4.js']}` }));
+    assert.notEqual(result.status, 0, statement);
+    assert.match(result.stderr, /\/assets\/Lazy-d4\.js statically imports \/assets\/transformers\.web-i9\.js, which the service worker caches only on first use/, statement);
+  }
+});
+
+test('a core file may import the voice runtime dynamically, when the code that needs it runs', () => {
+  const result = checkBundle(writeBuild({
+    ...BUILD,
+    'assets/transformers.web-i9.js': 'export const p=1;',
+    'assets/Lazy-d4.js': `${BUILD['assets/Lazy-d4.js']}const t=()=>import("./transformers.web-i9.js");`,
+  }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^Offline core graph: 4 hashed assets/m);
+});
+
 test('a core file the worker does not precache fails the check', () => {
   const result = checkBundle(writeBuild(
     { ...BUILD, 'assets/Lazy-d4.js': `${BUILD['assets/Lazy-d4.js']}const h=()=>import("./Help-g7.js");` },

@@ -45,6 +45,11 @@ const referencedAssets = (source) => {
   return [...urls];
 };
 
+// Rollup writes a chunk's static imports as `from"./x.js"`, or `import"./x.js"` for one kept for its side effects.
+// A dynamic import("./x.js") has a parenthesis instead: it loads only when the code that needs it runs.
+const staticImports = (source) =>
+  [...source.matchAll(/\b(?:from|import)\s*["']\.\/([A-Za-z0-9_.-]+\.js)["']/g)].map((match) => `/assets/${match[1]}`);
+
 // The core graph, from the shell through every file it can load short of the voice runtime, must be precached.
 const queue = referencedAssets(html);
 const precached = new Set();
@@ -55,7 +60,13 @@ while (queue.length > 0 && precached.size < 80) {
   const source = readFileSync(resolve(dist, url.slice(1)));
   precached.add(url);
   if (url.endsWith('.js')) {
-    for (const dependency of referencedAssets(source.toString('utf8'))) {
+    const code = source.toString('utf8');
+    for (const dependency of staticImports(code)) {
+      if (optionalMedia.has(dependency)) {
+        throw new Error(`${url} statically imports ${dependency}, which the service worker caches only on first use, so ${url} could fail to load offline`);
+      }
+    }
+    for (const dependency of referencedAssets(code)) {
       if (!precached.has(dependency)) queue.push(dependency);
     }
   }
