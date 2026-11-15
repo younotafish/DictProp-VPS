@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { findStalledEnrichment } from '../src/enrichment-stall.js';
 import { advancedVocabContentHash } from '../src/incremental-enrichment.js';
-import { sentenceLookupHash } from '../src/sentence-enrichment.js';
+import { sentenceLookupHash } from '../src/sentence-lookup.js';
 import { completeAnalysis, completeVocab } from './support/fixtures.js';
 
 const HOUR = 60 * 60 * 1_000;

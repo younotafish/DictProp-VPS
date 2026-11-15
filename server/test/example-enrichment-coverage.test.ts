@@ -5,7 +5,7 @@ import {
   collectExpectedExampleSentences,
   summarizeExampleEnrichmentCoverage,
 } from '../src/example-enrichment-coverage.js';
-import { sentenceLookupHash } from '../src/sentence-enrichment.js';
+import { sentenceLookupHash } from '../src/sentence-lookup.js';
 import { completeAnalysis } from './support/fixtures.js';
 
 test('example coverage deduplicates markup variants and excludes saved sentences', () => {

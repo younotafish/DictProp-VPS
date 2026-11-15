@@ -7,13 +7,12 @@ import {
 } from './support/library.js';
 
 const { createSession, createUserAndClaimItems, db, softDeleteItem } = await import('../src/db.js');
-const { enrichmentId } = await import('../src/example-enrichment-coverage.js');
-const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
+const { exampleSentenceId, sentenceLookupHash } = await import('../src/sentence-lookup.js');
 
 const owner = createOwner();
 const save = (id: string, type: string, data: Record<string, unknown>) => saveItem(owner.id, id, type, data);
 const ids = (texts: string[]) => texts.map(sentenceLookupHash).sort((left, right) => left.localeCompare(right))
-  .map(enrichmentId);
+  .map(exampleSentenceId);
 // An analysis from before grammar and pronunciation were part of the contract.
 const legacyAnalysis = {
   translation: '新的。',

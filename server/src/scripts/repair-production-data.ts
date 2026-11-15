@@ -1,6 +1,7 @@
 import { db, deleteUnreferencedBlobs, getAllItems, listAllUsers, softDeleteItem, upsertItem } from '../db.js';
 import { env } from '../env.js';
 import { backupBeforeWrite, checkpointAfterWrite } from '../import-support.js';
+import { normalizeLabel, vocabSenseKey } from '../library-identity.js';
 import { isOwnerUser } from '../owner-access.js';
 
 const apply = process.argv.includes('--apply');
@@ -81,10 +82,13 @@ const PREFERRED_SURVIVOR_IDS = new Set([
 const items = getAllItems(owner.id) as any[];
 const byId = new Map(items.map(item => [item.data.id, item]));
 const imageIds = new Set((db.prepare('SELECT id FROM item_images WHERE user_id = ?').all(owner.id) as Array<{ id: string }>).map(row => row.id));
-const normalize = (value: unknown) => String(value || '').toLowerCase().trim().replace(/\s+/g, ' ');
-const normalizeSentence = (value: unknown) => normalize(String(value || '')
-  .replace(/\{\{([^{}]+)\}\}/g, '$1')
-  .replace(/\[\[([^\[\]]+)\]\]/g, '$1'));
+// The sentence identity the July duplicate groups were adjudicated by: text without its markers, and the source
+// card, compared as labels (no NFKC, no quote or dash folding).
+const julySentenceKey = (data: { text?: unknown; sourceWord?: unknown; sourceSense?: unknown }) => [
+  normalizeLabel(String(data.text || '').replace(/\{\{([^{}]+)\}\}/g, '$1').replace(/\[\[([^[\]]+)\]\]/g, '$1')),
+  normalizeLabel(data.sourceWord),
+  normalizeLabel(data.sourceSense),
+].join('\u0000');
 const finite = (value: unknown, fallback = 0) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
 
@@ -122,19 +126,17 @@ function assertSameIdentity(group: any[], allowSenseMismatch: boolean): void {
   const first = group[0];
   if (group.some(item => item.type !== first.type)) throw new Error('Duplicate repair group changed item type');
   if (first.type === 'vocab') {
-    const key = allowSenseMismatch
-      ? normalize(first.data.word)
-      : `${normalize(first.data.word)}\u0000${normalize(first.data.sense)}`;
     const identityOf = (item: any) => allowSenseMismatch
-      ? normalize(item.data.word)
-      : `${normalize(item.data.word)}\u0000${normalize(item.data.sense)}`;
+      ? normalizeLabel(item.data.word)
+      : vocabSenseKey(item.data.word, item.data.sense);
+    const key = identityOf(first);
     if (group.some(item => identityOf(item) !== key)) {
       throw new Error(`Vocab duplicate group changed identity: ${group.map(item => item.data.id).join(',')}`);
     }
     return;
   }
-  const key = [normalizeSentence(first.data.text), normalize(first.data.sourceWord), normalize(first.data.sourceSense)].join('\u0000');
-  if (group.some(item => [normalizeSentence(item.data.text), normalize(item.data.sourceWord), normalize(item.data.sourceSense)].join('\u0000') !== key)) {
+  const key = julySentenceKey(first.data);
+  if (group.some(item => julySentenceKey(item.data) !== key)) {
     throw new Error(`Sentence duplicate group changed identity: ${group.map(item => item.data.id).join(',')}`);
   }
 }
@@ -218,7 +220,7 @@ function mergedExamplesFor(plan: (typeof duplicatePlans)[number]): string[] {
   for (const item of [plan.survivor, ...plan.losers]) {
     for (const example of Array.isArray(item.data?.examples) ? item.data.examples : []) {
       if (typeof example !== 'string' || !example.trim()) continue;
-      const key = normalize(example);
+      const key = normalizeLabel(example);
       if (seen.has(key)) continue;
       seen.add(key);
       examples.push(example);
@@ -230,12 +232,11 @@ function mergedExamplesFor(plan: (typeof duplicatePlans)[number]): string[] {
 const sentenceRelinksBySurvivor = new Map<string, any[]>();
 for (const plan of duplicatePlans) {
   if (!plan.semantic || plan.survivor.type !== 'vocab') continue;
-  const loserKeys = new Set(plan.losers.map((loser: any) =>
-    `${normalize(loser.data.word)}\u0000${normalize(loser.data.sense)}`));
-  const survivorKey = `${normalize(plan.survivor.data.word)}\u0000${normalize(plan.survivor.data.sense)}`;
+  const loserKeys = new Set(plan.losers.map((loser: any) => vocabSenseKey(loser.data.word, loser.data.sense)));
+  const survivorKey = vocabSenseKey(plan.survivor.data.word, plan.survivor.data.sense);
   loserKeys.delete(survivorKey);
-  const linked = items.filter(item => item.type === 'sentence' && !item.isDeleted && loserKeys.has(
-    `${normalize(item.data.sourceWord)}\u0000${normalize(item.data.sourceSense)}`));
+  const linked = items.filter(item => item.type === 'sentence' && !item.isDeleted &&
+    loserKeys.has(vocabSenseKey(item.data.sourceWord, item.data.sourceSense)));
   sentenceRelinksBySurvivor.set(plan.survivor.data.id, linked);
 }
 

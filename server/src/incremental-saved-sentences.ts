@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
+import { sentenceTextHash } from './sentence-lookup.js';
 
 export interface IncrementalSavedSentenceSource {
   version: 1;
@@ -60,7 +60,7 @@ export function collectIncompleteSavedSentences(
     seenIds.add(data.id);
     if (hasCompleteSentenceAnalysis(data.analysis)) continue;
 
-    const textHash = createHash('sha256').update(data.text).digest('hex');
+    const textHash = sentenceTextHash(data.text);
     const previous = previousById.get(data.id);
     if (!previous) newlyDiscovered++;
     else if (previous.textHash !== textHash) changedSentences++;

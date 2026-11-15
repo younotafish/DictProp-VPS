@@ -1,9 +1,9 @@
-import { createHash } from 'crypto';
 import { getAllItems, listAllUsers } from '../db.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import type { SentenceExportRecord } from '../sentence-backfill.js';
+import { sentenceTextHash } from '../sentence-lookup.js';
 
 const owner = listAllUsers().find(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL));
 if (!owner) throw new Error('Owner account not found');
@@ -18,7 +18,7 @@ const sentences: SentenceExportRecord[] = getAllItems(owner.id)
       text,
       sourceWord: typeof data.sourceWord === 'string' ? data.sourceWord : '',
       ...(typeof data.sourceSense === 'string' ? { sourceSense: data.sourceSense } : {}),
-      textHash: createHash('sha256').update(text).digest('hex'),
+      textHash: sentenceTextHash(text),
       hasAnalysis: isSentenceAnalysis(data.analysis),
       hasGrammar: hasSentenceGrammarAnalysis(data.analysis),
       hasDetailedAnalysis: hasCompleteSentenceAnalysis(data.analysis),

@@ -6,6 +6,7 @@ import {
   summarizeExampleEnrichmentCoverage,
   type StoredSentenceEnrichmentRecord,
 } from '../example-enrichment-coverage.js';
+import { normalizeLabel, sentenceIdentityKey, sentenceTextKey, vocabSenseKey } from '../library-identity.js';
 import { isOwnerUser } from '../owner-access.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../usage-audit.js';
@@ -18,10 +19,6 @@ if (!owner) throw new Error('Owner account not found');
 const allItems = getAllItems(owner.id) as any[];
 const liveItems = allItems.filter(item => !item.isDeleted);
 const sample = (values: string[], limit = 100) => values.slice(0, limit);
-const normalize = (value: unknown) => String(value || '').toLowerCase().trim().replace(/\s+/g, ' ');
-const normalizeSentence = (value: unknown) => normalize(String(value || '')
-  .replace(/\{\{([^{}]+)\}\}/g, '$1')
-  .replace(/\[\[([^\[\]]+)\]\]/g, '$1'));
 const countQuery = (sql: string, ...params: unknown[]): number =>
   (db.prepare(sql).get(...params) as { count: number }).count;
 
@@ -210,24 +207,24 @@ const duplicateGroups = (items: any[], keyOf: (item: any) => string) => {
 };
 const duplicateVocabSenses = duplicateGroups(
   liveItems.filter(item => item.type === 'vocab'),
-  item => `${normalize(item.data.word)}\u0000${normalize(item.data.sense)}`,
+  item => vocabSenseKey(item.data.word, item.data.sense),
 );
 const duplicatePhrases = duplicateGroups(
   liveItems.filter(item => item.type === 'phrase'),
-  item => normalize(item.data.query),
+  item => normalizeLabel(item.data.query),
 );
-const duplicateSentences = duplicateGroups(sentenceItems, item => normalizeSentence(item.data.text));
+const duplicateSentences = duplicateGroups(sentenceItems, item => sentenceTextKey(item.data.text));
 const duplicateExactSentences = duplicateGroups(
   sentenceItems,
-  item => [normalizeSentence(item.data.text), normalize(item.data.sourceWord), normalize(item.data.sourceSense)].join('\u0000'),
+  item => sentenceIdentityKey(item.data.text, item.data.sourceWord, item.data.sourceSense),
 );
 
 const liveVocabWords = new Set(liveItems
   .filter(item => item.type === 'vocab')
-  .map(item => normalize(item.data.word))
+  .map(item => normalizeLabel(item.data.word))
   .filter(Boolean));
 const missingSentenceSources = sentenceItems
-  .filter(item => normalize(item.data.sourceWord) && !liveVocabWords.has(normalize(item.data.sourceWord)))
+  .filter(item => normalizeLabel(item.data.sourceWord) && !liveVocabWords.has(normalizeLabel(item.data.sourceWord)))
   .map(item => item.data.id);
 
 const projectTagCount = (db.prepare('SELECT COUNT(*) AS count FROM items WHERE user_id = ? AND project IS NOT NULL')

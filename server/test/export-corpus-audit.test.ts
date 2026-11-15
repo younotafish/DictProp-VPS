@@ -10,7 +10,7 @@ import {
 
 const { corpusSourceHash } = await import('../src/corpus-audit.js');
 const { getAllItems, getItemById, softDeleteItem } = await import('../src/db.js');
-const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
+const { sentenceLookupHash } = await import('../src/sentence-lookup.js');
 
 const owner = createOwner();
 const save = (id: string, type: string, data: Record<string, unknown>, isArchived = false) =>

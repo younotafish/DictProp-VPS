@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
 import {
@@ -16,6 +15,7 @@ import {
   validateSentenceBackfillBundle,
   type SentenceBackfillBundle,
 } from '../sentence-backfill.js';
+import { sentenceTextHash } from '../sentence-lookup.js';
 
 const manifestPath = process.argv[2];
 if (!manifestPath) throw new Error('Usage: import-sentence-backfill <manifest.json>');
@@ -69,7 +69,7 @@ const importSentence = db.transaction(({ entry, image, mimeType }: PreparedEntry
   if (!live || live.isDeleted) throw new StaleEntryError('sentence is missing or deleted');
   if (live.type !== 'sentence') throw new Error('item is no longer a sentence');
   const liveText = typeof live.data?.text === 'string' ? live.data.text : '';
-  if (createHash('sha256').update(liveText).digest('hex') !== entry.textHash) {
+  if (sentenceTextHash(liveText) !== entry.textHash) {
     throw new StaleEntryError('sentence text changed after export');
   }
   const imageExists = hasItemImage(entry.id, owner.id);

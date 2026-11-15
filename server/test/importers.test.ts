@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { enrichmentId } from '../src/example-enrichment-coverage.js';
 import { srs } from './support/fixtures.js';
 import { png, sha256 } from './support/fs.js';
 import { runServerScript } from './support/scripts.js';
@@ -18,7 +17,7 @@ const {
   createUserAndClaimItems, db, getItemById, getItemImage, getSentenceEnrichmentImage, softDeleteItem, upsertItem,
   upsertItemImageBinary, upsertSentenceEnrichment,
 } = await import('../src/db.js');
-const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
+const { exampleSentenceId, sentenceLookupHash } = await import('../src/sentence-lookup.js');
 
 const owner = createUserAndClaimItems({ googleId: 'importer-owner', email: OWNER_EMAIL, displayName: null, photoUrl: null });
 const dataUri = (seed: string) => `data:image/png;base64,${png(seed).toString('base64')}`;
@@ -277,7 +276,7 @@ test('the repair only previews by default, and on --apply backs up first and kee
   const text = 'A serene lake reflected the hills.';
   const lookupHash = sentenceLookupHash(text);
   upsertSentenceEnrichment({
-    entry: { id: enrichmentId(lookupHash), text, lookupHash, textHash: sha256(text), analysis, generatedAt: 10 },
+    entry: { id: exampleSentenceId(lookupHash), text, lookupHash, textHash: sha256(text), analysis, generatedAt: 10 },
     image: png('repair-enrichment'),
     mimeType: 'image/png',
   });

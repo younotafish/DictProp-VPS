@@ -3,14 +3,13 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { enrichmentId } from '../src/example-enrichment-coverage.js';
 import { png, sha256 } from './support/fs.js';
 import { runServerScript } from './support/scripts.js';
 
 const DATA_DIR = process.env.DATA_DIR!;
 
 const { getSentenceEnrichmentForText, getSentenceEnrichmentImage, upsertSentenceEnrichment } = await import('../src/db.js');
-const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
+const { exampleSentenceId, sentenceLookupHash } = await import('../src/sentence-lookup.js');
 
 const analysis = (translation: string) => ({
   translation,
@@ -21,7 +20,7 @@ const analysis = (translation: string) => ({
 const entry = (text: string, generatedAt: number, imageFile?: string) => {
   const lookupHash = sentenceLookupHash(text);
   return {
-    id: enrichmentId(lookupHash), text, lookupHash, textHash: sha256(text),
+    id: exampleSentenceId(lookupHash), text, lookupHash, textHash: sha256(text),
     analysis: analysis(`译文：${text}`), generatedAt, ...(imageFile ? { imageFile } : {}),
   };
 };

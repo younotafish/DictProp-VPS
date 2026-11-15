@@ -8,8 +8,7 @@ import { SERVER_DIR } from './paths.js';
 
 const { createUserAndClaimItems, db, upsertItem, upsertItemImageBinary, upsertSentenceEnrichment } =
   await import('../../src/db.js');
-const { enrichmentId } = await import('../../src/example-enrichment-coverage.js');
-const { sentenceLookupHash } = await import('../../src/sentence-enrichment.js');
+const { exampleSentenceId, sentenceLookupHash } = await import('../../src/sentence-lookup.js');
 
 export const OWNER_EMAIL = 'owner@example.com';
 
@@ -43,7 +42,7 @@ export function storeExample(text: string, analysis: unknown, image?: Buffer): v
   const lookupHash = sentenceLookupHash(text);
   upsertSentenceEnrichment({
     entry: {
-      id: enrichmentId(lookupHash), text, lookupHash, textHash: sha256(text), analysis: analysis as SentenceAnalysis, generatedAt: 10,
+      id: exampleSentenceId(lookupHash), text, lookupHash, textHash: sha256(text), analysis: analysis as SentenceAnalysis, generatedAt: 10,
     },
     ...(image ? { image, mimeType: 'image/png' } : {}),
   });
@@ -59,7 +58,7 @@ export function storeRawExample(text: string, analysisText: string, imageContent
     INSERT INTO sentence_enrichments (lookup_hash, source_id, text_hash, source_text, analysis, generated_at,
       image_content_hash, image_mime_type, updated_at)
     VALUES (?, ?, ?, ?, ?, 10, ?, ?, ?)
-  `).run(lookupHash, enrichmentId(lookupHash), sha256(text), text, analysisText, imageContentHash,
+  `).run(lookupHash, exampleSentenceId(lookupHash), sha256(text), text, analysisText, imageContentHash,
     imageContentHash ? 'image/png' : null, updatedAt);
 }
 

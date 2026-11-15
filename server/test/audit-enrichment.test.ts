@@ -7,14 +7,13 @@ import {
 } from './support/library.js';
 
 const { advancedVocabContentHash, imagePromptHash } = await import('../src/incremental-enrichment.js');
-const { enrichmentId } = await import('../src/example-enrichment-coverage.js');
-const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
+const { exampleSentenceId, sentenceLookupHash } = await import('../src/sentence-lookup.js');
 
 const HOUR = 60 * 60 * 1_000;
 const owner = createOwner();
 const { pronunciation: _pronunciation, ...incompleteAnalysis } = completeAnalysis;
 const ids = (texts: string[]) => texts.map(sentenceLookupHash).sort((left, right) => left.localeCompare(right))
-  .map(enrichmentId);
+  .map(exampleSentenceId);
 const noGaps = {
   sentenceDetailedAnalysis: 0,
   sentenceImage: 0,

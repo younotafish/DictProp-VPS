@@ -1,5 +1,5 @@
 import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
-import { normalizeSentenceLookup, sentenceLookupHash } from './sentence-enrichment.js';
+import { exampleSentenceId, normalizeSentenceLookup, sentenceLookupHash } from './sentence-lookup.js';
 
 export interface StoredSentenceEnrichmentRecord {
   lookup_hash: string;
@@ -27,7 +27,8 @@ export interface ExampleEnrichmentCoverage {
 }
 
 const sample = (values: string[], limit = 100): string[] => values.slice(0, limit);
-export const enrichmentId = (lookupHash: string): string => `example-${lookupHash.slice(0, 40)}`;
+/** The id of an example's enrichment: exampleSentenceId, under the name the tests import. */
+export const enrichmentId = exampleSentenceId;
 
 export function collectExpectedExampleSentences(items: any[]): ExpectedExampleSentence[] {
   const savedSentenceHashes = new Set<string>();
