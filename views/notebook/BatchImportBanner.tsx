@@ -11,9 +11,9 @@ export interface BatchImportProgress {
   isRunning: boolean;
 }
 
-/** The progress of a running batch import, under the notebook's header. */
+/** The progress of a running batch import, at the foot of the notebook's sticky header. */
 export const BatchImportBanner: React.FC<{ progress: BatchImportProgress }> = ({ progress }) => (
-  <div className="sticky top-[72px] z-[9] bg-indigo-500 text-white px-4 py-3 shadow-md">
+  <div className="bg-indigo-500 text-white px-4 py-3 shadow-md">
     <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
       <div className="flex items-center gap-3">
         <Loader2 className="animate-spin" size={18} />

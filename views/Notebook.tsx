@@ -331,10 +331,9 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           onSearchWithAI={() => performAISearch(localSearchQuery)}
           onClear={() => changeQuery('')}
         />
+        {/* Batch Import Progress Banner, part of the header so it hides and shows with it */}
+        {batchImportProgress?.isRunning && <BatchImportBanner progress={batchImportProgress} />}
       </NotebookHeader>
-
-      {/* Batch Import Progress Banner */}
-      {batchImportProgress?.isRunning && <BatchImportBanner progress={batchImportProgress} />}
 
       {/* AI Search Results */}
       {searchError && (
