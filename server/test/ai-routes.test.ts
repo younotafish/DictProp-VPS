@@ -179,6 +179,16 @@ test('bad analyze input is rejected before any model call', async () => {
   assert.equal(h.requests.length + noKey.requests.length, 0);
 });
 
+test('a body that is not a JSON object gets each route\'s 400, never a 500, before any model call', async () => {
+  const h = harness([reply({})]);
+  for (const path of ['/analyze', '/extract-vocabulary', '/compare', '/transcribe']) {
+    for (const body of ['null', '[]', '"bank"', '5', '{oops']) {
+      assert.equal((await h.post(path, undefined, { body })).status, 400, `${path} with ${body}`);
+    }
+  }
+  assert.equal(h.requests.length, 0);
+});
+
 // ── /compare ────────────────────────────────────────────────────────────────
 
 const WORDS = ['fleeting', 'transient', 'ephemeral', 'momentary', 'brief', 'passing', 'short-lived', 'evanescent', 'temporary'];

@@ -92,3 +92,12 @@ test('while a detached worker\'s run is beating, starting the backfill answers w
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.deepEqual(synthesized, []);
 });
+
+test('a generate request whose body is not a JSON object is a 400', async () => {
+  const { app, synthesized } = routes();
+  for (const body of ['null', '[]', '{oops']) {
+    const response = await app.request('/api/tts/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    assert.equal(response.status, 400, body);
+  }
+  assert.deepEqual(synthesized, []);
+});

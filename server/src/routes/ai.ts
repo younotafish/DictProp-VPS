@@ -62,6 +62,13 @@ function errorResponse(msg: string, status: number) {
   return { error: msg, status };
 }
 
+// The request's JSON body when it is an object; null for malformed JSON or anything else (null, an array, a string).
+// server-core's http-body.ts is to export the same helper for every route.
+async function readJsonObject(c: Context): Promise<Record<string, unknown> | null> {
+  const body: unknown = await c.req.json().catch(() => null);
+  return body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
+}
+
 // ============================================================================
 // Routes
 // ============================================================================
@@ -103,7 +110,8 @@ export function createAiRoutes(deps: AiRouteDependencies = {}) {
       const clientSignal = c.req.raw.signal;
       const key = apiKey();
       if (!key) return c.json(errorResponse(MISSING_KEY, 500), 500);
-      const body = await c.req.json().catch(() => ({}));
+      // Any body that isn't a JSON object reads as an empty one, which each handler answers with its own 400.
+      const body = (await readJsonObject(c)) ?? {};
       return handle({ c, body, clientSignal, apiKey: key });
     });
   };
