@@ -31,34 +31,35 @@ interface NotebookProps {
   user: AppUser | null;
   onSignIn: () => void;
   onSignOut: () => void;
-  syncStatus?: SyncStatus;
-  onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
-  onForceSync?: () => void;
-  isOnline?: boolean;
+  syncStatus: SyncStatus;
+  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
+  onForceSync: () => void;
+  isOnline: boolean;
   /** Unused: the 'notebook-search' listener that read it is gone. App still passes it until it stops (handoff). */
   hasSavedVariant?: (query: string) => boolean;
   isVocabSaved: (vocab: VocabCard) => boolean;
-  onFindDuplicates?: () => void;
-  onArchive?: (id: string) => void;
-  onUnarchive?: (id: string) => void;
-  onSave?: (item: StoredItem) => void;
-  onCompare?: (words: string[]) => void;
-  onSaveSentence?: (text: string, word: string, sense?: string) => void;
-  isSentenceSaved?: (text: string) => boolean;
-  hasOverlay?: boolean;
-  onBatchImport?: (words: string[]) => void;
-  batchImportProgress?: { current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean } | null;
-  onJSONImported?: () => void;
-  onGenerateAllSpeech?: () => void;
-  ttsGenProgress?: { current: number; total: number; isRunning: boolean } | null;
-  onRestoreImagesToServer?: () => void;
-  imageRestoreRunning?: boolean;
-  onDownloadOfflineImages?: () => void;
+  onFindDuplicates: () => void;
+  onArchive: (id: string) => void;
+  onUnarchive: (id: string) => void;
+  onSave: (item: StoredItem) => void;
+  onCompare: (words: string[]) => void;
+  onSaveSentence: (text: string, word: string, sense?: string) => void;
+  isSentenceSaved: (text: string) => boolean;
+  /** A card or dialog is open over the notebook, whose keys are its own. */
+  hasOverlay: boolean;
+  onBatchImport: (words: string[]) => void;
+  batchImportProgress: { current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean } | null;
+  onJSONImported: () => void;
+  onGenerateAllSpeech: () => void;
+  ttsGenProgress: { current: number; total: number; isRunning: boolean } | null;
+  onRestoreImagesToServer: () => void;
+  imageRestoreRunning: boolean;
+  onDownloadOfflineImages: () => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
     items, onDelete, onSearch, onViewDetail,
-    user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
+    user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline,
     isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
@@ -332,8 +333,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
 
   // Save a vocab from search results into the unified notebook.
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
-    if (!onSave) return;
-
     onSave(makeVocabStoredItem(vocab));
   }, [onSave]);
 
@@ -348,7 +347,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     }
 
     lastScrollY.current = currentScrollY;
-    onScroll?.(e);
+    onScroll(e);
   }, [onScroll]);
   
   const searchQuery = deferredSearchQuery.trim();
@@ -651,43 +650,31 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                     <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowBatchImport(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
                       <ListPlus size={17} /> Batch import
                     </button>
-                    {onJSONImported && (
-                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowJSONImport(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
-                        <FileJson size={17} /> Import JSON
-                      </button>
-                    )}
-                    {onDownloadOfflineImages && (
-                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onDownloadOfflineImages(); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
-                        <Download size={17} /> Download image pack
-                      </button>
-                    )}
-                    {onForceSync && (
-                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onForceSync(); }} disabled={syncStatus === 'syncing'} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                        {syncStatus === 'syncing' ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />} Sync now
-                      </button>
-                    )}
+                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); setShowJSONImport(true); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
+                      <FileJson size={17} /> Import JSON
+                    </button>
+                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onDownloadOfflineImages(); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
+                      <Download size={17} /> Download image pack
+                    </button>
+                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onForceSync(); }} disabled={syncStatus === 'syncing'} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                      {syncStatus === 'syncing' ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />} Sync now
+                    </button>
                     <div className="h-px bg-slate-100 my-1" />
-                    {onGenerateAllSpeech && (
-                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onGenerateAllSpeech(); }} disabled={ttsGenProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                        {ttsGenProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <Volume2 size={17} />} Generate speech cache
-                      </button>
-                    )}
-                    {onRestoreImagesToServer && (
-                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onRestoreImagesToServer(); }} disabled={imageRestoreRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                        {imageRestoreRunning ? <Loader2 size={17} className="animate-spin" /> : <UploadCloud size={17} />} Restore server images
-                      </button>
-                    )}
-                    {onFindDuplicates && (
-                      <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onFindDuplicates(); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
-                        <GitMerge size={17} /> Merge duplicates
-                      </button>
-                    )}
+                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onGenerateAllSpeech(); }} disabled={ttsGenProgress?.isRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                      {ttsGenProgress?.isRunning ? <Loader2 size={17} className="animate-spin" /> : <Volume2 size={17} />} Generate speech cache
+                    </button>
+                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onRestoreImagesToServer(); }} disabled={imageRestoreRunning} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                      {imageRestoreRunning ? <Loader2 size={17} className="animate-spin" /> : <UploadCloud size={17} />} Restore server images
+                    </button>
+                    <button role="menuitem" onClick={() => { setShowMaintenanceMenu(false); onFindDuplicates(); }} className="w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50">
+                      <GitMerge size={17} /> Merge duplicates
+                    </button>
                   </div>
                 )}
               </div>
             )}
             {/* Compare mode toggle */}
-            {onCompare && isOnline && (
+            {isOnline && (
               <button
                 onClick={() => {
                   setCompareMode(prev => !prev);
@@ -880,36 +867,30 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       </div>
 
       {/* Text Analyzer Modal */}
-      {onSave && (
-        <TextAnalyzer
-          isOpen={showTextAnalyzer}
-          onClose={() => setShowTextAnalyzer(false)}
-          onSave={onSave}
-          savedItems={items}
-          isOnline={isOnline}
-        />
-      )}
+      <TextAnalyzer
+        isOpen={showTextAnalyzer}
+        onClose={() => setShowTextAnalyzer(false)}
+        onSave={onSave}
+        savedItems={items}
+        isOnline={isOnline}
+      />
 
       {/* Batch Import Modal */}
-      {onBatchImport && (
-        <BatchImport
-          isOpen={showBatchImport}
-          onClose={() => setShowBatchImport(false)}
-          onSubmit={onBatchImport}
-        />
-      )}
+      <BatchImport
+        isOpen={showBatchImport}
+        onClose={() => setShowBatchImport(false)}
+        onSubmit={onBatchImport}
+      />
 
       {/* JSON Import Modal */}
-      {onJSONImported && (
-        <JSONImport
-          isOpen={showJSONImport}
-          onClose={() => setShowJSONImport(false)}
-          onImported={onJSONImported}
-        />
-      )}
+      <JSONImport
+        isOpen={showJSONImport}
+        onClose={() => setShowJSONImport(false)}
+        onImported={onJSONImported}
+      />
 
       {/* Compare floating action button */}
-      {compareMode && selectedForCompare.length >= 2 && onCompare && (
+      {compareMode && selectedForCompare.length >= 2 && (
         <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] left-0 right-0 flex justify-center z-20 pointer-events-none">
           <button
             onClick={() => {
