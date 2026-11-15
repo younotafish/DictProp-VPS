@@ -25,33 +25,35 @@ const expire = (token: string) => {
 const clearsSessionCookie = (response: Response) =>
   response.headers.getSetCookie().some(cookie => cookie.startsWith('session=;') && /Max-Age=0/i.test(cookie));
 
-test('an API request needs an owner session', async () => {
+test('an API request needs an owner session, and one that can\'t be used is ended', async () => {
   let response = await get('/api/items/images/manifest');
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: 'Not authenticated' });
+  assert.deepEqual(response.headers.getSetCookie(), []);
 
   response = await get('/api/items/images/manifest', 'not-a-session');
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: 'Session expired' });
+  assert.ok(clearsSessionCookie(response));
 
   const strangerSession = createSession(stranger.id).token;
   response = await get('/api/items/images/manifest', strangerSession);
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { error: 'owner_only' });
-  assert.deepEqual(response.headers.getSetCookie(), []);
-  assert.equal(getSessionUser(strangerSession)?.id, stranger.id);
+  assert.ok(clearsSessionCookie(response));
+  assert.equal(getSessionUser(strangerSession), null);
 
   const ownerSession = createSession(owner.id).token;
   response = await get('/api/items/images/manifest', ownerSession);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), []);
 
-  const expiring = createSession(stranger.id).token;
+  const expiring = createSession(owner.id).token;
   expire(expiring);
   response = await get('/api/items/images/manifest', expiring);
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: 'Session expired' });
-  assert.deepEqual(response.headers.getSetCookie(), []);
+  assert.ok(clearsSessionCookie(response));
 });
 
 test('health and the sign-in routes answer without a session, and unknown sign-in paths are JSON 404s', async () => {
@@ -74,7 +76,7 @@ test('/api/auth/me reports the owner, and refuses and ends a session that is not
   response = await get('/api/auth/me', 'not-a-session');
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: 'Session expired' });
-  assert.deepEqual(response.headers.getSetCookie(), []);
+  assert.ok(clearsSessionCookie(response));
 
   const strangerSession = createSession(stranger.id).token;
   response = await get('/api/auth/me', strangerSession);

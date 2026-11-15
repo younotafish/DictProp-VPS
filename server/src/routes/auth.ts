@@ -3,7 +3,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { randomUUID } from 'crypto';
 import { env } from '../env.js';
 import { proxyFetch, type FetchLike } from '../proxy-fetch.js';
-import { endSession, resolveSession, SESSION_COOKIE } from '../middleware/auth.js';
+import { resolveSession, SESSION_COOKIE } from '../middleware/auth.js';
 import { createPkcePair, verifyGoogleIdToken, type GoogleIdentity } from '../google-auth.js';
 import { CANONICAL_ORIGIN, isWwwHost, requestedHost } from '../canonical-host.js';
 import {
@@ -205,10 +205,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
       c.header('Cache-Control', 'private, no-store');
       return c.redirect(`${CANONICAL_ORIGIN}${forwardedUri === '/' ? returnTo : forwardedUri}`, 308);
     }
-    const session = resolveSession(c);
-    if (session.kind === 'owner') return c.body(null, 204);
-    if (session.kind === 'not-owner') endSession(c, session.token);
-    if (session.kind === 'expired') deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    if (resolveSession(c).kind === 'owner') return c.body(null, 204);
 
     c.header('Cache-Control', 'private, no-store');
     return c.redirect(`/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
@@ -220,9 +217,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     switch (session.kind) {
       case 'anonymous': return c.json({ error: 'Not authenticated' }, 401);
       case 'expired': return c.json({ error: 'Session expired' }, 401);
-      case 'not-owner':
-        endSession(c, session.token);
-        return c.json({ error: 'owner_only' }, 403);
+      case 'not-owner': return c.json({ error: 'owner_only' }, 403);
       case 'owner': return c.json({ user: session.user });
     }
   });

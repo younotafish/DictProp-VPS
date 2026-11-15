@@ -41,31 +41,35 @@ export function userRowToAuthUser(row: UserRow): AuthUser {
   };
 }
 
-/** What a request's session cookie amounts to. A token is kept where a caller may end the session. */
+/** What a request's session cookie amounts to. */
 export type SessionState =
   | { kind: 'owner'; user: AuthUser }
   | { kind: 'anonymous' }
-  | { kind: 'expired'; token: string }
-  | { kind: 'not-owner'; token: string };
+  | { kind: 'expired' }
+  | { kind: 'not-owner' };
 
 /**
  * Resolve the request's session: the one place the API, /api/auth/me and the static-site gate look a session
- * up. Local development with DEV_AUTH_BYPASS=1 is always the synthetic owner.
+ * up, and clean up after one that can't be used. Local development with DEV_AUTH_BYPASS=1 is always the
+ * synthetic owner.
  */
 export function resolveSession(c: Context): SessionState {
   if (env.DEV_AUTH_BYPASS) return { kind: 'owner', user: DEV_AUTH_USER };
   const token = getCookie(c, SESSION_COOKIE);
   if (!token) return { kind: 'anonymous' };
   const row = getSessionUser(token);
-  if (!row) return { kind: 'expired', token };
-  if (!isOwnerUser(row, env.OWNER_GOOGLE_EMAIL)) return { kind: 'not-owner', token };
+  if (!row) {
+    // An expired or unknown session never comes back, so the browser can stop sending its cookie.
+    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    return { kind: 'expired' };
+  }
+  if (!isOwnerUser(row, env.OWNER_GOOGLE_EMAIL)) {
+    // Only the owner keeps a session: one from before the owner email changed ends here.
+    deleteSession(token);
+    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    return { kind: 'not-owner' };
+  }
   return { kind: 'owner', user: userRowToAuthUser(row) };
-}
-
-/** Delete a session and clear its cookie. */
-export function endSession(c: Context, token: string): void {
-  deleteSession(token);
-  deleteCookie(c, SESSION_COOKIE, { path: '/' });
 }
 
 /** The session gate for every API route after it: health and the sign-in routes are registered before it. */
