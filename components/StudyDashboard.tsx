@@ -1,10 +1,21 @@
 import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import { BarChart3, Clock, Flame, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
 import { getItemTitle, type ReviewHistory, type StoredItem } from '../types';
+import { MASTERY_LEVELS, type MasteryKey } from '../services/srsAlgorithm';
 import { buildReviewQueue } from '../services/studySession';
 import { computeStudyStats } from '../services/studyStats';
 
 const SCROLL_KEY = 'study_dashboard_scroll';
+
+// The shade each mastery band has in the breakdown bar and its legend.
+const MASTERY_SHADES: Record<MasteryKey, string> = {
+  grandmaster: 'bg-purple-500',
+  mastered: 'bg-emerald-500',
+  proficient: 'bg-blue-500',
+  learning: 'bg-amber-400',
+  struggling: 'bg-orange-500',
+  new: 'bg-slate-300',
+};
 
 interface StudyDashboardProps {
   items: StoredItem[];
@@ -42,15 +53,12 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
     return saveScroll;
   }, []);
 
-  // Mastery breakdown data for stacked bar
-  const masteryData = [
-    { label: 'Grandmaster', count: stats.grandmaster, color: 'bg-purple-500' },
-    { label: 'Mastered', count: stats.mastered, color: 'bg-emerald-500' },
-    { label: 'Proficient', count: stats.proficient, color: 'bg-blue-500' },
-    { label: 'Learning', count: stats.learning, color: 'bg-amber-400' },
-    { label: 'Struggling', count: stats.struggling, color: 'bg-orange-500' },
-    { label: 'New', count: stats.newItems, color: 'bg-slate-300' },
-  ];
+  // Mastery breakdown data for stacked bar, strongest band first
+  const masteryData = MASTERY_LEVELS.map(level => ({
+    label: level.label,
+    count: stats.mastery[level.key],
+    color: MASTERY_SHADES[level.key],
+  }));
 
   // Max reviews for chart scaling
   const maxReviews = Math.max(...stats.last7Days.map(d => d.reviews), 1);

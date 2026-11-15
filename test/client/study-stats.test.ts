@@ -48,14 +48,17 @@ test('study stats bucket items by memory strength and count due spellings once',
     vocab('e', 'hop', { strength: 0, due: NOW - HOUR }),
   ];
   const stats = computeStudyStats(items, recentOnly([]), NOW);
-  assert.deepEqual(
-    [stats.grandmaster, stats.mastered, stats.proficient, stats.learning, stats.struggling, stats.newItems],
-    [1, 1, 1, 1, 1, 1],
-  );
+  assert.deepEqual(stats.mastery, { grandmaster: 1, mastered: 1, proficient: 1, learning: 1, struggling: 1, new: 1 });
   // Both senses of "run" share one review slot, and "hop", never studied, waits with the new cards.
   assert.equal(stats.due, 2);
   assert.equal(stats.total, 6);
   assert.equal(stats.avgStrength, Math.round((90 + 72 + 55 + 30 + 12) / 6));
+});
+
+test('each band starts at its minimum strength, and a strength below every band counts as new', () => {
+  const items = [85, 84, 70, 69, 50, 49, 30, 29, 10, 9, 0, -2].map((strength, i) => vocab(String(i), String(i), { strength }));
+  const stats = computeStudyStats(items, recentOnly([]), NOW);
+  assert.deepEqual(stats.mastery, { grandmaster: 1, mastered: 2, proficient: 2, learning: 2, struggling: 2, new: 3 });
 });
 
 test('study stats pick the three most reviewed items, earlier items first on ties', () => {

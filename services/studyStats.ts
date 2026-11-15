@@ -1,14 +1,11 @@
 import { getItemSpelling, type ReviewHistory, type StoredItem } from '../types';
+import { masteryLevelFor, type MasteryKey } from './srsAlgorithm';
 
 export interface StudyStats {
   /** Distinct due spellings: the review session buries same-spelling senses, so the count follows it. */
   due: number;
-  grandmaster: number;
-  mastered: number;
-  proficient: number;
-  learning: number;
-  struggling: number;
-  newItems: number;
+  /** How many items each mastery band holds, by their stored display strength. */
+  mastery: Record<MasteryKey, number>;
   total: number;
   avgStrength: number;
   /** Consecutive days with a review, counting back from today, or from yesterday if today has none yet. */
@@ -38,7 +35,7 @@ export function computeStudyStats(
   now = Date.now(),
 ): StudyStats {
   const dueSpellings = new Set<string>();
-  let grandmaster = 0, mastered = 0, proficient = 0, learning = 0, struggling = 0, newItems = 0;
+  const mastery: Record<MasteryKey, number> = { grandmaster: 0, mastered: 0, proficient: 0, learning: 0, struggling: 0, new: 0 };
   let strengthSum = 0;
   let legacyReviewFloor = 0;
   let longestStreak = 0;
@@ -53,12 +50,8 @@ export function computeStudyStats(
     }
 
     const strength = srs?.memoryStrength ?? 0;
-    if (strength >= 85) grandmaster++;
-    else if (strength >= 70) mastered++;
-    else if (strength >= 50) proficient++;
-    else if (strength >= 30) learning++;
-    else if (strength >= 10) struggling++;
-    else if (strength < 10) newItems++;
+    const level = masteryLevelFor(strength);
+    if (level) mastery[level.key]++;
     strengthSum += strength;
     legacyReviewFloor += srs?.totalReviews ?? 0;
     longestStreak = Math.max(longestStreak, srs?.correctStreak ?? 0);
@@ -118,12 +111,7 @@ export function computeStudyStats(
 
   return {
     due: dueSpellings.size,
-    grandmaster,
-    mastered,
-    proficient,
-    learning,
-    struggling,
-    newItems,
+    mastery,
     total: items.length,
     avgStrength: items.length > 0 ? Math.round(strengthSum / items.length) : 0,
     streak,

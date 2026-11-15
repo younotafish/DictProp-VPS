@@ -8,6 +8,31 @@
 
 import { SRSData } from '../types';
 
+/** The mastery bands, strongest first: a badge and the study dashboard's breakdown both band by this table. */
+export const MASTERY_LEVELS = [
+  { key: 'grandmaster', label: 'Grandmaster', min: 85, color: 'purple' },
+  { key: 'mastered', label: 'Mastered', min: 70, color: 'emerald' },
+  { key: 'proficient', label: 'Proficient', min: 50, color: 'blue' },
+  { key: 'learning', label: 'Learning', min: 30, color: 'amber' },
+  { key: 'struggling', label: 'Struggling', min: 10, color: 'orange' },
+  { key: 'new', label: 'New', min: -Infinity, color: 'slate' },
+] as const;
+
+export type MasteryLevel = typeof MASTERY_LEVELS[number];
+export type MasteryKey = MasteryLevel['key'];
+/** The colour a band is drawn in; components/mastery.tsx turns it into classes. */
+export type MasteryColor = MasteryLevel['color'];
+
+/**
+ * The band a display strength (0–100) falls in: the strongest whose minimum it reaches. Only NaN, which
+ * compares false with every minimum, has none; a badge shows it as New, and the breakdown leaves it out.
+ */
+export function masteryLevelFor(strength: number): MasteryLevel | undefined {
+  return MASTERY_LEVELS.find(level => strength >= level.min);
+}
+
+const NEW_LEVEL = MASTERY_LEVELS[MASTERY_LEVELS.length - 1];
+
 export class SRSAlgorithm {
   /**
    * Fills the fields older rows lack (display strength from stability, counts, dates) and keeps the rest; a
@@ -106,32 +131,11 @@ export class SRSAlgorithm {
     return Math.min(100, Math.round(18 * Math.log(1 + stability)));
   }
 
-  /**
-   * Calculate mastery level for display.
-   * Based on memory strength score (0–100):
-   *   0–10:  New        (Gray/Slate)
-   *  10–30:  Struggling (Orange)
-   *  30–50:  Learning   (Amber)
-   *  50–70:  Proficient (Blue)
-   *  70–85:  Mastered   (Emerald/Green)
-   *  85–100: Grandmaster(Purple)
-   */
-  static getMasteryLevel(srs: SRSData): { label: string; color: string; percentage: number } {
+  /** The mastery badge for a schedule: its band in MASTERY_LEVELS and its display strength (0–100). */
+  static getMasteryLevel(srs: SRSData): { label: string; color: MasteryColor; percentage: number } {
     // Recalculate display strength from stability to ensure consistency
     const strength = SRSAlgorithm.stabilityToDisplayStrength(srs.stability);
-
-    if (strength >= 85) {
-      return { label: 'Grandmaster', color: 'purple', percentage: strength };
-    } else if (strength >= 70) {
-      return { label: 'Mastered', color: 'emerald', percentage: strength };
-    } else if (strength >= 50) {
-      return { label: 'Proficient', color: 'blue', percentage: strength };
-    } else if (strength >= 30) {
-      return { label: 'Learning', color: 'amber', percentage: strength };
-    } else if (strength >= 10) {
-      return { label: 'Struggling', color: 'orange', percentage: strength };
-    } else {
-      return { label: 'New', color: 'slate', percentage: strength };
-    }
+    const { label, color } = masteryLevelFor(strength) ?? NEW_LEVEL;
+    return { label, color, percentage: strength };
   }
 }

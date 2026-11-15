@@ -1,4 +1,5 @@
 import React from 'react';
+import type { MasteryColor } from '../services/srsAlgorithm';
 
 /**
  * Shared mastery → Tailwind class helpers + badge, used by every review surface (DetailView,
@@ -7,7 +8,7 @@ import React from 'react';
  */
 export type MasteryClasses = { bg: string; text: string; bar: string };
 
-const MASTERY_COLORS: Record<string, MasteryClasses> = {
+const MASTERY_COLORS: Record<MasteryColor, MasteryClasses> = {
   slate: { bg: 'bg-slate-100', text: 'text-slate-600', bar: 'bg-slate-400' },
   orange: { bg: 'bg-orange-100', text: 'text-orange-600', bar: 'bg-orange-400' },
   amber: { bg: 'bg-amber-100', text: 'text-amber-600', bar: 'bg-amber-400' },
@@ -16,8 +17,11 @@ const MASTERY_COLORS: Record<string, MasteryClasses> = {
   purple: { bg: 'bg-purple-100', text: 'text-purple-600', bar: 'bg-purple-400' },
 };
 
+const isMasteryColor = (color: string): color is MasteryColor => Object.hasOwn(MASTERY_COLORS, color);
+
 /** Badge/bar classes for a mastery level color (falls back to slate). */
-export const getMasteryColors = (color: string): MasteryClasses => MASTERY_COLORS[color] || MASTERY_COLORS.slate;
+export const getMasteryColors = (color: string): MasteryClasses =>
+  isMasteryColor(color) ? MASTERY_COLORS[color] : MASTERY_COLORS.slate;
 
 /** Threshold bar color from a 0–100 mastery percentage (used by the Sentences list strip). */
 export const barColorFor = (percentage?: number | null): string =>

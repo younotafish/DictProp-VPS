@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
+import { MASTERY_LEVELS, SRSAlgorithm, masteryLevelFor } from '../../services/srsAlgorithm.ts';
 
 test('display strength is 18·ln(1 + stability), rounded and capped, as the table in its doc says', () => {
   const table: [stability: number, strength: number][] = [
@@ -36,4 +36,32 @@ test('ensure creates a record for an item without one and migrates one that exis
   assert.deepEqual(ensure(legacy, 'old', 'vocab'), migrate(legacy));
   assert.equal(migrate(legacy).memoryStrength, 37);
   assert.equal(migrate(legacy).lastExposureDate, 0);
+});
+
+test('mastery bands run from Grandmaster down to New, each from its minimum strength', () => {
+  assert.deepEqual(MASTERY_LEVELS.map(level => [level.key, level.label, level.min, level.color]), [
+    ['grandmaster', 'Grandmaster', 85, 'purple'],
+    ['mastered', 'Mastered', 70, 'emerald'],
+    ['proficient', 'Proficient', 50, 'blue'],
+    ['learning', 'Learning', 30, 'amber'],
+    ['struggling', 'Struggling', 10, 'orange'],
+    ['new', 'New', -Infinity, 'slate'],
+  ]);
+  const keyOf = (strength: number) => masteryLevelFor(strength)?.key;
+  assert.deepEqual([100, 85, 84.9, 70, 69.9, 50, 49.9, 30, 29.9, 10, 9.9, 0, -1].map(keyOf), [
+    'grandmaster', 'grandmaster', 'mastered', 'mastered', 'proficient', 'proficient', 'learning', 'learning',
+    'struggling', 'struggling', 'new', 'new', 'new',
+  ]);
+  assert.equal(masteryLevelFor(NaN), undefined, 'NaN reaches no band');
+});
+
+test('a badge shows the band of the strength recomputed from stability', () => {
+  const badge = (stability: number) => SRSAlgorithm.getMasteryLevel({ ...SRSAlgorithm.createNew('x', 'vocab', 0), stability });
+  assert.deepEqual(badge(0.5), { label: 'New', color: 'slate', percentage: 7 });
+  assert.deepEqual(badge(1), { label: 'Struggling', color: 'orange', percentage: 12 });
+  assert.deepEqual(badge(7), { label: 'Learning', color: 'amber', percentage: 37 });
+  assert.deepEqual(badge(25), { label: 'Proficient', color: 'blue', percentage: 59 });
+  assert.deepEqual(badge(47), { label: 'Mastered', color: 'emerald', percentage: 70 });
+  assert.deepEqual(badge(143), { label: 'Grandmaster', color: 'purple', percentage: 89 });
+  assert.deepEqual(badge(NaN), { label: 'New', color: 'slate', percentage: NaN });
 });
