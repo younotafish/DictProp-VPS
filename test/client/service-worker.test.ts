@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 import test from 'node:test';
 import { stampServiceWorker } from '../../vite.config.ts';
-import { readRepoFile } from '../support/paths.ts';
+import { readRepoFile, repoPath } from '../support/paths.ts';
 import { FakeNetwork, MemoryCacheStorage, runServiceWorker, type ServiceWorkerHarness } from '../support/service-worker.ts';
 
 // public/sw.js, stamped the way the build stamps it, run against in-memory caches and a scripted server: installing
@@ -308,6 +309,20 @@ test('a cached icon or manifest answers at once, and the worker lives until the 
   assert.equal(await (await offline.response)?.text(), 'newer manifest');
   await offline.settled();
   assert.equal(await (await caches.open(ONE.cache)).text('/manifest.json'), 'newer manifest');
+});
+
+test('the worker answers for exactly the icons and manifest the shell and the manifest reference', async () => {
+  const shellLinks = readRepoFile('index.html').matchAll(/<link\b[^>]*\brel="(?:manifest|icon|apple-touch-icon)"[^>]*\bhref="([^"]+)"/g);
+  const manifest: { icons: { src: string }[] } = JSON.parse(readRepoFile('public/manifest.json'));
+  const referenced = new Set([...[...shellLinks].map(match => match[1]), ...manifest.icons.map(icon => icon.src)]);
+  assert.deepEqual([...referenced].sort(), [...ROOT_FILES].sort());
+
+  const { sw } = await device([ONE]);
+  for (const name of readdirSync(repoPath('public'))) {
+    if (name === 'sw.js') continue; // the browser fetches the worker itself around it
+    const path = `/${name}`;
+    assert.equal(sw.fetch(path).response !== undefined, referenced.has(path), path);
+  }
 });
 
 test('icons and the manifest answer from the cache, else the network, else an error', async () => {

@@ -27,7 +27,7 @@ const MEDIA = 'dictprop-media';
 // Remembers which build's cache the active worker uses, so an update keeps exactly that one for open pages.
 const META = 'dictprop-meta';
 const STATIC = ['/manifest.json', '/favicon-32x32.png', '/apple-touch-icon.png', '/pwa-192x192.png'];
-const ROOT_FILES = new Set([...STATIC, '/pwa-512x512.png', '/pwa-maskable-512x512.png', '/icon.svg']);
+const ROOT_FILES = new Set([...STATIC, '/pwa-512x512.png', '/pwa-maskable-512x512.png']);
 const isAppNavigation = (url) => url.pathname === '/' || url.pathname === '/index.html';
 
 /** A usable build file: never an error, and never the HTML shell a server answers for a file it lacks. */
