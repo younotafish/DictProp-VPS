@@ -20,7 +20,9 @@ interface SearchResultsCarouselProps {
   keyboardEnabled: boolean;
 }
 
-export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
+// Memoized, with a stable save callback, so typing in the search box or a sync status change doesn't redraw the
+// card: every prop it gets from the notebook is a state value or a memoized callback.
+export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = React.memo(({
   vocabs, onSave, isVocabSaved, onSearch, onSaveSentence, isSentenceSaved, keyboardEnabled
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -77,6 +79,7 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
   });
 
   const currentVocab = vocabs[currentIndex];
+  const handleSave = useCallback(() => onSave(currentVocab), [onSave, currentVocab]);
   
   return (
     <div className="px-3 pt-3 pb-2">
@@ -103,7 +106,7 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
           <VocabCardDisplay
             data={currentVocab}
             isSaved={isVocabSaved(currentVocab)}
-            onSave={() => onSave(currentVocab)}
+            onSave={handleSave}
             showSave={true}
             onSearch={onSearch}
             scrollable={false}
@@ -122,4 +125,4 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
       <div className="border-b border-slate-200 mt-4 mb-2" />
     </div>
   );
-};
+});
