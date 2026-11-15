@@ -1,66 +1,32 @@
 #!/usr/bin/env bash
+# Publishes detailed analyses of the example sentences production lacks one for, in waves, ahead of their
+# images.
 
 set -euo pipefail
 
 POOL_ROOT="${1:-data/offline-backfill/example-sentence-pool}"
 BATCH_SIZE="${2:-2000}"
 REQUIRED_DEPLOY_SHA="${3:-$(git rev-parse HEAD)}"
-KEY_FILE="${SENTENCE_BRIDGE_KEY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dictprop/sentence_bridge_key}"
 STATE_ROOT="${EXAMPLE_ANALYSIS_WAVE_STATE_ROOT:-/tmp/dictprop-staged-example-analyses}"
 COOLDOWN_SECONDS="${EXAMPLE_ANALYSIS_WAVE_COOLDOWN_SECONDS:-30}"
-RELEASE_CREATE_ATTEMPTS="${RELEASE_CREATE_ATTEMPTS:-12}"
 SOURCE="$POOL_ROOT/source.json"
 ANALYSIS="${EXAMPLE_ANALYSIS_MANIFEST:-$POOL_ROOT/final-reconciliation/final-analysis.json}"
 
 OFFLINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$OFFLINE_DIR/deadline.sh"
-
-log() {
-  printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"
-}
-
-publisher_state_dir() {
-  local tag="$1"
-  local state_key
-  state_key="$(printf '%s' "$tag" | tr -c 'A-Za-z0-9._-' '_')"
-  printf '%s/dictprop-publish-%s\n' "${TMPDIR:-/tmp}" "$state_key"
-}
-
-# The failed wave is kept for inspection under a name the dispatcher ignores, and its entries go into
-# a fresh wave with a new release on the next run.
-set_wave_aside() {
-  local failed="$1.failed"
-  if [ -e "$failed" ]; then failed="$1.failed-$(date -u +%Y%m%dT%H%M%SZ)"; fi
-  mv "$1" "$failed"
-  log "publication of ${1##*/} failed; set it aside as ${failed##*/} so the next run starts a fresh wave"
-}
+. "$OFFLINE_DIR/wave-dispatch.sh"
 
 manifest_count() {
   local source="$1"
   shift
   if [ "$#" -eq 0 ]; then printf '0\n'; return; fi
-  node -e 'const fs=require("fs"); const source=JSON.parse(fs.readFileSync(process.argv[1])); const targets=new Set(source.sentences.filter(entry => entry.hasAnalysis !== true).map(entry => entry.id)); const ids=new Set(); for(const path of process.argv.slice(2)){const manifest=JSON.parse(fs.readFileSync(path)); if(Number(manifest.generatedAt||0)<Number(source.exportedAt||0)) continue; for(const entry of manifest.entries) if(targets.has(entry.id)) ids.add(entry.id)} console.log(ids.size)' "$source" "$@"
-}
-
-next_wave_number() {
-  local next=1 wave_dir suffix number
-  while IFS= read -r wave_dir; do
-    suffix="${wave_dir##*/wave-}"
-    number=$((10#$suffix))
-    if [ "$number" -ge "$next" ]; then next=$((number + 1)); fi
-  done < <(find "$STATE_ROOT" -mindepth 1 -maxdepth 1 -type d \
-    -name 'wave-[0-9][0-9][0-9][0-9]' | sort)
-  printf '%s\n' "$next"
+  "$NODE_BIN" -e 'const fs=require("fs"); const source=JSON.parse(fs.readFileSync(process.argv[1])); const targets=new Set(source.sentences.filter(entry => entry.hasAnalysis !== true).map(entry => entry.id)); const ids=new Set(); for(const path of process.argv.slice(2)){const manifest=JSON.parse(fs.readFileSync(path)); if(Number(manifest.generatedAt||0)<Number(source.exportedAt||0)) continue; for(const entry of manifest.entries) if(targets.has(entry.id)) ids.add(entry.id)} console.log(ids.size)' "$source" "$@"
 }
 
 if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ] || [ "$BATCH_SIZE" -gt 2000 ]; then
   echo "Example analysis batch size must be between 1 and 2000" >&2
   exit 1
 fi
-if ! [[ "$RELEASE_CREATE_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "RELEASE_CREATE_ATTEMPTS must be a positive integer" >&2
-  exit 1
-fi
+require_positive_integer RELEASE_CREATE_ATTEMPTS "$RELEASE_CREATE_ATTEMPTS"
 for required in "$SOURCE" "$ANALYSIS" "$KEY_FILE"; do
   if [ ! -s "$required" ]; then
     echo "Example analysis publication input is missing: $required" >&2
@@ -68,88 +34,33 @@ for required in "$SOURCE" "$ANALYSIS" "$KEY_FILE"; do
   fi
 done
 
-TOTAL_COUNT="$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1])); console.log(x.sentences.filter(entry => entry.hasAnalysis !== true).length)' "$SOURCE")"
-mkdir -p "$STATE_ROOT"
-
-# Publisher state lives in each wave; waves published before that moved kept it under TMPDIR.
-while IFS= read -r tag_file; do
-  wave_dir="$(dirname "$tag_file")"
-  release_tag="$(tr -d '[:space:]' < "$tag_file")"
-  for publisher_state in "$wave_dir/publisher" "$(publisher_state_dir "$release_tag")"; do
-    if [ -s "$publisher_state/complete" ]; then cp "$publisher_state/complete" "$wave_dir/published"; break; fi
-  done
-done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-tag ! -path '*.failed*' | sort)
-
-PUBLISHED_MANIFESTS=()
-while IFS= read -r manifest; do
-  if [ -s "$(dirname "$manifest")/published" ]; then PUBLISHED_MANIFESTS+=("$manifest"); fi
-done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json ! -path '*.failed*' | sort)
+TOTAL_COUNT="$("$NODE_BIN" -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1])); console.log(x.sentences.filter(entry => entry.hasAnalysis !== true).length)' "$SOURCE")"
+load_published_waves
 
 while :; do
-  if [ "${#PUBLISHED_MANIFESTS[@]}" -eq 0 ]; then PUBLISHED_COUNT=0
-  else PUBLISHED_COUNT="$(manifest_count "$SOURCE" "${PUBLISHED_MANIFESTS[@]}")"; fi
+  PUBLISHED_COUNT="$(manifest_count "$SOURCE" ${PUBLISHED_MANIFESTS[@]+"${PUBLISHED_MANIFESTS[@]}"})"
   if [ "$PUBLISHED_COUNT" -ge "$TOTAL_COUNT" ]; then
     printf '%s\n' "$PUBLISHED_COUNT" > "$STATE_ROOT/complete"
     log "example-sentence analysis publication complete: $PUBLISHED_COUNT/$TOTAL_COUNT"
     exit 0
   fi
 
-  WAVE_NUMBER="$(next_wave_number)"
-  WAVE_NAME="wave-$(printf '%04d' "$WAVE_NUMBER")"
-  WAVE_DIR="$STATE_ROOT/$WAVE_NAME"
-  mkdir -p "$WAVE_DIR"
-  if [ "${#PUBLISHED_MANIFESTS[@]}" -eq 0 ]; then
-    RESULT="$(node scripts/offline/prepare-example-analysis-wave.mjs \
-      "$SOURCE" "$ANALYSIS" "$WAVE_DIR" "$BATCH_SIZE")"
-  else
-    RESULT="$(node scripts/offline/prepare-example-analysis-wave.mjs \
-      "$SOURCE" "$ANALYSIS" "$WAVE_DIR" "$BATCH_SIZE" "${PUBLISHED_MANIFESTS[@]}")"
-  fi
-  WAVE_COUNT="$(printf '%s' "$RESULT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).waveEntries))')"
+  open_wave "$(next_wave_number)"
+  WAVE_COUNT="$(prepare_wave scripts/offline/prepare-example-analysis-wave.mjs "$SOURCE" "$ANALYSIS" "$WAVE_DIR" "$BATCH_SIZE")"
   if [ "$WAVE_COUNT" -eq 0 ]; then
     echo "No unpublished analyses were found at $PUBLISHED_COUNT/$TOTAL_COUNT" >&2
     exit 1
   fi
 
-  TAG_FILE="$WAVE_DIR/release-tag"
-  if [ ! -s "$TAG_FILE" ]; then
-    printf 'example-analyses-%s-%s\n' "$WAVE_NAME" "$(date -u +%Y%m%dT%H%M%SZ)" > "$TAG_FILE"
-  fi
-  RELEASE_TAG="$(tr -d '[:space:]' < "$TAG_FILE")"
+  name_wave_release example-analyses
   # The archive is bound to this operation and release, so it decrypts for no other import.
   ARCHIVE="$WAVE_DIR/sentence-enrichments.enc"
-  rm -f "$ARCHIVE"
-  tar -czf - -C "$WAVE_DIR" manifest.json \
-    | node "$OFFLINE_DIR/bridge-crypto.mjs" encrypt --key-file "$KEY_FILE" \
-      --purpose "import:enrichment-import:$RELEASE_TAG" --out "$ARCHIVE"
-
+  seal_wave "$ARCHIVE" --purpose "import:enrichment-import:$RELEASE_TAG" manifest.json
   # Waiting before the release exists means a wait that gives up leaves no release behind.
   GH_BIN="$GH_BIN" GITHUB_REPOSITORY="$REPO" \
     scripts/offline/wait-for-incremental-enrichment.sh
-  if [ ! -s "$WAVE_DIR/publisher/complete" ]; then
-    create_attempts=0
-    until gh_bounded release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1 \
-      || gh_bounded release create "$RELEASE_TAG" --repo "$REPO" \
-        --title "Temporary encrypted example analyses $WAVE_NAME" \
-        --notes "Codex-harness-generated and verified example-sentence analyses; removed after import." \
-        --latest=false; do
-      create_attempts=$((create_attempts + 1))
-      if [ "$create_attempts" -ge "$RELEASE_CREATE_ATTEMPTS" ]; then
-        log "GitHub release creation for $WAVE_NAME failed $create_attempts times; giving up for this run" >&2
-        exit 1
-      fi
-      log "GitHub release creation unavailable for $WAVE_NAME; retrying later"
-      sleep 300
-    done
-  fi
-
-  if ! PUBLISH_STATE_DIR="$WAVE_DIR/publisher" scripts/offline/publish-backfill-release.sh \
-    "$RELEASE_TAG" "$ARCHIVE" sentence-enrichments.enc enrichment-import "$REQUIRED_DEPLOY_SHA" 300; then
-    if [ -e "$WAVE_DIR/publisher/failed" ]; then set_wave_aside "$WAVE_DIR"; fi
-    exit 1
-  fi
-  date -u +%FT%TZ > "$WAVE_DIR/published"
-  PUBLISHED_MANIFESTS+=("$WAVE_DIR/manifest.json")
-  log "$WAVE_NAME published ($WAVE_COUNT analyses); cooling down for ${COOLDOWN_SECONDS}s"
-  sleep "$COOLDOWN_SECONDS"
+  ensure_release "Temporary encrypted example analyses $WAVE_NAME" \
+    "Locally generated and verified example-sentence analyses; removed after import."
+  publish_wave "$ARCHIVE" sentence-enrichments.enc enrichment-import
+  cool_down_after_wave "$WAVE_COUNT analyses"
 done

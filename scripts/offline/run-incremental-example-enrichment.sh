@@ -392,9 +392,7 @@ if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
     "$ITEM_IMAGE_ROOT")"
   if [ "$ITEM_IMAGE_READY" -gt 0 ]; then
     log "publishing $ITEM_IMAGE_READY locally generated saved-word/phrase/sentence image(s)"
-    if ! WAIT_FOR_SENTENCE_IMPORTS=0 \
-      OFFLINE_IMAGE_CORPUS_MANIFEST=/dev/null \
-      OFFLINE_IMAGE_WAVE_STATE_ROOT="$ITEM_IMAGE_ROOT/publish-state/$ITEM_IMAGE_FINGERPRINT" \
+    if ! OFFLINE_IMAGE_WAVE_STATE_ROOT="$ITEM_IMAGE_ROOT/publish-state/$ITEM_IMAGE_FINGERPRINT" \
       OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30 GH_BIN="$GH_BIN" \
       scripts/offline/dispatch-staged-offline-images.sh \
         "$ITEM_IMAGE_ROOT" 100 "$REQUIRED_DEPLOY_SHA"; then

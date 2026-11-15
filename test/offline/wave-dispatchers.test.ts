@@ -28,6 +28,10 @@ const layouts = {
   'prepare-offline-image-wave.mjs': { wave: 1, batch: 2, key: 'imageId', files: 0 },
   'prepare-offline-audio-wave.mjs': { wave: 1, batch: 2, key: 'key', files: 0 },
 };
+if (process.env.FAKE_PREPARE === 'fail') {
+  console.error('preparer failed');
+  process.exit(3);
+}
 const layout = layouts[basename(process.argv[1])];
 const args = process.argv.slice(2);
 const published = new Set(args.slice(layout.batch + 1)
@@ -62,6 +66,7 @@ const GH_STUB = `#!/bin/bash
 printf '%s\\n' "$*" >> "$GH_LOG"
 case "$1 $2" in
   "release view") exit 1 ;;
+  "release create") exit "\${FAKE_RELEASE_CREATE_STATUS:-0}" ;;
 esac
 exit 0
 `;
@@ -95,7 +100,6 @@ async function dispatch(root: string, name: string, run: Run) {
   writeExecutable(join(cwd, 'gh'), GH_STUB);
   // The cycle runs the dispatchers from the repository root, where the image check finds sharp.
   symlinkSync(repoPath('node_modules'), join(cwd, 'node_modules'));
-  writeExecutable(join(cwd, 'python'), '#!/bin/sh\nexit 0\n');
   writeFileSync(join(cwd, 'key'), 'dispatcher-test-key\n');
   writeFile(join(cwd, 'wave-pool.json'), await run.inputs(cwd));
   const publishLog = join(cwd, 'publish.log');
@@ -112,8 +116,6 @@ async function dispatch(root: string, name: string, run: Run) {
       PUBLISH_LOG: publishLog,
       GH_LOG: ghLog,
       TMPDIR: join(cwd, 'tmp'),
-      // The example-enrichment dispatcher checks images with Pillow; the stand-in accepts them.
-      PYTHON_BIN: join(cwd, 'python'),
       ...run.env,
     },
   });
@@ -204,8 +206,6 @@ const RUNS: Record<string, Run> = {
     env: {
       OFFLINE_IMAGE_WAVE_STATE_ROOT: 'state',
       OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS: '0',
-      WAIT_FOR_SENTENCE_IMPORTS: '0',
-      OFFLINE_IMAGE_CORPUS_MANIFEST: '/dev/null',
     },
     inputs: async cwd => {
       const entries = ['i1', 'i2'].map(id => ({ imageId: id, imageFile: `images/${id}.webp` }));
@@ -253,8 +253,6 @@ const RUNS: Record<string, Run> = {
     env: {
       OFFLINE_IMAGE_WAVE_STATE_ROOT: 'state',
       OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS: '0',
-      WAIT_FOR_SENTENCE_IMPORTS: '0',
-      OFFLINE_IMAGE_CORPUS_MANIFEST: '/dev/null',
     },
     inputs: async cwd => {
       const entries = ['i1', 'i2'].map(id => ({ imageId: id, imageFile: `images/${id}.webp` }));
@@ -272,6 +270,71 @@ const RUNS: Record<string, Run> = {
       return entries;
     },
   },
+  'audio-fails': {
+    dispatcher: 'dispatch-staged-offline-audio.sh',
+    args: ['audio-root', '5', DEPLOY_SHA],
+    env: {
+      OFFLINE_AUDIO_WAVE_STATE_ROOT: 'state',
+      OFFLINE_AUDIO_WAVE_COOLDOWN_SECONDS: '0',
+      OFFLINE_AUDIO_CATALOG: 'catalog.json',
+      OFFLINE_AUDIO_EXPECTED_COUNT: '1',
+      FAKE_PUBLISH: 'fail',
+    },
+    inputs: cwd => {
+      writeFile(join(cwd, 'catalog.json'), { collections: [] });
+      const entries = [{ key: 'k1', audioFile: 'audio/k1.wav' }];
+      writeFile(join(cwd, 'audio-root', 'manifest.json'), { version: 1, entries });
+      mkdirSync(join(cwd, 'audio-root', 'audio'), { recursive: true });
+      writeFileSync(join(cwd, 'audio-root', 'audio', 'k1.wav'), 'wav');
+      return entries;
+    },
+  },
+  'audio-release-unavailable': {
+    dispatcher: 'dispatch-staged-offline-audio.sh',
+    args: ['audio-root', '5', DEPLOY_SHA],
+    env: {
+      OFFLINE_AUDIO_WAVE_STATE_ROOT: 'state',
+      OFFLINE_AUDIO_CATALOG: 'catalog.json',
+      OFFLINE_AUDIO_EXPECTED_COUNT: '1',
+      FAKE_RELEASE_CREATE_STATUS: '1',
+      RELEASE_CREATE_ATTEMPTS: '1',
+    },
+    inputs: cwd => {
+      writeFile(join(cwd, 'catalog.json'), { collections: [] });
+      const entries = [{ key: 'k1', audioFile: 'audio/k1.wav' }];
+      writeFile(join(cwd, 'audio-root', 'manifest.json'), { version: 1, entries });
+      mkdirSync(join(cwd, 'audio-root', 'audio'), { recursive: true });
+      writeFileSync(join(cwd, 'audio-root', 'audio', 'k1.wav'), 'wav');
+      return entries;
+    },
+  },
+  'enrichments-bad-image': {
+    dispatcher: 'dispatch-staged-example-enrichments.sh',
+    args: ['pool', '5', DEPLOY_SHA],
+    env: { ALLOW_DEFERRED_IMAGES: '1', EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT: 'state' },
+    inputs: async cwd => {
+      const sentences = [{ id: 'x1', textHash: sha256('x1') }];
+      writeFile(join(cwd, 'pool', 'source.json'), { exportedAt: 1, sentences });
+      writeFile(join(cwd, 'pool', 'final-reconciliation', 'final-analysis.json'), { entries: [] });
+      const entries = [{ id: 'x1', textHash: sha256('x1'), imageFile: `images/${imageId('x1')}` }];
+      writeFile(join(cwd, 'pool', 'final-images', 'manifest.json'), { version: 1, entries });
+      mkdirSync(join(cwd, 'pool', 'final-images', 'images'), { recursive: true });
+      writeFileSync(join(cwd, 'pool', 'final-images', entries[0].imageFile), await webp(640, 480));
+      return entries;
+    },
+  },
+  'saved-preparer-fails': {
+    dispatcher: 'dispatch-staged-saved-sentence-analyses.sh',
+    args: ['analysis.json', '5000', DEPLOY_SHA],
+    env: { SAVED_SENTENCE_ANALYSIS_STATE_ROOT: 'state', FAKE_PREPARE: 'fail' },
+    inputs: cwd => {
+      const entries = [{ id: 's1', textHash: 'a'.repeat(64) }];
+      writeFile(join(cwd, 'analysis.json'), { generatedAt: 1, entries });
+      return entries;
+    },
+  },
+  'corpus-without-source': { dispatcher: 'dispatch-staged-corpus-audit.sh', args: [], inputs: () => [] },
+  'images-without-root': { dispatcher: 'dispatch-staged-offline-images.sh', args: [], inputs: () => [] },
 };
 
 let root: string;
@@ -320,7 +383,7 @@ test('the corpus dispatcher publishes the completed records in waves until all a
 test('the example-analysis dispatcher publishes only sentences production lacks an analysis for', async () => {
   const run = await result('analyses');
   assert.equal(run.status, 0, run.stderr);
-  const notes = 'Codex-harness-generated and verified example-sentence analyses; removed after import.';
+  const notes = 'Locally generated and verified example-sentence analyses; removed after import.';
   assert.deepEqual(run.gh, [
     view('example-analyses', 'wave-0001'), create('example-analyses', 'wave-0001', 'Temporary encrypted example analyses', notes),
     view('example-analyses', 'wave-0002'), create('example-analyses', 'wave-0002', 'Temporary encrypted example analyses', notes),
@@ -342,7 +405,7 @@ test('the saved-sentence dispatcher publishes every detailed analysis in one wav
   assert.deepEqual(run.gh, [
     view('sentence-grammar', 'wave-0001'),
     create('sentence-grammar', 'wave-0001', 'Temporary encrypted saved sentence grammar',
-      'Codex-harness-generated detailed sentence analyses; removed after import.'),
+      'Locally generated detailed sentence analyses; removed after import.'),
   ]);
   assert.deepEqual(run.published, [
     `sentence-grammar-wave-0001-<stamp> state/wave-0001/sentence-backfill.enc sentence-backfill.enc import ${DEPLOY_SHA} 300 state=state/wave-0001/publisher files=manifest.json`,
@@ -365,9 +428,11 @@ test('the example-enrichment dispatcher publishes accepted images with their ana
     `example-enrichments-wave-0001-<stamp> state/wave-0001/sentence-enrichments.enc sentence-enrichments.enc enrichment-import ${DEPLOY_SHA} 300 state=state/wave-0001/publisher files=images/${imageId('x1')},manifest.json`,
     `example-enrichments-wave-0002-<stamp> state/wave-0002/sentence-enrichments.enc sentence-enrichments.enc enrichment-import ${DEPLOY_SHA} 300 state=state/wave-0002/publisher files=images/${imageId('x2')},manifest.json`,
   ]);
-  assert.deepEqual(run.stdout.filter(line => !line.startsWith('Validated')), [
+  assert.deepEqual(run.stdout, [
     'waiting for reconciled example-sentence metadata and image targets',
+    'Validated 1 staged example enrichments',
     'wave-0001 published (1 enrichments); cooling down for 0s',
+    'Validated 1 staged example enrichments',
     'wave-0002 published (1 enrichments); cooling down for 0s',
     'example-sentence enrichment publication complete: 2/2',
   ]);
@@ -376,10 +441,10 @@ test('the example-enrichment dispatcher publishes accepted images with their ana
 test('the item-image dispatcher validates and publishes accepted images in waves', async () => {
   const run = await result('images');
   assert.equal(run.status, 0, run.stderr);
-  const notes = 'Locally generated and strictly reviewed vocabulary images; removed after verified import.';
+  const notes = 'Locally generated and strictly reviewed item images; removed after verified import.';
   assert.deepEqual(run.gh, [
-    view('vocab-images', 'wave-0001'), create('vocab-images', 'wave-0001', 'Temporary encrypted vocabulary image', notes),
-    view('vocab-images', 'wave-0002'), create('vocab-images', 'wave-0002', 'Temporary encrypted vocabulary image', notes),
+    view('vocab-images', 'wave-0001'), create('vocab-images', 'wave-0001', 'Temporary encrypted item images', notes),
+    view('vocab-images', 'wave-0002'), create('vocab-images', 'wave-0002', 'Temporary encrypted item images', notes),
   ]);
   assert.deepEqual(run.published, [
     `vocab-images-wave-0001-<stamp> state/wave-0001/offline-images.enc offline-images.enc image-import ${DEPLOY_SHA} 300 state=state/wave-0001/publisher files=images/i1.webp,manifest.json`,
@@ -390,8 +455,8 @@ test('the item-image dispatcher validates and publishes accepted images in waves
     'wave-0001 published (1 new images); cooling down for 0s',
     'Validated 1 staged offline images',
     'wave-0002 published (1 new images); cooling down for 0s',
-    'all 2 authoritative vocabulary images are published',
-    'vocabulary image publication completion marker verified: 2/2',
+    'all 2 item images are published',
+    'item image publication complete: 2/2',
   ]);
 });
 
@@ -404,8 +469,8 @@ test('the audio dispatcher publishes generated clips in waves', async () => {
     view('real-life-audio', 'wave-0002'), create('real-life-audio', 'wave-0002', 'Temporary encrypted Real Life audio', notes),
   ]);
   assert.deepEqual(run.published, [
-    `real-life-audio-wave-0001-<stamp> state/wave-0001/offline-audio.enc offline-audio.enc audio-import ${DEPLOY_SHA} 300 state= files=audio/k1.wav,manifest.json`,
-    `real-life-audio-wave-0002-<stamp> state/wave-0002/offline-audio.enc offline-audio.enc audio-import ${DEPLOY_SHA} 300 state= files=audio/k2.wav,manifest.json`,
+    `real-life-audio-wave-0001-<stamp> state/wave-0001/offline-audio.enc offline-audio.enc audio-import ${DEPLOY_SHA} 300 state=state/wave-0001/publisher files=audio/k1.wav,manifest.json`,
+    `real-life-audio-wave-0002-<stamp> state/wave-0002/offline-audio.enc offline-audio.enc audio-import ${DEPLOY_SHA} 300 state=state/wave-0002/publisher files=audio/k2.wav,manifest.json`,
   ]);
   assert.deepEqual(run.stdout, [
     'wave-0001 published (1 clips); cooling down for 0s',
@@ -431,5 +496,47 @@ test('a wave the publisher verified before its dispatcher stopped counts as publ
     'state/wave-0002/offline-images.enc offline-images.enc image-import',
   ]);
   assert.ok(marked(run.cwd, 'wave-0001', 'published'));
-  assert.equal(run.stdout.at(-1), 'vocabulary image publication completion marker verified: 2/2');
+  assert.equal(run.stdout.at(-1), 'item image publication complete: 2/2');
+});
+
+test('the audio dispatcher keeps its publisher state in the wave and sets a failed wave aside', async () => {
+  const run = await result('audio-fails');
+  assert.equal(run.status, 1, run.stderr);
+  assert.deepEqual(run.stdout, [
+    'publication of wave-0001 failed; set it aside as wave-0001.failed so the next run starts a fresh wave',
+  ]);
+  assert.deepEqual(waves(run.cwd), ['wave-0001.failed']);
+});
+
+test('the audio dispatcher stops after its release-creation attempts', async () => {
+  const run = await result('audio-release-unavailable');
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /GitHub release creation for wave-0001 failed 1 times; giving up for this run/);
+  assert.deepEqual(run.published, []);
+});
+
+test('an image that is not a 1024x576 or 768x432 WebP stops the wave before anything is published', async () => {
+  const run = await result('enrichments-bad-image');
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /invalid wave image: .*640x480 webp/);
+  assert.deepEqual(run.gh, []);
+  assert.deepEqual(run.published, []);
+});
+
+test('the corpus and item-image dispatchers need their source; neither falls back to a bulk-era pool', async () => {
+  for (const name of ['corpus-without-source', 'images-without-root']) {
+    const run = await result(name);
+    assert.equal(run.status, 1, name);
+    assert.match(run.stderr, new RegExp(`Usage: ${RUNS[name].dispatcher.replace('.', '\\.')} <`), name);
+    assert.deepEqual(run.gh, [], name);
+  }
+});
+
+test('a wave preparer that fails stops the dispatcher before anything is sealed or published', async () => {
+  const run = await result('saved-preparer-fails');
+  assert.equal(run.status, 3, run.stderr);
+  assert.match(run.stderr, /preparer failed/);
+  assert.deepEqual(run.gh, []);
+  assert.deepEqual(run.published, []);
+  assert.equal(existsSync(join(run.cwd, 'state', 'wave-0001', 'sentence-backfill.enc')), false);
 });
