@@ -4,6 +4,17 @@ import { jobs, loadWorkflows, steps } from './support/workflow.ts';
 
 const workflows = loadWorkflows();
 
+test("pull requests get the same check as the deploy's verify job, which checks every push to main", () => {
+  const check = workflows.find(({ name }) => name === 'check.yml')?.text ?? '';
+  const deploy = workflows.find(({ name }) => name === 'deploy.yml')?.text ?? '';
+  assert.match(check, /^on:\n {2}pull_request:\n\n/m);
+  /** A job's steps without their names, which may differ. */
+  const recipe = (text: string, id: string): string[] => steps(jobs(text).get(id) ?? '')
+    .map(step => step.split('\n').filter(line => !/^\s+(?:- )?name: /.test(line)).join('\n'));
+  assert.ok(recipe(check, 'build').length > 0);
+  assert.deepEqual(recipe(check, 'build'), recipe(deploy, 'verify'));
+});
+
 // Without one, GitHub lets a wedged job hold its runner, and any concurrency group it joins, for six hours.
 test('every job has a time limit', () => {
   for (const { name, text } of workflows) {

@@ -1,9 +1,8 @@
 name: Check
 
+# deploy.yml's verify job runs the same check on every push to main, so this one runs only for pull requests.
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
