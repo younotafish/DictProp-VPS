@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isVocabItem, savedVocabKey, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { normalizeSentenceIdentity } from '../services/sentenceIdentity';
 import { sameItemContent } from '../services/items';
-import { buildVariantIndex, cardBase, matchBaseWords, normalizeKey } from '../services/wordMatch';
-import { getUsagePriority, sortVocabCardsByUsage } from '../services/usageAudit';
+import { buildVariantIndex, matchBaseWords } from '../services/wordMatch';
+import { buildSavedVocabByBase, pickSavedItem, savedCardsForBases } from '../services/notebook/libraryLookups';
 import { isRealLifeProgressItem } from '../services/realLifeProgressIdentity';
 import { isEssayProgressItem } from '../services/essayProgressIdentity';
 import { useStableArray } from './useStableValue';
@@ -26,24 +26,7 @@ export function useLibraryViews(savedItems: StoredItem[]) {
   // base word → its most useful saved vocab item, so footnote lookup is O(1) per word
   // instead of an O(n) scan over the whole library on every rendered token. See findSavedItem.
   // The review-count tie-break reads the snapshot's counts, which is close enough for a tie-break.
-  const savedVocabByBase = useMemo(() => {
-    const m = new Map<string, StoredItem>();
-    for (const i of activeContent) {
-      if (i.type !== 'vocab') continue;
-      const base = cardBase(i.data as VocabCard);
-      if (!base) continue;
-      const prev = m.get(base);
-      const candidatePriority = getUsagePriority((i.data as VocabCard).usageAudit?.status);
-      const previousPriority = prev
-        ? getUsagePriority((prev.data as VocabCard).usageAudit?.status)
-        : Number.POSITIVE_INFINITY;
-      if (!prev || candidatePriority < previousPriority ||
-          (candidatePriority === previousPriority && (i.srs?.totalReviews ?? 0) > (prev.srs?.totalReviews ?? 0))) {
-        m.set(base, i);
-      }
-    }
-    return m;
-  }, [activeContent]);
+  const savedVocabByBase = useMemo(() => buildSavedVocabByBase(activeContent), [activeContent]);
   // Items available for study (excludes archived and sentences)
   const filteredStudyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
   const studyItems = useStableArray(filteredStudyItems);
@@ -127,9 +110,7 @@ export function useLibraryViews(savedItems: StoredItem[]) {
   const findSavedByWord = useCallback((word: string): VocabCard[] => {
     const bases = matchBaseWords(word, variantIndex);
     if (bases.size === 0) return [];
-    return sortVocabCardsByUsage(activeContent
-      .filter(i => i.type === 'vocab' && bases.has(normalizeKey((i.data as VocabCard).word || '')))
-      .map(i => i.data as VocabCard));
+    return savedCardsForBases(bases, activeContent);
   }, [activeContent, variantIndex]);
 
   // Footnote lookup: the saved item (vocab or phrase) a sentence term maps to, or null. Variant-aware
@@ -140,12 +121,7 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     if (bases.size === 0) return null;
     // O(candidates) via the prebuilt index — NOT an O(n) scan per token (this runs per word in every
     // rendered sentence). Vocab only; multi-word vocab still matches via variantKeys.
-    let best: StoredItem | null = null;
-    for (const b of bases) {
-      const it = savedVocabByBase.get(b);
-      if (it && (!best || (it.srs?.totalReviews ?? 0) > (best.srs?.totalReviews ?? 0))) best = it;
-    }
-    return best;
+    return pickSavedItem(bases, savedVocabByBase);
   }, [variantIndex, savedVocabByBase]);
 
   // Cheap boolean variant check (no card collection) — for Notebook's "auto-AI if no match" gate.
