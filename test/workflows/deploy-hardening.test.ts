@@ -19,18 +19,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { writeExecutable } from '../support/fs.ts';
 import { readRepoFile } from '../support/paths.ts';
-import { block, entry, loadWorkflows, readWorkflow as workflow, settings, steps } from './support/workflow.ts';
+import { block, blocks, entry, loadWorkflows, readWorkflow as workflow, runs, settings, steps } from './support/workflow.ts';
 
 const workflows = loadWorkflows();
-/** The workflows that act on production and print to a public run log. */
-const productionWorkflows = [
-  'deploy.yml',
-  'recover-production.yml',
-  'diagnose-production.yml',
-  'deploy-nz-japan.yml',
-  'deploy-lake-loop.yml',
-  'deploy-sd-cards.yml',
-];
 const hasPython = spawnSync('python3', ['--version']).status === 0;
 /** ssh runs a remote script in root's login shell on the VPS, which is zsh, so these tests run it there too.
  *  -f leaves out this machine's zsh startup files. A step's run block runs in bash on the runner. */
@@ -88,26 +79,29 @@ test('no workflow splices a secret into a sed program', () => {
   }
 });
 
+// Every workflow prints to a public run log, so the rule holds everywhere, not only where it is needed today.
 test('public run logs get no raw container logs', () => {
-  for (const { name, text } of workflows) assert.doesNotMatch(text, /logs --tail[= ]200/, name);
-  for (const name of productionWorkflows) {
-    for (const line of workflow(name).split('\n').filter(line => /docker (?:compose )?logs\b/.test(line))) {
+  for (const { name, text } of workflows) {
+    assert.doesNotMatch(text, /logs --tail[= ]200/, name);
+    for (const line of text.split('\n').filter(line => /docker (?:compose )?logs\b/.test(line))) {
       assert.match(line, /> "\$log_file" 2>&1/, `${name}: ${line.trim()}`);
     }
   }
 });
 
-test('every script in the production workflows parses, and every remote script parses in zsh', () => {
+test('every step script parses in bash, and every remote script parses in zsh', () => {
   const parses = (name: string, script: string, [shell, ...options]: readonly string[]) => {
     const input = script.replace(/\$\{\{[^}]*\}\}/g, 'expression');
     const result = spawnSync(shell, [...options, '-n'], { input, encoding: 'utf8' });
     assert.equal(result.status, 0, `${name}: ${result.stderr}`);
   };
   for (const { name, text } of workflows) {
-    for (const step of steps(text)) {
-      if (productionWorkflows.includes(name) && /^\s+run: \|$/m.test(step)) parses(name, block(step, 'run'), ['bash']);
-      if (/^\s+script: \|$/m.test(step)) parses(name, block(step, 'script'), REMOTE_SHELL);
-    }
+    const local = runs(text);
+    // ssh-action's scripts and the bridge's REMOTE_SCRIPTs both run on the VPS.
+    const remote = [...blocks(text, 'script'), ...blocks(text, 'REMOTE_SCRIPT')];
+    assert.ok(local.length + remote.length > 0, `${name} has scripts to check`);
+    for (const script of local) parses(name, script, ['bash']);
+    for (const script of remote) parses(name, script, REMOTE_SHELL);
   }
 });
 
