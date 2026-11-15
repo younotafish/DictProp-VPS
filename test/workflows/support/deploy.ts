@@ -30,7 +30,7 @@ export const scriptEnv = (bin: string, variables: Record<string, string>): NodeJ
 export const RUN_ID = '4242';
 export const RELEASE_IMAGE = 'ghcr.io/younotafish/dictprop-vps:candidate';
 
-/** deploy.yml's server script in three parts: checkout and exit trap, the .env update, and the release. */
+/** deploy.yml's server script in parts: checkout and exit trap, the database backup, the .env update, and the release. */
 export function deployScript() {
   const script = block(readWorkflow('deploy.yml'), 'script', {
     'github.run_id': RUN_ID,
@@ -50,6 +50,8 @@ export function deployScript() {
   assert.deepEqual(lines.slice(0, 2), ['set -e', 'cd /opt/dictprop-vps']);
   return {
     checkout: ['set -e', 'cd "$DEPLOY_DIR"', ...lines.slice(2, at('git pull --ff-only origin main') + 1)].join('\n'),
+    // From the disk report after the swap setup, so a test never touches the machine's swap.
+    backup: lines.slice(at('=== DISK BEFORE CLEANUP ==='), at('# Sync the DeepInfra key')).join('\n'),
     env: lines.slice(at('# Sync the DeepInfra key'), at('=== PULLING PREBUILT RELEASE ===')).join('\n'),
     release: lines.slice(at('=== PULLING PREBUILT RELEASE ===')).join('\n'),
   };

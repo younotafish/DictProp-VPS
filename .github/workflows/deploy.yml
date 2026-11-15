@@ -136,43 +136,28 @@ jobs:
             }
             # Opening a copy leaves -wal and -shm files beside it.
             remove_copy() {
-              rm -f "$1" "$1-wal" "$1-shm" "$1.verified"
+              rm -f "$1" "$1-wal" "$1-shm"
             }
             # Remove abandoned/old backup copies before deciding whether a fresh snapshot is needed.
             SKIP_DATABASE_BACKUP=0
             if [ -f data/dictprop.db ]; then
               mkdir -p data/backups
               find data/backups -type f -name '*.partial' -delete
+              # Earlier deploys marked each copy they had checked with a .verified file, which nothing reads now.
+              find data/backups -maxdepth 1 -type f -name '*.verified' -delete
+              # This script and the importers both write a copy to a .partial file and rename it only once it is
+              # complete, so every listed copy is whole, and its age alone decides whether it can be reused.
               LATEST_BACKUP="$(list_copies | head -n 1)"
-              BACKUP_MARKER="${LATEST_BACKUP}.verified"
-              if [ -n "$LATEST_BACKUP" ] && [ -f "$BACKUP_MARKER" ] && [ "$BACKUP_MARKER" -nt "$LATEST_BACKUP" ]; then
-                echo "Reusing persisted verification for $LATEST_BACKUP"
-              elif [ -n "$LATEST_BACKUP" ] && python3 -c '
-            import sqlite3, sys
-            db = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro&immutable=1", uri=True)
-            result = db.execute("PRAGMA quick_check").fetchone()
-            db.close()
-            raise SystemExit(0 if result == ("ok",) else 1)
-            ' "$LATEST_BACKUP"; then
-                touch "$BACKUP_MARKER"
-              elif [ -n "$LATEST_BACKUP" ]; then
-                echo "Removing incomplete backup: $LATEST_BACKUP"
-                rm -f "$LATEST_BACKUP" "$BACKUP_MARKER"
-                LATEST_BACKUP=""
-              fi
               if [ -n "$LATEST_BACKUP" ]; then
                 BACKUP_AGE_SECONDS="$(( $(date +%s) - $(stat -c %Y "$LATEST_BACKUP") ))"
                 if [ "$BACKUP_AGE_SECONDS" -lt 43200 ]; then
-                  echo "Reusing verified backup from ${BACKUP_AGE_SECONDS}s ago"
+                  echo "Reusing backup $LATEST_BACKUP from ${BACKUP_AGE_SECONDS}s ago"
                   SKIP_DATABASE_BACKUP=1
                 fi
               fi
-              # Keep only the newest verified snapshot. A new backup temporarily needs a second copy,
+              # Keep only the newest snapshot. A new backup temporarily needs a second copy,
               # but the older one remains available if that copy fails and is pruned only after success.
               list_copies | tail -n +2 | while read -r copy; do remove_copy "$copy"; done
-              find data/backups -type f -name '*.db.verified' | while read -r marker; do
-                [ -f "${marker%.verified}" ] || rm -f "$marker"
-              done
             fi
             # Take a transactionally consistent online SQLite backup before the new container can run
             # schema migrations. Retention above leaves room for the atomic copy, and a copy that would
@@ -202,8 +187,7 @@ jobs:
                   data/dictprop.db "data/backups/$BACKUP_TEMP"
               fi
               mv "data/backups/$BACKUP_TEMP" "data/backups/$BACKUP_NAME"
-              touch "data/backups/$BACKUP_NAME.verified"
-              # The new verified copy supersedes the older snapshot.
+              # The new copy supersedes the older snapshot.
               list_copies | tail -n +2 | while read -r copy; do remove_copy "$copy"; done
             fi
             # Sync the DeepInfra key from the GH Actions secret WITHOUT clobbering other .env vars
