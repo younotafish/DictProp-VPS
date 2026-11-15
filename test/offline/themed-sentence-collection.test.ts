@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import { writeExecutable, writeJson } from '../support/fs.ts';
 import { repoPath } from '../support/paths.ts';
 
 const generator = repoPath('scripts', 'offline', 'generate-themed-sentence-collection.mjs');
+const audit = repoPath('scripts', 'offline', 'audit-themed-sentence-collection.mjs');
 
 // Stands in for `codex exec`: it writes FAKE_CODEX_OUTPUT to the -o path, or else a valid section for the prompt,
 // and records each call's arguments.
@@ -104,4 +105,36 @@ test('the themed generator retries a section that fails validation, then gives u
   assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, 3);
   assert.equal(existsSync(output), false);
   assert.deepEqual(readdirSync(root).filter(name => name.startsWith('collection')), []);
+});
+
+test('the collection audit writes its report only after checking it, and leaves an earlier report alone otherwise', () => {
+  const { root, codex } = setup();
+  const output = join(root, 'out', 'collection.json');
+  assert.equal(run(generator, [join(root, 'brief.json'), output], { CODEX_BIN: codex }).status, 0);
+  const report = join(root, 'out', 'report.json');
+  const issue = (sectionId: string, sentenceNumber: number) => ({
+    sectionId,
+    sentenceNumber,
+    severity: 'should_fix',
+    reason: 'Repeats a scenario the section already covers.',
+    replacementText: 'Could you hold the reservation until noon while I find my passport?',
+    replacementFocus: 'hold the reservation',
+  });
+  const auditWith = (env: Record<string, string>) =>
+    run(audit, [output, join(root, 'brief.json'), report], { CODEX_BIN: codex, ...env });
+
+  const passed = auditWith({ FAKE_CODEX_OUTPUT: JSON.stringify({ verdict: 'changes_required', issues: [issue('hotel', 2)] }) });
+  assert.equal(passed.status, 0, passed.stderr);
+  assert.match(passed.stderr, /Audit changes_required: 1 issue\(s\)/);
+  assert.deepEqual(JSON.parse(readFileSync(report, 'utf8')).issues, [issue('hotel', 2)]);
+
+  writeFileSync(report, 'the earlier report');
+  const unknownEntry = auditWith({ FAKE_CODEX_OUTPUT: JSON.stringify({ verdict: 'changes_required', issues: [issue('hotel', 40)] }) });
+  assert.notEqual(unknownEntry.status, 0);
+  assert.match(unknownEntry.stderr, /Audit referenced an unknown entry: hotel\/40/);
+  const codexFailed = auditWith({ FAKE_CODEX_EXIT: '3' });
+  assert.notEqual(codexFailed.status, 0);
+  assert.match(codexFailed.stderr, /Codex exited with 3/);
+  assert.equal(readFileSync(report, 'utf8'), 'the earlier report');
+  assert.equal(existsSync(`${report}.tmp`), false);
 });

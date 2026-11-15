@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { spawnCodex } from './codex-process.mjs';
+import { installCodexSignalCleanup } from './codex-process.mjs';
 import { readJson, writePrivateJson } from './offline-io.mjs';
+import { runThemedCodex, themedCodexSettings } from './themed-collection-codex.mjs';
 
 const [collectionArg, briefArg, outputArg] = process.argv.slice(2);
 if (!collectionArg || !briefArg || !outputArg) {
@@ -84,26 +85,26 @@ For each issue, provide a complete original replacement that stays in the SAME s
 
 COLLECTION:\n${JSON.stringify(compact)}`;
 
-const child = spawnCodex([
-  'exec', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-  '-m', process.env.CODEX_MODEL || 'gpt-5.6-sol', '--output-schema', schemaPath, '-o', outputPath, '-',
-]);
-let stderr = '';
-child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
-child.stdin.end(prompt);
-const exitCode = await new Promise((accept, reject) => {
-  child.on('error', reject);
-  child.on('exit', code => accept(code));
-});
-if (exitCode !== 0) throw new Error(`Codex audit failed with ${exitCode}: ${stderr}`);
-
-const report = readJson(outputPath);
-const sections = new Map(collection.sections.map(section => [section.id, section]));
-for (const issue of report.issues) {
-  const sentence = sections.get(issue.sectionId)?.sentences?.[issue.sentenceNumber - 1];
-  if (!sentence) throw new Error(`Audit referenced an unknown entry: ${issue.sectionId}/${issue.sentenceNumber}`);
-  if (!issue.replacementText.toLocaleLowerCase('en-US').includes(issue.replacementFocus.toLocaleLowerCase('en-US'))) {
-    throw new Error(`Replacement focus is not contiguous: ${issue.sectionId}/${issue.sentenceNumber}`);
+// Codex writes beside the report, which takes its place only once it is checked. Ctrl-C or a timeout stops Codex's
+// whole process group, so no stray run writes the report afterwards.
+const { model, timeoutMs } = themedCodexSettings();
+const activeChildren = new Set();
+installCodexSignalCleanup(activeChildren);
+const resultPath = `${outputPath}.tmp`;
+rmSync(resultPath, { force: true });
+try {
+  await runThemedCodex({ prompt, schemaPath, resultPath, model, timeoutMs, activeChildren });
+  const report = readJson(resultPath);
+  const sections = new Map(collection.sections.map(section => [section.id, section]));
+  for (const issue of report.issues) {
+    const sentence = sections.get(issue.sectionId)?.sentences?.[issue.sentenceNumber - 1];
+    if (!sentence) throw new Error(`Audit referenced an unknown entry: ${issue.sectionId}/${issue.sentenceNumber}`);
+    if (!issue.replacementText.toLocaleLowerCase('en-US').includes(issue.replacementFocus.toLocaleLowerCase('en-US'))) {
+      throw new Error(`Replacement focus is not contiguous: ${issue.sectionId}/${issue.sentenceNumber}`);
+    }
   }
+  renameSync(resultPath, outputPath);
+  process.stderr.write(`Audit ${report.verdict}: ${report.issues.length} issue(s)\n`);
+} finally {
+  rmSync(resultPath, { force: true });
 }
-process.stderr.write(`Audit ${report.verdict}: ${report.issues.length} issue(s)\n`);
