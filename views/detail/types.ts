@@ -31,7 +31,8 @@ export interface DetailViewProps {
   comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
   onOpenComparison?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string, prepared?: SentenceData) => void;
-  onOpenExampleSentence?: (text: string, word: string, sense?: string) => StoredItem | null | Promise<StoredItem | null>;
+  /** The sentence card an example opens as: its saved copy, or a preview of it. */
+  onOpenExampleSentence?: (text: string, word: string, sense?: string) => StoredItem | null;
   isSentenceSaved?: (text: string) => boolean;
   /** Whether a word and sense is in the notebook, looked up in a prebuilt set. */
   isVocabSaved: (vocab: VocabCard) => boolean;

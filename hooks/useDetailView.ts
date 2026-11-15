@@ -190,9 +190,10 @@ export function useDetailView(
     updateDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered, openId: nextDetailKey() });
   }, [updateDetailContext, latestItemsRef]);
 
-  // Resolve an example to a sentence card without changing the notebook. Prepared analysis and its
-  // image are global source material, so previewing can read them before the user explicitly saves.
-  const prepareExampleSentence = useCallback(async (text: string, sourceWord: string, sourceSense?: string): Promise<StoredItem | null> => {
+  // Resolve an example to a sentence card without changing the notebook: its saved copy when there is one (a
+  // catalog sentence's progress record never counts), else a preview under a temporary id. The card view fetches
+  // the prepared analysis and picture itself (useSentenceEnrichment), so the example opens at once.
+  const prepareExampleSentence = useCallback((text: string, sourceWord: string, sourceSense?: string): StoredItem | null => {
     const identity = normalizeSentenceIdentity(text);
     if (!identity) return null;
 
@@ -200,33 +201,19 @@ export function useDetailView(
       !item.isDeleted && isSentenceItem(item) && !isRealLifeProgressItem(item) && !isEssayProgressItem(item) &&
       normalizeSentenceIdentity((item.data as SentenceData).text) === identity
     );
-    if (existing && (existing.data as SentenceData).analysis) return existing;
+    if (existing) return existing;
 
-    const id = existing?.data.id ?? `sentence-preview:${crypto.randomUUID()}`;
-    let enrichment = null;
-    try {
-      const { default: loadEnrichment } = await import('../services/sentenceEnrichment');
-      enrichment = await loadEnrichment(text);
-    } catch { /* The preview remains usable when prepared metadata is unavailable. */ }
+    const id = `sentence-preview:${crypto.randomUUID()}`;
     return {
-      ...(existing ?? {
-        type: 'sentence' as const,
-        savedAt: Date.now(),
-        srs: SRSAlgorithm.createNew(id, 'sentence'),
-      }),
-      data: {
-        ...(existing?.data as SentenceData | undefined),
-        id,
-        text,
-        sourceWord,
-        sourceSense,
-        ...(enrichment ?? {}),
-      },
+      type: 'sentence',
+      savedAt: Date.now(),
+      srs: SRSAlgorithm.createNew(id, 'sentence'),
+      data: { id, text, sourceWord, sourceSense },
     };
   }, [latestItemsRef]);
 
-  const handleOpenStudyExample = useCallback(async (text: string, sourceWord: string, sourceSense?: string) => {
-    const sentence = await prepareExampleSentence(text, sourceWord, sourceSense);
+  const handleOpenStudyExample = useCallback((text: string, sourceWord: string, sourceSense?: string) => {
+    const sentence = prepareExampleSentence(text, sourceWord, sourceSense);
     if (sentence) handleViewSentence([sentence], 0);
   }, [handleViewSentence, prepareExampleSentence]);
 

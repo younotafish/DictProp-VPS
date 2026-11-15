@@ -6,6 +6,8 @@ import type { DetailViewBodyProps } from './types';
 interface ExampleSentencePreviewProps {
   /** The word card's props; the preview shares the library and its callbacks. */
   viewProps: DetailViewBodyProps;
+  /** New for each example opened; the review keeps its state while it stays the same. */
+  requestId: number;
   sourceGroup: ItemGroup;
   sentence: StoredItem;
   /** A saved copy backs the sentence, so it can be reviewed; otherwise it's read-only until saved. */
@@ -14,7 +16,7 @@ interface ExampleSentencePreviewProps {
 }
 
 /** An example sentence opened from the word card, reviewed over it as a sentence review of its own. */
-export function ExampleSentencePreview({ viewProps, sourceGroup, sentence, saved, onClose }: ExampleSentencePreviewProps) {
+export function ExampleSentencePreview({ viewProps, requestId, sourceGroup, sentence, saved, onClose }: ExampleSentencePreviewProps) {
   const {
     onSave, onDelete, onArchive, onUnarchive, onResetSRS, savedItems, savedSentenceItems, onSearch, onRefresh, onLazyLoadImage,
     onUpdateSRS, onCompare, comparisons, onOpenComparison, onSaveSentence, isSentenceSaved, isVocabSaved,
@@ -26,7 +28,7 @@ export function ExampleSentencePreview({ viewProps, sourceGroup, sentence, saved
       fallbackMessage="Something went wrong displaying this sentence. Your word card is still open."
     >
       <SentenceReviewView
-        key={`example-sentence:${sentence.data.id}`}
+        key={`example-sentence:${requestId}`}
         groups={[sourceGroup]}
         initialGroupIndex={0}
         initialItemIndex={0}

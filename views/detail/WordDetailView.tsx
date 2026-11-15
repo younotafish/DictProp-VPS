@@ -452,6 +452,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
       {exampleSentencePreview && previewSentence && (
         <ExampleSentencePreview
           viewProps={props}
+          requestId={exampleSentencePreview.requestId}
           sourceGroup={exampleSentencePreview.sourceGroup}
           sentence={previewSentence}
           saved={!!savedPreviewSentence}

@@ -2,7 +2,6 @@ import { useCallback, useRef, useState, type RefObject } from 'react';
 import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type SentenceData, type StoredItem, type VocabCard } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { stopCurrent } from '../../services/lazyTts';
-import { error as logError } from '../../services/logger';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
 import { isCatalogProgressItem, type SavedSentenceIndex } from './useSavedSentenceIndex';
@@ -17,14 +16,17 @@ interface ExampleSentencePreviewOptions {
 }
 
 /**
- * An example sentence opened from the word card, shown as a sentence review over it. It opens at once with the
- * sentence as written and its word as the source card (a saved one when there is one), then takes the prepared
- * copy the caller looks up. Once the sentence is saved, the preview shows the saved copy, with its progress.
+ * An example sentence opened from the word card, shown as a sentence review over it: the caller's sentence card for
+ * it (its saved copy, or a preview), with its word as the source card (a saved one when there is one). The review
+ * fetches the prepared lesson itself. Once the sentence is saved, the preview shows the saved copy, with its
+ * progress, in place.
  */
 export function useExampleSentencePreview({
   onOpenExampleSentence, savedItemsRef, savedSentenceIndex, stopAutoPlay,
 }: ExampleSentencePreviewOptions) {
   const [exampleSentencePreview, setExampleSentencePreview] = useState<{
+    /** Keys the review, so a save or a sync updates it in place and only another example starts a new one. */
+    requestId: number;
     sentence: StoredItem;
     sourceGroup: ItemGroup;
   } | null>(null);
@@ -36,7 +38,7 @@ export function useExampleSentencePreview({
     if (!onOpenExampleSentence) return;
     const requestId = ++exampleSentenceRequestRef.current;
     const previewId = `${SENTENCE_PREVIEW_ID_PREFIX}${crypto.randomUUID()}`;
-    const sentence: StoredItem = {
+    const sentence: StoredItem = onOpenExampleSentence(text, word, sense) ?? {
       data: { id: previewId, text, sourceWord: word, sourceSense: sense },
       type: 'sentence',
       savedAt: Date.now(),
@@ -75,22 +77,13 @@ export function useExampleSentencePreview({
     stopAutoPlay();
     stopCurrent();
     setExampleSentencePreview({
+      requestId,
       sentence,
       sourceGroup: { title: getItemTitle(source), items: [source] },
     });
-    void Promise.resolve(onOpenExampleSentence(text, word, sense)).then(hydrated => {
-      if (!hydrated || exampleSentenceRequestRef.current !== requestId) return;
-      setExampleSentencePreview(current => current ? { ...current, sentence: hydrated } : current);
-    }).catch(error => {
-      logError('Failed to open prepared example sentence:', error);
-    });
   }, [onOpenExampleSentence, savedItemsRef, stopAutoPlay]);
 
-  // Closing also drops a lookup still in flight, so it can't reopen the preview.
-  const closeExampleSentencePreview = useCallback(() => {
-    exampleSentenceRequestRef.current += 1;
-    setExampleSentencePreview(null);
-  }, []);
+  const closeExampleSentencePreview = useCallback(() => setExampleSentencePreview(null), []);
 
   const savedPreviewSentence = exampleSentencePreview
     ? [savedSentenceIndex.byId.get(exampleSentencePreview.sentence.data.id)]
