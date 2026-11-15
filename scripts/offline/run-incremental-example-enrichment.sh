@@ -36,7 +36,7 @@ IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-8}"
 IMAGE_MAX_CANDIDATES="${IMAGE_MAX_CANDIDATES:-8}"
 # Local renderer for both image stages. In a side-by-side test on this Mac, Krea-2-Turbo drew the intended
 # meaning far more often than ERNIE-Image-Turbo, at about 37 s instead of 8 s per image. A cycle renders
-# tens of images, so accuracy outweighs speed. The bulk backfill keeps ERNIE for throughput.
+# tens of images, so accuracy outweighs speed.
 IMAGE_MODEL="${IMAGE_MODEL:-krea2}"
 IMAGE_MODEL_LABEL="${IMAGE_MODEL_LABEL:-krea/Krea-2-Turbo}"
 IMAGE_MODEL_QUANTIZE="${IMAGE_MODEL_QUANTIZE:-}"
@@ -47,7 +47,7 @@ INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-100}"
 INCREMENTAL_VOCAB_LOOKBACK_HOURS="${INCREMENTAL_VOCAB_LOOKBACK_HOURS:-168}"
 INCREMENTAL_VOCAB_PROVIDER_FILTER="${INCREMENTAL_VOCAB_PROVIDER_FILTER:-}"
 # Every wait below holds the cycle lock, so each one ends. A stage that runs out of time keeps the work
-# it finished for the next cycle. The publishers' own limits suit a supervised bulk run; a cycle is
+# it finished for the next cycle. The publishers' own limits suit a supervised manual run; a cycle is
 # retried six hours later.
 TEXT_STAGE_TIMEOUT_SECONDS="${TEXT_STAGE_TIMEOUT_SECONDS:-10800}"
 IMAGE_STAGE_TIMEOUT_SECONDS="${IMAGE_STAGE_TIMEOUT_SECONDS:-14400}"
@@ -177,9 +177,10 @@ ensure_analysis_cache() {
   fi
 }
 
-# run_image_stage LEDGER_STAGE TARGETS IMAGES STAGE LOOP...: runs the image loop LOOP within the image stage's
-# time and records each target's outcome in the failure ledger, so images deferred after too many rejected
-# candidates stop being rendered every cycle. A loop that failed fails STAGE, and the model must still answer.
+# run_image_stage LEDGER_STAGE TARGETS IMAGES STAGE LOOP...: runs the image loop LOOP within the image
+# stage's time and records each target's outcome in the failure ledger, so images deferred after too many
+# rejected candidates stop being rendered every cycle. A loop that failed fails STAGE, and the model must
+# still answer.
 run_image_stage() {
   local ledger_stage="$1" targets="$2" images="$3" stage="$4" status=0
   shift 4
@@ -192,9 +193,9 @@ run_image_stage() {
   fi
 }
 
-# image_pipeline_busy STAGE: true, after logging it, when another local image pipeline is running. One image
-# job saturates the GPU, so the image stage STAGE leaves its new images to a later cycle, and publishes only
-# the ones accepted before.
+# image_pipeline_busy STAGE: true, after logging it, when another local image pipeline is running. One
+# image job saturates the GPU, so the image stage STAGE leaves its new images to a later cycle and
+# publishes only the ones accepted before.
 image_pipeline_busy() {
   local pids
   pids="$(pgrep -f '[r]un-streaming-image-quality-loop\.sh' | tr '\n' ' ' || true)"
