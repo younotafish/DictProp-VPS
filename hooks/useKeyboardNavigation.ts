@@ -1,34 +1,21 @@
 /**
- * Keyboard Navigation Hook for Chrome macOS
- * 
- * Provides consistent keyboard shortcuts across the app:
- * - Esc: Close modals, go back
- * - Tab: Navigate focus
- * - Arrow Keys: Navigate carousels, items
- * - Enter/Space: Activate focused element
- * - Cmd+S: Save current item (if applicable)
- * - Cmd+F: Focus search input
- * - 1/2/3: Switch between tabs (Notebook/Sentences/Study) — useGlobalNavigation
+ * The card view's navigation keys: the arrows, Enter and Cmd/Ctrl+S. Space and Cmd/Ctrl+F are kept from the
+ * browser here too. The letter shortcuts live with each view (useWordShortcuts, useSentenceShortcuts), Escape goes
+ * through the escape stack (useEscapeLayer), and the tab keys 1/2/3 are useGlobalNavigation's.
  */
 
 import { useEffect, RefObject } from 'react';
 import { useLatest } from './useStableValue';
+import { isTypingTarget } from '../components/keyboardTarget';
 
 interface KeyboardNavigationOptions {
-  onEscape?: () => void;
   onArrowLeft?: () => void;
   onArrowRight?: () => void;
   onArrowUp?: () => void;
   onArrowDown?: () => void;
   onEnter?: () => void;
-  onSpace?: () => void;
-  onTab?: (shiftKey: boolean) => void;
   onSave?: () => void; // Cmd+S
-  onSearch?: () => void; // Cmd+F
   enabled?: boolean;
-  // Focus trap for modals
-  trapFocus?: boolean;
-  containerRef?: RefObject<HTMLElement | null>;
 }
 
 export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
@@ -40,24 +27,10 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
     if (!enabled) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      const {
-        onEscape,
-        onArrowLeft,
-        onArrowRight,
-        onArrowUp,
-        onArrowDown,
-        onEnter,
-        onSpace,
-        onTab,
-        onSave,
-        onSearch,
-        trapFocus = false,
-        containerRef,
-      } = optionsRef.current;
+      const { onArrowLeft, onArrowRight, onArrowUp, onArrowDown, onEnter, onSave } = optionsRef.current;
 
       // Don't intercept if user is typing in an input/textarea, or picking in a select
-      const target = e.target as HTMLElement;
-      const isInputElement = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
+      const isInputElement = isTypingTarget(e.target);
 
       // Cmd+S - Save; never the browser's Save Page dialog, and not while typing
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -66,26 +39,25 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
         return;
       }
 
-      // Cmd+F - Focus search (works everywhere)
+      // Cmd+F is the app's search (GlobalSearch takes it), never the browser's Find
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
         e.preventDefault();
-        onSearch?.();
         return;
       }
 
-      // Skip most handlers when in input fields (except Escape)
+      // Skip the rest when in input fields (except Escape)
       if (isInputElement && e.key !== 'Escape') {
         return;
       }
 
       switch (e.key) {
         case 'Escape':
+          // The view's escape layer does the closing; this only keeps the browser's default action off.
           e.preventDefault();
-          onEscape?.();
           break;
 
         case 'ArrowLeft':
-          if (!isInputElement && onArrowLeft) {
+          if (onArrowLeft) {
             e.preventDefault();
             e.stopImmediatePropagation();
             onArrowLeft();
@@ -93,7 +65,7 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
           break;
 
         case 'ArrowRight':
-          if (!isInputElement && onArrowRight) {
+          if (onArrowRight) {
             e.preventDefault();
             e.stopImmediatePropagation();
             onArrowRight();
@@ -101,7 +73,7 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
           break;
 
         case 'ArrowUp':
-          if (!isInputElement && onArrowUp) {
+          if (onArrowUp) {
             e.preventDefault();
             e.stopImmediatePropagation();
             onArrowUp();
@@ -109,7 +81,7 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
           break;
 
         case 'ArrowDown':
-          if (!isInputElement && onArrowDown) {
+          if (onArrowDown) {
             e.preventDefault();
             e.stopImmediatePropagation();
             onArrowDown();
@@ -117,24 +89,13 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
           break;
 
         case 'Enter':
-          if (!isInputElement) {
-            e.preventDefault();
-            onEnter?.();
-          }
+          e.preventDefault();
+          onEnter?.();
           break;
 
         case ' ':
-          if (!isInputElement) {
-            e.preventDefault();
-            onSpace?.();
-          }
-          break;
-
-        case 'Tab':
-          if (trapFocus && containerRef?.current) {
-            handleFocusTrap(e, containerRef.current);
-          }
-          onTab?.(e.shiftKey);
+          // Space never scrolls the card, including the held repeats the letter shortcuts ignore.
+          e.preventDefault();
           break;
       }
     };
@@ -143,28 +104,6 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [enabled, optionsRef]);
 };
-
-/**
- * Handle focus trap for modal dialogs
- */
-function handleFocusTrap(e: KeyboardEvent, container: HTMLElement) {
-  const focusableElements = container.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-  );
-  
-  if (focusableElements.length === 0) return;
-  
-  const firstElement = focusableElements[0];
-  const lastElement = focusableElements[focusableElements.length - 1];
-  
-  if (e.shiftKey && document.activeElement === firstElement) {
-    e.preventDefault();
-    lastElement.focus();
-  } else if (!e.shiftKey && document.activeElement === lastElement) {
-    e.preventDefault();
-    firstElement.focus();
-  }
-}
 
 /**
  * Hook for horizontal wheel scrolling (trackpad gestures)
