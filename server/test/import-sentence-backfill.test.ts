@@ -70,3 +70,46 @@ test('a sentence whose bundle image is bad still gets its analysis, and the imag
   assert.equal(getItemImage('bi-corrupt', owner.id), null);
   assert.equal(getItemImage('bi-replaced', owner.id), dataUri('bi-replaced'));
 });
+
+test('a retried bundle leaves the sentences that already hold its analyses as they are', () => {
+  const plain = sentence('bu-plain', 'The lucid summary came first.');
+  const withImage = sentence('bu-image', 'A lucid diagram followed.', { imageFile: 'images/image.png' });
+  const replacing = sentence('bu-replace', 'The lucid caption changed.', {
+    imageFile: 'images/replace.png', replaceImage: true,
+  });
+  const manifest = bundle([plain, withImage, replacing], {
+    'image.png': png('bu-image'), 'replace.png': png('bu-replace'),
+  });
+  const first = runImport(manifest);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.output.analysesUpdated, 3);
+  assert.equal(first.output.unchanged, 0);
+  const revisionAfterFirst = (id: string) => stored(id).serverRevision ?? 0;
+  const plainRevision = revisionAfterFirst('bu-plain');
+  const imageRevision = revisionAfterFirst('bu-image');
+
+  const retry = runImport(manifest);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.deepEqual(Object.keys(retry.output), [
+    'total', 'analysesUpdated', 'unchanged', 'imagesAdded', 'imagesReplaced', 'imagesPreserved', 'stale', 'staleIds',
+    'skipped', 'errors', 'backup',
+  ]);
+  assert.equal(retry.output.unchanged, 2);
+  assert.equal(retry.output.imagesPreserved, 1);
+  // An explicit replacement is written again.
+  assert.equal(retry.output.analysesUpdated, 1);
+  assert.equal(retry.output.imagesReplaced, 1);
+  assert.deepEqual(retry.output.errors, []);
+  assert.equal(stored('bu-plain').serverRevision, plainRevision);
+  assert.equal(stored('bu-image').serverRevision, imageRevision);
+  assert.equal(getItemImage('bu-image', owner.id), dataUri('bu-image'));
+
+  // A newer analysis of the same sentence is written as before.
+  const newer = { ...plain, analysis: analysis('新的译文'), generatedAt: 200 };
+  const update = runImport(bundle([newer]));
+  assert.equal(update.status, 0, update.stderr);
+  assert.equal(update.output.analysesUpdated, 1);
+  assert.equal(update.output.unchanged, 0);
+  assert.deepEqual(stored('bu-plain').data.analysis, newer.analysis);
+  assert.ok((stored('bu-plain').serverRevision ?? 0) > plainRevision);
+});

@@ -18,6 +18,7 @@ const backup = await backupBeforeWrite('sentence-backfill');
 const result = {
   total: bundle.entries.length,
   analysesUpdated: 0,
+  unchanged: 0,
   imagesAdded: 0,
   imagesReplaced: 0,
   imagesPreserved: 0,
@@ -30,7 +31,12 @@ const result = {
 type Entry = SentenceBackfillBundle['entries'][number];
 /** imageError: the bundle's image for the entry could not be read, or is not an image the server stores. */
 type PreparedEntry = { entry: Entry; image: Buffer | null; mimeType: string | null; imageError?: string };
-type Outcome = { id: string; image: 'added' | 'replaced' | 'preserved' | null; imageError?: string };
+type Outcome = {
+  id: string;
+  analysis: 'updated' | 'unchanged';
+  image: 'added' | 'replaced' | 'preserved' | null;
+  imageError?: string;
+};
 
 // Only images that will be written are read, and only for the current chunk.
 const prepare = (entry: Entry): PreparedEntry => {
@@ -60,20 +66,27 @@ const importSentence = db.transaction(({ entry, image, mimeType, imageError }: P
   if (entry.imageFile && !image && !imageError && !imageExists) {
     throw new StaleEntryError('image was removed while the backfill was imported');
   }
-  writeOverLiveItem(live, owner.id, {
-    ...live.data,
-    analysis: entry.analysis,
-    analysisGeneratedAt: entry.generatedAt,
-  });
-
-  if (!entry.imageFile) return { id: entry.id, image: null };
-  // A bad or refused image leaves the new analysis in place, and any image already stored, and is reported on its own.
-  if (imageError) return { id: entry.id, image: null, imageError };
-  if (imageExists && entry.replaceImage !== true) return { id: entry.id, image: 'preserved' };
-  if (!image || !mimeType || !upsertItemImageBinary(entry.id, image, mimeType, owner.id)) {
-    return { id: entry.id, image: null, imageError: 'image could not be stored' };
+  // A sentence that already holds this analysis, as on a retry of the same bundle, isn't written again unless an
+  // image comes with it: the write would change nothing but its revision, and every device would download it again.
+  const storesImage = !!entry.imageFile && !imageError && (!imageExists || entry.replaceImage === true);
+  const analysis = !storesImage && live.data.analysisGeneratedAt === entry.generatedAt &&
+    JSON.stringify(live.data.analysis) === JSON.stringify(entry.analysis) ? 'unchanged' : 'updated';
+  if (analysis === 'updated') {
+    writeOverLiveItem(live, owner.id, {
+      ...live.data,
+      analysis: entry.analysis,
+      analysisGeneratedAt: entry.generatedAt,
+    });
   }
-  return { id: entry.id, image: imageExists ? 'replaced' : 'added' };
+
+  if (!entry.imageFile) return { id: entry.id, analysis, image: null };
+  // A bad or refused image leaves the new analysis in place, and any image already stored, and is reported on its own.
+  if (imageError) return { id: entry.id, analysis, image: null, imageError };
+  if (imageExists && entry.replaceImage !== true) return { id: entry.id, analysis, image: 'preserved' };
+  if (!image || !mimeType || !upsertItemImageBinary(entry.id, image, mimeType, owner.id)) {
+    return { id: entry.id, analysis, image: null, imageError: 'image could not be stored' };
+  }
+  return { id: entry.id, analysis, image: imageExists ? 'replaced' : 'added' };
 });
 
 const applyChunk = db.transaction((entries: PreparedEntry[]) => {
@@ -111,7 +124,8 @@ for (let start = 0; start < bundle.entries.length; start += 100) {
     const { outcomes, stale, failures } = applyChunk.immediate(prepared);
     // Counted only once committed.
     for (const outcome of outcomes) {
-      result.analysesUpdated++;
+      if (outcome.analysis === 'unchanged') result.unchanged++;
+      else result.analysesUpdated++;
       if (outcome.image === 'added') result.imagesAdded++;
       else if (outcome.image === 'replaced') result.imagesReplaced++;
       else if (outcome.image === 'preserved') result.imagesPreserved++;
