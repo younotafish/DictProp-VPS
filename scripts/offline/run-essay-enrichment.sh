@@ -13,7 +13,7 @@ SOURCE="$POOL_ROOT/source.json"
 ANALYSIS="$POOL_ROOT/final-reconciliation/final-analysis.json"
 ANALYSIS_WORK="$POOL_ROOT/analysis-work"
 FINAL_IMAGES="$POOL_ROOT/final-images"
-CODEX_MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
+# The model and provider come from structured-model.mjs, as in the cycle, unless the caller exports them.
 CODEX_CONCURRENCY="${CODEX_CONCURRENCY:-8}"
 IMAGE_QA_CONCURRENCY="${IMAGE_QA_CONCURRENCY:-16}"
 IMAGE_WIDTH="${ESSAY_IMAGE_WIDTH:-768}"
@@ -25,13 +25,13 @@ mkdir -p "$POOL_ROOT/final-reconciliation"
 node scripts/offline/build-essay-sentence-pool.mjs \
   content/essay-catalog.json "$SOURCE" "$ESSAY_ID"
 
-env CODEX_MODEL="$CODEX_MODEL" CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
+env CODEX_CONCURRENCY="$CODEX_CONCURRENCY" \
   node scripts/offline/enrich-sentences.mjs "$SOURCE" "$ANALYSIS" "$ANALYSIS_WORK"
 
 node scripts/offline/prepare-sentence-images.mjs \
   "$SOURCE" "$ANALYSIS" "$FINAL_IMAGES" krea/Krea-2-Turbo
 
-env CODEX_CONCURRENCY="$IMAGE_QA_CONCURRENCY" IMAGE_MODEL=krea2 KREA_QUANTIZE=8 \
+env CODEX_CONCURRENCY="$IMAGE_QA_CONCURRENCY" IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE=8 \
   bash scripts/offline/run-streaming-image-quality-loop.sh \
     "$FINAL_IMAGES/targets.json" \
     "$FINAL_IMAGES/candidates" \

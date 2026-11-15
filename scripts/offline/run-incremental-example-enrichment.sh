@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT="${1:-data/offline-backfill/incremental-example-enrichment}"
+# The frozen baseline pool: the July 2026 bulk pipeline built it, and the cycle only adds what came later.
+# That pipeline (run-example-sentence-pool-pipeline.sh) was removed on 2026-11-15; see its git history.
 BASE_SOURCE="${2:-data/offline-backfill/example-sentence-pool/source.json}"
 BASE_IMAGE_ROOT="${3:-data/offline-backfill/example-sentence-pool/final-images}"
 BASE_ANALYSIS="${BASE_ANALYSIS:-$(dirname "$BASE_SOURCE")/final-reconciliation/final-analysis.json}"
