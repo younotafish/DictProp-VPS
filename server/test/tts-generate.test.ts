@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,16 +9,13 @@ const DATA_DIR = process.env.DATA_DIR!;
 const { createTtsRoutes, GENERATE_MAX_TEXT_CHARS } = await import('../src/routes/tts.js');
 const { cleanCasualRespelling } = await import('../src/tts/casual.js');
 const { GENERATE_MAX_ITEMS } = await import('../src/shared/ai-limits.js');
+const { audioPath, ttsKey } = await import('../src/tts/cache.js');
 const { createPriorityQueue } = await import('../src/local-whisper.js');
 type Dependencies = NonNullable<Parameters<typeof createTtsRoutes>[0]>;
 
 const TIMING = [{ start: 0, end: 0.4, text: 'hi' }];
 
-// Mirrors ttsKey in src/routes/tts.ts (and the client).
-const clipPath = (text: string, voice = 'Mia') => {
-  const key = createHash('sha256').update(`${voice}\n${text.trim()}`).digest('hex');
-  return join(DATA_DIR, 'tts', key.slice(0, 2), key);
-};
+const clipPath = (text: string, voice = 'Mia') => audioPath(ttsKey(text, voice));
 
 // The TTS routes with MiMo, the casual respelling and whisper replaced; nothing leaves the process.
 function stub(overrides: Dependencies = {}) {

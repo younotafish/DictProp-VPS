@@ -6,6 +6,7 @@ import { env } from '../env.js';
 import { getAllSentenceTexts } from '../db.js';
 import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
+import { stripSentenceMarkers } from '../shared/sentence-markers.js';
 import { audioPath, CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, ttsKey } from './cache.js';
 import { reduceCasualBatch } from './casual.js';
 import type { ClipStore } from './clips.js';
@@ -16,8 +17,8 @@ const BACKFILL_STATUS_PATH = resolve(env.DATA_DIR, 'tts-backfill-status.json');
 // so the client never has to stay open. Idempotent (generateAndVerify skips clips that already have
 // both files) and resumable (a restart just re-scans and skips what's done). Low concurrency since the
 // work is I/O-bound (DeepInfra + tiny file writes), so it doesn't starve normal request serving.
-const stripMarkers = (t: string): string =>
-  (t || '').replace(/\{\{(.+?)\}\}/g, '$1').replace(/\[\[(.+?)\]\]/g, '$1').trim();
+// A clip is keyed by a sentence's speakable text, exactly as the client derives it (stripSentenceMarkers, trimmed).
+const speakableText = (text: string): string => stripSentenceMarkers(text).trim();
 
 export type BackfillStatus = { running: boolean; total: number; done: number; generated: number; failed: number; startedAt: number; finishedAt: number };
 
@@ -69,9 +70,9 @@ export function partitionBackfillTexts(catalogInput: string[], libraryInput: str
   catalog: string[];
   library: string[];
 } {
-  const catalog = Array.from(new Set(catalogInput.map(stripMarkers).filter(Boolean)));
+  const catalog = Array.from(new Set(catalogInput.map(speakableText).filter(Boolean)));
   const catalogSet = new Set(catalog);
-  const library = Array.from(new Set(libraryInput.map(stripMarkers).filter(Boolean)))
+  const library = Array.from(new Set(libraryInput.map(speakableText).filter(Boolean)))
     .filter(text => !catalogSet.has(text));
   return { catalog, library };
 }
