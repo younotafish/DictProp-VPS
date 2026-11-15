@@ -122,7 +122,7 @@ export function useLibrary(userId: string) {
     { complete = false }: { complete?: boolean } = {},
   ): Promise<void> => {
     let droppedIds: string[] = [];
-    const merged = updateItems(items => {
+    updateItems(items => {
       const next = trackServerContent(mergeDatasets(items, remoteItems), remoteItems, { complete });
       if (!complete) return next;
       // A snapshot brings back the expired tombstones the server still keeps.
@@ -133,7 +133,9 @@ export function useLibrary(userId: string) {
     serverCursorRef.current = cursor;
     await deleteItemRecords(droppedIds, userId)
       .catch(error => warn('Expired deletions stay stored until the next launch:', error));
-    await saveData(merged, userId, cursor);
+    // The library as it stands now, not as merged: an edit made during the delete above stored a newer copy,
+    // which the merged one would overwrite. The library now includes the merge, so it's at or past the cursor.
+    await saveData(latestItemsRef.current, userId, cursor);
   }, [updateItems, userId]);
 
   /**
