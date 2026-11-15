@@ -58,3 +58,15 @@ test('before the engine loads, a gap is timed by a plain timer', async t => {
   t.mock.timers.tick(1000);
   assert.deepEqual(fired, ['gap']);
 });
+
+test('once the engine has loaded, stopping auto-play leaves the keep-alive stopped', async () => {
+  const tts = await freshFacade();
+  tts.acquireKeepAlive();
+  await until(() => keepAliveElement()?.paused === false, 'auto-play holds the keep-alive');
+  // The Stop tap: setState queues React's render (whose effect cleanup releases the hold) before the tap's
+  // own prime runs.
+  queueMicrotask(() => tts.releaseKeepAlive());
+  tts.primeKeepAlive();
+  await tick();
+  assert.equal(keepAliveElement()?.paused, true, 'the prime ran inside the tap, before the release');
+});
