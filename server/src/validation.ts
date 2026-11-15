@@ -1,33 +1,23 @@
 import { isSentenceAnalysis } from './sentence-analysis.js';
 import { isUsageAudit } from './shared/usage-audit.js';
+import { isFiniteNonNegative, isItemType, isPositiveFinite, isRecord, isSha256 } from './validation-helpers.js';
 
-const ITEM_TYPES = new Set(['vocab', 'phrase', 'sentence']);
 const MAX_ID_LENGTH = 200;
 // The largest real item is a phrase of about 40 KB. Rows are read whole on every sync page.
 const MAX_ITEM_DATA_BYTES = 256 * 1024;
 const MAX_NESTING = 32;
 
-function isRecord(value: unknown): value is Record<string, any> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isFiniteNonNegative(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
-}
-
 function isAdvancedEnrichmentMarker(value: unknown): boolean {
   return isRecord(value) && value.version === 1 &&
     (value.provider === 'codex-harness' || value.provider === 'claude-code' || value.provider === 'local-mlx') &&
     typeof value.model === 'string' && value.model.length > 0 && value.model.length <= 300 &&
-    isFiniteNonNegative(value.generatedAt) && value.generatedAt > 0 &&
-    typeof value.contentHash === 'string' && /^[a-f0-9]{64}$/.test(value.contentHash);
+    isPositiveFinite(value.generatedAt) && isSha256(value.contentHash);
 }
 
 function isLocalImageEnrichmentMarker(value: unknown): boolean {
   return isRecord(value) && value.version === 1 && value.provider === 'local-ernie' &&
     typeof value.model === 'string' && value.model.length > 0 && value.model.length <= 300 &&
-    isFiniteNonNegative(value.generatedAt) && value.generatedAt > 0 &&
-    typeof value.promptHash === 'string' && /^[a-f0-9]{64}$/.test(value.promptHash);
+    isPositiveFinite(value.generatedAt) && isSha256(value.promptHash);
 }
 
 /** 'nested' when the value is too deep to walk, true when a string in it holds an inline image. */
@@ -46,7 +36,7 @@ function containsInlineImage(value: unknown, depth = 0): boolean | 'nested' {
  * Only imageUrl, on the item or on a phrase vocab, may carry an inline image: the server moves those into
  * image storage on write. Anywhere else the bytes would stay in the row and ride along with every sync.
  */
-function validateItemDataShape(data: Record<string, any>, srs: unknown): string | null {
+function validateItemDataShape(data: Record<string, unknown>, srs: unknown): string | null {
   const { imageUrl: _imageUrl, ...stored } = data;
   if (Array.isArray(data.vocabs)) {
     stored.vocabs = data.vocabs.map((vocab: unknown) => {
@@ -66,7 +56,7 @@ function validateItemDataShape(data: Record<string, any>, srs: unknown): string 
 
 export function validateStoredItem(value: unknown): string | null {
   if (!isRecord(value)) return 'item must be an object';
-  if (typeof value.type !== 'string' || !ITEM_TYPES.has(value.type)) return 'item.type is invalid';
+  if (!isItemType(value.type)) return 'item.type is invalid';
   if (!isRecord(value.data)) return 'item.data must be an object';
   if (typeof value.data.id !== 'string' || value.data.id.length === 0 || value.data.id.length > MAX_ID_LENGTH) {
     return 'item.data.id is invalid';
@@ -83,7 +73,8 @@ export function validateStoredItem(value: unknown): string | null {
   }
   if (!isFiniteNonNegative(value.savedAt)) return 'item.savedAt is invalid';
   if (value.updatedAt !== undefined && !isFiniteNonNegative(value.updatedAt)) return 'item.updatedAt is invalid';
-  if (value.serverRevision !== undefined && (!Number.isSafeInteger(value.serverRevision) || value.serverRevision < 0)) {
+  if (value.serverRevision !== undefined &&
+      (typeof value.serverRevision !== 'number' || !Number.isSafeInteger(value.serverRevision) || value.serverRevision < 0)) {
     return 'item.serverRevision is invalid';
   }
   if (value.isDeleted !== undefined && typeof value.isDeleted !== 'boolean') return 'item.isDeleted is invalid';
@@ -127,17 +118,18 @@ export function validateStoredItem(value: unknown): string | null {
       !isLocalImageEnrichmentMarker(value.data.localImageEnrichment)) {
     return 'item localImageEnrichment is invalid';
   }
-  if (value.type === 'phrase') {
+  // A phrase's vocabs are an array: checked above.
+  if (value.type === 'phrase' && Array.isArray(value.data.vocabs)) {
     for (let index = 0; index < value.data.vocabs.length; index++) {
-      const vocab = value.data.vocabs[index];
-      if (vocab?.advancedEnrichment !== undefined && !isAdvancedEnrichmentMarker(vocab.advancedEnrichment)) {
+      const vocab: unknown = value.data.vocabs[index];
+      if (!isRecord(vocab)) continue;
+      if (vocab.advancedEnrichment !== undefined && !isAdvancedEnrichmentMarker(vocab.advancedEnrichment)) {
         return `phrase vocab ${index} advancedEnrichment is invalid`;
       }
-      if (vocab?.localImageEnrichment !== undefined &&
-          !isLocalImageEnrichmentMarker(vocab.localImageEnrichment)) {
+      if (vocab.localImageEnrichment !== undefined && !isLocalImageEnrichmentMarker(vocab.localImageEnrichment)) {
         return `phrase vocab ${index} localImageEnrichment is invalid`;
       }
-      if (vocab?.usageAudit !== undefined && !isUsageAudit(vocab.usageAudit)) {
+      if (vocab.usageAudit !== undefined && !isUsageAudit(vocab.usageAudit)) {
         return `phrase vocab ${index} usageAudit is invalid`;
       }
     }

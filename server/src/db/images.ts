@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { hasImageSignature } from '../image-format.js';
+import { isSupportedImageMime, isValidImage, parseImageDataUri } from '../image-format.js';
 import { db } from './connection.js';
 
 // ─── Image (item_images) prepared statements ───
@@ -69,15 +69,8 @@ const inlineStmts = {
     WHERE user_id = ? AND type = 'phrase' AND data LIKE '%data:image/%'`),
 };
 
-function parseImageDataUri(dataUri: string): { data: Buffer; mimeType: string } | null {
-  const match = dataUri.match(/^data:(image\/(?:avif|gif|jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
-  if (!match) return null;
-  return { mimeType: match[1], data: Buffer.from(match[2], 'base64') };
-}
-
 function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeType: string, updatedAt: number): boolean {
-  if (data.length === 0 || !/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType) ||
-      !hasImageSignature(data, mimeType)) return false;
+  if (!isValidImage(data, mimeType)) return false;
   const owner = imageStmts.owner.get(id) as { user_id: string | null; content_hash: string | null } | undefined;
   if (owner?.user_id && owner.user_id !== userId) return false;
   const contentHash = createHash('sha256').update(data).digest('hex');
@@ -171,7 +164,7 @@ export function getItemImage(id: string, userId: string): string | null {
   return getInlineItemImages([id], userId)[id] ?? null;
 }
 
-const RASTER_DATA_URI = /^data:(image\/(?:avif|gif|jpeg|png|webp));base64,(.+)$/;
+const INLINE_DATA_URI = /^data:(image\/[a-z]+);base64,(.+)$/;
 
 /**
  * An image's bytes for the image endpoint, with their SHA-256 as a version. Blob-backed images already
@@ -189,11 +182,11 @@ export function getItemImageBinary(id: string, userId: string): {
   } | undefined;
   if (row?.content_hash && Buffer.isBuffer(row.data) && row.data.length > 0) {
     const mimeType = row.mime_type || 'image/webp';
-    if (!/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType)) return null;
+    if (!isSupportedImageMime(mimeType)) return null;
     return { data: row.data, mimeType, contentHash: row.content_hash };
   }
-  const match = getItemImage(id, userId)?.match(RASTER_DATA_URI);
-  if (!match) return null;
+  const match = getItemImage(id, userId)?.match(INLINE_DATA_URI);
+  if (!match || !isSupportedImageMime(match[1])) return null;
   const data = Buffer.from(match[2], 'base64');
   return { data, mimeType: match[1], contentHash: createHash('sha256').update(data).digest('hex') };
 }

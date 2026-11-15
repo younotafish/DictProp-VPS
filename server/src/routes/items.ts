@@ -3,7 +3,7 @@ import { stream } from 'hono/streaming';
 import { randomUUID } from 'crypto';
 import { db, getItemsAfterRevision, upsertMany, getItemById, getItemImageBinary, getImageManifest, getReviewHistory, applyReviewEvent, undoReviewEvent, upsertItemImageBinary, touchItemRevisions, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import type { AuthVariables } from '../middleware/auth.js';
-import { detectImageMimeType } from '../image-format.js';
+import { detectImageMimeType, isSupportedImageMime } from '../image-format.js';
 import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
 import { fetchPublicHttpUrl } from '../safe-url.js';
 import { sentenceLookupHash } from '../sentence-enrichment.js';
@@ -209,7 +209,7 @@ itemsRoutes.get('/items/images/manifest', (c) => {
 itemsRoutes.put('/items/:id/image', async (c) => {
   const userId = c.get('user').id;
   const mimeType = (c.req.header('content-type') || '').split(';', 1)[0].toLowerCase();
-  if (!/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType)) {
+  if (!isSupportedImageMime(mimeType)) {
     return c.json({ error: 'Unsupported image type' }, 415);
   }
   const declaredLength = Number(c.req.header('content-length') || '0');

@@ -1,9 +1,11 @@
-export type SupportedImageMime =
-  | 'image/avif'
-  | 'image/gif'
-  | 'image/jpeg'
-  | 'image/png'
-  | 'image/webp';
+// The raster image types the server stores and serves, and the checks that bytes really are one of them.
+// SVG is never among them: it is a document that can run script on this origin.
+
+export const SUPPORTED_IMAGE_MIMES = ['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp'] as const;
+export type SupportedImageMime = typeof SUPPORTED_IMAGE_MIMES[number];
+
+export const isSupportedImageMime = (value: unknown): value is SupportedImageMime =>
+  (SUPPORTED_IMAGE_MIMES as readonly unknown[]).includes(value);
 
 export function detectImageMimeType(data: Uint8Array): SupportedImageMime | null {
   if (data.length >= 8 &&
@@ -31,4 +33,16 @@ export function detectImageMimeType(data: Uint8Array): SupportedImageMime | null
 
 export function hasImageSignature(data: Uint8Array, mimeType: string): boolean {
   return detectImageMimeType(data) === mimeType;
+}
+
+/** Bytes worth storing as an image: there are some, the type is supported, and the bytes are of that type. */
+export function isValidImage(data: Uint8Array, mimeType: string): boolean {
+  return data.length > 0 && isSupportedImageMime(mimeType) && hasImageSignature(data, mimeType);
+}
+
+/** The bytes and type of a base64 data URI of a supported type, or null for anything else. */
+export function parseImageDataUri(dataUri: string): { data: Buffer; mimeType: SupportedImageMime } | null {
+  const match = dataUri.match(/^data:(image\/[a-z]+);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match || !isSupportedImageMime(match[1])) return null;
+  return { mimeType: match[1], data: Buffer.from(match[2], 'base64') };
 }

@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { hasImageSignature } from '../image-format.js';
+import { isSupportedImageMime, isValidImage } from '../image-format.js';
 import { hasCompleteSentenceAnalysis } from '../sentence-analysis.js';
 import { sentenceLookupHash, type SentenceEnrichmentEntry } from '../sentence-enrichment.js';
 import { db } from './connection.js';
@@ -107,7 +107,7 @@ export function getSentenceEnrichmentImage(lookupHash: string): {
     data: Buffer;
     image_mime_type: string;
   } | undefined;
-  if (!row?.data || !/^image\/(?:avif|gif|jpeg|png|webp)$/.test(row.image_mime_type || '')) return null;
+  if (!row?.data || !isSupportedImageMime(row.image_mime_type)) return null;
   return { data: row.data, mimeType: row.image_mime_type };
 }
 
@@ -137,10 +137,7 @@ export function upsertSentenceEnrichment(record: SentenceEnrichmentImportRecord)
   let imageMimeType: string | null = existing?.image_mime_type ?? null;
   let imageStored = false;
   if (image && mimeType) {
-    if (image.length === 0 || !/^image\/(?:avif|gif|jpeg|png|webp)$/.test(mimeType) ||
-        !hasImageSignature(image, mimeType)) {
-      throw new Error(`Sentence enrichment ${entry.id} has an invalid image`);
-    }
+    if (!isValidImage(image, mimeType)) throw new Error(`Sentence enrichment ${entry.id} has an invalid image`);
     imageContentHash = createHash('sha256').update(image).digest('hex');
     imageMimeType = mimeType;
     const inserted = imageStmts.upsertBlob.run({

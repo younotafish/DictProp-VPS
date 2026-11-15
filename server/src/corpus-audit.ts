@@ -1,7 +1,8 @@
 import { createHash } from 'crypto';
 import { isUsageAudit, resolveUsageArchive, shouldArchiveUsage } from './shared/usage-audit.js';
+import { isItemType, isPositiveFinite, isRecord, isSha256, type ItemType } from './validation-helpers.js';
 
-export type CorpusItemType = 'vocab' | 'phrase' | 'sentence';
+export type CorpusItemType = ItemType;
 
 export interface CorpusExportRecord {
   id: string;
@@ -28,13 +29,6 @@ export interface CorpusAuditBundle {
   generatedAt: number;
   model: string;
   entries: CorpusAuditEntry[];
-}
-
-const ITEM_TYPES = new Set<CorpusItemType>(['vocab', 'phrase', 'sentence']);
-const SHA256 = /^[a-f0-9]{64}$/;
-
-function isRecord(value: unknown): value is Record<string, any> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function withoutImageFields(value: unknown): unknown {
@@ -85,7 +79,7 @@ export function corpusAuditImportState(
   };
 }
 
-function hasCompleteAudit(type: CorpusItemType, data: Record<string, any>): boolean {
+function hasCompleteAudit(type: CorpusItemType, data: Record<string, unknown>): boolean {
   // Saved sentences were not all audited; the importer refuses an entry that drops an existing audit.
   if (type === 'sentence' && data.usageAudit === undefined) return true;
   if (!isUsageAudit(data.usageAudit)) return false;
@@ -97,9 +91,7 @@ function hasCompleteAudit(type: CorpusItemType, data: Record<string, any>): bool
 export function validateCorpusAuditBundle(value: unknown): string | null {
   if (!isRecord(value)) return 'bundle must be an object';
   if (value.version !== 1) return 'unsupported bundle version';
-  if (typeof value.generatedAt !== 'number' || !Number.isFinite(value.generatedAt) || value.generatedAt <= 0) {
-    return 'bundle generatedAt is invalid';
-  }
+  if (!isPositiveFinite(value.generatedAt)) return 'bundle generatedAt is invalid';
   if (typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 200) {
     return 'bundle model is invalid';
   }
@@ -115,20 +107,17 @@ export function validateCorpusAuditBundle(value: unknown): string | null {
     }
     if (ids.has(entry.id)) return `entry ${index} duplicates id ${entry.id}`;
     ids.add(entry.id);
-    if (typeof entry.type !== 'string' || !ITEM_TYPES.has(entry.type as CorpusItemType)) {
-      return `entry ${index} type is invalid`;
-    }
-    if (typeof entry.sourceHash !== 'string' || !SHA256.test(entry.sourceHash)) {
-      return `entry ${index} sourceHash is invalid`;
-    }
+    if (!isItemType(entry.type)) return `entry ${index} type is invalid`;
+    if (!isSha256(entry.sourceHash)) return `entry ${index} sourceHash is invalid`;
     if (!isRecord(entry.data) || entry.data.id !== entry.id) return `entry ${index} data identity is invalid`;
     if (typeof entry.wasArchived !== 'boolean') return `entry ${index} wasArchived is invalid`;
-    if (!hasCompleteAudit(entry.type as CorpusItemType, entry.data)) {
+    if (!hasCompleteAudit(entry.type, entry.data)) {
       return `entry ${index} does not contain a complete usage audit`;
     }
     if (typeof entry.archiveForUsage !== 'boolean') return `entry ${index} archiveForUsage is invalid`;
+    // A complete audit is a valid one, or a saved sentence's missing one.
     const audit = entry.data.usageAudit;
-    const expectedArchive = audit !== undefined && shouldArchiveUsage(audit.status, audit.confidence);
+    const expectedArchive = isUsageAudit(audit) && shouldArchiveUsage(audit.status, audit.confidence);
     if (entry.archiveForUsage !== expectedArchive) return `entry ${index} archiveForUsage disagrees with usage audit`;
     if (entry.setArchived !== undefined && typeof entry.setArchived !== 'boolean') return `entry ${index} setArchived is invalid`;
   }
