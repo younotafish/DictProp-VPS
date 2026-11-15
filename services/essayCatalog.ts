@@ -155,21 +155,14 @@ const STATIC_ESSAYS = buildCatalog(catalogSource as RawEssayCatalog, {
 const STATIC_ESSAY_IDS = new Set(STATIC_ESSAYS.map(essay => essay.id));
 const STATIC_SENTENCE_IDS = new Set(STATIC_ESSAYS.flatMap(essay => essay.sentences.map(sentence => sentence.id)));
 
-// Mutated only by installPrivateEssayCatalog after the authenticated catalog request completes.
-// Keeping the exported array stable lets progress helpers resolve newly installed sentence ids.
-export const ESSAYS: Essay[] = [...STATIC_ESSAYS];
+/** The public essays, bundled with the app. */
+export const ESSAYS: readonly Essay[] = STATIC_ESSAYS;
 
-let sentencesById = new Map(
-  ESSAYS.flatMap(essay => essay.sentences).map(sentence => [sentence.id, sentence]),
-);
-
-function rebuildSentenceIndex(): void {
-  sentencesById = new Map(
-    ESSAYS.flatMap(essay => essay.sentences).map(sentence => [sentence.id, sentence]),
-  );
-}
-
-export function installPrivateEssayCatalog(source: RawEssayCatalog): Essay[] {
+/**
+ * The public essays followed by the private ones in `source`, the owner's catalog that the server serves to a
+ * signed-in user. Throws when that catalog is invalid or reuses a public essay's or sentence's id.
+ */
+export function withPrivateEssays(source: RawEssayCatalog): Essay[] {
   const privateEssays = buildCatalog(source, { allowEmpty: true, defaultCollection: 'modern' });
   for (const essay of privateEssays) {
     if (STATIC_ESSAY_IDS.has(essay.id)) throw new Error(`Private essay duplicates a public essay: ${essay.id}`);
@@ -179,15 +172,5 @@ export function installPrivateEssayCatalog(source: RawEssayCatalog): Essay[] {
       }
     }
   }
-  ESSAYS.splice(STATIC_ESSAYS.length, ESSAYS.length - STATIC_ESSAYS.length, ...privateEssays);
-  rebuildSentenceIndex();
-  return [...ESSAYS];
-}
-
-export function findEssaySentence(id: string): EssaySentence | undefined {
-  return sentencesById.get(id);
-}
-
-export function findEssay(id: string): Essay | undefined {
-  return ESSAYS.find(essay => essay.id === id);
+  return [...STATIC_ESSAYS, ...privateEssays];
 }

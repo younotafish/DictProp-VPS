@@ -4,7 +4,6 @@ import { ESSAYS } from '../../services/essayCatalog.ts';
 import {
   buildEssayStudyItems,
   createEssayProgressItem,
-  createEssayProgressItemFromId,
   essayProgressItemId,
   getEssayProgress,
   isEssayProgressItem,
@@ -22,8 +21,6 @@ test('Essay progress ids and provenance remain stable', () => {
   assert.equal((item.data as any).catalogCollectionId, 'self-reliance');
   assert.equal((item.data as any).catalogSentenceId, sentence.id);
   assert.equal(isEssayProgressItem(item), true);
-  assert.deepEqual(createEssayProgressItemFromId(item.data.id, 100)?.data, item.data);
-  assert.equal(createEssayProgressItemFromId('essay-sentence:not-in-catalog'), null);
 });
 
 test('each essay computes an isolated memorization score', () => {

@@ -15,7 +15,7 @@ import { loadPrivateEssayCatalog } from '../services/api';
 import { useNow } from '../hooks/useNow';
 import {
   ESSAYS,
-  installPrivateEssayCatalog,
+  withPrivateEssays,
   type Essay,
   type EssaySentence,
 } from '../services/essayCatalog';
@@ -59,6 +59,10 @@ const essayStyle = {
     reader: 'selection:bg-emerald-200',
   },
 } as const;
+
+// The essays this page session last loaded, private ones included. A tab that mounts again, after its error
+// screen's Try again, shows them at once while it asks the server for the private catalog again.
+let loadedEssays: readonly Essay[] = ESSAYS;
 
 const EssayTile: React.FC<{
   essay: Essay;
@@ -122,7 +126,7 @@ const EssayTile: React.FC<{
 
 export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progressItems, onScroll }) => {
   const [selectedEssayId, setSelectedEssayId] = useState<string | null>(null);
-  const [essays, setEssays] = useState<Essay[]>(() => [...ESSAYS]);
+  const [essays, setEssays] = useState(() => loadedEssays);
   const [privateCatalogStatus, setPrivateCatalogStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const selectedEssay = essays.find(essay => essay.id === selectedEssayId) ?? null;
@@ -157,7 +161,8 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
     loadPrivateEssayCatalog()
       .then(source => {
         if (cancelled) return;
-        setEssays(installPrivateEssayCatalog(source));
+        loadedEssays = withPrivateEssays(source);
+        setEssays(loadedEssays);
         setPrivateCatalogStatus('ready');
       })
       .catch(() => {

@@ -1,11 +1,7 @@
 import type { SentenceData, StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
-import { findEssaySentence, type Essay, type EssaySentence } from './essayCatalog';
-import {
-  ESSAY_PROGRESS_PREFIX,
-  essayProgressItemId,
-  isEssayProgressItem,
-} from './essayProgressIdentity';
+import type { Essay, EssaySentence } from './essayCatalog';
+import { essayProgressItemId, isEssayProgressItem } from './essayProgressIdentity';
 
 export {
   ESSAY_PROGRESS_PREFIX,
@@ -21,12 +17,6 @@ export interface EssayProgress {
   memorized: number;
   toReview: number;
   masteryScore: number;
-}
-
-export function catalogSentenceIdFromEssayProgressItemId(itemId: string): string | null {
-  if (!itemId.startsWith(ESSAY_PROGRESS_PREFIX)) return null;
-  const catalogSentenceId = itemId.slice(ESSAY_PROGRESS_PREFIX.length);
-  return findEssaySentence(catalogSentenceId) ? catalogSentenceId : null;
 }
 
 export function createEssayProgressItem(
@@ -49,16 +39,6 @@ export function createEssayProgressItem(
     savedAt,
     srs: SRSAlgorithm.createNew(id, 'sentence'),
   };
-}
-
-export function createEssayProgressItemFromId(
-  itemId: string,
-  savedAt: number = Date.now(),
-): StoredItem | null {
-  const sentenceId = catalogSentenceIdFromEssayProgressItemId(itemId);
-  if (!sentenceId) return null;
-  const sentence = findEssaySentence(sentenceId);
-  return sentence ? createEssayProgressItem(sentence, savedAt) : null;
 }
 
 export function indexEssayProgress(items: readonly StoredItem[]): Map<string, StoredItem> {

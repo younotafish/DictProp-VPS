@@ -97,11 +97,3 @@ function buildCatalog(source: RawCatalog): RealLifeCollection[] {
 }
 
 export const REAL_LIFE_COLLECTIONS = buildCatalog(catalogSource as RawCatalog);
-
-const SENTENCES_BY_ID = new Map(
-  REAL_LIFE_COLLECTIONS.flatMap(collection => collection.sentences).map(sentence => [sentence.id, sentence]),
-);
-
-export function findRealLifeSentence(id: string): RealLifeSentence | undefined {
-  return SENTENCES_BY_ID.get(id);
-}

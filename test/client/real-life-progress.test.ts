@@ -4,7 +4,6 @@ import { REAL_LIFE_COLLECTIONS } from '../../services/realLifeCatalog.ts';
 import {
   buildRealLifeStudyItems,
   createRealLifeProgressItem,
-  createRealLifeProgressItemFromId,
   getRealLifeCollectionProgress,
   isRealLifeProgressItem,
   realLifeProgressItemId,
@@ -21,14 +20,10 @@ test('Real Life progress ids are stable and include the collection boundary', ()
   assert.equal((item.data as any).catalogCollectionId, 'career-conversations');
   assert.equal((item.data as any).catalogSentenceId, career.id);
   assert.equal(isRealLifeProgressItem(item), true);
-  const recreated = createRealLifeProgressItemFromId(item.data.id, 100);
-  assert.ok(recreated);
-  assert.deepEqual(recreated.data, item.data);
-  assert.equal(recreated.savedAt, item.savedAt);
-  assert.equal(recreated.srs.id, item.srs.id);
-  assert.equal(recreated.srs.type, item.srs.type);
-  assert.equal(recreated.srs.totalReviews, 0);
-  assert.equal(createRealLifeProgressItemFromId('real-life-sentence:not-in-catalog'), null);
+  assert.equal(item.savedAt, 100);
+  assert.equal(item.srs.id, item.data.id);
+  assert.equal(item.srs.type, 'sentence');
+  assert.equal(item.srs.totalReviews, 0);
 });
 
 test('each collection computes an isolated queue and mastery score', () => {

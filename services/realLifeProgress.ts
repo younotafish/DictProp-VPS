@@ -1,16 +1,7 @@
 import type { SentenceData, StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
-import {
-  findRealLifeSentence,
-  type RealLifeCollection,
-  type RealLifeSentence,
-} from './realLifeCatalog';
-import {
-  REAL_LIFE_PROGRESS_PREFIX,
-  isRealLifeProgressItem,
-  realLifeProgressItemId,
-} from './realLifeProgressIdentity';
-import type { SentenceReviewFilter } from './sentenceOrdering';
+import type { RealLifeCollection, RealLifeSentence } from './realLifeCatalog';
+import { isRealLifeProgressItem, realLifeProgressItemId } from './realLifeProgressIdentity';
 
 export {
   REAL_LIFE_PROGRESS_PREFIX,
@@ -26,12 +17,6 @@ export interface RealLifeCollectionProgress {
   memorized: number;
   toReview: number;
   masteryScore: number;
-}
-
-export function catalogSentenceIdFromProgressItemId(itemId: string): string | null {
-  if (!itemId.startsWith(REAL_LIFE_PROGRESS_PREFIX)) return null;
-  const catalogSentenceId = itemId.slice(REAL_LIFE_PROGRESS_PREFIX.length);
-  return findRealLifeSentence(catalogSentenceId) ? catalogSentenceId : null;
 }
 
 export function createRealLifeProgressItem(
@@ -54,16 +39,6 @@ export function createRealLifeProgressItem(
     savedAt,
     srs: SRSAlgorithm.createNew(id, 'sentence'),
   };
-}
-
-export function createRealLifeProgressItemFromId(
-  itemId: string,
-  savedAt: number = Date.now(),
-): StoredItem | null {
-  const catalogSentenceId = catalogSentenceIdFromProgressItemId(itemId);
-  if (!catalogSentenceId) return null;
-  const sentence = findRealLifeSentence(catalogSentenceId);
-  return sentence ? createRealLifeProgressItem(sentence, savedAt) : null;
 }
 
 export function indexRealLifeProgress(items: readonly StoredItem[]): Map<string, StoredItem> {
@@ -117,18 +92,4 @@ export function getRealLifeCollectionProgress(
     toReview: unreviewed + due,
     masteryScore: total === 0 ? 0 : Math.round(strength / total),
   };
-}
-
-export function sentenceMatchesRealLifeFilter(
-  sentence: RealLifeSentence,
-  filter: SentenceReviewFilter,
-  progressItems: readonly StoredItem[],
-  now: number = Date.now(),
-): boolean {
-  if (filter === 'all') return true;
-  const item = indexRealLifeProgress(progressItems).get(sentence.id);
-  const reviews = item?.srs?.totalReviews ?? 0;
-  if (filter === 'unreviewed') return reviews === 0;
-  if (filter === 'due') return reviews > 0 && (item?.srs?.nextReview ?? 0) <= now;
-  return reviews > 0 && (item?.srs?.nextReview ?? 0) > now;
 }
