@@ -5,15 +5,17 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { dirname, resolve, sep } from 'node:path';
-import { env } from '../env.js';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { validateOfflineTtsBundle, type OfflineTtsBundle } from '../offline-tts-import.js';
+import type { WordTiming } from '../tts-alignment.js';
+import { audioPath, timingsPath } from '../tts/cache.js';
 
 const manifestPath = process.argv[2];
 if (!manifestPath) throw new Error('Usage: import-offline-tts <manifest.json>');
@@ -24,8 +26,6 @@ const validationError = validateOfflineTtsBundle(bundle);
 if (validationError) throw new Error(validationError);
 
 const bundleRoot = dirname(resolvedManifest);
-const ttsRoot = resolve(env.DATA_DIR, 'tts');
-mkdirSync(ttsRoot, { recursive: true });
 
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
 const insideBundle = (relativePath: string): string => {
@@ -34,29 +34,29 @@ const insideBundle = (relativePath: string): string => {
   return path;
 };
 
-type WordTiming = { start: number; end: number; text: string };
-function parseTimings(bytes: Buffer, duration: number): WordTiming[] {
+function assertValidTimings(bytes: Buffer, duration: number): void {
   const value = JSON.parse(bytes.toString('utf8')) as unknown;
   if (!Array.isArray(value) || value.length === 0 || value.length > 2_000) throw new Error('timings are empty or oversized');
   let previousEnd = 0;
-  for (const timing of value) {
-    if (!timing || typeof timing !== 'object' ||
-        !Number.isFinite((timing as any).start) || !Number.isFinite((timing as any).end) ||
-        (timing as any).start < 0 || (timing as any).end <= (timing as any).start ||
-        (timing as any).start + 0.05 < previousEnd ||
-        typeof (timing as any).text !== 'string' || !(timing as any).text.trim()) {
+  for (const entry of value as unknown[]) {
+    const timing = entry && typeof entry === 'object' ? entry as Partial<Record<keyof WordTiming, unknown>> : null;
+    const { start, end, text } = timing ?? {};
+    if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end) ||
+        start < 0 || end <= start || start + 0.05 < previousEnd ||
+        typeof text !== 'string' || !text.trim()) {
       throw new Error('timings are malformed or non-monotonic');
     }
-    previousEnd = (timing as any).end;
+    previousEnd = end;
   }
   if (previousEnd > duration + 0.75) throw new Error('timings exceed audio duration');
-  return value as WordTiming[];
 }
 
 function probeDuration(path: string): number {
   const result = spawnSync('ffprobe', [
     '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nk=1:nw=1', path,
   ], { encoding: 'utf8', timeout: 30_000 });
+  // A missing or unrunnable ffprobe leaves no output to read.
+  if (result.error) throw new Error(`ffprobe unavailable: ${result.error.message}`);
   const duration = Number(result.stdout.trim());
   if (result.status !== 0 || !Number.isFinite(duration)) throw new Error('ffprobe rejected audio');
   return duration;
@@ -71,11 +71,33 @@ function syncDirectory(path: string): void {
   }
 }
 
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists but belongs to someone else.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+// An import killed mid-write (a step timeout's SIGKILL) leaves its temp file behind. The next run that installs the
+// same file removes it, unless the process that named it is still running.
+function removeStaleTemps(target: string): void {
+  const prefix = `${basename(target)}.`;
+  for (const name of readdirSync(dirname(target))) {
+    const pid = name.startsWith(prefix) ? /^(\d+)\.importing$/.exec(name.slice(prefix.length))?.[1] : undefined;
+    if (pid === undefined || Number(pid) === process.pid || isRunning(Number(pid))) continue;
+    rmSync(join(dirname(target), name), { force: true });
+  }
+}
+
 // A file lands whole or not at all: it is written and synced under a temp name in its own directory, then
 // renamed over the final name. The temp name carries the pid, so concurrent imports never share one.
 function installFile(target: string, bytes: Buffer): void {
   const temp = `${target}.${process.pid}.importing`;
   rmSync(`${target}.importing`, { force: true }); // left by an import from before the pid was in the name
+  removeStaleTemps(target);
   try {
     const fd = openSync(temp, 'w');
     try {
@@ -101,21 +123,20 @@ const result = { total: bundle.entries.length, imported: 0, skipped: 0, errors: 
 
 for (const entry of bundle.entries) {
   try {
-    const audioPath = insideBundle(entry.audioFile);
-    const timingsPath = insideBundle(entry.timingsFile);
-    const audio = readFileSync(audioPath);
-    const timings = readFileSync(timingsPath);
+    const audioPathInBundle = insideBundle(entry.audioFile);
+    const timingsPathInBundle = insideBundle(entry.timingsFile);
+    const audio = readFileSync(audioPathInBundle);
+    const timings = readFileSync(timingsPathInBundle);
     if (audio.length < 1_000 || audio.length > 10 * 1024 * 1024) throw new Error('audio size is invalid');
     if (sha256(audio) !== entry.audioSha256) throw new Error('audio hash mismatch');
     if (sha256(timings) !== entry.timingsSha256) throw new Error('timings hash mismatch');
-    const duration = probeDuration(audioPath);
+    const duration = probeDuration(audioPathInBundle);
     if (Math.abs(duration - entry.durationSeconds) > 0.25) throw new Error('audio duration mismatch');
-    parseTimings(timings, duration);
+    assertValidTimings(timings, duration);
 
-    const targetDir = resolve(ttsRoot, entry.key.slice(0, 2));
-    const targetAudio = resolve(targetDir, entry.key);
-    const targetTimings = `${targetAudio}.json`;
-    mkdirSync(targetDir, { recursive: true });
+    const targetAudio = audioPath(entry.key);
+    const targetTimings = timingsPath(entry.key);
+    mkdirSync(dirname(targetAudio), { recursive: true });
 
     const audioState = installedState(targetAudio, entry.audioSha256);
     const timingsState = installedState(targetTimings, entry.timingsSha256);

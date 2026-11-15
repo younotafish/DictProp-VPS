@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { offlineTtsKey, validateOfflineTtsBundle } from '../src/offline-tts-import.js';
+import { validateOfflineTtsBundle } from '../src/offline-tts-import.js';
+import { ttsKey } from '../src/tts/cache.js';
 
 const text = 'Could we pressure-test that assumption before we commit?';
 const voice = 'qwen3-aiden-clear-v1' as const;
-const key = offlineTtsKey(text, voice);
+const key = ttsKey(text, voice);
 const entry = {
   key,
   voice,

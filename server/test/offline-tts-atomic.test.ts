@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { offlineTtsKey } from '../src/offline-tts-import.js';
+import { ttsKey } from '../src/tts/cache.js';
 import { sha256 } from './support/fs.js';
 import { runServerScript } from './support/scripts.js';
 
@@ -16,7 +17,7 @@ writeFileSync(join(binDir, 'ffprobe'), '#!/bin/sh\necho 2.0\n', { mode: 0o755 })
 
 type Clip = { key: string; text: string; audio: Buffer; timings: Buffer };
 const clip = (text: string): Clip => ({
-  key: offlineTtsKey(text, 'qwen3-aiden-clear-v1'),
+  key: ttsKey(text, 'qwen3-aiden-clear-v1'),
   text,
   audio: Buffer.concat([Buffer.from('ID3'), Buffer.alloc(1_200, text)]),
   timings: Buffer.from(JSON.stringify([{ start: 0, end: 0.6, text: 'Hello' }, { start: 0.6, end: 1.4, text: text.slice(0, 8) }])),
@@ -96,4 +97,32 @@ test('a cache key that already holds different content is left alone and reporte
   assert.match(run.output.errors[0].error, /already contains different content/);
   assert.deepEqual(readFileSync(installed(clash.key)), Buffer.alloc(1_500, 'other audio'));
   assert.equal(existsSync(`${installed(clash.key)}.json`), false);
+});
+
+test('installing a clip removes the temp file a killed import left for it, but not a running import\'s', () => {
+  const target = clip('A killed import left a temp file for this clip.');
+  const dir = join(TTS_DIR, target.key.slice(0, 2));
+  mkdirSync(dir, { recursive: true });
+  // The pid of a process that has exited, and of one that is running (this test).
+  const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+  const stale = `${installed(target.key)}.${deadPid}.importing`;
+  const live = `${installed(target.key)}.json.${process.pid}.importing`;
+  writeFileSync(stale, 'half a clip');
+  writeFileSync(live, 'another import is still writing this');
+
+  const run = runImport(bundle([target]));
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(existsSync(stale), false);
+  assert.equal(existsSync(live), true);
+  assert.deepEqual(readFileSync(installed(target.key)), target.audio);
+  rmSync(live);
+});
+
+test('a missing ffprobe is reported as such for every entry', () => {
+  const emptyBin = mkdtempSync(join(tmpdir(), 'dictprop-offline-tts-nobin-'));
+  const entry = clip('No ffprobe can measure this clip.');
+  const run = runServerScript('import-offline-tts', [bundle([entry])], { DATA_DIR, PATH: emptyBin });
+  assert.equal(run.status, 1);
+  assert.match(run.output.errors[0].error, /^ffprobe unavailable: /);
+  assert.equal(existsSync(installed(entry.key)), false);
 });

@@ -1,9 +1,6 @@
-import { createHash } from 'node:crypto';
-
-export const OFFLINE_TTS_VOICES = [
-  'qwen3-aiden-clear-v1',
-  'qwen3-aiden-casual-v1',
-] as const;
+// The manifest of an offline speech bundle: clips the Mac generated, aligned and verified for the versioned
+// offline voices, imported into the server's cache by scripts/import-offline-tts.ts.
+import { OFFLINE_TTS_VOICES, ttsKey } from './tts/cache.js';
 
 export interface OfflineTtsEntry {
   key: string;
@@ -27,18 +24,16 @@ export interface OfflineTtsBundle {
 const SHA256 = /^[a-f0-9]{64}$/;
 const VOICES = new Set<string>(OFFLINE_TTS_VOICES);
 
-function isRecord(value: unknown): value is Record<string, any> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function offlineTtsKey(text: string, voice: string): string {
-  return createHash('sha256').update(`${voice}\n${text.trim()}`).digest('hex');
 }
 
 export function validateOfflineTtsBundle(value: unknown): string | null {
   if (!isRecord(value)) return 'bundle must be an object';
   if (value.version !== 1) return 'unsupported bundle version';
-  if (!Number.isFinite(value.generatedAt) || value.generatedAt <= 0) return 'bundle generatedAt is invalid';
+  if (typeof value.generatedAt !== 'number' || !Number.isFinite(value.generatedAt) || value.generatedAt <= 0) {
+    return 'bundle generatedAt is invalid';
+  }
   for (const field of ['model', 'aligner'] as const) {
     if (typeof value[field] !== 'string' || value[field].length === 0 || value[field].length > 300) {
       return `bundle ${field} is invalid`;
@@ -59,13 +54,14 @@ export function validateOfflineTtsBundle(value: unknown): string | null {
     if (typeof entry.text !== 'string' || entry.text.length === 0 || entry.text.length > 20_000 || entry.text !== entry.text.trim()) {
       return `entry ${index} text is invalid`;
     }
-    if (offlineTtsKey(entry.text, entry.voice) !== entry.key) return `entry ${index} key does not match voice and text`;
+    if (ttsKey(entry.text, entry.voice) !== entry.key) return `entry ${index} key does not match voice and text`;
     const prefix = entry.key.slice(0, 2);
     if (entry.audioFile !== `audio/${prefix}/${entry.key}.mp3`) return `entry ${index} audioFile is invalid`;
     if (entry.timingsFile !== `audio/${prefix}/${entry.key}.json`) return `entry ${index} timingsFile is invalid`;
     if (typeof entry.audioSha256 !== 'string' || !SHA256.test(entry.audioSha256)) return `entry ${index} audioSha256 is invalid`;
     if (typeof entry.timingsSha256 !== 'string' || !SHA256.test(entry.timingsSha256)) return `entry ${index} timingsSha256 is invalid`;
-    if (!Number.isFinite(entry.durationSeconds) || entry.durationSeconds < 0.2 || entry.durationSeconds > 180) {
+    if (typeof entry.durationSeconds !== 'number' || !Number.isFinite(entry.durationSeconds) ||
+        entry.durationSeconds < 0.2 || entry.durationSeconds > 180) {
       return `entry ${index} durationSeconds is invalid`;
     }
   }

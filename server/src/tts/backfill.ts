@@ -6,7 +6,7 @@ import { env } from '../env.js';
 import { getAllSentenceTexts } from '../db.js';
 import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
-import { CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, pathForKey, ttsKey } from './cache.js';
+import { audioPath, CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, ttsKey } from './cache.js';
 import { reduceCasualBatch } from './casual.js';
 import type { ClipStore } from './clips.js';
 
@@ -144,7 +144,7 @@ export function createBackfill({
     for (const text of texts) {
       const k = ttsKey(text, CASUAL_STYLE);
       if (await isComplete(k)) continue;
-      if (await fileExists(pathForKey(k))) needTimingsOnly.push(text);
+      if (await fileExists(audioPath(k))) needTimingsOnly.push(text);
       else needAudio.push(text);
     }
     backfill.done += texts.length - needAudio.length - needTimingsOnly.length; // already-complete casual

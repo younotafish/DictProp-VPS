@@ -6,12 +6,13 @@ import { join } from 'path';
 import { alignAudioLocally, type AlignmentPriority } from '../local-whisper.js';
 import type { WordTiming } from '../tts-alignment.js';
 import {
+  audioPath,
   CASUAL_STYLE,
   fileExists,
   isComplete,
-  OFFLINE_CACHE_VOICES,
-  pathForKey,
-  timingsPathForKey,
+  isOfflineVoice,
+  respellingPath,
+  timingsPath,
   TTS_DIR,
   ttsKey,
   writeFileAtomic,
@@ -59,10 +60,10 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
     const existing = audioInFlight.get(key);
     if (existing) return existing;
     const job = (async () => {
-      if (OFFLINE_CACHE_VOICES.has(voice)) {
+      if (isOfflineVoice(voice)) {
         throw new Error(`${voice} is populated only by the verified offline audio bridge`);
       }
-      const p = pathForKey(key);
+      const p = audioPath(key);
       if (await fileExists(p)) return null;
       let audio: Buffer;
       let spoken: string | null = null;
@@ -77,7 +78,7 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
       mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
       await writeFileAtomic(p, audio);
       // Keep the respelling beside the clip: the only record of what a casual clip actually says. Best-effort.
-      if (spoken) await writeFileAtomic(p + '.txt', spoken).catch(() => {});
+      if (spoken) await writeFileAtomic(respellingPath(key), spoken).catch(() => {});
       return audio;
     })().finally(() => audioInFlight.delete(key));
     audioInFlight.set(key, job);
@@ -91,9 +92,9 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
     const existing = timingsInFlight.get(key);
     if (existing) return existing;
     const job = (async () => {
-      const tp = timingsPathForKey(key);
+      const tp = timingsPath(key);
       if (await fileExists(tp)) return;
-      const audio = fresh ?? (await readFile(pathForKey(key)));
+      const audio = fresh ?? (await readFile(audioPath(key)));
       let words: WordTiming[];
       try {
         words = await deps.align(audio, priority);

@@ -6,13 +6,14 @@ import type { AlignmentPriority } from '../local-whisper.js';
 import { GENERATE_MAX_ITEMS } from '../shared/ai-limits.js';
 import { createBackfill, getDetachedBackfillStatus, type BackfillTexts } from '../tts/backfill.js';
 import {
+  audioPath,
   CASUAL_STYLE,
+  isCacheKey,
   isComplete,
+  isOfflineVoice,
   MIMO_VOICE,
-  OFFLINE_CACHE_VOICES,
-  pathForKey,
   sniffContentType,
-  timingsPathForKey,
+  timingsPath,
   ttsKey,
 } from '../tts/cache.js';
 import { createClipStore, defaultClipDependencies, type ClipDependencies } from '../tts/clips.js';
@@ -50,10 +51,10 @@ export function createTtsRoutes(deps: TtsRouteDependencies = {}) {
   // GET /api/tts/:name  (name = "<64-hex-key>.mp3") — serve the cached clip or 404. Never generates.
   routes.get('/tts/:name', async (c) => {
     const key = c.req.param('name').replace(/\.(mp3|wav)$/i, '');
-    if (!/^[0-9a-f]{64}$/.test(key)) return c.json({ error: 'bad key' }, 400);
+    if (!isCacheKey(key)) return c.json({ error: 'bad key' }, 400);
     let buf: Buffer;
     try {
-      buf = await readFile(pathForKey(key));
+      buf = await readFile(audioPath(key));
     } catch {
       return c.json({ error: 'not cached' }, 404);
     }
@@ -66,10 +67,10 @@ export function createTtsRoutes(deps: TtsRouteDependencies = {}) {
   // GET /api/tts/:name/timings  (name = "<64-hex-key>") — serve the clip's word timings or 404.
   routes.get('/tts/:name/timings', async (c) => {
     const key = c.req.param('name').replace(/\.(mp3|wav|json)$/i, '');
-    if (!/^[0-9a-f]{64}$/.test(key)) return c.json({ error: 'bad key' }, 400);
+    if (!isCacheKey(key)) return c.json({ error: 'bad key' }, 400);
     let buf: Buffer;
     try {
-      buf = await readFile(timingsPathForKey(key));
+      buf = await readFile(timingsPath(key));
     } catch {
       return c.json({ error: 'not cached' }, 404);
     }
@@ -101,7 +102,7 @@ export function createTtsRoutes(deps: TtsRouteDependencies = {}) {
       if (!text || text.length > GENERATE_MAX_TEXT_CHARS) { failed++; return; }
       // Versioned Qwen clips are generated, aligned, and validated on Apple Silicon, then imported.
       // Never silently put MiMo bytes behind an immutable Qwen cache key.
-      if (OFFLINE_CACHE_VOICES.has(voice)) { skipped++; return; }
+      if (isOfflineVoice(voice)) { skipped++; return; }
       if (!GENERATE_VOICES.has(voice)) { failed++; return; }
       try {
         const key = ttsKey(text, voice);
