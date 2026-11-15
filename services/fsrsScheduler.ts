@@ -1,17 +1,22 @@
 /**
  * FSRS v6 scheduling of explicit reviews, apart from the progress records in srsAlgorithm.ts so that the
- * scheduler loads only where reviews happen.
+ * scheduler loads only where reviews happen. The device shows a review's new schedule at once; the server then
+ * applies the same review and its result is the one every device keeps.
  *
  * - Again / Hard / Good / Easy are deterministic (fuzz disabled)
  * - Existing fixed-schedule rows become FSRS rows on their next review
  * - The legacy "remember" action maps to Good
+ *
+ * MIRRORED in server/src/srs.ts: the server compiles only its own src/, and this copy has to stay out of the
+ * first bundle, so each side holds one, and both need ts-fsrs, so neither can live in server/src/shared/. KEEP
+ * THE SCHEDULER CONFIG, toFsrsCard AND fromFsrsCard IDENTICAL: test/contracts/srs.test.ts runs the same reviews
+ * through both copies and compares every schedule field, or each review would visibly jump after the next sync.
  */
 
 import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
 import { SRSData, type ReviewRating } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 
-const DAY_MS = 86_400_000;
 const scheduler = fsrs({
   request_retention: 0.9,
   maximum_interval: 3650,
@@ -29,16 +34,14 @@ const ratingMap: Record<ReviewRating, Grade> = {
 };
 
 function toFsrsCard(srs: SRSData, now: number): CardInput {
-  if ((srs.totalReviews || 0) === 0) {
-    const empty = createEmptyCard(new Date(srs.nextReview || now));
-    return { ...empty, due: new Date(srs.nextReview || now) };
-  }
+  if ((srs.totalReviews || 0) === 0) return createEmptyCard(new Date(srs.nextReview || now));
   const lastReview = srs.lastReviewDate || Math.max(0, now - Math.max(1, srs.interval) * 60_000);
   return {
     due: new Date(srs.nextReview || now),
     stability: Math.max(0.1, Number(srs.stability) || 0.5),
     difficulty: Math.min(10, Math.max(1, Number(srs.difficulty) || 5)),
-    elapsed_days: Math.max(0, Math.round((now - lastReview) / DAY_MS)),
+    // CardInput still requires the deprecated elapsed_days, but the scheduler recomputes it from last_review.
+    elapsed_days: 0,
     scheduled_days: Math.max(0, srs.scheduledDays ?? Math.round((srs.interval || 0) / 1440)),
     learning_steps: Math.max(0, srs.learningSteps || 0),
     reps: Math.max(1, srs.totalReviews || 0),

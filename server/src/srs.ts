@@ -1,8 +1,48 @@
+/**
+ * The server's FSRS v6 step for each review it applies; it decides the schedule every device keeps.
+ *
+ * MIRRORED in services/fsrsScheduler.ts: the server compiles only its own src/, and the client keeps the scheduler
+ * out of its first bundle, so each side holds a copy, and both need ts-fsrs, so neither can live in shared/. KEEP
+ * THE SCHEDULER CONFIG, toFsrsCard AND fromFsrsCard IDENTICAL: test/contracts/srs.test.ts runs the same reviews
+ * through both copies and compares every schedule field, or each review would visibly jump after the next sync.
+ */
 import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
 
 export type ReviewRating = 'again' | 'hard' | 'good' | 'easy';
 
-const DAY_MS = 86_400_000;
+/** The fields of a stored schedule that a review reads. Rows from the fixed-schedule era lack the FSRS ones. */
+export interface SrsLike {
+  nextReview?: number;
+  interval?: number;
+  lastReviewDate?: number;
+  totalReviews?: number;
+  correctStreak?: number;
+  stability?: number;
+  difficulty?: number;
+  scheduledDays?: number;
+  learningSteps?: number;
+  lapses?: number;
+  fsrsState?: number;
+}
+
+/** The fields a review writes over the stored schedule. */
+export interface ScheduledSrs {
+  nextReview: number;
+  /** Minutes until the next review. */
+  interval: number;
+  memoryStrength: number;
+  lastReviewDate: number;
+  totalReviews: number;
+  correctStreak: number;
+  stability: number;
+  scheduler: 'fsrs-v6';
+  difficulty: number;
+  lapses: number;
+  fsrsState: number;
+  learningSteps: number;
+  scheduledDays: number;
+}
+
 const scheduler = fsrs({
   request_retention: 0.9,
   maximum_interval: 3650,
@@ -18,17 +58,21 @@ const ratingMap: Record<ReviewRating, Grade> = {
   easy: Rating.Easy,
 };
 
-function toFsrsCard(srs: any, now: number): CardInput {
-  if ((Number(srs.totalReviews) || 0) === 0) {
-    const empty = createEmptyCard(new Date(srs.nextReview || now));
-    return { ...empty, due: new Date(srs.nextReview || now) };
-  }
+/** The 0–100 strength a mastery badge shows, as the client's SRSAlgorithm.stabilityToDisplayStrength computes it. */
+function stabilityToDisplayStrength(stability: number): number {
+  if (stability <= 0) return 0;
+  return Math.min(100, Math.round(18 * Math.log(1 + stability)));
+}
+
+function toFsrsCard(srs: SrsLike, now: number): CardInput {
+  if ((Number(srs.totalReviews) || 0) === 0) return createEmptyCard(new Date(srs.nextReview || now));
   const lastReview = Number(srs.lastReviewDate) || Math.max(0, now - Math.max(1, Number(srs.interval) || 0) * 60_000);
   return {
     due: new Date(srs.nextReview || now),
     stability: Math.max(0.1, Number(srs.stability) || 0.5),
     difficulty: Math.min(10, Math.max(1, Number(srs.difficulty) || 5)),
-    elapsed_days: Math.max(0, Math.round((now - lastReview) / DAY_MS)),
+    // CardInput still requires the deprecated elapsed_days, but the scheduler recomputes it from last_review.
+    elapsed_days: 0,
     scheduled_days: Math.max(0, srs.scheduledDays ?? Math.round((Number(srs.interval) || 0) / 1440)),
     learning_steps: Math.max(0, Number(srs.learningSteps) || 0),
     reps: Math.max(1, Number(srs.totalReviews) || 0),
@@ -38,13 +82,13 @@ function toFsrsCard(srs: any, now: number): CardInput {
   };
 }
 
-function fromFsrsCard(previous: any, card: Card, rating: ReviewRating, reviewedAt: number): any {
+function fromFsrsCard<T extends SrsLike>(previous: T, card: Card, rating: ReviewRating, reviewedAt: number): T & ScheduledSrs {
   const interval = Math.max(1, Math.round((card.due.getTime() - reviewedAt) / 60_000));
   return {
     ...previous,
     nextReview: card.due.getTime(),
     interval,
-    memoryStrength: card.stability <= 0 ? 0 : Math.min(100, Math.round(18 * Math.log(1 + card.stability))),
+    memoryStrength: stabilityToDisplayStrength(card.stability),
     lastReviewDate: reviewedAt,
     totalReviews: card.reps,
     correctStreak: rating === 'again' ? 0 : (Number(previous.correctStreak) || 0) + 1,
@@ -58,8 +102,8 @@ function fromFsrsCard(previous: any, card: Card, rating: ReviewRating, reviewedA
   };
 }
 
-/** Server-authoritative FSRS v6 transition; defaults legacy clients to Good. */
-export function advanceReviewSrs(srs: any, reviewedAt: number, rating: ReviewRating = 'good'): any {
+/** Server-authoritative FSRS v6 transition; defaults legacy clients to Good. Other fields of `srs` carry over. */
+export function advanceReviewSrs<T extends SrsLike>(srs: T, reviewedAt: number, rating: ReviewRating = 'good'): T & ScheduledSrs {
   const result = scheduler.next(toFsrsCard(srs, reviewedAt), new Date(reviewedAt), ratingMap[rating]);
   return fromFsrsCard(srs, result.card, rating, reviewedAt);
 }
