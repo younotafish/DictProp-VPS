@@ -1,5 +1,10 @@
 import { TTS_CASUAL_VOICE, TTS_VOICE } from './api';
 
+// ── Speech style: clear (crisp MiMo) ⇄ casual (reduced, mumbled) ──────────────
+// A persisted GLOBAL choice of which cached track to play. Every play site routes through this engine,
+// so the one toggle governs word review, sentence review, and the global-search popup at once. The
+// style maps to the cache "voice" token: clear -> TTS_VOICE (e.g. 'Mia'); casual -> 'casual' (MUST
+// match the server's CASUAL_STYLE). Casual clips are audio-only — no word timings / lead-in skip.
 export type TtsStyle = 'clear' | 'casual';
 const TTS_STYLE_KEY = 'tts_style';
 // Read like the rate below: with storage blocked, touching localStorage throws, and this runs on import.
@@ -22,6 +27,14 @@ export const setTtsStyle = (value: TtsStyle) => {
   styleListeners.forEach(callback => callback(value));
 };
 
+// ── Playback speed: adjustable voice rate for example sentences ────────────────
+// A persisted GLOBAL playback rate for the cached-clip (<audio>) path — i.e. the example-sentence
+// voice. Cached clips should play at their authored rate by default, so the default is 1.0×; it's
+// adjustable up to 2×. Applied at the one shared <audio> element (see playUrl) with preservesPitch,
+// so a faster rate speeds up the speech WITHOUT raising the pitch. Like the style toggle, it's a
+// single global value routed through this engine, so one control governs word review, sentence
+// review, and the search popup at once. Word reads (speakWord → system voice) are left at their own
+// natural rate — the complaint is sentence playback.
 export const RATE_PRESETS = [1.0, 1.1, 1.3, 1.5, 1.75, 2.0] as const;
 const DEFAULT_RATE = 1.0;
 const RATE_KEY = 'tts_rate';
