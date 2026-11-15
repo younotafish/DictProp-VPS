@@ -50,6 +50,24 @@ test('marker segments come in order, with offsets into the marker-stripped text'
   }
 });
 
+test('segments spell the spoken text even when markers nest or cross, which the server never emits', () => {
+  assert.deepEqual(parseSentenceMarkers('{{a [[b]] c}} end'), [
+    { kind: 'item', text: 'a b c', offset: 0 },
+    { kind: 'plain', text: ' end', offset: 5 },
+  ]);
+  assert.deepEqual(parseSentenceMarkers('[[a {{b]] c}} end'), [{ kind: 'plain', text: 'a b c end', offset: 0 }]);
+  const malformed = ['[[a {{b}} c]]', '{{[[a]]}}', '{{[[a}}]]', '{{a [[b}} c]]', '{{a}}}}', '{{{a}}', '[[a]] {{b ]] c}}', '{{}}x[[]]'];
+  for (const text of [...WELL_FORMED, ...malformed]) {
+    const segments = parseSentenceMarkers(text);
+    assert.equal(segments.map(s => s.text).join(''), stripSentenceMarkers(text), text);
+    let offset = 0;
+    for (const segment of segments) {
+      assert.equal(segment.offset, offset, text);
+      offset += segment.text.length;
+    }
+  }
+});
+
 test('edge punctuation is stripped from lookup terms, keeping apostrophes', () => {
   assert.equal(stripEdgePunct('cat.'), 'cat');
   assert.equal(stripEdgePunct('"Hello,"'), 'Hello');

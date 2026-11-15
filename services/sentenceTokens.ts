@@ -1,4 +1,5 @@
 import type { StoredItem } from '../types';
+import { stripSentenceMarkers } from './sentenceMarkers';
 
 /**
  * How a sentence's text becomes the pieces HighlightedSentence renders: its {{studied item}} and
@@ -22,7 +23,12 @@ export interface SentenceSegment {
 // The same grammar stripSentenceMarkers removes (services/sentenceMarkers.ts), scanned in one pass.
 const MARKER = /\{\{(.+?)\}\}|\[\[(.+?)\]\]/g;
 
-/** Splits a sentence into its plain runs and marker segments, in order; plain runs are never empty. */
+/**
+ * Splits a sentence into its plain runs and marker segments, in order; plain runs are never empty. The
+ * segments always spell stripSentenceMarkers(text), the text that is spoken, so their offsets are positions
+ * in it. A marker nested in another ('{{a [[b]] c}}') is stripped from the outer segment's text, and markers
+ * that cross ('[[a {{b]] c}}'), which no segment split can spell, leave the whole stripped text plain.
+ */
 export function parseSentenceMarkers(text: string): SentenceSegment[] {
   const segments: SentenceSegment[] = [];
   let offset = 0;
@@ -33,11 +39,13 @@ export function parseSentenceMarkers(text: string): SentenceSegment[] {
   };
   for (const match of text.matchAll(MARKER)) {
     if (match.index > lastIndex) push('plain', text.slice(lastIndex, match.index));
-    if (match[1] !== undefined) push('item', match[1]);
-    else push('uncommon', match[2]);
+    if (match[1] !== undefined) push('item', stripSentenceMarkers(match[1]));
+    else push('uncommon', stripSentenceMarkers(match[2]));
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < text.length) push('plain', text.slice(lastIndex));
+  const spoken = stripSentenceMarkers(text);
+  if (segments.map(segment => segment.text).join('') !== spoken) return [{ kind: 'plain', text: spoken, offset: 0 }];
   return segments;
 }
 
