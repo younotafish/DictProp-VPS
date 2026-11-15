@@ -7,8 +7,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-sentence-enrichment-import-test-'));
-process.env.DATA_DIR = DATA_DIR;
+const DATA_DIR = process.env.DATA_DIR!;
 
 const { getSentenceEnrichmentForText, getSentenceEnrichmentImage, upsertSentenceEnrichment } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');

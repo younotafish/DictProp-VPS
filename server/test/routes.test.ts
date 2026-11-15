@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { Hono } from 'hono';
 
-process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-routes-test-'));
 process.env.DEV_AUTH_BYPASS = '1';
 
 const { createApp } = await import('../src/app.js');
@@ -50,7 +49,7 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   response = await app.request('/api/items');
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') || '', /^application\/json/);
-  const fullItems = await response.json() as any[];
+  const fullItems = (await response.json() as any[]).filter(stored => stored.data.id === item.data.id);
   assert.equal(fullItems.length, 1);
   assert.equal(fullItems[0].data.id, item.data.id);
 
@@ -74,14 +73,15 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   response = await app.request('/api/items?afterRevision=0&afterId=&limit=10');
   assert.equal(response.status, 200);
   const delta = await response.json() as any;
-  assert.equal(delta.items.length, 1);
-  assert.equal(delta.items[0].srs.totalReviews, 1);
-  assert.equal(delta.items[0].srs.scheduler, 'fsrs-v6');
+  const deltaItems = delta.items.filter((stored: any) => stored.data.id === item.data.id);
+  assert.equal(deltaItems.length, 1);
+  assert.equal(deltaItems[0].srs.totalReviews, 1);
+  assert.equal(deltaItems[0].srs.scheduler, 'fsrs-v6');
   assert.ok(delta.cursor.revision > 0);
 
   response = await app.request('/api/reviews?since=0');
   assert.equal(response.status, 200);
-  const events = await response.json() as any[];
+  const events = (await response.json() as any[]).filter(stored => stored.id === event.id);
   assert.equal(events.length, 1);
   assert.deepEqual(
     {
@@ -104,7 +104,7 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   assert.equal((await response.json() as any).undone, false);
 
   response = await app.request('/api/reviews?since=0');
-  assert.deepEqual(await response.json(), []);
+  assert.deepEqual((await response.json() as any[]).filter(stored => stored.id === event.id), []);
 });
 
 test('review history sends recent reviews in full and older ones as times and a count', async () => {

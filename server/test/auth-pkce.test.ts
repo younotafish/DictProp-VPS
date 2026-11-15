@@ -1,17 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
 import { Hono } from 'hono';
 
-process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-auth-pkce-test-'));
 process.env.OWNER_GOOGLE_EMAIL = 'owner@example.com';
 process.env.GOOGLE_CLIENT_ID = 'test-client';
 process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
-process.env.DEV_AUTH_BYPASS = '0';
-process.env.PUBLIC_ORIGIN = '';
 
 const { createAuthRoutes } = await import('../src/routes/auth.js');
 

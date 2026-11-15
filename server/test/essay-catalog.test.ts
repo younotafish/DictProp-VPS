@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   getAllEssayCatalogSentenceTexts,
@@ -21,7 +23,8 @@ test('Essay catalog starts with five complete, stable public-domain texts', () =
       ['how-it-feels-to-be-colored-me', 105],
     ],
   );
-  assert.ok(getEssayCatalogSentenceCount() >= 825);
+  // The test runner's DATA_DIR holds no private catalog, so only the static texts count.
+  assert.equal(getEssayCatalogSentenceCount(), 825);
   assert.equal(getAllEssayCatalogSentenceTexts().length, getEssayCatalogSentenceCount());
   const first = getEssayCatalogSentence('self-reliance:p001:s01');
   assert.equal(first?.essayTitle, 'Self-Reliance');
@@ -120,4 +123,21 @@ test('private essay catalog accepts book-sized collections up to the safety limi
     return essay;
   });
   assert.throws(() => validatePrivateEssayCatalog(oversized), /too many essays/);
+});
+
+test('a private catalog in DATA_DIR joins the static texts, and its removal takes it away again', () => {
+  const dataDir = process.env.DATA_DIR!;
+  const path = join(dataDir, 'private-essay-catalog.json');
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(path, JSON.stringify(privateCatalog));
+  try {
+    assert.equal(getEssayCatalogSentenceCount(), 826);
+    assert.deepEqual(getEssayCatalogSummaries().map(summary => summary.id).slice(-2), ['how-it-feels-to-be-colored-me', 'modern-test-essay']);
+    assert.equal(getEssayCatalogSentence('modern-test-essay:p001:s01')?.text, 'Attention becomes deliberate when routine stops feeling invisible.');
+    assert.equal(getEssayCatalogSentence('self-reliance:p001:s01')?.essayTitle, 'Self-Reliance');
+  } finally {
+    rmSync(path, { force: true });
+  }
+  assert.equal(getEssayCatalogSentenceCount(), 825);
+  assert.equal(getEssayCatalogSentence('modern-test-essay:p001:s01'), undefined);
 });

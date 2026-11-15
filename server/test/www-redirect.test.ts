@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
 
-process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-www-redirect-test-'));
 process.env.OWNER_GOOGLE_EMAIL = 'owner@example.com';
-process.env.DEV_AUTH_BYPASS = '0';
-process.env.PUBLIC_ORIGIN = '';
 
 const { createApp } = await import('../src/app.js');
 const app = createApp({ logging: false, serveStaticFiles: false });

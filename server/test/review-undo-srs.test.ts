@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
 
-process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-review-undo-srs-test-'));
 process.env.DEV_AUTH_BYPASS = '1';
 
 const { createApp } = await import('../src/app.js');

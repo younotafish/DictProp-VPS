@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Hono } from 'hono';
 
-const DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-tts-generate-test-'));
-process.env.DATA_DIR = DATA_DIR;
+const DATA_DIR = process.env.DATA_DIR!;
 
 const {
   cleanCasualRespelling,
@@ -214,7 +212,18 @@ test('a client that disconnects stops further clips from starting', async () => 
   }
 });
 
-test('writes leave no temporary files behind', () => {
+test('writes leave no temporary files behind', async () => {
+  // Writes of its own (a clip, its timings, a casual respelling), so the scan never looks at an empty directory.
+  // When the whole file runs, it covers every earlier test's writes too.
+  const { restore } = stub();
+  try {
+    const text = 'Every write lands under its final name.';
+    assert.deepEqual(await (await generate([{ text }, { text, voice: 'casual' }])).json(), { generated: 2, skipped: 0, failed: 0 });
+    await waitFor(() => existsSync(`${clipPath(text)}.json`) && existsSync(`${clipPath(text, 'casual')}.json`), 'both timings files');
+    assert.ok(existsSync(`${clipPath(text, 'casual')}.txt`));
+  } finally {
+    restore();
+  }
   const leftovers = readdirSync(join(DATA_DIR, 'tts'), { recursive: true })
     .map(String)
     .filter(name => name.endsWith('.tmp'));

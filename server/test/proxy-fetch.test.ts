@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { proxyFetch } from '../src/proxy-fetch.js';
+
+// The transport is chosen when the module loads. Without this, a developer's HTTPS_PROXY sends the 40 KB body
+// through curl on the Mac while CI takes the direct path, so the two machines would test different code.
+for (const name of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete process.env[name];
+const { proxyFetch } = await import('../src/proxy-fetch.js');
 
 test('proxyFetch handles large request bodies through its single transport boundary', async () => {
   const server = createServer((request, response) => {

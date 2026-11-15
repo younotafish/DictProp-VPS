@@ -8,9 +8,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
-const DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-importers-test-'));
+const DATA_DIR = process.env.DATA_DIR!;
 const OWNER_EMAIL = 'owner@example.com';
-process.env.DATA_DIR = DATA_DIR;
 process.env.OWNER_GOOGLE_EMAIL = OWNER_EMAIL;
 
 const { corpusSourceHash } = await import('../src/corpus-audit.js');

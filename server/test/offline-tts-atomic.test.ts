@@ -8,7 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { offlineTtsKey } from '../src/offline-tts-import.js';
 
-const DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-offline-tts-test-'));
+const DATA_DIR = process.env.DATA_DIR!;
 const TTS_DIR = join(DATA_DIR, 'tts');
 const serverDir = fileURLToPath(new URL('..', import.meta.url));
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');

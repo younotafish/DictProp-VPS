@@ -1,14 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
 import { Hono } from 'hono';
 
-process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-sign-in-limits-test-'));
 process.env.OWNER_GOOGLE_EMAIL = 'owner@example.com';
-process.env.DEV_AUTH_BYPASS = '0';
-process.env.PUBLIC_ORIGIN = '';
 
 const { createApp } = await import('../src/app.js');
 const { clientAddress, createClientRateLimit } = await import('../src/middleware/runtime.js');
@@ -68,13 +62,16 @@ test('the limiter forgets the oldest clients instead of growing without bound', 
   assert.equal(await hit('198.51.100.1'), 200); // dropped to make room, so it starts over
 });
 
-test('a client is let back in when its window ends', async () => {
+test('a client is let back in when its window ends', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
   const app = new Hono();
   app.use('*', createClientRateLimit(1, 50));
   app.get('/', c => c.text('ok'));
   const hit = async () => (await app.request('/', {}, from('198.51.100.1'))).status;
   assert.equal(await hit(), 200);
   assert.equal(await hit(), 429);
-  await new Promise(resolve => setTimeout(resolve, 70));
+  t.mock.timers.tick(49);
+  assert.equal(await hit(), 429);
+  t.mock.timers.tick(1);
   assert.equal(await hit(), 200);
 });

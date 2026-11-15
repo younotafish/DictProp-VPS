@@ -1,10 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
-
-process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-srs-sync-test-'));
 
 // Progress that moves backwards (a reset, an undone review) has to survive the server's save and every
 // device's merge, which otherwise keep the schedule with the newest review.

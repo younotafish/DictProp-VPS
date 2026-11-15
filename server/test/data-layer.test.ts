@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-
-process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-data-layer-test-'));
 
 const {
   db, deleteUnreferencedBlobs, getComparisons, getImageManifest, getItemById, getItemImage, getItemImagesBatch,

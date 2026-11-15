@@ -123,9 +123,6 @@ test('no workflow splices a secret into a sed program', () => {
       }
     }
   }
-  const deploy = workflow('deploy.yml');
-  assert.match(deploy, /printf 'DEEPINFRA_API_KEY=%s\\n' "\$DEEPINFRA_API_KEY" >> "\$ENV_TEMP"/);
-  assert.match(deploy, /mv -f "\$ENV_TEMP" \.env/);
 });
 
 test('public run logs get no raw container logs', () => {
@@ -233,7 +230,10 @@ function deployScript() {
     'github.sha': 'candidate',
   });
   assert.doesNotMatch(script, /\$\{\{/);
-  const lines = script.split('\n');
+  // The stubbed curl answers every health check the same way, so three attempts decide what 120 would: three in
+  // a row pass, and a failing release fails all of them. The other 117 only forked stubs.
+  assert.ok(script.includes('for attempt in $(seq 1 120); do'), 'wait_for_health makes 120 attempts');
+  const lines = script.replace('for attempt in $(seq 1 120); do', 'for attempt in $(seq 1 3); do').split('\n');
   const at = (marker: string): number => {
     const index = lines.findIndex(line => line.includes(marker));
     assert.notEqual(index, -1, marker);

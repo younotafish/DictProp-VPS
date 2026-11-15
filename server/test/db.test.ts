@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
-
-process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'dictprop-db-test-'));
 
 const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, touchItemRevisions, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
@@ -129,15 +124,17 @@ test('legacy project cleanup runs as a resumable background migration', async ()
 
 test('image ids cannot overwrite another user', () => {
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+  const blobs = () => (db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count;
+  const blobsBefore = blobs();
   assert.equal(upsertItemImages([{ id: 'owned-image', data: image }], 'user-a'), 1);
   assert.equal(upsertItemImages([{ id: 'owned-image', data: image }], 'user-b'), 0);
   assert.equal(upsertItemImages([{ id: 'duplicate-image', data: image }], 'user-a'), 1);
-  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, 1);
+  assert.equal(blobs(), blobsBefore + 1);
   const replacement = Buffer.concat([Buffer.from(image.split(',')[1], 'base64'), Buffer.from([0])]);
   assert.equal(upsertItemImageBinary('owned-image', replacement, 'image/png', 'user-a'), true);
-  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, 2);
+  assert.equal(blobs(), blobsBefore + 2);
   assert.equal(upsertItemImageBinary('duplicate-image', replacement, 'image/png', 'user-a'), true);
-  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count, 1);
+  assert.equal(blobs(), blobsBefore + 1);
   assert.equal(upsertItemImageBinary('fake-image', Buffer.from('not an image'), 'image/png', 'user-a'), false);
 });
 
@@ -169,6 +166,7 @@ test('saving a prepared example sentence attaches its analysis and deduplicated 
   };
   const generatedAt = 10_000;
   const blobsBefore = (db.prepare('SELECT COUNT(*) AS count FROM image_blobs').get() as { count: number }).count;
+  const enrichmentsBefore = getSentenceEnrichmentCount();
   assert.deepEqual(upsertSentenceEnrichment({
     entry: {
       id: `example-${lookupHash.slice(0, 40)}`,
@@ -181,7 +179,7 @@ test('saving a prepared example sentence attaches its analysis and deduplicated 
     image,
     mimeType: 'image/png',
   }), { status: 'inserted', imageStored: true });
-  assert.equal(getSentenceEnrichmentCount(), 1);
+  assert.equal(getSentenceEnrichmentCount(), enrichmentsBefore + 1);
 
   const sentence = {
     type: 'sentence',

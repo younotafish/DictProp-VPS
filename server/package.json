@@ -10,7 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/**/*.test.ts",
+    "test": "tsx --import ../test/support/isolated-env.ts --test --test-timeout=120000 'test/**/*.test.ts'",
     "check": "npm run typecheck && npm run build",
     "start": "node dist/index.js"
   },
