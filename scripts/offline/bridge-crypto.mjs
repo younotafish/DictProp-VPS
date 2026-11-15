@@ -162,7 +162,12 @@ async function writePrivately(outputPath, label, write) {
 }
 
 function commit(tempPath, outputPath) {
-  renameSync(tempPath, outputPath);
+  try {
+    renameSync(tempPath, outputPath);
+  } catch (error) {
+    discard(tempPath);
+    throw error;
+  }
   liveTempFiles.delete(tempPath);
 }
 

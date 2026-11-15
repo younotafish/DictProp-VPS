@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -256,6 +256,32 @@ test('the CLI encrypts from stdin with a key file and decrypts with the key from
     const badPurpose = spawnSync(process.execPath, [script, 'encrypt', '--purpose', 'has space', '--out', join(dir, 'x')], { env, input: '' });
     assert.equal(badPurpose.status, 1);
     assert.match(badPurpose.stderr.toString(), /invalid purpose/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an output that cannot take the decrypted file fails the command and leaves no plaintext beside it', () => {
+  const dir = tempDir();
+  try {
+    const keyFile = join(dir, 'key');
+    writeFileSync(keyFile, `${passphrase}\n`);
+    for (const gunzip of [false, true]) {
+      const blob = join(dir, 'export.dpb');
+      const encrypted = spawnSync(process.execPath, [script, 'encrypt', '--key-file', keyFile, '--purpose', purpose, '--out', blob], {
+        input: gzipSync(Buffer.from('{"secret":"plaintext"}')),
+      });
+      assert.equal(encrypted.status, 0, encrypted.stderr.toString());
+      // A directory where the file should go: the decryption succeeds, but its rename into place cannot.
+      const output = join(dir, 'export.json');
+      mkdirSync(output, { recursive: true });
+      const args = ['decrypt', ...(gunzip ? ['--gunzip'] : []), '--key-file', keyFile, '--purpose', purpose, '--in', blob, '--out', output];
+      const decrypted = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
+      assert.equal(decrypted.status, 1, decrypted.stderr);
+      assert.match(decrypted.stderr, /bridge-crypto: decrypt failed: E(ISDIR|NOTEMPTY|EXIST|PERM)/);
+      assert.deepEqual(leftovers(dir, ['key', 'export.dpb', 'export.json']), [], `gunzip=${gunzip}`);
+      assert.deepEqual(readdirSync(output), []);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
