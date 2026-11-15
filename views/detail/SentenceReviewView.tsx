@@ -173,7 +173,12 @@ export function SentenceReviewView({
   const {
     showImagePanel, setShowImagePanel, imageUploading, imageDragOver, setImageDragOver, imageError, setImageError,
     imageReloadTick, attachImageFromFile, handleImageFabTap,
-  } = useSentenceImageAttach({ currentSentenceRef, onAttachImage, interactionLocked });
+  } = useSentenceImageAttach({
+    currentSentenceRef,
+    // A preview isn't in the library, so it takes no picture: the attach button is hidden and a paste is ignored.
+    onAttachImage: isSentencePreview ? undefined : onAttachImage,
+    interactionLocked,
+  });
   const { sentenceCopy, handleCopySentence } = useSentenceCopy(currentSentenceRef);
 
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
