@@ -1,21 +1,17 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useEffect, useCallback, useMemo, useRef } from 'react';
 import { Volume2, Loader2, Pause, Play } from 'lucide-react';
 import {
   speakNatural,
   getPlaybackState,
   getPlaybackProgress,
-  subscribePlayback,
   pauseCurrent,
   resumeCurrent,
   stopCurrent,
   type SpeakHandle,
-  type PlaybackState,
 } from '../services/lazyTts';
+import { toggleActionFor } from '../services/audio/playbackToggle';
+import { usePlaybackStatus } from '../hooks/audio/usePlaybackStatus';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
-import { error as logError } from '../services/logger';
-
-// A second tap once the clip is this far in restarts from the top instead of pausing the last sliver.
-const RESTART_NEAR_END = 0.85;
 
 interface Props {
   /** The example sentence (may contain {{…}}/[[…]] markers — they're stripped before speaking). */
@@ -38,43 +34,33 @@ interface Props {
  */
 export const SentenceSpeakerButton: React.FC<Props> = ({ text, className = '', iconSize = 14, onComplete }) => {
   const plain = useMemo(() => stripSentenceMarkers(text || '').trim(), [text]);
-  const [pb, setPb] = useState<PlaybackState>(getPlaybackState);
+  const status = usePlaybackStatus(plain);
   const playbackHandleRef = useRef<SpeakHandle | null>(null);
-  useEffect(() => subscribePlayback(setPb), []);
 
   // A matching text value does not prove ownership: another view may already be reading the same
   // sentence. The returned handle is token-scoped, so unmount only stops playback this button began.
   useEffect(() => () => { playbackHandleRef.current?.stop(); }, []);
 
-  const isMine = !!plain && pb.text === plain;
-  const isLoading = isMine && pb.status === 'loading';
-  const isPlaying = isMine && (pb.status === 'playing' || pb.status === 'paused');
-  const isPaused = isMine && pb.status === 'paused';
+  const isLoading = status === 'loading';
+  const isPlaying = status === 'playing' || status === 'paused';
+  const isPaused = status === 'paused';
   const label = isLoading ? 'Loading natural voice' : !isPlaying ? 'Listen to this sentence' : isPaused ? 'Resume' : 'Pause';
 
   const start = useCallback(() => {
-    try {
-      playbackHandleRef.current = speakNatural(plain, { allowDownload: true, onEnd: onComplete });
-    } catch (err) {
-      logError('Sentence speech failed', err);
-    }
+    playbackHandleRef.current = speakNatural(plain, { allowDownload: true, onEnd: onComplete });
   }, [plain, onComplete]);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (!plain) return;
-    const cur = getPlaybackState();
-    if (cur.text === plain) {
-      if (cur.status === 'loading') { stopCurrent(); return; }   // cancel a load that hasn't started yet
-      if (cur.status === 'paused')  { resumeCurrent(); return; }
-      if (cur.status === 'playing') {
-        // Almost finished → restart from the top instead of a pointless near-end pause.
-        if (getPlaybackProgress() >= RESTART_NEAR_END) { start(); return; }
-        pauseCurrent();
-        return;
-      }
+    switch (toggleActionFor(getPlaybackState(), plain, getPlaybackProgress(), { onLoading: 'cancel', restartNearEnd: true })) {
+      case 'cancel': stopCurrent(); return; // a load that hasn't started playing yet
+      case 'resume': resumeCurrent(); return;
+      case 'pause': pauseCurrent(); return;
+      case 'restart': // almost finished → from the top instead of a pointless near-end pause
+      case 'start': start(); return; // idle, or a different sentence is active → ours from the top
+      case 'ignore': return;
     }
-    start(); // idle, or a different sentence is active → (re)start ours from the top
   }, [plain, start]);
 
   // Callers passing a className size the button themselves. The bare icon gets a bigger tap target (34px
