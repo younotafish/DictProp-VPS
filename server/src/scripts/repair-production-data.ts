@@ -78,7 +78,7 @@ const PREFERRED_SURVIVOR_IDS = new Set([
   'f8e38ce0-9289-411b-b9c4-155bfd85e7a3',
 ]);
 
-const items = getAllItems(owner.id) as any[];
+const items = getAllItems(owner.id);
 const byId = new Map(items.map(item => [item.data.id, item]));
 const imageIds = new Set((db.prepare('SELECT id FROM item_images WHERE user_id = ?').all(owner.id) as Array<{ id: string }>).map(row => row.id));
 // The sentence identity the July duplicate groups were adjudicated by: text without its markers, and the source

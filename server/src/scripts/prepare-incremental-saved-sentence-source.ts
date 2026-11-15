@@ -1,3 +1,5 @@
+// Run by the Mac's enrichment cycle (scripts/offline/run-incremental-example-enrichment.sh) under tsx, never on the
+// VPS: it turns a corpus export into the saved sentences still to analyse, and their partial analyses to build on.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { collectIncompleteSavedSentences } from '../incremental-saved-sentences.js';

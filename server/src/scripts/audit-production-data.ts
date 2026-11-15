@@ -18,7 +18,7 @@ import { requireOwner } from './support/run.js';
 const users = listAllUsers();
 const owner = requireOwner(users);
 
-const allItems = getAllItems(owner.id) as any[];
+const allItems = getAllItems(owner.id);
 const liveItems = allItems.filter(item => !item.isDeleted);
 const sample = (values: string[], limit = 100) => values.slice(0, limit);
 const countQuery = (sql: string, ...params: unknown[]): number =>

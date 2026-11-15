@@ -1,3 +1,5 @@
+// The Mac's enrichment cycle runs this, through prepare-incremental-saved-sentence-source.ts under tsx; it ships with
+// the server only because it shares the server's sentence contracts.
 import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
 import { sentenceTextHash } from './sentence-lookup.js';
 

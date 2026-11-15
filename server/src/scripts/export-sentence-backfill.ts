@@ -9,7 +9,7 @@ const owner = requireOwner();
 const sentences: SentenceExportRecord[] = getAllItems(owner.id)
   .filter(item => item.type === 'sentence' && !item.isDeleted)
   .map(item => {
-    const data = item.data as any;
+    const data = item.data;
     const text = typeof data.text === 'string' ? data.text : '';
     return {
       id: data.id,
@@ -20,8 +20,8 @@ const sentences: SentenceExportRecord[] = getAllItems(owner.id)
       hasAnalysis: isSentenceAnalysis(data.analysis),
       hasGrammar: hasSentenceGrammarAnalysis(data.analysis),
       hasDetailedAnalysis: hasCompleteSentenceAnalysis(data.analysis),
-      hasImage: data.imageUrl?.startsWith('server:has_image') ||
-        (typeof data.imageUrl === 'string' && data.imageUrl.startsWith('data:image/')),
+      // The read path gives every stored image, inline ones included, a server:has_image marker.
+      hasImage: typeof data.imageUrl === 'string' && data.imageUrl.startsWith('server:has_image'),
     };
   });
 
