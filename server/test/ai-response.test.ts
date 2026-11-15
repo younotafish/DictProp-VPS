@@ -93,6 +93,21 @@ test('normalization keeps usable siblings, drops unusable cards, and orders sens
   assert.ok(result.data.vocabs.every(vocab => vocab.usageAudit.auditedAt === 5678));
 });
 
+test('a card that comes back without its word is for the query in word mode and dropped in a sentence', () => {
+  const sentence = 'We sat on the bank by the river all day.';
+  const wordless = completeCard({ word: undefined, sense: 'noun: river' });
+  const inSentence = normalizeAnalysisResponse({ query: sentence, translation: '我们在河边坐了一整天。', vocabs: [completeCard(), wordless] },
+    { fallbackQuery: sentence, auditedAt: 1 });
+  assert.deepEqual(inSentence.data.vocabs.map(vocab => vocab.word), ['bank']);
+  assert.equal(inSentence.droppedCards, 1);
+
+  const inWordMode = normalizeAnalysisResponse({ query: 'bank', vocabs: [wordless] }, { fallbackQuery: 'bank', queryIsHeadword: true, auditedAt: 1 });
+  assert.deepEqual(inWordMode.data.vocabs.map(vocab => vocab.word), ['bank']);
+  // The headword the model resolved (a Chinese query's English) names the card, not the input.
+  const resolved = normalizeAnalysisResponse({ query: 'bank', vocabs: [wordless] }, { fallbackQuery: '银行', queryIsHeadword: true, auditedAt: 1 });
+  assert.equal(resolved.data.vocabs[0].word, 'bank');
+});
+
 test('normalization accepts common model aliases for essential fields', () => {
   const result = normalizeAnalysisResponse({
     query: '',

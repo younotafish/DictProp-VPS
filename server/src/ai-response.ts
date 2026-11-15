@@ -371,7 +371,15 @@ export function sortVocabsByUsage<T extends { usageAudit?: { status?: UsageStatu
 
 export function normalizeAnalysisResponse(
   raw: unknown,
-  options: { fallbackQuery: string; auditedAt?: number },
+  options: {
+    fallbackQuery: string;
+    /**
+     * The query is one headword (word mode), so a card that comes back without its word is for the query. In a
+     * sentence the query is the whole sentence, and such a card is dropped.
+     */
+    queryIsHeadword?: boolean;
+    auditedAt?: number;
+  },
 ): { data: AnalysisData; inputCards: number; droppedCards: number } {
   const source: JsonObject = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as JsonObject : {};
   const auditedAt = options.auditedAt ?? Date.now();
@@ -384,7 +392,7 @@ export function normalizeAnalysisResponse(
       : [];
   const vocabs = sortVocabsByUsage(
     rawVocabs.flatMap((vocab: unknown) => {
-      const normalized = normalizeVocabCard(vocab, query || options.fallbackQuery, auditedAt);
+      const normalized = normalizeVocabCard(vocab, options.queryIsHeadword ? query || options.fallbackQuery : '', auditedAt);
       return normalized ? [normalized] : [];
     }),
   );

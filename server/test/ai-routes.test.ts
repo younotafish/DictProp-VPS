@@ -115,6 +115,20 @@ test('a sentence needs a translation or a card; one with neither fails after one
   assert.match(empty.user(1), /The Chinese translation is mandatory/);
 });
 
+test('in a sentence, a card that comes back without its word is dropped, never titled with the sentence', async () => {
+  const sentence = 'We sat on the bank by the river all day.';
+  const wordless = (overrides: Record<string, unknown> = {}) => ({ ...riverCard(overrides), word: undefined });
+  const h = harness([
+    reply({ query: sentence, translation: '我们在河岸上坐了一整天。', vocabs: [riverCard({ mnemonic: '' }), wordless()] }),
+    reply({ vocabs: [wordless()] }), // the repair loses the word too
+  ]);
+  const response = await h.post('/analyze', { text: sentence });
+  assert.equal(response.status, 200);
+  const body = await response.json() as { vocabs: Array<{ word: string }> };
+  assert.deepEqual(body.vocabs, []);
+  assert.equal(h.requests.length, 3); // the analysis and two repair rounds
+});
+
 test('a reply cut off twice is a 502, and the re-ask asks for a compact answer', async () => {
   const h = harness([reply('{"query":"bank","vocabs":[', 'length')]);
   const response = await h.post('/analyze', { text: 'bank' });

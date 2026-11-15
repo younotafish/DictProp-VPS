@@ -85,12 +85,14 @@ interface FailingCard extends CardSlot {
 /**
  * Ask the model to rewrite only the failing cards, telling it why each failed. A rewritten card is
  * matched to its original by word and sense (or by position when the counts agree); cards that still
- * fail, or that did not come back, are returned for another round.
+ * fail, or that did not come back, are returned for another round. `headword` is the query: a word, or in
+ * sentence mode the sentence, which a rewritten card that lost its word must not take as its title.
  */
 async function repairCards(
   chat: ChatJson,
   ctx: AiRequestContext,
   headword: string,
+  isWord: boolean,
   failing: FailingCard[],
   round: number,
 ): Promise<{ fixed: CardSlot[]; stillFailing: FailingCard[] }> {
@@ -108,7 +110,7 @@ async function repairCards(
   const stillFailing: FailingCard[] = [];
   const auditedAt = Date.now();
   rewritten.forEach((rawCard, position) => {
-    const card = normalizeVocabCard(rawCard, headword, auditedAt);
+    const card = normalizeVocabCard(rawCard, isWord ? headword : '', auditedAt);
     if (!card) return;
     let original = byKey.get(cardKey(card));
     if (original && !unmatched.has(original)) original = undefined;
@@ -183,7 +185,7 @@ export async function generateAnalysisData(
       continue;
     }
 
-    const normalized = normalizeAnalysisResponse(modelData, { fallbackQuery: query });
+    const normalized = normalizeAnalysisResponse(modelData, { fallbackQuery: query, queryIsHeadword: isWord });
     const data = normalized.data;
     if (isWord && data.vocabs.length === 0 && (modelData.notFound === true || modelData.notFound === 'true')) {
       throw new AiError('not_found', `No dictionary entry for ${JSON.stringify(query)}`);
@@ -222,7 +224,7 @@ export async function generateAnalysisData(
         break;
       }
       try {
-        const { fixed, stillFailing } = await repairCards(chat, ctx, data.query || query, failing, round);
+        const { fixed, stillFailing } = await repairCards(chat, ctx, data.query || query, isWord, failing, round);
         console.log(`Analysis repair round ${round}: fixed ${fixed.length}/${failing.length} card(s)`);
         passing.push(...fixed);
         failing = stillFailing;
