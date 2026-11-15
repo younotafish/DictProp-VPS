@@ -5,7 +5,7 @@ import { getServerImageManifest, loadItemImagesBatch, uploadImages } from '../se
 import { getServerImageVersion, isImageMarker } from '../services/libraryImages';
 import { log, warn } from '../services/logger';
 import type { Library } from './useLibrary';
-import { picturesOf } from './useWarmImages';
+import { picturesOf } from '../services/cardPictures';
 
 /** How far the explicit offline-image download has got. */
 export interface ImagePrefetchProgress { done: number; total: number }

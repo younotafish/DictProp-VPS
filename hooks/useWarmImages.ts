@@ -1,15 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { isPhraseItem, type StoredItem } from '../types';
+import type { StoredItem } from '../types';
+import { picturesOf } from '../services/cardPictures';
 import { IMAGE_IDB_MARKER, getServerImageVersion } from '../services/libraryImages';
 import { decodeImage, warmImage } from '../services/storage';
 
 type LoadMissingImage = (itemId: string, imageVersion?: string) => Promise<string | null>;
-
-/** The pictures a card shows: its own, and those of the words inside a phrase. */
-export const picturesOf = (item: StoredItem): Array<{ id: string; imageUrl: string | undefined }> => [
-  { id: item.data.id, imageUrl: item.data.imageUrl },
-  ...(isPhraseItem(item) ? (item.data.vocabs ?? []).map(vocab => ({ id: vocab.id, imageUrl: vocab.imageUrl })) : []),
-];
 
 /**
  * Decodes the pictures of the cards the learner can move to next, downloading any that aren't stored yet,
