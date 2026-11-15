@@ -20,7 +20,7 @@ import {
   sortVocabsByUsage,
   vocabValidationIssues,
 } from '../ai-response.js';
-import { isWordOrPhrase, MAX_COMPARE_WORDS } from '../query-mode.js';
+import { isWordOrPhrase, MAX_COMPARE_WORDS } from '../shared/query-mode.js';
 
 // The JSON extractor lives with the chat client; re-exported for existing callers and tests.
 export { parseModelJson } from '../ai-client.js';

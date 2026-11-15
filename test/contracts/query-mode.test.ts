@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import * as client from '../../services/queryMode.ts';
-import * as server from '../../server/src/query-mode.js';
+import * as server from '../../server/src/shared/query-mode.ts';
 
 const SENTENCES = [
   'The cat sat on the mat',
@@ -38,12 +38,16 @@ const PHRASES = [
 ];
 
 test('the search box and the analysis route share one routing decision', () => {
-  for (const input of [...SENTENCES, ...PHRASES, '', '   ', ' bank ', 'run the gamut.', 'Wait...']) {
-    assert.equal(client.isWordOrPhrase(input), server.isWordOrPhrase(input), `isWordOrPhrase(${JSON.stringify(input)})`);
-    assert.equal(client.looksLikeSentence(input), server.looksLikeSentence(input), `looksLikeSentence(${JSON.stringify(input)})`);
-  }
+  // The client module re-exports the shared one, so both sides run the same functions.
+  assert.equal(client.isWordOrPhrase, server.isWordOrPhrase);
+  assert.equal(client.looksLikeSentence, server.looksLikeSentence);
   assert.equal(client.MAX_COMPARE_WORDS, server.MAX_COMPARE_WORDS);
   assert.equal(server.MAX_COMPARE_WORDS, 8);
+});
+
+test('surrounding space and closing punctuation do not change the routing', () => {
+  for (const input of ['bank', ' bank ', 'run the gamut.', 'Wait...']) assert.equal(server.isWordOrPhrase(input), true, input);
+  assert.equal(server.isWordOrPhrase('  The kids ran home.  '), false);
 });
 
 test('a subject followed by a verb is a sentence', () => {
