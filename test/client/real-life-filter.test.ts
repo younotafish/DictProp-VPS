@@ -46,3 +46,12 @@ test('theme, chip and search narrow together', () => {
   assert.deepEqual(ids({ sectionId: 'reservations-and-arrival', query: 'dairy' }), []);
   assert.ok(ids({ sectionId: 'dietary-needs', reviewFilter: 'unreviewed', query: 'dairy' }).includes('restaurant-conversations:dietary-needs:10'));
 });
+
+test('the search ignores accents and curly apostrophes, as the Sentences search does', () => {
+  // Phone keyboards type curly apostrophes; the catalog has both kinds.
+  assert.deepEqual(ids({ query: 'can’t have dairy' }), ['restaurant-conversations:dietary-needs:10']);
+  assert.deepEqual(ids({ query: "I'd rather choose" }), ['restaurant-conversations:problems-and-resolution:03']);
+  const entree = ids({ query: 'entree' });
+  assert.ok(entree.includes('restaurant-conversations:recommendations-and-pairings:01'));
+  assert.deepEqual(ids({ query: 'ENTRÉE' }), entree);
+});
