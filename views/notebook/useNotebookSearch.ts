@@ -3,6 +3,7 @@ import type { StoredItem } from '../../types';
 import {
   buildNotebookList, findFuzzyMatches, findLiteralMatches, type NotebookFilter, type NotebookList, type NotebookSort,
 } from '../../services/notebookList';
+import { useNow } from '../../hooks/useNow';
 
 /** How long typing must pause before a query nothing contains gets its fuzzy scan. */
 const FUZZY_PAUSE_MS = 300;
@@ -26,13 +27,21 @@ export function useNotebookSearch(items: StoredItem[], query: string, sortMode: 
     [items, searchQuery],
   );
   const fuzzyReady = !!searchQuery && !literalMatches && pausedQuery === searchQuery;
+  // The time the list counts what's due from (list.now), which the header's counts and the rows' Due badges share.
+  // It's read again whenever the list is rebuilt from new input, and when the page comes back into view, so what
+  // fell due while the app sat in the background shows as due. It doesn't tick while the list is read.
+  const listInputs = useMemo(
+    () => ({ items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode }),
+    [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode],
+  );
+  const now = useNow(listInputs);
   const shownList = useRef<NotebookList | null>(null);
   const list = useMemo(() => {
-    if (!searchQuery) return buildNotebookList(items, null, sortMode, filterMode);
+    if (!searchQuery) return buildNotebookList(items, null, sortMode, filterMode, now);
     const matches = literalMatches ?? (fuzzyReady ? findFuzzyMatches(items, searchQuery) : null);
     if (!matches && shownList.current) return shownList.current;
-    return buildNotebookList(items, matches ?? [], sortMode, filterMode);
-  }, [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode]);
+    return buildNotebookList(items, matches ?? [], sortMode, filterMode, now);
+  }, [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode, now]);
   useEffect(() => { shownList.current = list; }, [list]);
   // The list shows this query's results, not the last query's kept on screen while the fuzzy scan waits.
   const searchSettled = !!searchQuery && (!!literalMatches || fuzzyReady);

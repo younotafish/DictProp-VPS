@@ -229,6 +229,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           group={group}
           section={section}
           groupIndex={groupIndex}
+          now={list.now}
           displayWord={displayWord}
           isSelected={isSelected}
           canSelect={canSelect}
@@ -243,6 +244,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           group={group}
           section={section}
           groupIndex={groupIndex}
+          now={list.now}
           onViewDetail={openGroup}
           onDelete={onDelete}
           onArchive={onArchive}
@@ -250,9 +252,9 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         />
       </div>
     );
-  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive, listNote]);
+  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive, listNote, list.now]);
 
-  const { reviewedToday, dueCount } = useMemo(() => notebookStats(items, Date.now()), [items]);
+  const { reviewedToday, dueCount } = useMemo(() => notebookStats(items, list.now), [items, list.now]);
 
   // The list scrolls inside this container. React detaches refs while the tab is hidden, and letting go of
   // the container then would unmount the list and lose its place, so only a new container replaces it.

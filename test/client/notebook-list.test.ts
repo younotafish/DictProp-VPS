@@ -251,3 +251,18 @@ test('rows run compare banner, note, groups, due header and due groups, then the
   assert.deepEqual(summary(buildNotebookRows({ groups: [], dueGroups: [], archived: [], archivedGroups: [] },
     { compareMode: false, showListNote: true, showArchived: true })), ['list-note']);
 });
+
+test('the list orders by the clock it is given and carries that clock, so its rows count Due from the same instant', () => {
+  const items = [
+    vocab('later', { due: NOW + 3 * DAY }),
+    vocab('soon', { due: NOW + 60_000, strength: 10 }),
+    vocab('overdue', { due: NOW - DAY, strength: 50 }),
+  ];
+  const before = buildNotebookList(items, null, 'familiarity', 'all', NOW);
+  assert.equal(before.now, NOW);
+  assert.deepEqual(titles(before.groups), ['overdue', 'soon', 'later']);
+  // A minute later 'soon' has fallen due and joins the due cards, weakest first.
+  const after = buildNotebookList(items, null, 'familiarity', 'all', NOW + 60_000);
+  assert.equal(after.now, NOW + 60_000);
+  assert.deepEqual(titles(after.groups), ['soon', 'overdue', 'later']);
+});

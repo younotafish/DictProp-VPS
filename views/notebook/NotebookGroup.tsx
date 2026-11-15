@@ -11,6 +11,8 @@ interface NotebookGroupProps {
   group: ItemGroup;
   section: NotebookSection;
   groupIndex: number;
+  /** The list's clock, which the Due badges count from. */
+  now: number;
   onViewDetail: (section: NotebookSection, groupIndex: number, itemIndex: number) => void;
   onDelete: (id: string) => void;
   onArchive?: (id: string) => void;
@@ -18,7 +20,7 @@ interface NotebookGroupProps {
 }
 
 export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
-  group, section, groupIndex, onViewDetail, onDelete, onArchive, onUnarchive
+  group, section, groupIndex, now, onViewDetail, onDelete, onArchive, onUnarchive
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const totalItems = group.items.length;
@@ -44,6 +46,7 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
     return (
       <NotebookItem
         item={group.items[0]}
+        now={now}
         onDelete={onDelete}
         onViewDetail={() => onViewDetail(section, groupIndex, 0)}
         onArchive={onArchive}
@@ -65,6 +68,7 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
       <div className="w-full" onTouchStart={swipe.onTouchStart} onTouchEnd={swipe.onTouchEnd}>
         <NotebookItem
           item={currentItem}
+          now={now}
           onDelete={onDelete}
           onViewDetail={() => onViewDetail(section, groupIndex, index)}
           onArchive={onArchive}

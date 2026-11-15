@@ -30,6 +30,8 @@ export interface NotebookList {
   archivedGroups: ItemGroup[];
   /** While searching, the due items the results leave out, weakest first. Empty otherwise. */
   dueGroups: ItemGroup[];
+  /** The time the list counted what's due from; its rows' Due badges count from it too. */
+  now: number;
 }
 
 // Lowercased word, phrase and Chinese fields, cached per content object. A review replaces an item's
@@ -165,7 +167,7 @@ export const buildNotebookList = (
     dueGroups = groupByTitle(due.sort(byPriority));
   }
 
-  return { groups: groupByTitle(active), archived, archivedGroups: groupByTitle(archived), dueGroups };
+  return { groups: groupByTitle(active), archived, archivedGroups: groupByTitle(archived), dueGroups, now };
 };
 
 /**

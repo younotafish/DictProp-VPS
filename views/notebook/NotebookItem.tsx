@@ -7,6 +7,8 @@ import { useLongPress } from './useLongPress';
 
 interface NotebookItemProps {
   item: StoredItem;
+  /** The list's clock: the card shows as due if its review falls at or before it. */
+  now: number;
   onDelete: (id: string) => void;
   onViewDetail: () => void;
   onArchive?: (id: string) => void;
@@ -16,7 +18,7 @@ interface NotebookItemProps {
 }
 
 export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
-  item, onDelete, onViewDetail, onArchive, onUnarchive, totalInGroup = 1
+  item, now, onDelete, onViewDetail, onArchive, onUnarchive, totalInGroup = 1
 }) => {
   const [showActions, setShowActions] = useState(false);
   const { pressHandlers, isClickSuppressed } = useLongPress(() => setShowActions(true));
@@ -56,7 +58,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
   const history = vocab?.history;
   const sense = vocab?.sense;
 
-  const isDue = (item.srs?.nextReview ?? 0) <= Date.now();
+  const isDue = (item.srs?.nextReview ?? 0) <= now;
   const intervalDays = Math.round((item.srs?.interval ?? 0) / (24 * 60));
 
   return (
