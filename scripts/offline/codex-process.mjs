@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 
-const DETACHED_PROCESS_GROUPS = process.platform !== 'win32';
+// Process helpers for the model CLIs, Claude Code and Codex alike; the module is named for Codex, its first
+// user. Each CLI runs in a process group of its own, so a signal reaches its helpers only through these.
+export const DETACHED_PROCESS_GROUPS = process.platform !== 'win32';
 
 export function spawnCodex(args) {
   return spawn(process.env.CODEX_BIN || '/usr/local/bin/codex', args, {
@@ -9,7 +11,7 @@ export function spawnCodex(args) {
   });
 }
 
-export function killCodex(child, signal = 'SIGTERM') {
+export function killProcessGroup(child, signal = 'SIGTERM') {
   if (!child?.pid) return;
   try {
     if (DETACHED_PROCESS_GROUPS) process.kill(-child.pid, signal);
@@ -30,7 +32,8 @@ export function killCodex(child, signal = 'SIGTERM') {
   }
 }
 
-export function installCodexSignalCleanup(activeChildren, onSignal = () => {}) {
+// On SIGINT or SIGTERM, stops every child's process group and exits; a second signal stops them at once.
+export function installSignalCleanup(activeChildren, onSignal = () => {}) {
   let handlingSignal = false;
   const exitCodes = { SIGINT: 130, SIGTERM: 143 };
   const handlers = new Map();
@@ -38,14 +41,14 @@ export function installCodexSignalCleanup(activeChildren, onSignal = () => {}) {
   for (const signal of Object.keys(exitCodes)) {
     const handler = () => {
       if (handlingSignal) {
-        for (const child of activeChildren) killCodex(child, 'SIGKILL');
+        for (const child of activeChildren) killProcessGroup(child, 'SIGKILL');
         process.exit(exitCodes[signal]);
       }
       handlingSignal = true;
       onSignal(signal);
-      for (const child of activeChildren) killCodex(child, 'SIGTERM');
+      for (const child of activeChildren) killProcessGroup(child, 'SIGTERM');
       setTimeout(() => {
-        for (const child of activeChildren) killCodex(child, 'SIGKILL');
+        for (const child of activeChildren) killProcessGroup(child, 'SIGKILL');
         process.exit(exitCodes[signal]);
       }, 2_000);
     };
@@ -57,3 +60,7 @@ export function installCodexSignalCleanup(activeChildren, onSignal = () => {}) {
     for (const [signal, handler] of handlers) process.off(signal, handler);
   };
 }
+
+// The earlier names, which the Codex-only scripts still import.
+export const killCodex = killProcessGroup;
+export const installCodexSignalCleanup = installSignalCleanup;

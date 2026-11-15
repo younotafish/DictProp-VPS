@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
+  checkModelReady,
   claudeStructuredResult,
   resolveStructuredModel,
   runStructuredModel,
@@ -32,9 +33,10 @@ process.stdin.on('end', () => {
     effortOverride: process.env.CLAUDE_CODE_EFFORT_LEVEL,
     streamIdleTimeout: process.env.CLAUDE_STREAM_IDLE_TIMEOUT_MS,
   }));
+  const structuredOutput = process.env.FAKE_STRUCTURED_OUTPUT ? JSON.parse(process.env.FAKE_STRUCTURED_OUTPUT) : { value: 'claude' };
   const envelope = process.env.FAKE_CLAUDE_FAIL
     ? { type: 'result', subtype: 'error_max_structured_output_retries', is_error: true, result: 'schema retries exhausted' }
-    : { type: 'result', subtype: 'success', is_error: false, result: '', structured_output: { value: 'claude' } };
+    : { type: 'result', subtype: 'success', is_error: false, result: '', structured_output: structuredOutput };
   process.stdout.write('Using AI Gateway (Vertex upstream)\\n');
   if (process.argv.includes('stream-json')) {
     process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init' }) + '\\n');
@@ -44,12 +46,16 @@ process.stdin.on('end', () => {
 });
 `;
 
+// Codex reads its output schema from a file and writes its answer to the -o file.
 const fakeCodex = `#!/usr/bin/env node
 const fs = require('node:fs');
 let input = '';
 process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', () => {
-  fs.writeFileSync(process.env.FAKE_MODEL_LOG, JSON.stringify({ argv: process.argv.slice(2), input }));
+  const schemaPath = process.argv[process.argv.indexOf('--output-schema') + 1];
+  fs.writeFileSync(process.env.FAKE_MODEL_LOG, JSON.stringify({
+    argv: process.argv.slice(2), input, schemaPath, schema: fs.readFileSync(schemaPath, 'utf8'),
+  }));
   fs.writeFileSync(process.argv[process.argv.indexOf('-o') + 1], JSON.stringify({ value: 'codex' }));
 });
 `;
@@ -107,10 +113,11 @@ test('Claude text requests use JSON output, no tools, and an isolated working di
     process.env.CLAUDE_BIN = bin;
     process.env.CLAUDE_CODE_EFFORT_LEVEL = 'max';
     const resultPath = join(root, 'result.json');
-    await runStructuredModel(resolveStructuredModel({}), {
-      prompt: 'Return a value.', schema, schemaPath: join(root, 'unused.json'), resultPath, timeoutMs: 10_000,
+    const result = await runStructuredModel(resolveStructuredModel({}), {
+      prompt: 'Return a value.', schema, resultPath, timeoutMs: 10_000,
     });
 
+    assert.deepEqual(result, { value: 'claude' });
     assert.deepEqual(JSON.parse(readFileSync(resultPath, 'utf8')), { value: 'claude' });
     const invocation = JSON.parse(readFileSync(log, 'utf8'));
     assert.deepEqual(invocation.argv.slice(0, 7), ['-p', '--model', 'claude-opus-5-5', '--effort', 'xhigh', '--tools', '']);
@@ -131,8 +138,7 @@ test('Claude image requests stream base64 attachments before the prompt', withFa
     process.env.CLAUDE_BIN = bin;
     const resultPath = join(root, 'result.json');
     await runStructuredModel(resolveStructuredModel({}), {
-      prompt: 'Judge the image.', schema, schemaPath: join(root, 'unused.json'), resultPath,
-      images: [icon], timeoutMs: 10_000,
+      prompt: 'Judge the image.', schema, resultPath, images: [icon], timeoutMs: 10_000,
     });
 
     const invocation = JSON.parse(readFileSync(log, 'utf8'));
@@ -159,28 +165,48 @@ test('failed Claude envelopes do not leave a cached result', withFakeModel(
     process.env.FAKE_CLAUDE_FAIL = '1';
     const resultPath = join(root, 'result.json');
     await assert.rejects(runStructuredModel(resolveStructuredModel({}), {
-      prompt: 'Return a value.', schema, schemaPath: join(root, 'unused.json'), resultPath, timeoutMs: 10_000,
+      prompt: 'Return a value.', schema, resultPath, timeoutMs: 10_000,
     }), /schema retries exhausted/);
     assert.equal(existsSync(resultPath), false);
   },
 ));
 
-test('Codex requests keep the schema file and image attachment flags', withFakeModel(
+test('Codex requests pass the schema in a file that lasts only as long as the call, and keep image flags', withFakeModel(
   fakeCodex,
   async ({ root, bin, log }) => {
     process.env.CODEX_BIN = bin;
-    const schemaPath = join(root, 'schema.json');
     const resultPath = join(root, 'result.json');
-    writeFileSync(schemaPath, JSON.stringify(schema));
-    await runStructuredModel(resolveStructuredModel({ ENRICHMENT_MODEL_PROVIDER: 'codex' }), {
-      prompt: 'Judge the image.', schema, schemaPath, resultPath, images: [icon], timeoutMs: 10_000,
+    const result = await runStructuredModel(resolveStructuredModel({ ENRICHMENT_MODEL_PROVIDER: 'codex' }), {
+      prompt: 'Judge the image.', schema, resultPath, images: [icon], timeoutMs: 10_000,
     });
 
+    assert.deepEqual(result, { value: 'codex' });
     const invocation = JSON.parse(readFileSync(log, 'utf8'));
     assert.equal(invocation.argv[0], 'exec');
     assert.equal(invocation.argv[invocation.argv.indexOf('-i') + 1], icon);
-    assert.equal(invocation.argv[invocation.argv.indexOf('--output-schema') + 1], schemaPath);
+    assert.equal(invocation.argv[invocation.argv.indexOf('--output-schema') + 1], invocation.schemaPath);
+    assert.deepEqual(JSON.parse(invocation.schema), schema);
+    assert.equal(existsSync(invocation.schemaPath), false);
     assert.equal(invocation.input, 'Judge the image.');
     assert.deepEqual(JSON.parse(readFileSync(resultPath, 'utf8')), { value: 'codex' });
+  },
+));
+
+test('the readiness check sends the app icon at low effort and accepts only {"ok": true}', withFakeModel(
+  fakeClaude,
+  async ({ bin, log }) => {
+    process.env.CLAUDE_BIN = bin;
+    process.env.FAKE_STRUCTURED_OUTPUT = JSON.stringify({ ok: true });
+    await checkModelReady(resolveStructuredModel({}), { timeoutMs: 10_000 });
+    const invocation = JSON.parse(readFileSync(log, 'utf8'));
+    assert.equal(invocation.argv[invocation.argv.indexOf('--effort') + 1], 'low');
+    assert.equal(invocation.effortOverride, 'low');
+    const message = JSON.parse(invocation.input.trim());
+    assert.deepEqual(message.message.content[1].source.data, readFileSync(icon).toString('base64'));
+    assert.match(message.message.content[2].text, /automated readiness check/);
+
+    process.env.FAKE_STRUCTURED_OUTPUT = JSON.stringify({ ok: false });
+    await assert.rejects(checkModelReady(resolveStructuredModel({}), { timeoutMs: 10_000 }),
+      /unexpected response \{"ok":false\}/);
   },
 ));

@@ -2,9 +2,9 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
-import { killCodex } from './codex-process.mjs';
+import { fileURLToPath } from 'node:url';
+import { DETACHED_PROCESS_GROUPS, killProcessGroup } from './codex-process.mjs';
 
-const DETACHED_PROCESS_GROUPS = process.platform !== 'win32';
 const IMAGE_MEDIA_TYPES = {
   '.gif': 'image/gif',
   '.jpeg': 'image/jpeg',
@@ -57,8 +57,8 @@ function runModelProcess(command, args, {
     let hardKillTimeout;
     let drainTimeout;
     const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKillTimeout = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
+      killProcessGroup(child, 'SIGTERM');
+      hardKillTimeout = setTimeout(() => killProcessGroup(child, 'SIGKILL'), 10_000);
     }, timeoutMs);
     const settle = (error, value) => {
       if (settled) return;
@@ -193,22 +193,61 @@ async function runClaude(config, { prompt, schema, resultPath, images, timeoutMs
     const tempPath = `${resultPath}.tmp`;
     writeFileSync(tempPath, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
     renameSync(tempPath, resultPath);
+    return result;
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
 }
 
-export async function runStructuredModel(config, request) {
-  const { prompt, schema, schemaPath, resultPath, timeoutMs, activeChildren } = request;
-  const images = request.images || [];
-  if (config.provider === 'claude') {
-    await runClaude(config, { prompt, schema, resultPath, images, timeoutMs, activeChildren });
-    return;
+async function runCodex(config, { prompt, schema, resultPath, images, timeoutMs, activeChildren }) {
+  // Codex reads its output schema from a file, which lives only as long as the call.
+  const schemaDir = mkdtempSync(join(tmpdir(), 'dictprop-codex-'));
+  const schemaPath = join(schemaDir, 'schema.json');
+  try {
+    writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
+    await runModelProcess(process.env.CODEX_BIN || '/usr/local/bin/codex', [
+      'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
+      '-m', config.model, '-c', `model_reasoning_effort="${config.reasoningEffort}"`,
+      ...images.flatMap(path => ['-i', path]),
+      '--output-schema', schemaPath, '-o', resultPath, '-',
+    ], { input: prompt, timeoutMs, activeChildren, label: 'Codex' });
+  } finally {
+    rmSync(schemaDir, { recursive: true, force: true });
   }
-  await runModelProcess(process.env.CODEX_BIN || '/usr/local/bin/codex', [
-    'exec', '--ephemeral', '--sandbox', 'read-only', '--ignore-rules', '--skip-git-repo-check',
-    '-m', config.model, '-c', `model_reasoning_effort="${config.reasoningEffort}"`,
-    ...images.flatMap(path => ['-i', path]),
-    '--output-schema', schemaPath, '-o', resultPath, '-',
-  ], { input: prompt, timeoutMs, activeChildren, label: 'Codex' });
+  return JSON.parse(readFileSync(resultPath, 'utf8'));
+}
+
+// Asks the configured model for one JSON object matching the schema. The result is written to resultPath,
+// which callers keep as their cache, and returned.
+export function runStructuredModel(config, request) {
+  const { prompt, schema, resultPath, timeoutMs, activeChildren } = request;
+  const call = { prompt, schema, resultPath, images: request.images || [], timeoutMs, activeChildren };
+  return config.provider === 'claude' ? runClaude(config, call) : runCodex(config, call);
+}
+
+const READINESS_ICON = fileURLToPath(new URL('../../public/pwa-192x192.png', import.meta.url));
+const READINESS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['ok'],
+  properties: { ok: { type: 'boolean' } },
+};
+
+// One small image-bearing call proves authentication, model access, schemas, and vision input. Resolves when
+// the model answered as asked; throws otherwise.
+export async function checkModelReady(config, { timeoutMs = 5 * 60 * 1_000, activeChildren } = {}) {
+  const workDir = mkdtempSync(join(tmpdir(), 'dictprop-model-check-'));
+  try {
+    const result = await runStructuredModel({ ...config, reasoningEffort: 'low' }, {
+      prompt: 'This is an automated readiness check. If you can see the attached app icon, return {"ok": true}.',
+      schema: READINESS_SCHEMA,
+      resultPath: join(workDir, 'result.json'),
+      images: [READINESS_ICON],
+      timeoutMs,
+      activeChildren,
+    });
+    if (result?.ok !== true) throw new Error(`unexpected response ${JSON.stringify(result)}`);
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
 }
