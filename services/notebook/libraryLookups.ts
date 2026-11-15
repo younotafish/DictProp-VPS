@@ -1,5 +1,5 @@
 import type { StoredItem, VocabCard } from '../../types';
-import { cardBase, normalizeKey } from '../wordMatch';
+import { cardBase } from '../wordMatch';
 import { getUsagePriority, sortVocabCardsByUsage } from '../usageAudit';
 
 /**
@@ -40,8 +40,11 @@ export const pickSavedItem = (bases: Iterable<string>, byBase: Map<string, Store
   return best;
 };
 
-/** Every saved card whose base word is one of `bases`, the most useful senses first. */
+/**
+ * Every saved card whose base word is one of `bases`, the most useful senses first. The bases come from the
+ * per-card cache the variant index filled, so the scan normalizes no word.
+ */
 export const savedCardsForBases = (bases: Set<string>, items: StoredItem[]): VocabCard[] =>
   sortVocabCardsByUsage(items
-    .filter(i => i.type === 'vocab' && bases.has(normalizeKey((i.data as VocabCard).word || '')))
+    .filter(i => i.type === 'vocab' && bases.has(cardBase(i.data as VocabCard)))
     .map(i => i.data as VocabCard));
