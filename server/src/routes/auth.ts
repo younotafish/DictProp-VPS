@@ -3,7 +3,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { randomUUID } from 'crypto';
 import { env } from '../env.js';
 import { proxyFetch, type FetchLike } from '../proxy-fetch.js';
-import { DEV_AUTH_USER } from '../middleware/auth.js';
+import { endSession, resolveSession, SESSION_COOKIE } from '../middleware/auth.js';
 import { createPkcePair, verifyGoogleIdToken, type GoogleIdentity } from '../google-auth.js';
 import { CANONICAL_ORIGIN, isWwwHost, requestedHost } from '../canonical-host.js';
 import {
@@ -11,10 +11,10 @@ import {
   createUserAndClaimItems,
   getUserCount,
   createSession,
-  getSessionUser,
   deleteSession,
+  SESSION_LIFETIME_MS,
 } from '../db.js';
-import { isOwnerUser, ownerLoginDecision } from '../owner-access.js';
+import { ownerLoginDecision } from '../owner-access.js';
 import { sanitizeAuthReturnTo } from '../auth-return.js';
 
 // A few concurrent sign-ins is all one owner needs; more than that is a flood holding Google round trips open.
@@ -183,12 +183,12 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     // Create session
     const session = createSession(userRow.id);
 
-    setCookie(c, 'session', session.token, {
+    setCookie(c, SESSION_COOKIE, session.token, {
       httpOnly: true,
       sameSite: 'Lax',
       secure: isSecure(c),
       path: '/',
-      maxAge: 30 * 24 * 60 * 60, // 30 days
+      maxAge: SESSION_LIFETIME_MS / 1000,
     });
 
     return c.redirect(returnTo);
@@ -205,61 +205,35 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
       c.header('Cache-Control', 'private, no-store');
       return c.redirect(`${CANONICAL_ORIGIN}${forwardedUri === '/' ? returnTo : forwardedUri}`, 308);
     }
-    const token = getCookie(c, 'session');
-    if (token) {
-      const userRow = getSessionUser(token);
-      if (userRow && isOwnerUser(userRow, env.OWNER_GOOGLE_EMAIL)) {
-        return c.body(null, 204);
-      }
-
-      if (userRow) deleteSession(token);
-      deleteCookie(c, 'session', { path: '/' });
-    }
+    const session = resolveSession(c);
+    if (session.kind === 'owner') return c.body(null, 204);
+    if (session.kind === 'not-owner') endSession(c, session.token);
+    if (session.kind === 'expired') deleteCookie(c, SESSION_COOKIE, { path: '/' });
 
     c.header('Cache-Control', 'private, no-store');
     return c.redirect(`/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
   });
 
-  // GET /api/auth/me — current user info
+  // GET /api/auth/me — the signed-in owner, which local development's bypass user also is
   authRoutes.get('/me', (c) => {
-    // Local dev only: report the synthetic bypass user so the client treats us as signed in.
-    if (env.DEV_AUTH_BYPASS) {
-      return c.json({ user: DEV_AUTH_USER });
+    const session = resolveSession(c);
+    switch (session.kind) {
+      case 'anonymous': return c.json({ error: 'Not authenticated' }, 401);
+      case 'expired': return c.json({ error: 'Session expired' }, 401);
+      case 'not-owner':
+        endSession(c, session.token);
+        return c.json({ error: 'owner_only' }, 403);
+      case 'owner': return c.json({ user: session.user });
     }
-
-    const token = getCookie(c, 'session');
-    if (!token) {
-      return c.json({ error: 'Not authenticated' }, 401);
-    }
-
-    const userRow = getSessionUser(token);
-    if (!userRow) {
-      return c.json({ error: 'Session expired' }, 401);
-    }
-    if (!isOwnerUser(userRow, env.OWNER_GOOGLE_EMAIL)) {
-      deleteSession(token);
-      deleteCookie(c, 'session', { path: '/' });
-      return c.json({ error: 'owner_only' }, 403);
-    }
-
-    return c.json({
-      user: {
-        id: userRow.id,
-        email: userRow.email,
-        displayName: userRow.display_name,
-        photoUrl: userRow.photo_url,
-        isAdmin: userRow.is_admin === 1,
-      },
-    });
   });
 
   // POST /api/auth/logout — destroy session
   authRoutes.post('/logout', (c) => {
-    const token = getCookie(c, 'session');
+    const token = getCookie(c, SESSION_COOKIE);
     if (token) {
       deleteSession(token);
     }
-    deleteCookie(c, 'session', { path: '/' });
+    deleteCookie(c, SESSION_COOKIE, { path: '/' });
     return c.json({ ok: true });
   });
 

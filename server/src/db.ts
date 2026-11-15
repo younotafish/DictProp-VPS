@@ -52,6 +52,7 @@ export {
   getSessionUser,
   getUserCount,
   listAllUsers,
+  SESSION_LIFETIME_MS,
   type UserRow,
 } from './db/users.js';
 export { getComparisons, upsertComparison, type StoredComparisonRow } from './db/comparisons.js';

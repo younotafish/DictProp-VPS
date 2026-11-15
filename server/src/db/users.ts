@@ -77,13 +77,14 @@ export function listAllUsers(): UserRow[] {
   return userStmts.listAll.all() as UserRow[];
 }
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+/** How long a sign-in lasts: the session row's expiry and the cookie's Max-Age. */
+export const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 const sessionTokenHash = (token: string): string => createHash('sha256').update(token).digest('hex');
 
 export function createSession(userId: string): { token: string; expiresAt: number } {
   const token = randomUUID();
   const now = Date.now();
-  const expiresAt = now + THIRTY_DAYS_MS;
+  const expiresAt = now + SESSION_LIFETIME_MS;
   sessionStmts.create.run({ token: sessionTokenHash(token), user_id: userId, created_at: now, expires_at: expiresAt });
   // Lookups already ignore expired sessions; a sign-in, which writes anyway, deletes them, so the request path
   // stays read-only. A busy database never fails a sign-in over this.
