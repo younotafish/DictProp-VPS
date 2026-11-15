@@ -227,21 +227,25 @@ test('validation issues name every failing field of a card', () => {
   ]);
 });
 
-test('example issues agree with the example validator', () => {
-  const samples: unknown[] = [
-    'I stopped by the {{bank}} after work to deposit my paycheck.',
-    'I stopped by the bank after work to deposit my paycheck.',
-    'The {{river}} overflowed its {{bank}} after the storm.',
-    'Short {{bank}}.',
-    `The {{bank}} ${'really '.repeat(150)}closed.`,
-    'A [[a1]] [[b2]] [[c3]] [[d4]] [[e5]] {{bank}} sentence here.',
-    'I stopped by the {{bank}} after [[ ]] work today, honestly.',
-    'I stopped by the {{bank}} after work { to deposit my paycheck.',
-    'I stopped by the {{[[bank]]}} after work to deposit my paycheck.',
-    42,
+test('an example needs one plain target, at most four lookups and no stray brackets', () => {
+  const samples: Array<[unknown, boolean]> = [
+    ['I stopped by the {{bank}} after work to deposit my paycheck.', true],
+    ['I stopped by the {{bank}} after [[work]] to [[deposit]] my [[paycheck]], [[honestly]].', true],
+    ['I stopped by the bank after work to deposit my paycheck.', false],
+    ['The {{river}} overflowed its {{bank}} after the storm.', false],
+    ['Short {{bank}}.', false],
+    [`The {{bank}} ${'really '.repeat(150)}closed.`, false],
+    ['A [[a1]] [[b2]] [[c3]] [[d4]] [[e5]] {{bank}} sentence here.', false],
+    ['I stopped by the {{bank}} after [[ ]] work today, honestly.', false],
+    ['I stopped by the {{bank}} after work { to deposit my paycheck.', false],
+    ['I stopped by the {{bank}} after work [sic] to deposit my paycheck.', false],
+    ['I stopped by the {{[[bank]]}} after work to deposit my paycheck.', false],
+    ['I stopped by the {{ }} after work to deposit my paycheck.', false],
+    [42, false],
   ];
-  for (const sample of samples) {
-    assert.equal(exampleIssues(sample).length === 0, isValidGeneratedExample(sample), String(sample));
+  for (const [sample, valid] of samples) {
+    assert.equal(isValidGeneratedExample(sample), valid, String(sample));
+    assert.equal(exampleIssues(sample).length === 0, valid, String(sample));
   }
   assert.deepEqual(exampleIssues('The {{river}} overflowed its {{bank}} after the storm.'), [
     'must wrap the studied word in {{double curly braces}} exactly once (found 2)',
