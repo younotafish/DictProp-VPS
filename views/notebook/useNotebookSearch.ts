@@ -4,6 +4,9 @@ import {
   buildNotebookList, findFuzzyMatches, findLiteralMatches, type NotebookFilter, type NotebookList, type NotebookSort,
 } from '../../services/notebookList';
 
+/** How long typing must pause before a query nothing contains gets its fuzzy scan. */
+const FUZZY_PAUSE_MS = 300;
+
 /** The notebook list for the typed query: literal matches at once, fuzzy ones once typing pauses. */
 export function useNotebookSearch(items: StoredItem[], query: string, sortMode: NotebookSort, filterMode: NotebookFilter) {
   // Defer the heavy grouping/search pipeline so typing stays responsive on large libraries: the input
@@ -15,7 +18,7 @@ export function useNotebookSearch(items: StoredItem[], query: string, sortMode: 
   // list keeps its last results rather than flash empty.
   const [pausedQuery, setPausedQuery] = useState(searchQuery);
   useEffect(() => {
-    const timer = window.setTimeout(() => setPausedQuery(searchQuery), 300);
+    const timer = window.setTimeout(() => setPausedQuery(searchQuery), FUZZY_PAUSE_MS);
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
   const literalMatches = useMemo(

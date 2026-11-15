@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Wand2 } from 'lucide-react';
 import type { VocabCard } from '../../types';
 import { VocabCardDisplay } from '../../components/VocabCard';
@@ -47,7 +47,7 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
   });
 
   // Keyboard arrow navigation
-  React.useEffect(() => {
+  useEffect(() => {
     if (totalItems <= 1 || !keyboardEnabled) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return;

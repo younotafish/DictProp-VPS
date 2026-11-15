@@ -1,6 +1,13 @@
 import { useEffect, useRef } from 'react';
 import type React from 'react';
 
+/** How long a press is held before it counts as a long press. */
+const LONG_PRESS_MS = 500;
+/** How far a pressing finger may drift and still be holding, not scrolling or swiping. */
+const MOVE_TOLERANCE_PX = 10;
+/** How long after a long press its closing click is ignored. */
+const CLICK_SUPPRESS_MS = 400;
+
 /**
  * A press held still on the element, by touch or the main mouse button, or a right-click (which a touch long
  * press can raise early): either calls `onLongPress`. A finger that moves is scrolling or swiping instead. The
@@ -12,8 +19,6 @@ export function useLongPress(onLongPress: () => void) {
   const longPressFired = useRef(false);
   // A mouse press held long enough to open the actions ends in a click, which would close them again.
   const ignoreClicksUntil = useRef(0);
-  const LONG_PRESS_MS = 500;
-  const MOVE_TOLERANCE_PX = 10;
 
   const handlePressStart = (e: React.PointerEvent) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -32,7 +37,7 @@ export function useLongPress(onLongPress: () => void) {
       window.clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
-    if (longPressFired.current) ignoreClicksUntil.current = Date.now() + 400;
+    if (longPressFired.current) ignoreClicksUntil.current = Date.now() + CLICK_SUPPRESS_MS;
     longPressFired.current = false;
     pressStart.current = null;
   };
