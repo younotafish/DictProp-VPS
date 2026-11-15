@@ -3,14 +3,14 @@ import type { StoredItem } from '../types';
 import { getAllStoredImageIds, getStoredImageIds, loadImagesByIds, saveImagesBatch } from '../services/storage';
 import { getServerImageManifest, loadItemImagesBatch, uploadImages } from '../services/api';
 import { getServerImageVersion, isImageMarker } from '../services/libraryImages';
+import { picturesOf } from '../services/cardPictures';
+import type { ImageRestoreProgress } from '../services/imageRestore';
 import { log, warn } from '../services/logger';
 import type { Library } from './useLibrary';
-import { picturesOf } from '../services/cardPictures';
 
+export type { ImageRestoreProgress } from '../services/imageRestore';
 /** How far the explicit offline-image download has got. */
 export interface ImagePrefetchProgress { done: number; total: number }
-/** How far restoring this device's images to the server has got. */
-export interface ImageRestoreProgress { phase: 'checking' | 'uploading' | 'done' | 'failed'; done: number; total: number; failed: number }
 
 /** Pictures kept for offline use: the study ones cached quietly, all of them on request, and restoring the server's. */
 export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsRef'>) {
@@ -116,50 +116,28 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
   // the server (e.g. images corrupted by the old marker-clobber bug). Run from a device
   // that still has the images cached. No-op on a fresh device (empty IDB).
   const handleRestoreImagesToServer = useCallback(async () => {
+    const { restoreImagesToServer } = await import('../services/libraryTools');
     // The last word stays up a little longer when something went wrong.
     const finish = (progress: ImageRestoreProgress) => {
       setImageRestoreProgress(progress);
       setTimeout(() => setImageRestoreProgress(null), progress.phase === 'failed' || progress.failed ? 6000 : 3000);
     };
     try {
-      setImageRestoreProgress({ phase: 'checking', done: 0, total: 0, failed: 0 });
-      const [manifest, localIds] = await Promise.all([
-        getServerImageManifest(),
-        getAllStoredImageIds(),
-      ]);
-
-      // Only restore images that belong to a current (non-deleted) item or vocab.
-      const liveIds = new Set<string>();
-      for (const item of latestItemsRef.current) {
-        if (item.isDeleted) continue;
-        for (const { id } of picturesOf(item)) if (id) liveIds.add(id);
-      }
-
-      const missing = [...localIds].filter(id => !manifest.has(id) && liveIds.has(id));
-      log(`🖼️ Restore: ${localIds.size} local, ${manifest.size} on server, ${missing.length} to upload`);
-      if (missing.length === 0) {
-        finish({ phase: 'done', done: 0, total: 0, failed: 0 });
-        return;
-      }
-
-      setImageRestoreProgress({ phase: 'uploading', done: 0, total: missing.length, failed: 0 });
-      const BATCH = 8;
-      let done = 0;
-      let failed = 0;
-      for (let i = 0; i < missing.length; i += BATCH) {
-        const batchIds = missing.slice(i, i + BATCH);
-        const map = Object.fromEntries(await loadImagesByIds(batchIds));
-        const found = Object.keys(map).length;
-        // An image this device lists but can't read is one it can't restore either.
-        failed += batchIds.length - found;
-        if (found > 0) {
-          try { await uploadImages(map); } catch (e) { failed += found; warn('Restore upload batch failed:', e); }
-        }
-        done += batchIds.length;
-        setImageRestoreProgress({ phase: 'uploading', done, total: missing.length, failed });
-      }
-      log(`🖼️ Restore complete: ${done - failed}/${missing.length} uploaded`);
-      finish({ phase: 'done', done, total: missing.length, failed });
+      finish(await restoreImagesToServer({
+        serverImageIds: getServerImageManifest,
+        storedImageIds: getAllStoredImageIds,
+        liveImageIds: () => {
+          const liveIds = new Set<string>();
+          for (const item of latestItemsRef.current) {
+            if (item.isDeleted) continue;
+            for (const { id } of picturesOf(item)) if (id) liveIds.add(id);
+          }
+          return liveIds;
+        },
+        loadImages: loadImagesByIds,
+        upload: uploadImages,
+        report: setImageRestoreProgress,
+      }));
     } catch (e) {
       warn('Restore images to server failed:', e);
       finish({ phase: 'failed', done: 0, total: 0, failed: 0 });

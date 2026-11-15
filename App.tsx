@@ -419,6 +419,7 @@ const App: React.FC = () => {
         screen.preload();
       }
       loadFsrsScheduler().catch(error => warn('The review scheduler will load with the first review:', error));
+      import('./services/libraryTools').catch(error => warn('The notebook tools will load when first used:', error));
     };
     if (typeof window.requestIdleCallback === 'function') {
       const handle = window.requestIdleCallback(preloadRest, { timeout: 2_000 });

@@ -1,8 +1,4 @@
 import { useCallback } from 'react';
-import type { VocabCard } from '../types';
-import type { DuplicateClusterView } from '../components/DuplicatesModal';
-import { applyMerges } from '../services/mergeDuplicates';
-import { findDuplicateClusters, normalizeKey } from '../services/wordMatch';
 import { log } from '../services/logger';
 import { isActiveLibraryItem } from './useLibraryViews';
 import type { Library } from './useLibrary';
@@ -15,19 +11,9 @@ export function useDuplicateMerge(
   // ── Find & merge variant duplicates (Phase 2 dedup tool) ──────────────────
   // Detection is read-only: cluster base words that are variants of one another
   // (run/running/ran), then open the review modal. Scans the whole notebook.
-  const handleFindDuplicates = useCallback(() => {
-    const activeItems = latestItemsRef.current.filter(isActiveLibraryItem);
-    const clusters = findDuplicateClusters(activeItems);
-    const detailed: DuplicateClusterView[] = clusters
-      .map((baseWords, i) => {
-        const set = new Set(baseWords);
-        const clusterItems = activeItems.filter(
-          it => it.type === 'vocab' && set.has(normalizeKey((it.data as VocabCard).word || ''))
-        );
-        const suggestedCanonical = [...baseWords].sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
-        return { id: `dup-${i}`, baseWords, items: clusterItems, suggestedCanonical };
-      })
-      .filter(c => c.items.length >= 2);
+  const handleFindDuplicates = useCallback(async () => {
+    const { findDuplicateClusterViews } = await import('../services/libraryTools');
+    const detailed = findDuplicateClusterViews(latestItemsRef.current.filter(isActiveLibraryItem));
 
     if (detailed.length === 0) {
       showNotice({
@@ -45,6 +31,7 @@ export function useDuplicateMerge(
   const handleMergeDuplicates = useCallback(async (merges: Array<{ baseWords: string[]; canonical: string }>) => {
     setDuplicateClusters(null);
     if (!merges || merges.length === 0) return;
+    const { applyMerges } = await import('../services/libraryTools');
 
     // applyMerges replaces items in place in a copy, so an index-wise identity check finds the changes.
     const before = latestItemsRef.current;
