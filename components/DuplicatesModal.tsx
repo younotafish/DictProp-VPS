@@ -20,21 +20,22 @@ interface Props {
 }
 
 export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge }) => {
-  // Per-cluster selection: whether to merge it, and which headword to keep.
+  // Per-cluster selection: whether to merge it, and which headword to keep. It covers every cluster, since the
+  // clusters can't change while the modal is open (the notebook behind it is inert).
   const [sel, setSel] = useState<Record<string, { include: boolean; canonical: string }>>(() =>
     Object.fromEntries(clusters.map(c => [c.id, { include: true, canonical: c.suggestedCanonical }]))
   );
 
-  const includedCount = useMemo(() => clusters.filter(c => sel[c.id]?.include).length, [clusters, sel]);
+  const includedCount = useMemo(() => clusters.filter(c => sel[c.id].include).length, [clusters, sel]);
 
   const setCanonical = (id: string, canonical: string) =>
     setSel(p => ({ ...p, [id]: { ...p[id], canonical } }));
   const toggleInclude = (id: string) =>
-    setSel(p => ({ ...p, [id]: { ...p[id], include: !p[id]?.include } }));
+    setSel(p => ({ ...p, [id]: { ...p[id], include: !p[id].include } }));
 
   const handleMerge = () => {
     const merges = clusters
-      .filter(c => sel[c.id]?.include)
+      .filter(c => sel[c.id].include)
       .map(c => ({ baseWords: c.baseWords, canonical: sel[c.id].canonical }));
     onMerge(merges);
   };
@@ -88,7 +89,7 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
           {clusters.map(cluster => {
             const s = sel[cluster.id];
             const counts = countByWord(cluster);
-            const include = s?.include ?? true;
+            const include = s.include;
             return (
               <div
                 key={cluster.id}
@@ -100,7 +101,7 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
                   {/* Canonical chooser */}
                   <div className="flex flex-wrap items-center gap-1.5">
                     {cluster.baseWords.map(bw => {
-                      const isCanon = (s?.canonical ?? cluster.suggestedCanonical) === bw;
+                      const isCanon = s.canonical === bw;
                       const n = counts.get(bw) || 0;
                       return (
                         <button
@@ -138,7 +139,7 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
                     {cluster.baseWords.join(', ')}
                   </span>
                   <ArrowRight size={12} className="shrink-0 text-indigo-400" />
-                  <span className="font-semibold text-indigo-600">{s?.canonical ?? cluster.suggestedCanonical}</span>
+                  <span className="font-semibold text-indigo-600">{s.canonical}</span>
                 </div>
 
                 {/* Cards involved */}
