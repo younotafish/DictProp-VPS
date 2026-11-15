@@ -2,6 +2,7 @@ import React from 'react';
 import { Search, X, Send, BookmarkPlus, MessageSquareQuote } from 'lucide-react';
 import type { SentenceData, StoredItem } from '../../types';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
+import { isImeKey } from '../keyboardTarget';
 
 interface Props {
   inputRef: React.RefObject<HTMLInputElement | null>;
@@ -70,6 +71,9 @@ export const SearchInputBar: React.FC<Props> = ({
         value={query}
         onChange={e => { setQuery(e.target.value); setHighlightedIndex(-1); }}
         onKeyDown={e => {
+          // Keys the input method is using mid-composition (the Enter that picks a pinyin candidate, the arrows
+          // that move through candidates) belong to it, not to the search.
+          if (isImeKey(e.nativeEvent)) return;
           // ↑/↓ move the highlight through the saved-sentence suggestions.
           if (e.key === 'ArrowDown' && suggestions.length > 0) {
             e.preventDefault();
