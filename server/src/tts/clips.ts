@@ -13,6 +13,7 @@ import {
   isOfflineVoice,
   respellingPath,
   timingsPath,
+  publishOnce,
   TTS_DIR,
   ttsKey,
   writeFileAtomic,
@@ -54,7 +55,7 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
   // Synthesize + store a clip's audio unless it already exists. `voice` doubles as the style: the
   // CASUAL_STYLE sentinel runs the casual recipe (AI-reduce the text, then voice-design TTS); any other
   // value is a MiMo voice (clear track). `reduced` lets the backfill pass a pre-batched casual respelling.
-  // Resolves the new bytes, or null when the clip was already on disk.
+  // Resolves the new bytes, or null when the clip was already on disk or another writer stored it first.
   function ensureAudio(text: string, voice: string, reduced?: string): Promise<Buffer | null> {
     const key = ttsKey(text, voice);
     const existing = audioInFlight.get(key);
@@ -76,7 +77,9 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
         audio = await deps.synthClear(text, voice);
       }
       mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
-      await writeFileAtomic(p, audio);
+      // Another process may have stored this clip while it was synthesized here. Its copy stays, and the timings are
+      // aligned on the bytes actually stored.
+      if (!(await publishOnce(p, audio))) return null;
       // Keep the respelling beside the clip: the only record of what a casual clip actually says. Best-effort.
       if (spoken) await writeFileAtomic(respellingPath(key), spoken).catch(() => {});
       return audio;
@@ -102,7 +105,7 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
         console.warn('[tts] local whisper alignment failed:', (error as Error | undefined)?.message);
         return;
       }
-      await writeFileAtomic(tp, JSON.stringify(words));
+      await publishOnce(tp, JSON.stringify(words));
     })().finally(() => timingsInFlight.delete(key));
     timingsInFlight.set(key, job);
     return job;

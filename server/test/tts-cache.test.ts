@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
   audioPath,
   isCacheKey,
   isOfflineVoice,
+  publishOnce,
   respellingPath,
   sniffContentType,
   timingsPath,
@@ -53,4 +55,14 @@ test('the backfill keys a sentence by its speakable text: markers stripped, then
   );
   assert.deepEqual(catalog, ['I turned it down.', 'A brace inside a marker stays plain.']);
   assert.deepEqual(library, ['One more line.']);
+});
+
+test('a published file keeps the first writer\'s bytes and leaves no temp file behind', async () => {
+  const dir = join(TTS_DIR, 'publish-once');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'clip');
+  assert.equal(await publishOnce(path, Buffer.from('first')), true);
+  assert.equal(await publishOnce(path, Buffer.from('second')), false);
+  assert.equal(readFileSync(path, 'utf8'), 'first');
+  assert.deepEqual(readdirSync(dir), ['clip']);
 });

@@ -4,7 +4,7 @@
 // never rewritten. The cache is GLOBAL, keyed by voice and text and shared across users, since pronunciation
 // isn't user-private; requireAuth (mounted on /api/*) still gates the routes that serve it.
 import { createHash, randomUUID } from 'crypto';
-import { access, rename, rm, writeFile } from 'fs/promises';
+import { access, link, open, rename, rm, writeFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { env } from '../env.js';
 
@@ -46,16 +46,54 @@ export async function fileExists(p: string): Promise<boolean> {
   try { await access(p); return true; } catch { return false; }
 }
 
-// Write through a temp file + rename: clips are served as immutable for a year, so a crash mid-write
-// must never leave a truncated file under the final name.
-export async function writeFileAtomic(path: string, data: Buffer | string): Promise<void> {
+// Replace a file whole: written under a temp name beside it, then renamed over it, so a reader never sees half of
+// it. For files that may change (a casual clip's respelling, the backfill's status); clips use publishOnce.
+export async function writeFileAtomic(path: string, data: Buffer | string, options: { mode?: number } = {}): Promise<void> {
   const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temp, data);
+    await writeFile(temp, data, options);
     await rename(temp, path);
   } catch (error) {
     await rm(temp, { force: true }).catch(() => {});
     throw error;
+  }
+}
+
+// What link() answers on a filesystem without hard links; publishOnce then renames instead.
+const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EXDEV', 'ENOSYS']);
+
+/**
+ * Store a file under its final name unless one is already there; resolves whether this call stored it. Several
+ * writers can make the same clip at once (this process's routes and backfill, a detached backfill worker): the first
+ * to finish wins and the others' bytes are dropped, so a clip that may already have been served never changes and its
+ * timings describe the audio on disk. The bytes are written and synced under a unique temp name beside the target,
+ * then hard-linked into place, since link() refuses a taken name where rename() would replace it. Without hard links
+ * it renames instead, after checking that the name is free.
+ */
+export async function publishOnce(path: string, data: Buffer | string): Promise<boolean> {
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    const handle = await open(temp, 'wx');
+    try {
+      await handle.writeFile(data);
+      // Synced before the name appears, so a crash can't leave an empty clip under it for good.
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      await link(temp, path);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? '';
+      if (code === 'EEXIST') return false;
+      if (!NO_HARD_LINKS.has(code)) throw error;
+    }
+    if (await fileExists(path)) return false;
+    await rename(temp, path);
+    return true;
+  } finally {
+    await rm(temp, { force: true }).catch(() => {});
   }
 }
 
