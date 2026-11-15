@@ -130,7 +130,7 @@ export function createImportRoutes({ fetchImage = fetchImageAsBase64 }: ImportRo
     const holders: Array<{ imageUrl?: unknown }> = items.filter(item => isRemote(item.data?.imageUrl)).map(item => item.data);
     for (const item of items) {
       if (Array.isArray(item.data?.vocabs)) {
-        for (const vocab of item.data.vocabs) if (isRemote(vocab.imageUrl)) holders.push(vocab);
+        for (const vocab of item.data.vocabs) if (isRecord(vocab) && isRemote(vocab.imageUrl)) holders.push(vocab);
       }
     }
     for (const holder of holders.slice(MAX_IMPORT_IMAGES)) delete holder.imageUrl;

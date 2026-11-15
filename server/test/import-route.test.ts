@@ -109,3 +109,15 @@ test('nested images are fetched five at a time, like the items\' own', async () 
   assert.deepEqual(await response.json(), { ok: true, imported: 1, skipped: 0, imagesFetched: 12 });
   assert.equal(mostInFlight, 5);
 });
+
+test('a phrase whose vocabs include a null or a string still imports', async () => {
+  const response = await importItems([{
+    type: 'phrase',
+    data: { id: 'sparse-phrase', query: 'q', vocabs: [null, 'stray', { id: 'sparse-vocab', word: 'w', imageUrl: 'https://img.example/ok/sparse' }] },
+    srs: srs('sparse-phrase', 'phrase'),
+    savedAt: 1,
+  }]);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, imported: 1, skipped: 0, imagesFetched: 1 });
+  assert.ok(getItemImageBinary('sparse-vocab', USER));
+});
