@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useBackdropClick } from './backdropPress';
 import { useEscapeLayer } from './escapeStack';
 import { useOverlay } from './overlayStack';
 
@@ -52,11 +53,14 @@ export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max
 
   useOverlay();
   useModalFocus(panelRef);
+  // A press that began in the panel, such as a text selection, doesn't close the dialog where it ends.
+  const backdrop = useBackdropClick(onClose);
 
   return (
     <div
       className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4 fade-in"
-      onClick={onClose}
+      onPointerDown={backdrop.onPointerDown}
+      onClick={backdrop.onClick}
     >
       <div
         ref={panelRef}
