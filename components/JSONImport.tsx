@@ -194,7 +194,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
 
         {itemCount > 0 && status === 'idle' && (
           <p className="text-[11px] text-slate-400 mt-2 text-center">
-            Image URLs will be auto-downloaded &middot; {modifierKeyLabel()}+Enter
+            Image URLs are downloaded (up to 100) &middot; {modifierKeyLabel()}+Enter
           </p>
         )}
 
@@ -212,7 +212,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Features:</p>
               {[
                 'Accepts simplified or full StoredItem format',
-                'Image URLs auto-converted to base64',
+                'Image URLs are downloaded and stored (up to 100 per import)',
                 'Single card or array of cards',
               ].map((hint, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs text-slate-500">

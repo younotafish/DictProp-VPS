@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { importErrorMessage, parseImportText } from '../../services/notebook/jsonImport.ts';
 
-test('one card or an array of them is accepted, keeping the items with a word or a full item id', () => {
+test("one card or an array of them is accepted, keeping the items the server's first check keeps", () => {
   assert.deepEqual(parseImportText(' {"word":"ubiquitous","chinese":"无处不在的"} '), {
     items: [{ word: 'ubiquitous', chinese: '无处不在的' }], error: null,
   });
@@ -10,9 +10,16 @@ test('one card or an array of them is accepted, keeping the items with a word or
   assert.deepEqual(parseImportText(JSON.stringify([{ word: 'apple' }, full, { chinese: '苹果' }, null, 7, 'pear'])), {
     items: [{ word: 'apple' }, full], error: null,
   });
+  // The server skips a blank word and a full item without its type, so they aren't counted or sent.
+  assert.deepEqual(parseImportText(JSON.stringify([{ word: '' }, { word: '  ' }, { data: { id: 'x', word: 'a' } }, { word: 'pear' }])), {
+    items: [{ word: 'pear' }], error: null,
+  });
 });
 
 test('JSON with nothing to import, or no JSON at all, says why', () => {
+  assert.deepEqual(parseImportText('[{"word":""},{"data":{"id":"x","word":"a"}}]'), {
+    items: null, error: 'No valid items found. Each item needs at least a "word" field.',
+  });
   assert.deepEqual(parseImportText('[{"chinese":"苹果"}, {"data":{}}]'), {
     items: null, error: 'No valid items found. Each item needs at least a "word" field.',
   });

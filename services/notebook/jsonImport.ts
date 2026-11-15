@@ -4,9 +4,11 @@ type JsonRecord = Record<string, unknown>;
 
 const isRecord = (value: unknown): value is JsonRecord => typeof value === 'object' && value !== null;
 
-// Each item should have at least a 'word' field (simplified) or 'data.id' (full)
+// The server's first check of each item (POST /api/import in server/src/routes/items.ts): a full item needs its
+// data and type, a simplified card a word that isn't blank. The server checks every item more closely after that,
+// so an item counted here can still be skipped.
 const isImportable = (item: unknown): boolean =>
-  isRecord(item) && (typeof item.word === 'string' || (isRecord(item.data) && !!item.data.id));
+  isRecord(item) && ((!!item.data && !!item.type) || (typeof item.word === 'string' && item.word.trim() !== ''));
 
 /** The pasted JSON's items worth sending, one object or an array of them, or why there are none. */
 export const parseImportText = (text: string): { items: unknown[] | null; error: string | null } => {
