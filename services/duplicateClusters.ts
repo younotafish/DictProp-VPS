@@ -14,8 +14,8 @@ export function findDuplicateClusterViews(activeItems: StoredItem[]): DuplicateC
       const clusterItems = activeItems.filter(
         it => it.type === 'vocab' && set.has(normalizeKey((it.data as VocabCard).word || ''))
       );
-      const suggestedCanonical = [...baseWords].sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
-      return { id: `dup-${i}`, baseWords, items: clusterItems, suggestedCanonical };
+      // findDuplicateClusters lists each cluster's base words shortest first, the alphabetically first among equals.
+      return { id: `dup-${i}`, baseWords, items: clusterItems, suggestedCanonical: baseWords[0] };
     })
     .filter(c => c.items.length >= 2);
 }

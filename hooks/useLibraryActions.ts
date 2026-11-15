@@ -210,7 +210,7 @@ export function useLibraryActions(
   // A meaning present in both old and new updates IN PLACE (handleSave matches by word+sense and we pass
   // its existing SRS), so spaced-repetition progress survives the refresh; brand-new meanings are added.
   // Unmatched saved senses remain: model sense coverage varies between calls, so omission is not evidence
-  // that a valid stored meaning should be deleted. Called again as illustrations stream in (GlobalSearch).
+  // that a valid stored meaning should be deleted.
   const handleRefreshReplace = useCallback((word: string, vocabs: VocabCard[]) => {
     if (!vocabs?.length) return;
     const spelling = word.toLowerCase().trim();
@@ -220,11 +220,9 @@ export function useLibraryActions(
     vocabs.forEach(vocab => {
       const match = oldItems.find(o => ((o.data as VocabCard).sense || '') === (vocab.sense || ''));
       if (match) {
-        // Update IN PLACE: keep the saved item's id/SRS/savedAt, swap in the fresh content.
-        // A refresh replaces the card BEFORE its new image has been generated, then re-saves once the
-        // image streams in. Carry the existing image forward when the fresh vocab has none yet, so the
-        // word is never left imageless — if the user navigates away (or the image gen fails) mid-refresh
-        // it simply keeps its old image instead of losing it.
+        // Update IN PLACE: keep the saved item's id/SRS/savedAt, swap in the fresh content. The card keeps
+        // its picture unless the fresh analysis brings one, which the search never does: pictures come from
+        // the Mac's enrichment cycle.
         const prevImage = (match.data as VocabCard).imageUrl;
         handleSave({ ...match, data: { ...vocab, id: match.data.id, imageUrl: vocab.imageUrl ?? prevImage }, srs: match.srs, savedAt: match.savedAt });
       } else {

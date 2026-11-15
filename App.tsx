@@ -81,7 +81,7 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
   const library = useLibrary(user.id);
   const { latestItemsRef } = library;
   const { reviewHistory, flushPendingReviews, undoSRSReview, updateSRS } = useReviewOutbox(user.id, library);
-  const { comparisons, handleCompareReady, handleCompare, handleOpenComparison } = useComparisons(authState);
+  const { comparisons, handleCompareReady, handleCompare } = useComparisons(authState);
   const libraryViews = useLibraryViews(library.savedItems);
   const {
     allActiveItems, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems,
@@ -232,7 +232,7 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
               onUpdateSRS={updateSRS}
               onCompare={handleCompare}
               comparisons={comparisons}
-              onOpenComparison={handleOpenComparison}
+              onOpenComparison={handleCompare}
               onSaveSentence={handleSaveSentence}
               onOpenExampleSentence={prepareExampleSentence}
               isSentenceSaved={isSentenceSaved}
