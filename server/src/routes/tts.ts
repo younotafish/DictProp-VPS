@@ -38,13 +38,13 @@ export function createTtsRoutes(deps: TtsRouteDependencies = {}) {
   const backfill = createBackfill({ clips, reduceBatch, sentenceTexts: backfillTexts, retryDelayMs: backfillRetryDelayMs });
   const routes = new Hono();
 
-
-  // POST /api/tts/backfill — start the background backfill (no-op if already running); returns status.
-  // GET  /api/tts/backfill — current progress. Registered BEFORE /tts/:name so "backfill" isn't read as a key.
+  // POST /api/tts/backfill — start the background backfill unless one is going, here or in the detached worker;
+  // returns its status. GET /api/tts/backfill — current progress. Registered BEFORE /tts/:name so "backfill" isn't
+  // read as a key.
   routes.post('/tts/backfill', async (c) => {
     const detached = await getDetachedBackfillStatus();
     if (detached) return c.json(detached);
-    backfill.run().catch((e: unknown) => console.warn('[tts] backfill error:', (e as Error | undefined)?.message));
+    await backfill.start();
     return c.json(backfill.status());
   });
   routes.get('/tts/backfill', async (c) => c.json((await getDetachedBackfillStatus()) ?? backfill.status()));

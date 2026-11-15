@@ -7,12 +7,20 @@ import { getAllSentenceTexts } from '../db.js';
 import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
 import { stripSentenceMarkers } from '../shared/sentence-markers.js';
-import { audioPath, CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, ttsKey } from './cache.js';
+import { audioPath, CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, ttsKey, writeFileAtomic } from './cache.js';
 import { reduceCasualBatch, RESPELLING_BATCH_SIZE, respellingUnavailable } from './casual.js';
 import type { ClipStore } from './clips.js';
+import { acquireLock, type LockOwner } from './lock.js';
 import { runPool } from './pool.js';
 
-const BACKFILL_STATUS_PATH = resolve(env.DATA_DIR, 'tts-backfill-status.json');
+// The lock holder's progress, rewritten at every heartbeat: the web server reports a detached worker's run from it,
+// and the scheduled workflow prints it.
+export const BACKFILL_STATUS_PATH = resolve(env.DATA_DIR, 'tts-backfill-status.json');
+const BACKFILL_LOCK_PATH = resolve(env.DATA_DIR, 'tts-backfill.lock');
+const HEARTBEAT_MS = 30_000;
+// A lock untouched this long belongs to a run that died; a status that stopped beating this long, likewise.
+const LOCK_STALE_AFTER_MS = 5 * 60_000;
+const STATUS_STALE_AFTER_MS = 120_000;
 
 // Generates audio + word timings for EVERY saved sentence, server-side, detached from any request —
 // so the client never has to stay open. Idempotent (generateAndVerify skips clips that already have
@@ -23,11 +31,14 @@ const speakableText = (text: string): string => stripSentenceMarkers(text).trim(
 
 export type BackfillStatus = { running: boolean; total: number; done: number; generated: number; failed: number; startedAt: number; finishedAt: number };
 
+// A detached worker's run, while its status keeps beating. A status a web server wrote is skipped: this process
+// reports its own run from memory, and another server's run is one a restart has ended.
 export async function getDetachedBackfillStatus(): Promise<BackfillStatus | null> {
   try {
     const value = JSON.parse(await readFile(BACKFILL_STATUS_PATH, 'utf8'));
     const heartbeatAt = Number(value?.heartbeatAt);
-    if (value?.running !== true || !Number.isFinite(heartbeatAt) || Date.now() - heartbeatAt > 120_000) return null;
+    if (value?.owner === 'server' || value?.running !== true || !Number.isFinite(heartbeatAt) ||
+        Date.now() - heartbeatAt > STATUS_STALE_AFTER_MS) return null;
     return {
       running: true,
       total: Number(value.total) || 0,
@@ -97,13 +108,23 @@ export interface BackfillOptions {
   reduceBatch?: (sentences: string[]) => Promise<Array<string | null>>;
   sentenceTexts?: () => BackfillTexts;
   retryDelayMs?: number;
+  /** Who runs it, recorded in the lock and the status: the web server (the default) or the detached worker. */
+  owner?: LockOwner;
+}
+
+export interface BackfillRun {
+  /** Resolves when the run ends; never rejects. */
+  finished: Promise<void>;
 }
 
 export interface Backfill {
   /** This process's run: running, or the last one's counts. */
   status(): BackfillStatus;
-  /** Starts a run unless one is going in this process; resolves when it ends. */
-  run(): Promise<void>;
+  /**
+   * Takes the backfill lock and starts a run, resolving once its counts are set. Null when it didn't start: a run is
+   * going in this process or another, or the sentences couldn't be read.
+   */
+  start(): Promise<BackfillRun | null>;
 }
 
 export function createBackfill({
@@ -111,6 +132,7 @@ export function createBackfill({
   reduceBatch = reduceCasualBatch,
   sentenceTexts = defaultBackfillTexts,
   retryDelayMs = BACKFILL_RETRY_DELAY_MS,
+  owner = 'server',
 }: BackfillOptions): Backfill {
   let backfill: BackfillStatus = { running: false, total: 0, done: 0, generated: 0, failed: 0, startedAt: 0, finishedAt: 0 };
   const retry = (operation: () => Promise<void>) =>
@@ -187,10 +209,16 @@ export function createBackfill({
     }
   }
 
-  async function runBackfill(): Promise<void> {
-    if (backfill.running) return;
-    respellingHalted = false;
-    // Synchronous setup (runs before the first await, so a non-awaiting caller still sees `total`).
+  const persist = () => writeFileAtomic(
+    BACKFILL_STATUS_PATH,
+    `${JSON.stringify({ ...backfill, owner, pid: process.pid, heartbeatAt: Date.now() }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  const warn = (what: string) => (e: unknown) => console.warn(`[tts] backfill ${what}:`, (e as Error | undefined)?.message);
+
+  async function begin(): Promise<BackfillRun | null> {
+    const lock = await acquireLock(BACKFILL_LOCK_PATH, owner, LOCK_STALE_AFTER_MS);
+    if (!lock) return null;
     let catalogTexts: string[];
     let libraryTexts: string[];
     try {
@@ -198,22 +226,58 @@ export function createBackfill({
       ({ catalog: catalogTexts, library: libraryTexts } = partitionBackfillTexts(catalog, library));
     } catch (e) {
       console.warn('[tts] backfill: failed to read items:', (e as Error | undefined)?.message);
-      return;
+      await lock.release();
+      return null;
     }
     const sentenceCount = catalogTexts.length + libraryTexts.length;
     // Two styles per sentence, each with audio and word timings.
     backfill = { running: true, total: sentenceCount * 2, done: 0, generated: 0, failed: 0, startedAt: Date.now(), finishedAt: 0 };
+    respellingHalted = false;
     console.log(`[tts] backfill: starting for ${sentenceCount} sentences × 2 styles`);
+    await persist().catch(warn('status write failed'));
+    const heartbeat = setInterval(() => {
+      Promise.all([lock.touch(), persist()]).catch(warn('heartbeat failed'));
+    }, HEARTBEAT_MS);
 
-    // The catalog is finite and product-critical. Finish both styles there before scanning the much
-    // larger saved-item library, otherwise a new collection's casual track can wait for days.
-    await runBackfillGroup(catalogTexts);
-    await runBackfillGroup(libraryTexts);
-
-    backfill.running = false;
-    backfill.finishedAt = Date.now();
-    console.log(`[tts] backfill done: generated=${backfill.generated} skipped=${backfill.total - backfill.generated - backfill.failed} failed=${backfill.failed}`);
+    const finished = (async () => {
+      try {
+        // The catalog is finite and product-critical. Finish both styles there before scanning the much
+        // larger saved-item library, otherwise a new collection's casual track can wait for days.
+        await runBackfillGroup(catalogTexts);
+        await runBackfillGroup(libraryTexts);
+      } catch (e) {
+        warn('error')(e);
+      } finally {
+        clearInterval(heartbeat);
+        backfill.running = false;
+        backfill.finishedAt = Date.now();
+        console.log(`[tts] backfill done: generated=${backfill.generated} skipped=${backfill.total - backfill.generated - backfill.failed} failed=${backfill.failed}`);
+        await persist().catch(warn('status write failed'));
+        await lock.release();
+      }
+    })();
+    return { finished };
   }
 
-  return { status: () => ({ ...backfill }), run: runBackfill };
+  // A start in progress, so two requests arriving together start one run.
+  let starting: Promise<BackfillRun | null> | null = null;
+
+  async function start(): Promise<BackfillRun | null> {
+    if (backfill.running) return null;
+    if (starting) {
+      await starting;
+      return null;
+    }
+    starting = begin().catch((e) => {
+      warn('could not start')(e);
+      return null;
+    });
+    try {
+      return await starting;
+    } finally {
+      starting = null;
+    }
+  }
+
+  return { status: () => ({ ...backfill }), start };
 }

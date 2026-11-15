@@ -1,48 +1,16 @@
-import { open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { env } from '../env.js';
-import { createBackfill } from '../tts/backfill.js';
+// The scheduled backfill: .github/workflows/tts-backfill.yml starts it detached inside the app container. It shares the
+// backfill lock with the web server's runs, so it starts only when no run is going, and prints the status at the end
+// (or, when another run holds the lock, the status that run last published).
+import { readFile } from 'node:fs/promises';
+import { BACKFILL_STATUS_PATH, createBackfill } from '../tts/backfill.js';
 import { createClipStore, defaultClipDependencies } from '../tts/clips.js';
 
-const lockPath = join(env.DATA_DIR, 'tts-backfill.lock');
-const statusPath = join(env.DATA_DIR, 'tts-backfill-status.json');
-const staleAfterMs = 5 * 60 * 1_000;
-const backfill = createBackfill({ clips: createClipStore(defaultClipDependencies) });
-
-async function acquireLock() {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      return await open(lockPath, 'wx', 0o600);
-    } catch (error: any) {
-      if (error?.code !== 'EEXIST') throw error;
-      const age = Date.now() - (await stat(lockPath)).mtimeMs;
-      if (age < staleAfterMs || attempt > 0) return null;
-      await unlink(lockPath).catch(() => {});
-    }
-  }
-  return null;
-}
-
-const lock = await acquireLock();
-if (!lock) {
-  const existing = await readFile(statusPath, 'utf8').catch(() => '{}');
+const backfill = createBackfill({ clips: createClipStore(defaultClipDependencies), owner: 'worker' });
+const run = await backfill.start();
+if (run) {
+  await run.finished;
+  process.stdout.write(`${JSON.stringify(backfill.status())}\n`);
+} else {
+  const existing = await readFile(BACKFILL_STATUS_PATH, 'utf8').catch(() => '{}');
   process.stdout.write(`${existing.trim()}\n`);
-  process.exit(0);
-}
-
-const persist = async () => {
-  const payload = { ...backfill.status(), workerPid: process.pid, heartbeatAt: Date.now() };
-  await writeFile(lockPath, `${JSON.stringify(payload)}\n`, { mode: 0o600 });
-  await writeFile(statusPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-};
-const heartbeat = setInterval(() => { void persist(); }, 30_000);
-try {
-  const job = backfill.run();
-  await persist();
-  await job;
-  await persist();
-} finally {
-  clearInterval(heartbeat);
-  await lock.close().catch(() => {});
-  await unlink(lockPath).catch(() => {});
 }

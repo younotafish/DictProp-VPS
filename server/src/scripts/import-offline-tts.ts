@@ -16,6 +16,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { validateOfflineTtsBundle, type OfflineTtsBundle } from '../offline-tts-import.js';
 import type { WordTiming } from '../tts-alignment.js';
 import { audioPath, timingsPath } from '../tts/cache.js';
+import { isProcessRunning } from '../tts/lock.js';
 
 const manifestPath = process.argv[2];
 if (!manifestPath) throw new Error('Usage: import-offline-tts <manifest.json>');
@@ -71,23 +72,13 @@ function syncDirectory(path: string): void {
   }
 }
 
-function isRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM: the process exists but belongs to someone else.
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
 // An import killed mid-write (a step timeout's SIGKILL) leaves its temp file behind. The next run that installs the
 // same file removes it, unless the process that named it is still running.
 function removeStaleTemps(target: string): void {
   const prefix = `${basename(target)}.`;
   for (const name of readdirSync(dirname(target))) {
     const pid = name.startsWith(prefix) ? /^(\d+)\.importing$/.exec(name.slice(prefix.length))?.[1] : undefined;
-    if (pid === undefined || Number(pid) === process.pid || isRunning(Number(pid))) continue;
+    if (pid === undefined || Number(pid) === process.pid || isProcessRunning(Number(pid))) continue;
     rmSync(join(dirname(target), name), { force: true });
   }
 }
