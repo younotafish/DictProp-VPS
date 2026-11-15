@@ -20,3 +20,15 @@ export function dataUriToBlob(dataUri: string): Blob {
 
   return new Blob([new TextEncoder().encode(decodeURIComponent(payload))], { type: mimeType });
 }
+
+// String.fromCharCode takes the bytes as arguments, so they go in chunks well under every engine's argument limit.
+const BASE64_CHUNK = 0x8000;
+
+/** Base64 of `bytes`: what btoa gives for their binary string, built a chunk at a time rather than a byte at a time. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let start = 0; start < bytes.length; start += BASE64_CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(start, start + BASE64_CHUNK));
+  }
+  return btoa(binary);
+}

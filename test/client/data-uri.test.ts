@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { dataUriToBlob } from '../../services/dataUri.js';
+import { randomBytes } from 'node:crypto';
+import { bytesToBase64, dataUriToBlob } from '../../services/dataUri.js';
 
 test('dataUriToBlob decodes base64 without fetch', async () => {
   const originalFetch = globalThis.fetch;
@@ -26,4 +27,13 @@ test('dataUriToBlob decodes percent-encoded data', async () => {
 
 test('dataUriToBlob rejects malformed input', () => {
   assert.throws(() => dataUriToBlob('not-a-data-uri'), /Invalid data URI/);
+});
+
+test('bytesToBase64 encodes in chunks to the same text as a byte-by-byte encoding', () => {
+  // Two full chunks and an odd remainder, so the padding and the chunk seams are both covered.
+  const bytes = new Uint8Array(randomBytes(0x8000 * 2 + 3));
+  assert.equal(bytesToBase64(bytes), Buffer.from(bytes).toString('base64'));
+  assert.equal(bytesToBase64(bytes), btoa(bytes.reduce((text, byte) => text + String.fromCharCode(byte), '')));
+  assert.equal(bytesToBase64(new Uint8Array()), '');
+  assert.equal(bytesToBase64(new Uint8Array([0xff])), '/w==');
 });

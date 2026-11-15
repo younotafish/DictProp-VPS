@@ -1,5 +1,5 @@
 import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent, ReviewHistory, RevisionCursor } from '../types';
-import { dataUriToBlob } from './dataUri';
+import { bytesToBase64, dataUriToBlob } from './dataUri';
 import { log, error as logError } from './logger';
 import { fetchWithin, HttpError, jsonRequest, requestJson, requestVoid } from './http';
 import { MAX_COMPARE_WORDS } from './queryMode';
@@ -379,10 +379,7 @@ export const detectVocabulary = async (text: string): Promise<VocabularyScan> =>
 export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
   log('[transcribeAudio] Starting transcription...');
 
-  const arrayBuffer = await audioBlob.arrayBuffer();
-  const base64 = btoa(
-    new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-  );
+  const base64 = bytesToBase64(new Uint8Array(await audioBlob.arrayBuffer()));
 
   let data: any;
   try {
