@@ -1,3 +1,4 @@
+import { ConflictError } from '../errors.js';
 import type { ReviewRating, ReviewTaskType } from '../shared/review.js';
 import { advanceReviewSrs } from '../srs.js';
 import { db } from './connection.js';
@@ -100,7 +101,7 @@ const applyReviewTransaction = db.transaction((
   }
   const previous = reviewStmts.byId.get(incoming.id) as any;
   if (previous) {
-    if (previous.user_id !== userId) throw new Error('Review event id belongs to another user');
+    if (previous.user_id !== userId) throw new ConflictError('Review event id belongs to another user');
     const snapshots = reviewStmts.snapshotsByEvent.all(incoming.id) as ReviewSnapshotRow[];
     const storedIds = snapshots.map(row => row.item_id);
     // A retried review reports a base only while the review is still the item's latest change.
@@ -246,10 +247,10 @@ const undoReviewTransaction = db.transaction((
 ): { undone: boolean; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
   const event = reviewStmts.byId.get(eventId) as any;
   if (!event) return null;
-  if (event.user_id !== userId) throw new Error('Review event id belongs to another user');
+  if (event.user_id !== userId) throw new ConflictError('Review event id belongs to another user');
 
   const snapshots = reviewStmts.snapshotsByEvent.all(eventId) as ReviewSnapshotRow[];
-  if (snapshots.length === 0) throw new Error('Review event cannot be undone');
+  if (snapshots.length === 0) throw new ConflictError('Review event cannot be undone');
   const itemIds = snapshots.map(snapshot => snapshot.item_id);
   // A retried undo reports no base: the undo's own revision isn't stored.
   if (event.undone_at !== null) return { undone: false, itemIds, baseRevisions: {} };
@@ -258,7 +259,7 @@ const undoReviewTransaction = db.transaction((
   for (const snapshot of snapshots) {
     const row = stmts.getByIdScoped.get(snapshot.item_id, userId) as ItemRow | undefined;
     if (!row || row.is_deleted === 1 || !sameSrs(row.srs, snapshot.applied_srs)) {
-      throw new Error('Review is no longer the latest change for this item');
+      throw new ConflictError('Review is no longer the latest change for this item');
     }
     baseRevisions[snapshot.item_id] = row.revision;
   }

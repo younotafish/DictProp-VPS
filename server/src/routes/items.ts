@@ -242,24 +242,17 @@ itemsRoutes.put('/items', async (c) => {
   const body = await c.req.json().catch(() => null);
   const validationError = validateStoredItemBatch(body, 500);
   if (validationError) return c.json({ error: validationError }, 400);
-  try {
-    const { enriched, ...result } = upsertMany(body, userId);
-    // Return sentences the enrichment pool just analysed immediately instead of waiting for the next
-    // 8-second delta pull. Conflicts use this same bounded canonical response path. Fields the server
-    // merely kept from its stored copy are left out, since adopting a canonical copy drops an edit made
-    // while the push was in flight. The saving client keeps its own data at an unchanged revision, so it
-    // lacks those fields until the row next changes.
-    const canonicalIds = new Set([...result.conflicts, ...enriched]);
-    const canonical = [...canonicalIds]
-      .map(id => getItemById(id, userId, false))
-      .filter(Boolean);
-    return c.json({ ok: true, count: body.length, ...result, canonical });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('belongs to another user')) {
-      return c.json({ error: error.message }, 409);
-    }
-    throw error;
-  }
+  const { enriched, ...result } = upsertMany(body, userId);
+  // Return sentences the enrichment pool just analysed immediately instead of waiting for the next
+  // 8-second delta pull. Conflicts use this same bounded canonical response path. Fields the server
+  // merely kept from its stored copy are left out, since adopting a canonical copy drops an edit made
+  // while the push was in flight. The saving client keeps its own data at an unchanged revision, so it
+  // lacks those fields until the row next changes.
+  const canonicalIds = new Set([...result.conflicts, ...enriched]);
+  const canonical = [...canonicalIds]
+    .map(id => getItemById(id, userId, false))
+    .filter(Boolean);
+  return c.json({ ok: true, count: body.length, ...result, canonical });
 });
 
 // POST /api/import — bulk import
@@ -376,35 +369,20 @@ itemsRoutes.post('/reviews/apply', async (c) => {
       return c.json({ error: validationError ? `Invalid review seed: ${validationError}` : 'Review seed does not match event' }, 400);
     }
   }
-  try {
-    // A review can reach the server before its item: an implicit catalog sentence on its first review, or an
-    // item whose first push hasn't landed. The seed is stored in the review's own transaction, so an
-    // offline/retried review cannot race the ordinary item sync or an importer, or advance the schedule twice.
-    // Existing items always win; the seed is used only for a genuinely absent id.
-    const result = applyReviewEvent(event, itemIds, userId, seedItem);
-    if (!result) return c.json({ error: 'Review item not found' }, 404);
-    return c.json(result, result.applied ? 201 : 200);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Review could not be applied';
-    if (message.includes('belongs to another user')) return c.json({ error: message }, 409);
-    throw error;
-  }
+  // A review can reach the server before its item: an implicit catalog sentence on its first review, or an
+  // item whose first push hasn't landed. The seed is stored in the review's own transaction, so an
+  // offline/retried review cannot race the ordinary item sync or an importer, or advance the schedule twice.
+  // Existing items always win; the seed is used only for a genuinely absent id.
+  const result = applyReviewEvent(event, itemIds, userId, seedItem);
+  if (!result) return c.json({ error: 'Review item not found' }, 404);
+  return c.json(result, result.applied ? 201 : 200);
 });
 
 itemsRoutes.post('/reviews/:id/undo', (c) => {
   const userId = c.get('user').id;
   const eventId = c.req.param('id');
   if (!eventId || eventId.length > 200) return c.json({ error: 'Invalid review event id' }, 400);
-  try {
-    const result = undoReviewEvent(eventId, userId);
-    if (!result) return c.json({ error: 'Review event not found' }, 404);
-    return c.json(result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Review could not be undone';
-    if (message.includes('belongs to another user') || message.includes('cannot be undone') ||
-        message.includes('no longer the latest')) {
-      return c.json({ error: message }, 409);
-    }
-    throw error;
-  }
+  const result = undoReviewEvent(eventId, userId);
+  if (!result) return c.json({ error: 'Review event not found' }, 404);
+  return c.json(result);
 });

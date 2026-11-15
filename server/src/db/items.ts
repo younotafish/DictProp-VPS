@@ -1,3 +1,4 @@
+import { ConflictError } from '../errors.js';
 import { serverImageMarker } from '../shared/image-markers.js';
 import { keepServerOwnedData } from '../shared/server-owned-data.js';
 import { db } from './connection.js';
@@ -186,7 +187,7 @@ export function writeItem(item: any, userId: string, options: UpsertOptions): Up
   const now = Date.now();
   const existing = stmts.getById.get(data.id) as ItemRow | undefined;
   if (existing?.user_id && existing.user_id !== userId) {
-    throw new Error('Item id belongs to another user');
+    throw new ConflictError('Item id belongs to another user');
   }
 
   const incomingUpdatedAt = item.updatedAt || now;

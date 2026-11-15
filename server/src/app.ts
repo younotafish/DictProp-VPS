@@ -4,6 +4,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { compress } from 'hono/compress';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import { HTTPException } from 'hono/http-exception';
 import { secureHeaders } from 'hono/secure-headers';
 import { randomUUID } from 'crypto';
 import { dirname, resolve } from 'path';
@@ -13,6 +14,7 @@ import { createClientRateLimit, createConcurrencyLimit, createRateLimit } from '
 import { CANONICAL_ORIGIN, isWwwHost, requestedHost } from './canonical-host.js';
 import { isDatabaseReady } from './db.js';
 import { env } from './env.js';
+import { ConflictError } from './errors.js';
 import { aiRoutes } from './routes/ai.js';
 import { authRoutes } from './routes/auth.js';
 import { comparisonsRoutes } from './routes/comparisons.js';
@@ -49,13 +51,17 @@ export function createApp(options: AppOptions = {}) {
   const app = new Hono<{ Variables: AuthVariables }>();
 
   app.onError((error, c) => {
+    if (error instanceof HTTPException) return error.getResponse();
+    if (error instanceof ConflictError) return c.json({ error: error.message }, 409);
     const requestId = c.get('requestId') || 'unknown';
+    // One JSON line, stack included: the deploy log's public excerpt drops every line that names a requestId.
     console.error(JSON.stringify({
       level: 'error',
       requestId,
       method: c.req.method,
       path: c.req.path,
       message: error.message || 'Internal server error',
+      stack: error.stack,
     }));
     return c.json({ error: 'Internal server error', requestId }, 500);
   });

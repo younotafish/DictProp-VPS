@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { enrichmentId } from '../src/example-enrichment-coverage.js';
 
 process.env.DEV_AUTH_BYPASS = '1';
@@ -414,6 +415,31 @@ test('text AI routes do not reject concurrent request bursts locally', async () 
 
   assert.deepEqual(new Set(responses.map(response => response.status)), new Set([200]));
   assert.equal(peakActive, 31);
+});
+
+test('an unexpected error is a 500 logged as one JSON line with its stack, and an HTTP exception keeps its status', async t => {
+  const failing = new Hono();
+  failing.post('/analyze', () => { throw new TypeError('route exploded'); });
+  failing.post('/compare', () => { throw new HTTPException(418, { message: 'teapot' }); });
+  const failingApp = createApp({ logging: false, serveStaticFiles: false, aiRouter: failing });
+  const logged = t.mock.method(console, 'error', () => {});
+
+  let response = await failingApp.request('/api/analyze', { method: 'POST', headers: { 'X-Request-Id': 'route-failure' } });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: 'Internal server error', requestId: 'route-failure' });
+  assert.equal(logged.mock.callCount(), 1);
+  const line = JSON.parse(String(logged.mock.calls[0].arguments[0])) as Record<string, string>;
+  assert.equal(logged.mock.calls[0].arguments.length, 1);
+  assert.deepEqual(
+    { level: line.level, requestId: line.requestId, method: line.method, path: line.path, message: line.message },
+    { level: 'error', requestId: 'route-failure', method: 'POST', path: '/api/analyze', message: 'route exploded' },
+  );
+  assert.match(line.stack, /^TypeError: route exploded\n\s+at /);
+
+  response = await failingApp.request('/api/compare', { method: 'POST' });
+  assert.equal(response.status, 418);
+  assert.equal(await response.text(), 'teapot');
+  assert.equal(logged.mock.callCount(), 1);
 });
 
 test('the server does not expose remote image generation routes', async () => {

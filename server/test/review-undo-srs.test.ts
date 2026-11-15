@@ -60,7 +60,22 @@ test('a review that fails after its seed is stored leaves no seed behind', async
   assert.match((await response.json() as any).error, /belongs to another user/);
   assert.equal((await app.request('/api/items/unsynced')).status, 404);
   assert.equal(getItemById('unsynced', DEV_AUTH_USER.id), null);
-  assert.deepEqual(getReviewEvents(DEV_AUTH_USER.id, 0), []);
+  assert.deepEqual(getReviewEvents(DEV_AUTH_USER.id, 0).filter(event => event.itemId === 'unsynced'), []);
+});
+
+test('an undo that a later review has overtaken is refused with 409 and the reason', async () => {
+  upsertItem(vocabItem('overtaken'), DEV_AUTH_USER.id);
+  assert.equal(applyReviewEvent(review('overtaken-first', 'overtaken'), ['overtaken'], DEV_AUTH_USER.id)?.applied, true);
+  assert.equal(applyReviewEvent({ ...review('overtaken-second', 'overtaken'), reviewedAt: Date.now() + 1 }, ['overtaken'], DEV_AUTH_USER.id)?.applied, true);
+
+  let response = await app.request('/api/reviews/overtaken-first/undo', { method: 'POST' });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'Review is no longer the latest change for this item' });
+  assert.equal(getItemById('overtaken', DEV_AUTH_USER.id)?.srs.totalReviews, 2);
+
+  response = await app.request('/api/reviews/overtaken-second/undo', { method: 'POST' });
+  assert.equal(response.status, 200);
+  assert.equal(getItemById('overtaken', DEV_AUTH_USER.id)?.srs.totalReviews, 1);
 });
 
 test('a seed for an id another user holds is refused and changes nothing', async () => {
@@ -69,5 +84,5 @@ test('a seed for an id another user holds is refused and changes nothing', async
   assert.equal(response.status, 409);
   assert.equal(getItemById('held-elsewhere', DEV_AUTH_USER.id), null);
   assert.equal(getItemById('held-elsewhere', 'other-user')?.srs.totalReviews, 0);
-  assert.deepEqual(getReviewEvents(DEV_AUTH_USER.id, 0), []);
+  assert.deepEqual(getReviewEvents(DEV_AUTH_USER.id, 0).filter(event => event.itemId === 'held-elsewhere'), []);
 });
