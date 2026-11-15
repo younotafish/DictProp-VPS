@@ -158,6 +158,28 @@ test('a clip the element refuses to play is read by the system voice instead', a
   assert.equal(engine.getPlaybackState().text, text);
 });
 
+test('after the browser refuses a clip it had seeked into, the system voice alone pauses and resumes', async () => {
+  // Warm timings make the clip start past its lead-in, so the refused clip is left at a position past zero.
+  const text = await sentence(true, [{ text: 'Sentence', start: 0.13, end: 0.4 }]);
+  FakeAudioElement.playPolicy = 'refuse';
+  engine.speakNatural(text, { allowDownload: true });
+  const el = media.element();
+  await until(() => el.src.startsWith('blob:'), 'the clip is set on the element');
+  el.loadMetadata(3);
+  await until(() => media.synth.last?.text === text, 'the system voice takes over');
+  media.synth.last?.onstart?.();
+  assert.ok(el.currentTime > 0, 'the refused clip sits past its start');
+  assert.equal(engine.getPlaybackProgress(), 0, 'the refused clip\'s position is not the read\'s progress');
+  engine.pauseCurrent();
+  FakeAudioElement.playPolicy = 'allow';
+  const plays = el.playCalls;
+  const mark = media.synth.calls.length;
+  engine.resumeCurrent();
+  assert.equal(el.playCalls, plays, 'the refused clip does not start under the voice');
+  assert.deepEqual(media.synth.calls.slice(mark), ['resume']);
+  assert.equal(engine.getPlaybackState().status, 'playing');
+});
+
 test('changing the speech style stops what is playing', async () => {
   const { callbacks } = await playing();
   setTtsStyle('casual');

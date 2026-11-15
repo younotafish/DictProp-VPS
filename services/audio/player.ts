@@ -28,14 +28,21 @@ export interface PlaybackState {
   status: PlaybackStatus;
 }
 
+/** The output sounding the active request: a clip in the shared <audio> element, or the system voice. */
+export type PlaybackBackend = 'clip' | 'speech';
+
 interface PlayerRecord {
   /** Bumped by every request and every stop, so callbacks from a superseded request do nothing. */
   token: number;
   /** What the speaker buttons show, published to subscribers on every change. */
   state: PlaybackState;
+  /** The active request's output once it has one; null while it loads and when nothing is active. Pause and
+   *  resume, progress and seek act on the <audio> element only while it's 'clip': otherwise the element may
+   *  still hold an earlier clip, or one the browser refused to play. */
+  backend: PlaybackBackend | null;
 }
 
-const player: PlayerRecord = { token: 0, state: { text: null, status: 'idle' } };
+const player: PlayerRecord = { token: 0, state: { text: null, status: 'idle' }, backend: null };
 const playbackListeners = new Set<(s: PlaybackState) => void>();
 
 // ---------------------------------------------------------------------------
@@ -95,7 +102,7 @@ const pausePlayback = (): void => {
 
 const resumePlayback = (onRefused: () => void): void => {
   try {
-    if (audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0) audioEl.play().catch(onRefused);
+    if (player.backend === 'clip' && audioEl && audioEl.paused && !audioEl.ended && audioEl.currentTime > 0) audioEl.play().catch(onRefused);
   } catch {
     /* ignore */
   }
@@ -109,6 +116,7 @@ const resumePlayback = (onRefused: () => void): void => {
 /** Make a new request the current one, superseding whatever was active. Returns that request's check. */
 export const supersedePlayback = (): (() => boolean) => {
   const token = ++player.token;
+  player.backend = null;
   return () => token === player.token;
 };
 
@@ -122,6 +130,7 @@ export const setPlaybackState = (patch: Partial<PlaybackState>): void => {
 
 /** The current request finished, or failed for good: nothing is active any more. */
 export const endPlayback = (): void => {
+  player.backend = null;
   setPlaybackState({ text: null, status: 'idle' });
 };
 
@@ -138,7 +147,7 @@ export const subscribePlayback = (cb: (s: PlaybackState) => void): (() => void) 
 /** Fraction (0..1) of the active <audio> clip already played; 0 when unknown (e.g. system voice). */
 export const getPlaybackProgress = (): number => {
   const a = audioEl;
-  if (a && isFinite(a.duration) && a.duration > 0) return Math.min(1, Math.max(0, a.currentTime / a.duration));
+  if (player.backend === 'clip' && a && isFinite(a.duration) && a.duration > 0) return Math.min(1, Math.max(0, a.currentTime / a.duration));
   return 0;
 };
 
@@ -214,6 +223,7 @@ export const playUrl = async (
   const begin = startAt && startAt > 0 ? startAt : 0;
   el.src = url;
   setUrlInUse(url);
+  player.backend = 'clip';
   if (begin <= 0) { try { el.currentTime = 0; } catch { /* ignore */ } applyRate(el); await el.play(); return; }
   // Start partway in (skip the lead-in / word seek). CRITICAL on iOS: a currentTime set before
   // metadata is loaded is IGNORED, and setting it *after* play() makes the clip start at 0 and then
@@ -242,4 +252,7 @@ export const playUrl = async (
 export const playSpeech = (
   text: string,
   options: { rate: number; onStart: () => void; onEnd: () => void; onError: (event: SpeechSynthesisErrorEvent) => void },
-): SpeechSynthesisUtterance | null => systemSpeak(text, options);
+): SpeechSynthesisUtterance | null => {
+  player.backend = 'speech';
+  return systemSpeak(text, options);
+};
