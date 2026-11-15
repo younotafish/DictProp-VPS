@@ -82,4 +82,8 @@ test('a refined brief replaces the prompt and the first brief is kept as origina
   assert.throws(() => readRefinements({
     results: [{ itemIndex: 0, prompt: 'Too short.', change: 'x' }, { itemIndex: 1, prompt: 'x'.repeat(40), change: 'x' }],
   }, batch, 7), /^Error: Batch 7 omitted index 0$/);
+  // A result without its change note is refused like any other incomplete one, not by a TypeError.
+  assert.throws(() => readRefinements({
+    results: [{ itemIndex: 0, prompt: 'x'.repeat(40), change: 'x' }, { itemIndex: 1, prompt: 'x'.repeat(40) }],
+  }, batch, 7), /^Error: Batch 7 omitted index 1$/);
 });

@@ -50,7 +50,8 @@ export function readRefinements(parsed, batch, batchNumber) {
   });
   return batch.map((target, itemIndex) => {
     const result = byIndex.get(itemIndex);
-    if (!result || typeof result.prompt !== 'string' || result.prompt.trim().length < 40) {
+    if (!result || typeof result.prompt !== 'string' || result.prompt.trim().length < 40 ||
+        typeof result.change !== 'string') {
       throw new Error(`Batch ${batchNumber} omitted index ${itemIndex}`);
     }
     return {
