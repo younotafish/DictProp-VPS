@@ -1,20 +1,20 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
-import { ViewState, getItemSpelling, VocabCard } from './types';
+import { ViewState, VocabCard } from './types';
 import { Loader2 } from 'lucide-react';
-import { getItemContentHash } from './services/itemHash';
 import { analyzeInput } from './services/api';
 import { lazyLoadImage } from './services/libraryImages';
-import { loginRedirect, logout, type AuthState, type AuthUser } from './services/auth';
+import { loginRedirect, type AuthState, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
 import { AuthLoadingScreen, LibraryReadFailedScreen, PendingApprovalScreen, SignInScreen } from './components/AppGateScreens';
-import { takeOverlayOpener, useAnyOverlayOpen, useOverlay } from './components/overlayStack';
+import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppBanners, AppStatusPills } from './components/AppStatus';
 import { SRSAlgorithm } from './services/srsAlgorithm';
 import { normalizeKey } from './services/wordMatch';
 import { useFrozenWhile } from './hooks/useStableValue';
 import { warn } from './services/logger';
+import { installDebugItems } from './services/debugItems';
 import { useAuthState } from './hooks/useAuthState';
 import { useLibrary } from './hooks/useLibrary';
 import { loadFsrsScheduler, useReviewOutbox } from './hooks/useReviewOutbox';
@@ -33,8 +33,9 @@ import { useDuplicateMerge } from './hooks/useDuplicateMerge';
 import { useLibraryActions } from './hooks/useLibraryActions';
 import { useBatchImport } from './hooks/useBatchImport';
 
-// App re-renders on every library change and progress tick, so the screens and overlays are memoized
-// and re-render only when their own props change. Their code loads on first use, and the ones a tap can
+// The signed-in app re-renders on every library change and progress tick, so the screens, the search sheet,
+// the card popup and the navigation are memoized and re-render only when their own props change (NotebookView
+// memoizes itself); the dialogs render only while open. Their code loads on first use, and the ones a tap can
 // open are fetched once the first screen is up (see the preload effect in App).
 const NotebookView = lazyScreen('notebook', () => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
 const GlobalSearch = lazyScreen('global-search', () => import('./components/GlobalSearch').then(module => ({ default: React.memo(module.GlobalSearch) })));
@@ -57,15 +58,13 @@ const TAB_SCREENS = {
   essays: EssaysView,
 } satisfies Record<ViewState, { preload: () => void }>;
 
-/** The tab showing when the app last closed: the notebook if there's none, or one the app no longer has. */
+const isTabView = (value: string): value is ViewState => Object.prototype.hasOwnProperty.call(TAB_SCREENS, value);
+
+/** The tab showing when the app last closed, or the notebook if there's none or it's gone (the old 'search' tab). */
 const readSavedView = (): ViewState => {
   let saved: string | null = null;
   try { saved = localStorage.getItem('app_current_view'); } catch { /* storage unavailable */ }
-  // Default to notebook, and handle legacy 'search' value from old localStorage
-  if (!saved || saved === 'search' || !['notebook', 'study', 'sentences', 'real-life', 'essays'].includes(saved)) {
-    return 'notebook';
-  }
-  return saved as ViewState;
+  return saved !== null && isTabView(saved) ? saved : 'notebook';
 };
 
 /**
@@ -111,59 +110,11 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
   // A card covers the page from the moment it's opened, also while its code loads behind the spinner or
   // when it crashes, not only once DetailView has registered itself.
   useOverlay(!!detailContext);
-  // An open card, popup, dialog or search result covers the tabs and the nav bar, which leave the tab order
-  // and the accessibility tree meanwhile (components/overlayStack). Overlays render beside <main>, never in
-  // it. When the last one closes, this cleanup runs after the commit that made the page live again, so focus
-  // can go back to the control that opened the first; the overlay's own restore ran while it was inert.
-  const overlayOpen = useAnyOverlayOpen();
-  useEffect(() => {
-    if (!overlayOpen) return;
-    return () => {
-      const opener = takeOverlayOpener();
-      const main = mainRef.current;
-      const active = document.activeElement;
-      const focusLost = !active || active === document.body || !active.isConnected || !!active.closest('[inert]');
-      if (!focusLost || !main) return;
-      // Not into a text field, where focus would bring up the on-screen keyboard.
-      if (opener instanceof HTMLElement && opener.isConnected && !opener.closest('[inert]')
-        && (main.contains(opener) || navRef.current?.contains(opener))
-        && !opener.matches('input, textarea, select, [contenteditable]')) {
-        opener.focus({ preventScroll: true });
-        if (document.activeElement === opener) return;
-      }
-      // The opener is gone (Clear all takes the refused-reviews badge with it), is a text field or can't take
-      // focus, so the page takes it rather than leaving it on the body. The page stays focusable only until
-      // focus moves on, so a click on its background never lands on it and keyboard scrolling still follows
-      // the click.
-      if (!main.hasAttribute('tabindex')) {
-        main.tabIndex = -1;
-        main.addEventListener('blur', () => main.removeAttribute('tabindex'), { once: true });
-      }
-      main.focus({ preventScroll: true });
-    };
-  }, [overlayOpen]);
+  // While anything covers the page, the page and the nav bar are inert; focus comes back when it closes.
+  const overlayOpen = useOverlayFocusReturn(mainRef, navRef);
 
-  // Debug: expose item inspector for diagnosing per-item sync/SRS issues
-  // Call from browser console: __debugItems('atlas') or __debugItems('first half')
-  useEffect(() => {
-    (window as any).__debugItems = (word: string) => {
-      const w = word.toLowerCase().trim();
-      const matches = latestItemsRef.current.filter(i => getItemSpelling(i) === w);
-      if (matches.length === 0) {
-        console.log(`[Debug] No items found for "${word}"`);
-        return;
-      }
-      console.log(`[Debug] Found ${matches.length} item(s) for "${word}":`);
-      matches.forEach((item, idx) => {
-        console.log(`  [${idx}] id=${item.data.id}, type=${item.type}, deleted=${!!item.isDeleted}, archived=${!!item.isArchived}`);
-        console.log(`       SRS: reviews=${item.srs?.totalReviews}, strength=${item.srs?.memoryStrength}, stability=${item.srs?.stability}d, streak=${item.srs?.correctStreak}`);
-        console.log(`       lastReview=${item.srs?.lastReviewDate ? new Date(item.srs.lastReviewDate).toISOString() : 'never'}, nextReview=${item.srs?.nextReview ? new Date(item.srs.nextReview).toISOString() : 'N/A'}`);
-        console.log(`       updatedAt=${item.updatedAt ? new Date(item.updatedAt).toISOString() : 'N/A'}, savedAt=${new Date(item.savedAt).toISOString()}`);
-        console.log(`       lastSyncedHash=${item.lastSyncedHash || 'NONE'}, currentHash=${getItemContentHash(item)}`);
-      });
-    };
-    return () => { delete (window as any).__debugItems; };
-  }, []);
+  // The console's item inspector, for diagnosing sync and schedule problems: __debugItems('atlas').
+  useEffect(() => installDebugItems(() => latestItemsRef.current), [latestItemsRef]);
 
   useAppShortcuts(setCurrentView, detail, overlays);
   const { isOnline, showOfflineBanner } = useOnlineStatus();
@@ -230,14 +181,19 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
     );
   }
 
-  return (
-    <div className="fixed inset-0 bg-white flex flex-col">
-      {!isLoaded ? (
+  // The library is still being read from this device.
+  if (!isLoaded) {
+    return (
+      <div className="fixed inset-0 bg-white flex flex-col">
         <div className="flex items-center justify-center h-full">
           <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
         </div>
-      ) : (
-      <>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-white flex flex-col">
       <AppBanners showOffline={showOfflineBanner} writeFailed={libraryWriteFailed} isOnline={isOnline} />
 
       {/* Each lazy overlay has a boundary of its own, so one whose code is still arriving doesn't hide the
@@ -472,8 +428,6 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
           <RefusedReviewsDialog userId={user.id} onClose={() => setShowRefusedReviews(false)} />
         )}
       </Suspense>
-      </>
-      )}
     </div>
   );
 }
@@ -505,9 +459,6 @@ const App: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, []);
 
-  // Signing out from the pending-approval screen needs the server; offline it says so instead of doing nothing.
-  const [signOutFailed, setSignOutFailed] = useState(false);
-
   // Auth gate: show login/pending/loading before the main app
   if (authState.loading) {
     return <AuthLoadingScreen />;
@@ -518,7 +469,7 @@ const App: React.FC = () => {
   }
 
   if (authState.pending) {
-    return <PendingApprovalScreen onSignOut={async () => setSignOutFailed(!(await logout()))} signOutFailed={signOutFailed} />;
+    return <PendingApprovalScreen />;
   }
 
   return <SignedInApp key={authState.user.id} user={authState.user} authState={authState} />;

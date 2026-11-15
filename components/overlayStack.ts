@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore, type RefObject } from 'react';
 
 /**
  * While a dialog, popup or sheet is open, the page behind it is inert: out of the tab order, the
@@ -52,4 +52,48 @@ export function takeOverlayOpener(): Element | null {
   const element = opener;
   opener = null;
   return element;
+}
+
+/**
+ * Gives focus back once the last overlay has closed, to the control that opened the first. `main` is the page
+ * and `nav` the nav bar, read as they are now, when the page has just become live again.
+ */
+function returnFocus(mainRef: RefObject<HTMLElement | null>, navRef: RefObject<HTMLElement | null>): void {
+  const opener = takeOverlayOpener();
+  const main = mainRef.current;
+  const active = document.activeElement;
+  const focusLost = !active || active === document.body || !active.isConnected || !!active.closest('[inert]');
+  if (!focusLost || !main) return;
+  // Not into a text field, where focus would bring up the on-screen keyboard.
+  if (opener instanceof HTMLElement && opener.isConnected && !opener.closest('[inert]')
+    && (main.contains(opener) || navRef.current?.contains(opener))
+    && !opener.matches('input, textarea, select, [contenteditable]')) {
+    opener.focus({ preventScroll: true });
+    if (document.activeElement === opener) return;
+  }
+  // The opener is gone (Clear all takes the refused-reviews badge with it), is a text field or can't take
+  // focus, so the page takes it rather than leaving it on the body. The page stays focusable only until
+  // focus moves on, so a click on its background never lands on it and keyboard scrolling still follows
+  // the click.
+  if (!main.hasAttribute('tabindex')) {
+    main.tabIndex = -1;
+    main.addEventListener('blur', () => main.removeAttribute('tabindex'), { once: true });
+  }
+  main.focus({ preventScroll: true });
+}
+
+/**
+ * For the app shell: whether any overlay is open, and focus back where it belongs when the last one closes.
+ * An open card, popup, dialog or search result covers the page and the nav bar, which leave the tab order and
+ * the accessibility tree meanwhile. Overlays render beside <main>, never in it. When the last one closes, the
+ * cleanup runs after the commit that made the page live again, so focus can go back to the control that
+ * opened the first; the overlay's own restore ran while it was inert.
+ */
+export function useOverlayFocusReturn(mainRef: RefObject<HTMLElement | null>, navRef: RefObject<HTMLElement | null>): boolean {
+  const overlayOpen = useAnyOverlayOpen();
+  useEffect(() => {
+    if (!overlayOpen) return;
+    return () => returnFocus(mainRef, navRef);
+  }, [overlayOpen, mainRef, navRef]);
+  return overlayOpen;
 }
