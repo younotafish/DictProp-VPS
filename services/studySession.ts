@@ -90,6 +90,131 @@ export function buildReviewQueue(
   return [...burySiblings(due, dueLimit), ...burySiblings(fresh, newLimit)];
 }
 
+/** The four grades, in the order of their buttons and of keys 1–4. */
+export const RATINGS = ['again', 'hard', 'good', 'easy'] as const satisfies readonly ReviewRating[];
+
+export const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
+
+/** A review session in progress: the cards it shows, in order, and how far it has got. */
+export interface StudySession {
+  id: string;
+  itemIds: string[];
+  index: number;
+  revealed: boolean;
+  typedAnswer: string;
+  promptStartedAt: number;
+  ratings: Record<ReviewRating, number>;
+  /** Where the cards just passed over begin. One that comes back before the next grade, as an undone
+   *  delete or archive brings it, is shown again where it was. */
+  passedOverFrom?: number;
+}
+
+/** A grade the session recorded, with what undoing it takes. */
+export interface SessionGrade {
+  eventId: string;
+  sessionId: string;
+  itemId: string;
+  itemIndex: number;
+  rating: ReviewRating;
+  taskType: ReviewTaskType;
+  durationMs: number;
+  typedAnswer: string;
+  /** Where an Again rating queued the card's extra showing, which undo takes back. */
+  requeuedAt?: number;
+}
+
+/** A new session over `queue`, at its first card. */
+export function startStudySession(id: string, queue: readonly StoredItem[], now: number): StudySession {
+  return {
+    id,
+    itemIds: queue.map(item => item.data.id),
+    index: 0,
+    revealed: false,
+    typedAnswer: '',
+    promptStartedAt: now,
+    ratings: emptyRatings(),
+  };
+}
+
+/**
+ * The session moved to the card at `index` (see findSessionCard), unrevealed and unanswered. Moving forward
+ * marks where the cards passed over begin, unless an earlier run of them is still open.
+ */
+export function moveSessionTo(session: StudySession, index: number, now: number): StudySession {
+  return {
+    ...session,
+    index,
+    passedOverFrom: index > session.index ? session.passedOverFrom ?? session.index : session.passedOverFrom,
+    revealed: false,
+    typedAnswer: '',
+    promptStartedAt: now,
+  };
+}
+
+/**
+ * The grade of the card the session shows (`item`, at session.index), and the session's cards with any
+ * extra showing that grade queues (requeueLapse).
+ */
+export function gradeSessionCard(
+  session: StudySession,
+  item: StoredItem,
+  rating: ReviewRating,
+  eventId: string,
+  now: number,
+): { grade: SessionGrade; itemIds: string[] } {
+  const itemIds = requeueLapse(session.itemIds, session.index, rating);
+  return {
+    grade: {
+      eventId,
+      sessionId: session.id,
+      itemId: item.data.id,
+      itemIndex: session.index,
+      rating,
+      taskType: selectReviewTask(item),
+      durationMs: Math.max(0, now - session.promptStartedAt),
+      typedAnswer: session.typedAnswer,
+      requeuedAt: itemIds !== session.itemIds ? session.itemIds.length : undefined,
+    },
+    itemIds,
+  };
+}
+
+/** The session after a grade: on to the next card, unrevealed, with the grade counted. */
+export function advanceSession(session: StudySession, itemIds: string[], rating: ReviewRating, now: number): StudySession {
+  return {
+    ...session,
+    itemIds,
+    index: session.index + 1,
+    passedOverFrom: undefined,
+    revealed: false,
+    typedAnswer: '',
+    promptStartedAt: now,
+    ratings: { ...session.ratings, [rating]: session.ratings[rating] + 1 },
+  };
+}
+
+/**
+ * The session after `grade` is undone: back at its card, revealed and with the typed answer, the grade no
+ * longer counted, and the extra showing an Again queued taken back if it is still where it was queued.
+ */
+export function undoSessionGrade(session: StudySession, grade: SessionGrade, now: number): StudySession {
+  return {
+    ...session,
+    itemIds: grade.requeuedAt !== undefined && session.itemIds[grade.requeuedAt] === grade.itemId
+      ? session.itemIds.filter((_, index) => index !== grade.requeuedAt)
+      : session.itemIds,
+    index: grade.itemIndex,
+    passedOverFrom: undefined,
+    revealed: true,
+    typedAnswer: grade.typedAnswer,
+    promptStartedAt: now,
+    ratings: {
+      ...session.ratings,
+      [grade.rating]: Math.max(0, session.ratings[grade.rating] - 1),
+    },
+  };
+}
+
 /**
  * The position of the card a session shows, from `index` on. Cards that left the study list mid-session
  * (deleted or archived) are passed over, and one passed over since `passedOverFrom` that is back, as an

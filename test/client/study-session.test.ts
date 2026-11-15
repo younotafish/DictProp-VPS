@@ -2,13 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { StoredItem } from '../../types.ts';
 import {
+  advanceSession,
   buildReviewQueue,
   createClozePrompt,
   findSessionCard,
   formatReviewInterval,
+  gradeSessionCard,
   isDueForReview,
+  moveSessionTo,
   requeueLapse,
   selectReviewTask,
+  startStudySession,
+  undoSessionGrade,
+  type StudySession,
 } from '../../services/studySession.ts';
 
 function vocab(
@@ -132,4 +138,71 @@ test('a session passes over cards that left the study list, and goes back to one
   assert.equal(findSessionCard(ids, 3, 1, present('a', 'b', 'c', 'd')), 1);
   // Cards before the run (already graded) stay behind.
   assert.equal(findSessionCard(ids, 3, 2, present('a', 'b', 'd')), 3);
+});
+
+const session = (overrides: Partial<StudySession> = {}): StudySession => ({
+  id: 'session',
+  itemIds: ['a', 'b', 'c'],
+  index: 1,
+  revealed: true,
+  typedAnswer: 'ran',
+  promptStartedAt: 1_000,
+  ratings: { again: 0, hard: 1, good: 2, easy: 0 },
+  ...overrides,
+});
+
+test('a session starts at its first card, unrevealed, with nothing counted', () => {
+  const started = startStudySession('s1', [vocab('a', 'run'), vocab('b', 'walk')], 5_000);
+  assert.deepEqual(started, {
+    id: 's1', itemIds: ['a', 'b'], index: 0, revealed: false, typedAnswer: '', promptStartedAt: 5_000,
+    ratings: { again: 0, hard: 0, good: 0, easy: 0 },
+  });
+});
+
+test('moving past cards that left marks where they begin; moving back to one that returned keeps the mark', () => {
+  const forward = moveSessionTo(session(), 3, 9_000);
+  assert.deepEqual(forward, { ...session(), index: 3, passedOverFrom: 1, revealed: false, typedAnswer: '', promptStartedAt: 9_000 });
+  // A run already open keeps its start, so a card passed over earlier can still come back.
+  assert.equal(moveSessionTo(session({ index: 2, passedOverFrom: 1 }), 3, 9_000).passedOverFrom, 1);
+  const back = moveSessionTo(session({ index: 3, passedOverFrom: 1 }), 2, 9_500);
+  assert.deepEqual(back, { ...session(), index: 2, passedOverFrom: 1, revealed: false, typedAnswer: '', promptStartedAt: 9_500 });
+});
+
+test('a grade records the card, its task, the time on its prompt and the typed answer', () => {
+  const current = session();
+  const card = vocab('b', 'walk', { strength: 40, reviews: 2 });
+  const { grade, itemIds } = gradeSessionCard(current, card, 'good', 'event-1', 4_000);
+  assert.deepEqual(grade, {
+    eventId: 'event-1', sessionId: 'session', itemId: 'b', itemIndex: 1, rating: 'good', taskType: 'production',
+    durationMs: 3_000, typedAnswer: 'ran', requeuedAt: undefined,
+  });
+  assert.equal(itemIds, current.itemIds, 'only Again queues the card again');
+  assert.equal(gradeSessionCard(current, card, 'good', 'event-2', 500).grade.durationMs, 0, 'a clock that went back counts no time');
+});
+
+test('an Again grade queues the card once more at the end, and the grade remembers where', () => {
+  const { grade, itemIds } = gradeSessionCard(session(), vocab('b', 'walk'), 'again', 'event', 2_000);
+  assert.deepEqual(itemIds, ['a', 'b', 'c', 'b']);
+  assert.equal(grade.requeuedAt, 3);
+});
+
+test('after a grade the session moves on to the next card, unrevealed, with the grade counted', () => {
+  const advanced = advanceSession(session({ passedOverFrom: 0 }), ['a', 'b', 'c', 'b'], 'again', 6_000);
+  assert.deepEqual(advanced, {
+    ...session(), itemIds: ['a', 'b', 'c', 'b'], index: 2, passedOverFrom: undefined, revealed: false, typedAnswer: '',
+    promptStartedAt: 6_000, ratings: { again: 1, hard: 1, good: 2, easy: 0 },
+  });
+});
+
+test('undoing a grade goes back to its card, revealed, and takes back its count and its extra showing', () => {
+  const before = session();
+  const { grade, itemIds } = gradeSessionCard(before, vocab('b', 'walk'), 'again', 'event', 2_000);
+  const after = advanceSession(before, itemIds, 'again', 2_000);
+  const undone = undoSessionGrade(after, grade, 7_000);
+  assert.deepEqual(undone, { ...before, passedOverFrom: undefined, promptStartedAt: 7_000 });
+
+  // An extra showing that has moved is left alone, and a count never goes below zero.
+  const moved = undoSessionGrade({ ...after, itemIds: ['a', 'b', 'c', 'x', 'b'], ratings: { again: 0, hard: 0, good: 0, easy: 0 } }, grade, 7_000);
+  assert.deepEqual(moved.itemIds, ['a', 'b', 'c', 'x', 'b']);
+  assert.equal(moved.ratings.again, 0);
 });
