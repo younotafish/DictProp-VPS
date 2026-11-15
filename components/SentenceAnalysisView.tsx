@@ -1,7 +1,8 @@
 import React from 'react';
 import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, ChevronDown, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
-import { SentenceData } from '../types';
+import type { SentenceAnalysisTerm, SentenceData } from '../types';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
+import { sentencePronunciation } from '../services/sentencePronunciation';
 
 interface SentenceAnalysisViewProps {
   sentence: SentenceData;
@@ -27,6 +28,97 @@ const STATUS_PRESENTATION: Record<'american' | 'shared' | 'not_american', {
   not_american: { label: 'Not natural American English', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: TriangleAlert },
 };
 
+const IPA_VALUE = 'break-words font-mono text-sm leading-relaxed text-slate-800 sm:text-base';
+const PROSE_VALUE = 'break-words text-sm leading-relaxed text-slate-700 sm:text-base';
+
+/** A row of the pronunciation list: the label on the left (above it on phones) and its value. */
+function PronunciationRow({ label, valueClassName, gap = 'gap-1', children }: {
+  label: string;
+  valueClassName?: string;
+  gap?: 'gap-1' | 'gap-2';
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`grid ${gap} py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4`}>
+      <dt className="text-sm font-semibold text-slate-500">{label}</dt>
+      <dd className={valueClassName}>{children}</dd>
+    </div>
+  );
+}
+
+/** One uncommon word or phrase: its IPA, translation, meaning, synonyms and antonyms, examples and history. */
+function TermCard({ term, onSearch }: { term: SentenceAnalysisTerm; onSearch: (term: string) => void }) {
+  return (
+    <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h3 className="text-xl font-bold text-slate-900">{term.term}</h3>
+          </div>
+          <p className="mt-2 break-words font-mono text-sm text-indigo-700">
+            <span className="font-sans font-semibold text-slate-500">American IPA: </span>
+            {term.ipa}
+          </p>
+          <p lang="zh-CN" className="mt-1 text-base text-slate-700">
+            <span className="font-semibold text-slate-500">Chinese translation: </span>
+            {term.chinese}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onSearch(term.term)}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
+          title={`Search ${term.term}`}
+          aria-label={`Search ${term.term}`}
+        >
+          <Search size={17} />
+        </button>
+      </div>
+
+      <div className="mt-4">
+        <h4 className="text-[11px] font-bold uppercase text-slate-400">Original meaning</h4>
+        <p className="mt-1 leading-relaxed text-slate-700">{term.originalMeaning}</p>
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div>
+          <h4 className="text-[11px] font-bold uppercase text-slate-400">Synonyms</h4>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {term.synonyms.map((value, index) => (
+              <span key={`${value}:${index}`} className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">{value}</span>
+            ))}
+          </div>
+        </div>
+        <div>
+          <h4 className="text-[11px] font-bold uppercase text-slate-400">Antonyms</h4>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {term.antonyms.length > 0 ? term.antonyms.map((value, index) => (
+              <span key={`${value}:${index}`} className="rounded-md bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700">{value}</span>
+            )) : <span className="text-sm text-slate-400">None in this context</span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-slate-100 pt-4">
+        <h4 className="text-[11px] font-bold uppercase text-slate-400">Usage examples</h4>
+        <ul className="mt-2 list-disc space-y-2 pl-5">
+          {term.examples.map((example, exampleIndex) => (
+            <li key={exampleIndex} className="pl-1 text-sm leading-relaxed text-slate-600">{example}</li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="mt-4 border-t border-slate-100 pt-4">
+        <div className="flex items-center gap-2">
+          <History size={15} className="shrink-0 text-amber-500" />
+          <h4 className="text-[11px] font-bold uppercase text-slate-400">Historical evolution</h4>
+        </div>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600">{term.historicalEvolution}</p>
+      </div>
+    </article>
+  );
+}
+
 export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   sentence,
   position,
@@ -41,13 +133,17 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
 }) => {
   const analysis = sentence.analysis;
   const plainSentence = stripSentenceMarkers(sentence.text || '').trim();
-  const standardSentenceIpa = analysis?.pronunciation?.slowIpa;
-  const fastSentenceIpa = analysis?.pronunciation?.fastIpa || analysis?.naturalSpeechIpa;
+  const { citation: citationIpa, connected: connectedIpa } = sentencePronunciation(analysis);
+  // Each new sentence starts with the American English details closed, from its first paint.
   const [americanEnglishExpanded, setAmericanEnglishExpanded] = React.useState(false);
+  const [expandedSentenceId, setExpandedSentenceId] = React.useState(sentence.id);
+  if (expandedSentenceId !== sentence.id) {
+    setExpandedSentenceId(sentence.id);
+    setAmericanEnglishExpanded(false);
+  }
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
   const rememberedScrollTopRef = React.useRef(0);
   const previousSentenceIdRef = React.useRef(sentence.id);
-  React.useEffect(() => setAmericanEnglishExpanded(false), [sentence.id]);
   React.useLayoutEffect(() => {
     const sentenceChanged = previousSentenceIdRef.current !== sentence.id;
     if (sentenceChanged) {
@@ -105,17 +201,17 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
               {plainSentence}
             </h1>
 
-            {standardSentenceIpa && (
+            {citationIpa && (
               <p className="mt-3 max-w-4xl break-words font-mono text-sm leading-relaxed text-indigo-700 sm:text-base">
                 <span className="font-sans font-semibold text-slate-500">American IPA: </span>
-                {standardSentenceIpa}
+                {citationIpa}
               </p>
             )}
 
-            {fastSentenceIpa && fastSentenceIpa !== standardSentenceIpa && (
-              <p className={`${standardSentenceIpa ? 'mt-2' : 'mt-3'} max-w-4xl break-words font-mono text-sm leading-relaxed text-indigo-700 sm:text-base`}>
+            {connectedIpa && (
+              <p className={`${citationIpa ? 'mt-2' : 'mt-3'} max-w-4xl break-words font-mono text-sm leading-relaxed text-indigo-700 sm:text-base`}>
                 <span className="font-sans font-semibold text-slate-500">Natural American IPA (connected speech): </span>
-                {fastSentenceIpa}
+                {connectedIpa}
               </p>
             )}
 
@@ -193,73 +289,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                   ) : (
                     <div className="grid gap-4">
                       {analysis.terms.map((term, index) => (
-                        <article key={`${term.term}:${index}`} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                                <h3 className="text-xl font-bold text-slate-900">{term.term}</h3>
-                              </div>
-                              <p className="mt-2 break-words font-mono text-sm text-indigo-700">
-                                <span className="font-sans font-semibold text-slate-500">American IPA: </span>
-                                {term.ipa}
-                              </p>
-                              <p lang="zh-CN" className="mt-1 text-base text-slate-700">
-                                <span className="font-semibold text-slate-500">Chinese translation: </span>
-                                {term.chinese}
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => onSearch(term.term)}
-                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
-                              title={`Search ${term.term}`}
-                              aria-label={`Search ${term.term}`}
-                            >
-                              <Search size={17} />
-                            </button>
-                          </div>
-
-                          <div className="mt-4">
-                            <h4 className="text-[11px] font-bold uppercase text-slate-400">Original meaning</h4>
-                            <p className="mt-1 leading-relaxed text-slate-700">{term.originalMeaning}</p>
-                          </div>
-
-                          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                            <div>
-                              <h4 className="text-[11px] font-bold uppercase text-slate-400">Synonyms</h4>
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {term.synonyms.map(value => (
-                                  <span key={value} className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">{value}</span>
-                                ))}
-                              </div>
-                            </div>
-                            <div>
-                              <h4 className="text-[11px] font-bold uppercase text-slate-400">Antonyms</h4>
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {term.antonyms.length > 0 ? term.antonyms.map(value => (
-                                  <span key={value} className="rounded-md bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700">{value}</span>
-                                )) : <span className="text-sm text-slate-400">None in this context</span>}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="mt-4 border-t border-slate-100 pt-4">
-                            <h4 className="text-[11px] font-bold uppercase text-slate-400">Usage examples</h4>
-                            <ul className="mt-2 list-disc space-y-2 pl-5">
-                              {term.examples.map((example, exampleIndex) => (
-                                <li key={exampleIndex} className="pl-1 text-sm leading-relaxed text-slate-600">{example}</li>
-                              ))}
-                            </ul>
-                          </div>
-
-                          <div className="mt-4 border-t border-slate-100 pt-4">
-                            <div className="flex items-center gap-2">
-                              <History size={15} className="shrink-0 text-amber-500" />
-                              <h4 className="text-[11px] font-bold uppercase text-slate-400">Historical evolution</h4>
-                            </div>
-                            <p className="mt-2 text-sm leading-relaxed text-slate-600">{term.historicalEvolution}</p>
-                          </div>
-                        </article>
+                        <TermCard key={`${term.term}:${index}`} term={term} onSearch={onSearch} />
                       ))}
                     </div>
                   )}
@@ -272,43 +302,24 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
                   </div>
                   {analysis.pronunciation ? (
                     <dl className="max-w-4xl divide-y divide-slate-200 border-y border-slate-200">
-                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
-                        <dt className="text-sm font-semibold text-slate-500">Spoken slowly</dt>
-                        <dd className="break-words font-mono text-sm leading-relaxed text-slate-800 sm:text-base">{analysis.pronunciation.slowIpa}</dd>
-                      </div>
-                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
-                        <dt className="text-sm font-semibold text-slate-500">Spoken quickly</dt>
-                        <dd className="break-words font-mono text-sm leading-relaxed text-slate-800 sm:text-base">{analysis.pronunciation.fastIpa}</dd>
-                      </div>
-                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
-                        <dt className="text-sm font-semibold text-slate-500">Careful speaker</dt>
-                        <dd className="break-words text-sm leading-relaxed text-slate-700 sm:text-base">{analysis.pronunciation.carefulSpeakerGuide}</dd>
-                      </div>
-                      <div className="grid gap-2 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
-                        <dt className="text-sm font-semibold text-slate-500">Fast-speech features</dt>
-                        <dd>
-                          <ul className="list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-700 sm:text-base">
-                            {analysis.pronunciation.fastSpeechFeatures.map((feature, index) => (
-                              <li key={`${feature}:${index}`} className="pl-1">{feature}</li>
-                            ))}
-                          </ul>
-                        </dd>
-                      </div>
-                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
-                        <dt className="text-sm font-semibold text-slate-500">Intonation &amp; chunking</dt>
-                        <dd className="break-words text-sm leading-relaxed text-slate-700 sm:text-base">{analysis.pronunciation.intonationAndChunking}</dd>
-                      </div>
-                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
-                        <dt className="text-sm font-semibold text-slate-500">Key difference</dt>
-                        <dd className="text-sm font-medium leading-relaxed text-slate-800 sm:text-base">{analysis.pronunciation.keyDifference}</dd>
-                      </div>
+                      <PronunciationRow label="Spoken slowly" valueClassName={IPA_VALUE}>{analysis.pronunciation.slowIpa}</PronunciationRow>
+                      <PronunciationRow label="Spoken quickly" valueClassName={IPA_VALUE}>{analysis.pronunciation.fastIpa}</PronunciationRow>
+                      <PronunciationRow label="Careful speaker" valueClassName={PROSE_VALUE}>{analysis.pronunciation.carefulSpeakerGuide}</PronunciationRow>
+                      <PronunciationRow label="Fast-speech features" gap="gap-2">
+                        <ul className="list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-700 sm:text-base">
+                          {analysis.pronunciation.fastSpeechFeatures.map((feature, index) => (
+                            <li key={`${feature}:${index}`} className="pl-1">{feature}</li>
+                          ))}
+                        </ul>
+                      </PronunciationRow>
+                      <PronunciationRow label="Intonation & chunking" valueClassName={PROSE_VALUE}>{analysis.pronunciation.intonationAndChunking}</PronunciationRow>
+                      <PronunciationRow label="Key difference" valueClassName="text-sm font-medium leading-relaxed text-slate-800 sm:text-base">
+                        {analysis.pronunciation.keyDifference}
+                      </PronunciationRow>
                     </dl>
                   ) : analysis.naturalSpeechIpa ? (
                     <dl className="max-w-4xl border-y border-slate-200">
-                      <div className="grid gap-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
-                        <dt className="text-sm font-semibold text-slate-500">Spoken quickly</dt>
-                        <dd className="break-words font-mono text-sm leading-relaxed text-slate-800 sm:text-base">{analysis.naturalSpeechIpa}</dd>
-                      </div>
+                      <PronunciationRow label="Spoken quickly" valueClassName={IPA_VALUE}>{analysis.naturalSpeechIpa}</PronunciationRow>
                     </dl>
                   ) : (
                     <p className="text-sm text-slate-400">Pronunciation analysis pending.</p>
