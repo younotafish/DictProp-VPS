@@ -3,7 +3,7 @@ import { ComparisonResult } from '../types';
 import { AlertTriangle, ChevronDown, ChevronUp, Lightbulb, Scale } from 'lucide-react';
 
 // Per-word color slots. Cycled (index % length) so a comparison of any number of words renders.
-export const WORD_COLORS = [
+const WORD_COLORS = [
   { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', pill: 'bg-indigo-100 text-indigo-700', dot: 'bg-indigo-500' },
   { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
   { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', pill: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500' },
@@ -14,7 +14,7 @@ export const WORD_COLORS = [
   { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', pill: 'bg-orange-100 text-orange-700', dot: 'bg-orange-500' },
 ];
 
-export const wordColorAt = (index: number) => WORD_COLORS[(index >= 0 ? index : 0) % WORD_COLORS.length];
+const wordColorAt = (index: number) => WORD_COLORS[(index >= 0 ? index : 0) % WORD_COLORS.length];
 
 // A saved comparison may predate today's shape, so each part is checked before it renders: a malformed part
 // is left out rather than breaking the whole comparison.
