@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
-import { ViewState, VocabCard } from './types';
+import type { ViewState } from './types';
 import { Loader2 } from 'lucide-react';
-import { analyzeInput } from './services/api';
 import { lazyLoadImage } from './services/libraryImages';
 import { loginRedirect, type AuthState, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -10,8 +9,6 @@ import { TabScreen } from './components/TabScreen';
 import { AuthLoadingScreen, LibraryReadFailedScreen, PendingApprovalScreen, SignInScreen } from './components/AppGateScreens';
 import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppBanners, AppStatusPills } from './components/AppStatus';
-import { SRSAlgorithm } from './services/srsAlgorithm';
-import { normalizeKey } from './services/wordMatch';
 import { useFrozenWhile } from './hooks/useStableValue';
 import { warn } from './services/logger';
 import { installDebugItems } from './services/debugItems';
@@ -32,6 +29,7 @@ import { useSpeechBackfill } from './hooks/useSpeechBackfill';
 import { useDuplicateMerge } from './hooks/useDuplicateMerge';
 import { useLibraryActions } from './hooks/useLibraryActions';
 import { useBatchImport } from './hooks/useBatchImport';
+import { useSenseLookup } from './hooks/useSenseLookup';
 
 // The signed-in app re-renders on every library change and progress tick, so the screens, the search sheet,
 // the card popup and the navigation are memoized and re-render only when their own props change (NotebookView
@@ -129,7 +127,7 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
   const { handleFindDuplicates, handleMergeDuplicates } = useDuplicateMerge(library, overlays);
   const actions = useLibraryActions(library, detail, undo);
   const {
-    handleSaveRef, handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,
+    handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,
     handleSaveSentence, handleRefreshReplace, resetSRS,
   } = actions;
   const { batchImportProgress, handleBatchImport } = useBatchImport(library, overlays, actions, speech);
@@ -138,26 +136,7 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
     () => ({ uid: user.id, displayName: user.displayName, photoURL: user.photoUrl, email: user.email }),
     [user],
   );
-  // Footnote popup: fetch a word's full set of AI senses (cached per session) so the popup can page
-  // through saved + not-yet-saved meanings; and save a chosen sense.
-  const senseCacheRef = useRef<Map<string, VocabCard[]>>(new Map());
-  const fetchSensesForWord = useCallback(async (word: string): Promise<VocabCard[]> => {
-    const key = normalizeKey(word);
-    if (!key) return [];
-    const cached = senseCacheRef.current.get(key);
-    if (cached) return cached;
-    try {
-      // A marked term is one expression, even when it's several words long.
-      const r = await analyzeInput(word, { mode: 'batch' });
-      const vocabs = Array.isArray(r?.vocabs) ? (r.vocabs as VocabCard[]) : [];
-      senseCacheRef.current.set(key, vocabs);
-      return vocabs;
-    } catch { return []; }
-  }, []);
-  const saveVocabSense = useCallback((vocab: VocabCard) => {
-    const v: VocabCard = { ...vocab, id: vocab.id || crypto.randomUUID() };
-    handleSaveRef.current({ data: v, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(v.id, 'vocab') });
-  }, []);
+  const { fetchSensesForWord, saveVocabSense } = useSenseLookup(handleSave);
 
   // Search handler - triggers GlobalSearch popup (bottom-right search icon)
   const handleRecursiveSearch = useCallback((text: string) => {

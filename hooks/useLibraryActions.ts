@@ -1,7 +1,7 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { IMAGE_IDB_MARKER, offloadImages, restoreInlineImages } from '../services/libraryImages';
-import { saveOverExisting } from '../services/items';
+import { makeVocabStoredItem, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { log, warn, error as logError } from '../services/logger';
 import type { DetailViewState } from './useDetailView';
@@ -15,9 +15,6 @@ export function useLibraryActions(
     'removeFromDetailView' | 'removeItemFromDetailContext' | 'removeSentenceFromDetailContext'>,
   { offerUndo }: Pick<UndoOfferState, 'offerUndo'>,
 ) {
-  // Refs for batch import to avoid stale closures
-  const handleSaveRef = useRef<(item: StoredItem) => void>(() => {});
-
   const handleSave = useCallback((item: StoredItem) => {
     try {
       if (!item || !item.data || !item.data.id) {
@@ -111,9 +108,6 @@ export function useLibraryActions(
     }
   }, [updateItems, replaceItem]);
 
-  // Keep batch import refs up to date
-  handleSaveRef.current = handleSave;
-
   // Attach a user-pasted/picked image to a sentence under review. Mirrors the vocab/phrase image path:
   // offload the base64 to IDB (awaited, for instant offline display) + upload to the server, then mark
   // the item's imageUrl and persist it. handleSave's own offload block only covers vocab/phrase, so the
@@ -124,8 +118,8 @@ export function useLibraryActions(
     // A review or a sync can have replaced the sentence during the upload, so mark the current copy.
     const current = latestItemsRef.current.find(saved => saved.data.id === item.data.id) ?? item;
     if (current.isDeleted) return;
-    handleSaveRef.current({ ...current, data: { ...current.data, imageUrl: IMAGE_IDB_MARKER } });
-  }, []);
+    handleSave({ ...current, data: { ...current.data, imageUrl: IMAGE_IDB_MARKER } });
+  }, [handleSave]);
 
   const handleDelete = useCallback(async (id: string) => {
     log('🗑️ App: Deleting item', id);
@@ -204,13 +198,13 @@ export function useLibraryActions(
       ...(prepared?.analysisGeneratedAt ? { analysisGeneratedAt: prepared.analysisGeneratedAt } : {}),
       ...(prepared?.imageUrl ? { imageUrl: prepared.imageUrl } : {}),
     };
-    handleSaveRef.current({
+    handleSave({
       data: sentenceData,
       type: 'sentence',
       savedAt: Date.now(),
       srs: SRSAlgorithm.createNew(sentenceData.id, 'sentence'),
     });
-  }, []);
+  }, [handleSave]);
 
   // Refresh-replace: a real re-run of the AI for an already-saved word replaces its saved card(s).
   // A meaning present in both old and new updates IN PLACE (handleSave matches by word+sense and we pass
@@ -232,17 +226,12 @@ export function useLibraryActions(
         // word is never left imageless — if the user navigates away (or the image gen fails) mid-refresh
         // it simply keeps its old image instead of losing it.
         const prevImage = (match.data as VocabCard).imageUrl;
-        handleSaveRef.current({ ...match, data: { ...vocab, id: match.data.id, imageUrl: vocab.imageUrl ?? prevImage }, srs: match.srs, savedAt: match.savedAt });
+        handleSave({ ...match, data: { ...vocab, id: match.data.id, imageUrl: vocab.imageUrl ?? prevImage }, srs: match.srs, savedAt: match.savedAt });
       } else {
-        handleSaveRef.current({
-          data: vocab,
-          type: 'vocab',
-          savedAt: Date.now(),
-          srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-        });
+        handleSave(makeVocabStoredItem(vocab));
       }
     });
-  }, []);
+  }, [handleSave]);
 
   // Reset only this sense/item. Different meanings now keep independent FSRS schedules. False when the
   // item isn't in the library.
@@ -250,15 +239,15 @@ export function useLibraryActions(
     const target = latestItemsRef.current.find(i => i.data.id === id);
     if (!target) return false;
     const srs = SRSAlgorithm.reset(target.data.id, target.type);
-    handleSaveRef.current({ ...target, srs });
+    handleSave({ ...target, srs });
     offerUndo('Reset', target, item => item.srs?.lastReviewDate === srs.lastReviewDate && !item.srs.totalReviews
       ? { ...item, srs: target.srs, updatedAt: target.updatedAt }
       : item);
     return true;
-  }, [offerUndo]);
+  }, [handleSave, offerUndo]);
 
   return {
-    handleSaveRef, handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,
+    handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,
     handleSaveSentence, handleRefreshReplace, resetSRS,
   };
 }

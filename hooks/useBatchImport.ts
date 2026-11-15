@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
-import { isVocabItem, savedVocabKey, type StoredItem } from '../types';
+import { isVocabItem, savedVocabKey } from '../types';
 import { analyzeInput } from '../services/api';
-import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { makeVocabStoredItem } from '../services/items';
 import { log, warn } from '../services/logger';
 import type { Library } from './useLibrary';
 import type { LibraryActions } from './useLibraryActions';
@@ -11,7 +11,7 @@ import type { SpeechBackfill } from './useSpeechBackfill';
 export function useBatchImport(
   { latestItemsRef, persistChangedItems }: Pick<Library, 'latestItemsRef' | 'persistChangedItems'>,
   { setConfirmModal }: Pick<Overlays, 'setConfirmModal'>,
-  { handleSaveRef }: Pick<LibraryActions, 'handleSaveRef'>,
+  { handleSave }: Pick<LibraryActions, 'handleSave'>,
   { runSpeechGenerationRef }: Pick<SpeechBackfill, 'runSpeechGenerationRef'>,
 ) {
   // Batch import state
@@ -90,13 +90,7 @@ export function useBatchImport(
               const senseKey = savedVocabKey(vocab);
               if (!savedSenses.has(senseKey)) {
                 savedSenses.add(senseKey);
-                const storedItem: StoredItem = {
-                  data: vocab,
-                  type: 'vocab',
-                  savedAt: Date.now(),
-                  srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
-                };
-                handleSaveRef.current(storedItem);
+                handleSave(makeVocabStoredItem(vocab));
                 saved++;
                 importedItemIds.push(vocab.id);
 
