@@ -1,9 +1,16 @@
 import type Database from 'better-sqlite3';
 
+/** Add a column an older database file lacks: every CREATE TABLE below already has its final columns. */
+function addColumnIfMissing(db: Database.Database, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some(existing => existing.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
 /** Create every table and index, and bring an older database file up to date. Runs before any statement is prepared. */
 export function applySchema(db: Database.Database): void {
-  // Create tables
+  // Columns that older files gained by ALTER TABLE come last, in the order those files have them.
   db.exec(`
+    -- project is retired: reads leave it out and writes clear it. The repair script and the audit still read it.
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       type TEXT NOT NULL CHECK(type IN ('vocab', 'phrase', 'sentence')),
@@ -12,10 +19,11 @@ export function applySchema(db: Database.Database): void {
       saved_at INTEGER NOT NULL,
       updated_at INTEGER,
       is_deleted INTEGER DEFAULT 0,
-      is_archived INTEGER DEFAULT 0
+      is_archived INTEGER DEFAULT 0,
+      user_id TEXT,
+      project TEXT,
+      revision INTEGER NOT NULL DEFAULT 0
     );
-    CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
-    CREATE INDEX IF NOT EXISTS idx_items_updated ON items(updated_at);
 
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -27,7 +35,6 @@ export function applySchema(db: Database.Database): void {
       is_admin INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
 
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
@@ -35,8 +42,6 @@ export function applySchema(db: Database.Database): void {
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-    CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
     CREATE TABLE IF NOT EXISTS sync_meta (
       key TEXT PRIMARY KEY,
@@ -51,114 +56,57 @@ export function applySchema(db: Database.Database): void {
       item_type TEXT NOT NULL CHECK(item_type IN ('vocab', 'phrase', 'sentence')),
       reviewed_at INTEGER NOT NULL,
       previous_step INTEGER NOT NULL,
-      next_step INTEGER NOT NULL
+      next_step INTEGER NOT NULL,
+      rating TEXT NOT NULL DEFAULT 'good',
+      task_type TEXT,
+      duration_ms INTEGER,
+      session_id TEXT,
+      undone_at INTEGER
     );
-    CREATE INDEX IF NOT EXISTS idx_review_events_user_time ON review_events(user_id, reviewed_at);
-  `);
 
-  // Migration: add user_id column to items if missing
-  const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string }[];
-  if (!columns.some(c => c.name === 'user_id')) {
-    db.exec(`ALTER TABLE items ADD COLUMN user_id TEXT`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user_id ON items(user_id)`);
-  }
-  if (!columns.some(c => c.name === 'revision')) {
-    db.exec(`ALTER TABLE items ADD COLUMN revision INTEGER NOT NULL DEFAULT 0`);
-  }
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user_revision ON items(user_id, revision, id)`);
-  // Phrase scans (image owners, the inline-image fallback) read the user's phrase rows, not the library.
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user_type ON items(user_id, type)`);
-
-  const reviewColumns = db.prepare(`PRAGMA table_info(review_events)`).all() as { name: string }[];
-  if (!reviewColumns.some(column => column.name === 'rating')) {
-    db.exec(`ALTER TABLE review_events ADD COLUMN rating TEXT NOT NULL DEFAULT 'good'`);
-  }
-  if (!reviewColumns.some(column => column.name === 'task_type')) {
-    db.exec(`ALTER TABLE review_events ADD COLUMN task_type TEXT`);
-  }
-  if (!reviewColumns.some(column => column.name === 'duration_ms')) {
-    db.exec(`ALTER TABLE review_events ADD COLUMN duration_ms INTEGER`);
-  }
-  if (!reviewColumns.some(column => column.name === 'session_id')) {
-    db.exec(`ALTER TABLE review_events ADD COLUMN session_id TEXT`);
-  }
-  if (!reviewColumns.some(column => column.name === 'undone_at')) {
-    db.exec(`ALTER TABLE review_events ADD COLUMN undone_at INTEGER`);
-  }
-  db.exec(`
+    -- The item's revisions before and after the review, so a client can tell whether anything besides the
+    -- review changed the item since its own copy. Rows stored before those columns have neither.
     CREATE TABLE IF NOT EXISTS review_event_items (
       event_id TEXT NOT NULL,
       item_id TEXT NOT NULL,
       previous_srs TEXT NOT NULL,
       applied_srs TEXT NOT NULL,
+      base_revision INTEGER,
+      applied_revision INTEGER,
       PRIMARY KEY (event_id, item_id)
     );
-    DROP INDEX IF EXISTS idx_review_event_items_event;
-  `);
-  // The item's revisions before and after the review, so a client can tell whether anything besides the
-  // review changed the item since its own copy. Rows stored before these columns have neither.
-  const reviewItemColumns = db.prepare(`PRAGMA table_info(review_event_items)`).all() as { name: string }[];
-  if (!reviewItemColumns.some(column => column.name === 'base_revision')) {
-    db.exec(`ALTER TABLE review_event_items ADD COLUMN base_revision INTEGER`);
-  }
-  if (!reviewItemColumns.some(column => column.name === 'applied_revision')) {
-    db.exec(`ALTER TABLE review_event_items ADD COLUMN applied_revision INTEGER`);
-  }
 
-  // Migration: add project column to items if missing
-  try {
-    if (!columns.some(c => c.name === 'project')) {
-      db.exec(`ALTER TABLE items ADD COLUMN project TEXT`);
-    }
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_items_project ON items(project)`);
-  } catch (e) {
-    console.warn('Project column migration:', e);
-  }
+    -- Retired with the project column. Kept until a production audit shows no project rows or tags remain,
+    -- because the repair script still deletes from it.
+    CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL);
 
-  // Projects table
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL)`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`);
-  } catch (e) {
-    console.warn('Projects table creation:', e);
-  }
-
-  // Image storage: base64 data URIs live here, OUT of items.data, so item reads/writes
-  // never touch image bytes. Keyed by id — a SHARED keyspace for both top-level item ids
-  // and nested phrase-vocab ids (a vocab id can appear as both; see DetailView "save vocab").
-  // user_id mirrors items.user_id (nullable for legacy orphan rows, claimed on first signup).
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS item_images (
+    -- Images live here, out of items.data, so item reads and writes never touch image bytes. Keyed by id, a
+    -- keyspace shared by top-level item ids and phrase vocab ids (a vocab id can be both; see DetailView's
+    -- "save vocab"). user_id mirrors items.user_id: null for rows from before accounts, claimed at sign-up.
+    -- Rows keep their bytes in image_blobs under content_hash and leave data empty; only rows from before
+    -- image_blobs hold an inline data URI there.
+    CREATE TABLE IF NOT EXISTS item_images (
       id TEXT PRIMARY KEY,
       user_id TEXT,
       data TEXT NOT NULL,
-      updated_at INTEGER
-    )`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_user_id ON item_images(user_id)`);
-    const imageColumns = db.prepare(`PRAGMA table_info(item_images)`).all() as { name: string }[];
-    if (!imageColumns.some(c => c.name === 'mime_type')) db.exec(`ALTER TABLE item_images ADD COLUMN mime_type TEXT`);
-    if (!imageColumns.some(c => c.name === 'content_hash')) db.exec(`ALTER TABLE item_images ADD COLUMN content_hash TEXT`);
-    // Cover stripped-item image markers without fetching legacy rows whose data column can still
-    // contain a large base64 payload. This keeps the first sync after a restart from blocking Node.
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_user_versions
-      ON item_images(user_id, id, content_hash, updated_at)`);
-    // Blob cleanup asks whether anything still references a hash; without this it scans every image.
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_item_images_content_hash ON item_images(content_hash)`);
-    db.exec(`CREATE TABLE IF NOT EXISTS image_blobs (
+      updated_at INTEGER,
+      mime_type TEXT,
+      content_hash TEXT
+    );
+
+    -- byte_length and created_at sit after the blob: a scan must test length(data), never those columns, or
+    -- SQLite reads every overflow page of every image to reach them.
+    CREATE TABLE IF NOT EXISTS image_blobs (
       content_hash TEXT PRIMARY KEY,
       data BLOB NOT NULL,
       byte_length INTEGER NOT NULL,
       created_at INTEGER NOT NULL
-    )`);
-  } catch (e) {
-    console.warn('item_images table creation:', e);
-  }
+    );
 
-  // Prepared example-sentence enrichment is global source material, not a user item. Keeping it in a
-  // separate lookup table prevents tens of thousands of analyses and images from entering /api/items.
-  // Images reuse image_blobs and are linked into a user's item_images row only when that sentence is saved.
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS sentence_enrichments (
+    -- Prepared example-sentence enrichment is global source material, not a user item. A lookup table of its
+    -- own keeps tens of thousands of analyses and images out of /api/items. Images reuse image_blobs and are
+    -- linked into a user's item_images row only when that sentence is saved.
+    CREATE TABLE IF NOT EXISTS sentence_enrichments (
       lookup_hash TEXT PRIMARY KEY,
       source_id TEXT UNIQUE NOT NULL,
       text_hash TEXT NOT NULL,
@@ -168,31 +116,66 @@ export function applySchema(db: Database.Database): void {
       image_content_hash TEXT,
       image_mime_type TEXT,
       updated_at INTEGER NOT NULL
-    )`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_sentence_enrichments_source_id
-      ON sentence_enrichments(source_id)`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_sentence_enrichments_image
-      ON sentence_enrichments(image_content_hash) WHERE image_content_hash IS NOT NULL`);
-  } catch (e) {
-    console.warn('sentence_enrichments table creation:', e);
-  }
+    );
 
-  // Word comparisons: AI-generated side-by-side analyses, kept OUT of the items table (its CHECK
-  // constraint only allows vocab/phrase/sentence). Keyed by the normalized word-set (e.g. 'fable|parable')
-  // so direction doesn't matter and each pair stores once; surfaced on every involved word's page.
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS comparisons (
+    -- Word comparisons: AI-generated side-by-side analyses, kept out of items, whose CHECK allows only
+    -- vocab, phrase and sentence. Keyed by the normalized word set (e.g. 'fable|parable'), so direction
+    -- doesn't matter and each set is stored once; every involved word's page shows it.
+    CREATE TABLE IF NOT EXISTS comparisons (
       key TEXT NOT NULL,
       user_id TEXT NOT NULL,
       words TEXT NOT NULL,
       data TEXT NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (key, user_id)
-    )`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_comparisons_user_id ON comparisons(user_id)`);
-  } catch (e) {
-    console.warn('comparisons table creation:', e);
-  }
+    );
+  `);
+
+  addColumnIfMissing(db, 'items', 'user_id', 'TEXT');
+  addColumnIfMissing(db, 'items', 'project', 'TEXT');
+  addColumnIfMissing(db, 'items', 'revision', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'review_events', 'rating', `TEXT NOT NULL DEFAULT 'good'`);
+  addColumnIfMissing(db, 'review_events', 'task_type', 'TEXT');
+  addColumnIfMissing(db, 'review_events', 'duration_ms', 'INTEGER');
+  addColumnIfMissing(db, 'review_events', 'session_id', 'TEXT');
+  addColumnIfMissing(db, 'review_events', 'undone_at', 'INTEGER');
+  addColumnIfMissing(db, 'review_event_items', 'base_revision', 'INTEGER');
+  addColumnIfMissing(db, 'review_event_items', 'applied_revision', 'INTEGER');
+  addColumnIfMissing(db, 'item_images', 'mime_type', 'TEXT');
+  addColumnIfMissing(db, 'item_images', 'content_hash', 'TEXT');
+
+  // Primary keys and UNIQUE columns have indexes of their own: the ids, users.google_id, sentence_enrichments.source_id.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_items_user_revision ON items(user_id, revision, id);
+    -- Phrase scans (image owners, the inline-image fallback) read the user's phrase rows, not the library.
+    CREATE INDEX IF NOT EXISTS idx_items_user_type ON items(user_id, type);
+    -- The audit's and the repair's project queries; without it they read every item to reach the column.
+    CREATE INDEX IF NOT EXISTS idx_items_project ON items(project);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_review_events_user_time ON review_events(user_id, reviewed_at);
+    CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+    -- Covers stripped-item image markers without reading legacy rows, whose data column can still hold a
+    -- large base64 payload, so the first sync after a restart doesn't block Node.
+    CREATE INDEX IF NOT EXISTS idx_item_images_user_versions ON item_images(user_id, id, content_hash, updated_at);
+    -- Blob cleanup asks whether anything still references a hash; without this it scans every image.
+    CREATE INDEX IF NOT EXISTS idx_item_images_content_hash ON item_images(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_sentence_enrichments_image
+      ON sentence_enrichments(image_content_hash) WHERE image_content_hash IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_comparisons_user_id ON comparisons(user_id);
+  `);
+
+  // Indexes no statement uses, or that repeat a key or the leading columns of another index. An older image
+  // recreates them if it is rolled back to.
+  db.exec(`
+    DROP INDEX IF EXISTS idx_items_type;
+    DROP INDEX IF EXISTS idx_items_updated;
+    DROP INDEX IF EXISTS idx_items_user_id;
+    DROP INDEX IF EXISTS idx_users_google_id;
+    DROP INDEX IF EXISTS idx_sentence_enrichments_source_id;
+    DROP INDEX IF EXISTS idx_item_images_user_id;
+    DROP INDEX IF EXISTS idx_review_event_items_event;
+  `);
 
   // Refresh planner statistics for tables whose indexes changed, bounded so it stays quick on a large file.
   db.pragma('optimize = 0x10002');

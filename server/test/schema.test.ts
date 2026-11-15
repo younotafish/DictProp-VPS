@@ -1,0 +1,107 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import Database from 'better-sqlite3';
+import { applySchema } from '../src/db/schema.js';
+
+const { db } = await import('../src/db.js');
+const { stmts } = await import('../src/db/items.js');
+const { imageStmts } = await import('../src/db/images.js');
+
+// A database file as the server created it in March, before accounts, revisions, ratings and image blobs,
+// with the indexes the schema has since retired.
+const MARCH_SCHEMA = `
+  CREATE TABLE items (
+    id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN ('vocab', 'phrase', 'sentence')), data TEXT NOT NULL,
+    srs TEXT NOT NULL, saved_at INTEGER NOT NULL, updated_at INTEGER, is_deleted INTEGER DEFAULT 0, is_archived INTEGER DEFAULT 0
+  );
+  CREATE INDEX idx_items_type ON items(type);
+  CREATE INDEX idx_items_updated ON items(updated_at);
+  CREATE TABLE users (
+    id TEXT PRIMARY KEY, google_id TEXT UNIQUE NOT NULL, email TEXT NOT NULL, display_name TEXT, photo_url TEXT,
+    is_approved INTEGER DEFAULT 0, is_admin INTEGER DEFAULT 0, created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_users_google_id ON users(google_id);
+  CREATE TABLE review_events (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    item_type TEXT NOT NULL CHECK(item_type IN ('vocab', 'phrase', 'sentence')), reviewed_at INTEGER NOT NULL,
+    previous_step INTEGER NOT NULL, next_step INTEGER NOT NULL
+  );
+  CREATE TABLE review_event_items (
+    event_id TEXT NOT NULL, item_id TEXT NOT NULL, previous_srs TEXT NOT NULL, applied_srs TEXT NOT NULL,
+    PRIMARY KEY (event_id, item_id)
+  );
+  CREATE INDEX idx_review_event_items_event ON review_event_items(event_id);
+  CREATE TABLE item_images (id TEXT PRIMARY KEY, user_id TEXT, data TEXT NOT NULL, updated_at INTEGER);
+  CREATE INDEX idx_item_images_user_id ON item_images(user_id);
+  CREATE TABLE sentence_enrichments (
+    lookup_hash TEXT PRIMARY KEY, source_id TEXT UNIQUE NOT NULL, text_hash TEXT NOT NULL, source_text TEXT NOT NULL,
+    analysis TEXT NOT NULL, generated_at INTEGER NOT NULL, image_content_hash TEXT, image_mime_type TEXT,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_sentence_enrichments_source_id ON sentence_enrichments(source_id);
+  INSERT INTO items (id, type, data, srs, saved_at) VALUES ('march-item', 'vocab', '{}', '{}', 1);
+`;
+
+/** Every table's columns and indexes, in a form two databases can be compared by. */
+function shape(database: Database.Database) {
+  const tables = database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+    .all() as Array<{ name: string }>;
+  return Object.fromEntries(tables.map(({ name }) => [name, {
+    columns: database.prepare(`PRAGMA table_info(${name})`).all(),
+    indexes: (database.prepare(`PRAGMA index_list(${name})`).all() as Array<{ name: string; unique: number; partial: number }>)
+      .map(index => ({
+        name: index.name, unique: index.unique, partial: index.partial,
+        columns: (database.prepare(`PRAGMA index_info(${index.name})`).all() as Array<{ name: string }>).map(column => column.name),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  }]));
+}
+
+const fresh = () => {
+  const database = new Database(':memory:');
+  applySchema(database);
+  return database;
+};
+
+test('a March database file upgrades to exactly the tables, columns and indexes of a fresh one', () => {
+  const march = new Database(':memory:');
+  march.exec(MARCH_SCHEMA);
+  applySchema(march);
+  assert.deepEqual(shape(march), shape(fresh()));
+  const row = march.prepare(`SELECT user_id, project, revision FROM items WHERE id = 'march-item'`).get();
+  assert.deepEqual(row, { user_id: null, project: null, revision: 0 });
+});
+
+test('applying the schema again changes nothing', () => {
+  const database = fresh();
+  const before = shape(database);
+  applySchema(database);
+  assert.deepEqual(shape(database), before);
+});
+
+test('the retired indexes are gone, and the projects table stays until the audit allows dropping it', () => {
+  const names = new Set((fresh().prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as Array<{ name: string }>)
+    .map(index => index.name));
+  for (const retired of [
+    'idx_items_type', 'idx_items_updated', 'idx_items_user_id', 'idx_users_google_id',
+    'idx_sentence_enrichments_source_id', 'idx_item_images_user_id', 'idx_review_event_items_event',
+  ]) {
+    assert.equal(names.has(retired), false, retired);
+  }
+  assert.ok(names.has('idx_items_project'));
+  assert.ok(names.has('idx_projects_user_id'));
+});
+
+test('lookups search the indexes that remain', () => {
+  const plan = (sql: string, ...params: unknown[]) =>
+    (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{ detail: string }>).map(row => row.detail).join('\n');
+  assert.match(plan(stmts.getById.source, 'id'), /SEARCH items USING INDEX sqlite_autoindex_items_1 \(id=\?\)/);
+  assert.match(plan(stmts.getAfterRevision.source, 'user', 0, 0, '', 10), /SEARCH items USING INDEX idx_items_user_revision/);
+  assert.doesNotMatch(plan(stmts.getAfterRevision.source, 'user', 0, 0, '', 10), /TEMP B-TREE/);
+  assert.match(plan(stmts.undoneReviewAt.source, 'user', 1, 'id'), /SEARCH review_events USING INDEX idx_review_events_user_time/);
+  assert.match(plan(imageStmts.manifest.source, 'user'), /SEARCH i USING COVERING INDEX idx_item_images_user_versions/);
+  // users.ts and the sign-up claim of rows from before accounts.
+  assert.match(plan('SELECT * FROM users WHERE google_id = ?', 'g'), /SEARCH users USING INDEX sqlite_autoindex_users_2/);
+  assert.match(plan('UPDATE items SET user_id = ? WHERE user_id IS NULL', 'user'), /SEARCH items USING (COVERING )?INDEX idx_items_user_/);
+  assert.match(plan('UPDATE item_images SET user_id = ? WHERE user_id IS NULL', 'user'), /SEARCH item_images USING (COVERING )?INDEX idx_item_images_user_versions/);
+});
