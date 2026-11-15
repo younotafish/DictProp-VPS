@@ -92,7 +92,6 @@ export const speak = (
   text: string,
   options?: {
     rate?: number;
-    volume?: number;
     onStart?: () => void;
     onEnd?: () => void;
     onError?: (event: SpeechSynthesisErrorEvent) => void;
@@ -104,7 +103,6 @@ export const speak = (
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'en-US';
   utterance.rate = options?.rate ?? 0.9;
-  utterance.volume = options?.volume ?? 1.0;
 
   if (options?.onStart) utterance.onstart = options.onStart;
   if (options?.onEnd) utterance.onend = options.onEnd;

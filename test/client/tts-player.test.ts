@@ -166,6 +166,51 @@ test('changing the speech style stops what is playing', async () => {
   assert.deepEqual(callbacks.heard, []);
 });
 
+test('in the casual style a casual clip plays, with its timings', async () => {
+  setTtsStyle('casual');
+  try {
+    const text = `Sentence number ${++sentences} reads aloud.`;
+    const casualKey = await ttsKey(text, 'casual');
+    const clearKey = await ttsKey(text, 'Mia');
+    server.clips.set(casualKey, clip());
+    server.timings.set(casualKey, [{ text: 'Sentence', start: 0.05, end: 0.3 }]);
+    engine.speakNatural(text, { allowDownload: true });
+    const el = media.element();
+    await until(() => el.src.startsWith('blob:'), 'the casual clip is set on the element');
+    el.loadMetadata(3);
+    assert.ok(server.requests.some(url => url.endsWith(`/api/tts/${casualKey}.mp3`)));
+    assert.ok(!server.requests.some(url => url.endsWith(`/api/tts/${clearKey}.mp3`)), 'the clear clip is not fetched');
+    assert.ok(!server.generated.some(item => item.text === text), 'nothing is generated');
+  } finally {
+    setTtsStyle('clear');
+  }
+});
+
+test('in the casual style a missing casual clip is requested while the clear clip plays', async () => {
+  setTtsStyle('casual');
+  try {
+    const text = await sentence(true);
+    engine.speakNatural(text, { allowDownload: true });
+    const el = media.element();
+    await until(() => el.src.startsWith('blob:') && !el.paused, 'the clear clip plays');
+    assert.deepEqual(server.generated.filter(item => item.text === text), [{ text, voice: 'casual' }]);
+  } finally {
+    setTtsStyle('clear');
+  }
+});
+
+test('in the casual style with no clip at all, both styles are requested and the system voice reads', async () => {
+  setTtsStyle('casual');
+  try {
+    const text = await sentence(false);
+    engine.speakNatural(text, { allowDownload: true });
+    await until(() => media.synth.last?.text === text, 'the system voice reads');
+    assert.deepEqual(server.generated.filter(item => item.text === text), [{ text, voice: 'casual' }, { text, voice: 'Mia' }]);
+  } finally {
+    setTtsStyle('clear');
+  }
+});
+
 test('a word read clears the speakers and supersedes the sentence', async () => {
   const sentenceRead = await playing();
   const word = engine.speakWord('serendipity');

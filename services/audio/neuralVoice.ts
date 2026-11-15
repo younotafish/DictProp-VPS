@@ -9,7 +9,7 @@ import { canUseWebGPU, isMobile, isNeuralSupported } from './platform';
 import { playUrl } from './player';
 import { MAX_KOKORO_URLS, UrlLru } from './urlLru';
 
-export const DEFAULT_VOICE: KokoroVoice = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
+const DEFAULT_VOICE: KokoroVoice = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
 
 const CONSENT_KEY = 'tts_neural_consent'; // mobile one-time download consent
 

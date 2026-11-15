@@ -1,20 +1,9 @@
-import {
-  ttsKey,
-  fetchCachedTTS,
-  fetchCachedTTSTimings,
-  requestTTSGeneration,
-  TTS_CASUAL_VOICE,
-  TTS_LEGACY_CASUAL_VOICE,
-  TTS_LEGACY_VOICE,
-  TTS_VOICE,
-  type WordTiming,
-} from '../api';
+import { ttsKey, fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, type WordTiming } from '../api';
 import { getAudioBlob, putAudioBlob, getTimings, putTimings } from '../audioCache';
 import { stripSentenceMarkers } from '../sentenceMarkers';
-import { getTtsStyleToken } from '../ttsSettings';
+import { getTtsStyle, type TtsStyle } from '../ttsSettings';
 import { Lru, MAX_TIMINGS, MAX_TTS_URLS, UrlLru } from './urlLru';
-
-const styleToken = getTtsStyleToken;
+import { STYLE_VOICES } from './voices';
 
 // Device-local cache of ready-to-play object URLs (cached MiMo clips, keyed by ttsKey hash) — replays are instant.
 const ttsUrlCache = new UrlLru(MAX_TTS_URLS);
@@ -58,25 +47,16 @@ const loadClipUrl = (key: string): Promise<string | null> => {
   return load;
 };
 
-export const legacyTokenFor = (token: string): string =>
-  token === TTS_CASUAL_VOICE
-    ? TTS_LEGACY_CASUAL_VOICE
-    : token === TTS_VOICE
-      ? TTS_LEGACY_VOICE
-      : token;
-
 export interface ResolvedCachedClip { key: string; url: string; token: string }
 
-/** Resolve the configured production clip, then its matching rollout fallback when one differs. */
-export const resolveCachedClip = async (text: string, token: string): Promise<ResolvedCachedClip | null> => {
-  const key = await ttsKey(text, token);
-  const url = await loadClipUrl(key);
-  if (url) return { key, url, token };
-  const legacyToken = legacyTokenFor(token);
-  if (legacyToken === token) return null;
-  const legacyKey = await ttsKey(text, legacyToken);
-  const legacyUrl = await loadClipUrl(legacyKey);
-  return legacyUrl ? { key: legacyKey, url: legacyUrl, token: legacyToken } : null;
+/** The first of the style's clips (best voice first) the device or the server has. Null when none exists. */
+export const resolveCachedClip = async (text: string, style: TtsStyle): Promise<ResolvedCachedClip | null> => {
+  for (const token of STYLE_VOICES[style].play) {
+    const key = await ttsKey(text, token);
+    const url = await loadClipUrl(key);
+    if (url) return { key, url, token };
+  }
+  return null;
 };
 
 /** Per-word timings for clip `key` (memory → IDB → server, write-through). Null when none exist. */
@@ -102,12 +82,11 @@ const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => {
 export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> => {
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return null;
-  const token = styleToken();
-  const key = await ttsKey(plain, token);
-  const timings = await loadTimingsCached(key);
-  if (timings) return timings;
-  const legacyToken = legacyTokenFor(token);
-  return legacyToken === token ? null : loadTimingsCached(await ttsKey(plain, legacyToken));
+  for (const token of STYLE_VOICES[getTtsStyle()].play) {
+    const timings = await loadTimingsCached(await ttsKey(plain, token));
+    if (timings) return timings;
+  }
+  return null;
 };
 
 /** Ensure word timings exist for `text` (current style): warm them if present, else kick off background
@@ -116,7 +95,7 @@ export const ensureTimings = async (text: string): Promise<void> => {
   const t = await getTimingsFor(text);
   if (t) return;
   const plain = stripSentenceMarkers(text).trim();
-  if (plain) requestTTSGeneration([{ text: plain, voice: legacyTokenFor(styleToken()) }]).catch(() => { /* best-effort backfill */ });
+  if (plain) requestTTSGeneration([{ text: plain, voice: STYLE_VOICES[getTtsStyle()].generate }]).catch(() => { /* best-effort backfill */ });
 };
 
 /**
@@ -125,12 +104,12 @@ export const ensureTimings = async (text: string): Promise<void> => {
  * Fetch-only — never triggers generation.
  */
 export const prefetchTTS = (texts: string[]): void => {
-  const token = styleToken();
+  const style = getTtsStyle();
   for (const raw of texts) {
     const plain = stripSentenceMarkers(raw || '').trim();
     if (!plain) continue;
     (async () => {
-      const clip = await resolveCachedClip(plain, token);
+      const clip = await resolveCachedClip(plain, style);
       if (clip) await loadTimingsCached(clip.key);
     })().catch(() => { /* best-effort */ });
   }
@@ -143,24 +122,24 @@ export const prefetchTTS = (texts: string[]): void => {
  */
 export const ensureTTS = async (texts: string[]): Promise<void> => {
   try {
-    const token = styleToken();
+    const style = getTtsStyle();
     const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
     if (!plains.length) return;
 
     // Pull anything already cached (memory → IDB → server) into the device cache; collect true misses.
     const missing: string[] = [];
     await Promise.all(plains.map(async (plain) => {
-      if (!(await resolveCachedClip(plain, token))) missing.push(plain);
+      if (!(await resolveCachedClip(plain, style))) missing.push(plain);
     }));
     if (missing.length) {
       // Generate the missing clips server-side (one batch), then pull them into the device cache.
-      const generationToken = legacyTokenFor(token);
+      const generationToken = STYLE_VOICES[style].generate;
       await requestTTSGeneration(missing.map(text => ({ text, voice: generationToken })));
       await Promise.all(missing.map(async (plain) => { await loadClipUrl(await ttsKey(plain, generationToken)); }));
     }
     // Warm per-word timings (both styles have them now) so tap-to-seek is ready on the first tap.
     await Promise.all(plains.map(async (plain) => {
-      const clip = await resolveCachedClip(plain, token);
+      const clip = await resolveCachedClip(plain, style);
       if (clip) await loadTimingsCached(clip.key);
     }));
   } catch {
@@ -178,7 +157,7 @@ export const preloadAudio = async (
   texts: string[],
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> => {
-  const token = styleToken();
+  const style = getTtsStyle();
   const plains = Array.from(new Set(texts.map(t => stripSentenceMarkers(t || '').trim()).filter(Boolean)));
   const total = plains.length;
   onProgress?.(0, total);
@@ -190,7 +169,7 @@ export const preloadAudio = async (
   const missing: string[] = [];
   await Promise.all(plains.map(async (plain) => {
     try {
-      const clip = await resolveCachedClip(plain, token);
+      const clip = await resolveCachedClip(plain, style);
       if (clip) { await loadTimingsCached(clip.key); tick(); return; }
       missing.push(plain); // absent everywhere → generate below
     } catch { tick(); }
@@ -198,7 +177,7 @@ export const preloadAudio = async (
 
   // 2) Generate the missing clips server-side (one batch), then pull them into the device cache.
   if (missing.length) {
-    const generationToken = legacyTokenFor(token);
+    const generationToken = STYLE_VOICES[style].generate;
     try { await requestTTSGeneration(missing.map(text => ({ text, voice: generationToken }))); } catch { /* best-effort */ }
     await Promise.all(missing.map(async (plain) => {
       try {

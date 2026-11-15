@@ -32,8 +32,6 @@ function deferredSpeak(method: 'speakNatural' | 'speakWord', text: string, optio
   }).catch(error => options?.onError?.(error));
   return {
     stop: () => { cancelled = true; handle?.stop(); },
-    pause: () => handle?.pause(), resume: () => handle?.resume(),
-    isPaused: () => handle?.isPaused() ?? false,
     isActive: () => !cancelled && (handle?.isActive() ?? true),
   };
 }

@@ -1,10 +1,7 @@
-import { TTS_CASUAL_VOICE, TTS_VOICE } from './api';
-
 // ── Speech style: clear (crisp MiMo) ⇄ casual (reduced, mumbled) ──────────────
 // A persisted GLOBAL choice of which cached track to play. Every play site routes through this engine,
-// so the one toggle governs word review, sentence review, and the global-search popup at once. The
-// style maps to the cache "voice" token: clear -> TTS_VOICE (e.g. 'Mia'); casual -> 'casual' (MUST
-// match the server's CASUAL_STYLE). Casual clips are audio-only — no word timings / lead-in skip.
+// so the one toggle governs word review, sentence review, and the global-search popup at once. Each
+// style's cache voice tokens are in services/audio/voices.ts; both styles' clips have word timings.
 export type TtsStyle = 'clear' | 'casual';
 const TTS_STYLE_KEY = 'tts_style';
 // Read like the rate below: with storage blocked, touching localStorage throws, and this runs on import.
@@ -14,7 +11,6 @@ let style: TtsStyle = (() => {
 const styleListeners = new Set<(value: TtsStyle) => void>();
 
 export const getTtsStyle = () => style;
-export const getTtsStyleToken = () => style === 'casual' ? TTS_CASUAL_VOICE : TTS_VOICE;
 export const subscribeTtsStyle = (callback: (value: TtsStyle) => void) => {
   styleListeners.add(callback);
   callback(style);
