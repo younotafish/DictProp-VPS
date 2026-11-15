@@ -8,7 +8,9 @@
  */
 import { KokoroTTS, type GenerateOptions } from 'kokoro-js';
 import { env } from '@huggingface/transformers';
-// The only runtime file the default onnxruntime-web build fetches (its JS glue is bundled into it).
+// The only runtime file the default onnxruntime-web build fetches (its JS glue is bundled into it). It's imported
+// by path because onnxruntime-web's exports map doesn't expose dist/*.wasm, and it must come from the copy that
+// transformers runs, which test/contracts/dependency-versions.test.ts checks. (kokoro-js brings both packages.)
 import ortWasmUrl from '../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm?url';
 
 export type KokoroDevice = 'webgpu' | 'wasm';
