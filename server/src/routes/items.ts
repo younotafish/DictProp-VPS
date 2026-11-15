@@ -1,123 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
-import { randomUUID } from 'crypto';
-import { getItemsAfterRevision, upsertMany, getItemById, getItemImageBinary, getImageManifest, getReviewHistory, applyReviewEvent, undoReviewEvent, storeItemImage, getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
+import { getItemById, getItemsAfterRevision, upsertMany, type ItemRead } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
-import { detectImageMimeType, isSupportedImageMime } from '../image-format.js';
-import { validateStoredItem, validateStoredItemBatch } from '../validation.js';
-import { fetchPublicHttpUrl } from '../safe-url.js';
-import { sentenceLookupHash } from '../sentence-enrichment.js';
-import { isReviewRating, isReviewTaskType } from '../shared/review.js';
-
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
-const IMAGE_FETCH_TIMEOUT_MS = 30_000;
-function hasValidReviewMetadata(event: any): boolean {
-  return (event.rating === undefined || isReviewRating(event.rating)) &&
-    (event.taskType === undefined || isReviewTaskType(event.taskType)) &&
-    (event.durationMs === undefined || (Number.isInteger(event.durationMs) && event.durationMs >= 0 && event.durationMs <= 86_400_000)) &&
-    (event.sessionId === undefined || (typeof event.sessionId === 'string' && event.sessionId.length <= 200));
-}
-
-async function readLimitedBody(response: Response, maxBytes: number): Promise<Buffer | null> {
-  if (!response.body) return Buffer.alloc(0);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    length += value.byteLength;
-    if (length > maxBytes) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), length);
-}
-
-/** Fetch an image URL and return as base64 data URI, or undefined on failure. */
-async function fetchImageAsBase64(url: string): Promise<string | undefined> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetchPublicHttpUrl(url, { signal: controller.signal });
-    if (!response.ok) {
-      await response.body?.cancel();
-      return undefined;
-    }
-    const declaredLength = Number(response.headers.get('content-length') || '0');
-    if (declaredLength > MAX_IMAGE_BYTES) return undefined;
-    const bytes = await readLimitedBody(response, MAX_IMAGE_BYTES);
-    if (!bytes) return undefined;
-    const mimeType = detectImageMimeType(bytes);
-    if (!mimeType) return undefined;
-    const base64 = bytes.toString('base64');
-    return `data:${mimeType};base64,${base64}`;
-  } catch {
-    return undefined;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Wrap a plain VocabCard object into a full StoredItem. */
-function wrapVocabCard(card: any): any {
-  const id = typeof card.id === 'string' && card.id.length > 0 && card.id.length <= 200 ? card.id : randomUUID();
-  const now = Date.now();
-  return {
-    type: 'vocab',
-    data: { ...card, id },
-    srs: {
-      id,
-      type: 'vocab',
-      nextReview: 0,
-      interval: 0,
-      memoryStrength: 0,
-      lastReviewDate: 0,
-      totalReviews: 0,
-      correctStreak: 0,
-      stability: 0,
-    },
-    savedAt: now,
-  };
-}
-
+import { readJsonArray } from '../middleware/json-body.js';
+import { MAX_ID_LENGTH, validateStoredItemBatch } from '../validation.js';
 
 export const itemsRoutes = new Hono<AppEnv>();
-
-// Prepared example metadata is global source material. Looking it up must not create a user item:
-// expanding an example is a read-only action, while bookmarking remains an explicit save.
-itemsRoutes.post('/sentence-enrichments/lookup', async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const text = body?.text;
-  if (typeof text !== 'string' || !text.trim() || text.length > 20_000) {
-    return c.json({ error: 'Expected a non-empty sentence' }, 400);
-  }
-  const enrichment = getSentenceEnrichmentForText(text);
-  if (!enrichment) return c.json({ found: false });
-  const lookupHash = sentenceLookupHash(text);
-  c.header('Cache-Control', 'private, max-age=300');
-  return c.json({
-    found: true,
-    analysis: enrichment.analysis,
-    analysisGeneratedAt: enrichment.generatedAt,
-    ...(enrichment.imageContentHash && enrichment.imageMimeType
-      ? { imageUrl: `/api/sentence-enrichments/${lookupHash}/image` }
-      : {}),
-  });
-});
-
-itemsRoutes.get('/sentence-enrichments/:lookupHash/image', (c) => {
-  const image = getSentenceEnrichmentImage(c.req.param('lookupHash'));
-  if (!image) return c.notFound();
-  return new Response(image.data, {
-    headers: {
-      'Content-Type': image.mimeType,
-      'Cache-Control': 'private, max-age=86400',
-    },
-  });
-});
 
 function streamAllItems(c: Context<AppEnv>, userId: string) {
   c.header('Content-Type', 'application/json; charset=UTF-8');
@@ -158,7 +46,7 @@ itemsRoutes.get('/items', (c) => {
     const revision = Number(afterRevision);
     const afterId = c.req.query('afterId') || '';
     const limit = Number(c.req.query('limit') || 200);
-    if (!Number.isSafeInteger(revision) || revision < 0 || afterId.length > 200 ||
+    if (!Number.isSafeInteger(revision) || revision < 0 || afterId.length > MAX_ID_LENGTH ||
         !Number.isSafeInteger(limit) || limit < 1) {
       return c.json({ error: 'Invalid revision cursor' }, 400);
     }
@@ -167,61 +55,6 @@ itemsRoutes.get('/items', (c) => {
   // Keep the legacy array response contract, but serialize bounded pages into a stream. A large
   // regenerated corpus must not monopolize the single Node event loop during JSON conversion.
   return streamAllItems(c, userId);
-});
-
-/** If-None-Match compares weakly, so a W/ prefix added by an intermediary still matches. */
-function ifNoneMatchHits(header: string | undefined, etag: string): boolean {
-  return !!header && header.split(',').some(tag => {
-    const value = tag.trim();
-    return value === '*' || value.replace(/^W\//, '') === etag;
-  });
-}
-
-// GET /api/items/:id/image — return raw binary image with caching headers
-itemsRoutes.get('/items/:id/image', (c) => {
-  const userId = c.get('user').id;
-  // Raster types only: never serve a stored SVG (a script-capable document) from this origin.
-  const image = getItemImageBinary(c.req.param('id'), userId);
-  if (!image) return c.notFound();
-
-  const headers = {
-    // The content hash names these exact bytes, so revalidation costs a 304 instead of the image.
-    ETag: `"${image.contentHash}"`,
-    // This is authenticated, user-owned content and the image may be regenerated
-    // at the same URL. Never allow a shared cache or immutable stale response.
-    'Cache-Control': 'private, max-age=300, must-revalidate',
-  };
-  if (ifNoneMatchHits(c.req.header('if-none-match'), headers.ETag)) {
-    return new Response(null, { status: 304, headers });
-  }
-  return new Response(image.data, { headers: { ...headers, 'Content-Type': image.mimeType } });
-});
-
-// GET /api/items/images/manifest — ids of every image this user has stored.
-// Lightweight (ids only); the client diffs this against its IndexedDB to know what to re-upload.
-itemsRoutes.get('/items/images/manifest', (c) => {
-  const userId = c.get('user').id;
-  return c.json(getImageManifest(userId));
-});
-
-// PUT /api/items/:id/image — binary image upload, without base64/JSON expansion.
-itemsRoutes.put('/items/:id/image', async (c) => {
-  const userId = c.get('user').id;
-  const mimeType = (c.req.header('content-type') || '').split(';', 1)[0].toLowerCase();
-  if (!isSupportedImageMime(mimeType)) {
-    return c.json({ error: 'Unsupported image type' }, 415);
-  }
-  const declaredLength = Number(c.req.header('content-length') || '0');
-  if (declaredLength > MAX_IMAGE_BYTES) return c.json({ error: 'Image is too large' }, 413);
-  const bytes = Buffer.from(await c.req.arrayBuffer());
-  if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
-    return c.json({ error: 'Invalid image size' }, 413);
-  }
-  // The image and the revisions that announce it commit together, or a delta client could miss it.
-  if (!storeItemImage(c.req.param('id'), bytes, mimeType, userId)) {
-    return c.json({ error: 'Image could not be stored' }, 400);
-  }
-  return c.json({ ok: true });
 });
 
 // GET /api/items/:id — return a single item
@@ -235,10 +68,11 @@ itemsRoutes.get('/items/:id', (c) => {
 // PUT /api/items — batch upsert (array of items)
 itemsRoutes.put('/items', async (c) => {
   const userId = c.get('user').id;
-  const body = await c.req.json().catch(() => null);
+  const body = await readJsonArray(c);
   const validationError = validateStoredItemBatch(body, 500);
-  if (validationError) return c.json({ error: validationError }, 400);
-  const { enriched, ...result } = upsertMany(body, userId);
+  if (validationError || !body) return c.json({ error: validationError }, 400);
+  // validateStoredItemBatch checked every item.
+  const { enriched, ...result } = upsertMany(body as Parameters<typeof upsertMany>[0], userId);
   // Return sentences the enrichment pool just analysed immediately instead of waiting for the next
   // 8-second delta pull. Conflicts use this same bounded canonical response path. Fields the server
   // merely kept from its stored copy are left out, since adopting a canonical copy drops an edit made
@@ -247,138 +81,6 @@ itemsRoutes.put('/items', async (c) => {
   const canonicalIds = new Set([...result.conflicts, ...enriched]);
   const canonical = [...canonicalIds]
     .map(id => getItemById(id, userId, false))
-    .filter(Boolean);
+    .filter((item): item is ItemRead => !!item);
   return c.json({ ok: true, count: body.length, ...result, canonical });
-});
-
-// POST /api/import — bulk import
-// Accepts either:
-//   1. StoredItem[] (full format with data/type/srs wrappers)
-//   2. VocabCard[] (simplified — just word/chinese/definition/etc, auto-wrapped)
-// If imageUrl is an HTTP URL, fetches and converts to base64.
-itemsRoutes.post('/import', async (c) => {
-  const userId = c.get('user').id;
-  const body = await c.req.json().catch(() => null);
-  if (!Array.isArray(body)) {
-    return c.json({ error: 'Expected array of items' }, 400);
-  }
-  if (body.length > 5_000) return c.json({ error: 'Import is limited to 5000 items' }, 400);
-
-  // Normalize: detect simplified VocabCard format and wrap
-  const items: any[] = body.map((item: any) => {
-    if (item && item.data && item.type) return item; // already StoredItem
-    if (item && typeof item.word === 'string' && item.word.trim()) return wrapVocabCard(item); // plain VocabCard
-    return null;
-  }).filter((item): item is any => !!item && validateStoredItem(item) === null);
-
-  if (items.length === 0) {
-    return c.json({ error: 'No valid items found' }, 400);
-  }
-
-  // Fetch HTTP image URLs → base64 (concurrently, max 5 at a time)
-  let imagesFetched = 0;
-  const remoteImageItems = items.filter((i: any) => {
-    const url = i.data?.imageUrl;
-    return url && typeof url === 'string' && url.startsWith('http');
-  });
-  const imageItems = remoteImageItems.slice(0, 100);
-  for (const item of remoteImageItems.slice(100)) delete item.data.imageUrl;
-
-  // Process in batches of 5
-  for (let i = 0; i < imageItems.length; i += 5) {
-    const batch = imageItems.slice(i, i + 5);
-    await Promise.all(
-      batch.map(async (item: any) => {
-        const base64 = await fetchImageAsBase64(item.data.imageUrl);
-        if (base64) {
-          item.data.imageUrl = base64;
-          imagesFetched++;
-        } else {
-          // Clear failed URL so it doesn't break the frontend
-          delete item.data.imageUrl;
-        }
-      })
-    );
-  }
-
-  // Also handle imageUrl on nested vocabs (for phrase/SearchResult items)
-  let nestedImagesAttempted = imageItems.length;
-  for (const item of items) {
-    if (Array.isArray(item.data?.vocabs)) {
-      for (const vocab of item.data.vocabs) {
-        if (vocab.imageUrl && typeof vocab.imageUrl === 'string' && vocab.imageUrl.startsWith('http')) {
-          if (nestedImagesAttempted >= 100) {
-            delete vocab.imageUrl;
-            continue;
-          }
-          nestedImagesAttempted++;
-          const base64 = await fetchImageAsBase64(vocab.imageUrl);
-          if (base64) {
-            vocab.imageUrl = base64;
-            imagesFetched++;
-          } else {
-            delete vocab.imageUrl;
-          }
-        }
-      }
-    }
-  }
-
-  upsertMany(items, userId);
-  return c.json({
-    ok: true,
-    imported: items.length,
-    skipped: body.length - items.length,
-    imagesFetched,
-  });
-});
-
-itemsRoutes.get('/reviews/history', (c) => {
-  const userId = c.get('user').id;
-  const recentSince = Number(c.req.query('recentSince'));
-  if (!Number.isFinite(recentSince) || recentSince < 0) return c.json({ error: 'Invalid recentSince parameter' }, 400);
-  return c.json(getReviewHistory(userId, recentSince));
-});
-
-// Atomically append an idempotent review event and advance the latest server schedule.
-itemsRoutes.post('/reviews/apply', async (c) => {
-  const userId = c.get('user').id;
-  const body = await c.req.json().catch(() => null);
-  const event = body?.event;
-  const itemIds = body?.itemIds;
-  const seedItem = body?.seedItem;
-  if (!event || typeof event.id !== 'string' || event.id.length === 0 || event.id.length > 200 ||
-      typeof event.itemId !== 'string' || event.itemId.length === 0 || event.itemId.length > 200 ||
-      !['vocab', 'phrase', 'sentence'].includes(event.itemType) ||
-      !Number.isFinite(event.reviewedAt) || event.reviewedAt < 0 ||
-      !Number.isInteger(event.previousStep) || event.previousStep < 0 ||
-      !Number.isInteger(event.nextStep) || event.nextStep < 0 ||
-      !hasValidReviewMetadata(event) ||
-      !Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 100 ||
-      !itemIds.every((id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 200)) {
-    return c.json({ error: 'Invalid review mutation' }, 400);
-  }
-  if (seedItem !== undefined) {
-    const validationError = validateStoredItem(seedItem);
-    if (validationError || seedItem.data.id !== event.itemId || seedItem.type !== event.itemType ||
-        seedItem.srs.id !== event.itemId || seedItem.srs.totalReviews !== event.previousStep) {
-      return c.json({ error: validationError ? `Invalid review seed: ${validationError}` : 'Review seed does not match event' }, 400);
-    }
-  }
-  // A review can reach the server before its item: an implicit catalog sentence on its first review, or an
-  // item whose first push hasn't landed. The seed is stored in the review's own transaction, so an
-  // offline/retried review cannot race the ordinary item sync or an importer, or advance the schedule twice.
-  // Existing items always win; the seed is used only for a genuinely absent id.
-  const result = applyReviewEvent(event, itemIds, userId, seedItem);
-  if (!result) return c.json({ error: 'Review item not found' }, 404);
-  return c.json(result, result.applied ? 201 : 200);
-});
-
-itemsRoutes.post('/reviews/:id/undo', (c) => {
-  const userId = c.get('user').id;
-  const eventId = c.req.param('id');
-  if (!eventId || eventId.length > 200) return c.json({ error: 'Invalid review event id' }, 400);
-  const result = undoReviewEvent(eventId, userId);
-  if (!result) return c.json({ error: 'Review event not found' }, 404);
-  return c.json(result);
 });

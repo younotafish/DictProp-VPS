@@ -19,7 +19,11 @@ import { aiRoutes } from './routes/ai.js';
 import { authRoutes } from './routes/auth.js';
 import { comparisonsRoutes } from './routes/comparisons.js';
 import { essaysRoutes } from './routes/essays.js';
+import { importRoutes } from './routes/import.js';
+import { itemImageRoutes } from './routes/item-images.js';
 import { itemsRoutes } from './routes/items.js';
+import { reviewRoutes } from './routes/reviews.js';
+import { sentenceEnrichmentRoutes } from './routes/sentence-enrichments.js';
 import { ttsRoutes } from './routes/tts.js';
 
 export interface AppOptions {
@@ -168,7 +172,11 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/*', requireAuth);
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
   app.use('/api/import', createConcurrencyLimit(1, 'Another data import is already running. Try again shortly.'));
+  app.route('/api', sentenceEnrichmentRoutes);
   app.route('/api', itemsRoutes);
+  app.route('/api', itemImageRoutes);
+  app.route('/api', importRoutes);
+  app.route('/api', reviewRoutes);
   app.route('/api', essaysRoutes);
   app.route('/api', options.aiRouter ?? aiRoutes);
   app.route('/api', ttsRoutes);

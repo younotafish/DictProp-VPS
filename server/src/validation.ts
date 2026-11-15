@@ -1,8 +1,44 @@
+import type { ReviewEvent } from './db.js';
 import { isSentenceAnalysis } from './sentence-analysis.js';
+import { isReviewRating, isReviewTaskType } from './shared/review.js';
 import { isUsageAudit } from './shared/usage-audit.js';
 import { isFiniteNonNegative, isItemType, isPositiveFinite, isRecord, isSha256 } from './validation-helpers.js';
 
-const MAX_ID_LENGTH = 200;
+/** The longest id the API accepts for an item, a review event or a review session. */
+export const MAX_ID_LENGTH = 200;
+
+export const isItemId = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_LENGTH;
+
+const MAX_REVIEW_DURATION_MS = 86_400_000;
+
+/** A review event as a client sends it to /api/reviews/apply, or null when any field is out of bounds. */
+export function parseReviewEvent(value: unknown): ReviewEvent | null {
+  if (!isRecord(value) || !isItemId(value.id) || !isItemId(value.itemId) || !isItemType(value.itemType)) return null;
+  const { reviewedAt, previousStep, nextStep, rating, taskType, durationMs, sessionId } = value;
+  if (typeof reviewedAt !== 'number' || !Number.isFinite(reviewedAt) || reviewedAt < 0) return null;
+  if (!Number.isInteger(previousStep) || (previousStep as number) < 0) return null;
+  if (!Number.isInteger(nextStep) || (nextStep as number) < 0) return null;
+  if (rating !== undefined && !isReviewRating(rating)) return null;
+  if (taskType !== undefined && !isReviewTaskType(taskType)) return null;
+  if (durationMs !== undefined &&
+      (!Number.isInteger(durationMs) || (durationMs as number) < 0 || (durationMs as number) > MAX_REVIEW_DURATION_MS)) {
+    return null;
+  }
+  if (sessionId !== undefined && (typeof sessionId !== 'string' || sessionId.length > MAX_ID_LENGTH)) return null;
+  return {
+    id: value.id,
+    itemId: value.itemId,
+    itemType: value.itemType,
+    reviewedAt,
+    previousStep: previousStep as number,
+    nextStep: nextStep as number,
+    ...(rating !== undefined ? { rating } : {}),
+    ...(taskType !== undefined ? { taskType } : {}),
+    ...(durationMs !== undefined ? { durationMs: durationMs as number } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+  };
+}
 // The largest real item is a phrase of about 40 KB. Rows are read whole on every sync page.
 const MAX_ITEM_DATA_BYTES = 256 * 1024;
 const MAX_NESTING = 32;

@@ -4,6 +4,7 @@
 import { Hono } from 'hono';
 import { getComparisons, upsertComparison } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
+import { readJsonObject } from '../middleware/json-body.js';
 
 export const comparisonsRoutes = new Hono<AppEnv>();
 
@@ -24,8 +25,7 @@ comparisonsRoutes.get('/comparisons', (c) => {
 // PUT /api/comparisons — upsert one comparison: { key, words, data, updatedAt }.
 comparisonsRoutes.put('/comparisons', async (c) => {
   const userId = c.get('user').id;
-  const body = await c.req.json().catch(() => ({}));
-  const { key, words, data, updatedAt } = body || {};
+  const { key, words, data, updatedAt } = await readJsonObject(c) ?? {};
   if (typeof key !== 'string' || !key || !Array.isArray(words) || !data || typeof data !== 'object') {
     return c.json({ error: 'key, words[], and data are required' }, 400);
   }
