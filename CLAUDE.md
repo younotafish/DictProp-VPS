@@ -225,7 +225,6 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 - **Each domain/origin has separate browser storage** — data on `localhost:3000` is separate from `dictprop.online` and `107.152.47.101:3000`
 
 ### Docker Build Pitfalls
-- `canvas` npm package (used only by `generate-icons.js`) requires Python + native build tools — excluded from the image via `npm pkg delete` in the Dockerfile
 - Rollup needs platform-specific binaries — do NOT use `--ignore-scripts` with npm ci
 - VPS has 2GB RAM, but local Docker builds can still OOM. Keep swap available: `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`
 

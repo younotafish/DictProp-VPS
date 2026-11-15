@@ -29,7 +29,7 @@ WORKDIR /app
 # breaks `npm ci` (which silently kept the old container running). Skipping it makes builds reliable.
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 COPY package.json package-lock.json ./
-RUN npm pkg delete devDependencies.canvas && npm ci --onnxruntime-node-install-cuda=skip
+RUN npm ci --onnxruntime-node-install-cuda=skip
 COPY index.html index.tsx tsconfig.json postcss.config.js ./
 COPY App.tsx types.ts ./
 COPY content/ ./content/

@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+
+// This checkout's root, so the watcher's ignores below apply here and not to a worktree nested under tmp/.
+const here = fileURLToPath(new URL('.', import.meta.url));
 
 // The neural voice runtime: large and only needed once neural voices are used, so it's cached on first use.
 const OPTIONAL_MEDIA = /^assets\/(?:neuralTts|transformers\.web|kokoro|ort-wasm)[^/]*\.(?:js|wasm)$/;
@@ -48,12 +52,18 @@ export default defineConfig({
     // shouldn't reach it by default.
     host: process.env.DEV_LAN === '1' ? '0.0.0.0' : '127.0.0.1',
     watch: {
-      // Ignore Watchman's ephemeral cookie files — it creates and instantly deletes them, and the
-      // dev watcher otherwise races to realpath() a now-gone file and crashes the server with ENOENT.
-      ignored: ['**/test-results/**', '**/playwright-report/**', '**/.playwright/**', '**/.watchman-cookie-*']
-    },
-    hmr: {
-      overlay: process.env.CI ? false : true
+      ignored: [
+        // Ignore Watchman's ephemeral cookie files — it creates and instantly deletes them, and the
+        // dev watcher otherwise races to realpath() a now-gone file and crashes the server with ENOENT.
+        '**/.watchman-cookie-*',
+        // Databases, generated data, audit worktrees and personal files: tens of thousands of files the app never
+        // imports, which the watcher would otherwise walk at startup. Anchored to this checkout, because the
+        // worktrees under tmp/ are checkouts too, and their own dev servers must still watch their sources.
+        `${here}data/**`,
+        `${here}server/data/**`,
+        `${here}tmp/**`,
+        `${here}personal_1/**`,
+      ],
     },
     // Proxy API requests to the Hono server during development
     proxy: {

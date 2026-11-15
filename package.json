@@ -1,5 +1,5 @@
 {
-  "name": "popdict-vps",
+  "name": "dictprop",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -38,10 +38,9 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
-    "autoprefixer": "^10.4.22",
-    "canvas": "^3.2.0",
     "fake-indexeddb": "^6.2.5",
     "postcss": "^8.5.6",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.1.17",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
