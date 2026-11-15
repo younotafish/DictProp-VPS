@@ -3,11 +3,12 @@ import type { StoredItem, SyncStatus } from '../types';
 import { logout, type AuthUser } from '../services/auth';
 import { deleteItemRecords, loadData, saveData, storeMissingItemHashes, subscribeLibraryWriteFailures } from '../services/storage';
 import { dropExpiredTombstones } from '../services/sync';
-import { getItemContentHash, isItemDirty } from '../services/itemHash';
+import { isItemDirty } from '../services/itemHash';
 import { stripAndStoreImages } from '../services/libraryImages';
 import { setReloadGuard } from '../services/appUpdate';
-import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { overlayPendingReviews, readPendingReviewMutations } from '../services/reviewQueue';
+import { readPendingReviewMutations } from '../services/reviewQueue';
+import { prepareStoredLibrary } from '../services/libraryLaunch';
+import { hasUnsentChanges, sendBeforeLeaving } from '../services/unsentChanges';
 import { subscribeToServerMutations } from '../services/syncSignals';
 import { log, warn, error as logError } from '../services/logger';
 import { useLatest } from './useStableValue';
@@ -89,15 +90,14 @@ export function useLibrarySync(
   // device hasn't sent would wait for the next sign-in or launch. Send it first, without letting a slow
   // server hold either up for long.
   const sendUnsentChanges = useCallback(async (): Promise<void> => {
-    closeUndoOffer();
-    const flush = (async () => {
-      if (isLoaded && latestItemsRef.current.length > 0) await userSaveData(latestItemsRef.current);
-      await flushPendingReviews();
-      await pushDirtyItems();
-    })().catch(error => warn('Unsent changes stay on this device until the next launch:', error));
-    let timer = 0;
-    await Promise.race([flush, new Promise<void>(resolve => { timer = window.setTimeout(resolve, SIGN_OUT_FLUSH_MS); })]);
-    window.clearTimeout(timer);
+    await sendBeforeLeaving({
+      closeUndoOffer,
+      saveLocal: () => (isLoaded && latestItemsRef.current.length > 0 ? userSaveData(latestItemsRef.current) : undefined),
+      flushReviews: () => flushPendingReviews(),
+      push: () => pushDirtyItems(),
+      timeoutMs: SIGN_OUT_FLUSH_MS,
+      onError: error => warn('Unsent changes stay on this device until the next launch:', error),
+    });
   }, [closeUndoOffer, isLoaded, userSaveData, flushPendingReviews, pushDirtyItems]);
 
   const handleSignOut = useCallback(async (): Promise<boolean> => {
@@ -108,11 +108,11 @@ export function useLibrarySync(
   // A new version's reload waits for changes still on their way to the server (services/appUpdate), and
   // sends them first. Items the server refused don't count: they wait for the next edit.
   useEffect(() => setReloadGuard({
-    hasUnsentChanges: () => {
-      const refused = refusedPushesRef.current;
-      return !!undoOfferRef.current || readPendingReviewMutations(currentUserIdRef.current).length > 0 ||
-        latestItemsRef.current.some(item => isItemDirty(item) && refused.get(item.data.id) !== getItemContentHash(item));
-    },
+    hasUnsentChanges: () => hasUnsentChanges(
+      latestItemsRef.current,
+      { heldId: undoOfferRef.current?.id ?? null, refused: refusedPushesRef.current },
+      () => readPendingReviewMutations(currentUserIdRef.current).length,
+    ),
     beforeReload: sendUnsentChanges,
   }), [sendUnsentChanges]);
 
@@ -181,62 +181,30 @@ export function useLibrarySync(
         try {
             clearLegacyLibraryCaches();
             // IndexedDB is the only local copy of the library; the server sync fills anything it lacks.
+            // Records that can't be used are left out, old ones migrated, and queued reviews laid back over
+            // them (services/libraryLaunch). Each step replaces only the items it changes, so the save below
+            // writes just those.
             const stored = await loadData(userId);
-            const loadedItems = stored.items.filter(item =>
-                item && item.data && item.data.id && item.srs && item.type
-            );
-            // The server won't resend a skipped record's changes, so a skipped record needs a full sync.
-            const cursor = loadedItems.length === stored.items.length ? stored.cursor : null;
-            log(`📦 Loaded ${loadedItems.length} items from IndexedDB`);
+            const prepared = prepareStoredLibrary(stored, readPendingReviewMutations(userId), Date.now());
+            log(`📦 Loaded ${prepared.items.length} items from IndexedDB`);
 
-            // Each migration replaces only the items it changes, so the save below writes just those.
-            const now = Date.now();
-            let processedItems = loadedItems.map(item => {
-                let migrated = item;
-                // 1. SRS migration
-                if (typeof migrated.srs?.memoryStrength !== 'number' ||
-                    (migrated.type === 'sentence' && (migrated.srs?.totalReviews ?? 0) === 0 &&
-                        ((migrated.srs?.memoryStrength ?? 0) !== 0 || (migrated.srs?.stability ?? 0.5) !== 0.5))) {
-                    migrated = { ...migrated, srs: SRSAlgorithm.migrate(migrated.srs) };
-                }
-                // 2. Timestamp fix (for sync)
-                if (!migrated.updatedAt && !migrated.savedAt) {
-                    migrated = { ...migrated, savedAt: now, updatedAt: now };
-                }
-                // 3. Merge every legacy project into the one notebook without touching card content or SRS.
-                if (migrated.project !== undefined) {
-                    const { project: _legacyProject, ...withoutProject } = migrated;
-                    migrated = withoutProject;
-                }
-                return migrated;
-            });
-
-            // 4. A review mutation is written synchronously before the async IndexedDB write. Reapply
-            // those tiny patches here so an immediate refresh cannot roll progress back. The review
-            // outbox delivers them, so a clean item stays clean, as in updateSRS.
-            const beforeOverlay = processedItems;
-            processedItems = overlayPendingReviews(beforeOverlay, readPendingReviewMutations(userId))
-                .map((item, index) => item !== beforeOverlay[index] && !isItemDirty(beforeOverlay[index])
-                    ? { ...item, lastSyncedHash: getItemContentHash(item) }
-                    : item);
-
-            // 5. Strip images from items → IDB (keep ~143MB out of React state). If they can't be stored,
+            // Strip images from items → IDB (keep ~143MB out of React state). If they can't be stored,
             // they stay inline for now and the next launch tries again.
-            processedItems = await stripAndStoreImages(processedItems).catch(error => {
+            let processedItems = await stripAndStoreImages(prepared.items).catch(error => {
                 warn('Inline images stay in memory until the next launch:', error);
-                return processedItems;
+                return prepared.items;
             });
 
-            // 6. Tombstones past retention have reached every device
+            // Tombstones past retention have reached every device
             const pruned = dropExpiredTombstones(processedItems);
             processedItems = pruned.items;
             await deleteItemRecords(pruned.droppedIds, userId)
                 .catch(error => warn('Expired deletions stay stored until the next launch:', error));
 
             updateItems(() => processedItems);
-            serverCursorRef.current = cursor;
+            serverCursorRef.current = prepared.cursor;
 
-            // 7. Write back the items the steps above replaced
+            // Write back the items the steps above replaced
             await saveData(processedItems, userId);
             setIsLoaded(true);
         } catch (e) {

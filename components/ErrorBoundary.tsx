@@ -52,10 +52,6 @@ export class ErrorBoundary extends React.Component<
     if (this.props.onReset) {
       this.props.onReset();
     }
-    // Clear potentially corrupted persisted state
-    try {
-      localStorage.removeItem('app_detail_context');
-    } catch {}
     this.setState({ hasError: false, error: null });
   };
 

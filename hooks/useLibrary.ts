@@ -3,9 +3,12 @@ import type { RevisionCursor, StoredItem } from '../types';
 import type { AuthUser } from '../services/auth';
 import { deleteItemRecords, saveData, saveItemUpdates } from '../services/storage';
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../services/sync';
-import { getItemContentHash, isItemDirty } from '../services/itemHash';
+import { getItemContentHash } from '../services/itemHash';
 import { loadAllItems, loadItemChanges, saveItems } from '../services/api';
 import { excludePendingReviewItems } from '../services/reviewQueue';
+import { createSerialLane } from '../services/serialLane';
+import { pullOrSnapshot, syncSnapshot } from '../services/serverSync';
+import { selectUnsent } from '../services/unsentChanges';
 import { log, warn, error as logError } from '../services/logger';
 import type { UndoOffer } from './useUndoOffer';
 
@@ -66,12 +69,7 @@ export function useLibrary(user: AuthUser | null) {
   // Pulls and pushes run one at a time: a pull merges only after an earlier push's acknowledgement is
   // recorded, and each push sends the latest copies. Tasks in the lane call pushNow, not pushDirtyItems,
   // which would wait on the lane itself.
-  const syncLaneRef = useRef<Promise<unknown>>(Promise.resolve());
-  const inSyncLane = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
-    const run = syncLaneRef.current.then(task, task);
-    syncLaneRef.current = run.catch(() => {});
-    return run;
-  }, []);
+  const [inSyncLane] = useState(createSerialLane);
 
   // Items the server refused, with the content it refused: sending that again would be refused again.
   const refusedPushesRef = useRef(new Map<string, string>());
@@ -82,11 +80,9 @@ export function useLibrary(user: AuthUser | null) {
   /** Pushes the dirty items (all, or those in `ids`) and records what the server kept. Returns the count. */
   const pushNow = useCallback(async (ids?: ReadonlySet<string>): Promise<number> => {
     const refused = refusedPushesRef.current;
-    const held = undoOfferRef.current?.id;
-    const dirty = latestItemsRef.current.filter(item => (!ids || ids.has(item.data.id)) && item.data.id !== held &&
-      isItemDirty(item) && refused.get(item.data.id) !== getItemContentHash(item));
+    const unsent = selectUnsent(latestItemsRef.current, { heldId: undoOfferRef.current?.id ?? null, refused }, ids);
     // Items with an unsent review wait for the review outbox, which applies the review atomically.
-    const toPush = excludePendingReviewItems(dirty, currentUserIdRef.current);
+    const toPush = excludePendingReviewItems(unsent, currentUserIdRef.current);
     if (toPush.length === 0) return 0;
     const result = await saveItems(toPush);
     const next = updateItems(items => applyServerSave(items, toPush, result));
@@ -151,23 +147,20 @@ export function useLibrary(user: AuthUser | null) {
   }, [mergeServerItems]);
 
   /** Merges a complete snapshot. Local items the server lacks turn dirty, so they upload. */
-  const syncFullSnapshot = useCallback(async (): Promise<void> => {
-    const { items: remoteItems, cursor } = await loadAllItems();
-    // An empty server isn't authoritative: merging it would re-upload the whole library.
-    if (remoteItems.length === 0) {
-      serverCursorRef.current = cursor;
-      return;
-    }
-    await mergeServerItems(remoteItems, cursor, { complete: true });
-    log(`Server: merged a full snapshot of ${remoteItems.length} items`);
-  }, [mergeServerItems]);
+  const syncFullSnapshot = useCallback((): Promise<void> => syncSnapshot({
+    loadAll: loadAllItems,
+    mergeSnapshot: async (remoteItems, cursor) => {
+      await mergeServerItems(remoteItems, cursor, { complete: true });
+      log(`Server: merged a full snapshot of ${remoteItems.length} items`);
+    },
+    storeCursor: cursor => { serverCursorRef.current = cursor; },
+  }), [mergeServerItems]);
 
   /** Pulls what changed since the stored cursor, or a full snapshot when there is no usable cursor. */
-  const syncWithServer = useCallback(async (): Promise<void> => {
-    const cursor = serverCursorRef.current;
-    if (cursor && await pullChanges(cursor)) return;
-    await syncFullSnapshot();
-  }, [pullChanges, syncFullSnapshot]);
+  const syncWithServer = useCallback(
+    (): Promise<void> => pullOrSnapshot(serverCursorRef.current, pullChanges, syncFullSnapshot),
+    [pullChanges, syncFullSnapshot],
+  );
 
   // Durable local write first, then an immediate push. A failed push leaves the items dirty, and the
   // debounced save retries them.

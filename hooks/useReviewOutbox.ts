@@ -4,9 +4,10 @@ import type { AuthUser } from '../services/auth';
 import { saveItemUpdates } from '../services/storage';
 import { reconcileReviewedItem } from '../services/sync';
 import { getItemContentHash, isItemDirty } from '../services/itemHash';
-import { applyReviewMutation, undoReviewMutation, type AppliedReviewResponse } from '../services/api';
+import { applyReviewMutation, undoReviewMutation } from '../services/api';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { describeRefusedReview, enqueuePendingReviewMutation, isRefusedReviewMutation, readPendingReviewMutations, recordRefusedReview, removePendingReviewMutation, type PendingReviewMutation } from '../services/reviewQueue';
+import { drainReviewOutbox, reviewSeed } from '../services/reviewOutbox';
 import { isRealLifeProgressItem } from '../services/realLifeProgressIdentity';
 import { isEssayProgressItem } from '../services/essayProgressIdentity';
 import { log, warn, error as logError } from '../services/logger';
@@ -59,21 +60,14 @@ export function useReviewOutbox(
     if (reviewFlushPromiseRef.current) return reviewFlushPromiseRef.current;
     const runFlush = async () => {
       try {
-        // A review storage wouldn't let go of comes round again; the next flush resends it (the server
-        // ignores a repeat) instead of this one sending it in a loop.
-        const sent = new Set<string>();
-        for (;;) {
-          const mutation = readPendingReviewMutations(userId).find(pending => !sent.has(pending.event.id));
-          if (!mutation) break;
-          sent.add(mutation.event.id);
-          let response: AppliedReviewResponse;
-          try {
-            response = await applyReviewMutation(mutation.event, mutation.itemIds, mutation.seedItem);
-          } catch (error) {
-            if (!isRefusedReviewMutation(error)) throw error;
-            // A retry would be refused the same way and hold back every review queued behind this one. The
-            // reviewed copies already hold the new schedule, so the item push delivers it instead. The user
-            // hears of it (components/RefusedReviews): the review itself never counts on the server.
+        await drainReviewOutbox({
+          read: () => readPendingReviewMutations(userId),
+          apply: mutation => applyReviewMutation(mutation.event, mutation.itemIds, mutation.seedItem),
+          isRefused: isRefusedReviewMutation,
+          reconcile: response => reconcileAppliedReview(response.items, response.baseRevisions),
+          // The reviewed copies already hold the new schedule, so the item push delivers it. The user hears of
+          // the refusal (components/RefusedReviews): the review itself never counts on the server.
+          recordRefusal: (mutation, error) => {
             warn('Review was refused; its schedule will sync with the item:', error);
             const reviewed = latestItemsRef.current.find(item => item.data.id === mutation.event.itemId) ?? mutation.seedItem;
             recordRefusedReview(userId, {
@@ -82,13 +76,10 @@ export function useReviewOutbox(
               reviewedAt: mutation.event.reviewedAt,
               reason: describeRefusedReview(error),
             });
-            removePendingReviewMutation(userId, mutation.event.id);
-            await markItemsUnsynced(mutation.itemIds);
-            continue;
-          }
-          await reconcileAppliedReview(response.items, response.baseRevisions);
-          removePendingReviewMutation(userId, mutation.event.id);
-        }
+          },
+          remove: eventId => removePendingReviewMutation(userId, eventId),
+          markUnsynced: markItemsUnsynced,
+        });
       } catch (error) {
         warn('Pending review sync will retry:', error);
       }
@@ -148,12 +139,8 @@ export function useReviewOutbox(
     const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
     const baseSRS = SRSAlgorithm.ensure(targetItem.srs, targetItem.data.id, targetItem.type);
     const updatedSRS = updateAfterRating(baseSRS, rating, now);
-    // An item the server has never stored (saved offline, or its first push still pending) travels with its
-    // review as a seed, since the item push waits for the review: without one, the server has nothing to apply
-    // the review to, and the two would wait on each other forever.
-    const seedItem = catalogSeed ?? (targetItem.serverRevision === undefined
-      ? { ...targetItem, srs: { ...baseSRS, id: itemId } }
-      : undefined);
+    // An item the server has never stored travels with its review as a seed (services/reviewOutbox).
+    const seedItem = reviewSeed(targetItem, baseSRS, catalogSeed);
     const reviewEvent: ReviewEvent = {
       id: context?.eventId || crypto.randomUUID(), itemId, itemType: targetItem.type, reviewedAt: now,
       previousStep: baseSRS.totalReviews, nextStep: updatedSRS.totalReviews,
