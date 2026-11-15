@@ -268,7 +268,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (element) setScrollParent(element);
   }, []);
 
-  if (!hasSavedItems && !localSearchQuery) {
+  // Typing stays on this screen, in the same box: its search opens the search sheet, where the first word is saved.
+  if (!hasSavedItems) {
     return <EmptyNotebook query={localSearchQuery} onQueryChange={changeQuery} onSearch={onSearch} />;
   }
 
