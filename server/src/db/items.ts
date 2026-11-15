@@ -4,7 +4,7 @@ import { keepServerOwnedData } from '../shared/server-owned-data.js';
 import { db, writeTransaction } from './connection.js';
 import { getItemImagesBatch, imageStmts, linkSentenceEnrichmentImage, storeImage, upsertItemImageBinary } from './images.js';
 import {
-  isJsonObject, isStaleContent, resolveSrs, splitInlineImages, withPoolAnalysis, type InlineImage, type JsonObject,
+  isJsonObject, isStaleContent, resolveSrs, sameJson, splitInlineImages, withPoolAnalysis, type InlineImage, type JsonObject,
 } from './item-write.js';
 import type { ItemType } from '../validation-helpers.js';
 import { allocateRevision, headRevision } from './revisions.js';
@@ -223,8 +223,9 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   const existingUpdatedAt = existing?.updated_at || 0;
   const existingRevision = existing?.revision || 0;
 
+  const storedSrs: unknown = existing ? JSON.parse(existing.srs) : undefined;
   const { srs, changed: srsChanged } = existing
-    ? resolveSrs(JSON.parse(existing.srs), item.srs)
+    ? resolveSrs(storedSrs, item.srs)
     : { srs: item.srs, changed: false };
   const staleContent = !!existing && isStaleContent({
     storedRevision: existingRevision,
@@ -241,9 +242,11 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   const { data: analysed, enriched } = withPoolAnalysis(incoming, pool);
 
   // After the pool, which returns the sentence it analyses to the saving client. Kept fields aren't returned.
-  const data = existing && existing.is_deleted !== 1 && !staleContent && !item.isDeleted && !options.replaceServerFields
-    ? keepServerOwnedData(analysed, item.type, JSON.parse(existing.data), existing.type)
-    : analysed;
+  const keepFrom = existing && existing.is_deleted !== 1 && !staleContent && !item.isDeleted && !options.replaceServerFields
+    ? existing
+    : undefined;
+  const storedData: unknown = keepFrom ? JSON.parse(keepFrom.data) : undefined;
+  const data = keepFrom ? keepServerOwnedData(analysed, item.type, storedData, keepFrom.type) : analysed;
   const keptServerFields = data !== analysed;
 
   // The item's own inline image goes first, so the pool's image only fills an item that has none.
@@ -281,8 +284,10 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   };
   // A copy that differs from the row only by lacking kept fields changes nothing. Its client keeps its own
   // data at an unchanged revision and pushes that copy again, so a revision per push would never settle.
-  if (existing && keptServerFields && !imagesChanged && !enriched &&
-      (Object.keys(row) as Array<keyof typeof row>).every(key => row[key] === existing[key])) {
+  // The JSON columns compare by content: kept fields come back in their own order, and a schedule can too.
+  const sameColumn = (key: keyof typeof row) =>
+    key === 'data' ? sameJson(stored, storedData) : key === 'srs' ? sameJson(srs, storedSrs) : row[key] === existing?.[key];
+  if (existing && keptServerFields && !imagesChanged && !enriched && (Object.keys(row) as Array<keyof typeof row>).every(sameColumn)) {
     return { id, revision: existingRevision, conflicted: false, enriched: false };
   }
   const revision = staleContent && !srsChanged ? existingRevision : allocateRevision();

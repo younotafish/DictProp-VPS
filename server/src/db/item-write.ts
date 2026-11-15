@@ -103,3 +103,7 @@ export function sortedKeys(value: unknown): unknown {
   if (!isObject(value)) return value;
   return Object.fromEntries(Object.keys(value).sort().map(key => [key, sortedKeys(value[key])]));
 }
+
+/** Whether two parsed JSON values hold the same content, whatever the order of their keys. */
+export const sameJson = (a: unknown, b: unknown): boolean =>
+  JSON.stringify(sortedKeys(a)) === JSON.stringify(sortedKeys(b));

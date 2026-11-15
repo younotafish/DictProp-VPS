@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  compareReviewProgress, isStaleContent, resolveSrs, sortedKeys, splitInlineImages, withPoolAnalysis,
+  compareReviewProgress, isStaleContent, resolveSrs, sameJson, sortedKeys, splitInlineImages, withPoolAnalysis,
 } from '../src/db/item-write.js';
 
 const schedule = (lastReviewDate: number, totalReviews: number, lastExposureDate?: number) =>
@@ -103,4 +103,11 @@ test('sorting keys makes copies that differ only in key order serialize alike', 
     JSON.stringify(sortedKeys({ e: null, a: [{ c: 2, d: 1 }], b: 1 })),
   );
   assert.equal(JSON.stringify(sortedKeys({ a: [1, 2] })), '{"a":[1,2]}');
+});
+
+test('JSON content compares equal whatever the order of its keys, and arrays keep their order', () => {
+  assert.equal(sameJson({ a: 1, b: { c: [1, { d: 2, e: 3 }] } }, { b: { c: [1, { e: 3, d: 2 }] }, a: 1 }), true);
+  assert.equal(sameJson({ a: [1, 2] }, { a: [2, 1] }), false);
+  assert.equal(sameJson({ a: 1 }, { a: 1, b: 2 }), false);
+  assert.equal(sameJson({ a: 1, gone: undefined }, { a: 1 }), true);
 });
