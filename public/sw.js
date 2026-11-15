@@ -48,6 +48,19 @@ async function cachedAsset(request) {
   return undefined;
 }
 
+/**
+ * Keeps the worker alive until a cache write that outlasts its response settles, so the browser doesn't stop an idle
+ * worker halfway through storing a large file such as the 21 MB voice runtime. Legal while the response promise is
+ * still pending, since respondWith extends the event's lifetime; a browser that refuses still lets the write run.
+ */
+function keepAliveFor(event, write) {
+  try {
+    event.waitUntil(write);
+  } catch {
+    // The write goes on regardless; only the worker's lifetime isn't extended for it.
+  }
+}
+
 async function precache() {
   const cache = await caches.open(CACHE);
   const shell = await fetch('/', { cache: 'no-cache' });
@@ -153,7 +166,7 @@ self.addEventListener('fetch', (event) => {
         const res = await fetch(req);
         if (isAsset(res)) {
           const cache = await caches.open(OPTIONAL.includes(url.pathname) ? MEDIA : CACHE);
-          cache.put(req, res.clone()).catch(() => {});
+          keepAliveFor(event, cache.put(req, res.clone()).catch(() => {}));
         }
         return res;
       })(),
@@ -167,9 +180,12 @@ self.addEventListener('fetch', (event) => {
     (async () => {
       const cache = await caches.open(CACHE);
       const hit = await cache.match(req);
+      let refreshing;
       const fetching = fetch(req)
-        .then((res) => { if (res && res.ok) cache.put(req, res.clone()).catch(() => {}); return res; })
+        .then((res) => { if (res && res.ok) refreshing = cache.put(req, res.clone()).catch(() => {}); return res; })
         .catch(() => null);
+      // A cached copy answers before the fresh one is back, so storing that one outlasts the response.
+      keepAliveFor(event, fetching.then(() => refreshing));
       return hit || (await fetching) || Response.error();
     })(),
   );

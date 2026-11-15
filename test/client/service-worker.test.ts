@@ -275,10 +275,39 @@ test('a hashed file in no cache comes from the network; offline it fails, and a 
   const page = sw.fetch('/assets/Gone-x9.js');
   assert.equal((await page.response)?.headers.get('content-type'), 'text/html');
   await page.settled();
+  assert.equal(page.extensions.length, 0);
   assert.equal(await caches.match('/assets/Gone-x9.js'), undefined, 'no cache stores a page under a file\'s name');
 
   network.online = false;
   await assert.rejects(sw.fetch('/assets/ort-wasm-simd-threaded.jsep-w1.wasm').response ?? Promise.resolve(), /Failed to fetch/);
+});
+
+test('a hashed file fetched on a miss is kept, the voice runtime in the shared cache, and the worker lives until it is', async () => {
+  const { sw, caches } = await device([ONE]);
+  await (await caches.open(ONE.cache)).delete('/assets/DetailView-d1.js');
+  for (const [path, cache] of [['/assets/kokoroWorker-k1.js', 'dictprop-media'], ['/assets/DetailView-d1.js', ONE.cache]]) {
+    const request = sw.fetch(path);
+    assert.equal(await (await request.response)?.text(), contents(path), path);
+    assert.equal(request.extensions.length, 1, `${path}: the write extends the event, past the response`);
+    await request.settled();
+    assert.equal(await (await caches.open(cache)).text(path), contents(path), path);
+  }
+});
+
+test('a cached icon or manifest answers at once, and the worker lives until the fresh copy is stored', async () => {
+  const { sw, network, caches } = await device([ONE]);
+  network.serve('/manifest.json', 'newer manifest');
+  const request = sw.fetch('/manifest.json');
+  assert.equal(await (await request.response)?.text(), contents('/manifest.json'));
+  assert.equal(request.extensions.length, 1);
+  await request.settled();
+  assert.equal(await (await caches.open(ONE.cache)).text('/manifest.json'), 'newer manifest');
+
+  network.online = false;
+  const offline = sw.fetch('/manifest.json');
+  assert.equal(await (await offline.response)?.text(), 'newer manifest');
+  await offline.settled();
+  assert.equal(await (await caches.open(ONE.cache)).text('/manifest.json'), 'newer manifest');
 });
 
 test('icons and the manifest answer from the cache, else the network, else an error', async () => {
