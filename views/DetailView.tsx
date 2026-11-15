@@ -1,19 +1,12 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { VocabCard, SearchResult, StoredItem, SentenceData, getItemTitle, getItemSpelling, getItemSense, getItemImageUrl, ItemGroup, isPhraseItem, isVocabItem, StoredComparison, type ReviewRating, type SRSData } from '../types';
-import { ArrowLeft, Bookmark, BookmarkMinus, Search as SearchIcon, RefreshCw, Trash2, MoreVertical, RotateCcw, Flame, CheckCircle2, X, Play, Pause, AudioLines, ExternalLink, MessageSquareQuote, Loader2, Scale, ImagePlus, Image as ImageIcon, Copy, Check, ClipboardPaste, BookOpenText, Lock } from 'lucide-react';
-import { Button } from '../components/Button';
-import { VocabCardDisplay, buildChatGPTUrl } from '../components/VocabCard';
+import { X } from 'lucide-react';
+import { VocabCardDisplay } from '../components/VocabCard';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { PronunciationBlock } from '../components/PronunciationBlock';
 import { OfflineImage } from '../components/OfflineImage';
-import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
-import { PlaybackSpeedToggle } from '../components/PlaybackSpeedToggle';
-import { HighlightedSentence } from '../components/HighlightedSentence';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
-import { SentenceSpeakerButton } from '../components/SentenceSpeakerButton';
 import { SentenceAnalysisView } from '../components/SentenceAnalysisView';
 import { EyesFreeZones, type ZoneFlash } from '../components/EyesFreeZones';
-import { AutoPlayCountdown } from '../components/AutoPlayCountdown';
 import { SessionPreload, type PreloadSession } from '../components/SessionPreload';
 import { getMasteryColors } from '../components/mastery';
 import { useEscapeLayer } from '../components/escapeStack';
@@ -27,16 +20,23 @@ import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../s
 import { log, warn, error as logError } from '../services/logger';
 import { isRealLifeProgressItem } from '../services/realLifeProgress';
 import { normalizeSentenceIdentity } from '../services/sentenceIdentity';
-import { copyTextToClipboard, extractImageFromTransfer, fileToDataUri, formatRelativeTime, hasDetailedSentenceAnalysis, mergePreparedSentence, readImageFromSystemClipboard, SENTENCE_PREFETCH_AHEAD } from './detail/detailUtils';
+import { copyTextToClipboard, extractImageFromTransfer, fileToDataUri, hasDetailedSentenceAnalysis, mergePreparedSentence, readImageFromSystemClipboard, SENTENCE_PREFETCH_AHEAD } from './detail/detailUtils';
 import { autoPlayTexts, exampleAt, preloadSession, readableExamples, wordZoneBands as countWordZoneBands, zoneText } from './detail/cardReading';
 import { sentenceTouchAction, touchFacts, wordTouchAction } from './detail/touchGestures';
 import { resolveSentenceUnderReview } from './detail/sentenceUnderReview';
 import { PLATFORM } from './detail/platform';
-import { GrammarNotes } from './detail/GrammarNotes';
-import { LibraryCounts } from './detail/LibraryCounts';
-import { PhraseVocabCard } from './detail/PhraseVocabCard';
 import { RememberToast } from './detail/RememberToast';
 import { DetailActionMenu } from './detail/DetailActionMenu';
+import { SentenceHero, type SentenceCopyState } from './detail/SentenceHero';
+import { SentenceHeaderRow } from './detail/SentenceHeaderRow';
+import { SentenceActionsRow } from './detail/SentenceActionsRow';
+import { SentencePlaybackControls } from './detail/SentencePlaybackControls';
+import { WordPlaybackControls } from './detail/WordPlaybackControls';
+import { WordCardHeader } from './detail/WordCardHeader';
+import { MeaningDots } from './detail/MeaningDots';
+import { WordComparisons, comparisonsInvolving } from './detail/WordComparisons';
+import { PhraseBody } from './detail/PhraseBody';
+import { SentenceImageFab, SentenceImagePanel } from './detail/SentenceImageAttach';
 import { isDialogOpenOutside, isImeKey, isKeyboardFocusedControl, isTypingTarget } from '../components/keyboardTarget';
 
 interface DetailViewProps {
@@ -543,7 +543,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   const [imageUploading, setImageUploading] = useState(false);
   const [imageDragOver, setImageDragOver] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
-  const imageFileInputRef = useRef<HTMLInputElement>(null);
   const imageFabTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Per-sentence image-reload counter. Bumped ONLY when an image is (re)attached, so the OfflineImage
   // key changes on a real image change but NOT on an SRS review (which merely bumps the item's
@@ -641,7 +640,7 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   }, [showImagePanel, imageUploading]);
 
   // ── Copy the sentence to the clipboard (to paste into Meta AI or anywhere). ──────
-  const [sentenceCopy, setSentenceCopy] = useState<'copied' | 'failed' | null>(null);
+  const [sentenceCopy, setSentenceCopy] = useState<SentenceCopyState>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
   const handleCopySentence = useCallback(async () => {
@@ -653,29 +652,6 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     copyTimerRef.current = setTimeout(() => setSentenceCopy(null), 1600);
   }, []);
-
-  // Small copy button that sits beside the sentence's speaker button (same compact icon style). Rendered
-  // in exactly one hero branch at a time (the image / no-image ternary), so reusing the element is safe.
-  const copySentenceButton = (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); void handleCopySentence(); }}
-      className={`p-2.5 -m-2 transition-colors ${sentenceCopy === 'copied' ? 'text-emerald-500' : sentenceCopy === 'failed' ? 'text-rose-500' : 'text-indigo-300 hover:text-indigo-600'}`}
-      title={sentenceCopy === 'copied' ? 'Copied — paste it into Meta AI' : sentenceCopy === 'failed' ? "Couldn't copy — select the sentence and copy it instead" : 'Copy sentence (to paste into Meta AI)'}
-    >
-      {sentenceCopy === 'copied' ? <Check size={14} /> : sentenceCopy === 'failed' ? <X size={14} /> : <Copy size={14} />}
-    </button>
-  );
-  const commandClickHint = isMacDesktop ? (
-    <span
-      className={`hidden h-6 w-6 items-center justify-center rounded-full text-xs font-semibold transition-colors sm:inline-flex ${isCommandHeld ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}
-      title="Command-click a word to look it up"
-      aria-label="Command-click a word to look it up"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <kbd className="font-sans">⌘</kbd>
-    </span>
-  ) : null;
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
@@ -888,12 +864,8 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   
   const title = type === 'phrase' ? (data as SearchResult).query : (data as VocabCard).word;
 
-  // Saved + in-flight comparisons that involve THIS word — surfaced as a "Comparisons" section below
-  // the card, so a "parable vs fable" comparison shows on both the parable and fable pages.
-  const normTitle = (title || '').toLowerCase().trim();
-  const wordComparisons = (comparisons || [])
-    .filter((c) => c.words.some((w) => w.toLowerCase().trim() === normTitle))
-    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  // Saved comparisons that involve THIS word, surfaced as a "Comparisons" section below the card.
+  const wordComparisons = comparisonsInvolving(comparisons, title);
 
   // Auto-pronounce the word when the card changes — but NOT during sentence auto-play, which
   // reads the example sentence instead (we don't want the word spoken over it).
@@ -1992,6 +1964,21 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
   // Eyes-free read-zone band counts, so the guides only draw the bands that read something.
   const wordZoneBands = sentenceMode ? 0 : countWordZoneBands(currentItem);
 
+  // The hero's props, shared by its two layouts (beside an attached picture, or on its own).
+  const heroProps: Omit<React.ComponentProps<typeof SentenceHero>, 'layout'> | null = currentSentence ? {
+    text: currentSentenceText,
+    sourceWord: (currentSentence.data as SentenceData).sourceWord,
+    findSaved,
+    onOpenCard,
+    onSearchWord: onSearch,
+    commandHeld: isCommandHeld,
+    onWordTouchStartCapture: isMobile ? handleMobileWordTouchStart : undefined,
+    onWordClickCapture: handleSentenceWordClickCapture,
+    onListened: () => recordSentenceExposure(currentSentence.data.id),
+    copyState: sentenceCopy,
+    onCopy: () => { void handleCopySentence(); },
+  } : null;
+
   return (
     <div
       ref={rootRef}
@@ -2015,44 +2002,16 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
         >
           <div className={`mx-auto w-full ${hasSentenceImage ? 'max-w-3xl lg:max-w-6xl xl:max-w-[1400px]' : 'max-w-3xl'} flex-1 flex flex-col min-h-0`}>
             {/* Row 1: back + position */}
-            <div className="flex items-center justify-between gap-2 mb-1.5">
-              <button
-                onClick={requestSentenceExit}
-                className={`flex items-center gap-1 text-sm font-medium -ml-1 -my-2 px-1 py-2.5 rounded-lg transition-colors ${
-                  isSentenceAutoPlaying
-                    ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
-                    : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-100'
-                }`}
-                title={isSentenceAutoPlaying ? 'Auto-play is locked. Open its controls to stop.' : `Back to ${sentenceExitLabel} (Esc)`}
-              >
-                {isSentenceAutoPlaying ? <Lock size={16} /> : <ArrowLeft size={18} />}
-                {isSentenceAutoPlaying ? 'Auto-play' : sentenceExitLabel}
-              </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setSentencePage('analysis'); }}
-                  className="-my-1 flex h-9 w-9 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-700"
-                  title="Sentence analysis"
-                  aria-label="Open sentence analysis"
-                >
-                  <BookOpenText size={15} />
-                </button>
-                {preparingSentenceId === currentSentenceSnapshot?.data.id && (
-                  <span className="flex items-center gap-1 text-[10px] font-semibold text-indigo-500">
-                    <Loader2 size={12} className="animate-spin" /> Loading lesson
-                  </span>
-                )}
-                <span className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
-                  <MessageSquareQuote size={12} /> {sentenceIndex + 1} / {sentenceItems?.length ?? 0}
-                </span>
-                {!readOnlySentencePreview && sentenceDueCount > 0 && (
-                  <span className="text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
-                    {sentenceDueCount} due
-                  </span>
-                )}
-              </div>
-            </div>
+            <SentenceHeaderRow
+              autoPlaying={isSentenceAutoPlaying}
+              exitLabel={sentenceExitLabel}
+              onExit={requestSentenceExit}
+              onOpenAnalysis={() => setSentencePage('analysis')}
+              loadingLesson={preparingSentenceId === currentSentenceSnapshot?.data.id}
+              position={sentenceIndex + 1}
+              total={sentenceItems?.length ?? 0}
+              dueCount={readOnlySentencePreview ? 0 : sentenceDueCount}
+            />
 
             {/* Row 2: the sentence — the hero, filling the page and centered in it. */}
             <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col">
@@ -2076,68 +2035,12 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
                       </div>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p
-                        data-sentence-hero
-                        className={`text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${isCommandHeld ? 'sentence-command-seek-active' : ''} text-xl sm:text-3xl`}
-                        onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
-                        onClickCapture={handleSentenceWordClickCapture}
-                        title={isMobile
-                          ? 'Tap a word to play from it · two-finger tap a word to look it up'
-                          : isMacDesktop
-                            ? 'Click a word to play from it · Command-click to look it up · click blank space to play/pause'
-                            : 'Click a word to play from it · Ctrl-click to look it up · click blank space to play/pause'}
-                      >
-                        <HighlightedSentence
-                          text={currentSentenceText}
-                          itemWord={(currentSentence.data as SentenceData).sourceWord}
-                          findSaved={findSaved}
-                          onOpenCard={onOpenCard}
-                          onSearchWord={onSearch}
-                          searchAnyWord
-                        />
-                      </p>
-                      <div className="mt-5 flex flex-wrap items-center justify-center md:justify-start gap-3">
-                        <SentenceSpeakerButton
-                          text={stripSentenceMarkers(currentSentenceText)}
-                          onComplete={() => recordSentenceExposure(currentSentence.data.id)}
-                        />
-                        {copySentenceButton}
-                        {commandClickHint}
-                      </div>
+                      {heroProps && <SentenceHero layout="split" {...heroProps} />}
                     </div>
                   </div>
                 ) : (
                   /* No image → the original centered full-width hero, unchanged. */
-                  <>
-                    <p
-                      data-sentence-hero
-                      className={`max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${isCommandHeld ? 'sentence-command-seek-active' : ''} text-2xl sm:text-4xl`}
-                      onTouchStartCapture={isMobile ? handleMobileWordTouchStart : undefined}
-                      onClickCapture={handleSentenceWordClickCapture}
-                      title={isMobile
-                        ? 'Tap a word to play from it · two-finger tap a word to look it up'
-                        : isMacDesktop
-                          ? 'Click a word to play from it · Command-click to look it up · click blank space to play/pause'
-                          : 'Click a word to play from it · Ctrl-click to look it up · click blank space to play/pause'}
-                    >
-                      <HighlightedSentence
-                        text={currentSentenceText}
-                        itemWord={(currentSentence.data as SentenceData).sourceWord}
-                        findSaved={findSaved}
-                        onOpenCard={onOpenCard}
-                        onSearchWord={onSearch}
-                        searchAnyWord
-                      />
-                    </p>
-                    <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-                      <SentenceSpeakerButton
-                        text={stripSentenceMarkers(currentSentenceText)}
-                        onComplete={() => recordSentenceExposure(currentSentence.data.id)}
-                      />
-                      {copySentenceButton}
-                      {commandClickHint}
-                    </div>
-                  </>
+                  heroProps && <SentenceHero layout="centered" {...heroProps} />
                 )}
               </div>
             </div>
@@ -2145,65 +2048,22 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
             {/* (Source-word card removed — the sentence stands alone; open any saved word via its footnote.) */}
 
             {/* Row 3: memorization stats + actions */}
-            <div className="mt-2 flex items-center gap-2 text-xs">
-              {sentenceMastery && sentenceMasteryColors && (
-                <>
-                  <span className={`${sentenceMasteryColors.bg} ${sentenceMasteryColors.text} px-2 py-0.5 rounded-full font-semibold whitespace-nowrap`}>
-                    {sentenceMastery.label} {Math.round(sentenceMastery.percentage)}%
-                  </span>
-                  <div className="hidden sm:block flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                    <div className={`h-full ${sentenceMasteryColors.bar} transition-all duration-300`} style={{ width: `${sentenceMastery.percentage}%` }} />
-                  </div>
-                  <span className="text-slate-400 whitespace-nowrap">{currentSentence.srs?.totalReviews ?? 0}×</span>
-                  {(currentSentence.srs?.correctStreak ?? 0) > 0 && (
-                    <span className="text-orange-500 flex items-center gap-0.5"><Flame size={12} />{currentSentence.srs?.correctStreak}</span>
-                  )}
-                  <span className="text-emerald-600 flex items-center gap-0.5"><CheckCircle2 size={12} />{sentenceMemorizedCount}</span>
-                  <span className="text-slate-500 whitespace-nowrap">
-                    {(currentSentence.srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatRelativeTime(currentSentence.srs?.nextReview ?? 0)}
-                  </span>
-                </>
-              )}
-              <div className="ml-auto flex items-center gap-1">
-                {isSentencePreview ? (
-                  catalogSentencePreview ? (
-                    <button
-                      type="button"
-                      onClick={handleRemember}
-                      className="flex min-h-11 items-center gap-2 rounded-md bg-emerald-500 px-4 text-sm font-bold text-white transition-colors hover:bg-emerald-600"
-                      title={`Remember in this ${catalogPreviewKind === 'essay' ? 'essay' : 'Real Life collection'} (R)`}
-                    >
-                      <CheckCircle2 size={17} /> Got it
-                    </button>
-                  ) : onSaveSentence && (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const sentence = currentSentence.data as SentenceData;
-                        onSaveSentence(sentence.text, sentence.sourceWord, sentence.sourceSense, sentence);
-                      }}
-                      className="flex min-h-11 items-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
-                      title="Save sentence for review"
-                    >
-                      <Bookmark size={17} /> Save sentence
-                    </button>
-                  )
-                ) : (
-                  <>
-                    <button onClick={handleResetSRS} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)" aria-label="Reset memory">
-                      <RotateCcw size={15} />
-                    </button>
-                    <button onClick={handleDeleteItem} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete sentence (D)" aria-label="Delete sentence">
-                      <Trash2 size={15} />
-                    </button>
-                    <button onClick={handleRemember} className="-my-1 flex min-h-9 items-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-3 rounded-lg transition-colors" title="Remember (R)">
-                      <CheckCircle2 size={14} /> Got it
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
+            <SentenceActionsRow
+              srs={currentSentence.srs}
+              mastery={sentenceMastery}
+              masteryColors={sentenceMasteryColors}
+              memorizedCount={sentenceMemorizedCount}
+              preview={isSentencePreview}
+              catalog={catalogSentencePreview}
+              catalogKind={catalogPreviewKind}
+              onRemember={handleRemember}
+              onSaveSentence={onSaveSentence ? () => {
+                const sentence = currentSentence.data as SentenceData;
+                onSaveSentence(sentence.text, sentence.sourceWord, sentence.sourceSense, sentence);
+              } : undefined}
+              onReset={handleResetSRS}
+              onDelete={handleDeleteItem}
+            />
           </div>
         </div>
       )}
@@ -2248,135 +2108,33 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       >
         {/* Minimal meaning indicator when header is hidden */}
         {!showHeader && currentGroup && currentGroup.items.length > 1 && (
-          <div className="sticky top-0 z-20 flex justify-center pt-2 pb-1">
-            <div className="flex items-center gap-1">
-              {currentGroup.items.map((_, idx) => (
-                <div
-                  key={idx}
-                  className={`rounded-full transition-all duration-200 ${
-                    idx === currentItemIndex 
-                      ? 'w-1.5 h-1.5 bg-violet-400' 
-                      : 'w-1 h-1 bg-slate-300'
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
+          <MeaningDots count={currentGroup.items.length} index={currentItemIndex} />
         )}
 
         {/* Header - combined with progress bar. Opens to its own height when the learner asks for it and
             closes at once, so a card change never slides the next card up after it appears. */}
-        <div
-          inert={!showHeader}
-          className={`sticky top-0 z-30 grid ${showHeader ? 'grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out' : 'grid-rows-[0fr]'}`}
-        >
-          <div className={`min-h-0 overflow-hidden bg-white border-slate-200/60 ${showHeader ? 'border-b' : ''}`}>
-            {/* Top row: navigation and actions */}
-            <div className="px-4 py-2 flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={onClose} className="text-slate-600 -ml-2 hover:bg-slate-100/50">
-                  <ArrowLeft size={20} className="mr-1" /> Close
-                </Button>
-                {/* Meaning position indicator - shows which card in the group */}
-                {currentGroup && currentGroup.items.length > 1 && (
-                  <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100">
-                    {currentItemIndex + 1}/{currentGroup.items.length}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => {
-                    // Use onRefresh if available (forces real AI search), otherwise fall back to onSearch
-                    if (onRefresh) {
-                      onRefresh(title);
-                    } else {
-                      onSearch(title);
-                    }
-                  }}
-                  className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
-                  title="Refresh with AI"
-                >
-                  <RefreshCw size={18} />
-                </Button>
-                {isSaved && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleDeleteItem}
-                    className="text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                    title="Delete (D)"
-                  >
-                    <Trash2 size={18} />
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleToggleSave}
-                  className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
-                >
-                  {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
-                  <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
-                </Button>
-                {/* Action menu for saved items */}
-                {isSaved && (
-                  <div ref={moreActionsRef} className="relative">
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => setShowActionMenu(!showActionMenu)}
-                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                      title="More actions"
-                      aria-haspopup="menu"
-                      aria-expanded={showActionMenu}
-                    >
-                      <MoreVertical size={18} />
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          
-            {/* Bottom row: Progress bar - shown for saved items (word mastery; sentence stats live in the banner) */}
-            {isSaved && savedItemMatch && mastery && masteryColors && (
-              <div className="px-4 pb-2">
-                <div className="flex items-center gap-2 text-xs">
-                  {/* Mastery badge with percentage */}
-                  <span className={`${masteryColors.bg} ${masteryColors.text} px-2 py-0.5 rounded-full font-semibold`}>
-                    {mastery.label} {Math.round(mastery.percentage)}%
-                  </span>
-                
-                  {/* Progress bar */}
-                  <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full ${masteryColors.bar} transition-all duration-300`}
-                      style={{ width: `${mastery.percentage}%` }}
-                    />
-                  </div>
-                
-                  {/* Stats */}
-                  <span className="text-slate-400 whitespace-nowrap">
-                    {savedItemMatch.srs?.totalReviews ?? 0}×
-                  </span>
-                  {(savedItemMatch.srs?.correctStreak ?? 0) > 0 && (
-                    <span className="text-orange-500 flex items-center gap-0.5">
-                      <Flame size={12} />
-                      {savedItemMatch.srs?.correctStreak}
-                    </span>
-                  )}
-                  {showHeader && <LibraryCounts savedItems={savedItems} />}
-                  <span className="text-slate-300">•</span>
-                  <span className="text-slate-500">
-                    {(savedItemMatch.srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatRelativeTime(savedItemMatch.srs?.nextReview ?? 0)}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <WordCardHeader
+          showHeader={showHeader}
+          onClose={onClose}
+          itemCount={currentGroup.items.length}
+          itemIndex={currentItemIndex}
+          onRefresh={() => {
+            // Use onRefresh if available (forces real AI search), otherwise fall back to onSearch
+            if (onRefresh) {
+              onRefresh(title);
+            } else {
+              onSearch(title);
+            }
+          }}
+          isSaved={isSaved}
+          onDelete={handleDeleteItem}
+          onToggleSave={handleToggleSave}
+          moreActionsRef={moreActionsRef}
+          showActionMenu={showActionMenu}
+          onToggleActionMenu={() => setShowActionMenu(!showActionMenu)}
+          stats={isSaved && savedItemMatch && mastery && masteryColors ? { srs: savedItemMatch.srs, mastery, colors: masteryColors } : null}
+          savedItems={savedItems}
+        />
 
         <div className="p-4 pb-24 md:pb-8 md:px-6">
 
@@ -2403,130 +2161,22 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
 
           {/* Saved comparisons involving this word. */}
           {onOpenComparison && wordComparisons.length > 0 && (
-            <div className="max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto mt-5">
-              <div className="flex items-center gap-2 mb-2">
-                <Scale size={14} className="text-indigo-500" />
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Comparisons</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {wordComparisons.map((c) => (
-                  <button
-                    key={c.key}
-                    onClick={() => onOpenComparison(c.words)}
-                    className="px-3 py-1.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors"
-                    title="View this comparison"
-                  >
-                    {c.words.join(' vs ')}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <WordComparisons comparisons={wordComparisons} onOpen={onOpenComparison} />
           )}
 
           {type === 'phrase' && (
-            <div className="space-y-6 max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto">
-              <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="md:flex">
-                  {/* With a picture, a fixed height on phones so the text below doesn't move when it arrives. */}
-                  <div className={`bg-slate-100 relative overflow-hidden flex items-center justify-center group md:w-2/5 md:shrink-0 ${(data as SearchResult).imageUrl ? 'h-48 md:h-auto' : ''}`}>
-                    {(data as SearchResult).imageUrl ? (
-                      <OfflineImage src={(data as SearchResult).imageUrl} itemId={(data as SearchResult).id} alt="Visual context" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" onMissing={onLazyLoadImage} />
-                    ) : (
-                      <div className="flex flex-col items-center text-slate-400 py-8">
-                        <SearchIcon className="mb-2 opacity-30" size={32}/>
-                        <span className="text-xs uppercase font-bold tracking-wider opacity-60">{(data as SearchResult).visualKeyword}</span>
-                      </div>
-                    )}
-                  </div>
-
-                <div className="p-6 sm:p-8 md:flex-1 md:min-w-0">
-                  <div className="mb-6">
-                    <h2 className="text-2xl xl:text-3xl font-bold text-slate-900 leading-tight mb-2">{(data as SearchResult).translation}</h2>
-                    <p className="text-lg xl:text-xl text-slate-600 mb-3 leading-relaxed">{(data as SearchResult).query}</p>
-                    <PronunciationBlock
-                      text={(data as SearchResult).query}
-                      ipa={(data as SearchResult).pronunciation}
-                      className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
-                    />
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <a
-                        href={`https://www.playphrase.me/#/search?q=${encodeURIComponent((data as SearchResult).query)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 hover:border-purple-300 transition-all active:scale-95 shadow-sm"
-                        title="Hear in movie & TV clips on PlayPhrase.me"
-                      >
-                        <ExternalLink size={12} />
-                        PlayPhrase
-                      </a>
-                      <a
-                        href={buildChatGPTUrl((data as SearchResult).query)}
-                        {...(!isMobile && { target: '_blank', rel: 'noopener noreferrer' })}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 hover:border-teal-300 transition-all active:scale-95 shadow-sm"
-                        title="Ask ChatGPT (translator mode)"
-                      >
-                        <ExternalLink size={12} />
-                        ChatGPT
-                      </a>
-                    </div>
-                  </div>
-
-                  <div className="prose prose-indigo prose-sm sm:prose-base xl:text-lg max-w-none text-slate-600">
-                    <GrammarNotes markdown={(data as SearchResult).grammar} />
-                  </div>
-                </div>
-              </div>{/* close md:flex */}
-              </div>
-
-              {((data as SearchResult).vocabs || []).length > 0 && (
-                <div>
-                  <div className="px-2 mb-4 flex items-center gap-2">
-                    <SearchIcon size={16} className="text-indigo-500" />
-                    <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Key Vocabulary</h3>
-                  </div>
-                  <div className="grid gap-4">
-                    {((data as SearchResult).vocabs || []).map((vocab) => (
-                      <ErrorBoundary key={vocab.id} variant="inline" fallbackMessage="This card couldn't be displayed.">
-                        <div className="relative group/vocab">
-                          {onRemoveVocabFromPhrase && (data as SearchResult).vocabs.length > 1 && (
-                            <button
-                              onClick={() => onRemoveVocabFromPhrase(data.id, vocab.id)}
-                              className="absolute -top-3 -right-3 z-10 w-8 h-8 rounded-full bg-slate-200 text-slate-500 hover:bg-rose-500 hover:text-white flex items-center justify-center opacity-0 group-hover/vocab:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-all duration-150 shadow-sm"
-                              title="Remove this vocab"
-                              aria-label={`Remove ${vocab.word} from this phrase`}
-                            >
-                              <X size={14} />
-                            </button>
-                          )}
-                          <PhraseVocabCard
-                            vocab={vocab}
-                            onSaveVocab={handleSaveVocab}
-                            isSaved={isVocabSaved(vocab)}
-                            onSearch={onSearch}
-                            scrollable={false}
-                            showSave={true}
-                            className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
-                            onCompare={onCompare}
-                            onSaveSentence={onSaveSentence}
-                            onOpenExampleSentence={onOpenExampleSentence ? openExampleSentencePreview : undefined}
-                            isSentenceSaved={isSentenceSaved}
-                            onLazyLoadImage={onLazyLoadImage}
-                          />
-                        </div>
-                      </ErrorBoundary>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <PhraseBody
+              phrase={data as SearchResult}
+              onLazyLoadImage={onLazyLoadImage}
+              onRemoveVocabFromPhrase={onRemoveVocabFromPhrase}
+              onSaveVocab={handleSaveVocab}
+              isVocabSaved={isVocabSaved}
+              onSearch={onSearch}
+              onCompare={onCompare}
+              onSaveSentence={onSaveSentence}
+              onOpenExampleSentence={onOpenExampleSentence ? openExampleSentencePreview : undefined}
+              isSentenceSaved={isSentenceSaved}
+            />
           )}
 
         </div>
@@ -2540,123 +2190,37 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
       {/* Sentence playback controls. Keep speech style on the primary surface; only Auto-play-specific
           settings belong in the secondary panel. */}
       {sentenceMode ? (
-        <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-4 z-[80] flex items-center gap-2">
-          <SpeechStyleToggle
-            className="shrink-0 bg-white shadow-lg border border-slate-200"
-            onChange={rememberCurrentSentenceSpeechStyle}
-          />
-          <div className="relative shrink-0">
-            {showSentenceAutoPlayPanel && (
-              <div role="dialog" aria-label="Sentence auto-play settings" className="absolute bottom-14 right-0 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
-                <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm font-semibold text-slate-700">Auto-play</span>
-                  <button type="button" onClick={() => setShowSentenceAutoPlayPanel(false)} className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-600" title="Close settings">
-                    <X size={16} />
-                  </button>
-                </div>
-                <div className="mb-3 flex justify-end">
-                  <PlaybackSpeedToggle className="bg-slate-100" />
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <button type="button" onClick={cycleTimerDuration} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Auto-play duration">
-                    <span className="block text-[10px] font-medium text-slate-400">Duration</span>
-                    <AutoPlayCountdown startedAt={countdownStartedAt} minutes={autoPlayTimerMinutes} />
-                  </button>
-                  <button type="button" onClick={cycleRepeats} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Times each sentence is read">
-                    <span className="block text-[10px] font-medium text-slate-400">Repeats</span>
-                    ×{sentenceRepeats}
-                  </button>
-                  <button type="button" onClick={cycleGap} className="min-w-0 rounded-lg bg-slate-100 px-2 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-200" title="Gap between reads">
-                    <span className="block text-[10px] font-medium text-slate-400">Interval</span>
-                    {sentenceGap / 1000}s
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setIsSentenceAutoPlaying(false); setShowSentenceAutoPlayPanel(false); }}
-                  className="mt-3 w-full rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-100"
-                >
-                  Stop auto-play
-                </button>
-              </div>
-            )}
-            <button
-              onClick={handleSentenceAutoPlayFab}
-              className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
-                isSentenceAutoPlaying
-                  ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-              }`}
-              title={isSentenceAutoPlaying ? 'Auto-play settings' : 'Start sentence auto-play'}
-              aria-label={isSentenceAutoPlaying ? 'Open sentence auto-play settings' : 'Start sentence auto-play'}
-            >
-              <AudioLines size={20} />
-            </button>
-          </div>
-        </div>
+        <SentencePlaybackControls
+          onSpeechStyleChange={rememberCurrentSentenceSpeechStyle}
+          autoPlaying={isSentenceAutoPlaying}
+          onAutoPlayButton={handleSentenceAutoPlayFab}
+          showPanel={showSentenceAutoPlayPanel}
+          onClosePanel={() => setShowSentenceAutoPlayPanel(false)}
+          countdownStartedAt={countdownStartedAt}
+          timerMinutes={autoPlayTimerMinutes}
+          onCycleTimer={cycleTimerDuration}
+          repeats={sentenceRepeats}
+          onCycleRepeats={cycleRepeats}
+          gap={sentenceGap}
+          onCycleGap={cycleGap}
+          onStop={() => { setIsSentenceAutoPlaying(false); setShowSentenceAutoPlayPanel(false); }}
+        />
       ) : (
-      <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-6 z-[60] flex items-center gap-2">
-        {/* Clear ⇄ Casual speech style (global) — sits with the playback controls. */}
-        <SpeechStyleToggle className="bg-white shadow-lg border border-slate-200" />
-        {/* Voice speed (global): default 1.1×, up to 2×. Distinct from the "Speed per slide" pill below. */}
-        <PlaybackSpeedToggle className="bg-white shadow-lg border border-slate-200" />
-        <button
-          onClick={cycleTimerDuration}
-          className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-          title="Auto-play duration"
-        >
-          <AutoPlayCountdown startedAt={countdownStartedAt} minutes={autoPlayTimerMinutes} />
-        </button>
-        {isAutoPlaying && (
-          <button
-            onClick={cycleSpeed}
-            className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-            title="Speed per slide"
-          >
-            {autoPlaySpeed / 1000}s
-          </button>
-        )}
-        {isSentenceAutoPlaying && (
-          <button
-            onClick={cycleRepeats}
-            className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-            title="Times each sentence is read"
-          >
-            ×{sentenceRepeats}
-          </button>
-        )}
-        {isSentenceAutoPlaying && (
-          <button
-            onClick={cycleGap}
-            className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-            title="Gap between reads"
-          >
-            {sentenceGap / 1000}s gap
-          </button>
-        )}
-        <button
-          onClick={toggleSentenceAutoPlay}
-          className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
-            isSentenceAutoPlaying
-              ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-          title={isSentenceAutoPlaying ? 'Stop auto-play (Space)' : 'Auto-play first sentence of each card'}
-        >
-          {isSentenceAutoPlaying ? <Pause size={20} /> : <AudioLines size={20} />}
-        </button>
-        <button
-          onClick={toggleAutoPlay}
-          className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
-            isAutoPlaying
-              ? 'bg-violet-500 text-white hover:bg-violet-600'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-          title={isAutoPlaying ? 'Pause (Space)' : 'Auto-play (Space)'}
-        >
-          {isAutoPlaying ? <Pause size={20} /> : <Play size={20} className="ml-0.5" />}
-        </button>
-      </div>
+        <WordPlaybackControls
+          countdownStartedAt={countdownStartedAt}
+          timerMinutes={autoPlayTimerMinutes}
+          onCycleTimer={cycleTimerDuration}
+          slideshowPlaying={isAutoPlaying}
+          slideSpeed={autoPlaySpeed}
+          onCycleSpeed={cycleSpeed}
+          onToggleSlideshow={toggleAutoPlay}
+          examplesPlaying={isSentenceAutoPlaying}
+          repeats={sentenceRepeats}
+          onCycleRepeats={cycleRepeats}
+          gap={sentenceGap}
+          onCycleGap={cycleGap}
+          onToggleExamples={toggleSentenceAutoPlay}
+        />
       )}
 
       {/* Success Animation Overlay */}
@@ -2677,97 +2241,23 @@ const DetailViewBody: React.FC<DetailViewProps & { groups: ItemGroup[] }> = ({
           (bottom-40 clears its bottom-24; z-[57] is above the search FAB's z-[55], below the autoplay
           cluster's z-[60]). Hidden while its own paste panel is open. */}
       {sentenceMode && currentSentence && !isSentencePreview && !showImagePanel && (
-        <button
-          onClick={handleImageFabTap}
-          className="fixed bottom-40 right-4 z-[57] w-12 h-12 touch-manipulation rounded-full flex items-center justify-center shadow-lg bg-white text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
-          aria-label={hasSentenceImage ? 'Replace image; double-tap to paste' : 'Attach image; double-tap to paste'}
-          title={hasSentenceImage ? 'Replace image; double-tap to paste' : 'Attach image; double-tap to paste'}
-        >
-          {hasSentenceImage ? <ImageIcon size={20} /> : <ImagePlus size={20} />}
-        </button>
+        <SentenceImageFab hasImage={hasSentenceImage} onTap={handleImageFabTap} />
       )}
 
       {/* Paste / drop / pick panel — mirrors the bottom-right AI-search input overlay. The card is
           focusable + data-image-panel so an in-panel ⌘V lands on onPaste (the window listener is the
           primary path). */}
       {sentenceMode && currentSentence && !isSentencePreview && showImagePanel && (
-        <div className="fixed bottom-28 right-4 left-4 z-[58]">
-          <div
-            data-image-panel
-            tabIndex={-1}
-            onPaste={(e) => {
-              const f = extractImageFromTransfer(e.clipboardData);
-              if (f) { e.preventDefault(); void attachImageFromFile(f); }
-            }}
-            onDragOver={(e) => { e.preventDefault(); setImageDragOver(true); }}
-            onDragLeave={() => setImageDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setImageDragOver(false);
-              void attachImageFromFile(extractImageFromTransfer(e.dataTransfer));
-            }}
-            className={`bg-white rounded-2xl shadow-2xl border p-4 max-w-md ml-auto outline-none transition-colors ${imageDragOver ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'}`}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-slate-700">
-                {hasSentenceImage ? 'Replace image' : 'Attach image'}
-              </span>
-              <button onClick={() => setShowImagePanel(false)} className="text-slate-400 hover:text-slate-600" title="Close">
-                <X size={18} />
-              </button>
-            </div>
-
-            {imageUploading ? (
-              <div className="flex items-center justify-center gap-2 py-6 text-slate-500 text-sm">
-                <Loader2 size={16} className="animate-spin text-indigo-500" /> Uploading…
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => imageFileInputRef.current?.click()}
-                    className="min-h-20 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
-                  >
-                    <ImagePlus size={22} />
-                    <span className="text-xs font-medium">Choose photo</span>
-                  </button>
-                  <div className="relative min-h-20 overflow-hidden border-2 border-dashed border-slate-200 rounded-xl text-slate-500 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-colors">
-                    <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1">
-                      <ClipboardPaste size={22} />
-                      <span className="text-xs font-medium">Paste image</span>
-                      <span className="text-[11px] text-slate-400">Long press</span>
-                    </div>
-                    <div
-                      contentEditable
-                      suppressContentEditableWarning
-                      role="textbox"
-                      aria-label="Paste an image"
-                      inputMode="none"
-                      onPaste={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        e.currentTarget.replaceChildren();
-                        const file = extractImageFromTransfer(e.clipboardData);
-                        if (file) void attachImageFromFile(file);
-                        else setImageError('The clipboard does not contain an image.');
-                      }}
-                      onInput={(e) => e.currentTarget.replaceChildren()}
-                      className="relative z-10 min-h-20 w-full cursor-text select-text text-transparent caret-transparent outline-none"
-                    />
-                  </div>
-                </div>
-                <input
-                  ref={imageFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; void attachImageFromFile(f); }}
-                />
-              </>
-            )}
-            {imageError && <p className="mt-2 text-xs text-rose-500">{imageError}</p>}
-          </div>
-        </div>
+        <SentenceImagePanel
+          hasImage={hasSentenceImage}
+          uploading={imageUploading}
+          dragOver={imageDragOver}
+          onDragOverChange={setImageDragOver}
+          error={imageError}
+          onError={setImageError}
+          onClose={() => setShowImagePanel(false)}
+          attach={attachImageFromFile}
+        />
       )}
 
       {exampleSentencePreview && previewSentence && (

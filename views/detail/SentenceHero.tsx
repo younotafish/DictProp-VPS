@@ -1,0 +1,93 @@
+import React from 'react';
+import { Check, Copy, X } from 'lucide-react';
+import type { StoredItem } from '../../types';
+import { HighlightedSentence } from '../../components/HighlightedSentence';
+import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
+import { stripSentenceMarkers } from '../../services/sentenceMarkers';
+import { PLATFORM } from './platform';
+
+export type SentenceCopyState = 'copied' | 'failed' | null;
+
+interface SentenceHeroProps {
+  /** 'split' sits beside an attached picture on wider screens; 'centered' has the page to itself. */
+  layout: 'split' | 'centered';
+  /** The sentence with its {{studied}} and [[uncommon]] markers. */
+  text: string;
+  sourceWord: string;
+  findSaved?: (term: string) => StoredItem | null;
+  onOpenCard?: (item: StoredItem) => void;
+  onSearchWord: (text: string) => void;
+  /** Command is held on a Mac, so the words preview the look-up a click would make. */
+  commandHeld: boolean;
+  /** The phone's word gestures, taken before the words' own handlers (see useSentenceWordGestures). */
+  onWordTouchStartCapture?: React.TouchEventHandler<HTMLElement>;
+  onWordClickCapture: React.MouseEventHandler<HTMLElement>;
+  /** The speaker played the sentence to its end. */
+  onListened: () => void;
+  copyState: SentenceCopyState;
+  onCopy: () => void;
+}
+
+/**
+ * The sentence under review, the page's hero, with its speaker, copy button and (on a Mac) the Command-click
+ * hint beneath it. Words play from where they're tapped or clicked and look themselves up with a two-finger tap
+ * or Command/Ctrl-click; the handlers come from the view.
+ */
+export function SentenceHero({
+  layout, text, sourceWord, findSaved, onOpenCard, onSearchWord, commandHeld,
+  onWordTouchStartCapture, onWordClickCapture, onListened, copyState, onCopy,
+}: SentenceHeroProps) {
+  const { isMobile, isMacDesktop } = PLATFORM;
+  const split = layout === 'split';
+  return (
+    <>
+      <p
+        data-sentence-hero
+        className={split
+          ? `text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${commandHeld ? 'sentence-command-seek-active' : ''} text-xl sm:text-3xl`
+          : `max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${commandHeld ? 'sentence-command-seek-active' : ''} text-2xl sm:text-4xl`}
+        onTouchStartCapture={onWordTouchStartCapture}
+        onClickCapture={onWordClickCapture}
+        title={isMobile
+          ? 'Tap a word to play from it · two-finger tap a word to look it up'
+          : isMacDesktop
+            ? 'Click a word to play from it · Command-click to look it up · click blank space to play/pause'
+            : 'Click a word to play from it · Ctrl-click to look it up · click blank space to play/pause'}
+      >
+        <HighlightedSentence
+          text={text}
+          itemWord={sourceWord}
+          findSaved={findSaved}
+          onOpenCard={onOpenCard}
+          onSearchWord={onSearchWord}
+          searchAnyWord
+        />
+      </p>
+      <div className={split ? 'mt-5 flex flex-wrap items-center justify-center md:justify-start gap-3' : 'mt-5 flex flex-wrap items-center justify-center gap-3'}>
+        <SentenceSpeakerButton
+          text={stripSentenceMarkers(text)}
+          onComplete={onListened}
+        />
+        {/* Copies the plain sentence, to paste into Meta AI or anywhere. */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onCopy(); }}
+          className={`p-2.5 -m-2 transition-colors ${copyState === 'copied' ? 'text-emerald-500' : copyState === 'failed' ? 'text-rose-500' : 'text-indigo-300 hover:text-indigo-600'}`}
+          title={copyState === 'copied' ? 'Copied — paste it into Meta AI' : copyState === 'failed' ? "Couldn't copy — select the sentence and copy it instead" : 'Copy sentence (to paste into Meta AI)'}
+        >
+          {copyState === 'copied' ? <Check size={14} /> : copyState === 'failed' ? <X size={14} /> : <Copy size={14} />}
+        </button>
+        {isMacDesktop && (
+          <span
+            className={`hidden h-6 w-6 items-center justify-center rounded-full text-xs font-semibold transition-colors sm:inline-flex ${commandHeld ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}
+            title="Command-click a word to look it up"
+            aria-label="Command-click a word to look it up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <kbd className="font-sans">⌘</kbd>
+          </span>
+        )}
+      </div>
+    </>
+  );
+}
