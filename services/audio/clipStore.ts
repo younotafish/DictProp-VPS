@@ -12,14 +12,14 @@ import {
 import { getAudioBlob, putAudioBlob, getTimings, putTimings } from '../audioCache';
 import { stripSentenceMarkers } from '../sentenceMarkers';
 import { getTtsStyleToken } from '../ttsSettings';
-import { lruSetUrl, lruSetVal, lruTouch, MAX_TIMINGS, MAX_TTS_URLS } from './urlLru';
+import { Lru, MAX_TIMINGS, MAX_TTS_URLS, UrlLru } from './urlLru';
 
 const styleToken = getTtsStyleToken;
 
 // Device-local cache of ready-to-play object URLs (cached MiMo clips, keyed by ttsKey hash) — replays are instant.
-const ttsUrlCache = new Map<string, string>();
+const ttsUrlCache = new UrlLru(MAX_TTS_URLS);
 // Per-word timings for cached clips, keyed by the SAME ttsKey hash (parallel to ttsUrlCache).
-const ttsTimingsCache = new Map<string, WordTiming[]>();
+const ttsTimingsCache = new Lru<WordTiming[]>(MAX_TIMINGS);
 
 // ── Durable clip acquisition — the offline audio cache seam ──────────────────────
 // Every clip/timing lookup funnels through these two helpers, which check the caches in order of speed:
@@ -36,22 +36,22 @@ const timingsLoads = new Map<string, Promise<WordTiming[] | null>>();
 
 /** Ready-to-play object URL for clip `key` (memory → IDB → server, write-through). Null on a true miss. */
 const loadClipUrl = (key: string): Promise<string | null> => {
-  const mem = ttsUrlCache.get(key);
-  if (mem) { lruTouch(ttsUrlCache, key); return Promise.resolve(mem); }
+  const mem = ttsUrlCache.get(key); // a hit marks the clip most recently used
+  if (mem) return Promise.resolve(mem);
   const pending = clipLoads.get(key);
   if (pending) return pending;
   const load = (async () => {
     const stored = await getAudioBlob(key);
     if (stored) {
       const url = URL.createObjectURL(stored);
-      lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
+      ttsUrlCache.set(key, url);
       return url;
     }
     const blob = await fetchCachedTTS(key);
     if (!blob) return null;
     void putAudioBlob(key, blob); // write-through (fire-and-forget; never blocks playback)
     const url = URL.createObjectURL(blob);
-    lruSetUrl(ttsUrlCache, key, url, MAX_TTS_URLS);
+    ttsUrlCache.set(key, url);
     return url;
   })().finally(() => clipLoads.delete(key));
   clipLoads.set(key, load);
@@ -87,9 +87,9 @@ const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => {
   if (pending) return pending;
   const load = (async () => {
     const stored = await getTimings(key);
-    if (stored && stored.length) { lruSetVal(ttsTimingsCache, key, stored, MAX_TIMINGS); return stored; }
+    if (stored && stored.length) { ttsTimingsCache.set(key, stored); return stored; }
     const t = await fetchCachedTTSTimings(key);
-    if (t && t.length) { void putTimings(key, t); lruSetVal(ttsTimingsCache, key, t, MAX_TIMINGS); return t; }
+    if (t && t.length) { void putTimings(key, t); ttsTimingsCache.set(key, t); return t; }
     return null;
   })().finally(() => timingsLoads.delete(key));
   timingsLoads.set(key, load);

@@ -7,7 +7,7 @@ import type { KokoroDevice, KokoroRequest, KokoroResponse } from '../kokoroWorke
 import { log, warn } from '../logger';
 import { canUseWebGPU, isMobile, isNeuralSupported } from './platform';
 import { playUrl } from './player';
-import { lruSetUrl, MAX_KOKORO_URLS } from './urlLru';
+import { MAX_KOKORO_URLS, UrlLru } from './urlLru';
 
 export const DEFAULT_VOICE = 'af_heart'; // Kokoro fallback voice — American female (matches our GA/rhotic IPA)
 
@@ -101,11 +101,11 @@ const getWorker = (): Worker => {
   return created;
 };
 
-const audioCache = new Map<string, string>(); // `${voice}:${text}` -> object URL
+const kokoroUrls = new UrlLru(MAX_KOKORO_URLS); // `${voice}:${text}` -> object URL
 
 const synthesize = async (text: string, voice: string): Promise<string> => {
   const key = `${voice}:${text}`;
-  const cached = audioCache.get(key);
+  const cached = kokoroUrls.get(key);
   if (cached) return cached;
   if (kokoroUnavailable) throw new Error('Kokoro is unavailable this session');
   const request: KokoroRequest = { id: ++nextRequestId, text, voice, devices: pickDevices() };
@@ -120,7 +120,7 @@ const synthesize = async (text: string, voice: string): Promise<string> => {
     pendingClips.delete(request.id);
   });
   const url = URL.createObjectURL(audio);
-  lruSetUrl(audioCache, key, url, MAX_KOKORO_URLS);
+  kokoroUrls.set(key, url);
   return url;
 };
 

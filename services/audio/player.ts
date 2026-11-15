@@ -5,6 +5,7 @@
 import { cancelSpeech, speak as systemSpeak } from '../speech';
 import { getPlaybackRate, subscribePlaybackRate } from '../ttsSettings';
 import { mirrorPlaybackStatus } from './mediaSession';
+import { setUrlInUse } from './urlLru';
 
 // Tiny valid silent WAV — played once inside a user gesture to unlock <audio> on iOS Safari,
 // so a later play() after the async synth await isn't blocked as non-user-initiated.
@@ -47,9 +48,6 @@ const getAudioEl = (): HTMLAudioElement => {
   return audioEl;
 };
 
-/** The source the shared <audio> element is set to, if it exists. */
-export const playingSource = (): string | undefined => audioEl?.src;
-
 /**
  * Play a silent clip inside the click gesture so iOS lets us play the real audio later; it also clears the
  * previous clip off the element. The play() call made inside the gesture is what unlocks the element: the
@@ -59,6 +57,7 @@ export const unlockAudio = (): void => {
   try {
     const el = getAudioEl();
     el.src = SILENT_WAV;
+    setUrlInUse(SILENT_WAV);
     const p = el.play();
     if (p && typeof p.then === 'function') {
       p.catch(() => {
@@ -214,6 +213,7 @@ export const playUrl = async (
   el.onloadedmetadata = null;
   const begin = startAt && startAt > 0 ? startAt : 0;
   el.src = url;
+  setUrlInUse(url);
   if (begin <= 0) { try { el.currentTime = 0; } catch { /* ignore */ } applyRate(el); await el.play(); return; }
   // Start partway in (skip the lead-in / word seek). CRITICAL on iOS: a currentTime set before
   // metadata is loaded is IGNORED, and setting it *after* play() makes the clip start at 0 and then
