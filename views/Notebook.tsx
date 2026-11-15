@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult, getItemSpelling } from '../types';
+import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
 import { Trash2, BookOpen, Layers, Loader2, RefreshCw, Type, ArrowDownAZ, Sparkles, Filter, WifiOff, ChevronLeft, ChevronRight, Archive, ArchiveRestore, ChevronDown, ChevronUp, Search, X, Wand2, Mic, MicOff, ScanText, Scale, Check, ListPlus, FileJson, UploadCloud, GitMerge, Volume2, MoreHorizontal, Download } from 'lucide-react';
 import { UserMenu } from '../components/UserMenu';
 import { SpeechStyleToggle } from '../components/SpeechStyleToggle';
@@ -13,22 +13,15 @@ import { JSONImport } from '../components/JSONImport';
 import { useWheelNavigation } from '../hooks';
 import { analyzeInput, transcribeAudio } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
-import { buildNotebookList, findFuzzyMatches, findLiteralMatches, type NotebookFilter, type NotebookList, type NotebookSort } from '../services/notebookList';
+import {
+  buildNotebookList, buildNotebookRows, countSavedSpellings, findFuzzyMatches, findLiteralMatches, listNoteFor, nextNotebookFilter,
+  nextNotebookSort, notebookStats, type NotebookFilter, type NotebookList, type NotebookRow, type NotebookSection, type NotebookSort,
+} from '../services/notebookList';
 import { speakWord, ensureTTS } from '../services/lazyTts';
 import { error as logError } from '../services/logger';
 import { isDialogOpenOutside, isTypingTarget } from '../components/keyboardTarget';
 
-type NotebookSection = 'main' | 'due' | 'archived';
-
-// The notebook list flattened for virtualization. `key` keeps each row's state with its group.
-type VirtualRow =
-  | { key: string; type: 'group'; group: ItemGroup; groupIndex: number; section: NotebookSection }
-  | { key: string; type: 'due-header'; count: number }
-  | { key: string; type: 'archived-toggle'; count: number }
-  | { key: string; type: 'compare-banner' }
-  | { key: string; type: 'list-note' };
-
-const virtualRowKey = (_index: number, row: VirtualRow) => row.key;
+const virtualRowKey = (_index: number, row: NotebookRow) => row.key;
 const noop = () => {};
 
 interface NotebookItemProps {
@@ -930,16 +923,10 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   // "N saved" counts the notebook's spellings under the current filter, not the search results. Outside a
   // search they're the listed groups; during one they're counted apart, once per search rather than per key.
   const searching = !!searchQuery;
-  const savedWhileSearching = useMemo(() => {
-    if (!searching) return 0;
-    const spellings = new Set<string>();
-    for (const item of items) {
-      if (!item?.data?.id || item.isDeleted || item.isArchived) continue;
-      if (filterMode === 'all' || item.type === filterMode) spellings.add(getItemSpelling(item));
-    }
-    spellings.delete('');
-    return spellings.size;
-  }, [items, filterMode, searching]);
+  const savedWhileSearching = useMemo(
+    () => (searching ? countSavedSpellings(items, filterMode) : 0),
+    [items, filterMode, searching],
+  );
   const savedCount = searching ? savedWhileSearching : list.groups.length;
   // The empty-notebook screen is for a notebook with nothing in it, not one the filter or the archive hides.
   const hasSavedItems = useMemo(() => items.some(item => !!item?.data?.id && !item.isDeleted), [items]);
@@ -947,18 +934,16 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   // With nothing listed above the due and archived sections, the list says why and offers the way out.
   const canLookUp = isOnline && !searchResults && !isSearching && !isTranscribing && !!localSearchQuery.trim();
   const listNote = useMemo(() => {
-    if (list.groups.length > 0) return null;
-    if (searchQuery ? !searchSettled : list.archived.length === 0 && filterMode === 'all') return null;
-    const noun = filterMode === 'phrase' ? 'phrases' : filterMode === 'vocab' ? 'words' : 'items';
-    const message = searchQuery
-      ? (list.archived.length > 0 ? `Only archived ${noun} match “${searchQuery}”.` : `No saved ${noun} match “${searchQuery}”.`)
-      : (list.archived.length > 0 ? `All your ${noun} are archived.` : `No ${noun} saved yet.`);
+    const note = listNoteFor({
+      searchQuery, searchSettled, groupCount: list.groups.length, archivedCount: list.archived.length, filter: filterMode, canLookUp,
+    });
+    if (!note) return null;
     return (
       <div className="mx-3 mt-3 px-4 py-5 bg-white border border-dashed border-slate-200 rounded-2xl text-center">
-        <p className="text-sm text-slate-500">{message}</p>
-        {((searchQuery && canLookUp) || filterMode !== 'all') && (
+        <p className="text-sm text-slate-500">{note.message}</p>
+        {(note.offerLookUp || note.offerShowAll) && (
           <div className="mt-3 flex flex-wrap justify-center gap-2">
-            {searchQuery && canLookUp && (
+            {note.offerLookUp && (
               <button
                 onClick={() => performAISearch(localSearchQuery)}
                 className="min-h-11 px-4 inline-flex items-center gap-2 rounded-xl bg-violet-50 text-violet-700 text-sm font-semibold hover:bg-violet-100 transition-colors"
@@ -966,7 +951,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
                 <Wand2 size={16} /> Look it up with AI
               </button>
             )}
-            {filterMode !== 'all' && (
+            {note.offerShowAll && (
               <button
                 onClick={() => setFilterMode('all')}
                 className="min-h-11 px-4 inline-flex items-center gap-2 rounded-xl bg-indigo-50 text-indigo-700 text-sm font-semibold hover:bg-indigo-100 transition-colors"
@@ -987,28 +972,12 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onViewDetail(groups, groupIndex, itemIndex);
   }, [list, onViewDetail]);
 
-  const virtualRows = useMemo((): VirtualRow[] => {
-    const rows: VirtualRow[] = [];
-    const addGroups = (groups: ItemGroup[], section: NotebookSection) => groups.forEach((group, groupIndex) => {
-      rows.push({ key: `${section}:${group.title}`, type: 'group', group, groupIndex, section });
-    });
+  const virtualRows = useMemo(
+    () => buildNotebookRows(list, { compareMode, showListNote, showArchived }),
+    [list, showArchived, compareMode, showListNote],
+  );
 
-    if (compareMode) rows.push({ key: 'compare-banner', type: 'compare-banner' });
-    if (showListNote) rows.push({ key: 'list-note', type: 'list-note' });
-    addGroups(list.groups, 'main');
-    // While searching, the due items outside the results follow them
-    if (list.dueGroups.length > 0) {
-      rows.push({ key: 'due-header', type: 'due-header', count: list.dueGroups.length });
-      addGroups(list.dueGroups, 'due');
-    }
-    if (list.archived.length > 0) {
-      rows.push({ key: 'archived-toggle', type: 'archived-toggle', count: list.archived.length });
-      if (showArchived) addGroups(list.archivedGroups, 'archived');
-    }
-    return rows;
-  }, [list, showArchived, compareMode, showListNote]);
-
-  const renderVirtualRow = useCallback((_index: number, row: VirtualRow) => {
+  const renderVirtualRow = useCallback((_index: number, row: NotebookRow) => {
     if (row.type === 'list-note') return listNote;
 
     if (row.type === 'compare-banner') {
@@ -1148,21 +1117,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     );
   }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive, listNote]);
 
-  const { reviewedToday, dueCount } = useMemo(() => {
-    const now = Date.now();
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-    const todayTs = todayStart.getTime();
-    let reviewed = 0;
-    let due = 0;
-    for (const item of items) {
-      if (item.isDeleted || item.isArchived || !item.srs) continue;
-      // A reset stamps lastReviewDate as well, and leaves no reviews.
-      if (item.srs.totalReviews > 0 && item.srs.lastReviewDate >= todayTs) reviewed++;
-      if (item.srs.nextReview <= now) due++;
-    }
-    return { reviewedToday: reviewed, dueCount: due };
-  }, [items]);
+  const { reviewedToday, dueCount } = useMemo(() => notebookStats(items, Date.now()), [items]);
 
   // The list scrolls inside this container. React detaches refs while the tab is hidden, and letting go of
   // the container then would unmount the list and lose its place, so only a new container replaces it.
@@ -1294,11 +1249,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               </button>
             )}
             <button
-              onClick={() => setFilterMode(prev => {
-                if (prev === 'all') return 'vocab';
-                if (prev === 'vocab') return 'phrase';
-                return 'all';
-              })}
+              onClick={() => setFilterMode(nextNotebookFilter)}
               className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors ${filterMode !== 'all' ? 'text-indigo-600 bg-indigo-50' : 'text-slate-500'}`}
               title={`Filter: ${filterMode === 'all' ? 'All Items' : filterMode === 'vocab' ? 'Vocabulary Only' : 'Phrases Only'}`}
             >
@@ -1307,7 +1258,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
               {filterMode === 'phrase' && <Layers size={16} />}
             </button>
             <button
-              onClick={() => setSortMode(prev => prev === 'familiarity' ? 'alphabetical' : 'familiarity')}
+              onClick={() => setSortMode(nextNotebookSort)}
               className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 hover:text-indigo-600 transition-colors"
               title={sortMode === 'familiarity' ? 'Sort: Review Priority' : 'Sort: A-Z'}
             >
