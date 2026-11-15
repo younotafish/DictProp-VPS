@@ -30,6 +30,5 @@ export function detectImageMimeType(data: Uint8Array): SupportedImageMime | null
 }
 
 export function hasImageSignature(data: Uint8Array, mimeType: string): boolean {
-  const normalized = mimeType.toLowerCase() === 'image/jpg' ? 'image/jpeg' : mimeType.toLowerCase();
-  return detectImageMimeType(data) === normalized;
+  return detectImageMimeType(data) === mimeType;
 }

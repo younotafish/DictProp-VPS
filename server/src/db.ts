@@ -251,7 +251,6 @@ db.pragma('optimize = 0x10002');
 // ─── Item prepared statements ───
 
 const stmts = {
-  getAll: db.prepare(`SELECT * FROM items WHERE user_id = ?`),
   getAllChunk: db.prepare(`SELECT rowid AS _rowid, * FROM items WHERE user_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`),
   getAfterRevision: db.prepare(`SELECT * FROM items
     WHERE user_id = ? AND (revision > ? OR (revision = ? AND id > ?))
@@ -1417,7 +1416,6 @@ export function hasItemImage(id: string, userId: string): boolean {
 }
 
 const touchStmts = {
-  exists: db.prepare(`SELECT 1 FROM items WHERE id = ? AND user_id = ?`),
   phrasesMentioning: db.prepare(`SELECT id, data FROM items WHERE user_id = ? AND type = 'phrase' AND data LIKE ?`),
   bump: db.prepare(`UPDATE items SET revision = ? WHERE id = ? AND user_id = ?`),
 };
@@ -1429,7 +1427,7 @@ const touchStmts = {
 export const touchItemRevisions = db.transaction((imageIds: readonly string[], userId: string): void => {
   const owners = new Set<string>();
   for (const imageId of new Set(imageIds)) {
-    if (touchStmts.exists.get(imageId, userId)) owners.add(imageId);
+    if (stmts.existsScoped.get(imageId, userId)) owners.add(imageId);
     const phrases = touchStmts.phrasesMentioning.all(userId, `%"id":"${imageId}"%`) as Array<{ id: string; data: string }>;
     for (const phrase of phrases) {
       try {

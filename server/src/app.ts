@@ -190,5 +190,3 @@ export function createApp(options: AppOptions = {}) {
 
   return app;
 }
-
-export type DictPropApp = ReturnType<typeof createApp>;
