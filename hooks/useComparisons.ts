@@ -23,7 +23,8 @@ export function useComparisons(authState: AuthState) {
   }, [userId]);
 
   // Restore from localStorage instantly, then merge in the server's list, once auth resolves. The merge keeps the
-  // comparisons the server doesn't have yet, and the newer copy of each.
+  // comparisons the server doesn't have yet, and the newer copy of each, and sends those to the server: a save that
+  // failed (offline, a deploy, an expired session) is tried again at each load until it lands.
   useEffect(() => {
     if (authState.loading || !userId) return;
     const cached = readCachedComparisons(userId);
@@ -34,7 +35,9 @@ export function useComparisons(authState: AuthState) {
     let cancelled = false;
     loadComparisons().then((server) => {
       if (cancelled) return;
-      persistComparisons(mergeComparisons(comparisonsRef.current, server).merged);
+      const { merged, toUpload } = mergeComparisons(comparisonsRef.current, server);
+      persistComparisons(merged);
+      for (const c of toUpload) saveComparisonApi(c).catch((e) => warn('Failed to save comparison to server:', e));
     }).catch((e) => warn('Failed to load comparisons:', e));
     return () => { cancelled = true; };
   }, [authState.loading, userId, persistComparisons]);
