@@ -1,56 +1,14 @@
 import catalogSource from '../content/essay-catalog.json';
+import type {
+  EssayCollection,
+  RawEssay,
+  RawEssayCatalog,
+  RawEssaySentence,
+} from '../server/src/essay-catalog';
 
-export type EssayAccent = 'indigo' | 'amber' | 'violet' | 'rose' | 'emerald';
-export type EssayCollection = 'classic' | 'modern';
-
-export interface RawEssaySentence {
-  id: string;
-  text: string;
-  focus: string;
-}
-
-export interface RawEssayBodyParagraph {
-  kind: 'body';
-  id: string;
-  sentences: RawEssaySentence[];
-}
-
-export interface RawEssayEpigraph {
-  kind: 'epigraph';
-  text: string;
-}
-
-export type RawEssayParagraph = RawEssayBodyParagraph | RawEssayEpigraph;
-
-export interface RawEssay {
-  id: string;
-  title: string;
-  author: string;
-  year: number;
-  publication: string;
-  eyebrow: string;
-  description: string;
-  level: string;
-  accent: EssayAccent;
-  collection?: EssayCollection;
-  themes: string[];
-  modernityNote: string;
-  sourceLabel: string;
-  sourceUrl: string;
-  publicDomainNote: string;
-  rightsNote?: string;
-  wordCount: number;
-  readingMinutes: number;
-  sentenceCount: number;
-  paragraphs: RawEssayParagraph[];
-}
-
-export interface RawEssayCatalog {
-  version: 1;
-  generatedAt: string;
-  editorialNote: string;
-  essays: RawEssay[];
-}
+// The raw catalog is the server's type: the server validates the owner's private catalog in this shape and serves
+// it from GET /api/essays/catalog. A type-only import, so nothing of the server reaches the bundle.
+export type { RawEssayCatalog } from '../server/src/essay-catalog';
 
 export interface EssaySentence extends RawEssaySentence {
   essayId: string;
