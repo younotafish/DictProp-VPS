@@ -6,8 +6,9 @@ import { log, warn } from '../../services/logger';
 import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../../services/searchRecovery';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../../services/queryMode';
+import { useLatest } from '../../hooks/useStableValue';
 import {
-  busyCountOf, findLiveComparison, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
+  busyCountOf, findLiveComparison, isQueued, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
   type QueueAction, type QueueItem,
 } from './searchQueue';
 
@@ -37,7 +38,7 @@ export function useSearchQueue({
 }: Options) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
-  const queueRef = useRef<QueueItem[]>([]); // fresh queue for synchronous dedup/open checks
+  const queueRef = useRef<QueueItem[]>([]); // the latest queue, for checks outside a render (dedup, a superseded request)
   const [scanning, setScanning] = useState(false); // sentence → expression scan in flight (pre-enqueue)
 
   // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
@@ -117,17 +118,19 @@ export function useSearchQueue({
     }
   }, [enqueue, showError, showStatus]);
 
-  // Post-process a fresh server result: prepare audio and replace an existing saved card when this is
-  // a refresh. Images are deliberately left empty so the Mac's local enrichment cycle creates them.
-  const finalizeResult = useCallback((_itemId: string, queryWord: string, result: SearchResult) => {
-    const liveVocabs = result.vocabs ? [...result.vocabs] : [];
-    // Prepare the API audio up front so the first play is instant (generates if not cached yet).
-    ensureTTS(liveVocabs.flatMap(v => v.examples || []));
-    // If this word was already saved, a fresh AI result replaces its saved card (keeps SRS).
-    const isReplace = !!(onRefreshReplace && findSavedByWord(queryWord).length > 0);
-    if (isReplace && liveVocabs.length) onRefreshReplace!(queryWord, liveVocabs);
+  // The library as it is when a request settles, not as it was when the request started.
+  const findSavedByWordRef = useLatest(findSavedByWord);
 
-  }, [onRefreshReplace, findSavedByWord]);
+  // Post-process a fresh server result: prepare audio and, for a refresh, replace the word's saved cards (keeping
+  // their SRS) if the word is saved now that the result is in. A card deleted during the refresh stays deleted,
+  // and a word saved during it gets the fresh result. Images are deliberately left empty so the Mac's local
+  // enrichment cycle creates them.
+  const finalizeResult = useCallback((queryWord: string, result: SearchResult, { refresh }: { refresh: boolean }) => {
+    const vocabs = result.vocabs ?? [];
+    // Prepare the API audio up front so the first play is instant (generates if not cached yet).
+    ensureTTS(vocabs.flatMap(v => v.examples || []));
+    if (refresh && vocabs.length > 0 && findSavedByWordRef.current(queryWord).length > 0) onRefreshReplace?.(queryWord, vocabs);
+  }, [onRefreshReplace, findSavedByWordRef]);
 
   // Process a single queue item: comparison, saved-card reuse, or a fresh analyze. The id was added to
   // processingIdsRef by the driver effect before this ran; every terminal path calls done().
@@ -135,7 +138,7 @@ export function useSearchQueue({
     const itemId = item.id;
     const done = () => { processingIdsRef.current.delete(itemId); };
 
-    // Comparison items run compareWords (the heavy call uses curl server-side) and persist on success.
+    // Comparison items run compareWords and persist on success.
     if (item.kind === 'compare') {
       setQueue(queueUpdate({ type: 'start', id: itemId }));
       log('⚖️ Queue: generating comparison "' + item.query + '"');
@@ -166,12 +169,21 @@ export function useSearchQueue({
     setQueue(queueUpdate({ type: 'start', id: itemId }));
 
     log('🔍 Queue: searching "' + item.query + '"' + (item.analyzeMode ? ' (' + item.analyzeMode + ')' : ''));
+    // A refresh of the same word replaces this entry while its request runs; the outcome then belongs to the
+    // newer request, so this one changes nothing: no toast, no queue change, no saved-card write.
+    const superseded = () => {
+      if (isQueued(queueRef.current, itemId)) return false;
+      log('🔍 Queue: dropping the superseded result for "' + item.query + '"');
+      return true;
+    };
     analyzeInput(item.query, item.analyzeMode ? { mode: item.analyzeMode } : undefined).then(result => {
+      if (superseded()) return;
       clearError(); // a fresh success clears any lingering failure toast
       setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: result }));
       if (item.forceAI) openWhenReady(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
-      finalizeResult(itemId, item.query, result); // prepare audio, replace saved card, stream images
+      finalizeResult(item.query, result, { refresh: !!item.forceAI }); // prepare audio; a refresh replaces the saved card
     }).catch(err => {
+      if (superseded()) return;
       warn('🔍 Queue: failed "' + item.query + '":', err?.message);
       setQueue(queueUpdate({ type: 'fail', id: itemId }));
       if (isAuthenticationError(err)) rememberSearchRetry({ query: item.query, analyzeMode: item.analyzeMode });

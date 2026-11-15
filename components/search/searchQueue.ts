@@ -88,6 +88,9 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
 /** The state update that applies `action`, for a queue held in React state: `setQueue(queueUpdate(action))`. */
 export const queueUpdate = (action: QueueAction) => (queue: QueueItem[]): QueueItem[] => searchQueueReducer(queue, action);
 
+/** Whether the entry `id` is still in the queue (a refresh of the same word replaces it, a dismissal drops it). */
+export const isQueued = (queue: readonly QueueItem[], id: string): boolean => queue.some(item => item.id === id);
+
 /** The results the sheet can show, in the order they were asked for. */
 export const readyItemsOf = (queue: readonly QueueItem[]): QueueItem[] => queue.filter(item => item.status === 'ready');
 

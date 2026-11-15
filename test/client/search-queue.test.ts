@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  busyCountOf, findLiveComparison, hasLiveDuplicate, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
+  busyCountOf, findLiveComparison, hasLiveDuplicate, isQueued, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
   type QueueAction, type QueueItem,
 } from '../../components/search/searchQueue.ts';
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types.ts';
@@ -154,4 +154,12 @@ test('a saved word shows its saved cards as the result, without a translation', 
   assert.deepEqual(savedCardsResult('q-7', 'running', cards, 42), {
     id: 'saved-q-7', query: 'running', translation: '', grammar: '', visualKeyword: 'run', pronunciation: '/run/', vocabs: cards, timestamp: 42,
   });
+});
+
+test('a lookup replaced by a refresh of the same word is no longer queued', () => {
+  const queue = run([add('q-1', 'gamut'), { type: 'start', id: 'q-1' }]);
+  assert.equal(isQueued(queue, 'q-1'), true);
+  const refreshed = searchQueueReducer(queue, add('q-2', 'gamut', { forceAI: true }));
+  assert.equal(isQueued(refreshed, 'q-1'), false);
+  assert.equal(isQueued(refreshed, 'q-2'), true);
 });

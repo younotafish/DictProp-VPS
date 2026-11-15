@@ -353,7 +353,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     analyzeInput(trimmed, analyzeMode ? { mode: analyzeMode } : undefined).then(result => {
       updateQueue({ type: 'refresh-ready', id, query: trimmed, results: result });
       setViewingVocabIdx(0);
-      finalizeResult(id, trimmed, result);
+      finalizeResult(trimmed, result, { refresh: true });
     }).catch(err => {
       warn('🔍 Refresh failed "' + trimmed + '":', err?.message);
       updateQueue({ type: 'refresh-fail', id });
