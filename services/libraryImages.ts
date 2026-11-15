@@ -6,7 +6,13 @@ import { saveImage } from './imageStore';
 // Pictures stay out of the library in memory: each card carries a marker, and the picture lives in
 // IndexedDB and on the server.
 
-export const offloadImages = async (images: Array<{ id: string; base64: string }>): Promise<void> => {
+/** A picture held inline as a data URI, under the id it is stored and uploaded by. */
+export interface InlineImage {
+  id: string;
+  base64: string;
+}
+
+export const offloadImages = async (images: InlineImage[]): Promise<void> => {
   const { offloadAndUpload } = await import('./imagePipeline');
   await offloadAndUpload(images);
 };
@@ -45,54 +51,82 @@ export const isImageMarker = (url: string | undefined): boolean =>
   !!url && (url === IMAGE_IDB_MARKER || url === SERVER_IMAGE_MARKER || url.startsWith(`${SERVER_IMAGE_MARKER}:`));
 
 /**
+ * A marker for a picture loaded by id: one stored on this device, or a versioned one on the server. Unlike
+ * isImageMarker, not the bare 'server:has_image' of old records, which names no version to load.
+ */
+export const isLazyImageMarker = (url: string | undefined): boolean =>
+  url === IMAGE_IDB_MARKER || getServerImageVersion(url) !== undefined;
+
+/** The pictures a card shows: its own, and those of the words inside a phrase. */
+export const picturesOf = (item: StoredItem): Array<{ id: string; imageUrl: string | undefined }> => [
+  { id: item.data.id, imageUrl: item.data.imageUrl },
+  ...(isPhraseItem(item) ? (item.data.vocabs ?? []).map(vocab => ({ id: vocab.id, imageUrl: vocab.imageUrl })) : []),
+];
+
+/**
+ * `item` with each inline picture (a data URI) replaced by IMAGE_IDB_MARKER, and those pictures with the ids they
+ * are stored under: the card's own under `topLevelId` (its id unless the caller saves it under another), each of a
+ * phrase's words under its own id. A sentence keeps its picture. Returns the same item when it has none.
+ */
+export function extractInlineImages(
+  item: StoredItem,
+  topLevelId: string = item.data.id,
+): { item: StoredItem; images: InlineImage[] } {
+  const images: InlineImage[] = [];
+  let changed = false;
+  let data = item.data;
+
+  // Vocab item image
+  if (isVocabItem(item)) {
+    const vc = data as VocabCard;
+    if (vc.imageUrl?.startsWith('data:image/')) {
+      images.push({ id: topLevelId, base64: vc.imageUrl });
+      data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
+      changed = true;
+    }
+  }
+
+  // Phrase item image + nested vocab images
+  if (isPhraseItem(item)) {
+    const sr = data as SearchResult;
+    if (sr.imageUrl?.startsWith('data:image/')) {
+      images.push({ id: topLevelId, base64: sr.imageUrl });
+      data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
+      changed = true;
+    }
+    if (sr.vocabs?.length) {
+      let vocabsChanged = false;
+      const newVocabs = sr.vocabs.map(v => {
+        if (v.imageUrl?.startsWith('data:image/')) {
+          images.push({ id: v.id, base64: v.imageUrl });
+          vocabsChanged = true;
+          return { ...v, imageUrl: IMAGE_IDB_MARKER };
+        }
+        return v;
+      });
+      if (vocabsChanged) {
+        data = { ...data, vocabs: newVocabs } as SearchResult;
+        changed = true;
+      }
+    }
+  }
+
+  return { item: changed ? { ...item, data } : item, images };
+}
+
+/**
  * Strip base64 imageUrl fields from items and store them in IDB images store.
  * Versioned server markers stay in state so OfflineImage can invalidate an older IDB entry.
  * Replaces base64 with a tiny marker so layout checks (imageUrl truthy) still work.
  * This keeps ~143MB of image data out of React state.
  */
 export async function stripAndStoreImages(items: StoredItem[]): Promise<StoredItem[]> {
-  const imagesToSave: Array<{ id: string; base64: string }> = [];
+  const imagesToSave: InlineImage[] = [];
 
   const stripped = items.map(item => {
-    let changed = false;
-    let data = item.data;
-
-    // Vocab item image
-    if (isVocabItem(item)) {
-      const vc = data as VocabCard;
-      if (vc.imageUrl?.startsWith('data:image/')) {
-        imagesToSave.push({ id: data.id, base64: vc.imageUrl });
-        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
-        changed = true;
-      }
-    }
-
-    // Phrase item image + nested vocab images
-    if (isPhraseItem(item)) {
-      const sr = data as SearchResult;
-      if (sr.imageUrl?.startsWith('data:image/')) {
-        imagesToSave.push({ id: sr.id, base64: sr.imageUrl });
-        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
-        changed = true;
-      }
-      if (sr.vocabs?.length) {
-        let vocabsChanged = false;
-        const newVocabs = sr.vocabs.map(v => {
-          if (v.imageUrl?.startsWith('data:image/')) {
-            imagesToSave.push({ id: v.id, base64: v.imageUrl });
-            vocabsChanged = true;
-            return { ...v, imageUrl: IMAGE_IDB_MARKER };
-          }
-          return v;
-        });
-        if (vocabsChanged) {
-          data = { ...data, vocabs: newVocabs } as SearchResult;
-          changed = true;
-        }
-      }
-    }
-
-    return changed ? { ...item, data } : item;
+    const extracted = extractInlineImages(item);
+    imagesToSave.push(...extracted.images);
+    return extracted.item;
   });
 
   if (imagesToSave.length > 0) {
@@ -109,7 +143,8 @@ export function restoreInlineImages(item: StoredItem, images: ReadonlyMap<string
     card.imageUrl === IMAGE_IDB_MARKER && images.has(card.id) ? { ...card, imageUrl: images.get(card.id) } : card;
   let data = inline(item.data);
   if (isPhraseItem(item) && item.data.vocabs?.length) {
-    data = { ...data, vocabs: item.data.vocabs.map(inline) } as SearchResult;
+    const vocabs = item.data.vocabs.map(inline);
+    if (vocabs.some((vocab, index) => vocab !== item.data.vocabs[index])) data = { ...data, vocabs } as SearchResult;
   }
   return data === item.data ? item : { ...item, data } as StoredItem;
 }

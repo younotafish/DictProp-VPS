@@ -2,8 +2,9 @@ import { uploadImages } from './api';
 import { optimizeImages } from './imageProcessing';
 import { saveImagesBatch } from './imageStore';
 import { warn } from './logger';
+import type { InlineImage } from './libraryImages';
 
-async function uploadWithRetry(images: Array<{ id: string; base64: string }>): Promise<void> {
+async function uploadWithRetry(images: InlineImage[]): Promise<void> {
   const chunkSize = 8;
   for (let i = 0; i < images.length; i += chunkSize) {
     const chunk = images.slice(i, i + chunkSize);
@@ -20,7 +21,7 @@ async function uploadWithRetry(images: Array<{ id: string; base64: string }>): P
   }
 }
 
-export async function offloadAndUpload(images: Array<{ id: string; base64: string }>): Promise<void> {
+export async function offloadAndUpload(images: InlineImage[]): Promise<void> {
   if (images.length === 0) return;
   const optimized = await optimizeImages(images);
   await saveImagesBatch(optimized.map(({ id, base64 }) => ({ id, image: base64 })));
