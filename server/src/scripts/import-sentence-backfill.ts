@@ -28,7 +28,8 @@ const result = {
 };
 
 type Entry = SentenceBackfillBundle['entries'][number];
-type PreparedEntry = { entry: Entry; image: Buffer | null; mimeType: string | null };
+/** imageError: the bundle's image for the entry could not be read, or is not an image the server stores. */
+type PreparedEntry = { entry: Entry; image: Buffer | null; mimeType: string | null; imageError?: string };
 type Outcome = { id: string; image: 'added' | 'replaced' | 'preserved' | null; imageError?: string };
 
 // Only images that will be written are read, and only for the current chunk.
@@ -38,12 +39,16 @@ const prepare = (entry: Entry): PreparedEntry => {
   }
   const imagePath = resolveInBundle(bundleRoot, entry.imageFile);
   if (!imagePath) throw new Error('image path escapes bundle root');
-  return { entry, ...readBundleImage(imagePath) };
+  try {
+    return { entry, ...readBundleImage(imagePath) };
+  } catch (error) {
+    return { entry, image: null, mimeType: null, imageError: errorMessage(error) };
+  }
 };
 
 // A savepoint per sentence, checked against its live row: the analysis is written over what is stored
 // now with the stored revision, and the image is stored only after that write went through cleanly.
-const importSentence = db.transaction(({ entry, image, mimeType }: PreparedEntry): Outcome => {
+const importSentence = db.transaction(({ entry, image, mimeType, imageError }: PreparedEntry): Outcome => {
   const live = getItemById(entry.id, owner.id, false) as any;
   if (!live || live.isDeleted) throw new StaleEntryError('sentence is missing or deleted');
   if (live.type !== 'sentence') throw new Error('item is no longer a sentence');
@@ -52,7 +57,7 @@ const importSentence = db.transaction(({ entry, image, mimeType }: PreparedEntry
     throw new StaleEntryError('sentence text changed after export');
   }
   const imageExists = hasItemImage(entry.id, owner.id);
-  if (entry.imageFile && !image && !imageExists) {
+  if (entry.imageFile && !image && !imageError && !imageExists) {
     throw new StaleEntryError('image was removed while the backfill was imported');
   }
   writeOverLiveItem(live, owner.id, {
@@ -62,8 +67,9 @@ const importSentence = db.transaction(({ entry, image, mimeType }: PreparedEntry
   });
 
   if (!entry.imageFile) return { id: entry.id, image: null };
+  // A bad or refused image leaves the new analysis in place, and any image already stored, and is reported on its own.
+  if (imageError) return { id: entry.id, image: null, imageError };
   if (imageExists && entry.replaceImage !== true) return { id: entry.id, image: 'preserved' };
-  // A refused image leaves the new analysis in place and is reported on its own.
   if (!image || !mimeType || !upsertItemImageBinary(entry.id, image, mimeType, owner.id)) {
     return { id: entry.id, image: null, imageError: 'image could not be stored' };
   }
