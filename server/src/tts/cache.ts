@@ -3,7 +3,6 @@
 // GLOBAL, keyed by voice and text and shared across users, since pronunciation isn't user-private;
 // requireAuth (mounted on /api/*) still gates the routes that serve it.
 import { createHash, randomUUID } from 'crypto';
-import { mkdirSync } from 'fs';
 import { access, rename, rm, writeFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { env } from '../env.js';
@@ -17,8 +16,6 @@ export const OFFLINE_CACHE_VOICES = new Set([
   'qwen3-aiden-casual-v1',
 ]);
 export const TTS_DIR = resolve(env.DATA_DIR, 'tts');
-
-mkdirSync(TTS_DIR, { recursive: true });
 
 // key = sha256(voice + "\n" + text.trim()) hex — MUST match the client (services/api.ts ttsKey).
 export function ttsKey(text: string, voice: string): string {

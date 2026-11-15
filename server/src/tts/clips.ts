@@ -76,7 +76,7 @@ export function createClipStore(deps: ClipDependencies): ClipStore {
       }
       mkdirSync(join(TTS_DIR, key.slice(0, 2)), { recursive: true });
       await writeFileAtomic(p, audio);
-      // Persist the spoken respelling next to the clip (transparency / future display). Best-effort.
+      // Keep the respelling beside the clip: the only record of what a casual clip actually says. Best-effort.
       if (spoken) await writeFileAtomic(p + '.txt', spoken).catch(() => {});
       return audio;
     })().finally(() => audioInFlight.delete(key));

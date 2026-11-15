@@ -7,7 +7,6 @@ import { GENERATE_MAX_ITEMS } from '../shared/ai-limits.js';
 import { createBackfill, getDetachedBackfillStatus, type BackfillTexts } from '../tts/backfill.js';
 import {
   CASUAL_STYLE,
-  fileExists,
   isComplete,
   MIMO_VOICE,
   OFFLINE_CACHE_VOICES,
@@ -123,22 +122,6 @@ export function createTtsRoutes(deps: TtsRouteDependencies = {}) {
     };
     await Promise.all(Array.from({ length: Math.min(GENERATE_CONCURRENCY, items.length) }, () => worker()));
     return c.json({ generated, skipped, failed });
-  });
-
-  // POST /api/tts/manifest  { keys: [...], audioOnly?: bool } -> { have: [...] }  (which keys are cached).
-  // audioOnly=true lets callers inventory clips independently. The default requires audio + timings,
-  // so ordinary sweeps also repair legacy audio-only cache entries.
-  routes.post('/tts/manifest', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
-    const keys: string[] = Array.isArray(body?.keys) ? body.keys : [];
-    const audioOnly = body?.audioOnly === true;
-    const have: string[] = [];
-    for (const k of keys) {
-      if (!/^[0-9a-f]{64}$/.test(k)) continue;
-      if (!(await fileExists(pathForKey(k)))) continue;
-      if (audioOnly || (await fileExists(timingsPathForKey(k)))) have.push(k);
-    }
-    return c.json({ have });
   });
 
   return routes;
