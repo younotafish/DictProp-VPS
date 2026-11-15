@@ -39,7 +39,12 @@ const LOCAL_DEV_ORIGINS = [
   'http://127.0.0.1:3001',
   'http://127.0.0.1:3002',
 ];
-const ALLOWED_ORIGINS = [CANONICAL_ORIGIN, ...(env.IS_PRODUCTION ? [] : LOCAL_DEV_ORIGINS)];
+// A PUBLIC_ORIGIN other than the canonical one is where sign-in returns, so its pages must be able to save too.
+const ALLOWED_ORIGINS = [...new Set([
+  CANONICAL_ORIGIN,
+  ...(env.PUBLIC_ORIGIN ? [env.PUBLIC_ORIGIN] : []),
+  ...(env.IS_PRODUCTION ? [] : LOCAL_DEV_ORIGINS),
+])];
 const ALLOWED_ORIGIN_SET = new Set(ALLOWED_ORIGINS);
 // Query strings can carry OAuth codes and state, so request logs keep only the path.
 const logWithoutQuery = (message: string, ...rest: string[]) =>

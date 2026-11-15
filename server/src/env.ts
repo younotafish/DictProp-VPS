@@ -15,6 +15,22 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
+/**
+ * PUBLIC_ORIGIN as an origin, or '' when unset. A value that isn't an http(s) URL would send every sign-in to a
+ * callback Google refuses, so it stops startup instead.
+ */
+export function parsePublicOrigin(value: string | undefined): string {
+  if (!value) return '';
+  let url: URL | undefined;
+  try {
+    url = new URL(value);
+  } catch {
+    url = undefined;
+  }
+  if (url?.protocol !== 'http:' && url?.protocol !== 'https:') throw new Error(`Invalid PUBLIC_ORIGIN: ${value}`);
+  return url.origin;
+}
+
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const DEV_AUTH_BYPASS = process.env.DEV_AUTH_BYPASS === '1';
 if (DEV_AUTH_BYPASS && IS_PRODUCTION) {
@@ -29,7 +45,7 @@ export const env = {
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
   OWNER_GOOGLE_EMAIL: process.env.OWNER_GOOGLE_EMAIL || '',
-  PUBLIC_ORIGIN: (process.env.PUBLIC_ORIGIN || '').replace(/\/$/, ''),
+  PUBLIC_ORIGIN: parsePublicOrigin(process.env.PUBLIC_ORIGIN),
   // Local dev only: when '1', skip Google auth and use a synthetic admin user. Refused in production, and the
   // server then listens on loopback only, so the no-auth API isn't reachable from the local network.
   DEV_AUTH_BYPASS,
