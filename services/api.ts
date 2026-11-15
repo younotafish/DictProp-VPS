@@ -1,6 +1,6 @@
 import { StoredItem, SearchResult, ComparisonResult, StoredComparison, ReviewEvent, ReviewHistory, RevisionCursor } from '../types';
 import { bytesToBase64, dataUriToBlob } from './dataUri';
-import { log, error as logError } from './logger';
+import { log, logError } from './logger';
 import { fetchWithin, HttpError, jsonRequest, requestJson, requestVoid } from './http';
 import { MAX_COMPARE_WORDS } from './queryMode';
 import { publishServerMutation } from './syncSignals';

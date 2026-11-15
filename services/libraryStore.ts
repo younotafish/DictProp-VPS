@@ -1,7 +1,7 @@
 import type { RevisionCursor, StoredItem } from '../types';
 import { checkIndexedDBAvailability, ITEM_RECORDS_STORE, ITEM_UPDATES_STORE, META_STORE, requestResult, transactionDone, withDB } from './idb';
 import { getItemContentHash, ITEM_HASH_VERSION, seedItemContentHash } from './itemHash';
-import { log, warn, error as logError } from './logger';
+import { log, logError, warn } from './logger';
 import { isSameJson } from './sameJson';
 
 // This device's copy of the library: one record per item, the server cursor it is current to, one write at a

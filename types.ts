@@ -56,7 +56,7 @@ export interface VocabCard {
   register: string;
   mnemonic: string;
   imagePrompt?: string; // To generate specific imagery
-  imageUrl?: string; // Generated Base64 image
+  imageUrl?: string; // A picture marker ('idb:stored', 'server:has_image:<version>'), or a data URI until it is stored
   usageAudit?: UsageAudit;
   advancedEnrichment?: AdvancedEnrichmentMarker;
   localImageEnrichment?: LocalImageEnrichmentMarker;
@@ -71,7 +71,7 @@ export interface SearchResult {
   pronunciation: string;
   vocabs: VocabCard[];
   timestamp: number;
-  imageUrl?: string; // Base64 data uri
+  imageUrl?: string; // A picture marker ('idb:stored', 'server:has_image:<version>'), or a data URI until it is stored
   imagePrompt?: string; // Photorealistic prompt for the complete phrase
   originalQuery?: string; // Original Chinese input if translated
   usageAudit?: UsageAudit;
@@ -216,7 +216,9 @@ export interface ReviewEvent {
   itemId: string;
   itemType: 'vocab' | 'phrase' | 'sentence';
   reviewedAt: number;
+  /** The item's total review count before this review. The name is the wire and database field's, from before FSRS. */
   previousStep: number;
+  /** The item's total review count after this review. */
   nextStep: number;
   rating?: ReviewRating;
   taskType?: ReviewTaskType;
@@ -325,14 +327,14 @@ export const getItemSense = (item: StoredItem): string => {
 /**
  * Gets the image reference of a stored item (data URI, API URL, or lazy-load marker).
  * @param item - The stored item
- * @returns Base64 image data URI or undefined if no image
+ * @returns The marker, data URI or API URL, or undefined if no image
  */
 export const getItemImageUrl = (item: StoredItem): string | undefined => {
   if (!item || !item.data) return undefined;
   return item.data.imageUrl;
 };
 
-// Word Comparison — AI-generated side-by-side analysis of 2-3 similar words
+// Word Comparison — AI-generated side-by-side analysis of 2 to MAX_COMPARE_WORDS (services/queryMode.ts) similar words
 interface ComparisonDimension {
   label: string;
   analysis: string;
@@ -366,7 +368,11 @@ export interface StoredComparison {
 export const comparisonKey = (words: string[]): string =>
   Array.from(new Set(words.map((w) => w.toLowerCase().trim()).filter(Boolean))).sort().join('|');
 
-// Authenticated application user exposed to UI components
+/**
+ * Authenticated application user exposed to UI components: AuthUser (services/auth.ts) under Firebase-era field
+ * names, which App.tsx translates for the Notebook and UserMenu.
+ * @deprecated Pass AuthUser instead (client-data-15); this goes once those two take it.
+ */
 export interface AppUser {
   uid: string;
   displayName?: string | null;

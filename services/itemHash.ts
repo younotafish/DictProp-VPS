@@ -10,6 +10,12 @@ import { StoredItem } from '../types';
  */
 export const ITEM_HASH_VERSION = 1;
 
+/**
+ * A 32-bit DJB2 hash (x33) of the string in base 36, followed by a second part. The second part runs the same
+ * recurrence from another seed, so it follows from the first part and the string's length and adds no strength:
+ * this is one 32-bit hash, enough to tell an edited item from its synced copy. Every local record and
+ * lastSyncedHash stores this exact output, so a stronger hash means migrating them under a new ITEM_HASH_VERSION.
+ */
 const hashString = (str: string): string => {
   let h1 = 5381;
   let h2 = 52711;
