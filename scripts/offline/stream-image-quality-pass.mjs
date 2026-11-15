@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DETACHED_PROCESS_GROUPS, killProcessGroup } from './codex-process.mjs';
 import { candidateFile } from './image-review.mjs';
 
@@ -43,11 +44,14 @@ mkdirSync(workDir, { recursive: true });
 mkdirSync(dirname(outputPath), { recursive: true });
 
 const sleep = milliseconds => new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds));
+const JUDGE = fileURLToPath(new URL('./judge-image-candidates.mjs', import.meta.url));
+const REFINER = fileURLToPath(new URL('./refine-rejected-image-prompts.mjs', import.meta.url));
+const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 let activeChild = null;
 let handlingSignal = false;
 
 function forwardSignal(signal) {
-  const exitCode = signal === 'SIGINT' ? 130 : 143;
+  const exitCode = SIGNAL_EXIT_CODES[signal];
   if (handlingSignal) {
     killProcessGroup(activeChild, 'SIGKILL');
     process.exit(exitCode);
@@ -60,8 +64,9 @@ function forwardSignal(signal) {
     process.exit(exitCode);
   }, 3_000);
 }
-process.on('SIGINT', () => forwardSignal('SIGINT'));
-process.on('SIGTERM', () => forwardSignal('SIGTERM'));
+for (const signal of Object.keys(SIGNAL_EXIT_CODES)) process.on(signal, () => forwardSignal(signal));
+// The judge and the refiner run in process groups of their own, so they must not outlive this pass.
+process.on('exit', () => killProcessGroup(activeChild, 'SIGKILL'));
 
 function candidatePath(target) {
   return candidateFile(candidateDir, target.filename, candidateNumber);
@@ -185,16 +190,11 @@ for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
     process.stderr.write(`Reusing completed candidate ${candidateNumber} judgment for ${chunkName}\n`);
   } else {
     process.stderr.write(`Judging candidate ${candidateNumber}, chunk ${chunkIndex + 1}/${chunks.length}\n`);
-    await retry(process.execPath, [
-      'scripts/offline/judge-image-candidates.mjs', chunkManifest, candidateDir, imageDir, judgeDir,
-      String(candidateNumber),
-    ]);
+    await retry(process.execPath, [JUDGE, chunkManifest, candidateDir, imageDir, judgeDir, String(candidateNumber)]);
     const rejected = readTargetManifest(rejectedPath, `${chunkName} judgment checkpoint`);
     validateChunkCheckpoint(targets, rejected.targets, `${chunkName} judgment checkpoint`);
   }
-  await retry(process.execPath, [
-    'scripts/offline/refine-rejected-image-prompts.mjs', rejectedPath, refinedPath, refineDir,
-  ]);
+  await retry(process.execPath, [REFINER, rejectedPath, refinedPath, refineDir]);
   const refined = readTargetManifest(refinedPath, `${chunkName} refinement checkpoint`);
   validateChunkCheckpoint(targets, refined.targets, `${chunkName} refinement checkpoint`);
   refinedTargets.push(...refined.targets);

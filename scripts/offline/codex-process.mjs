@@ -32,10 +32,12 @@ export function killProcessGroup(child, signal = 'SIGTERM') {
   }
 }
 
-// On SIGINT or SIGTERM, stops every child's process group and exits; a second signal stops them at once.
+// On SIGHUP, SIGINT or SIGTERM, stops every child's process group and exits; a second signal stops them at
+// once. Children still running when the process exits any other way are killed as well: in process groups of
+// their own, they would otherwise outlive it.
 export function installSignalCleanup(activeChildren, onSignal = () => {}) {
   let handlingSignal = false;
-  const exitCodes = { SIGINT: 130, SIGTERM: 143 };
+  const exitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
   const handlers = new Map();
 
   for (const signal of Object.keys(exitCodes)) {
@@ -55,9 +57,14 @@ export function installSignalCleanup(activeChildren, onSignal = () => {}) {
     handlers.set(signal, handler);
     process.on(signal, handler);
   }
+  const killRemaining = () => {
+    for (const child of activeChildren) killProcessGroup(child, 'SIGKILL');
+  };
+  process.on('exit', killRemaining);
 
   return () => {
     for (const [signal, handler] of handlers) process.off(signal, handler);
+    process.off('exit', killRemaining);
   };
 }
 
