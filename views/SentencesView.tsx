@@ -13,15 +13,7 @@ import { summarizeReviewStates } from '../services/sentenceReviewState';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
 import { useNow } from '../hooks/useNow';
-
-const formatDue = (ts: number) => {
-  const diff = ts - Date.now();
-  if (diff <= 0) return 'due';
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  if (days === 0) return 'today';
-  if (days === 1) return 'tomorrow';
-  return `in ${days}d`;
-};
+import { formatDueLabel } from './reading/dueLabel';
 
 const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
 
@@ -32,6 +24,8 @@ const listComponents = { Footer: () => <div className="h-[calc(5rem+env(safe-are
 interface SentenceRowProps {
   item: SentenceItem;
   isDue: boolean;
+  /** When a sentence that isn't due comes due ('tomorrow', 'in 3d'), read from the same clock as isDue. */
+  dueLabel?: string;
   confirmingDelete: boolean;
   onOpen: (item: StoredItem) => void;
   onUpdateSRS: (itemId: string) => Promise<boolean>;
@@ -47,6 +41,7 @@ interface SentenceRowProps {
 const SentenceRow = React.memo(function SentenceRow({
   item,
   isDue,
+  dueLabel,
   confirmingDelete,
   onOpen,
   onUpdateSRS,
@@ -85,8 +80,8 @@ const SentenceRow = React.memo(function SentenceRow({
               {d.sourceSense && (
                 <span className="text-xs text-slate-400">{d.sourceSense}</span>
               )}
-              {!isDue && item.srs?.nextReview && (
-                <span className="text-xs text-slate-400">{formatDue(item.srs.nextReview)}</span>
+              {dueLabel && (
+                <span className="text-xs text-slate-400">{dueLabel}</span>
               )}
             </div>
             <div className="flex items-center gap-1">
@@ -190,10 +185,12 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
 
   const renderSentence = useCallback((_index: number, item: StoredItem) => {
     if (!isSentenceItem(item)) return null;
+    const isDue = (item.srs?.nextReview ?? 0) <= now;
     return (
       <SentenceRow
         item={item}
-        isDue={(item.srs?.nextReview ?? 0) <= now}
+        isDue={isDue}
+        dueLabel={!isDue && item.srs?.nextReview ? formatDueLabel(item.srs.nextReview, now) : undefined}
         confirmingDelete={confirmDeleteId === item.data.id}
         onOpen={openSentence}
         onUpdateSRS={onUpdateSRS}
