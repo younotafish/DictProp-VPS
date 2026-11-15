@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fileReady, writeJsonAtomic } from './atomic-file.mjs';
 import { DETACHED_PROCESS_GROUPS, killProcessGroup } from './codex-process.mjs';
 import { candidateFile } from './image-review.mjs';
 
@@ -70,10 +71,6 @@ process.on('exit', () => killProcessGroup(activeChild, 'SIGKILL'));
 
 function candidatePath(target) {
   return candidateFile(candidateDir, target.filename, candidateNumber);
-}
-
-function fileReady(path) {
-  return existsSync(path) && statSync(path).size > 0;
 }
 
 function targetReady(target) {
@@ -182,7 +179,7 @@ for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
   }
 
   mkdirSync(chunkDir, { recursive: true });
-  writeFileSync(chunkManifest, `${JSON.stringify({ ...payload, targets }, null, 2)}\n`, { mode: 0o600 });
+  writeJsonAtomic(chunkManifest, { ...payload, targets });
 
   if (fileReady(rejectedPath)) {
     const rejected = readTargetManifest(rejectedPath, `${chunkName} judgment checkpoint`);
@@ -200,10 +197,10 @@ for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
   refinedTargets.push(...refined.targets);
 }
 
-writeFileSync(outputPath, `${JSON.stringify({
+writeJsonAtomic(outputPath, {
   ...payload,
   qualityPassGeneratedAt: new Date().toISOString(),
   candidateNumber,
   targets: refinedTargets,
-}, null, 2)}\n`, { mode: 0o600 });
+});
 process.stderr.write(`Candidate ${candidateNumber} quality pass complete: accepted=${payload.targets.length - refinedTargets.length}, rejected=${refinedTargets.length}\n`);

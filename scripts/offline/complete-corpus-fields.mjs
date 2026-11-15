@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { writeJsonAtomic } from './atomic-file.mjs';
 import {
   NOTHING_SUCCEEDED_EXIT_CODE,
   ledgerFromEnvironment,
@@ -130,7 +131,7 @@ Preserve the headword's capitalization only when it is a proper name. Use Genera
 
 const tasks = collectCompletionTasks(source.entries);
 if (tasks.length === 0) {
-  writeFileSync(outputPath, `${JSON.stringify(source, null, 2)}\n`, { mode: 0o600 });
+  writeJsonAtomic(outputPath, source);
   process.stderr.write('No incomplete vocabulary cards found\n');
   process.exit(0);
 }
@@ -210,16 +211,14 @@ const expectedCards = tasks.filter(task => !failedParents.has(task.parentId)).le
 if (completedCards !== expectedCards) throw new Error(`Applied ${completedCards}/${expectedCards} completions`);
 const failedEntries = source.entries.filter(entry => failedParents.has(entry.id));
 if (failedEntries.length > 0) {
-  const tempPath = `${failuresPath}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify({
+  writeJsonAtomic(failuresPath, {
     version: 1,
     generatedAt,
     provider: MODEL_CONFIG.marker,
     model: MODEL,
     reasoningEffort: REASONING_EFFORT,
     failures: failedEntries.map(entry => ({ id: entry.id, error: failedParents.get(entry.id) })),
-  }, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tempPath, failuresPath);
+  });
 } else if (existsSync(failuresPath)) {
   unlinkSync(failuresPath);
 }
@@ -252,8 +251,8 @@ const output = {
   entries,
 };
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
-writeFileSync(join(dirname(outputPath), 'completion-report.json'), `${JSON.stringify({
+writeJsonAtomic(outputPath, output);
+writeJsonAtomic(join(dirname(outputPath), 'completion-report.json'), {
   version: 1,
   generatedAt,
   model: MODEL,
@@ -266,6 +265,6 @@ writeFileSync(join(dirname(outputPath), 'completion-report.json'), `${JSON.strin
   missingFieldCounts: Object.fromEntries([...new Set(tasks.flatMap(task => task.missing))]
     .sort()
     .map(field => [field, tasks.filter(task => task.missing.includes(field)).length])),
-}, null, 2)}\n`, { mode: 0o600 });
+});
 process.stderr.write(`Wrote ${completedCards} completed cards to ${outputPath}${
   failedEntries.length ? `; ${failedEntries.length} item(s) deferred to a later cycle` : ''}\n`);

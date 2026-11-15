@@ -4,8 +4,9 @@
 // it accepts as an answer.
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeJsonAtomic } from './atomic-file.mjs';
 import { installSignalCleanup, killProcessGroup } from './codex-process.mjs';
 
 export function errorMessage(error) {
@@ -156,7 +157,7 @@ export async function runSplittingBatches(batch, options, depth = 0) {
       if (lifecycle.aborting) throw error;
       const message = errorMessage(error);
       if (batch.length === 1) return { results: [], failures: [await onSingletonFailure(batch[0], message)] };
-      writeFileSync(splitMarkerPath, `${JSON.stringify(marker(batch, message, depth), null, 2)}\n`, { mode: 0o600 });
+      writeJsonAtomic(splitMarkerPath, marker(batch, message, depth));
       onSplit({ batch, halves, depth, error: message, resumed: false });
     }
   } else {

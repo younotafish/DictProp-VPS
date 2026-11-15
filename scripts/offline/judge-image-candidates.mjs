@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { copyFileAtomic, writeJsonAtomic } from './atomic-file.mjs';
 import { candidateFile, judgmentRecords, readVerdicts } from './image-review.mjs';
 import {
   batchFiles,
@@ -37,7 +38,7 @@ const workDir = resolve(workArg);
 mkdirSync(imageDir, { recursive: true });
 mkdirSync(workDir, { recursive: true });
 if (payload.targets.length === 0) {
-  writeFileSync(join(workDir, 'rejected-targets.json'), `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  writeJsonAtomic(join(workDir, 'rejected-targets.json'), payload);
   process.stderr.write('No image candidates remain to judge\n');
   process.exit(0);
 }
@@ -100,9 +101,9 @@ await runPool(batches.length, concurrency, lifecycle, async index => {
 const rejected = [];
 for (const batch of results) {
   for (const { target, result, candidate } of batch) {
-    if (result.acceptable) copyFileSync(candidate, join(imageDir, target.filename));
+    if (result.acceptable) copyFileAtomic(candidate, join(imageDir, target.filename));
     else rejected.push({ ...target, rejectionReason: result.reason });
   }
 }
-writeFileSync(join(workDir, 'rejected-targets.json'), `${JSON.stringify({ ...payload, targets: rejected }, null, 2)}\n`, { mode: 0o600 });
+writeJsonAtomic(join(workDir, 'rejected-targets.json'), { ...payload, targets: rejected });
 process.stderr.write(`Accepted ${pending.length - rejected.length}/${pending.length}; rejected ${rejected.length}\n`);

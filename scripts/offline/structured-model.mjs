@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeJsonAtomic } from './atomic-file.mjs';
 import { DETACHED_PROCESS_GROUPS, killProcessGroup } from './codex-process.mjs';
 
 const IMAGE_MEDIA_TYPES = {
@@ -190,9 +191,7 @@ async function runClaude(config, { prompt, schema, resultPath, images, timeoutMs
       label: 'Claude',
     });
     const result = claudeStructuredResult(output);
-    const tempPath = `${resultPath}.tmp`;
-    writeFileSync(tempPath, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
-    renameSync(tempPath, resultPath);
+    writeJsonAtomic(resultPath, result);
     return result;
   } finally {
     rmSync(cwd, { recursive: true, force: true });

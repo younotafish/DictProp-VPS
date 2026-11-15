@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { writeJsonAtomic } from './atomic-file.mjs';
 import { readRefinements, refinementRecords } from './image-review.mjs';
 import {
   batchFiles,
@@ -26,7 +27,7 @@ if (!Array.isArray(payload.targets)) throw new Error('Rejected target manifest i
 const workDir = resolve(workArg);
 mkdirSync(workDir, { recursive: true });
 if (payload.targets.length === 0) {
-  writeFileSync(resolve(outputArg), `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  writeJsonAtomic(resolve(outputArg), payload);
   process.stderr.write('No rejected image prompts remain to refine\n');
   process.exit(0);
 }
@@ -85,8 +86,5 @@ await runPool(batches.length, concurrency, lifecycle, async index => {
   results[index] = await refineBatch(batches[index], index);
 });
 
-writeFileSync(resolve(outputArg), `${JSON.stringify({
-  ...payload,
-  targets: results.flat(),
-}, null, 2)}\n`, { mode: 0o600 });
+writeJsonAtomic(resolve(outputArg), { ...payload, targets: results.flat() });
 process.stderr.write(`Refined ${payload.targets.length} rejected image prompt(s)\n`);

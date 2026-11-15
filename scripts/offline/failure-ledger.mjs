@@ -5,9 +5,10 @@
 // cannot handle fails its stage on every six-hour cycle and holds back everything behind it.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fileReady, writeJsonAtomic } from './atomic-file.mjs';
 
 export const LEDGER_VERSION = 1;
 // A stage exits with this when it made no progress at all, so the runner can re-check the model
@@ -47,11 +48,7 @@ export function readLedger(path) {
 
 export function writeLedger(path, ledger, now = Date.now()) {
   mkdirSync(dirname(path), { recursive: true });
-  const tempPath = `${path}.${process.pid}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify({ ...ledger, version: LEDGER_VERSION, updatedAt: now }, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  renameSync(tempPath, path);
+  writeJsonAtomic(path, { ...ledger, version: LEDGER_VERSION, updatedAt: now });
 }
 
 export function prune(ledger, now = Date.now()) {
@@ -147,12 +144,10 @@ function readJson(path) {
   return JSON.parse(readFileSync(resolve(path), 'utf8'));
 }
 
-function writeJsonAtomic(path, value) {
+function writeOutput(path, value) {
   const target = resolve(path);
   mkdirSync(dirname(target), { recursive: true });
-  const tempPath = `${target}.${process.pid}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tempPath, target);
+  writeJsonAtomic(target, value);
 }
 
 function filterList(ledgerPath, stage, items, keyOf, hashOf, label, now) {
@@ -167,10 +162,6 @@ function filterList(ledgerPath, stage, items, keyOf, hashOf, label, now) {
     process.stderr.write(`Skipping ${deferred} ${label} in failure backoff (${stage}); see ${ledgerPath}\n`);
   }
   return remaining;
-}
-
-function fileReady(path) {
-  return existsSync(path) && statSync(path).size > 0;
 }
 
 function formatEpoch(value) {
@@ -191,7 +182,7 @@ function main(argv) {
     // Every other field, including exportedAt, is kept: the dispatchers compare it with manifest ages.
     const sentences = filterList(ledgerPath, stage, source.sentences, sentence => sentence.id, sentenceHash,
       'sentence(s)', now);
-    writeJsonAtomic(outputPath, { ...source, sentences });
+    writeOutput(outputPath, { ...source, sentences });
     process.stdout.write(`${sentences.length}\n`);
     return;
   }
@@ -204,7 +195,7 @@ function main(argv) {
     if (!Array.isArray(payload?.targets)) throw new Error('Image target manifest is invalid');
     const targets = filterList(ledgerPath, stage, payload.targets, target => target.imageId, imageTargetHash,
       'image(s)', now);
-    writeJsonAtomic(outputPath, { ...payload, targets });
+    writeOutput(outputPath, { ...payload, targets });
     process.stdout.write(`${targets.length}\n`);
     return;
   }

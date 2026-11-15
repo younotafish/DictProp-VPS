@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { writeJsonAtomic } from './atomic-file.mjs';
 import {
   NOTHING_SUCCEEDED_EXIT_CODE,
   ledgerFromEnvironment,
@@ -151,8 +152,7 @@ const failuresPath = join(workDir, 'failures.json');
 const preservedGrammarCount = source.sentences.filter(sentence => preservedGrammarFor(baseAnalysisById, sentence)).length;
 
 function writeProgress(status) {
-  const tempPath = `${progressPath}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify({
+  writeJsonAtomic(progressPath, {
     status,
     provider: MODEL_CONFIG.marker,
     model: MODEL,
@@ -166,8 +166,7 @@ function writeProgress(status) {
     totalBatches: batches.length,
     completedBatches,
     updatedAt: new Date().toISOString(),
-  }, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tempPath, progressPath);
+  });
 }
 
 writeProgress('running');
@@ -187,16 +186,14 @@ try {
 }
 
 if (failures.length > 0) {
-  const tempPath = `${failuresPath}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify({
+  writeJsonAtomic(failuresPath, {
     version: 1,
     generatedAt: Date.now(),
     provider: MODEL_CONFIG.marker,
     model: MODEL,
     reasoningEffort: REASONING_EFFORT,
     failures: failures.sort((left, right) => left.id.localeCompare(right.id)),
-  }, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tempPath, failuresPath);
+  });
   // Without a ledger the caller needs every sentence, so stop here; successful batches stay cached.
   if (!failureLedger) {
     writeProgress('incomplete');
@@ -231,16 +228,14 @@ if (failureLedger) {
 }
 
 mkdirSync(dirname(outputPath), { recursive: true });
-const outputTemp = `${outputPath}.tmp`;
-writeFileSync(outputTemp, `${JSON.stringify({
+writeJsonAtomic(outputPath, {
   version: 1,
   generatedAt,
   provider: MODEL_CONFIG.marker,
   model: MODEL,
   reasoningEffort: REASONING_EFFORT,
   entries,
-}, null, 2)}\n`, { mode: 0o600 });
-renameSync(outputTemp, outputPath);
+});
 writeProgress(failures.length > 0 ? 'partial' : 'complete');
 process.stderr.write(
   `Wrote ${entries.length} sentence analyses to ${outputPath}` +
