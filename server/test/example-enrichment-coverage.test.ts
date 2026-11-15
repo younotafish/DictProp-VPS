@@ -6,27 +6,7 @@ import {
   summarizeExampleEnrichmentCoverage,
 } from '../src/example-enrichment-coverage.js';
 import { sentenceLookupHash } from '../src/sentence-enrichment.js';
-
-const completeAnalysis = {
-  translation: '这是一个例句。',
-  naturalSpeechIpa: '/ðɪs ɪz ə tɛst/',
-  grammar: { structure: 'A simple declarative clause.', points: [] },
-  americanEnglish: {
-    status: 'shared',
-    explanation: 'Yes. This is natural in American English.',
-    evidence: ['The wording is current and idiomatic.'],
-  },
-  terms: [],
-  pronunciation: {
-    slowIpa: '/ðɪs ɪz ə tɛst/',
-    fastIpa: '/ðɪs ɪz ə tɛst/',
-    carefulSpeakerGuide: 'this IS a TEST',
-    fastSpeechFeatures: ['The article is reduced in fluent speech.'],
-    intonationAndChunking: 'Use one thought group with a final fall.',
-    keyDifference: 'Fluent speech reduces the unstressed article.',
-  },
-  imagePrompt: 'A photorealistic wide image of a student completing a short test at a desk, with no visible text.',
-};
+import { completeAnalysis } from './support/fixtures.js';
 
 test('example coverage deduplicates markup variants and excludes saved sentences', () => {
   const items = [

@@ -1,16 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { writeJson } from '../support/fs.ts';
 import { repoPath } from '../support/paths.ts';
 
 const scripts = repoPath('scripts', 'offline');
-
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-}
 
 test('usage adjudication freezes a meaning linked to a saved sentence', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-usage-'));

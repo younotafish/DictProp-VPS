@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
+import { enrichmentId } from '../src/example-enrichment-coverage.js';
+import { srs } from './support/fixtures.js';
+import { png, sha256 } from './support/fs.js';
 
 const {
   db, deleteUnreferencedBlobs, getComparisons, getImageManifest, getItemById, getItemImage, getItemImagesBatch,
@@ -14,11 +16,6 @@ const { backupBeforeWrite, StaleEntryError, writeOverLiveItem } = await import('
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const USER = 'data-layer-user';
-const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-const png = (seed: string) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(seed)]);
-const srs = (id: string, type: string) => ({
-  id, type, nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 0,
-});
 const vocab = (id: string, data: Record<string, unknown>, updatedAt: number, extra: Record<string, unknown> = {}) => ({
   type: 'vocab', data: { id, word: 'lucid', ...data }, srs: srs(id, 'vocab'), savedAt: 1, updatedAt, ...extra,
 });
@@ -38,7 +35,7 @@ const analysis = {
 const enrich = (text: string, image: Buffer) => {
   const lookupHash = sentenceLookupHash(text);
   upsertSentenceEnrichment({
-    entry: { id: `example-${lookupHash.slice(0, 40)}`, text, lookupHash, textHash: sha256(text), analysis, generatedAt: 10 },
+    entry: { id: enrichmentId(lookupHash), text, lookupHash, textHash: sha256(text), analysis, generatedAt: 10 },
     image,
     mimeType: 'image/png',
   });

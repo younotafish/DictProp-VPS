@@ -1,15 +1,11 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sha256, writeJson } from '../support/fs.ts';
 import { REPO_ROOT, repoPath } from '../support/paths.ts';
-
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-}
 
 test('streaming image QA reuses a completed chunk without judging it again', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-image-resume-'));
@@ -151,11 +147,11 @@ test('streaming image QA defers images that exhaust their candidates and keeps a
 });
 
 function exampleSentence(text: string) {
-  const lookupHash = createHash('sha256').update(text.toLowerCase()).digest('hex');
+  const lookupHash = sha256(text.toLowerCase());
   return {
     id: `example-${lookupHash.slice(0, 40)}`,
     text,
-    textHash: createHash('sha256').update(text).digest('hex'),
+    textHash: sha256(text),
     lookupHash,
     provenance: ['test'],
     hasAnalysis: true,
@@ -163,7 +159,7 @@ function exampleSentence(text: string) {
 }
 
 const exampleImageFilename = (id: string): string =>
-  `${createHash('sha256').update(id).digest('hex').slice(0, 32)}.webp`;
+  `${sha256(id).slice(0, 32)}.webp`;
 
 test('example pool verification accepts a deferred image only when the cycle allows it', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-example-deferred-verify-'));
@@ -337,7 +333,7 @@ test('sentence image preparation reuses a verified baseline image', () => {
   const fallbackRoot = join(root, 'fallback');
   const id = 'example-reused-image';
   const coveredId = 'example-production-covered-image';
-  const filename = `${createHash('sha256').update(id).digest('hex').slice(0, 32)}.webp`;
+  const filename = `${sha256(id).slice(0, 32)}.webp`;
   mkdirSync(fallbackRoot, { recursive: true });
   writeFileSync(join(fallbackRoot, filename), 'baseline-image');
   writeJson(sourcePath, {

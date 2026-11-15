@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { sha256 } from '../support/fs.ts';
 
 const enrichScript = fileURLToPath(new URL('../../scripts/offline/enrich-sentences.mjs', import.meta.url));
 
@@ -56,7 +56,6 @@ process.stdin.on('end', () => {
 });
 `;
 
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 test('detailed sentence migration splits failures, resumes caches, and preserves prior grammar', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-detailed-sentence-'));
@@ -68,9 +67,9 @@ test('detailed sentence migration splits failures, resumes caches, and preserves
     const workDir = join(root, 'work');
     const callsPath = join(root, 'calls.log');
     const sentences = [
-      { id: 'one', text: 'First works.', sourceWord: 'first', textHash: hash('First works.') },
-      { id: 'two', text: 'Second works.', sourceWord: 'second', textHash: hash('Second works.') },
-      { id: 'three', text: 'This always fails.', sourceWord: 'fail', textHash: hash('This always fails.') },
+      { id: 'one', text: 'First works.', sourceWord: 'first', textHash: sha256('First works.') },
+      { id: 'two', text: 'Second works.', sourceWord: 'second', textHash: sha256('Second works.') },
+      { id: 'three', text: 'This always fails.', sourceWord: 'fail', textHash: sha256('This always fails.') },
     ];
     const preservedGrammar = {
       structure: 'Preserved 5.6 grammar.',
@@ -135,7 +134,7 @@ test('parallel detail generation can defer grammar checks to a later pass', () =
     chmodSync(fakeCodexPath, 0o700);
     writeFileSync(sourcePath, JSON.stringify({
       version: 1,
-      sentences: [{ id: 'one', text: 'It worked.', sourceWord: 'work', textHash: hash('It worked.') }],
+      sentences: [{ id: 'one', text: 'It worked.', sourceWord: 'work', textHash: sha256('It worked.') }],
     }));
 
     const result = spawnSync(process.execPath, [enrichScript, sourcePath, outputPath, workDir], {

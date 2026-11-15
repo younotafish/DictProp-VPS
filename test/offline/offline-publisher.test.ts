@@ -1,7 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
-  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -13,12 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sha256, writeExecutable } from '../support/fs.ts';
 import { repoPath, SERVER_DIR } from '../support/paths.ts';
-
-function writeExecutable(path: string, contents: string): void {
-  writeFileSync(path, contents);
-  chmodSync(path, 0o755);
-}
 
 test('publisher follows the exact fallback deployment it dispatches', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-publisher-'));
@@ -254,7 +248,7 @@ fi
   });
   const ghLog = () => readFileSync(join(fakeState, 'gh.log'), 'utf8');
   const dispatches = () => Number(readFileSync(join(fakeState, 'import-count'), 'utf8').trim());
-  const archiveSha = createHash('sha256').update('encrypted wave').digest('hex');
+  const archiveSha = sha256('encrypted wave');
   return { root, stateDir, publish, ghLog, dispatches, archiveSha };
 }
 

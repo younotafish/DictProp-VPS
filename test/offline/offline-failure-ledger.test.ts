@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -26,6 +25,7 @@ import {
   recordSuccess,
   updateLedger,
 } from '../../scripts/offline/failure-ledger.mjs';
+import { sha256, writeJson } from '../support/fs.ts';
 
 type LedgerEntry = {
   hash: string;
@@ -41,7 +41,6 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const script = (name: string) => join(repoRoot, 'scripts', 'offline', name);
 const HOUR = 60 * 60 * 1_000;
 const DAY = 24 * HOUR;
-const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 
 const entry = (hash: string, retryAfter: number, lastFailedAt = retryAfter - HOUR): LedgerEntry => ({
   hash,
@@ -51,10 +50,6 @@ const entry = (hash: string, retryAfter: number, lastFailedAt = retryAfter - HOU
   retryAfter,
   error: 'earlier failure',
 });
-
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-}
 
 function readJson(path: string): any {
   return JSON.parse(readFileSync(path, 'utf8'));

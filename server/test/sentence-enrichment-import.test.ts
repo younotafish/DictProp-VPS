@@ -1,19 +1,17 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { SERVER_DIR } from './support/paths.js';
+import { enrichmentId } from '../src/example-enrichment-coverage.js';
+import { png, sha256 } from './support/fs.js';
+import { runServerScript } from './support/scripts.js';
 
 const DATA_DIR = process.env.DATA_DIR!;
 
 const { getSentenceEnrichmentForText, getSentenceEnrichmentImage, upsertSentenceEnrichment } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
-const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-const png = (seed: string) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(seed)]);
 const analysis = (translation: string) => ({
   translation,
   americanEnglish: { status: 'shared' as const, explanation: 'Natural shared English.' },
@@ -23,20 +21,13 @@ const analysis = (translation: string) => ({
 const entry = (text: string, generatedAt: number, imageFile?: string) => {
   const lookupHash = sentenceLookupHash(text);
   return {
-    id: `example-${lookupHash.slice(0, 40)}`, text, lookupHash, textHash: sha256(text),
+    id: enrichmentId(lookupHash), text, lookupHash, textHash: sha256(text),
     analysis: analysis(`译文：${text}`), generatedAt, ...(imageFile ? { imageFile } : {}),
   };
 };
 
 function runImport(manifest: string) {
-  const { NODE_TEST_CONTEXT: _testContext, ...parentEnv } = process.env;
-  const child = spawnSync(process.execPath, ['--import', 'tsx', 'src/scripts/import-sentence-enrichments.ts', manifest], {
-    cwd: SERVER_DIR,
-    env: { ...parentEnv, DATA_DIR },
-    encoding: 'utf8',
-  });
-  const lines = child.stdout.trim().split('\n');
-  return { status: child.status, stderr: child.stderr, output: JSON.parse(lines[lines.length - 1] || 'null') };
+  return runServerScript('import-sentence-enrichments', [manifest], { DATA_DIR });
 }
 
 test('a bad image is skipped and counted while the rest of the bundle imports', () => {

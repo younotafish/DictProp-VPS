@@ -1,19 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sha256, writeExecutable, writeJson } from '../support/fs.ts';
 import { REPO_ROOT, repoPath } from '../support/paths.ts';
 
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function hash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
+const hash = (value: unknown): string => sha256(JSON.stringify(value));
 
 test('corpus rebasing accepts an ordered chain of verified predecessors', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-rebase-'));
@@ -52,11 +46,6 @@ test('corpus rebasing accepts an ordered chain of verified predecessors', () => 
   assert.equal(output.entries[0].sourceHash, hash(secondData));
   assert.deepEqual(output.entries[0].data, targetData);
 });
-
-function writeExecutable(path: string, contents: string): void {
-  writeFileSync(path, contents);
-  chmodSync(path, 0o755);
-}
 
 // Answers like gh for the corrections publisher. A dispatched export becomes run 43, a run's artifacts
 // come from artifacts-<run>.json through the publisher's own --jq filter, and every download fails.

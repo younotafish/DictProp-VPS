@@ -9,13 +9,7 @@ import {
   recordRefusedReview,
   unseenRefusedReviews,
 } from '../../services/reviewQueue.ts';
-
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) { return this.values.get(key) ?? null; }
-  setItem(key: string, value: string) { this.values.set(key, value); }
-  removeItem(key: string) { this.values.delete(key); }
-}
+import { MemoryStorage } from '../support/memory-storage.ts';
 
 const refusal = (n: number) => ({ itemId: `item-${n}`, word: `word ${n}`, reviewedAt: 1_000 + n, reason: 'The card isn’t on the server' });
 

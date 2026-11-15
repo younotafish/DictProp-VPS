@@ -4,15 +4,7 @@ import type { PendingReviewMutation } from '../../services/reviewQueue.ts';
 import { HttpError } from '../../services/http.ts';
 import { enqueuePendingReviewMutation, isRefusedReviewMutation, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation } from '../../services/reviewQueue.ts';
 import type { StoredItem } from '../../types.ts';
-
-class MemoryStorage {
-  protected values = new Map<string, string>();
-  get length() { return this.values.size; }
-  key(index: number) { return [...this.values.keys()][index] ?? null; }
-  getItem(key: string) { return this.values.get(key) ?? null; }
-  setItem(key: string, value: string) { this.values.set(key, value); }
-  removeItem(key: string) { this.values.delete(key); }
-}
+import { MemoryStorage } from '../support/memory-storage.ts';
 
 const baseItem: StoredItem = {
   type: 'vocab',

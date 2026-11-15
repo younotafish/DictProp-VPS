@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import test from 'node:test';
+import { srs } from './support/fixtures.js';
+import { png, sha256 } from './support/fs.js';
 
 process.env.DEV_AUTH_BYPASS = '1';
 
@@ -8,12 +9,7 @@ const { createApp } = await import('../src/app.js');
 const { db } = await import('../src/db.js');
 const app = createApp({ logging: false, serveStaticFiles: false });
 
-const sha256 = (value: Buffer) => createHash('sha256').update(value).digest('hex');
-const png = (seed: string) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(seed)]);
 const dataUri = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
-const srs = (id: string, type: string) => ({
-  id, type, nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 0,
-});
 const vocab = (id: string, data: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => ({
   type: 'vocab', data: { id, word: 'lucid', definition: 'clear', ...data }, srs: srs(id, 'vocab'), savedAt: 1, updatedAt: 1, ...extra,
 });

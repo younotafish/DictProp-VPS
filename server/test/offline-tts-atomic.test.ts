@@ -1,16 +1,14 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { offlineTtsKey } from '../src/offline-tts-import.js';
-import { SERVER_DIR } from './support/paths.js';
+import { sha256 } from './support/fs.js';
+import { runServerScript } from './support/scripts.js';
 
 const DATA_DIR = process.env.DATA_DIR!;
 const TTS_DIR = join(DATA_DIR, 'tts');
-const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 // ffprobe stands in for the real one: every clip is two seconds long.
 const binDir = mkdtempSync(join(tmpdir(), 'dictprop-offline-tts-bin-'));
@@ -45,14 +43,7 @@ function bundle(clips: Clip[]): string {
 }
 
 function runImport(manifest: string) {
-  const { NODE_TEST_CONTEXT: _testContext, ...parentEnv } = process.env;
-  const child = spawnSync(process.execPath, ['--import', 'tsx', 'src/scripts/import-offline-tts.ts', manifest], {
-    cwd: SERVER_DIR,
-    env: { ...parentEnv, DATA_DIR, PATH: `${binDir}:${process.env.PATH}` },
-    encoding: 'utf8',
-  });
-  const lines = child.stdout.trim().split('\n');
-  return { status: child.status, stderr: child.stderr, output: JSON.parse(lines[lines.length - 1] || 'null') };
+  return runServerScript('import-offline-tts', [manifest], { DATA_DIR, PATH: `${binDir}:${process.env.PATH}` });
 }
 
 const leftovers = (): string[] => !existsSync(TTS_DIR) ? [] : readdirSync(TTS_DIR, { recursive: true })

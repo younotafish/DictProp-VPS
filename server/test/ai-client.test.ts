@@ -11,8 +11,7 @@ import {
   type ChatRequest,
   type FetchLike,
 } from '../src/ai-client.js';
-
-type Responder = (init: RequestInit) => Response | Promise<Response>;
+import { hang, httpStatus as status, keepingAlive, reply, type Responder } from './support/ai.js';
 
 // A fetch stub that answers from a script (the last responder repeats) and records each request body.
 function stubFetch(...responders: Responder[]) {
@@ -24,31 +23,10 @@ function stubFetch(...responders: Responder[]) {
   return { fetch, bodies };
 }
 
-const reply = (content: unknown, finishReason = 'stop') => () => new Response(JSON.stringify({
-  choices: [{ message: { content: typeof content === 'string' ? content : JSON.stringify(content) }, finish_reason: finishReason }],
-}));
-const status = (code: number, body = '') => () => new Response(body, { status: code });
-// Never answers; rejects with the signal's reason, like fetch does.
-const hang: Responder = (init) => new Promise<Response>((_resolve, reject) => {
-  const signal = init.signal!;
-  if (signal.aborted) reject(signal.reason);
-  else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-});
-
 const REQUEST: ChatRequest = { system: 'system prompt', user: 'user prompt', maxTokens: 1234, label: 'test' };
 const client = (fetch: FetchLike, apiKey: () => string | undefined = () => 'test-key') =>
   createChatClient({ fetch, apiKey, retryDelayMs: 0 });
 const kindOf = (kind: AiError['kind']) => (error: unknown) => error instanceof AiError && error.kind === kind;
-
-// AbortSignal.timeout timers do not keep the process alive; hold it open while a test waits on one.
-async function keepingAlive<T>(run: () => Promise<T>): Promise<T> {
-  const timer = setInterval(() => {}, 1_000);
-  try {
-    return await run();
-  } finally {
-    clearInterval(timer);
-  }
-}
 
 test('transport failures map to accurate kinds and statuses', () => {
   const undiciTimeout = (code: string) => Object.assign(new TypeError('fetch failed'), {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Hono } from 'hono';
+import { enrichmentId } from '../src/example-enrichment-coverage.js';
 
 process.env.DEV_AUTH_BYPASS = '1';
 
@@ -298,7 +299,7 @@ test('saving a prepared example returns the server-enriched canonical sentence',
   };
   upsertSentenceEnrichment({
     entry: {
-      id: `example-${lookupHash.slice(0, 40)}`,
+      id: enrichmentId(lookupHash),
       text,
       lookupHash,
       textHash: createHash('sha256').update(text).digest('hex'),

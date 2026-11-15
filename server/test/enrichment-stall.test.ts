@@ -3,37 +3,10 @@ import test from 'node:test';
 import { findStalledEnrichment } from '../src/enrichment-stall.js';
 import { advancedVocabContentHash } from '../src/incremental-enrichment.js';
 import { sentenceLookupHash } from '../src/sentence-enrichment.js';
+import { completeAnalysis, completeVocab } from './support/fixtures.js';
 
 const HOUR = 60 * 60 * 1_000;
 const now = Date.UTC(2026, 8, 28, 12);
-
-const completeVocab = {
-  id: 'word',
-  word: 'word',
-  sense: 'noun: unit of language',
-  chinese: '词',
-  ipa: '/wɝd/',
-  definition: 'A distinct unit of language with meaning or grammatical function.',
-  forms: ['word', 'words'],
-  wordFamily: [{ word: 'wording', pos: 'noun', chinese: '措辞' }],
-  history: 'From Old English word, with cognates across the Germanic languages.',
-  register: 'Common in every register of present-day English.',
-  mnemonic: 'A word is one unit you can put into a sentence.',
-  imagePrompt: 'A clean educational icon showing one highlighted word in a row of language symbols.',
-  synonyms: [],
-  antonyms: [],
-  confusables: [],
-  examples: [
-    'I need one better {{word}} before I send this message to the whole team.',
-    'That {{word}} makes the instructions way easier to understand.',
-  ],
-  usageAudit: {
-    status: 'current_general',
-    reason: 'A basic and current term throughout American English.',
-    confidence: 'high',
-    auditedAt: 1,
-  },
-};
 
 const withAdvancedEnrichment = (data: any, generatedAt = 1) => ({
   ...data,
@@ -45,27 +18,6 @@ const withAdvancedEnrichment = (data: any, generatedAt = 1) => ({
     contentHash: advancedVocabContentHash(data),
   },
 });
-
-const completeAnalysis = {
-  translation: '这是一个例句。',
-  naturalSpeechIpa: '/ðɪs ɪz ə tɛst/',
-  grammar: { structure: 'A simple declarative clause.', points: [] },
-  americanEnglish: {
-    status: 'shared',
-    explanation: 'Yes. This is natural in American English.',
-    evidence: ['The wording is current and idiomatic.'],
-  },
-  terms: [],
-  pronunciation: {
-    slowIpa: '/ðɪs ɪz ə tɛst/',
-    fastIpa: '/ðɪs ɪz ə tɛst/',
-    carefulSpeakerGuide: 'this IS a TEST',
-    fastSpeechFeatures: ['The article is reduced in fluent speech.'],
-    intonationAndChunking: 'Use one thought group with a final fall.',
-    keyDifference: 'Fluent speech reduces the unstressed article.',
-  },
-  imagePrompt: 'A photorealistic wide image of a student completing a short test at a desk, with no visible text.',
-};
 
 const enrichedExamples = completeVocab.examples.map(example => ({
   lookup_hash: sentenceLookupHash(example),

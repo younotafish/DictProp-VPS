@@ -17,6 +17,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { writeExecutable } from '../support/fs.ts';
 import { readRepoFile, repoPath } from '../support/paths.ts';
 
 const workflow = (name: string): string => readRepoFile(`.github/workflows/${name}`);
@@ -71,8 +72,7 @@ function block(text: string, key: string, values: Record<string, string> = {}): 
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'deploy-hardening-'));
 
 function stub(bin: string, name: string, body: string): void {
-  writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`);
-  chmodSync(join(bin, name), 0o755);
+  writeExecutable(join(bin, name), `#!/bin/bash\n${body}\n`);
 }
 
 /** A clean environment for scripts under test: the stubs first on PATH, and git kept off the user's config. */

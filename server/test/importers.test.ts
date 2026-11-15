@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { SERVER_DIR } from './support/paths.js';
+import { enrichmentId } from '../src/example-enrichment-coverage.js';
+import { srs } from './support/fixtures.js';
+import { png, sha256 } from './support/fs.js';
+import { runServerScript } from './support/scripts.js';
 
 const DATA_DIR = process.env.DATA_DIR!;
 const OWNER_EMAIL = 'owner@example.com';
@@ -20,12 +21,7 @@ const {
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const owner = createUserAndClaimItems({ googleId: 'importer-owner', email: OWNER_EMAIL, displayName: null, photoUrl: null });
-const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-const png = (seed: string) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(seed)]);
 const dataUri = (seed: string) => `data:image/png;base64,${png(seed).toString('base64')}`;
-const srs = (id: string, type: string) => ({
-  id, type, nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 0,
-});
 const save = (id: string, type: string, data: Record<string, unknown>, updatedAt = 1_000) =>
   upsertItem({ type, data: { id, ...data }, srs: srs(id, type), savedAt: 1, updatedAt }, owner.id);
 const stored = (id: string) => getItemById(id, owner.id, false) as any;
@@ -57,14 +53,7 @@ function bundle(files: string[], manifest: object): string {
 
 // The scripts run as they do in production: their own process and connection on the same database.
 function runScript(name: string, ...args: string[]) {
-  const { NODE_TEST_CONTEXT: _testContext, ...parentEnv } = process.env;
-  const child = spawnSync(process.execPath, ['--import', 'tsx', `src/scripts/${name}.ts`, ...args], {
-    cwd: SERVER_DIR,
-    env: { ...parentEnv, DATA_DIR, OWNER_GOOGLE_EMAIL: OWNER_EMAIL },
-    encoding: 'utf8',
-  });
-  const lines = child.stdout.trim().split('\n');
-  return { status: child.status, stderr: child.stderr, output: JSON.parse(lines[lines.length - 1] || 'null') };
+  return runServerScript(name, args, { DATA_DIR, OWNER_GOOGLE_EMAIL: OWNER_EMAIL });
 }
 
 test('the sentence backfill skips sentences edited or deleted after export without failing the run', () => {
@@ -288,7 +277,7 @@ test('the repair only previews by default, and on --apply backs up first and kee
   const text = 'A serene lake reflected the hills.';
   const lookupHash = sentenceLookupHash(text);
   upsertSentenceEnrichment({
-    entry: { id: `example-${lookupHash.slice(0, 40)}`, text, lookupHash, textHash: sha256(text), analysis, generatedAt: 10 },
+    entry: { id: enrichmentId(lookupHash), text, lookupHash, textHash: sha256(text), analysis, generatedAt: 10 },
     image: png('repair-enrichment'),
     mimeType: 'image/png',
   });

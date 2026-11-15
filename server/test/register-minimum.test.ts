@@ -1,31 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeVocabCard, REGISTER_MINIMUM, vocabValidationIssues } from '../src/ai-response.js';
+import { bankCard } from './support/fixtures.js';
 
 // The local cycle's definition of a complete stored card.
 const { missingCardFields } = await import(new URL('../../scripts/offline/vocab-card-contract.mjs', import.meta.url).href);
 
-const raw = (register: string) => ({
-  word: 'bank',
-  sense: 'noun: finance',
-  chinese: '银行',
-  ipa: '/bæŋk/',
-  definition: 'A business that keeps and lends money.',
-  forms: ['bank', 'banks'],
-  wordFamily: [{ word: 'banker', pos: 'noun', chinese: '银行家' }],
-  synonyms: ['lender'],
-  antonyms: [],
-  confusables: ['bench'],
-  examples: [
-    'I stopped by the {{bank}} after work to deposit my paycheck.',
-    'The {{bank}} approved our mortgage sooner than I expected.',
-  ],
-  history: 'From Italian banca, the bench where money changers worked.',
-  register,
-  mnemonic: 'A bench (banca) where the money sat.',
-  imagePrompt: 'A realistic neighborhood bank counter with a customer depositing a paycheck, natural daylight.',
-  usageAudit: { status: 'current_general', reason: 'Normal in American English.', confidence: 'high' },
-});
+const raw = (register: string) => bankCard({ register });
 const card = normalizeVocabCard(raw('Neutral; fine in speech and writing.'), 'bank', 1234);
 
 // The shortest register note a check accepts, found by trying every length.

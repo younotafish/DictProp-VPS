@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
+import { enrichmentId } from '../src/example-enrichment-coverage.js';
 
 const { getItemById, getItemsAfterRevision, upsertItem, upsertItemImages, touchItemRevisions, addReviewEvent, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
@@ -169,7 +170,7 @@ test('saving a prepared example sentence attaches its analysis and deduplicated 
   const enrichmentsBefore = getSentenceEnrichmentCount();
   assert.deepEqual(upsertSentenceEnrichment({
     entry: {
-      id: `example-${lookupHash.slice(0, 40)}`,
+      id: enrichmentId(lookupHash),
       text,
       lookupHash,
       textHash: createHash('sha256').update(text).digest('hex'),
@@ -215,7 +216,7 @@ test('a late image repairs media without replacing a complete sentence analysis'
     Buffer.from('late-image'),
   ]);
   const identity = {
-    id: `example-${lookupHash.slice(0, 40)}`,
+    id: enrichmentId(lookupHash),
     text,
     lookupHash,
     textHash: createHash('sha256').update(text).digest('hex'),

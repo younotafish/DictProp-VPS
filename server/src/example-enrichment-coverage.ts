@@ -27,7 +27,7 @@ export interface ExampleEnrichmentCoverage {
 }
 
 const sample = (values: string[], limit = 100): string[] => values.slice(0, limit);
-const enrichmentId = (lookupHash: string): string => `example-${lookupHash.slice(0, 40)}`;
+export const enrichmentId = (lookupHash: string): string => `example-${lookupHash.slice(0, 40)}`;
 
 export function collectExpectedExampleSentences(items: any[]): ExpectedExampleSentence[] {
   const savedSentenceHashes = new Set<string>();

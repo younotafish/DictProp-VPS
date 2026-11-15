@@ -6,11 +6,12 @@ import {
   sentenceLookupHash,
   validateSentenceEnrichmentBundle,
 } from '../src/sentence-enrichment.js';
+import { enrichmentId } from '../src/example-enrichment-coverage.js';
 
 const text = 'She finally [[came clean]] about the mistake.';
 const lookupHash = sentenceLookupHash(text);
 const entry = {
-  id: `example-${lookupHash.slice(0, 40)}`,
+  id: enrichmentId(lookupHash),
   text,
   lookupHash,
   textHash: createHash('sha256').update(text).digest('hex'),
@@ -64,7 +65,7 @@ test('analysis-only enrichment waves can be larger than image-bearing waves', ()
     const itemLookupHash = sentenceLookupHash(itemText);
     return {
       ...entry,
-      id: `example-${itemLookupHash.slice(0, 40)}`,
+      id: enrichmentId(itemLookupHash),
       text: itemText,
       lookupHash: itemLookupHash,
       textHash: createHash('sha256').update(itemText).digest('hex'),

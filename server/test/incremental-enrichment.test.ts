@@ -13,6 +13,7 @@ import {
   summarizeIncrementalEnrichmentBacklog,
 } from '../src/incremental-enrichment.js';
 import { validateStoredItem } from '../src/validation.js';
+import { completeVocab } from './support/fixtures.js';
 
 const withAdvancedEnrichment = (data: any) => ({
   ...data,
@@ -42,34 +43,6 @@ const legacySentenceAnalysis = {
   americanEnglish: { status: 'shared', explanation: 'Natural shared English.' },
   terms: [],
   imagePrompt: 'A realistic photograph of something new, without text.',
-};
-
-const completeVocab = {
-  id: 'word',
-  word: 'word',
-  sense: 'noun: unit of language',
-  chinese: '词',
-  ipa: '/wɝd/',
-  definition: 'A distinct unit of language with meaning or grammatical function.',
-  forms: ['word', 'words'],
-  wordFamily: [{ word: 'wording', pos: 'noun', chinese: '措辞' }],
-  history: 'From Old English word, with cognates across the Germanic languages.',
-  register: 'Common in every register of present-day English.',
-  mnemonic: 'A word is one unit you can put into a sentence.',
-  imagePrompt: 'A clean educational icon showing one highlighted word in a row of language symbols.',
-  synonyms: [],
-  antonyms: [],
-  confusables: [],
-  examples: [
-    'I need one better {{word}} before I send this message to the whole team.',
-    'That {{word}} makes the instructions way easier to understand.',
-  ],
-  usageAudit: {
-    status: 'current_general',
-    reason: 'A basic and current term throughout American English.',
-    confidence: 'high',
-    auditedAt: 1,
-  },
 };
 
 test('incremental enrichment prioritizes recent records and still drains the historical backlog', () => {

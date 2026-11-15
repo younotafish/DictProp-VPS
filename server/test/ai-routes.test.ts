@@ -3,18 +3,8 @@ import test from 'node:test';
 import { Hono } from 'hono';
 import type { FetchLike } from '../src/ai-client.js';
 import { createAiRoutes, type AiRouteDependencies } from '../src/routes/ai.js';
-
-type Responder = (init: RequestInit) => Response | Promise<Response>;
-
-const reply = (content: unknown, finishReason = 'stop') => () => new Response(JSON.stringify({
-  choices: [{ message: { content: typeof content === 'string' ? content : JSON.stringify(content) }, finish_reason: finishReason }],
-}));
-const httpStatus = (code: number, body = '') => () => new Response(body, { status: code });
-const hang: Responder = (init) => new Promise<Response>((_resolve, reject) => {
-  const signal = init.signal!;
-  if (signal.aborted) reject(signal.reason);
-  else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-});
+import { hang, httpStatus, keepingAlive, reply, type Responder } from './support/ai.js';
+import { bankCard as card } from './support/fixtures.js';
 
 // The AI routes on a bare app, with DeepInfra replaced by a script of responses (the last one repeats).
 function harness(responders: Responder[], deps: Partial<AiRouteDependencies> = {}) {
@@ -38,37 +28,6 @@ function harness(responders: Responder[], deps: Partial<AiRouteDependencies> = {
   };
 }
 
-async function keepingAlive<T>(run: () => Promise<T>): Promise<T> {
-  const timer = setInterval(() => {}, 1_000);
-  try {
-    return await run();
-  } finally {
-    clearInterval(timer);
-  }
-}
-
-const card = (overrides: Record<string, unknown> = {}) => ({
-  word: 'bank',
-  sense: 'noun: finance',
-  chinese: '银行',
-  ipa: '/bæŋk/',
-  definition: 'A business that keeps and lends money.',
-  forms: ['bank', 'banks'],
-  wordFamily: [{ word: 'banker', pos: 'noun', chinese: '银行家' }],
-  synonyms: ['lender'],
-  antonyms: [],
-  confusables: ['bench'],
-  examples: [
-    'I stopped by the {{bank}} after work to deposit my paycheck.',
-    'The {{bank}} approved our mortgage sooner than I expected.',
-  ],
-  history: 'From Italian banca, the bench where money changers worked.',
-  register: 'Everyday',
-  mnemonic: 'A bench (banca) where the money sat.',
-  imagePrompt: 'A realistic neighborhood bank counter with a customer depositing a paycheck, natural daylight.',
-  usageAudit: { status: 'current_general', reason: 'Normal in American English.', confidence: 'high' },
-  ...overrides,
-});
 const riverCard = (overrides: Record<string, unknown> = {}) => card({
   sense: 'noun: river',
   chinese: '河岸',
