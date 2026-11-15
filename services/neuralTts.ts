@@ -34,11 +34,13 @@ import { setMediaSessionHandlers as applyMediaSessionHandlers, type MediaSession
 import { speakViaKokoro } from './audio/neuralVoice';
 import { isIOS } from './audio/platform';
 import {
+  endPlayback,
+  getPlaybackState,
   pauseCurrent,
+  playSpeech,
   playUrl,
   resumeCurrent,
   setPlaybackState,
-  getPlaybackState,
   stopCurrent,
   stopPlayback,
   supersedePlayback,
@@ -126,9 +128,9 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   // nor tell its caller it finished: the system voice reports a cancelled utterance as ended or failed,
   // which would record a read that was cut off or carry a stopped autoplay chain on to the next sentence.
   const markStart = () => { if (!isCurrent()) return; setPlaybackState({ status: 'playing' }); onStart?.(); };
-  const markEnd = () => { if (!isCurrent()) return; setPlaybackState({ text: null, status: 'idle' }); onEnd?.(); };
-  const markError = (e: any) => { if (!isCurrent()) return; setPlaybackState({ text: null, status: 'idle' }); onError?.(e); };
-  const systemFallback = () => systemSpeak(plain, { rate: rate ?? getPlaybackRate(), onStart: markStart, onEnd: markEnd, onError: markError });
+  const markEnd = () => { if (!isCurrent()) return; endPlayback(); onEnd?.(); };
+  const markError = (e: any) => { if (!isCurrent()) return; endPlayback(); onError?.(e); };
+  const systemFallback = () => playSpeech(plain, { rate: rate ?? getPlaybackRate(), onStart: markStart, onEnd: markEnd, onError: markError });
 
   // Unlock <audio> synchronously inside the gesture (iOS) and stop anything currently playing.
   unlockAudio();
