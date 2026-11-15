@@ -259,6 +259,13 @@ export const savedVocabKey = (vocab: VocabCard): string => {
 };
 
 /**
+ * A sense label compared loosely, ignoring case and surrounding space. The duplicate merge and the review popup take
+ * 'Noun: emotion' and 'noun: emotion' for one meaning, while saving, search and batch import keep the exact label
+ * (savedVocabKey), so there they are two cards.
+ */
+export const senseMatchKey = (sense: string | undefined): string => (sense || '').toLowerCase().trim();
+
+/**
  * Type guard to check if a StoredItem contains vocabulary data.
  * When true, narrows the type to allow direct access to VocabCard properties.
  */

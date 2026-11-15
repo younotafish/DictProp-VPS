@@ -1,4 +1,4 @@
-import type { StoredItem, VocabCard } from '../types';
+import { isVocabItem, senseMatchKey, type StoredItem, type VocabCard } from '../types';
 import { normalizeKey } from './wordMatch';
 
 // Merge variant-duplicate clusters (Phase 2 of the dedup tool). For each merge, every
@@ -33,17 +33,17 @@ export function applyMerges(
 
     const members = result
       .map((it, idx) => ({ it, idx }))
-      .filter(({ it }) =>
-        it.type === 'vocab' && !it.isDeleted &&
-        baseSet.has(normalizeKey((it.data as VocabCard).word || ''))
+      .filter((member): member is { it: StoredItem & { type: 'vocab'; data: VocabCard }; idx: number } =>
+        isVocabItem(member.it) && !member.it.isDeleted &&
+        baseSet.has(normalizeKey(member.it.data.word || ''))
       );
     if (members.length < 2) continue;
 
     // Display spelling of the canonical headword: reuse an existing card's exact spelling if present.
     let canonDisplay = canonical.trim();
     for (const { it } of members) {
-      if (normalizeKey((it.data as VocabCard).word || '') === canon) {
-        canonDisplay = ((it.data as VocabCard).word || '').trim();
+      if (normalizeKey(it.data.word || '') === canon) {
+        canonDisplay = (it.data.word || '').trim();
         break;
       }
     }
@@ -51,7 +51,7 @@ export function applyMerges(
     // Union of forms + the original variant spellings (minus the canonical itself).
     const unionForms = new Set<string>();
     for (const { it } of members) {
-      const c = it.data as VocabCard;
+      const c = it.data;
       if (Array.isArray(c.forms)) for (const f of c.forms) { const t = (f || '').trim(); if (t) unionForms.add(t); }
       const w = (c.word || '').trim();
       if (w && normalizeKey(w) !== canon) unionForms.add(w);
@@ -62,7 +62,7 @@ export function applyMerges(
     const bestBySense = new Map<string, number>();
     const losers = new Set<number>();
     for (const { it, idx } of members) {
-      const senseKey = ((it.data as VocabCard).sense || '').toLowerCase().trim();
+      const senseKey = senseMatchKey(it.data.sense);
       const prevIdx = bestBySense.get(senseKey);
       if (prevIdx === undefined) {
         bestBySense.set(senseKey, idx);
@@ -78,8 +78,7 @@ export function applyMerges(
       if (losers.has(idx)) {
         result[idx] = { ...it, isDeleted: true, updatedAt: now };
       } else {
-        const c = it.data as VocabCard;
-        result[idx] = { ...it, data: { ...c, word: canonDisplay, forms: mergedForms }, updatedAt: now };
+        result[idx] = { ...it, data: { ...it.data, word: canonDisplay, forms: mergedForms }, updatedAt: now };
       }
     }
   }
