@@ -179,17 +179,7 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
           card or the progress pills already on screen. */}
       {confirmModal && (
         <Suspense fallback={null}>
-        <ConfirmModal
-          isOpen={confirmModal.isOpen}
-          title={confirmModal.title}
-          message={confirmModal.message}
-          confirmText={confirmModal.confirmText}
-          cancelText={confirmModal.cancelText}
-          variant={confirmModal.variant}
-          onConfirm={confirmModal.onConfirm}
-          onCancel={() => setConfirmModal(null)}
-          showCancel={confirmModal.showCancel}
-        />
+        <ConfirmModal {...confirmModal} onCancel={() => setConfirmModal(null)} />
         </Suspense>
       )}
 

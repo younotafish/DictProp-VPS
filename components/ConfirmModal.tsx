@@ -3,8 +3,7 @@ import { X, AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import { Button } from './Button';
 import { Modal } from './Modal';
 
-interface ConfirmModalProps {
-  isOpen: boolean;
+export interface ConfirmModalProps {
   title: string;
   message: string;
   confirmText?: string;
@@ -15,8 +14,42 @@ interface ConfirmModalProps {
   showCancel?: boolean;
 }
 
+const variantStyles = {
+  danger: {
+    bg: 'bg-rose-50',
+    border: 'border-rose-100',
+    iconBg: 'bg-rose-100',
+    iconColor: 'text-rose-500',
+    buttonClass: 'bg-rose-500 hover:bg-rose-600 shadow-rose-200',
+    Icon: AlertCircle
+  },
+  warning: {
+    bg: 'bg-amber-50',
+    border: 'border-amber-100',
+    iconBg: 'bg-amber-100',
+    iconColor: 'text-amber-500',
+    buttonClass: 'bg-amber-500 hover:bg-amber-600 shadow-amber-200',
+    Icon: AlertCircle
+  },
+  success: {
+    bg: 'bg-emerald-50',
+    border: 'border-emerald-100',
+    iconBg: 'bg-emerald-100',
+    iconColor: 'text-emerald-500',
+    buttonClass: 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200',
+    Icon: CheckCircle2
+  },
+  info: {
+    bg: 'bg-indigo-50',
+    border: 'border-indigo-100',
+    iconBg: 'bg-indigo-100',
+    iconColor: 'text-indigo-500',
+    buttonClass: 'bg-indigo-500 hover:bg-indigo-600 shadow-indigo-200',
+    Icon: Info
+  }
+};
+
 export const ConfirmModal: React.FC<ConfirmModalProps> = ({
-  isOpen,
   title,
   message,
   confirmText = 'Confirm',
@@ -27,7 +60,6 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   showCancel = true
 }) => {
   useEffect(() => {
-    if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Enter' || e.repeat || e.isComposing) return;
       // Enter on a focused control is that control's own press: on Cancel or the X it must not confirm.
@@ -38,44 +70,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onConfirm]);
-
-  if (!isOpen) return null;
-
-  const variantStyles = {
-    danger: {
-      bg: 'bg-rose-50',
-      border: 'border-rose-100',
-      iconBg: 'bg-rose-100',
-      iconColor: 'text-rose-500',
-      buttonClass: 'bg-rose-500 hover:bg-rose-600 shadow-rose-200',
-      Icon: AlertCircle
-    },
-    warning: {
-      bg: 'bg-amber-50',
-      border: 'border-amber-100',
-      iconBg: 'bg-amber-100',
-      iconColor: 'text-amber-500',
-      buttonClass: 'bg-amber-500 hover:bg-amber-600 shadow-amber-200',
-      Icon: AlertCircle
-    },
-    success: {
-      bg: 'bg-emerald-50',
-      border: 'border-emerald-100',
-      iconBg: 'bg-emerald-100',
-      iconColor: 'text-emerald-500',
-      buttonClass: 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200',
-      Icon: CheckCircle2
-    },
-    info: {
-      bg: 'bg-indigo-50',
-      border: 'border-indigo-100',
-      iconBg: 'bg-indigo-100',
-      iconColor: 'text-indigo-500',
-      buttonClass: 'bg-indigo-500 hover:bg-indigo-600 shadow-indigo-200',
-      Icon: Info
-    }
-  };
+  }, [onConfirm]);
 
   const style = variantStyles[variant];
   const { Icon } = style;

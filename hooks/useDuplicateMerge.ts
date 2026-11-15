@@ -10,7 +10,7 @@ import type { Overlays } from './useOverlays';
 
 export function useDuplicateMerge(
   { latestItemsRef, updateItems, persistChangedItems }: Pick<Library, 'latestItemsRef' | 'updateItems' | 'persistChangedItems'>,
-  { setConfirmModal, setDuplicateClusters }: Pick<Overlays, 'setConfirmModal' | 'setDuplicateClusters'>,
+  { showNotice, setDuplicateClusters }: Pick<Overlays, 'showNotice' | 'setDuplicateClusters'>,
 ) {
   // ── Find & merge variant duplicates (Phase 2 dedup tool) ──────────────────
   // Detection is read-only: cluster base words that are variants of one another
@@ -30,14 +30,10 @@ export function useDuplicateMerge(
       .filter(c => c.items.length >= 2);
 
     if (detailed.length === 0) {
-      setConfirmModal({
-        isOpen: true,
+      showNotice({
         title: 'No Duplicates Found',
         message: 'No variant duplicates detected — your words are already consolidated. 🎉',
-        confirmText: 'OK',
         variant: 'success',
-        onConfirm: () => setConfirmModal(null),
-        showCancel: false,
       });
       return;
     }

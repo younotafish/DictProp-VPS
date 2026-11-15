@@ -2,6 +2,15 @@ import { useCallback, useMemo, useState } from 'react';
 import { getItemSpelling, type StoredItem } from '../types';
 import { sortStoredSensesByUsage } from '../services/usageAudit';
 import type { DuplicateClusterView } from '../components/DuplicatesModal';
+import type { ConfirmModalProps } from '../components/ConfirmModal';
+
+/**
+ * The confirm dialog on screen: ConfirmModal's props, whose Cancel closes it. `isOpen` means nothing, since a
+ * dialog in the state is open; it's accepted until the callers that still pass it (useSpeechBackfill) stop.
+ */
+export type ConfirmDialog = Omit<ConfirmModalProps, 'onCancel'> & { isOpen?: true };
+/** An acknowledgement: a titled message with one OK button. */
+export type Notice = Pick<ConfirmModalProps, 'title' | 'message'> & { variant: NonNullable<ConfirmModalProps['variant']> };
 
 /** What can open over the page: the card popup, the confirm and duplicates dialogs, the shortcuts and the refused reviews. */
 export function useOverlays(allActiveItems: StoredItem[]) {
@@ -22,16 +31,10 @@ export function useOverlays(allActiveItems: StoredItem[]) {
   const [duplicateClusters, setDuplicateClusters] = useState<DuplicateClusterView[] | null>(null);
 
   // Confirm modal state
-  const [confirmModal, setConfirmModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    confirmText?: string;
-    cancelText?: string;
-    variant?: 'danger' | 'warning' | 'success' | 'info';
-    onConfirm: () => void;
-    showCancel?: boolean;
-  } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<ConfirmDialog | null>(null);
+  const showNotice = useCallback((notice: Notice) => {
+    setConfirmModal({ ...notice, confirmText: 'OK', onConfirm: () => setConfirmModal(null), showCancel: false });
+  }, []);
 
   // Keyboard shortcuts help modal
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
@@ -41,7 +44,7 @@ export function useOverlays(allActiveItems: StoredItem[]) {
 
   return {
     cardPopup, setCardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters,
-    confirmModal, setConfirmModal, showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp,
+    confirmModal, setConfirmModal, showNotice, showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp,
     showRefusedReviews, setShowRefusedReviews, openRefusedReviews,
   };
 }

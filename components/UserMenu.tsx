@@ -111,7 +111,6 @@ export const UserMenu: React.FC<Props> = ({ user, onSignIn, onSignOut }) => {
       {/* In a portal: the header this sits in slides away on scroll, and would carry a fixed dialog with it. */}
       {confirmingSignOut && createPortal(
         <ConfirmModal
-          isOpen
           title="Sign out?"
           message="You'll need to be online to sign back in."
           confirmText="Sign Out"
@@ -127,7 +126,6 @@ export const UserMenu: React.FC<Props> = ({ user, onSignIn, onSignOut }) => {
       )}
       {signOutFailed && createPortal(
         <ConfirmModal
-          isOpen
           title="Couldn't sign out"
           message="The server couldn't be reached, so you're still signed in. Try again once you're online."
           confirmText="OK"

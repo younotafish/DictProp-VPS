@@ -10,7 +10,7 @@ import type { SpeechBackfill } from './useSpeechBackfill';
 
 export function useBatchImport(
   { latestItemsRef, persistChangedItems }: Pick<Library, 'latestItemsRef' | 'persistChangedItems'>,
-  { setConfirmModal }: Pick<Overlays, 'setConfirmModal'>,
+  { setConfirmModal, showNotice }: Pick<Overlays, 'setConfirmModal' | 'showNotice'>,
   { handleSave }: Pick<LibraryActions, 'handleSave'>,
   { runSpeechGenerationRef }: Pick<SpeechBackfill, 'runSpeechGenerationRef'>,
 ) {
@@ -48,14 +48,10 @@ export function useBatchImport(
     }
 
     if (newWords.length === 0) {
-      setConfirmModal({
-        isOpen: true,
+      showNotice({
         title: 'All Already Saved',
         message: `All ${listed.size} words are already in your notebook.`,
-        confirmText: 'OK',
         variant: 'info',
-        onConfirm: () => setConfirmModal(null),
-        showCancel: false,
       });
       return;
     }
@@ -133,7 +129,6 @@ export function useBatchImport(
     setBatchImportProgress(null);
 
     setConfirmModal({
-      isOpen: true,
       title: 'Batch Import Complete',
       message: `${saved} vocab cards saved${skipped > 0 ? `\n${skipped} skipped (already saved)` : ''}${failed > 0 ? `\n${failed} failed` : ''}`,
       confirmText: failedWords.length > 0 ? 'Retry Failed' : 'OK',
