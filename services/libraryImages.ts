@@ -46,6 +46,10 @@ export const getServerImageVersion = (url: string | undefined): string | undefin
     ? url.slice(SERVER_IMAGE_MARKER.length + 1)
     : undefined;
 
+// The server versions a picture by its bytes: the first 20 hex digits of their SHA-256 are the version in its
+// 'server:has_image:<version>' marker (server/src/db.ts).
+export const imageVersionFromContentHash = (sha256Hex: string): string => sha256Hex.slice(0, 20);
+
 // Check if an imageUrl is a marker (not real base64 data)
 export const isImageMarker = (url: string | undefined): boolean =>
   !!url && (url === IMAGE_IDB_MARKER || url === SERVER_IMAGE_MARKER || url.startsWith(`${SERVER_IMAGE_MARKER}:`));
