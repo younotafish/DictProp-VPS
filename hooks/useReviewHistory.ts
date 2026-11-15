@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReviewEvent, ReviewHistory } from '../types';
-import { loadReviewHistory, saveReviewEvent } from '../services/api';
+import { loadReviewHistory } from '../services/api';
 import { warn } from '../services/logger';
 import { readPendingReviewMutations } from '../services/reviewQueue';
 
@@ -11,30 +11,13 @@ const EMPTY_HISTORY: ReviewHistory = { recent: [], olderTimes: [], olderCount: 0
 
 const byTime = (a: ReviewEvent, b: ReviewEvent) => a.reviewedAt - b.reviewedAt;
 
-/** Reviews saved before the review outbox existed, which may still be waiting to upload. */
-function readLegacyPending(key: string): ReviewEvent[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch { return []; }
-}
-
-function writeLegacyPending(key: string, pending: ReviewEvent[]): void {
-  try {
-    if (pending.length) localStorage.setItem(key, JSON.stringify(pending));
-    else localStorage.removeItem(key);
-  } catch { /* best effort */ }
-}
-
+/** The signed-in user's review history: the server's, plus the reviews still in this device's outbox. */
 export function useReviewHistory(userId?: string) {
   const [history, setHistory] = useState<ReviewHistory>(EMPTY_HISTORY);
 
   useEffect(() => {
     if (!userId) { setHistory(EMPTY_HISTORY); return; }
-    const legacyKey = `review_events_pending_${userId}`;
-    const legacyPending = readLegacyPending(legacyKey);
-    const unsynced = new Map(legacyPending.map(event => [event.id, event]));
-    readPendingReviewMutations(userId).forEach(mutation => unsynced.set(mutation.event.id, mutation.event));
+    const unsynced = new Map(readPendingReviewMutations(userId).map(mutation => [mutation.event.id, mutation.event]));
     setHistory({ ...EMPTY_HISTORY, recent: [...unsynced.values()].sort(byTime) });
 
     // The recent reviews reach back to the oldest unsynced one, so a review the outbox did deliver
@@ -43,7 +26,7 @@ export function useReviewHistory(userId?: string) {
     unsynced.forEach(event => { if (event.reviewedAt < recentSince) recentSince = event.reviewedAt; });
     let cancelled = false;
     loadReviewHistory(recentSince)
-      .then(async remote => {
+      .then(remote => {
         if (cancelled) return;
         // Reviews recorded while the history loaded stay.
         setHistory(current => {
@@ -51,11 +34,6 @@ export function useReviewHistory(userId?: string) {
           current.recent.forEach(event => recent.set(event.id, event));
           return { recent: [...recent.values()].sort(byTime), olderTimes: remote.olderTimes, olderCount: remote.olderCount };
         });
-        const failed: ReviewEvent[] = [];
-        for (const event of legacyPending) {
-          try { await saveReviewEvent(event); } catch { failed.push(event); }
-        }
-        writeLegacyPending(legacyKey, failed);
       })
       .catch(error => warn('Failed to load review history:', error));
     return () => { cancelled = true; };
