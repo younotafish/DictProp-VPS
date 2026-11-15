@@ -17,7 +17,7 @@ interface WordGesturesOptions {
   hasPrevItem: boolean;
   setCurrentGroupIndex: Dispatch<SetStateAction<number>>;
   setCurrentItemIndex: Dispatch<SetStateAction<number>>;
-  setIsAutoPlaying: Dispatch<SetStateAction<boolean>>;
+  stopSlideshow: () => void;
   /** Reads an example sentence, or pauses, resumes or restarts it (useExampleSpeech). */
   toggleSpeak: (raw: string) => void;
   onClose: () => void;
@@ -31,7 +31,7 @@ interface WordGesturesOptions {
  */
 export function useWordGestures({
   scrollContainerRef, showHeader, setShowHeader, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
-  setCurrentGroupIndex, setCurrentItemIndex, setIsAutoPlaying, toggleSpeak, onClose, handleRemember,
+  setCurrentGroupIndex, setCurrentItemIndex, stopSlideshow, toggleSpeak, onClose, handleRemember,
 }: WordGesturesOptions) {
   const lastScrollY = useRef(0);
   const handleScroll = (e: ReactUIEvent<HTMLDivElement>) => {
@@ -110,19 +110,19 @@ export function useWordGestures({
         setShowHeader(true);
         break;
       case 'next-word':
-        setIsAutoPlaying(false);
+        stopSlideshow();
         setShowHeader(false); // Hide header on navigation
         setCurrentGroupIndex(prev => prev + 1);
         setCurrentItemIndex(0); // Reset to first meaning
         break;
       case 'previous-word':
-        setIsAutoPlaying(false);
+        stopSlideshow();
         setShowHeader(false); // Hide header on navigation
         setCurrentGroupIndex(prev => prev - 1);
         setCurrentItemIndex(0); // Reset to first meaning
         break;
       case 'next-meaning': {
-        setIsAutoPlaying(false);
+        stopSlideshow();
         const totalItems = currentGroup.items.length;
         if (totalItems === 1) {
           // Single meaning: just pronounce, no scroll/animation reset
@@ -137,12 +137,12 @@ export function useWordGestures({
         break;
       }
       case 'previous-meaning':
-        setIsAutoPlaying(false);
+        stopSlideshow();
         setShowHeader(false); // Hide header on navigation
         setCurrentItemIndex(prev => prev - 1);
         break;
       case 'close':
-        setIsAutoPlaying(false);
+        stopSlideshow();
         onClose(); // Swiping right past the first meaning closes the view
         break;
     }

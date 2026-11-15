@@ -86,7 +86,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const moreActionsRef = useRef<HTMLDivElement>(null);
   const {
-    isAutoPlaying, setIsAutoPlaying, isSentenceAutoPlaying, setIsSentenceAutoPlaying, isSentenceAutoPlayingRef,
+    isAutoPlaying, isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow, stopSentenceAutoPlay,
     autoPlaySpeed, autoPlaySpeedRef, cycleSpeed, autoPlayTimerMinutes, cycleTimerDuration, countdownStartedAt,
     sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef, cycleRepeats, toggleAutoPlay,
     toggleSentenceAutoPlay,
@@ -103,7 +103,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   const {
     exampleSentencePreview, savedPreviewSentence, previewSentence, openExampleSentencePreview, closeExampleSentencePreview,
   } = useExampleSentencePreview({
-    onOpenExampleSentence, savedItemsRef, savedSentenceIndex, setIsAutoPlaying, setIsSentenceAutoPlaying,
+    onOpenExampleSentence, savedItemsRef, savedSentenceIndex, stopAutoPlay,
   });
   // An example opened over the card takes the keys and gestures.
   const detailInteractionLocked = interactionLocked || !!exampleSentencePreview;
@@ -171,15 +171,15 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // Navigation handlers for keyboard
   const handlePrevItem = useCallback(() => {
     if (hasPrevItem) {
-      setIsAutoPlaying(false);
+      stopSlideshow();
       setCurrentItemIndex(prev => prev - 1);
     }
-  }, [hasPrevItem, setIsAutoPlaying, setCurrentItemIndex]);
+  }, [hasPrevItem, stopSlideshow, setCurrentItemIndex]);
 
   const handleNextItem = useCallback(() => {
     const totalItems = currentGroup ? currentGroup.items.length : 0;
     if (totalItems >= 1) {
-      setIsAutoPlaying(false);
+      stopSlideshow();
       if (totalItems === 1) {
         // Single meaning: just pronounce
         if (currentItem) {
@@ -192,26 +192,26 @@ export function WordDetailView(props: DetailViewBodyProps) {
         setCurrentItemIndex(prev => (prev + 1) % totalItems);
       }
     }
-  }, [currentGroup, currentItem, setIsAutoPlaying, setCurrentItemIndex]);
+  }, [currentGroup, currentItem, stopSlideshow, setCurrentItemIndex]);
 
   const handlePrevGroup = useCallback(() => {
     if (hasPrevGroup && groups) {
-      setIsAutoPlaying(false);
+      stopSlideshow();
       setCurrentGroupIndex(prev => prev - 1);
       setCurrentItemIndex(0);
     }
-  }, [hasPrevGroup, groups, setIsAutoPlaying, setCurrentGroupIndex, setCurrentItemIndex]);
+  }, [hasPrevGroup, groups, stopSlideshow, setCurrentGroupIndex, setCurrentItemIndex]);
 
   const handleNextGroup = useCallback(() => {
     if (hasNextGroup && groups) {
-      setIsAutoPlaying(false);
+      stopSlideshow();
       setCurrentGroupIndex(prev => prev + 1);
       setCurrentItemIndex(0);
     }
-  }, [hasNextGroup, groups, setIsAutoPlaying, setCurrentGroupIndex, setCurrentItemIndex]);
+  }, [hasNextGroup, groups, stopSlideshow, setCurrentGroupIndex, setCurrentItemIndex]);
 
   useWordSlideshow({
-    isAutoPlaying, setIsAutoPlaying, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
+    isAutoPlaying, stopSlideshow, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
     setCurrentItemIndex, autoPlaySpeedRef, title,
   });
 
@@ -221,7 +221,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
 
   useAutoPlayReader({
     active: isSentenceAutoPlaying,
-    setActive: setIsSentenceAutoPlaying,
+    stop: stopSentenceAutoPlay,
     repeatsRef: sentenceRepeatsRef,
     gapRef: sentenceGapRef,
     groups,
@@ -240,7 +240,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   useEffect(() => { currentItemRef.current = currentItem; });
 
   const { readCardExamples, toggleSpeak, speakSentenceAt } = useExampleSpeech({
-    currentItemRef, isSentenceAutoPlayingRef, sentenceReview: false, setIsAutoPlaying, setIsSentenceAutoPlaying,
+    currentItemRef, isSentenceAutoPlayingRef, sentenceReview: false, stopAutoPlay,
   });
 
   // Stop any playback when the view closes (covers a manual read still going at close time).
@@ -280,7 +280,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
 
   const { zoneFlash, handleScroll, onContentTouchStart, onContentTouchEnd, handleDoubleClick } = useWordGestures({
     scrollContainerRef, showHeader, setShowHeader, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
-    setCurrentGroupIndex, setCurrentItemIndex, setIsAutoPlaying, toggleSpeak, onClose, handleRemember,
+    setCurrentGroupIndex, setCurrentItemIndex, stopSlideshow, toggleSpeak, onClose, handleRemember,
   });
 
   useWordShortcuts({

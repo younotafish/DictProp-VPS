@@ -14,8 +14,9 @@ interface SentencePlaybackOptions {
   sentenceItemsRef: RefObject<StoredItem[] | undefined>;
   currentGroupIndexRef: RefObject<number>;
   isSentenceAutoPlayingRef: RefObject<boolean>;
-  setIsAutoPlaying: Dispatch<SetStateAction<boolean>>;
-  setIsSentenceAutoPlaying: Dispatch<SetStateAction<boolean>>;
+  /** End whichever auto-play runs, or only the word slideshow. */
+  stopAutoPlay: () => void;
+  stopSlideshow: () => void;
   setCurrentGroupIndex: Dispatch<SetStateAction<number>>;
   setCurrentItemIndex: Dispatch<SetStateAction<number>>;
   onSave: (item: StoredItem) => void;
@@ -28,8 +29,8 @@ interface SentencePlaybackOptions {
  * readers may pause or resume its clip, but never start one over it. A fully heard read counts as a listen.
  */
 export function useSentencePlayback({
-  currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, setIsAutoPlaying,
-  setIsSentenceAutoPlaying, setCurrentGroupIndex, setCurrentItemIndex, onSave,
+  currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow,
+  setCurrentGroupIndex, setCurrentItemIndex, onSave,
 }: SentencePlaybackOptions) {
   const recordSentenceExposure = useCallback((expectedSentenceId?: string) => {
     const sentence = currentSentenceRef.current;
@@ -69,11 +70,8 @@ export function useSentencePlayback({
       return;
     }
 
-    readInTurnOrToggle(sentences, () => {
-      setIsAutoPlaying(false);
-      setIsSentenceAutoPlaying(false);
-    }, () => recordSentenceExposure(exposureSentenceId));
-  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, setIsAutoPlaying, setIsSentenceAutoPlaying]);
+    readInTurnOrToggle(sentences, stopAutoPlay, () => recordSentenceExposure(exposureSentenceId));
+  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Speak the saved sentence from the top (shared by the swipe gestures and the arrow keys).
   const speakCurrentSentence = useCallback(() => {
@@ -82,13 +80,12 @@ export function useSentencePlayback({
     const sentence = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
     if (!sentence) return;
     if (isSentenceAutoPlayingRef.current) return;
-    setIsAutoPlaying(false);
-    setIsSentenceAutoPlaying(false);
+    stopAutoPlay();
     speakNatural(sentence, {
       allowDownload: true,
       onEnd: () => recordSentenceExposure(s.data.id),
     });
-  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, setIsAutoPlaying, setIsSentenceAutoPlaying]);
+  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Tap the sentence (or context-aware Space): pause it if it's playing, resume if paused, otherwise
   // (re)start it from the top. Routed through the shared playback state so it stays in sync with the
@@ -105,13 +102,12 @@ export function useSentencePlayback({
       if (pb.status === 'paused') { resumeCurrent(); return; }
     }
     if (isSentenceAutoPlayingRef.current) return;
-    setIsAutoPlaying(false);
-    setIsSentenceAutoPlaying(false);
+    stopAutoPlay();
     speakNatural(sentence, {
       allowDownload: true,
       onEnd: () => recordSentenceExposure(s.data.id),
     });
-  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, setIsAutoPlaying, setIsSentenceAutoPlaying]);
+  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Play the current sentence starting at a clicked/selected word (by its char offset in the stripped
   // sentence). If this sentence's clip is already the active audio, seek it in place (seamless);
@@ -133,8 +129,7 @@ export function useSentencePlayback({
       return;
     }
     if (isSentenceAutoPlayingRef.current) return;
-    setIsAutoPlaying(false);
-    setIsSentenceAutoPlaying(false);
+    stopAutoPlay();
     // Timings can be absent for a legacy/system-voice clip or during a flaky-network timeout. Reading
     // the remaining text is a prosody compromise, but it preserves the interaction's core promise:
     // Command-click starts audibly at the selected word rather than unexpectedly returning to word one.
@@ -145,7 +140,7 @@ export function useSentencePlayback({
       startAt: startAt ?? undefined,
       onEnd: () => recordSentenceExposure(s.data.id),
     }); // (re)start AT the word
-  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, setIsAutoPlaying, setIsSentenceAutoPlaying]);
+  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Enter: play from the word the caret/selection sits in. No-op if not in a word, so it never hijacks
   // Enter elsewhere. Words carry data-word-offset (see HighlightedSentence).
@@ -169,7 +164,7 @@ export function useSentencePlayback({
       if (!keepAutoPlaying) speakCurrentSentence(); // already at an end → re-speak outside autoplay
       return;
     }
-    setIsAutoPlaying(false);
+    stopSlideshow();
     setCurrentGroupIndex(clamped);
     setCurrentItemIndex(0);
     const next = list[clamped];
@@ -186,7 +181,7 @@ export function useSentencePlayback({
     }
   }, [
     recordSentenceExposure, speakCurrentSentence, sentenceItemsRef, isSentenceAutoPlayingRef, currentGroupIndexRef,
-    setIsAutoPlaying, setCurrentGroupIndex, setCurrentItemIndex,
+    stopSlideshow, setCurrentGroupIndex, setCurrentItemIndex,
   ]);
 
   return {

@@ -9,6 +9,9 @@ const REPEAT_PRESETS = [1, 2, 3, 4, 5];                  // times each sentence 
 
 const nextPreset = <T,>(presets: readonly T[], current: T): T => presets[(presets.indexOf(current) + 1) % presets.length];
 
+/** Which auto-play runs: none, the word slideshow, or the sentence reader. One state, so the two never run at once. */
+export type AutoPlayMode = 'off' | 'slideshow' | 'examples';
+
 /**
  * The card view's two auto-play modes and their settings. The word slideshow (isAutoPlaying) steps through the
  * cards; sentence auto-play (isSentenceAutoPlaying) reads each card's example sentences, or in sentence review
@@ -16,11 +19,12 @@ const nextPreset = <T,>(presets: readonly T[], current: T): T => presets[(preset
  * runs out.
  */
 export function useAutoPlay() {
-  const [isAutoPlaying, setIsAutoPlaying] = useState(false);
+  const [autoPlayMode, setAutoPlayMode] = useState<AutoPlayMode>('off');
+  const isAutoPlaying = autoPlayMode === 'slideshow';
+  const isSentenceAutoPlaying = autoPlayMode === 'examples';
   const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
   const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(20);
   const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
-  const [isSentenceAutoPlaying, setIsSentenceAutoPlaying] = useState(false);
   const isSentenceAutoPlayingRef = useRef(isSentenceAutoPlaying);
   useEffect(() => { isSentenceAutoPlayingRef.current = isSentenceAutoPlaying; }, [isSentenceAutoPlaying]);
   const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between every read (repeats + distinct sentences)
@@ -75,12 +79,17 @@ export function useAutoPlay() {
   }, []);
 
   const toggleAutoPlay = useCallback(() => {
-    setIsAutoPlaying(prev => {
-      const next = !prev;
-      if (next) setIsSentenceAutoPlaying(false); // the two auto-play modes are mutually exclusive
-      return next;
-    });
+    setAutoPlayMode(mode => mode === 'slideshow' ? 'off' : 'slideshow');
   }, []);
+
+  // Each stop ends its own mode and leaves the other running; stopAutoPlay ends whichever runs.
+  const stopSlideshow = useCallback(() => {
+    setAutoPlayMode(mode => mode === 'slideshow' ? 'off' : mode);
+  }, []);
+  const stopSentenceAutoPlay = useCallback(() => {
+    setAutoPlayMode(mode => mode === 'examples' ? 'off' : mode);
+  }, []);
+  const stopAutoPlay = useCallback(() => setAutoPlayMode('off'), []);
 
   // ── Sentence auto-play: read each card's example sentences (both) in turn (neural voice) ──
   const cycleGap = useCallback(() => {
@@ -93,11 +102,7 @@ export function useAutoPlay() {
   }, []);
 
   const toggleSentenceAutoPlay = useCallback(() => {
-    setIsSentenceAutoPlaying(prev => {
-      const next = !prev;
-      if (next) setIsAutoPlaying(false);
-      return next;
-    });
+    setAutoPlayMode(mode => mode === 'examples' ? 'off' : 'examples');
     // Prime the silent keep-alive inside this user gesture so iOS unlocks it (the registration effect's
     // acquire runs after paint, outside the gesture). Priming takes no hold — the media-session effect's
     // acquire/release pair owns the lifecycle. Harmless when stopping — that effect's cleanup releases it.
@@ -119,10 +124,7 @@ export function useAutoPlay() {
   useEffect(() => {
     if ((!isAutoPlaying && !isSentenceAutoPlaying) || autoPlayStartedAt === null) return;
     const interval = setInterval(() => {
-      if (Date.now() - autoPlayStartedAt >= autoPlayTimerMinutes * 60_000) {
-        setIsAutoPlaying(false);
-        setIsSentenceAutoPlaying(false);
-      }
+      if (Date.now() - autoPlayStartedAt >= autoPlayTimerMinutes * 60_000) setAutoPlayMode('off');
     }, 1000);
     return () => clearInterval(interval);
   }, [isAutoPlaying, isSentenceAutoPlaying, autoPlayStartedAt, autoPlayTimerMinutes]);
@@ -130,7 +132,7 @@ export function useAutoPlay() {
   const countdownStartedAt = isAutoPlaying || isSentenceAutoPlaying ? autoPlayStartedAt : null;
 
   return {
-    isAutoPlaying, setIsAutoPlaying, isSentenceAutoPlaying, setIsSentenceAutoPlaying, isSentenceAutoPlayingRef,
+    isAutoPlaying, isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow, stopSentenceAutoPlay,
     autoPlaySpeed, autoPlaySpeedRef, cycleSpeed, autoPlayTimerMinutes, cycleTimerDuration, countdownStartedAt,
     sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef, cycleRepeats,
     toggleAutoPlay, toggleSentenceAutoPlay,

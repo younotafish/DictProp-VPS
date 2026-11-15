@@ -4,7 +4,7 @@ import { speakWord } from '../../services/lazyTts';
 
 interface WordSlideshowOptions {
   isAutoPlaying: boolean;
-  setIsAutoPlaying: Dispatch<SetStateAction<boolean>>;
+  stopSlideshow: () => void;
   groups: ItemGroup[];
   currentGroupIndex: number;
   currentItemIndex: number;
@@ -21,7 +21,7 @@ interface WordSlideshowOptions {
  * last card. A word with one meaning shows twice and is pronounced again, so every word plays at least twice.
  */
 export function useWordSlideshow({
-  isAutoPlaying, setIsAutoPlaying, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
+  isAutoPlaying, stopSlideshow, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
   setCurrentItemIndex, autoPlaySpeedRef, title,
 }: WordSlideshowOptions) {
   // Counts displays of the current group during auto-play. Single-meaning words
@@ -38,7 +38,7 @@ export function useWordSlideshow({
     const timer = setTimeout(() => {
       const safeGroupIdx = Math.min(currentGroupIndex, groups.length - 1);
       const group = groups[safeGroupIdx];
-      if (!group) { setIsAutoPlaying(false); return; }
+      if (!group) { stopSlideshow(); return; }
 
       const safeItemIdx = Math.min(currentItemIndex, group.items.length - 1);
       const isLastItem = safeItemIdx >= group.items.length - 1;
@@ -59,11 +59,11 @@ export function useWordSlideshow({
         setCurrentItemIndex(0);
       } else {
         // Reached the end
-        setIsAutoPlaying(false);
+        stopSlideshow();
       }
     }, autoPlaySpeedRef.current);
 
     return () => clearTimeout(timer);
     // The title follows from the cards and the indices, so listing it adds no restart.
-  }, [isAutoPlaying, currentGroupIndex, currentItemIndex, groups, groupPlayCount, title, autoPlaySpeedRef, setIsAutoPlaying, setCurrentGroupIndex, setCurrentItemIndex]);
+  }, [isAutoPlaying, currentGroupIndex, currentItemIndex, groups, groupPlayCount, title, autoPlaySpeedRef, stopSlideshow, setCurrentGroupIndex, setCurrentItemIndex]);
 }

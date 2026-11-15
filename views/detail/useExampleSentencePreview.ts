@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, useState, type RefObject } from 'react';
 import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type SentenceData, type StoredItem, type VocabCard } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { stopCurrent } from '../../services/lazyTts';
@@ -13,8 +13,8 @@ interface ExampleSentencePreviewOptions {
   onOpenExampleSentence: DetailViewProps['onOpenExampleSentence'];
   savedItemsRef: RefObject<StoredItem[]>;
   savedSentenceIndex: SavedSentenceIndex;
-  setIsAutoPlaying: Dispatch<SetStateAction<boolean>>;
-  setIsSentenceAutoPlaying: Dispatch<SetStateAction<boolean>>;
+  /** Ends whichever auto-play runs, as the preview opens. */
+  stopAutoPlay: () => void;
 }
 
 /**
@@ -23,7 +23,7 @@ interface ExampleSentencePreviewOptions {
  * copy the caller looks up. Once the sentence is saved, the preview shows the saved copy, with its progress.
  */
 export function useExampleSentencePreview({
-  onOpenExampleSentence, savedItemsRef, savedSentenceIndex, setIsAutoPlaying, setIsSentenceAutoPlaying,
+  onOpenExampleSentence, savedItemsRef, savedSentenceIndex, stopAutoPlay,
 }: ExampleSentencePreviewOptions) {
   const [exampleSentencePreview, setExampleSentencePreview] = useState<{
     sentence: StoredItem;
@@ -73,8 +73,7 @@ export function useExampleSentencePreview({
         srs: SRSAlgorithm.createNew(synthetic.id, 'vocab'),
       };
     }
-    setIsAutoPlaying(false);
-    setIsSentenceAutoPlaying(false);
+    stopAutoPlay();
     stopCurrent();
     setExampleSentencePreview({
       sentence,
@@ -86,7 +85,7 @@ export function useExampleSentencePreview({
     }).catch(error => {
       logError('Failed to open prepared example sentence:', error);
     });
-  }, [onOpenExampleSentence, savedItemsRef, setIsAutoPlaying, setIsSentenceAutoPlaying]);
+  }, [onOpenExampleSentence, savedItemsRef, stopAutoPlay]);
 
   // Closing also drops a lookup still in flight, so it can't reopen the preview.
   const closeExampleSentencePreview = useCallback(() => {

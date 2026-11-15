@@ -83,7 +83,7 @@ export function SentenceReviewView({
   const rootRef = useRef<HTMLDivElement>(null);
   const isCommandHeld = useCommandKeyHeld(isMacDesktop);
   const {
-    setIsAutoPlaying, isSentenceAutoPlaying, setIsSentenceAutoPlaying, isSentenceAutoPlayingRef, cycleSpeed,
+    isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow, stopSentenceAutoPlay, cycleSpeed,
     autoPlayTimerMinutes, cycleTimerDuration, countdownStartedAt, sentenceGap, sentenceGapRef, cycleGap,
     sentenceRepeats, sentenceRepeatsRef, cycleRepeats, toggleSentenceAutoPlay,
   } = useAutoPlay();
@@ -233,13 +233,13 @@ export function SentenceReviewView({
     recordSentenceExposure, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
     goToSentence,
   } = useSentencePlayback({
-    currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, setIsAutoPlaying,
-    setIsSentenceAutoPlaying, setCurrentGroupIndex, setCurrentItemIndex, onSave,
+    currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow,
+    setCurrentGroupIndex, setCurrentItemIndex, onSave,
   });
 
   useAutoPlayReader({
     active: isSentenceAutoPlaying,
-    setActive: setIsSentenceAutoPlaying,
+    stop: stopSentenceAutoPlay,
     repeatsRef: sentenceRepeatsRef,
     gapRef: sentenceGapRef,
     groups,
@@ -264,7 +264,7 @@ export function SentenceReviewView({
   useEffect(() => { currentItemRef.current = currentItem; });
 
   const { speakSentenceAt } = useExampleSpeech({
-    currentItemRef, isSentenceAutoPlayingRef, sentenceReview: true, setIsAutoPlaying, setIsSentenceAutoPlaying,
+    currentItemRef, isSentenceAutoPlayingRef, sentenceReview: true, stopAutoPlay,
   });
 
   // Arrow keys: ←/→ for the two pages and ↑/↓ for sentence navigation. Page changes deliberately leave the
@@ -476,7 +476,7 @@ export function SentenceReviewView({
         onCycleRepeats={cycleRepeats}
         gap={sentenceGap}
         onCycleGap={cycleGap}
-        onStop={() => { setIsSentenceAutoPlaying(false); setShowSentenceAutoPlayPanel(false); }}
+        onStop={() => { stopSentenceAutoPlay(); setShowSentenceAutoPlayPanel(false); }}
       />
       {/* Success Animation Overlay */}
       {showSuccessAnim && <RememberToast intervalDays={rememberInfo?.intervalDays ?? null} />}

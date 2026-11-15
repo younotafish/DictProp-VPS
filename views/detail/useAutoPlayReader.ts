@@ -8,7 +8,8 @@ import {
 interface AutoPlayReaderOptions {
   /** Sentence auto-play is on (word cards: their examples; sentence review: the sentence). */
   active: boolean;
-  setActive: Dispatch<SetStateAction<boolean>>;
+  /** Ends sentence auto-play: after the last card, or from the lock screen's Stop. */
+  stop: () => void;
   /** Times each sentence is read, and the silence between reads, read as the chain goes. */
   repeatsRef: RefObject<number>;
   gapRef: RefObject<number>;
@@ -41,7 +42,7 @@ interface AutoPlayReaderOptions {
  * screen's pause holds the chain even between reads.
  */
 export function useAutoPlayReader({
-  active, setActive, repeatsRef, gapRef, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
+  active, stop, repeatsRef, gapRef, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
   setCurrentItemIndex, currentGroupIndexRef, currentItem, sentenceReview, sentenceItemsRef, readCard, onRoundListened,
 }: AutoPlayReaderOptions) {
   // Autoplay pause/resume across the inter-read GAP (not just mid-clip): the media-session /
@@ -67,7 +68,7 @@ export function useAutoPlayReader({
     const advanceCard = () => {
       const safeGroupIdx = Math.min(currentGroupIndex, groups.length - 1);
       const group = groups[safeGroupIdx];
-      if (!group) { setActive(false); return; }
+      if (!group) { stop(); return; }
       const safeItemIdx = Math.min(currentItemIndex, group.items.length - 1);
       const isLastItem = safeItemIdx >= group.items.length - 1;
       const isLastGroup = safeGroupIdx >= groups.length - 1;
@@ -77,7 +78,7 @@ export function useAutoPlayReader({
         setCurrentGroupIndex(p => p + 1);
         setCurrentItemIndex(0);
       } else {
-        setActive(false); // played the last card → stop
+        stop(); // played the last card → stop
       }
     };
 
@@ -183,7 +184,7 @@ export function useAutoPlayReader({
         cancelGapRef.current?.();                                                // between reads → abort the pending gap
         cancelGapRef.current = null;
       },
-      onStop: () => setActive(false),
+      onStop: () => stop(),
       onNext: () => step(1),
       onPrev: () => step(-1),
     });
@@ -193,5 +194,5 @@ export function useAutoPlayReader({
     };
     // The rest are refs, state setters and a flag fixed for the view's life, so this re-registers only when
     // auto-play is switched or the cards change.
-  }, [active, groups, sentenceReview, sentenceItemsRef, currentGroupIndexRef, setActive, setCurrentGroupIndex, setCurrentItemIndex]);
+  }, [active, groups, sentenceReview, sentenceItemsRef, currentGroupIndexRef, stop, setCurrentGroupIndex, setCurrentItemIndex]);
 }

@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useCallback, type RefObject } from 'react';
 import type { StoredItem } from '../../types';
 import { getPlaybackProgress, getPlaybackState, pauseCurrent, resumeCurrent, speakNatural, type SpeakHandle } from '../../services/lazyTts';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
@@ -44,8 +44,8 @@ interface ExampleSpeechOptions {
   isSentenceAutoPlayingRef: RefObject<boolean>;
   /** Sentence review's auto-play owns the audio chain, so these readers never start a clip over it. */
   sentenceReview: boolean;
-  setIsAutoPlaying: Dispatch<SetStateAction<boolean>>;
-  setIsSentenceAutoPlaying: Dispatch<SetStateAction<boolean>>;
+  /** Ends whichever auto-play runs, as a manual read starts. */
+  stopAutoPlay: () => void;
 }
 
 /**
@@ -53,18 +53,15 @@ interface ExampleSpeechOptions {
  * shared playback state so the megaphone icons stay in sync: the same clip playing pauses, paused resumes, almost
  * done restarts from the top, and anything else starts fresh.
  */
-export function useExampleSpeech({ currentItemRef, isSentenceAutoPlayingRef, sentenceReview, setIsAutoPlaying, setIsSentenceAutoPlaying }: ExampleSpeechOptions) {
+export function useExampleSpeech({ currentItemRef, isSentenceAutoPlayingRef, sentenceReview, stopAutoPlay }: ExampleSpeechOptions) {
   // E: read the displayed card's example sentences in turn. Press again to pause; once more to resume.
   const readCardExamples = useCallback(() => {
     const item = currentItemRef.current;
     if (!item) return;
     const sentences = readableExamples(item);
     if (!sentences.length) return;
-    readInTurnOrToggle(sentences, () => {
-      setIsAutoPlaying(false);
-      setIsSentenceAutoPlaying(false);
-    });
-  }, [currentItemRef, setIsAutoPlaying, setIsSentenceAutoPlaying]);
+    readInTurnOrToggle(sentences, stopAutoPlay);
+  }, [currentItemRef, stopAutoPlay]);
 
   const toggleSpeak = useCallback((raw: string) => {
     const sentence = stripSentenceMarkers(raw || '').trim();
@@ -77,10 +74,9 @@ export function useExampleSpeech({ currentItemRef, isSentenceAutoPlayingRef, sen
       if (pb.status === 'playing' && getPlaybackProgress() < RESTART_NEAR_END) { pauseCurrent(); return; }
     }
     if (sentenceReview && isSentenceAutoPlayingRef.current) return;
-    setIsAutoPlaying(false);
-    setIsSentenceAutoPlaying(false);
+    stopAutoPlay();
     speakNatural(sentence, { allowDownload: true });
-  }, [sentenceReview, isSentenceAutoPlayingRef, setIsAutoPlaying, setIsSentenceAutoPlaying]);
+  }, [sentenceReview, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Cmd/Ctrl+1–4: read the corresponding example sentence (a phrase has one: its query). A second
   // press on the same sentence pauses/resumes unless it is almost finished, when it restarts.
