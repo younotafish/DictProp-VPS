@@ -104,3 +104,24 @@ test('entries built from the export import cleanly: the export\'s source hash is
   // The sentence keeps the analysis its export carried.
   assert.deepEqual(getItemById('ce-sentence', owner.id, false)?.data.analysis, completeAnalysis);
 });
+
+test('an export larger than one write is still exactly the JSON of the whole export', () => {
+  const definition = 'A long definition. '.repeat(300);
+  for (let index = 0; index < 400; index++) save(`ce-bulk-${index}`, 'vocab', { word: `bulk ${index}`, definition });
+  const run = runScript('export-corpus-audit');
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(run.stdout.length > 2 * 1024 * 1024, `only ${run.stdout.length} characters`);
+
+  const exported = JSON.parse(run.stdout);
+  const items = getAllItems(owner.id).filter(item => !item.isDeleted).map(item => ({
+    id: item.data.id,
+    type: item.type,
+    sourceHash: corpusSourceHash(item.data),
+    wasArchived: item.isArchived === true,
+    savedAt: item.savedAt,
+    data: item.data,
+  }));
+  assert.equal(run.stdout, JSON.stringify({
+    version: 1, exportedAt: exported.exportedAt, items, exampleEnrichmentCoverage: exported.exampleEnrichmentCoverage,
+  }));
+});
