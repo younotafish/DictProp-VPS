@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { spawnCodex } from './codex-process.mjs';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 
 const [collectionArg, briefArg, outputArg] = process.argv.slice(2);
 if (!collectionArg || !briefArg || !outputArg) {
   throw new Error('Usage: audit-themed-sentence-collection.mjs <collection.json> <brief.json> <report.json>');
 }
 
-const collection = JSON.parse(readFileSync(resolve(collectionArg), 'utf8'));
-const brief = JSON.parse(readFileSync(resolve(briefArg), 'utf8'));
+const collection = readJson(collectionArg);
+const brief = readJson(briefArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(dirname(outputPath), 'audit-work');
 mkdirSync(workDir, { recursive: true });
@@ -40,7 +41,7 @@ const schema = {
   },
 };
 const schemaPath = resolve(workDir, 'schema.json');
-writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
+writePrivateJson(schemaPath, schema);
 
 const compact = {
   collection: {
@@ -96,7 +97,7 @@ const exitCode = await new Promise((accept, reject) => {
 });
 if (exitCode !== 0) throw new Error(`Codex audit failed with ${exitCode}: ${stderr}`);
 
-const report = JSON.parse(readFileSync(outputPath, 'utf8'));
+const report = readJson(outputPath);
 const sections = new Map(collection.sections.map(section => [section.id, section]));
 for (const issue of report.issues) {
   const sentence = sections.get(issue.sectionId)?.sentences?.[issue.sentenceNumber - 1];

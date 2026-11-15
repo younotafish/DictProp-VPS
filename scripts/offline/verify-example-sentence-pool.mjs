@@ -2,6 +2,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { readJson } from './offline-io.mjs';
 import { isDetailedSentenceAnalysis, isSentenceAnalysis } from './sentence-analysis-contract.mjs';
 import {
   exampleSentenceId, sentenceImageFilename, sentenceLookupHash, sentenceTextHash,
@@ -136,10 +137,6 @@ process.stdout.write(`${JSON.stringify({
   averageImageBytes: imageCount ? Math.round(imageBytes / imageCount) : 0,
   verified: true,
 }, null, 2)}\n`);
-
-function readJson(path) {
-  return JSON.parse(readFileSync(resolve(path), 'utf8'));
-}
 
 function assertString(value, label) {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${label} is invalid`);

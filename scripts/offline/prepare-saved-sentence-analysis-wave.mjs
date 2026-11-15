@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { readJson } from './offline-io.mjs';
 import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
+import { forEachPublishedEntry, parseMaxEntries, printWaveSummary, writeWaveManifest } from './wave-manifests.mjs';
 
 const [analysisArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!analysisArg || !outputArg) {
@@ -11,36 +12,25 @@ if (!analysisArg || !outputArg) {
   );
 }
 
-const readJson = path => JSON.parse(readFileSync(resolve(path), 'utf8'));
 const analysis = readJson(analysisArg);
 const outputDir = resolve(outputArg);
-const maxEntries = Number(maxEntriesArg || 5_000);
+const maxEntries = parseMaxEntries(maxEntriesArg, { fallback: 5_000, max: 5_000 });
 const requireDetailed = process.env.REQUIRE_DETAILED_SENTENCE_ANALYSIS === '1';
-if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 5_000) {
-  throw new Error('max-entries must be an integer from 1 to 5000');
-}
 if (analysis?.version !== 1 || !Array.isArray(analysis.entries) || analysis.entries.length === 0) {
   throw new Error('Saved sentence analysis manifest is invalid or empty');
 }
 
 const entryIdentity = entry => `${entry.id}\0${entry.textHash}`;
 const publishedEntries = new Set();
-for (const excludeArg of excludeArgs) {
-  const published = readJson(excludeArg);
-  if (published?.version !== 1 || !Array.isArray(published.entries)) {
-    throw new Error(`Published manifest is invalid: ${excludeArg}`);
+// Each cycle rebuilds the analysis manifest from sentences production still lacks, so an older publication
+// did not survive there (a device can re-save a sentence without its analysis) and is published again.
+forEachPublishedEntry(excludeArgs, { since: Number(analysis.generatedAt || 0) }, (entry, path) => {
+  if (typeof entry?.id !== 'string' || !entry.id ||
+      typeof entry.textHash !== 'string' || entry.textHash.length !== 64) {
+    throw new Error(`Published manifest has an invalid identity: ${path}`);
   }
-  // Each cycle rebuilds the analysis manifest from sentences production still lacks, so an older publication
-  // did not survive there (a device can re-save a sentence without its analysis) and is published again.
-  if (Number(published.generatedAt || 0) < Number(analysis.generatedAt || 0)) continue;
-  for (const entry of published.entries) {
-    if (typeof entry?.id !== 'string' || !entry.id ||
-        typeof entry.textHash !== 'string' || entry.textHash.length !== 64) {
-      throw new Error(`Published manifest has an invalid identity: ${excludeArg}`);
-    }
-    publishedEntries.add(entryIdentity(entry));
-  }
-}
+  publishedEntries.add(entryIdentity(entry));
+});
 
 const selected = [];
 const sourceIds = new Set();
@@ -57,14 +47,13 @@ for (const entry of analysis.entries) {
   if (selected.length >= maxEntries) break;
 }
 
-mkdirSync(outputDir, { recursive: true });
-writeFileSync(join(outputDir, 'manifest.json'), `${JSON.stringify({
+writeWaveManifest(outputDir, {
   version: 1,
   generatedAt: Date.now(),
   entries: selected,
-}, null, 2)}\n`, { mode: 0o600 });
-process.stdout.write(`${JSON.stringify({
+});
+printWaveSummary({
   sourceEntries: analysis.entries.length,
   previouslyPublished: publishedEntries.size,
   waveEntries: selected.length,
-})}\n`);
+});

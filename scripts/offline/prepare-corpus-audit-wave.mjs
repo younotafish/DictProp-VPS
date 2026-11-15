@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { readJson } from './offline-io.mjs';
+import { forEachPublishedEntry, parseMaxEntries, printWaveSummary, writeWaveManifest } from './wave-manifests.mjs';
 
 const [sourceArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!sourceArg || !outputArg) {
@@ -12,22 +13,13 @@ const source = readJson(sourceArg);
 if (source?.version !== 1 || !Array.isArray(source.entries) || source.entries.length === 0) {
   throw new Error('Source corpus audit manifest is invalid or empty');
 }
-const maxEntries = Number(maxEntriesArg || 500);
-if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 1_000) {
-  throw new Error('max-entries must be an integer from 1 to 1000');
-}
+const maxEntries = parseMaxEntries(maxEntriesArg, { fallback: 500, max: 1_000 });
 
 const publishedIds = new Set();
-for (const excludeArg of excludeArgs) {
-  const published = readJson(excludeArg);
-  if (published?.version !== 1 || !Array.isArray(published.entries)) {
-    throw new Error(`Published corpus manifest is invalid: ${excludeArg}`);
-  }
-  for (const entry of published.entries) {
-    if (typeof entry?.id !== 'string' || !entry.id) throw new Error(`Published manifest has an invalid id: ${excludeArg}`);
-    publishedIds.add(entry.id);
-  }
-}
+forEachPublishedEntry(excludeArgs, { kind: 'corpus' }, (entry, path) => {
+  if (typeof entry?.id !== 'string' || !entry.id) throw new Error(`Published manifest has an invalid id: ${path}`);
+  publishedIds.add(entry.id);
+});
 
 const sourceIds = new Set();
 for (const entry of source.entries) {
@@ -51,20 +43,14 @@ const prioritized = source.entries.map((entry, sourceIndex) => ({ entry, sourceI
     return leftRank - rightRank || left.sourceIndex - right.sourceIndex;
   });
 const selected = prioritized.slice(0, maxEntries).map(({ entry }) => entry);
-const outputDir = resolve(outputArg);
-mkdirSync(outputDir, { recursive: true });
-writeFileSync(join(outputDir, 'manifest.json'), `${JSON.stringify({
+writeWaveManifest(resolve(outputArg), {
   version: 1,
   generatedAt: source.generatedAt,
   model: source.model,
   entries: selected,
-}, null, 2)}\n`, { mode: 0o600 });
-process.stdout.write(`${JSON.stringify({
+});
+printWaveSummary({
   sourceEntries: source.entries.length,
   previouslyPublished: publishedIds.size,
   waveEntries: selected.length,
-})}\n`);
-
-function readJson(path) {
-  return JSON.parse(readFileSync(resolve(path), 'utf8'));
-}
+});

@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { isDeferred, ledgerFromEnvironment, parentHash, readLedger } from './failure-ledger.mjs';
 import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 import { missingCardFields, validString, validUsageAudit } from './vocab-card-contract.mjs';
 
 const [corpusArg, outputArg, limitArg, lookbackHoursArg, providerFilterArg] = process.argv.slice(2);
@@ -13,7 +12,7 @@ if (!corpusArg || !outputArg) {
   );
 }
 
-const corpus = JSON.parse(readFileSync(resolve(corpusArg), 'utf8'));
+const corpus = readJson(corpusArg);
 if (corpus?.version !== 1 || !Array.isArray(corpus.items)) throw new Error('Corpus export is invalid');
 const limit = Math.max(1, Math.min(100, Number(limitArg || 8)));
 const lookbackHours = Math.max(1, Math.min(24 * 365, Number(lookbackHoursArg || 168)));
@@ -82,7 +81,7 @@ const output = {
   advancedEnrichmentVersion: 1,
   entries: selected,
 };
-writeFileSync(resolve(outputArg), `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
+writePrivateJson(outputArg, output);
 process.stdout.write(`${JSON.stringify({
   eligible: candidates.length,
   advancedEligible: candidates.filter(candidate => candidate.needsAdvancedEnrichment).length,

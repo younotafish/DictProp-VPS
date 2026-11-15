@@ -1,6 +1,10 @@
+#!/usr/bin/env node
+
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
+import { readJson } from './offline-io.mjs';
+import { printWaveSummary, writeWaveManifest } from './wave-manifests.mjs';
 
 const [sourceArg, outputArg, limitArg, ...publishedPaths] = process.argv.slice(2);
 if (!sourceArg || !outputArg || !limitArg) {
@@ -11,11 +15,11 @@ const outputRoot = resolve(outputArg);
 const limit = Number(limitArg);
 if (!Number.isInteger(limit) || limit < 1 || limit > 2_000) throw new Error('limit must be between 1 and 2000');
 
-const source = JSON.parse(readFileSync(join(sourceRoot, 'manifest.json'), 'utf8'));
+const source = readJson(join(sourceRoot, 'manifest.json'));
 if (source?.version !== 1 || !Array.isArray(source.entries)) throw new Error('source audio manifest is invalid');
 const published = new Set();
 for (const path of publishedPaths) {
-  const manifest = JSON.parse(readFileSync(resolve(path), 'utf8'));
+  const manifest = readJson(path);
   for (const entry of manifest.entries ?? []) published.add(entry.key);
 }
 
@@ -47,11 +51,11 @@ for (const entry of selected) {
     copyFileSync(inside(sourceRoot, entry[field]), target);
   }
 }
-writeFileSync(join(outputRoot, 'manifest.json'), JSON.stringify({
+writeWaveManifest(outputRoot, {
   version: 1,
   generatedAt: source.generatedAt,
   model: source.model,
   aligner: source.aligner,
   entries: selected,
-}));
-process.stdout.write(`${JSON.stringify({ waveEntries: selected.length, publishedEntries: published.size })}\n`);
+});
+printWaveSummary({ waveEntries: selected.length, publishedEntries: published.size });

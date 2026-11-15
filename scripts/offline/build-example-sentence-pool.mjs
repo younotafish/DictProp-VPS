@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 import { normalizeSentenceLookup, poolSentence, sentenceLookupHash } from './sentence-pool.mjs';
 
 const [corpusArg, outputArg, overlayArg] = process.argv.slice(2);
@@ -11,12 +12,12 @@ if (!corpusArg || !outputArg) {
   );
 }
 
-const source = JSON.parse(readFileSync(resolve(corpusArg), 'utf8'));
+const source = readJson(corpusArg);
 const sourceRecords = Array.isArray(source?.items) ? source.items : source?.entries;
 if (!Array.isArray(sourceRecords) || sourceRecords.length === 0) throw new Error('Corpus input has no records');
 const overlayById = new Map();
 if (overlayArg && overlayArg !== '-') {
-  const overlay = JSON.parse(readFileSync(resolve(overlayArg), 'utf8'));
+  const overlay = readJson(overlayArg);
   if (overlay?.version !== 1 || !Array.isArray(overlay.entries)) {
     throw new Error('Local vocabulary overlay is invalid');
   }
@@ -115,5 +116,5 @@ const output = {
 };
 const outputPath = resolve(outputArg);
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
+writePrivateJson(outputPath, output);
 process.stdout.write(`${JSON.stringify(output.stats, null, 2)}\n`);

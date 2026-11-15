@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -46,11 +46,13 @@ function prepare(bundle: ReturnType<typeof sourceRoot>, entries: unknown[], args
   const child = spawnSync(process.execPath, [script, bundle.source, bundle.output, ...args, ...publishedPaths], {
     encoding: 'utf8',
   });
+  const manifestPath = join(bundle.output, 'manifest.json');
   return {
     status: child.status,
     stderr: child.stderr,
     summary: child.status === 0 ? JSON.parse(child.stdout) : null,
-    manifestText: child.status === 0 ? readFileSync(join(bundle.output, 'manifest.json'), 'utf8') : '',
+    manifestText: child.status === 0 ? readFileSync(manifestPath, 'utf8') : '',
+    manifestPath,
   };
 }
 
@@ -61,9 +63,10 @@ test('an audio wave copies unpublished, hash-checked clips up to its limit', () 
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.summary, { waveEntries: 2, publishedEntries: 1 });
-  assert.equal(result.manifestText, JSON.stringify({
+  assert.equal(result.manifestText, `${JSON.stringify({
     version: 1, generatedAt: 7, model: 'tts-model', aligner: 'aligner-model', entries: bundle.entries.slice(1, 3),
-  }));
+  }, null, 2)}\n`);
+  assert.equal(statSync(result.manifestPath).mode & 0o777, 0o600);
   assert.equal(readFileSync(join(bundle.output, 'audio', 'bb', 'bb22.mp3'), 'utf8'), 'audio bb22');
   assert.ok(existsSync(join(bundle.output, 'audio', 'cc', 'cc33.json')));
   assert.equal(existsSync(join(bundle.output, 'audio', 'aa', 'aa11.mp3')), false);

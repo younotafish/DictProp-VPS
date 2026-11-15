@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
-import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { linkOrCopy, readJson } from './offline-io.mjs';
 import { isDetailedSentenceAnalysis } from './sentence-analysis-contract.mjs';
+import { forEachPublishedEntry, parseMaxEntries, printWaveSummary, writeWaveManifest } from './wave-manifests.mjs';
 
 const [sourceArg, analysisArg, imagesArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!sourceArg || !analysisArg || !imagesArg || !outputArg) {
@@ -14,11 +16,8 @@ const analysis = readJson(analysisArg);
 const imageRoot = resolve(imagesArg);
 const imageManifest = readJson(join(imageRoot, 'manifest.json'));
 const outputDir = resolve(outputArg);
-const maxEntries = Number(maxEntriesArg || 100);
+const maxEntries = parseMaxEntries(maxEntriesArg, { fallback: 100, max: 500 });
 const requireDetailed = process.env.REQUIRE_DETAILED_SENTENCE_ANALYSIS === '1';
-if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 500) {
-  throw new Error('max-entries must be an integer from 1 to 500');
-}
 if (source?.version !== 1 || !Array.isArray(source.sentences) ||
     analysis?.version !== 1 || !Array.isArray(analysis.entries) ||
     imageManifest?.version !== 1 || !Array.isArray(imageManifest.entries)) {
@@ -29,21 +28,14 @@ const analysisById = uniqueMap(analysis.entries, 'analysis');
 const imageById = uniqueMap(imageManifest.entries, 'image');
 const sourceById = uniqueMap(source.sentences, 'source');
 const publishedIds = new Set();
-for (const excludeArg of excludeArgs) {
-  const published = readJson(excludeArg);
-  if (published?.version !== 1 || !Array.isArray(published.entries)) {
-    throw new Error(`Published manifest is invalid: ${excludeArg}`);
+forEachPublishedEntry(excludeArgs, { since: Number(source.exportedAt || 0) }, (entry, path) => {
+  if (typeof entry?.id !== 'string' || !entry.id) throw new Error(`Published manifest has an invalid id: ${path}`);
+  const current = sourceById.get(entry.id);
+  if (typeof entry.imageFile === 'string' && entry.imageFile &&
+      current && entry.textHash === current.textHash) {
+    publishedIds.add(entry.id);
   }
-  if (Number(published.generatedAt || 0) < Number(source.exportedAt || 0)) continue;
-  for (const entry of published.entries) {
-    if (typeof entry?.id !== 'string' || !entry.id) throw new Error(`Published manifest has an invalid id: ${excludeArg}`);
-    const current = sourceById.get(entry.id);
-    if (typeof entry.imageFile === 'string' && entry.imageFile &&
-        current && entry.textHash === current.textHash) {
-      publishedIds.add(entry.id);
-    }
-  }
-}
+});
 
 const selected = [];
 for (const sentence of source.sentences) {
@@ -80,29 +72,20 @@ for (const entry of selected) {
   const sourceImage = resolve(imageRoot, sourceEntry.imageFile);
   const destination = join(outputDir, entry.imageFile);
   mkdirSync(dirname(destination), { recursive: true });
-  if (existsSync(destination)) continue;
-  try {
-    linkSync(sourceImage, destination);
-  } catch {
-    copyFileSync(sourceImage, destination);
-  }
+  linkOrCopy(sourceImage, destination);
 }
 
-writeFileSync(join(outputDir, 'manifest.json'), `${JSON.stringify({
+writeWaveManifest(outputDir, {
   version: 1,
   generatedAt: Date.now(),
   entries: selected,
-}, null, 2)}\n`, { mode: 0o600 });
+});
 
-process.stdout.write(`${JSON.stringify({
+printWaveSummary({
   sourceEntries: source.sentences.length,
   previouslyPublished: publishedIds.size,
   waveEntries: selected.length,
-})}\n`);
-
-function readJson(path) {
-  return JSON.parse(readFileSync(resolve(path), 'utf8'));
-}
+});
 
 function uniqueMap(entries, label) {
   const result = new Map();

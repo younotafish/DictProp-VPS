@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { installCodexSignalCleanup, killCodex, spawnCodex } from './codex-process.mjs';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 
 const [briefArg, outputArg, workArg] = process.argv.slice(2);
 if (!briefArg || !outputArg) {
@@ -12,7 +13,7 @@ if (!briefArg || !outputArg) {
   );
 }
 
-const brief = JSON.parse(readFileSync(resolve(briefArg), 'utf8'));
+const brief = readJson(briefArg);
 if (brief?.version !== 1 || !brief.collection?.id || !Array.isArray(brief.methodology) ||
     !Array.isArray(brief.sections) || brief.sections.length === 0) {
   throw new Error('The themed-sentence generation brief is invalid');
@@ -49,7 +50,7 @@ const schema = {
   },
 };
 const schemaPath = join(workDir, 'output-schema.json');
-writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, { mode: 0o600 });
+writePrivateJson(schemaPath, schema);
 
 const model = process.env.CODEX_MODEL || 'gpt-5.6-sol';
 const concurrency = Math.max(1, Math.min(32, Number(process.env.CODEX_CONCURRENCY || 8)));
@@ -168,7 +169,7 @@ async function generateSection(section) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       if (!existsSync(resultPath)) await runCodex(promptFor(section, correction), resultPath);
-      return validateSection(JSON.parse(readFileSync(resultPath, 'utf8')), section);
+      return validateSection(readJson(resultPath), section);
     } catch (error) {
       if (aborting || attempt === 2) throw error;
       if (existsSync(resultPath)) unlinkSync(resultPath);
@@ -216,8 +217,6 @@ const collection = {
     sentences: generatedSections[index],
   })),
 };
-const tempPath = `${outputPath}.tmp`;
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(tempPath, `${JSON.stringify(collection, null, 2)}\n`, { mode: 0o600 });
-renameSync(tempPath, outputPath);
+writePrivateJson(outputPath, collection);
 process.stderr.write(`Wrote ${allSentenceKeys.size} original sentences to ${outputPath}\n`);

@@ -1,14 +1,9 @@
 #!/usr/bin/env node
 
-import {
-  copyFileSync,
-  existsSync,
-  linkSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
+import { linkOrCopy, readJson } from './offline-io.mjs';
+import { forEachPublishedEntry, parseMaxEntries, printWaveSummary, writeWaveManifest } from './wave-manifests.mjs';
 
 const [sourceArg, outputArg, maxEntriesArg, ...excludeArgs] = process.argv.slice(2);
 if (!sourceArg || !outputArg) {
@@ -17,23 +12,17 @@ if (!sourceArg || !outputArg) {
 
 const sourceDir = resolve(sourceArg);
 const outputDir = resolve(outputArg);
-const maxEntries = Number(maxEntriesArg || 100);
-if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) throw new Error('max-entries must be a positive integer');
+const maxEntries = parseMaxEntries(maxEntriesArg, { fallback: 100 });
 
-const manifest = JSON.parse(readFileSync(join(sourceDir, 'manifest.json'), 'utf8'));
+const manifest = readJson(join(sourceDir, 'manifest.json'));
 if (manifest?.version !== 1 || !Array.isArray(manifest.entries) || manifest.entries.length === 0) {
   throw new Error('Source offline-image manifest is invalid or empty');
 }
 
 const publishedIds = new Set();
-for (const excludeArg of excludeArgs) {
-  const excludePath = resolve(excludeArg);
-  const published = JSON.parse(readFileSync(excludePath, 'utf8'));
-  if (published?.version !== 1 || !Array.isArray(published.entries)) {
-    throw new Error(`Published image manifest is invalid: ${excludePath}`);
-  }
-  for (const entry of published.entries) publishedIds.add(entry.imageId);
-}
+forEachPublishedEntry(excludeArgs.map(excludeArg => resolve(excludeArg)), { kind: 'image' }, entry => {
+  publishedIds.add(entry.imageId);
+});
 
 const sourceIds = new Set();
 const selected = [];
@@ -53,22 +42,16 @@ for (const entry of manifest.entries) {
 mkdirSync(join(outputDir, 'images'), { recursive: true });
 for (const entry of selected) {
   const sourceImage = resolve(sourceDir, entry.imageFile);
-  const destination = join(outputDir, 'images', basename(entry.imageFile));
-  if (existsSync(destination)) continue;
-  try {
-    linkSync(sourceImage, destination);
-  } catch {
-    copyFileSync(sourceImage, destination);
-  }
+  linkOrCopy(sourceImage, join(outputDir, 'images', basename(entry.imageFile)));
 }
 
-writeFileSync(join(outputDir, 'manifest.json'), `${JSON.stringify({
+writeWaveManifest(outputDir, {
   ...manifest,
   generatedAt: Date.now(),
   entries: selected,
-}, null, 2)}\n`, { mode: 0o600 });
-process.stdout.write(`${JSON.stringify({
+});
+printWaveSummary({
   sourceEntries: manifest.entries.length,
   previouslyPublished: publishedIds.size,
   waveEntries: selected.length,
-})}\n`);
+});

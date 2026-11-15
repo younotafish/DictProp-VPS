@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 import { poolSentence, sentenceLookupHash } from './sentence-pool.mjs';
 
 const [catalogArg, outputArg, essayArg] = process.argv.slice(2);
@@ -9,7 +10,7 @@ if (!catalogArg || !outputArg) {
   throw new Error('Usage: build-essay-sentence-pool.mjs <essay-catalog.json> <output.json> [essay-id[,essay-id...]]');
 }
 
-const catalog = JSON.parse(readFileSync(resolve(catalogArg), 'utf8'));
+const catalog = readJson(catalogArg);
 if (catalog?.version !== 1 || !Array.isArray(catalog.essays) || catalog.essays.length === 0) {
   throw new Error('Essay catalog is invalid');
 }
@@ -85,5 +86,5 @@ const output = {
 };
 const outputPath = resolve(outputArg);
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
+writePrivateJson(outputPath, output);
 process.stdout.write(`${JSON.stringify(output.stats, null, 2)}\n`);

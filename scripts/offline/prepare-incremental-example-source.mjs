@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 
 const [currentArg, baselineArg, outputArg, previousArg] = process.argv.slice(2);
 if (!currentArg || !baselineArg || !outputArg) {
@@ -11,7 +12,7 @@ if (!currentArg || !baselineArg || !outputArg) {
 }
 
 const readSource = (path, label, allowEmpty = false) => {
-  const source = JSON.parse(readFileSync(resolve(path), 'utf8'));
+  const source = readJson(path);
   if (source?.version !== 1 || !Array.isArray(source.sentences) || (!allowEmpty && source.sentences.length === 0)) {
     throw new Error(`${label} is invalid`);
   }
@@ -89,7 +90,7 @@ const output = {
 };
 const outputPath = resolve(outputArg);
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
+writePrivateJson(outputPath, output);
 process.stdout.write(`${JSON.stringify({
   baselineSentences: baseline.byId.size,
   currentSentences: current.byId.size,

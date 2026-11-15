@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 
 const [manifestArg, outputArg] = process.argv.slice(2);
 if (!manifestArg || !outputArg) {
@@ -11,7 +12,7 @@ if (!manifestArg || !outputArg) {
 
 const manifestPath = resolve(manifestArg);
 const outputPath = resolve(outputArg);
-const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+const manifest = readJson(manifestPath);
 if (manifest?.version !== 1 || !Array.isArray(manifest.essays) || manifest.essays.length === 0) {
   throw new Error('Private essay manifest must contain at least one version 1 essay');
 }
@@ -156,7 +157,7 @@ const catalog = {
   essays,
 };
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, `${JSON.stringify(catalog, null, 2)}\n`, { mode: 0o600 });
+writePrivateJson(outputPath, catalog);
 process.stdout.write(`${JSON.stringify({
   output: outputPath,
   essays: essays.map(essay => ({

@@ -4,9 +4,10 @@
 // These clips are paired with generate-qwen-naturalness-benchmark.py for blinded human listening.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { writePrivateJson } from './offline-io.mjs';
 
 const TEST_SENTENCES = [
   "I'd have brought it up earlier, but I didn't want to put you on the spot.",
@@ -66,12 +67,9 @@ for (const [sentenceIndex, text] of TEST_SENTENCES.slice(0, sentenceLimit || und
   process.stderr.write(`[${sentenceIndex + 1}/${sentenceLimit || TEST_SENTENCES.length}] MiMo Mia\n`);
 }
 
-const manifestPath = resolve(outputRoot, 'manifest.json');
-const temporaryPath = `${manifestPath}.tmp`;
-writeFileSync(temporaryPath, `${JSON.stringify({
+writePrivateJson(resolve(outputRoot, 'manifest.json'), {
   version: 1,
   generatedAt: Date.now(),
   model: 'XiaomiMiMo/MiMo-V2.5-tts',
   entries,
-}, null, 2)}\n`, { mode: 0o600 });
-renameSync(temporaryPath, manifestPath);
+});

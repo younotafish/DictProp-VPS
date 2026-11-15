@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 
 const [corpusArg, analysisArg, completionArg, outputArg, modelArg] = process.argv.slice(2);
 if (!corpusArg || !outputArg) {
@@ -12,11 +13,11 @@ if (!corpusArg || !outputArg) {
   );
 }
 
-const corpus = JSON.parse(readFileSync(resolve(corpusArg), 'utf8'));
+const corpus = readJson(corpusArg);
 if (corpus?.version !== 1 || !Array.isArray(corpus.items)) throw new Error('Corpus export is invalid');
 const sentenceAnalysisById = new Map();
 if (analysisArg && analysisArg !== '-') {
-  const analyses = JSON.parse(readFileSync(resolve(analysisArg), 'utf8'));
+  const analyses = readJson(analysisArg);
   if (analyses?.version !== 1 || !Array.isArray(analyses.entries)) {
     throw new Error('Sentence analysis manifest is invalid');
   }
@@ -24,7 +25,7 @@ if (analysisArg && analysisArg !== '-') {
 }
 const completedDataById = new Map();
 if (completionArg && completionArg !== '-') {
-  const completion = JSON.parse(readFileSync(resolve(completionArg), 'utf8'));
+  const completion = readJson(completionArg);
   if (completion?.version !== 1 || !Array.isArray(completion.entries)) {
     throw new Error('Vocabulary completion manifest is invalid');
   }
@@ -125,10 +126,6 @@ for (const item of corpus.items) {
 }
 
 const generatedAt = Date.now();
-writeFileSync(join(outputDir, 'manifest.json'), `${JSON.stringify({
-  version: 1, generatedAt, model, entries,
-}, null, 2)}\n`, { mode: 0o600 });
-writeFileSync(join(outputDir, 'targets.json'), `${JSON.stringify({
-  version: 1, generatedAt, model, targets,
-}, null, 2)}\n`, { mode: 0o600 });
+writePrivateJson(join(outputDir, 'manifest.json'), { version: 1, generatedAt, model, entries });
+writePrivateJson(join(outputDir, 'targets.json'), { version: 1, generatedAt, model, targets });
 process.stderr.write(`Prepared ${targets.length} missing or locally refreshed top-level/nested item image target(s)\n`);

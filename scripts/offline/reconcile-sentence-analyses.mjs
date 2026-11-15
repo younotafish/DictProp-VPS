@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { readJson, writePrivateJson } from './offline-io.mjs';
 import { isDetailedSentenceAnalysis, isSentenceAnalysis } from './sentence-analysis-contract.mjs';
 
 const [sourceArg, baseAnalysisArg, outputDirArg, supplementalAnalysisArg] = process.argv.slice(2);
@@ -123,14 +124,6 @@ if (report.complete) {
 
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 if (supplementalAnalysis && !report.complete) process.exitCode = 1;
-
-function readJson(path) {
-  return JSON.parse(readFileSync(resolve(path), 'utf8'));
-}
-
-function writePrivateJson(path, value) {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-}
 
 function indexFinalSource(sentences) {
   const byId = new Map();
