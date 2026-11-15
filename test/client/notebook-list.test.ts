@@ -242,12 +242,12 @@ test('rows run compare banner, note, groups, due header and due groups, then the
     archivedGroups: [group('pond')],
   };
   const summary = (rows: NotebookRow[]) => rows.map(row =>
-    row.type === 'group' ? `${row.key}#${row.groupIndex}` : row.type === 'due-header' || row.type === 'archived-toggle' ? `${row.key}(${row.count})` : row.key);
+    row.type === 'due-header' || row.type === 'archived-toggle' ? `${row.key}(${row.count})` : row.key);
 
   assert.deepEqual(summary(buildNotebookRows(list, { compareMode: false, showListNote: false, showArchived: false })),
-    ['main:bank#0', 'main:banker#1', 'due-header(1)', 'due:river#0', 'archived-toggle(1)']);
+    ['main:bank', 'main:banker', 'due-header(1)', 'due:river', 'archived-toggle(1)']);
   assert.deepEqual(summary(buildNotebookRows(list, { compareMode: true, showListNote: true, showArchived: true })),
-    ['compare-banner', 'list-note', 'main:bank#0', 'main:banker#1', 'due-header(1)', 'due:river#0', 'archived-toggle(1)', 'archived:pond#0']);
+    ['compare-banner', 'list-note', 'main:bank', 'main:banker', 'due-header(1)', 'due:river', 'archived-toggle(1)', 'archived:pond']);
   assert.deepEqual(summary(buildNotebookRows({ groups: [], dueGroups: [], archived: [], archivedGroups: [] },
     { compareMode: false, showListNote: true, showArchived: true })), ['list-note']);
 });
@@ -265,4 +265,33 @@ test('the list orders by the clock it is given and carries that clock, so its ro
   const after = buildNotebookList(items, null, 'familiarity', 'all', NOW + 60_000);
   assert.equal(after.now, NOW + 60_000);
   assert.deepEqual(titles(after.groups), ['soon', 'overdue', 'later']);
+});
+
+test('a rebuild keeps the earlier object of every group whose senses are unchanged, section by section', () => {
+  const items = [
+    vocab('bank', { sense: 'money', due: NOW - DAY }),
+    vocab('bank', { sense: 'river', due: NOW + DAY }),
+    vocab('apple', { due: NOW + 2 * DAY }),
+    vocab('pear', { due: NOW + 3 * DAY }),
+    vocab('zebra', { archived: true }),
+  ];
+  const first = buildNotebookList(items, null, 'familiarity', 'all', NOW);
+  // A review replaces apple's wrapper; nothing else changes.
+  const reviewed = items.map(item => (item.data.id === 'apple:' ? { ...item, srs: { ...item.srs, totalReviews: 1 } } : item));
+  const second = buildNotebookList(reviewed, null, 'familiarity', 'all', NOW, first);
+  assert.deepEqual(titles(second.groups), ['bank', 'apple', 'pear']);
+  assert.equal(second.groups[0], first.groups[0]);
+  assert.notEqual(second.groups[1], first.groups[1]);
+  assert.equal(second.groups[1].items[0], reviewed[2]);
+  assert.equal(second.groups[2], first.groups[2]);
+  assert.equal(second.archivedGroups[0], first.archivedGroups[0]);
+
+  // A group whose senses change, by one more or one fewer, is new; a search's due section reuses only its own.
+  const fewer = buildNotebookList(reviewed.filter(item => item.data.id !== 'bank:river'), null, 'familiarity', 'all', NOW, second);
+  assert.notEqual(fewer.groups[0], second.groups[0]);
+  assert.deepEqual(fewer.groups[0].items.map(item => item.data.id), ['bank:money']);
+  const searching = buildNotebookList(reviewed, findNotebookMatches(reviewed, 'pear'), 'familiarity', 'all', NOW, second);
+  assert.deepEqual(titles(searching.dueGroups), ['bank']);
+  assert.notEqual(searching.dueGroups[0], second.groups[0]);
+  assert.equal(searching.groups[0], second.groups[2]);
 });

@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import type { ItemGroup } from '../../types';
+import React, { useState, useRef, useCallback } from 'react';
+import type { ItemGroup, StoredItem } from '../../types';
 import type { NotebookSection } from '../../services/notebookList';
 import { useWheelNavigation } from '../../hooks';
 import { NotebookItem } from './NotebookItem';
@@ -10,21 +10,34 @@ import { useHorizontalSwipe } from './useHorizontalSwipe';
 interface NotebookGroupProps {
   group: ItemGroup;
   section: NotebookSection;
-  groupIndex: number;
   /** The list's clock, which the Due badges count from. */
   now: number;
-  onViewDetail: (section: NotebookSection, groupIndex: number, itemIndex: number) => void;
+  onViewDetail: (group: ItemGroup, section: NotebookSection, itemIndex: number) => void;
   onDelete: (id: string) => void;
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
 }
 
+const isDueAt = (item: StoredItem, now: number) => (item.srs?.nextReview ?? 0) <= now;
+
+// A row redraws when its group (a new one only when its senses changed, see buildNotebookList), its section or a
+// handler changes, or when the list's clock passes the review time of one of its senses, flipping its Due badge.
+// A clock that moves on without flipping one changes nothing the row shows.
+const sameRow = (a: NotebookGroupProps, b: NotebookGroupProps): boolean =>
+  a.group === b.group && a.section === b.section && a.onViewDetail === b.onViewDetail && a.onDelete === b.onDelete &&
+  a.onArchive === b.onArchive && a.onUnarchive === b.onUnarchive &&
+  (a.now === b.now || a.group.items.every(item => isDueAt(item, a.now) === isDueAt(item, b.now)));
+
 export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
-  group, section, groupIndex, now, onViewDetail, onDelete, onArchive, onUnarchive
+  group, section, now, onViewDetail, onDelete, onArchive, onUnarchive
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const totalItems = group.items.length;
   const carouselRef = useRef<HTMLDivElement>(null);
+  const openSense = useCallback(
+    (itemIndex: number) => onViewDetail(group, section, itemIndex),
+    [onViewDetail, group, section],
+  );
 
   // Left swipe -> next meaning, right swipe -> previous, both looping
   const swipe = useHorizontalSwipe({
@@ -46,9 +59,10 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
     return (
       <NotebookItem
         item={group.items[0]}
-        now={now}
+        isDue={isDueAt(group.items[0], now)}
+        itemIndex={0}
+        onOpen={openSense}
         onDelete={onDelete}
-        onViewDetail={() => onViewDetail(section, groupIndex, 0)}
         onArchive={onArchive}
         onUnarchive={onUnarchive}
       />
@@ -68,9 +82,10 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
       <div className="w-full" onTouchStart={swipe.onTouchStart} onTouchEnd={swipe.onTouchEnd}>
         <NotebookItem
           item={currentItem}
-          now={now}
+          isDue={isDueAt(currentItem, now)}
+          itemIndex={index}
+          onOpen={openSense}
           onDelete={onDelete}
-          onViewDetail={() => onViewDetail(section, groupIndex, index)}
           onArchive={onArchive}
           onUnarchive={onUnarchive}
           totalInGroup={totalItems}
@@ -81,4 +96,4 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
       <CarouselDots count={totalItems} index={index} onSelect={setCurrentIndex} />
     </div>
   );
-});
+}, sameRow);

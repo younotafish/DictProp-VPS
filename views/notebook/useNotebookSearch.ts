@@ -37,10 +37,11 @@ export function useNotebookSearch(items: StoredItem[], query: string, sortMode: 
   const now = useNow(listInputs);
   const shownList = useRef<NotebookList | null>(null);
   const list = useMemo(() => {
-    if (!searchQuery) return buildNotebookList(items, null, sortMode, filterMode, now);
+    // The list on screen lends the new one its unchanged groups, so their rows don't redraw.
+    if (!searchQuery) return buildNotebookList(items, null, sortMode, filterMode, now, shownList.current);
     const matches = literalMatches ?? (fuzzyReady ? findFuzzyMatches(items, searchQuery) : null);
     if (!matches && shownList.current) return shownList.current;
-    return buildNotebookList(items, matches ?? [], sortMode, filterMode, now);
+    return buildNotebookList(items, matches ?? [], sortMode, filterMode, now, shownList.current);
   }, [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode, now]);
   useEffect(() => { shownList.current = list; }, [list]);
   // The list shows this query's results, not the last query's kept on screen while the fuzzy scan waits.

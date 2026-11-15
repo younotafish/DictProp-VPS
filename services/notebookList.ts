@@ -136,9 +136,24 @@ export const groupByTitle = (items: StoredItem[]): ItemGroup[] => {
   return Array.from(groups, ([title, senses]) => ({ title, items: sortStoredSensesByUsage(senses) }));
 };
 
+const sameItems = (a: StoredItem[], b: StoredItem[]): boolean =>
+  a.length === b.length && a.every((item, i) => item === b[i]);
+
+// Each group of `groups` that has the same senses in the same order as the like-titled group of `before`, as
+// that earlier object, so a rebuild that changed one card leaves every other row's group, and the row, alone.
+const reuseGroups = (groups: ItemGroup[], before: ItemGroup[] | undefined): ItemGroup[] => {
+  if (!before?.length) return groups;
+  const byTitle = new Map(before.map(group => [group.title, group]));
+  return groups.map(group => {
+    const earlier = byTitle.get(group.title);
+    return earlier && sameItems(earlier.items, group.items) ? earlier : group;
+  });
+};
+
 /**
  * The notebook's sections. `matches` is the search result, or null when not searching; while searching,
- * the due items outside the results are listed after them so review can continue.
+ * the due items outside the results are listed after them so review can continue. Given the `previous` list,
+ * a group whose senses haven't changed keeps its earlier object, in the same section.
  */
 export const buildNotebookList = (
   items: StoredItem[],
@@ -146,6 +161,7 @@ export const buildNotebookList = (
   sort: NotebookSort,
   filter: NotebookFilter,
   now = Date.now(),
+  previous?: NotebookList | null,
 ): NotebookList => {
   const isListed = (item: StoredItem) =>
     !!item?.data?.id && !item.isDeleted && (filter === 'all' || item.type === filter);
@@ -167,7 +183,13 @@ export const buildNotebookList = (
     dueGroups = groupByTitle(due.sort(byPriority));
   }
 
-  return { groups: groupByTitle(active), archived, archivedGroups: groupByTitle(archived), dueGroups, now };
+  return {
+    groups: reuseGroups(groupByTitle(active), previous?.groups),
+    archived,
+    archivedGroups: reuseGroups(groupByTitle(archived), previous?.archivedGroups),
+    dueGroups: reuseGroups(dueGroups, previous?.dueGroups),
+    now,
+  };
 };
 
 /**
@@ -234,7 +256,7 @@ export const listNoteFor = ({ searchQuery, searchSettled, groupCount, archivedCo
 
 /** One row of the virtualized list. `key` keeps each row's state with its group. */
 export type NotebookRow =
-  | { key: string; type: 'group'; group: ItemGroup; groupIndex: number; section: NotebookSection }
+  | { key: string; type: 'group'; group: ItemGroup; section: NotebookSection }
   | { key: string; type: 'due-header'; count: number }
   | { key: string; type: 'archived-toggle'; count: number }
   | { key: string; type: 'compare-banner' }
@@ -249,8 +271,8 @@ export const buildNotebookRows = (
   { compareMode, showListNote, showArchived }: { compareMode: boolean; showListNote: boolean; showArchived: boolean },
 ): NotebookRow[] => {
   const rows: NotebookRow[] = [];
-  const addGroups = (groups: ItemGroup[], section: NotebookSection) => groups.forEach((group, groupIndex) => {
-    rows.push({ key: `${section}:${group.title}`, type: 'group', group, groupIndex, section });
+  const addGroups = (groups: ItemGroup[], section: NotebookSection) => groups.forEach(group => {
+    rows.push({ key: `${section}:${group.title}`, type: 'group', group, section });
   });
 
   if (compareMode) rows.push({ key: 'compare-banner', type: 'compare-banner' });

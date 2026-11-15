@@ -35,7 +35,6 @@ export const CompareBanner: React.FC<{ selectedCount: number; onExit: () => void
 interface CompareRowProps {
   group: ItemGroup;
   section: NotebookSection;
-  groupIndex: number;
   now: number;
   displayWord: string;
   isSelected: boolean;
@@ -44,7 +43,7 @@ interface CompareRowProps {
 }
 
 /** A listed word in compare mode: a checkbox over its card, which is shown but can't be used meanwhile. */
-export const CompareRow: React.FC<CompareRowProps> = ({ group, section, groupIndex, now, displayWord, isSelected, canSelect, onToggle }) => (
+export const CompareRow: React.FC<CompareRowProps> = ({ group, section, now, displayWord, isSelected, canSelect, onToggle }) => (
   <div className="px-3 py-1.5">
     <div
       role="checkbox"
@@ -74,7 +73,6 @@ export const CompareRow: React.FC<CompareRowProps> = ({ group, section, groupInd
         <NotebookGroup
           group={group}
           section={section}
-          groupIndex={groupIndex}
           now={now}
           onViewDetail={noop}
           onDelete={noop}

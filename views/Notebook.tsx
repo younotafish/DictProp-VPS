@@ -5,6 +5,7 @@ import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
 import { JSONImport } from '../components/JSONImport';
 import { makeVocabStoredItem } from '../services/items';
+import { useLatest } from '../hooks/useStableValue';
 import {
   buildNotebookRows, countSavedSpellings, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats,
   type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
@@ -180,11 +181,17 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   }, [list, searchSettled, searchQuery, filterMode, canLookUp, performAISearch, localSearchQuery]);
   const showListNote = listNote !== null;
 
-  // DetailView pages through the section the card was opened from.
-  const openGroup = useCallback((section: NotebookSection, groupIndex: number, itemIndex: number) => {
-    const groups = section === 'due' ? list.dueGroups : section === 'archived' ? list.archivedGroups : list.groups;
-    onViewDetail(groups, groupIndex, itemIndex);
-  }, [list, onViewDetail]);
+  // DetailView pages through the section the card was opened from. The list is read when a card opens, so this
+  // callback, and the rows it's handed to, outlive list rebuilds. A row's group is the list's own object, or, if a
+  // rebuild replaced it, the one with its title.
+  const listRef = useLatest(list);
+  const openGroup = useCallback((group: ItemGroup, section: NotebookSection, itemIndex: number) => {
+    const current = listRef.current;
+    const groups = section === 'due' ? current.dueGroups : section === 'archived' ? current.archivedGroups : current.groups;
+    let groupIndex = groups.indexOf(group);
+    if (groupIndex < 0) groupIndex = groups.findIndex(g => g.title === group.title);
+    if (groupIndex >= 0) onViewDetail(groups, groupIndex, itemIndex);
+  }, [listRef, onViewDetail]);
 
   const virtualRows = useMemo(
     () => buildNotebookRows(list, { compareMode, showListNote, showArchived }),
@@ -210,7 +217,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     }
 
     // row.type === 'group'
-    const { group, groupIndex, section } = row;
+    const { group, section } = row;
 
     if (compareMode && section === 'main') {
       const displayWord = getItemTitle(group.items[0]) || group.title;
@@ -228,7 +235,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         <CompareRow
           group={group}
           section={section}
-          groupIndex={groupIndex}
           now={list.now}
           displayWord={displayWord}
           isSelected={isSelected}
@@ -243,7 +249,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         <NotebookGroup
           group={group}
           section={section}
-          groupIndex={groupIndex}
           now={list.now}
           onViewDetail={openGroup}
           onDelete={onDelete}

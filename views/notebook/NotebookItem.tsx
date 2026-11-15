@@ -7,10 +7,12 @@ import { useLongPress } from './useLongPress';
 
 interface NotebookItemProps {
   item: StoredItem;
-  /** The list's clock: the card shows as due if its review falls at or before it. */
-  now: number;
+  /** Whether the card is due at the list's clock. */
+  isDue: boolean;
+  /** Its place among its spelling's senses, which onOpen gets back. */
+  itemIndex: number;
+  onOpen: (itemIndex: number) => void;
   onDelete: (id: string) => void;
-  onViewDetail: () => void;
   onArchive?: (id: string) => void;
   onUnarchive?: (id: string) => void;
   // Senses sharing this spelling; with more than one, the sense label shows
@@ -18,7 +20,7 @@ interface NotebookItemProps {
 }
 
 export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
-  item, now, onDelete, onViewDetail, onArchive, onUnarchive, totalInGroup = 1
+  item, isDue, itemIndex, onOpen, onDelete, onArchive, onUnarchive, totalInGroup = 1
 }) => {
   const [showActions, setShowActions] = useState(false);
   const { pressHandlers, isClickSuppressed } = useLongPress(() => setShowActions(true));
@@ -38,7 +40,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
       setShowActions(false);
       return;
     }
-    onViewDetail();
+    onOpen(itemIndex);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -58,7 +60,6 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
   const history = vocab?.history;
   const sense = vocab?.sense;
 
-  const isDue = (item.srs?.nextReview ?? 0) <= now;
   const intervalDays = Math.round((item.srs?.interval ?? 0) / (24 * 60));
 
   return (
