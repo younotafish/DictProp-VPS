@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ZoneFlash } from '../EyesFreeZones';
-import { acquireKeepAlive, releaseKeepAlive } from '../../services/lazyTts';
+import {
+  acquireKeepAlive, getPlaybackProgress, getPlaybackState, pauseCurrent, releaseKeepAlive, resumeCurrent, speakNatural,
+} from '../../services/lazyTts';
 import type { SearchMode } from './searchViewing';
 
-/** Playback in the results sheet: the eyes-free zones' tap flash, and the audio session held open while it's up. */
+/**
+ * Playback in the results sheet: the eyes-free zones' tap flash, the audio session held open while the sheet is
+ * up, and the example-sentence toggle that Cmd/Ctrl+1–4 and the zones share.
+ */
 export function useSheetPlayback(mode: SearchMode) {
   // Eyes-free zone tap-confirmation flash (see EyesFreeZones).
   const [zoneFlash, setZoneFlash] = useState<ZoneFlash | null>(null);
@@ -35,5 +40,18 @@ export function useSheetPlayback(mode: SearchMode) {
   useEffect(() => { if (mode !== 'viewing') letGoKeepAlive(); }, [mode, letGoKeepAlive]);
   useEffect(() => letGoKeepAlive, [letGoKeepAlive]);
 
-  return { zoneFlash, flashZone, holdKeepAlive };
+  // Read an example sentence in the natural voice. A second press on the same sentence pauses or resumes it
+  // (or starts it again once it's nearly done), as the DetailView shortcut does.
+  const playOrToggleSentence = useCallback((sentence: string) => {
+    const pb = getPlaybackState();
+    if (pb.text === sentence) {
+      if (pb.status === 'loading') return;                       // already starting this one
+      if (pb.status === 'paused') { resumeCurrent(); return; }
+      if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; } // mid-clip → pause
+    }
+    holdKeepAlive();
+    speakNatural(sentence, { allowDownload: true });
+  }, [holdKeepAlive]);
+
+  return { zoneFlash, flashZone, playOrToggleSentence };
 }

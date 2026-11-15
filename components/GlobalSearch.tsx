@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredVa
 import { SearchResult, VocabCard, StoredItem, ComparisonResult } from '../types';
 import { analyzeInput } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
-import { speakWord, prefetchTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent } from '../services/lazyTts';
+import { speakWord, prefetchTTS } from '../services/lazyTts';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { useSentenceSearch } from '../services/sentenceSearch';
 import { warn } from '../services/logger';
@@ -16,7 +16,7 @@ import { looksLikeSentence } from '../services/queryMode';
 import { useSearchQueue } from './search/useSearchQueue';
 import { useSheetPlayback } from './search/useSheetPlayback';
 import { useTimedMessage } from './search/useTimedMessage';
-import type { SearchMode } from './search/searchViewing';
+import { stepMeaning, viewingIndexAfterDismiss, type SearchMode } from './search/searchViewing';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
@@ -54,9 +54,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // When a DB hit (already-saved word) becomes ready, auto-open its card. AI results don't set this.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
-  const SWIPE_THRESHOLD = 50;
-  const { zoneFlash, flashZone, holdKeepAlive } = useSheetPlayback(mode);
+  const { zoneFlash, flashZone, playOrToggleSentence } = useSheetPlayback(mode);
 
   // Surface a failed search as an auto-dismissing toast. The floating search has no inline results
   // area, so without this a failed queue item just vanishes (the bug behind silent search failures).
@@ -118,6 +116,24 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const readyCount = readyItems.length;
   const isBusy = busyCount > 0 || scanning; // scanning = sentence→expression scan before items are enqueued
 
+  // Current viewing state
+  const viewingItem = mode === 'viewing' ? readyItems[viewingQueueIdx] : null;
+  const viewingResult = viewingItem?.results;
+  const viewingVocab = viewingResult?.vocabs?.[viewingVocabIdx];
+  const viewingVocabCount = viewingResult?.vocabs?.length || 0;
+
+  // Shows another meaning of the open result; with `speak` (the arrow keys and swipes), also says its word.
+  const showMeaning = useCallback((index: number, options?: { speak?: boolean }) => {
+    setViewingVocabIdx(index);
+    const word = viewingResult?.vocabs?.[index]?.word;
+    if (options?.speak && word) speakWord(word);
+  }, [viewingResult]);
+  // Opens another ready result, at its first meaning.
+  const showResult = useCallback((index: number) => {
+    setViewingQueueIdx(index);
+    setViewingVocabIdx(0);
+  }, []);
+
   // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
   useEffect(() => {
     if (!pendingOpenId) return;
@@ -157,39 +173,22 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           const vocab = currentResult?.vocabs?.[viewingVocabIdx];
           const sentence = stripSentenceMarkers((vocab?.examples || [])[Number(e.key) - 1] || '').trim();
           if (!sentence) return;
-          const pb = getPlaybackState();
-          if (pb.text === sentence) {
-            if (pb.status === 'loading') return;                       // already starting this one
-            if (pb.status === 'paused') { resumeCurrent(); return; }
-            if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; } // mid-clip → pause
-          }
-          holdKeepAlive();
-          speakNatural(sentence, { allowDownload: true });
+          playOrToggleSentence(sentence);
           return;
         }
 
-        if (e.key === 'ArrowLeft') {
+        // ←/→ step through the meanings, round from either end, and say the word.
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
           e.preventDefault();
           e.stopImmediatePropagation();
-          if (vocabCount > 1) {
-            const prev = viewingVocabIdx > 0 ? viewingVocabIdx - 1 : vocabCount - 1;
-            setViewingVocabIdx(prev);
-            if (currentResult?.vocabs?.[prev]?.word) speakWord(currentResult.vocabs[prev].word);
-          }
-        } else if (e.key === 'ArrowRight') {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          if (vocabCount > 1) {
-            const next = (viewingVocabIdx + 1) % vocabCount;
-            setViewingVocabIdx(next);
-            if (currentResult?.vocabs?.[next]?.word) speakWord(currentResult.vocabs[next].word);
-          }
+          const next = stepMeaning(viewingVocabIdx, vocabCount, e.key === 'ArrowLeft' ? -1 : 1, true);
+          if (next !== null) showMeaning(next, { speak: true });
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [mode, readyItems, viewingQueueIdx, viewingVocabIdx, holdKeepAlive]);
+  }, [mode, readyItems, viewingQueueIdx, viewingVocabIdx, playOrToggleSentence, showMeaning]);
 
   // Auto-focus input
   useEffect(() => {
@@ -277,12 +276,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     updateQueue({ type: 'dismiss', id });
     // Adjust viewing index if needed
     setViewingQueueIdx(prev => {
-      const newReady = queue.filter(q => q.id !== id && q.status === 'ready');
-      if (newReady.length === 0) {
+      const next = viewingIndexAfterDismiss(queue, id, prev);
+      if (next === null) {
         setMode('idle');
         return 0;
       }
-      return Math.min(prev, newReady.length - 1);
+      return next;
     });
     setViewingVocabIdx(0);
   }, [queue, updateQueue]);
@@ -314,39 +313,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setMode('idle');
   };
 
-  // Touch handlers for swipe navigation in results popup
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStart.current) return;
-    const diffX = e.changedTouches[0].clientX - touchStart.current.x;
-    const diffY = e.changedTouches[0].clientY - touchStart.current.y;
-    touchStart.current = null;
-
-    if (Math.abs(diffX) <= Math.abs(diffY) * 1.5 || Math.abs(diffX) <= SWIPE_THRESHOLD) return;
-
-    const currentResult = readyItems[viewingQueueIdx]?.results;
-    const vocabCount = currentResult?.vocabs?.length || 0;
-
-    if (vocabCount > 1) {
-      if (diffX < 0) {
-        const next = (viewingVocabIdx + 1) % vocabCount;
-        setViewingVocabIdx(next);
-        if (currentResult?.vocabs?.[next]?.word) speakWord(currentResult.vocabs[next].word);
-      } else if (viewingVocabIdx > 0) {
-        setViewingVocabIdx(viewingVocabIdx - 1);
-        if (currentResult?.vocabs?.[viewingVocabIdx - 1]?.word) speakWord(currentResult.vocabs[viewingVocabIdx - 1].word);
-      }
-    }
-  };
-
-  // Current viewing state
-  const viewingItem = mode === 'viewing' ? readyItems[viewingQueueIdx] : null;
-  const viewingResult = viewingItem?.results;
-  const viewingVocab = viewingResult?.vocabs?.[viewingVocabIdx];
-  const viewingVocabCount = viewingResult?.vocabs?.length || 0;
   // The results popup is modal: focus moves into it, Tab stays inside, the page behind goes inert, and
   // closing it gives focus back.
   const resultsOpen = !!viewingItem && (!!viewingVocab || viewingItem.kind === 'compare');
@@ -382,35 +348,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       showError(describeSearchError(trimmed, err), isRetryableSearchError(err) ? trimmed : undefined, analyzeMode);
     });
   }, [mode, readyItems, viewingQueueIdx, finalizeResult, showError, updateQueue]);
-
-  // Eyes-free zone read: a click/tap in the popup body's top quarter plays the 1st example sentence, the
-  // second quarter the 2nd; the bottom half is inert. Zones are measured against the VISIBLE popup body
-  // (the scroll container is e.currentTarget), NOT the full card — so they stay the same on-screen bands no
-  // matter how far a tall card is scrolled, and you never have to chase the tiny speaker icon. Mirrors the
-  // DetailView eyes-free zones and routes through the shared playback so a second tap on the same zone
-  // pauses/resumes. One onClick path covers desktop clicks AND mobile taps (synthesized click); controls
-  // inside the card stopPropagation, and the guard skips the rest.
-  const handleCardZoneRead = useCallback((e: React.MouseEvent<HTMLElement>) => {
-    if (window.getSelection()?.toString().trim()) return; // don't hijack a text selection
-    const target = e.target as HTMLElement | null;
-    if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return; // a control
-    const examples = (viewingVocab?.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean);
-    if (!examples.length) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const rel = e.clientY - rect.top;
-    const zone = rel < rect.height / 4 ? 0 : rel < rect.height / 2 ? 1 : -1; // top ¼ → 1st, 2nd ¼ → 2nd
-    if (zone < 0) return;
-    flashZone(zone);
-    const sentence = examples[Math.min(zone, examples.length - 1)];
-    const pb = getPlaybackState();
-    if (pb.text === sentence) {
-      if (pb.status === 'loading') return;                                          // already starting this one
-      if (pb.status === 'paused') { resumeCurrent(); return; }
-      if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; } // mid-clip → pause
-    }
-    holdKeepAlive();
-    speakNatural(sentence, { allowDownload: true });
-  }, [viewingVocab, flashZone, holdKeepAlive]);
 
   // The error toast's retry: replays the query the failure carries.
   const retryFailedSearch = (failed: SearchErrorToast) => {
@@ -458,12 +395,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           dialogRef={resultsDialogRef}
           viewingItem={viewingItem}
           viewingResult={viewingResult}
-          viewingVocabIdx={viewingVocabIdx}
-          viewingVocabCount={viewingVocabCount}
+          meaningIndex={viewingVocabIdx}
+          meaningCount={viewingVocabCount}
           readyItems={readyItems}
-          viewingQueueIdx={viewingQueueIdx}
-          setViewingQueueIdx={setViewingQueueIdx}
-          setViewingVocabIdx={setViewingVocabIdx}
+          resultIndex={viewingQueueIdx}
+          onShowResult={showResult}
           isVocabSaved={isVocabSaved}
           onClose={handleClose}
           onSaveWord={handleSaveWord}
@@ -474,14 +410,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           {viewingVocab && (
             <SearchVocabPane
               vocabs={viewingResult!.vocabs}
-              viewingVocab={viewingVocab}
-              viewingVocabIdx={viewingVocabIdx}
-              viewingVocabCount={viewingVocabCount}
-              setViewingVocabIdx={setViewingVocabIdx}
-              onCardZoneRead={handleCardZoneRead}
-              onTouchStart={handleTouchStart}
-              onTouchEnd={handleTouchEnd}
+              meaningIndex={viewingVocabIdx}
+              onShowMeaning={showMeaning}
               zoneFlash={zoneFlash}
+              flashZone={flashZone}
+              playOrToggleSentence={playOrToggleSentence}
               isVocabSaved={isVocabSaved}
               onSaveVocab={handleSaveVocab}
               onSearch={onSearch}

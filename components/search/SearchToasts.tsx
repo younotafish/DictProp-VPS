@@ -32,7 +32,7 @@ export const SearchToasts: React.FC<Props> = ({ saveToast, statusToast, error, o
       </div>
     )}
     {/* Error toast — failures surface here instead of vanishing. Tapping the message retries the failed
-        query (force-refresh bypasses the saved-card reuse + dedup); the X closes the toast without one. */}
+        query (see GlobalSearch's retryFailedSearch); the X closes the toast without retrying. */}
     {error && (
       <div
         role="alert"

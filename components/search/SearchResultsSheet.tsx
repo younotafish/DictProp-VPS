@@ -10,12 +10,14 @@ interface Props {
   /** The open result, a lookup or a comparison. */
   viewingItem: QueueItem;
   viewingResult: SearchResult | null | undefined;
-  viewingVocabIdx: number;
-  viewingVocabCount: number;
+  /** The meaning on screen, and how many the result has. */
+  meaningIndex: number;
+  meaningCount: number;
+  /** Every ready result, and the open one's position among them. */
   readyItems: QueueItem[];
-  viewingQueueIdx: number;
-  setViewingQueueIdx: React.Dispatch<React.SetStateAction<number>>;
-  setViewingVocabIdx: React.Dispatch<React.SetStateAction<number>>;
+  resultIndex: number;
+  /** Opens another result at its first meaning. */
+  onShowResult: (index: number) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onClose: () => void;
   onSaveWord: (result: SearchResult | null) => void;
@@ -31,8 +33,8 @@ interface Props {
  * buttons; the open comparison or meaning; and a strip of every ready result, with Save all and Clear all.
  */
 export const SearchResultsSheet: React.FC<Props> = ({
-  dialogRef, viewingItem, viewingResult, viewingVocabIdx, viewingVocabCount, readyItems, viewingQueueIdx,
-  setViewingQueueIdx, setViewingVocabIdx, isVocabSaved, onClose, onSaveWord, onDismiss, onSaveAll, onClearAll, children,
+  dialogRef, viewingItem, viewingResult, meaningIndex, meaningCount, readyItems, resultIndex, onShowResult,
+  isVocabSaved, onClose, onSaveWord, onDismiss, onSaveAll, onClearAll, children,
 }) => (
   <>
     {/* Backdrop */}
@@ -62,9 +64,9 @@ export const SearchResultsSheet: React.FC<Props> = ({
                 <Loader2 size={12} className="animate-spin" /> Refreshing…
               </span>
             )}
-            {viewingVocabCount > 1 && (
+            {meaningCount > 1 && (
               <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full shrink-0">
-                {viewingVocabIdx + 1}/{viewingVocabCount}
+                {meaningIndex + 1}/{meaningCount}
               </span>
             )}
           </div>
@@ -73,19 +75,19 @@ export const SearchResultsSheet: React.FC<Props> = ({
             {readyItems.length > 1 && (
               <div className="flex items-center gap-1 mr-2">
                 <button
-                  onClick={() => { setViewingQueueIdx(prev => Math.max(0, prev - 1)); setViewingVocabIdx(0); }}
-                  disabled={viewingQueueIdx === 0}
+                  onClick={() => onShowResult(Math.max(0, resultIndex - 1))}
+                  disabled={resultIndex === 0}
                   aria-label="Previous result"
                   className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30"
                 >
                   <ChevronLeft size={14} />
                 </button>
                 <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">
-                  {viewingQueueIdx + 1}/{readyItems.length}
+                  {resultIndex + 1}/{readyItems.length}
                 </span>
                 <button
-                  onClick={() => { setViewingQueueIdx(prev => Math.min(readyItems.length - 1, prev + 1)); setViewingVocabIdx(0); }}
-                  disabled={viewingQueueIdx >= readyItems.length - 1}
+                  onClick={() => onShowResult(Math.min(readyItems.length - 1, resultIndex + 1))}
+                  disabled={resultIndex >= readyItems.length - 1}
                   aria-label="Next result"
                   className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30"
                 >
@@ -152,9 +154,9 @@ export const SearchResultsSheet: React.FC<Props> = ({
             {readyItems.map((item, idx) => (
               <button
                 key={item.id}
-                onClick={() => { setViewingQueueIdx(idx); setViewingVocabIdx(0); }}
+                onClick={() => onShowResult(idx)}
                 className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                  idx === viewingQueueIdx
+                  idx === resultIndex
                     ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
@@ -162,22 +164,20 @@ export const SearchResultsSheet: React.FC<Props> = ({
                 {item.query}
               </button>
             ))}
-            {readyItems.length > 1 && (
-              <>
-                <button
-                  onClick={onSaveAll}
-                  className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-indigo-500 text-white hover:bg-indigo-600 transition-colors shadow-sm"
-                >
-                  Save all
-                </button>
-                <button
-                  onClick={onClearAll}
-                  className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors"
-                >
-                  Clear all
-                </button>
-              </>
-            )}
+            <>
+              <button
+                onClick={onSaveAll}
+                className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-indigo-500 text-white hover:bg-indigo-600 transition-colors shadow-sm"
+              >
+                Save all
+              </button>
+              <button
+                onClick={onClearAll}
+                className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors"
+              >
+                Clear all
+              </button>
+            </>
           </div>
         )}
       </div>
