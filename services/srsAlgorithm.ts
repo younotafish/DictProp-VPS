@@ -8,26 +8,22 @@
 
 import { SRSData } from '../types';
 
-// Fixed review schedule (days). Each "remember" tap advances one step.
-const SCHEDULE = [1, 2, 3, 5, 7, 12, 20, 25, 47, 84, 143, 180];
-
 export class SRSAlgorithm {
   /**
-   * Migrate old SRS data format to new format.
-   * Strips legacy fields and infers schedule step from totalReviews/stability.
+   * Fills the fields older rows lack (display strength from stability, counts, dates) and keeps the rest; a
+   * never-reviewed sentence shows strength 0.
    */
   static migrate(srs: SRSData): SRSData {
     const totalReviews = srs.totalReviews ?? 0;
     const isUnreviewedSentence = srs.type === 'sentence' && totalReviews === 0;
     const stability = isUnreviewedSentence ? 0.5 : (srs.stability ?? 0.5);
-    // Already has the required fields — just ensure display strength is up to date
     return {
       ...srs,
       // A never-reviewed sentence is still unmemorized even though FSRS needs a non-zero seed
       // stability. Keep this correction sentence-scoped so legacy word-card display stays untouched.
       memoryStrength: isUnreviewedSentence
         ? 0
-        : this.stabilityToDisplayStrength(stability),
+        : SRSAlgorithm.stabilityToDisplayStrength(stability),
       stability,
       totalReviews,
       correctStreak: srs.correctStreak ?? 0,
@@ -45,16 +41,15 @@ export class SRSAlgorithm {
     fallbackType: 'vocab' | 'phrase' | 'sentence'
   ): SRSData {
     if (srs) {
-      return this.migrate(srs);
+      return SRSAlgorithm.migrate(srs);
     }
-    return this.createNew(fallbackId, fallbackType);
+    return SRSAlgorithm.createNew(fallbackId, fallbackType);
   }
 
   /**
    * Initialize new SRS data for an item.
    */
-  static createNew(id: string, type: 'vocab' | 'phrase' | 'sentence'): SRSData {
-    const now = Date.now();
+  static createNew(id: string, type: 'vocab' | 'phrase' | 'sentence', now = Date.now()): SRSData {
     return {
       id,
       type,
@@ -81,29 +76,7 @@ export class SRSAlgorithm {
    * FSRS never reads that clock for a card with no reviews.
    */
   static reset(id: string, type: 'vocab' | 'phrase' | 'sentence', now = Date.now()): SRSData {
-    return { ...this.createNew(id, type), nextReview: now, lastReviewDate: now };
-  }
-
-  /**
-   * Calculate step penalty for overdue items.
-   * Penalty is proportional to how late the review is relative to the expected interval.
-   * Being 8 days late on a 25-day interval (32%) is very different from 8 days late on a 1-day interval.
-   */
-  static getOverduePenalty(srs: SRSData, now = Date.now()): number {
-    if (srs.scheduler === 'fsrs-v6') return 0;
-    const daysOverdue = Math.max(0, (now - srs.nextReview) / (1000 * 60 * 60 * 24));
-
-    // Grace period: no penalty if less than 14 days overdue in absolute terms
-    if (daysOverdue <= 14) return 0;
-
-    // Compare overdue duration to the item's current interval
-    const step = Math.max(0, srs.totalReviews - 1);
-    const expectedInterval = SCHEDULE[Math.min(step, SCHEDULE.length - 1)] || 1;
-    const overdueRatio = daysOverdue / expectedInterval;
-
-    if (overdueRatio > 4) return 2;
-    if (overdueRatio > 2) return 1;
-    return 0;
+    return { ...SRSAlgorithm.createNew(id, type, now), nextReview: now, lastReviewDate: now };
   }
 
   /** Record a completed passive listen without changing any memorization or FSRS state. */
@@ -117,16 +90,16 @@ export class SRSAlgorithm {
   /**
    * Map stability (days) to a display strength score (0–100) for mastery badges.
    *
-   * Mapping (approximate):
-   *   stability  1d → 13  (Struggling)
-   *   stability  3d → 25  (Struggling)
-   *   stability  7d → 37  (Learning)
-   *   stability 12d → 47  (Learning)
-   *   stability 25d → 59  (Proficient)
-   *   stability 47d → 70  (Mastered)
-   *   stability 84d → 80  (Mastered)
-   *   stability143d → 90  (Grandmaster)
-   *   stability180d → 94  (Grandmaster)
+   * Mapping (18·ln(1 + stability), rounded):
+   *   stability   1d → 12  (Struggling)
+   *   stability   3d → 25  (Struggling)
+   *   stability   7d → 37  (Learning)
+   *   stability  12d → 46  (Learning)
+   *   stability  25d → 59  (Proficient)
+   *   stability  47d → 70  (Mastered)
+   *   stability  84d → 80  (Mastered)
+   *   stability 143d → 89  (Grandmaster)
+   *   stability 180d → 94  (Grandmaster)
    */
   static stabilityToDisplayStrength(stability: number): number {
     if (stability <= 0) return 0;
@@ -145,7 +118,7 @@ export class SRSAlgorithm {
    */
   static getMasteryLevel(srs: SRSData): { label: string; color: string; percentage: number } {
     // Recalculate display strength from stability to ensure consistency
-    const strength = this.stabilityToDisplayStrength(srs.stability);
+    const strength = SRSAlgorithm.stabilityToDisplayStrength(srs.stability);
 
     if (strength >= 85) {
       return { label: 'Grandmaster', color: 'purple', percentage: strength };
@@ -160,12 +133,5 @@ export class SRSAlgorithm {
     } else {
       return { label: 'New', color: 'slate', percentage: strength };
     }
-  }
-
-  /**
-   * Get the fixed schedule for external reference.
-   */
-  static getSchedule(): readonly number[] {
-    return SCHEDULE;
   }
 }
