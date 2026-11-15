@@ -47,9 +47,11 @@ const CollectionTile: React.FC<{
               {section.title}
             </span>
           ))}
-          <span className="rounded-full bg-black/10 px-2 py-1 text-[9px] font-semibold text-white/90 sm:text-[11px]">
-            +{collection.sections.length - 3} themes
-          </span>
+          {collection.sections.length > 3 && (
+            <span className="rounded-full bg-black/10 px-2 py-1 text-[9px] font-semibold text-white/90 sm:text-[11px]">
+              +{collection.sections.length - 3} themes
+            </span>
+          )}
         </div>
 
         <div className="mt-auto pt-5">

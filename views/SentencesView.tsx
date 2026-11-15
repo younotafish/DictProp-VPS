@@ -141,7 +141,7 @@ interface SentencesViewProps {
   onScroll: (e: React.UIEvent<HTMLElement>) => void;
   /** Open a sentence's source card in DetailView. Receives the on-screen sorted order + clicked index. */
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
-  /** Footnote support: look up a saved item for a term, and open its full card popup. */
+  /** Saved words in a sentence: look up the saved item for a term, and open its card popup. */
   findSaved?: (term: string) => StoredItem | null;
   onOpenCard?: (item: StoredItem) => void;
 }
@@ -171,8 +171,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   // How many active sentences are in each review state (unreviewed, due, memorized), for the chips and header.
   const counts = useMemo(() => summarizeReviewStates(activeItems.map(item => item.srs), now), [activeItems, now]);
 
-  // Least-memorized first. Among equally strong sentences, untouched/least-recently heard comes first,
-  // then most-recently added. Passive listening therefore rotates a card down without inflating mastery.
+  // Weakest first; among equally strong sentences, the newest saved first. Listening doesn't move a sentence.
   const sorted = useMemo(() => {
     if (!deferredQuery.trim()) return orderSentencesForReview(activeItems, filter, now);
     // A search overrides the review-state chips so a match surfaces regardless of the active tab, and

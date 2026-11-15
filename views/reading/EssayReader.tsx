@@ -40,7 +40,7 @@ const EssayParagraph = React.memo(function EssayParagraph({
             <button
               type="button"
               onClick={() => onOpenSentence(sentence)}
-              className={`inline cursor-pointer rounded px-0.5 text-left font-inherit text-inherit transition-colors hover:bg-indigo-100 hover:text-indigo-950 focus-visible:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${stateClass}`}
+              className={`inline cursor-pointer rounded px-0.5 text-left text-inherit transition-colors hover:bg-indigo-100 hover:text-indigo-950 focus-visible:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${stateClass}`}
               title={`Open sentence ${sentence.position} of ${sentenceCount}`}
               aria-label={`Open sentence ${sentence.position}: ${sentence.text}`}
             >
