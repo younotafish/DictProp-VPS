@@ -2,13 +2,17 @@ import { createHash } from 'crypto';
 import { db, getAllItems, getImageManifest, listAllUsers } from '../db.js';
 import { detectImageMimeType } from '../image-format.js';
 import {
+  collectExpectedExampleSentenceHashes,
+  parseStoredAnalysis,
+  storedExampleFlags,
   summarizeExampleEnrichmentCoverage,
-  type StoredSentenceEnrichmentRecord,
 } from '../example-enrichment-coverage.js';
+import { fieldsOf } from '../incremental-enrichment.js';
 import { normalizeLabel, sentenceIdentityKey, sentenceTextKey, vocabSenseKey } from '../library-identity.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../usage-audit.js';
 import { validateStoredItem } from '../validation.js';
+import { storedEnrichmentRows } from './support/enrichment-rows.js';
 import { requireOwner } from './support/run.js';
 
 const users = listAllUsers();
@@ -144,52 +148,46 @@ for (const row of imageRows.iterate(owner.id) as Iterable<{
     brokenImageRows.push(row.id);
   }
 }
-const orphanImageBlobCount = (db.prepare(`
+const orphanImageBlobCount = countQuery(`
   SELECT COUNT(*) AS count FROM image_blobs b
   WHERE NOT EXISTS (SELECT 1 FROM item_images i WHERE i.content_hash = b.content_hash)
     AND NOT EXISTS (SELECT 1 FROM sentence_enrichments e WHERE e.image_content_hash = b.content_hash)
-`).get() as { count: number }).count;
-const sentenceEnrichmentStats = db.prepare(`
-  SELECT
-    COUNT(*) AS total,
-    SUM(CASE WHEN image_content_hash IS NOT NULL THEN 1 ELSE 0 END) AS with_images,
-    SUM(CASE WHEN NOT json_valid(analysis) THEN 1 ELSE 0 END) AS invalid_analysis,
-    SUM(CASE WHEN json_valid(analysis) AND json_type(analysis, '$.grammar.structure') = 'text'
-      AND json_type(analysis, '$.grammar.points') = 'array' THEN 0 ELSE 1 END) AS missing_grammar,
-    SUM(CASE WHEN image_content_hash IS NOT NULL AND NOT EXISTS (
-      SELECT 1 FROM image_blobs b WHERE b.content_hash = sentence_enrichments.image_content_hash
-    ) THEN 1 ELSE 0 END) AS missing_blobs,
-    COALESCE(SUM(CASE WHEN image_content_hash IS NOT NULL THEN (
-      SELECT length(data) FROM image_blobs b WHERE b.content_hash = sentence_enrichments.image_content_hash
-    ) ELSE 0 END), 0) AS image_bytes
-  FROM sentence_enrichments
-`).get() as {
-  total: number;
-  with_images: number | null;
-  invalid_analysis: number | null;
-  missing_grammar: number | null;
-  missing_blobs: number | null;
-  image_bytes: number;
+`);
+
+// A grammar section at all, however incomplete: a structure string and a list of points.
+const hasGrammarSection = (analysis: unknown): boolean => {
+  const grammar = fieldsOf(fieldsOf(analysis).grammar);
+  return typeof grammar.structure === 'string' && Array.isArray(grammar.points);
 };
-let incompleteDetailedEnrichmentCount = 0;
-for (const row of db.prepare('SELECT analysis FROM sentence_enrichments').iterate() as Iterable<{ analysis: string }>) {
-  try {
-    if (!hasCompleteSentenceAnalysis(JSON.parse(row.analysis))) incompleteDetailedEnrichmentCount++;
-  } catch {
-    incompleteDetailedEnrichmentCount++;
+// One pass over the stored enrichments, which run to several kilobytes apiece, gives both their own statistics and
+// the example coverage.
+const sentenceEnrichments = {
+  total: 0,
+  withImages: 0,
+  invalidAnalysisCount: 0,
+  missingGrammarCount: 0,
+  incompleteDetailedAnalysisCount: 0,
+  missingBlobCount: 0,
+  imageBytes: 0,
+};
+const expectedExampleHashes = new Set(collectExpectedExampleSentenceHashes(allItems));
+const storedExampleCoverage = new Map<string, number>();
+for (const row of storedEnrichmentRows()) {
+  const analysis = parseStoredAnalysis(row.analysis);
+  sentenceEnrichments.total++;
+  if (row.image_content_hash !== null) {
+    sentenceEnrichments.withImages++;
+    if (row.image_bytes === null) sentenceEnrichments.missingBlobCount++;
+    else sentenceEnrichments.imageBytes += row.image_bytes;
+  }
+  if (analysis === undefined) sentenceEnrichments.invalidAnalysisCount++;
+  if (!hasGrammarSection(analysis)) sentenceEnrichments.missingGrammarCount++;
+  if (!hasCompleteSentenceAnalysis(analysis)) sentenceEnrichments.incompleteDetailedAnalysisCount++;
+  if (expectedExampleHashes.has(row.lookup_hash)) {
+    storedExampleCoverage.set(row.lookup_hash, storedExampleFlags(analysis, row.image_bytes));
   }
 }
-const exampleSentenceCoverage = summarizeExampleEnrichmentCoverage(
-  allItems,
-  db.prepare(`
-    SELECT
-      e.lookup_hash,
-      e.analysis,
-      CASE WHEN length(b.data) > 0 THEN e.image_content_hash ELSE NULL END AS image_content_hash
-    FROM sentence_enrichments e
-    LEFT JOIN image_blobs b ON b.content_hash = e.image_content_hash
-  `).iterate() as Iterable<StoredSentenceEnrichmentRecord>,
-);
+const exampleSentenceCoverage = summarizeExampleEnrichmentCoverage(allItems, storedExampleCoverage);
 
 const duplicateGroups = (items: any[], keyOf: (item: any) => string) => {
   const groups = new Map<string, string[]>();
@@ -224,16 +222,18 @@ const missingSentenceSources = sentenceItems
   .filter(item => normalizeLabel(item.data.sourceWord) && !liveVocabWords.has(normalizeLabel(item.data.sourceWord)))
   .map(item => item.data.id);
 
-const projectTagCount = (db.prepare('SELECT COUNT(*) AS count FROM items WHERE user_id = ? AND project IS NOT NULL')
-  .get(owner.id) as { count: number }).count;
-const projectRowCount = (db.prepare('SELECT COUNT(*) AS count FROM projects WHERE user_id = ?')
-  .get(owner.id) as { count: number }).count;
-const inlineImageItemCount = (db.prepare(`SELECT COUNT(*) AS count FROM items WHERE user_id = ? AND data LIKE '%data:image/%'`)
-  .get(owner.id) as { count: number }).count;
-const nonOwnerItemCount = (db.prepare('SELECT COUNT(*) AS count FROM items WHERE user_id IS NULL OR user_id != ?')
-  .get(owner.id) as { count: number }).count;
-const nonOwnerSessionCount = (db.prepare('SELECT COUNT(*) AS count FROM sessions WHERE user_id != ? AND expires_at > ?')
-  .get(owner.id, Date.now()) as { count: number }).count;
+const projectTagCount = countQuery('SELECT COUNT(*) AS count FROM items WHERE user_id = ? AND project IS NOT NULL', owner.id);
+const projectRowCount = countQuery('SELECT COUNT(*) AS count FROM projects WHERE user_id = ?', owner.id);
+const inlineImageItemCount = countQuery(
+  `SELECT COUNT(*) AS count FROM items WHERE user_id = ? AND data LIKE '%data:image/%'`,
+  owner.id,
+);
+const nonOwnerItemCount = countQuery('SELECT COUNT(*) AS count FROM items WHERE user_id IS NULL OR user_id != ?', owner.id);
+const nonOwnerSessionCount = countQuery(
+  'SELECT COUNT(*) AS count FROM sessions WHERE user_id != ? AND expires_at > ?',
+  owner.id,
+  Date.now(),
+);
 const databaseQuickCheck = (db.pragma('quick_check') as Array<Record<string, unknown>>)
   .flatMap(row => Object.values(row).map(String));
 const foreignKeyViolationCount = (db.pragma('foreign_key_check') as unknown[]).length;
@@ -319,15 +319,7 @@ const report = {
     missingSourceWordCount: missingSentenceSources.length,
     missingSourceWordIds: sample(missingSentenceSources),
   },
-  sentenceEnrichments: {
-    total: sentenceEnrichmentStats.total,
-    withImages: sentenceEnrichmentStats.with_images || 0,
-    invalidAnalysisCount: sentenceEnrichmentStats.invalid_analysis || 0,
-    missingGrammarCount: sentenceEnrichmentStats.missing_grammar || 0,
-    incompleteDetailedAnalysisCount: incompleteDetailedEnrichmentCount,
-    missingBlobCount: sentenceEnrichmentStats.missing_blobs || 0,
-    imageBytes: sentenceEnrichmentStats.image_bytes,
-  },
+  sentenceEnrichments,
   exampleSentenceCoverage,
   images: {
     storedCount: imageIds.size,

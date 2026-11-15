@@ -2,11 +2,22 @@ import { fieldsOf, type AuditedItem } from './incremental-enrichment.js';
 import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
 import { exampleSentenceId, normalizeSentenceLookup, sentenceLookupHash } from './sentence-lookup.js';
 
+/** A stored example enrichment, as the audits and the corpus export read it. */
 export interface StoredSentenceEnrichmentRecord {
   lookup_hash: string;
   analysis: string;
+  /** The row's image reference, whether or not its blob is still there. */
   image_content_hash: string | null;
+  /** The referenced blob's size; null when the row has no image or its blob is gone. */
+  image_bytes: number | null;
+  updated_at: number;
 }
+
+/**
+ * What each expected example's stored row covers, as bit flags that keep the map small although analyses run to
+ * kilobytes: 1 the row exists, 2 its detailed analysis is complete, 4 its image is stored.
+ */
+export type StoredExampleCoverage = ReadonlyMap<string, number>;
 
 export interface ExampleEnrichmentCoverage {
   expected: number;
@@ -24,6 +35,37 @@ export interface ExampleEnrichmentCoverage {
 const sample = (values: string[], limit = 100): string[] => values.slice(0, limit);
 /** The id of an example's enrichment: exampleSentenceId, under the name the tests import. */
 export const enrichmentId = exampleSentenceId;
+
+/** A stored analysis, or undefined when its text isn't JSON: a malformed row counts as incomplete, never as an error. */
+export function parseStoredAnalysis(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The coverage flags a stored row gives its example. */
+export const storedExampleFlags = (analysis: unknown, imageBytes: number | null): number =>
+  1 | (hasCompleteSentenceAnalysis(analysis) ? 2 : 0) | (imageBytes !== null && imageBytes > 0 ? 4 : 0);
+
+/**
+ * Reads the stored rows once: the flags of each expected example (rows for any other sentence are skipped unparsed)
+ * and the newest row's update time, which is when the local cycle last published an example.
+ */
+export function readStoredExampleCoverage(
+  records: Iterable<StoredSentenceEnrichmentRecord>,
+  expectedHashes: ReadonlySet<string>,
+): { coverage: Map<string, number>; latestUpdatedAt: number } {
+  const coverage = new Map<string, number>();
+  let latestUpdatedAt = 0;
+  for (const record of records) {
+    latestUpdatedAt = Math.max(latestUpdatedAt, record.updated_at);
+    if (!expectedHashes.has(record.lookup_hash)) continue;
+    coverage.set(record.lookup_hash, storedExampleFlags(parseStoredAnalysis(record.analysis), record.image_bytes));
+  }
+  return { coverage, latestUpdatedAt };
+}
 
 /**
  * The lookup hashes of the examples on live cards that need an enrichment row of their own, in the order the id
@@ -58,9 +100,13 @@ export function collectExpectedExampleSentenceHashes(items: readonly AuditedItem
   return [...hashes].sort((left, right) => left.localeCompare(right));
 }
 
+/**
+ * How far the examples these items expect are enriched. `stored` must hold the flags of every one of those examples
+ * that has a row: read it with readStoredExampleCoverage over these items' expected hashes, or a superset of them.
+ */
 export function summarizeExampleEnrichmentCoverage(
   items: readonly AuditedItem[],
-  storedRecords: Iterable<StoredSentenceEnrichmentRecord>,
+  stored: StoredExampleCoverage,
 ): ExampleEnrichmentCoverage {
   const missingAnalysisIds: string[] = [];
   const incompleteDetailedAnalysisIds: string[] = [];
@@ -69,26 +115,10 @@ export function summarizeExampleEnrichmentCoverage(
   let withImage = 0;
   let fullyEnriched = 0;
   const expectedHashes = collectExpectedExampleSentenceHashes(items);
-  // Bit flags keep this bounded even when each stored analysis is several kilobytes:
-  // 1 = row exists, 2 = detailed analysis is complete, 4 = image reference exists.
-  const coverageByHash = new Map(expectedHashes.map(hash => [hash, 0]));
-  for (const record of storedRecords) {
-    if (!coverageByHash.has(record.lookup_hash)) continue;
-    let analysisComplete = false;
-    try {
-      analysisComplete = hasCompleteSentenceAnalysis(JSON.parse(record.analysis));
-    } catch {
-      analysisComplete = false;
-    }
-    coverageByHash.set(
-      record.lookup_hash,
-      1 | (analysisComplete ? 2 : 0) | (record.image_content_hash ? 4 : 0),
-    );
-  }
 
   for (const lookupHash of expectedHashes) {
     const id = exampleSentenceId(lookupHash);
-    const coverage = coverageByHash.get(lookupHash) || 0;
+    const coverage = stored.get(lookupHash) || 0;
     const hasRecord = (coverage & 1) !== 0;
     const analysisComplete = (coverage & 2) !== 0;
     const hasImage = (coverage & 4) !== 0;

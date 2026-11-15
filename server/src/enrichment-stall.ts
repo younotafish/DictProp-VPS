@@ -1,7 +1,4 @@
-import {
-  summarizeExampleEnrichmentCoverage,
-  type StoredSentenceEnrichmentRecord,
-} from './example-enrichment-coverage.js';
+import { summarizeExampleEnrichmentCoverage, type StoredExampleCoverage } from './example-enrichment-coverage.js';
 import { fieldsOf, summarizeIncrementalEnrichmentBacklog, type AuditedItem } from './incremental-enrichment.js';
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -52,11 +49,12 @@ function latestLocalEnrichmentAt(items: readonly AuditedItem[]): number {
 
 /**
  * Enrichment the local cycle should already have finished. Each item's clock starts at its last change. A
- * review restarts it too, which can only delay an alert, never raise a false one.
+ * review restarts it too, which can only delay an alert, never raise a false one. `storedExamples` is the coverage
+ * read for all of `items` (readStoredExampleCoverage): the settled items' examples are a subset of theirs.
  */
 export function findStalledEnrichment(
   items: readonly AuditedItem[],
-  readStoredExamples: () => Iterable<StoredSentenceEnrichmentRecord>,
+  storedExamples: StoredExampleCoverage,
   { overdueAfterHours, imageGapTolerance, examplesPublishedAt = 0, now = Date.now() }: EnrichmentStallOptions,
 ): EnrichmentStall {
   const overdueBefore = now - overdueAfterHours * HOUR_MS;
@@ -69,7 +67,7 @@ export function findStalledEnrichment(
   // Every saved sentence counts here, since a saved sentence only rules out examples that have their own analysis.
   const examples = summarizeExampleEnrichmentCoverage(
     items.filter(item => item?.type === 'sentence' || isSettled(item)),
-    readStoredExamples(),
+    storedExamples,
   );
   const textGaps = gaps.sentenceDetailedAnalysis + gaps.recentVocabContent + gaps.recentVocabAdvanced +
     gaps.recentNestedVocabAdvanced + examples.missingAnalysis + examples.incompleteDetailedAnalysis;

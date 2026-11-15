@@ -1,6 +1,8 @@
-import { db, getAllItems } from '../db.js';
+import { getAllItems } from '../db.js';
 import { corpusSourceHash, type CorpusExportRecord } from '../corpus-audit.js';
+import { parseStoredAnalysis } from '../example-enrichment-coverage.js';
 import { hasCompleteSentenceAnalysis } from '../sentence-analysis.js';
+import { storedEnrichmentRows } from './support/enrichment-rows.js';
 import { requireOwner } from './support/run.js';
 
 const owner = requireOwner();
@@ -21,29 +23,12 @@ const exampleEnrichmentCoverage: Array<{
   hasAnalysis: boolean;
   hasImage: boolean;
 }> = [];
-// length(data) comes from the blob row's header; byte_length sits after the blob and would read all of it.
-const enrichmentRows = db.prepare(`
-  SELECT
-    e.lookup_hash,
-    e.analysis,
-    EXISTS (
-      SELECT 1 FROM image_blobs b
-      WHERE b.content_hash = e.image_content_hash AND length(b.data) > 0
-    ) AS has_image
-  FROM sentence_enrichments e
-  ORDER BY e.lookup_hash
-`).iterate() as Iterable<{ lookup_hash: string; analysis: string; has_image: number }>;
-for (const row of enrichmentRows) {
-  let hasAnalysis = false;
-  try {
-    hasAnalysis = hasCompleteSentenceAnalysis(JSON.parse(row.analysis));
-  } catch {
-    // Malformed or obsolete records are intentionally exported as repair targets.
-  }
+// Malformed and obsolete rows are exported too, as incomplete: the Mac redoes them.
+for (const row of storedEnrichmentRows({ byLookupHash: true })) {
   exampleEnrichmentCoverage.push({
     lookupHash: row.lookup_hash,
-    hasAnalysis,
-    hasImage: row.has_image === 1,
+    hasAnalysis: hasCompleteSentenceAnalysis(parseStoredAnalysis(row.analysis)),
+    hasImage: row.image_bytes !== null && row.image_bytes > 0,
   });
 }
 

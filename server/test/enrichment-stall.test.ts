@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { findStalledEnrichment } from '../src/enrichment-stall.js';
-import { advancedVocabContentHash } from '../src/incremental-enrichment.js';
+import {
+  collectExpectedExampleSentenceHashes,
+  readStoredExampleCoverage,
+  type StoredSentenceEnrichmentRecord,
+} from '../src/example-enrichment-coverage.js';
+import { advancedVocabContentHash, type AuditedItem } from '../src/incremental-enrichment.js';
 import { sentenceLookupHash } from '../src/sentence-lookup.js';
 import { completeAnalysis, completeVocab } from './support/fixtures.js';
 
@@ -19,11 +24,16 @@ const withAdvancedEnrichment = (data: any, generatedAt = 1) => ({
   },
 });
 
-const enrichedExamples = completeVocab.examples.map(example => ({
+const enrichedExamples: StoredSentenceEnrichmentRecord[] = completeVocab.examples.map(example => ({
   lookup_hash: sentenceLookupHash(example),
   analysis: JSON.stringify(completeAnalysis),
   image_content_hash: 'image-hash',
+  image_bytes: 1_000,
+  updated_at: 1,
 }));
+// What the audit reads for these items: one pass over the stored rows, for every example they expect.
+const storedFor = (items: AuditedItem[], records: StoredSentenceEnrichmentRecord[] = []) =>
+  readStoredExampleCoverage(records, new Set(collectExpectedExampleSentenceHashes(items))).coverage;
 
 test('the stall check stays quiet for a deferred image and for work the next cycle will reach', () => {
   const items = [
@@ -35,7 +45,7 @@ test('the stall check stays quiet for a deferred image and for work the next cyc
     { type: 'vocab', savedAt: now - 30 * HOUR, updatedAt: now - HOUR, data: { id: 'reviewed', word: 'reviewed' } },
   ];
 
-  const stall = findStalledEnrichment(items, () => enrichedExamples, {
+  const stall = findStalledEnrichment(items, storedFor(items, enrichedExamples), {
     overdueAfterHours: 18, imageGapTolerance: 20, now,
   });
 
@@ -52,7 +62,7 @@ test('the stall check alerts when an analysis stays missing past the overdue win
     data: { ...completeVocab, id: 'waiting', imageUrl: 'server:has_image' },
   }];
 
-  const stall = findStalledEnrichment(items, () => enrichedExamples, {
+  const stall = findStalledEnrichment(items, storedFor(items, enrichedExamples), {
     overdueAfterHours: 18, imageGapTolerance: 20, examplesPublishedAt: now - 30 * HOUR, now,
   });
 
@@ -87,7 +97,7 @@ test('an example waits on its card\'s clock, and a saved sentence still rules it
     },
   ];
 
-  const stall = findStalledEnrichment(items, () => [], { overdueAfterHours: 18, imageGapTolerance: 20, now });
+  const stall = findStalledEnrichment(items, storedFor(items), { overdueAfterHours: 18, imageGapTolerance: 20, now });
 
   assert.equal(stall.textGaps, 1);
   assert.equal(stall.imageGaps, 1);
@@ -101,7 +111,7 @@ test('the stall check alerts once overdue images outnumber the deferral allowanc
     data: { id, word: id, imagePrompt: 'A photorealistic picture of the word on a sign.' },
   }));
   const check = (imageGapTolerance: number) =>
-    findStalledEnrichment(items, () => [], { overdueAfterHours: 18, imageGapTolerance, now }).alerts;
+    findStalledEnrichment(items, storedFor(items), { overdueAfterHours: 18, imageGapTolerance, now }).alerts;
 
   assert.deepEqual(check(3), []);
   assert.deepEqual(check(2), [
