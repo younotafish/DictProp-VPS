@@ -17,7 +17,7 @@ const sentenceEnrichmentStmts = {
     ) AS has_image
   `),
   getImage: db.prepare(`
-    SELECT b.data, e.image_mime_type
+    SELECT b.data, e.image_mime_type, e.image_content_hash
     FROM sentence_enrichments e
     JOIN image_blobs b ON b.content_hash = e.image_content_hash
     WHERE e.lookup_hash = ?
@@ -79,16 +79,19 @@ export function getSentenceEnrichmentCount(): number {
 }
 
 export function getSentenceEnrichmentForText(text: string): {
+  lookupHash: string;
   analysis: SentenceAnalysis;
   generatedAt: number;
   imageContentHash: string | null;
   imageMimeType: string | null;
 } | null {
   if (!text.trim()) return null;
-  const row = sentenceEnrichmentStmts.get.get(sentenceLookupHash(text)) as SentenceEnrichmentRow | undefined;
+  const lookupHash = sentenceLookupHash(text);
+  const row = sentenceEnrichmentStmts.get.get(lookupHash) as SentenceEnrichmentRow | undefined;
   if (!row) return null;
   try {
     return {
+      lookupHash,
       analysis: JSON.parse(row.analysis),
       generatedAt: row.generated_at,
       imageContentHash: row.image_content_hash,
@@ -102,14 +105,16 @@ export function getSentenceEnrichmentForText(text: string): {
 export function getSentenceEnrichmentImage(lookupHash: string): {
   data: Buffer;
   mimeType: string;
+  contentHash: string;
 } | null {
   if (!/^[a-f0-9]{64}$/.test(lookupHash)) return null;
   const row = sentenceEnrichmentStmts.getImage.get(lookupHash) as {
     data: Buffer;
     image_mime_type: string;
+    image_content_hash: string;
   } | undefined;
   if (!row?.data || !isSupportedImageMime(row.image_mime_type)) return null;
-  return { data: row.data, mimeType: row.image_mime_type };
+  return { data: row.data, mimeType: row.image_mime_type, contentHash: row.image_content_hash };
 }
 
 function writeSentenceEnrichment(record: SentenceEnrichmentImportRecord): SentenceEnrichmentImportResult {

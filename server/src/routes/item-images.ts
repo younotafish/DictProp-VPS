@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { getImageManifest, getItemImageBinary, storeItemImage } from '../db.js';
 import { isSupportedImageMime } from '../image-format.js';
 import type { AppEnv } from '../middleware/auth.js';
@@ -16,13 +16,8 @@ function ifNoneMatchHits(header: string | undefined, etag: string): boolean {
   });
 }
 
-// GET /api/items/:id/image — return raw binary image with caching headers
-itemImageRoutes.get('/items/:id/image', (c) => {
-  const userId = c.get('user').id;
-  // Raster types only: never serve a stored SVG (a script-capable document) from this origin.
-  const image = getItemImageBinary(c.req.param('id'), userId);
-  if (!image) return c.json({ error: 'Not found' }, 404);
-
+/** An image's bytes, or a 304 when the client's copy has the same content hash. */
+export function imageResponse(c: Context, image: { data: Buffer; mimeType: string; contentHash: string }): Response {
   const headers = {
     // The content hash names these exact bytes, so revalidation costs a 304 instead of the image.
     ETag: `"${image.contentHash}"`,
@@ -34,6 +29,15 @@ itemImageRoutes.get('/items/:id/image', (c) => {
     return new Response(null, { status: 304, headers });
   }
   return new Response(image.data, { headers: { ...headers, 'Content-Type': image.mimeType } });
+}
+
+// GET /api/items/:id/image — return raw binary image with caching headers
+itemImageRoutes.get('/items/:id/image', (c) => {
+  const userId = c.get('user').id;
+  // Raster types only: never serve a stored SVG (a script-capable document) from this origin.
+  const image = getItemImageBinary(c.req.param('id'), userId);
+  if (!image) return c.json({ error: 'Not found' }, 404);
+  return imageResponse(c, image);
 });
 
 // GET /api/items/images/manifest — ids of every image this user has stored.

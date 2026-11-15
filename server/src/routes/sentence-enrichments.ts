@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getSentenceEnrichmentForText, getSentenceEnrichmentImage } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonObject } from '../middleware/json-body.js';
-import { sentenceLookupHash } from '../sentence-enrichment.js';
+import { imageResponse } from './item-images.js';
 
 export const sentenceEnrichmentRoutes = new Hono<AppEnv>();
 
@@ -16,25 +16,19 @@ sentenceEnrichmentRoutes.post('/sentence-enrichments/lookup', async (c) => {
   }
   const enrichment = getSentenceEnrichmentForText(text);
   if (!enrichment) return c.json({ found: false });
-  const lookupHash = sentenceLookupHash(text);
-  c.header('Cache-Control', 'private, max-age=300');
   return c.json({
     found: true,
     analysis: enrichment.analysis,
     analysisGeneratedAt: enrichment.generatedAt,
     ...(enrichment.imageContentHash && enrichment.imageMimeType
-      ? { imageUrl: `/api/sentence-enrichments/${lookupHash}/image` }
+      ? { imageUrl: `/api/sentence-enrichments/${enrichment.lookupHash}/image` }
       : {}),
   });
 });
 
+// A newer wave can replace a sentence's image at the same URL, so it revalidates by content hash as item images do.
 sentenceEnrichmentRoutes.get('/sentence-enrichments/:lookupHash/image', (c) => {
   const image = getSentenceEnrichmentImage(c.req.param('lookupHash'));
   if (!image) return c.json({ error: 'Not found' }, 404);
-  return new Response(image.data, {
-    headers: {
-      'Content-Type': image.mimeType,
-      'Cache-Control': 'private, max-age=86400',
-    },
-  });
+  return imageResponse(c, image);
 });
