@@ -8,8 +8,10 @@ import {
   batchFiles,
   batchFingerprint,
   createStageLifecycle,
+  rethrowIfModelDown,
   runCachedModelBatch,
   runPool,
+  runSplittingBatches,
   stageSettings,
 } from './model-stage.mjs';
 import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
@@ -73,15 +75,17 @@ const pending = payload.targets.filter(target => !fileReady(join(imageDir, targe
 const batches = [];
 for (let index = 0; index < pending.length; index += 8) batches.push(pending.slice(index, index + 8));
 
-function judgeBatch(batch, batchIndex) {
+const candidatePath = target => candidateFile(candidateDir, target.filename, candidateNumber);
+const filesFor = (batch, batchIndex) => batchFiles(workDir, batchIndex, batchFingerprint(MODEL_CONFIG, {
+  instruction: [JUDGMENT_INTRODUCTION, JUDGMENT_POLICY], schema, records: judgmentRecords(batch, candidateNumber),
+}));
+
+// Each accepted candidate is copied into place as soon as its batch is judged, so a later failure keeps it.
+async function judgeBatch(batch, batchIndex) {
   const records = judgmentRecords(batch, candidateNumber);
-  const fingerprint = batchFingerprint(MODEL_CONFIG, {
-    instruction: [JUDGMENT_INTRODUCTION, JUDGMENT_POLICY], schema, records,
-  });
-  const candidates = batch.map(target => candidateFile(candidateDir, target.filename, candidateNumber));
-  if (candidates.some(path => !existsSync(path))) throw new Error(`Batch ${batchIndex + 1} is missing a candidate image`);
-  return runCachedModelBatch({
-    resultPath: batchFiles(workDir, batchIndex, fingerprint).result,
+  const candidates = batch.map(candidatePath);
+  const verdicts = await runCachedModelBatch({
+    resultPath: filesFor(batch, batchIndex).result,
     prompt: correction => `${JUDGMENT_INTRODUCTION}\n${JSON.stringify(records)}\n\n${JUDGMENT_POLICY}${correction}`,
     correction: message => ` Your previous response failed validation: ${message}. Return every itemIndex exactly once.`,
     ask: ({ prompt, resultPath }) => runStructuredModel(MODEL_CONFIG, {
@@ -91,20 +95,53 @@ function judgeBatch(batch, batchIndex) {
     retryDelayMs,
     lifecycle,
   });
+  for (const { target, result, candidate } of verdicts) {
+    if (result.acceptable) copyFileAtomic(candidate, join(imageDir, target.filename));
+  }
+  return verdicts;
 }
 
-const results = new Array(batches.length);
+// A batch that keeps failing is halved down to the image that fails alone. That image is rejected as one the
+// reviewer could not judge, so the loop renders it a new candidate and in the end defers it, instead of
+// failing its chunk and every later one on every cycle.
+function judgeResilient(batch, batchIndex) {
+  return runSplittingBatches(batch, {
+    run: part => judgeBatch(part, batchIndex),
+    markerPath: part => filesFor(part, batchIndex).splitMarker,
+    marker: (part, error, depth) => ({
+      version: 1,
+      batchIndex,
+      depth,
+      imageIds: part.map(target => target.imageId),
+      error,
+      splitAt: new Date().toISOString(),
+    }),
+    onSplit: ({ batch: part, halves: [left, right], error, resumed }) => {
+      process.stderr.write(resumed
+        ? `Image judgment batch ${batchIndex + 1} was split on an earlier run; resuming its ${left.length}+${right.length} halves\n`
+        : `Image judgment batch ${batchIndex + 1} failed (${error}); splitting ${part.length} images into ${left.length}+${right.length}\n`);
+    },
+    onSingletonFailure: async (target, message, error) => {
+      await rethrowIfModelDown(error, MODEL_CONFIG, lifecycle);
+      process.stderr.write(`Image ${target.imageId} could not be judged; rejecting this candidate: ${message}\n`);
+      return { target, reason: `The reviewer could not judge this image: ${message.slice(0, 200)}` };
+    },
+    lifecycle,
+  });
+}
+
+const rejectionReasons = new Map();
 await runPool(batches.length, concurrency, lifecycle, async index => {
+  const batch = batches[index];
   process.stderr.write(`Judging image batch ${index + 1}/${batches.length}\n`);
-  results[index] = await judgeBatch(batches[index], index);
+  // A missing candidate means the renderer and this stage disagree, which is no fault of the image.
+  if (batch.some(target => !existsSync(candidatePath(target)))) throw new Error(`Batch ${index + 1} is missing a candidate image`);
+  const { results: verdicts, failures: unjudged } = await judgeResilient(batch, index);
+  for (const { target, result } of verdicts) if (!result.acceptable) rejectionReasons.set(target, result.reason);
+  for (const { target, reason } of unjudged) rejectionReasons.set(target, reason);
 });
 
-const rejected = [];
-for (const batch of results) {
-  for (const { target, result, candidate } of batch) {
-    if (result.acceptable) copyFileAtomic(candidate, join(imageDir, target.filename));
-    else rejected.push({ ...target, rejectionReason: result.reason });
-  }
-}
+const rejected = pending.filter(target => rejectionReasons.has(target))
+  .map(target => ({ ...target, rejectionReason: rejectionReasons.get(target) }));
 writeJsonAtomic(join(workDir, 'rejected-targets.json'), { ...payload, targets: rejected });
 process.stderr.write(`Accepted ${pending.length - rejected.length}/${pending.length}; rejected ${rejected.length}\n`);

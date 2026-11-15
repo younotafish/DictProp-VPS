@@ -8,8 +8,10 @@ import {
   batchFiles,
   batchFingerprint,
   createStageLifecycle,
+  rethrowIfModelDown,
   runCachedModelBatch,
   runPool,
+  runSplittingBatches,
   stageSettings,
 } from './model-stage.mjs';
 import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
@@ -64,11 +66,15 @@ for (let index = 0; index < payload.targets.length; index += 20) {
   batches.push(payload.targets.slice(index, index + 20));
 }
 
-function refineBatch(batch, batchIndex) {
+const filesFor = (batch, batchIndex) => batchFiles(workDir, batchIndex, batchFingerprint(MODEL_CONFIG, {
+  instruction, schema, records: refinementRecords(batch),
+}));
+
+// Pairs each target with its refinement, so split batches can be put back in order.
+async function refineBatch(batch, batchIndex) {
   const records = refinementRecords(batch);
-  const fingerprint = batchFingerprint(MODEL_CONFIG, { instruction, schema, records });
-  return runCachedModelBatch({
-    resultPath: batchFiles(workDir, batchIndex, fingerprint).result,
+  const refinements = await runCachedModelBatch({
+    resultPath: filesFor(batch, batchIndex).result,
     prompt: correction => `${instruction}${correction}\n\nREFINE THESE REJECTED TARGETS:\n${JSON.stringify(records)}`,
     correction: message => `\n\nYour previous response failed validation: ${message}. Return every itemIndex exactly once.`,
     ask: ({ prompt, resultPath }) => runStructuredModel(MODEL_CONFIG, {
@@ -78,13 +84,50 @@ function refineBatch(batch, batchIndex) {
     retryDelayMs,
     lifecycle,
   });
+  return refinements.map((refined, index) => ({ target: batch[index], refined }));
 }
 
-const results = new Array(batches.length);
+// A batch that keeps failing is halved down to the brief that fails alone. That brief is kept as it was; the
+// next candidate still gets a new seed, and a target that never passes is deferred in the end.
+function refineResilient(batch, batchIndex) {
+  return runSplittingBatches(batch, {
+    run: part => refineBatch(part, batchIndex),
+    markerPath: part => filesFor(part, batchIndex).splitMarker,
+    marker: (part, error, depth) => ({
+      version: 1,
+      batchIndex,
+      depth,
+      imageIds: part.map(target => target.imageId),
+      error,
+      splitAt: new Date().toISOString(),
+    }),
+    onSplit: ({ batch: part, halves: [left, right], error, resumed }) => {
+      process.stderr.write(resumed
+        ? `Prompt-refinement batch ${batchIndex + 1} was split on an earlier run; resuming its ${left.length}+${right.length} halves\n`
+        : `Prompt-refinement batch ${batchIndex + 1} failed (${error}); splitting ${part.length} briefs into ${left.length}+${right.length}\n`);
+    },
+    onSingletonFailure: async (target, message, error) => {
+      await rethrowIfModelDown(error, MODEL_CONFIG, lifecycle);
+      process.stderr.write(`The brief for ${target.imageId} could not be rewritten; keeping it: ${message}\n`);
+      return {
+        target,
+        refined: {
+          ...target,
+          originalPrompt: target.originalPrompt || target.prompt,
+          promptRefinement: 'unchanged: the prompt editor could not rewrite this brief',
+        },
+      };
+    },
+    lifecycle,
+  });
+}
+
+const refinedByTarget = new Map();
 await runPool(batches.length, concurrency, lifecycle, async index => {
   process.stderr.write(`Refining rejected prompt batch ${index + 1}/${batches.length}\n`);
-  results[index] = await refineBatch(batches[index], index);
+  const { results, failures } = await refineResilient(batches[index], index);
+  for (const { target, refined } of [...results, ...failures]) refinedByTarget.set(target, refined);
 });
 
-writeJsonAtomic(resolve(outputArg), { ...payload, targets: results.flat() });
+writeJsonAtomic(resolve(outputArg), { ...payload, targets: payload.targets.map(target => refinedByTarget.get(target)) });
 process.stderr.write(`Refined ${payload.targets.length} rejected image prompt(s)\n`);

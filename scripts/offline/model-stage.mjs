@@ -8,6 +8,7 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeJsonAtomic } from './atomic-file.mjs';
 import { installSignalCleanup, killProcessGroup } from './codex-process.mjs';
+import { checkModelReady } from './structured-model.mjs';
 
 export function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -144,7 +145,8 @@ export async function runCachedModelBatch({ resultPath, prompt, correction, ask,
 //   markerPath(batch)                        where the batch's split marker lives
 //   marker(batch, error, depth)              what the marker records
 //   onSplit({ batch, halves, depth, error, resumed })  told of each split; resumed when a marker existed
-//   onSingletonFailure(item, error)          the failure recorded for an item that failed on its own
+//   onSingletonFailure(item, message, error) the failure recorded for an item that failed on its own; it may
+//                                            throw instead, to fail the stage
 export async function runSplittingBatches(batch, options, depth = 0) {
   const { run, markerPath, marker, onSplit, onSingletonFailure, lifecycle } = options;
   const splitMarkerPath = markerPath(batch);
@@ -156,7 +158,7 @@ export async function runSplittingBatches(batch, options, depth = 0) {
     } catch (error) {
       if (lifecycle.aborting) throw error;
       const message = errorMessage(error);
-      if (batch.length === 1) return { results: [], failures: [await onSingletonFailure(batch[0], message)] };
+      if (batch.length === 1) return { results: [], failures: [await onSingletonFailure(batch[0], message, error)] };
       writeJsonAtomic(splitMarkerPath, marker(batch, message, depth));
       onSplit({ batch, halves, depth, error: message, resumed: false });
     }
@@ -166,4 +168,16 @@ export async function runSplittingBatches(batch, options, depth = 0) {
   const left = await runSplittingBatches(halves[0], options, depth + 1);
   const right = await runSplittingBatches(halves[1], options, depth + 1);
   return { results: [...left.results, ...right.results], failures: [...left.failures, ...right.failures] };
+}
+
+// A request that fails even for a single item is blamed on that item only while the model still answers its
+// readiness check. Otherwise this rethrows the request's error: the stage fails, nothing is blamed, and the
+// runner's own readiness check ends the cycle.
+export async function rethrowIfModelDown(error, config, lifecycle) {
+  try {
+    await checkModelReady(config, { activeChildren: lifecycle.activeChildren });
+  } catch (readinessError) {
+    process.stderr.write(`${config.label} ${config.model} failed its readiness check as well: ${errorMessage(readinessError)}\n`);
+    throw error;
+  }
 }
