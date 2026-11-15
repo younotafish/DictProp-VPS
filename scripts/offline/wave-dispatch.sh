@@ -53,8 +53,8 @@ load_published_waves() {
   done < <(find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -type f -name manifest.json ! -path '*.failed*' | sort)
 }
 
-# The number after the highest wave in STATE_ROOT, so a wave directory is never prepared twice. The other
-# dispatchers number a wave one past the waves published, which resumes an unpublished wave in place.
+# The number after the highest wave in STATE_ROOT. Waves set aside as wave-N.failed don't count, so a
+# fresh directory can take a set-aside wave's number.
 next_wave_number() {
   local next=1 wave_dir suffix number
   while IFS= read -r wave_dir; do
@@ -71,6 +71,26 @@ open_wave() {
   WAVE_NAME="wave-$(printf '%04d' "$1")"
   WAVE_DIR="$STATE_ROOT/$WAVE_NAME"
   mkdir -p "$WAVE_DIR"
+}
+
+# Opens a fresh wave after the highest in STATE_ROOT. A wave an earlier run left neither published nor set
+# aside, because that run was killed or its publisher stopped short, is set aside first instead of being
+# prepared again: its images/ can hold links from that run's selection, which tar would ship with the new
+# one. The sweep removes waves set aside once they have been idle for a week.
+open_next_wave() {
+  local wave_dir
+  while IFS= read -r wave_dir; do
+    if [ ! -s "$wave_dir/published" ] && [ ! -s "$wave_dir/publisher/complete" ]; then
+      set_wave_aside "$wave_dir"
+      log "${wave_dir##*/} was left unpublished by an earlier run; set it aside as ${WAVE_SET_ASIDE_AS##*/}"
+    fi
+  done < <(find "$STATE_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'wave-[0-9][0-9][0-9][0-9]' | sort)
+  open_wave "$(next_wave_number)"
+}
+
+# discard_wave: removes the wave just opened when its preparer found nothing to put in it.
+discard_wave() {
+  rm -rf "$WAVE_DIR"
 }
 
 # prepare_wave PREPARER ARG...: runs the wave preparer, which skips the published waves' entries, and prints
@@ -152,13 +172,12 @@ ensure_release() {
   done
 }
 
-# The failed wave is kept for inspection under a name the dispatchers ignore, and its entries go into a
-# fresh wave with a new release on the next run.
+# set_wave_aside WAVE_DIR: keeps the wave for inspection as wave-N.failed (WAVE_SET_ASIDE_AS), a name the
+# dispatchers ignore, so its entries go into a fresh wave with a new release.
 set_wave_aside() {
-  local failed="$1.failed"
-  if [ -e "$failed" ]; then failed="$1.failed-$(date -u +%Y%m%dT%H%M%SZ)"; fi
-  mv "$1" "$failed"
-  log "publication of ${1##*/} failed; set it aside as ${failed##*/} so the next run starts a fresh wave"
+  WAVE_SET_ASIDE_AS="$1.failed"
+  if [ -e "$WAVE_SET_ASIDE_AS" ]; then WAVE_SET_ASIDE_AS="$1.failed-$(date -u +%Y%m%dT%H%M%SZ)"; fi
+  mv "$1" "$WAVE_SET_ASIDE_AS"
 }
 
 # publish_wave ARCHIVE ASSET OPERATION: has the publisher import the wave, keeping its state in the wave.
@@ -167,7 +186,10 @@ set_wave_aside() {
 publish_wave() {
   if ! PUBLISH_STATE_DIR="$WAVE_DIR/publisher" scripts/offline/publish-backfill-release.sh \
     "$RELEASE_TAG" "$1" "$2" "$3" "$REQUIRED_DEPLOY_SHA" 300; then
-    if [ -e "$WAVE_DIR/publisher/failed" ]; then set_wave_aside "$WAVE_DIR"; fi
+    if [ -e "$WAVE_DIR/publisher/failed" ]; then
+      set_wave_aside "$WAVE_DIR"
+      log "publication of $WAVE_NAME failed; set it aside as ${WAVE_SET_ASIDE_AS##*/} so the next run starts a fresh wave"
+    fi
     exit 1
   fi
   date -u +%FT%TZ > "$WAVE_DIR/published"

@@ -43,9 +43,13 @@ while :; do
     exit 0
   fi
 
+  # One past the waves published, so a wave an earlier run left unpublished is prepared again in place,
+  # as server/test/incremental-saved-sentences.test.ts expects; the other dispatchers set it aside instead
+  # (open_next_wave).
   open_wave "$((${#PUBLISHED_MANIFESTS[@]} + 1))"
   WAVE_COUNT="$(prepare_wave scripts/offline/prepare-saved-sentence-analysis-wave.mjs "$ANALYSIS" "$WAVE_DIR" "$BATCH_SIZE")"
   if [ "$WAVE_COUNT" -eq 0 ]; then
+    discard_wave
     echo "No unpublished saved sentence analyses were found at $PUBLISHED_COUNT/$TOTAL_COUNT" >&2
     exit 1
   fi

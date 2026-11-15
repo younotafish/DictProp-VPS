@@ -53,9 +53,10 @@ while :; do
     continue
   fi
 
-  open_wave "$((${#PUBLISHED_MANIFESTS[@]} + 1))"
+  open_next_wave
   WAVE_COUNT="$(prepare_wave scripts/offline/prepare-offline-audio-wave.mjs "$SOURCE_ROOT" "$WAVE_DIR" "$BATCH_SIZE")"
   if [ "$WAVE_COUNT" -eq 0 ]; then
+    discard_wave
     log "no unpublished verified audio was found; retrying later"
     sleep 30
     continue

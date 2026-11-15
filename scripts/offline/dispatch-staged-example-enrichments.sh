@@ -67,10 +67,11 @@ while :; do
     continue
   fi
 
-  open_wave "$(next_wave_number)"
+  open_next_wave
   WAVE_COUNT="$(prepare_wave scripts/offline/prepare-example-enrichment-wave.mjs \
     "$SOURCE" "$ANALYSIS" "$IMAGE_ROOT" "$WAVE_DIR" "$BATCH_SIZE")"
   if [ "$WAVE_COUNT" -eq 0 ]; then
+    discard_wave
     # With image generation finished, nothing will change while this waits.
     if [ "${ALLOW_DEFERRED_IMAGES:-0}" = 1 ]; then
       echo "No unpublished verified enrichments were found for $READY_COUNT accepted image(s) at $PUBLISHED_COUNT/$TOTAL_COUNT" >&2

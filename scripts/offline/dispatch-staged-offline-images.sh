@@ -54,9 +54,10 @@ while :; do
     continue
   fi
 
-  open_wave "$((${#PUBLISHED_MANIFESTS[@]} + 1))"
+  open_next_wave
   WAVE_COUNT="$(prepare_wave scripts/offline/prepare-offline-image-wave.mjs "$SOURCE_ROOT" "$WAVE_DIR" "$BATCH_SIZE")"
   if [ "$WAVE_COUNT" -eq 0 ]; then
+    discard_wave
     log "no unpublished verified images were found; retrying later"
     wait_or_give_up "still no unpublished verified images" 60
     continue

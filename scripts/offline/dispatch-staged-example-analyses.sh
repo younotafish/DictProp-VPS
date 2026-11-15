@@ -45,9 +45,10 @@ while :; do
     exit 0
   fi
 
-  open_wave "$(next_wave_number)"
+  open_next_wave
   WAVE_COUNT="$(prepare_wave scripts/offline/prepare-example-analysis-wave.mjs "$SOURCE" "$ANALYSIS" "$WAVE_DIR" "$BATCH_SIZE")"
   if [ "$WAVE_COUNT" -eq 0 ]; then
+    discard_wave
     echo "No unpublished analyses were found at $PUBLISHED_COUNT/$TOTAL_COUNT" >&2
     exit 1
   fi

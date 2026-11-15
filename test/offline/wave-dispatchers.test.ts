@@ -17,7 +17,7 @@ const DEPLOY_SHA = 'c0ffee'.repeat(6) + 'c0ff';
 
 // Where each preparer finds its wave directory, batch size and source files, and the key a published
 // manifest excludes.
-const PREPARE_STUB = `import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+const PREPARE_STUB = `import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 const layouts = {
@@ -34,10 +34,13 @@ if (process.env.FAKE_PREPARE === 'fail') {
 }
 const layout = layouts[basename(process.argv[1])];
 const args = process.argv.slice(2);
+// The first wave comes out empty, as when no image is verified yet; later ones take entries as usual.
+const emptyOnce = process.env.FAKE_PREPARE === 'empty-once' && !existsSync('prepared-empty');
+if (emptyOnce) writeFileSync('prepared-empty', '');
 const published = new Set(args.slice(layout.batch + 1)
   .flatMap(path => JSON.parse(readFileSync(path, 'utf8')).entries.map(entry => entry[layout.key])));
 const pool = JSON.parse(readFileSync('wave-pool.json', 'utf8'));
-const selected = pool.filter(entry => !published.has(entry[layout.key])).slice(0, Number(args[layout.batch]));
+const selected = emptyOnce ? [] : pool.filter(entry => !published.has(entry[layout.key])).slice(0, Number(args[layout.batch]));
 const waveDir = args[layout.wave];
 mkdirSync(waveDir, { recursive: true });
 for (const entry of selected) {
@@ -108,6 +111,8 @@ async function dispatch(root: string, name: string, run: Run) {
     cwd,
     env: {
       ...process.env,
+      // A run's inputs can stand in for a tool here, as the empty-wave run does for sleep.
+      PATH: `${join(cwd, 'bin')}:${process.env.PATH ?? '/usr/bin:/bin'}`,
       GH_BIN: join(cwd, 'gh'),
       GITHUB_REPOSITORY: 'test-owner/test-repo',
       SENTENCE_BRIDGE_KEY_FILE: join(cwd, 'key'),
@@ -267,6 +272,39 @@ const RUNS: Record<string, Run> = {
       writeFileSync(join(wave, 'release-tag'), 'vocab-images-wave-0001-20260101T000000Z\n');
       mkdirSync(join(wave, 'publisher'));
       writeFileSync(join(wave, 'publisher', 'complete'), '2026-01-01T00:00:00Z\n');
+      return entries;
+    },
+  },
+  'images-abandoned': {
+    dispatcher: 'dispatch-staged-offline-images.sh',
+    args: ['item-images', '1', DEPLOY_SHA],
+    env: { OFFLINE_IMAGE_WAVE_STATE_ROOT: 'state', OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS: '0' },
+    inputs: async cwd => {
+      const entries = ['i1', 'i2'].map(id => ({ imageId: id, imageFile: `images/${id}.webp` }));
+      writeFile(join(cwd, 'item-images', 'manifest.json'), { version: 1, entries });
+      mkdirSync(join(cwd, 'item-images', 'images'), { recursive: true });
+      for (const entry of entries) writeFileSync(join(cwd, 'item-images', entry.imageFile), await webp(1024, 576));
+      // An earlier run was killed with its first wave prepared, an image from another selection included.
+      const wave = join(cwd, 'state', 'wave-0001');
+      writeFile(join(wave, 'manifest.json'), { version: 1, entries: [entries[0]] });
+      writeFileSync(join(wave, 'release-tag'), 'vocab-images-wave-0001-20260101T000000Z\n');
+      mkdirSync(join(wave, 'images'));
+      writeFileSync(join(wave, 'images', 'stale.webp'), await webp(1024, 576));
+      return entries;
+    },
+  },
+  'images-empty': {
+    dispatcher: 'dispatch-staged-offline-images.sh',
+    args: ['item-images', '1', DEPLOY_SHA],
+    env: { OFFLINE_IMAGE_WAVE_STATE_ROOT: 'state', OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS: '0', FAKE_PREPARE: 'empty-once' },
+    inputs: async cwd => {
+      const entries = [{ imageId: 'i1', imageFile: 'images/i1.webp' }];
+      writeFile(join(cwd, 'item-images', 'manifest.json'), { version: 1, entries });
+      mkdirSync(join(cwd, 'item-images', 'images'), { recursive: true });
+      writeFileSync(join(cwd, 'item-images', entries[0].imageFile), await webp(1024, 576));
+      // The dispatcher's minute-long wait for the next try passes at once.
+      mkdirSync(join(cwd, 'bin'));
+      writeExecutable(join(cwd, 'bin', 'sleep'), '#!/bin/sh\nexit 0\n');
       return entries;
     },
   },
@@ -497,6 +535,36 @@ test('a wave the publisher verified before its dispatcher stopped counts as publ
   ]);
   assert.ok(marked(run.cwd, 'wave-0001', 'published'));
   assert.equal(run.stdout.at(-1), 'item image publication complete: 2/2');
+});
+
+test('a wave an earlier run left unpublished is set aside, and a fresh one carries only its own entries', async () => {
+  const run = await result('images-abandoned');
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(run.published.map(line => line.split(' ').slice(1).join(' ')), [
+    `state/wave-0001/offline-images.enc offline-images.enc image-import ${DEPLOY_SHA} 300 state=state/wave-0001/publisher files=images/i1.webp,manifest.json`,
+    `state/wave-0002/offline-images.enc offline-images.enc image-import ${DEPLOY_SHA} 300 state=state/wave-0002/publisher files=images/i2.webp,manifest.json`,
+  ]);
+  assert.deepEqual(run.stdout.slice(0, 3), [
+    'wave-0001 was left unpublished by an earlier run; set it aside as wave-0001.failed',
+    'Validated 1 staged offline images',
+    'wave-0001 published (1 new images); cooling down for 0s',
+  ]);
+  assert.deepEqual(waves(run.cwd), ['wave-0001', 'wave-0001.failed', 'wave-0002']);
+  // The fresh wave has a release of its own.
+  assert.notEqual(readFileSync(join(run.cwd, 'state', 'wave-0001', 'release-tag'), 'utf8'), 'vocab-images-wave-0001-20260101T000000Z\n');
+});
+
+test('an empty wave is discarded, so the next try does not take it for a wave an earlier run left', async () => {
+  const run = await result('images-empty');
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(run.stdout, [
+    'no unpublished verified images were found; retrying later',
+    'Validated 1 staged offline images',
+    'wave-0001 published (1 new images); cooling down for 0s',
+    'all 1 item images are published',
+    'item image publication complete: 1/1',
+  ]);
+  assert.deepEqual(waves(run.cwd), ['wave-0001']);
 });
 
 test('the audio dispatcher keeps its publisher state in the wave and sets a failed wave aside', async () => {

@@ -39,9 +39,10 @@ while :; do
     exit 0
   fi
 
-  open_wave "$((${#PUBLISHED_MANIFESTS[@]} + 1))"
+  open_next_wave
   WAVE_COUNT="$(prepare_wave scripts/offline/prepare-corpus-audit-wave.mjs "$SOURCE_MANIFEST" "$WAVE_DIR" "$BATCH_SIZE")"
   if [ "$WAVE_COUNT" -eq 0 ]; then
+    discard_wave
     echo "No unpublished corpus records were found at $PUBLISHED_COUNT/$TOTAL_COUNT" >&2
     exit 1
   fi
