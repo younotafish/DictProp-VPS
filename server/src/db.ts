@@ -9,6 +9,7 @@ export {
   getItemImagesBatch,
   hasItemImage,
   upsertItemImageBinary,
+  type ImageStoreResult,
 } from './db/images.js';
 export {
   getSentenceEnrichmentCount,

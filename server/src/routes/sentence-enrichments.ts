@@ -30,7 +30,7 @@ sentenceEnrichmentRoutes.post('/sentence-enrichments/lookup', async (c) => {
 
 sentenceEnrichmentRoutes.get('/sentence-enrichments/:lookupHash/image', (c) => {
   const image = getSentenceEnrichmentImage(c.req.param('lookupHash'));
-  if (!image) return c.notFound();
+  if (!image) return c.json({ error: 'Not found' }, 404);
   return new Response(image.data, {
     headers: {
       'Content-Type': image.mimeType,

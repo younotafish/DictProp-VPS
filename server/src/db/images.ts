@@ -69,10 +69,19 @@ const inlineStmts = {
     WHERE user_id = ? AND type = 'phrase' AND data LIKE '%data:image/%'`),
 };
 
-function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeType: string, updatedAt: number): boolean {
-  if (!isValidImage(data, mimeType)) return false;
+/** What storing an image came to: stored, or refused for bytes that aren't the declared type or an id another user owns. */
+export type ImageStoreResult = 'stored' | 'invalid' | 'forbidden';
+
+export function storeImageBuffer(
+  id: string,
+  userId: string | null,
+  data: Buffer,
+  mimeType: string,
+  updatedAt: number,
+): ImageStoreResult {
+  if (!isValidImage(data, mimeType)) return 'invalid';
   const owner = imageStmts.owner.get(id) as { user_id: string | null; content_hash: string | null } | undefined;
-  if (owner?.user_id && owner.user_id !== userId) return false;
+  if (owner?.user_id && owner.user_id !== userId) return 'forbidden';
   const contentHash = createHash('sha256').update(data).digest('hex');
   imageStmts.upsertBlob.run({
     content_hash: contentHash, data, byte_length: data.length, created_at: updatedAt,
@@ -84,16 +93,17 @@ function storeImageBuffer(id: string, userId: string | null, data: Buffer, mimeT
   if (reference.changes > 0 && owner?.content_hash && owner.content_hash !== contentHash) {
     deleteUnreferencedBlobs([owner.content_hash]);
   }
-  return reference.changes > 0;
+  // The upsert skips a row another user claimed since the owner check above.
+  return reference.changes > 0 ? 'stored' : 'forbidden';
 }
 
 export function storeImage(id: string, userId: string | null, dataUri: string, updatedAt: number): boolean {
   const parsed = parseImageDataUri(dataUri);
-  return parsed ? storeImageBuffer(id, userId, parsed.data, parsed.mimeType, updatedAt) : false;
+  return parsed ? storeImageBuffer(id, userId, parsed.data, parsed.mimeType, updatedAt) === 'stored' : false;
 }
 
 export const upsertItemImageBinary = writeTransaction((id: string, data: Buffer, mimeType: string, userId: string): boolean =>
-  storeImageBuffer(id, userId, data, mimeType, Date.now()));
+  storeImageBuffer(id, userId, data, mimeType, Date.now()) === 'stored');
 
 function storedImageToDataUri(row: { data: Buffer | string; mime_type?: string | null } | undefined): string | null {
   // A blob reference whose blob is gone reads back as the row's empty placeholder: that is no image.

@@ -4,7 +4,8 @@ import { keepServerOwnedData } from '../shared/server-owned-data.js';
 import type { ItemType } from '../validation-helpers.js';
 import { db, writeTransaction } from './connection.js';
 import {
-  getItemImagesBatch, hasItemImage, imageStmts, linkSentenceEnrichmentImage, storeImage, upsertItemImageBinary,
+  getItemImagesBatch, hasItemImage, imageStmts, linkSentenceEnrichmentImage, storeImage, storeImageBuffer,
+  type ImageStoreResult,
 } from './images.js';
 import {
   isJsonObject, isStaleContent, resolveSrs, sameJson, splitInlineImages, withPoolAnalysis, type InlineImage, type JsonObject,
@@ -374,8 +375,8 @@ export const touchItemRevisions = writeTransaction((imageIds: readonly string[],
 });
 
 /** Store an image for an item or phrase vocab id, together with the revisions that announce it to delta clients. */
-export const storeItemImage = writeTransaction((id: string, data: Buffer, mimeType: string, userId: string): boolean => {
-  if (!upsertItemImageBinary(id, data, mimeType, userId)) return false;
-  touchItemRevisions([id], userId);
-  return true;
+export const storeItemImage = writeTransaction((id: string, data: Buffer, mimeType: string, userId: string): ImageStoreResult => {
+  const result = storeImageBuffer(id, userId, data, mimeType, Date.now());
+  if (result === 'stored') touchItemRevisions([id], userId);
+  return result;
 });

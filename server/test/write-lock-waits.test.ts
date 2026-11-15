@@ -56,7 +56,7 @@ test('a review, its undo and an image upload wait for the write lock too', async
   };
   assert.equal((await whileLocked(() => applyReviewEvent(event, [event.itemId], USER))).result?.applied, true);
   assert.equal((await whileLocked(() => undoReviewEvent(event.id, USER))).result?.undone, true);
-  assert.equal((await whileLocked(() => storeItemImage('lock-reviewed', png('lock'), 'image/png', USER))).result, true);
+  assert.equal((await whileLocked(() => storeItemImage('lock-reviewed', png('lock'), 'image/png', USER))).result, 'stored');
 });
 
 test('an importer can still run these writes inside its own transaction', () => {
