@@ -3,6 +3,7 @@ import type { SentenceData, StoredItem } from '../../types';
 import { warn } from '../../services/logger';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { hasDetailedSentenceAnalysis, mergePreparedSentence, SENTENCE_PREFETCH_AHEAD } from './detailUtils';
+import { isCatalogProgressItem } from './useSavedSentenceIndex';
 
 interface SentenceEnrichmentOptions {
   sentenceItems: StoredItem[];
@@ -73,7 +74,8 @@ export function useSentenceEnrichment({ sentenceItems, sentenceIndex, savedSente
           (!!sourceSentence.catalogSentenceId &&
             candidateData.catalogSentenceId === sourceSentence.catalogSentenceId &&
             candidateData.catalogCollectionId === sourceSentence.catalogCollectionId) ||
-          normalizeSentenceIdentity(candidateData.text) === normalizeSentenceIdentity(sourceSentence.text);
+          (!isCatalogProgressItem(candidate) &&
+            normalizeSentenceIdentity(candidateData.text) === normalizeSentenceIdentity(sourceSentence.text));
       });
       if (!savedMatch) return;
 

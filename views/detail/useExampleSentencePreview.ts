@@ -3,10 +3,9 @@ import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type Sente
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { stopCurrent } from '../../services/lazyTts';
 import { error as logError } from '../../services/logger';
-import { isRealLifeProgressItem } from '../../services/realLifeProgressIdentity';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
-import type { SavedSentenceIndex } from './useSavedSentenceIndex';
+import { isCatalogProgressItem, type SavedSentenceIndex } from './useSavedSentenceIndex';
 import type { DetailViewProps } from './types';
 
 interface ExampleSentencePreviewOptions {
@@ -98,7 +97,7 @@ export function useExampleSentencePreview({
         .concat(savedSentenceIndex.byIdentity.get(
           normalizeSentenceIdentity((exampleSentencePreview.sentence.data as SentenceData).text),
         ) ?? [])
-        .find(item => !!item && !isRealLifeProgressItem(item))
+        .find(item => !!item && !isCatalogProgressItem(item))
     : undefined;
   const previewSentence = exampleSentencePreview
     ? savedPreviewSentence
