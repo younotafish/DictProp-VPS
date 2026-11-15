@@ -337,7 +337,7 @@ test('revision pages report the newest revision the server has issued', () => {
   const issued = db.prepare(`SELECT value FROM sync_meta WHERE key = 'item_revision'`).get() as { value: number };
   assert.equal(page.headRevision, issued.value);
   assert.equal(page.items.length, 2);
-  assert.ok(page.items.every(item => item.serverRevision <= page.headRevision));
+  assert.ok(page.items.every(item => item.serverRevision !== undefined && item.serverRevision <= page.headRevision));
 });
 
 test('storing an image bumps the revision of every item that shows it', () => {

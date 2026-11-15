@@ -28,6 +28,8 @@ export {
   touchItemRevisions,
   upsertItem,
   upsertMany,
+  type ItemRead,
+  type ItemWrite,
   type RevisionCursor,
   type UpsertOptions,
   type UpsertResult,
@@ -38,7 +40,7 @@ export {
   getReviewHistory,
   undoReviewEvent,
   type AppliedReviewResult,
-  type ReviewEventRow,
+  type ReviewEvent,
   type ReviewHistoryRows,
   type UndoneReviewResult,
 } from './db/reviews.js';

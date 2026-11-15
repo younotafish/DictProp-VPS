@@ -1,6 +1,6 @@
 import { db } from './connection.js';
 
-// ─── Comparison prepared statements + accessors ───
+// Word comparisons, one per user and word set (see the comparisons table in schema.ts).
 
 const compStmts = {
   getAll: db.prepare(`SELECT key, words, data, updated_at FROM comparisons WHERE user_id = ?`),
@@ -12,10 +12,10 @@ const compStmts = {
   `),
 };
 
-export interface StoredComparisonRow { key: string; words: string[]; data: any; updatedAt: number }
+export interface StoredComparisonRow { key: string; words: string[]; data: unknown; updatedAt: number }
 
 export function getComparisons(userId: string): StoredComparisonRow[] {
-  const rows = compStmts.getAll.all(userId) as any[];
+  const rows = compStmts.getAll.all(userId) as Array<{ key: string; words: string; data: string; updated_at: number }>;
   return rows.map((r) => ({
     key: r.key,
     words: JSON.parse(r.words),
@@ -25,7 +25,7 @@ export function getComparisons(userId: string): StoredComparisonRow[] {
 }
 
 /** Returns false when the stored comparison is newer, so a device replaying an old copy can't regress it. */
-export function upsertComparison(userId: string, key: string, words: string[], data: any, updatedAt: number): boolean {
+export function upsertComparison(userId: string, key: string, words: string[], data: unknown, updatedAt: number): boolean {
   return compStmts.upsert.run({
     key,
     user_id: userId,

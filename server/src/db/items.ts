@@ -3,7 +3,11 @@ import { serverImageMarker } from '../shared/image-markers.js';
 import { keepServerOwnedData } from '../shared/server-owned-data.js';
 import { db, writeTransaction } from './connection.js';
 import { getItemImagesBatch, imageStmts, linkSentenceEnrichmentImage, storeImage, upsertItemImageBinary } from './images.js';
-import { currentRevision, nextRevision } from './revisions.js';
+import {
+  isJsonObject, isStaleContent, resolveSrs, splitInlineImages, withPoolAnalysis, type InlineImage, type JsonObject,
+} from './item-write.js';
+import type { ItemType } from '../validation-helpers.js';
+import { allocateRevision, headRevision } from './revisions.js';
 import { getSentenceEnrichmentForText } from './sentence-enrichments.js';
 
 // ─── Item prepared statements ───
@@ -38,7 +42,7 @@ export const stmts = {
 // Row → StoredItem JSON
 export interface ItemRow {
   id: string;
-  type: string;
+  type: ItemType;
   data: string;
   srs: string;
   saved_at: number;
@@ -50,6 +54,8 @@ export interface ItemRow {
   revision: number;
 }
 
+// Item data is open JSON, which the routes send on and the scripts read field by field: `any` at this one boundary.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
 function rowToItem(row: ItemRow, data: any = JSON.parse(row.data)) {
   return {
     type: row.type,
@@ -63,6 +69,9 @@ function rowToItem(row: ItemRow, data: any = JSON.parse(row.data)) {
   };
 }
 
+/** An item as the API sends it. */
+export type ItemRead = ReturnType<typeof rowToItem>;
+
 // ─── Item CRUD (all scoped by userId) ───
 
 /**
@@ -74,7 +83,7 @@ function rowsToItems(rows: ItemRow[], userId: string) {
   const parsed = rows.map(row => ({ row, data: JSON.parse(row.data) }));
   const imageIds = parsed.flatMap(({ data }) => [
     data.id,
-    ...(Array.isArray(data.vocabs) ? data.vocabs.map((vocab: any) => vocab?.id) : []),
+    ...(Array.isArray(data.vocabs) ? data.vocabs.map((vocab: unknown) => (isJsonObject(vocab) ? vocab.id : undefined)) : []),
   ]).filter((id): id is string => typeof id === 'string');
   const versions = new Map<string, string>();
   if (imageIds.length > 0) {
@@ -96,8 +105,9 @@ function rowsToItems(rows: ItemRow[], userId: string) {
     const topMarker = markerFor(data.id, data.imageUrl);
     if (topMarker) data.imageUrl = topMarker;
     if (Array.isArray(data.vocabs)) {
-      data.vocabs = data.vocabs.map((vocab: any) => {
-        const marker = markerFor(vocab?.id, vocab?.imageUrl);
+      data.vocabs = data.vocabs.map((vocab: unknown) => {
+        if (!isJsonObject(vocab)) return vocab;
+        const marker = markerFor(vocab.id, vocab.imageUrl);
         return marker ? { ...vocab, imageUrl: marker } : vocab;
       });
     }
@@ -107,7 +117,7 @@ function rowsToItems(rows: ItemRow[], userId: string) {
 
 export function getAllItems(userId: string) {
   const CHUNK = 500;
-  const items: any[] = [];
+  const items: ItemRead[] = [];
   let lastRowId = 0;
   for (;;) {
     const rows = stmts.getAllChunk.all(userId, lastRowId, CHUNK) as Array<ItemRow & { _rowid: number }>;
@@ -124,12 +134,12 @@ export function getAllItems(userId: string) {
 // markers — the caller strips them to match the client's cache key.
 export function getAllSentenceTexts(): string[] {
   const texts = new Set<string>();
-  const add = (t: any) => { if (typeof t === 'string' && t.trim()) texts.add(t.trim()); };
+  const add = (t: unknown) => { if (typeof t === 'string' && t.trim()) texts.add(t.trim()); };
   const stmt = db.prepare(`SELECT data FROM items WHERE is_deleted IS NOT 1`);
   for (const row of stmt.iterate() as Iterable<{ data: string }>) {
-    let d: any;
+    let d: unknown;
     try { d = JSON.parse(row.data); } catch { continue; }
-    if (!d) continue;
+    if (!isJsonObject(d)) continue;
     if (Array.isArray(d.examples)) d.examples.forEach(add);                                  // vocab card
     if (Array.isArray(d.vocabs)) for (const v of d.vocabs) if (Array.isArray(v?.examples)) v.examples.forEach(add); // phrase
     if (typeof d.text === 'string') add(d.text);                                             // saved sentence
@@ -150,7 +160,7 @@ export function getItemsAfterRevision(
   cursor: RevisionCursor,
   limit: number,
   userId: string,
-): { items: any[]; cursor: RevisionCursor; hasMore: boolean; headRevision: number } {
+): { items: ItemRead[]; cursor: RevisionCursor; hasMore: boolean; headRevision: number } {
   const cappedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
   const rows = stmts.getAfterRevision.all(
     userId,
@@ -166,7 +176,7 @@ export function getItemsAfterRevision(
     items: rowsToItems(page, userId),
     cursor: last ? { revision: last.revision, id: last.id } : cursor,
     hasMore,
-    headRevision: (currentRevision.get() as { value: number } | undefined)?.value ?? 0,
+    headRevision: headRevision(),
   };
 }
 
@@ -180,12 +190,31 @@ export interface UpsertOptions {
   replaceServerFields?: boolean;
 }
 
-export function writeItem(item: any, userId: string, options: UpsertOptions): UpsertResult & { enriched: boolean } {
-  let data = item.data;
-  if (!data || !data.id) throw new Error('Item missing data.id');
+/** An item as a client or an importer writes it. The item routes validate this shape; importers build it. */
+export interface ItemWrite {
+  type: string;
+  data: object;
+  srs: object;
+  savedAt?: number;
+  updatedAt?: number;
+  serverRevision?: number;
+  isDeleted?: boolean;
+  isArchived?: boolean;
+}
+
+const storeInlineImage = (image: InlineImage | undefined, userId: string, now: number): boolean =>
+  !!image && storeImage(image.id, userId, image.dataUri, now);
+
+export function writeItem(item: ItemWrite, userId: string, options: UpsertOptions): UpsertResult & {
+  id: string;
+  enriched: boolean;
+} {
+  const incoming = item.data as JsonObject;
+  if (!incoming || !incoming.id) throw new Error('Item missing data.id');
+  const id = String(incoming.id);
 
   const now = Date.now();
-  const existing = stmts.getById.get(data.id) as ItemRow | undefined;
+  const existing = stmts.getById.get(id) as ItemRow | undefined;
   if (existing?.user_id && existing.user_id !== userId) {
     throw new ConflictError('Item id belongs to another user');
   }
@@ -193,115 +222,60 @@ export function writeItem(item: any, userId: string, options: UpsertOptions): Up
   const incomingUpdatedAt = item.updatedAt || now;
   const existingUpdatedAt = existing?.updated_at || 0;
   const existingRevision = existing?.revision || 0;
-  const incomingRevision = typeof item.serverRevision === 'number' ? item.serverRevision : undefined;
 
-  // Content and learning progress have different conflict clocks. An edit can
-  // have newer content while carrying SRS loaded before another device reviewed
-  // the card, so always select SRS independently by its review timestamp.
-  let selectedSrs = item.srs;
-  let srsChanged = false;
-  if (existing) {
-    const existingSrs = JSON.parse(existing.srs);
-    const incomingReview = item.srs?.lastReviewDate || 0;
-    const existingReview = existingSrs?.lastReviewDate || 0;
-    const incomingReviews = item.srs?.totalReviews || 0;
-    const existingReviews = existingSrs?.totalReviews || 0;
-    if (
-      existingReview > incomingReview ||
-      (existingReview === incomingReview && existingReviews > incomingReviews)
-    ) {
-      selectedSrs = existingSrs;
-    } else if (incomingReview > existingReview ||
-               (incomingReview === existingReview && incomingReviews > existingReviews)) {
-      srsChanged = true;
-    }
-
-    // A passive listen is deliberately independent from FSRS review progress. Preserve its newest
-    // timestamp even when the other device owns the newer explicit review, and mark a newer incoming
-    // exposure as an SRS change so stale content cannot suppress its revision.
-    const incomingExposure = Number(item.srs?.lastExposureDate) || 0;
-    const existingExposure = Number(existingSrs?.lastExposureDate) || 0;
-    const latestExposure = Math.max(incomingExposure, existingExposure);
-    if ((Number(selectedSrs?.lastExposureDate) || 0) !== latestExposure) {
-      selectedSrs = { ...selectedSrs, lastExposureDate: latestExposure };
-    }
-    if (incomingExposure > existingExposure) srsChanged = true;
-  }
-
-  // Ignore stale content while still accepting a newer review selected above.
-  const staleContent = !!existing && (incomingRevision !== undefined
-    ? incomingRevision < existingRevision
-    : incomingUpdatedAt < existingUpdatedAt);
+  const { srs, changed: srsChanged } = existing
+    ? resolveSrs(JSON.parse(existing.srs), item.srs)
+    : { srs: item.srs, changed: false };
+  const staleContent = !!existing && isStaleContent({
+    storedRevision: existingRevision,
+    incomingRevision: typeof item.serverRevision === 'number' ? item.serverRevision : undefined,
+    storedUpdatedAt: existingUpdatedAt,
+    incomingUpdatedAt,
+  });
 
   // A prepared example sentence upgrades itself when it is saved. This lookup is tiny and indexed;
   // the full enrichment pool never enters normal item reads. Preserve any explicit item analysis.
-  const enrichment = !staleContent && item.type === 'sentence' && !item.isDeleted &&
-    typeof data.text === 'string'
-    ? getSentenceEnrichmentForText(data.text)
+  const pool = !staleContent && item.type === 'sentence' && !item.isDeleted && typeof incoming.text === 'string'
+    ? getSentenceEnrichmentForText(incoming.text)
     : null;
-  let enriched = false;
-  if (enrichment && !data.analysis) {
-    data = {
-      ...data,
-      analysis: enrichment.analysis,
-      analysisGeneratedAt: enrichment.generatedAt,
-    };
-    enriched = true;
-  }
+  const { data: analysed, enriched } = withPoolAnalysis(incoming, pool);
 
   // After the pool, which returns the sentence it analyses to the saving client. Kept fields aren't returned.
-  const beforeKeeping = data;
-  if (existing && existing.is_deleted !== 1 && !staleContent && !item.isDeleted && !options.replaceServerFields) {
-    data = keepServerOwnedData(data, item.type, JSON.parse(existing.data), existing.type);
-  }
-  const keptServerFields = data !== beforeKeeping;
+  const data = existing && existing.is_deleted !== 1 && !staleContent && !item.isDeleted && !options.replaceServerFields
+    ? keepServerOwnedData(analysed, item.type, JSON.parse(existing.data), existing.type)
+    : analysed;
+  const keptServerFields = data !== analysed;
 
-  // Capture any incoming base64 into item_images, then strip imageUrl from the data we
-  // store — base64 and markers ('idb:stored'/'server:has_image') never live in items.data.
-  // For markers / missing / non-base64, we leave item_images untouched (and NEVER delete:
-  // a vocab id can be shared with a standalone item). This replaces the old fragile,
-  // index-based image-preservation, which could clobber real images with markers.
-  let imagesChanged = false;
-  const captureImage = (id: string | undefined, url: unknown) => {
-    if (id && typeof url === 'string' && url.startsWith('data:image/')) {
-      if (storeImage(id, userId, url, now)) imagesChanged = true;
-    }
-  };
-
-  captureImage(data.id, data.imageUrl);
-  if (enrichment && linkSentenceEnrichmentImage(
-    data.id,
-    userId,
-    enrichment.imageContentHash,
-    enrichment.imageMimeType,
-    now,
-  )) {
+  // The item's own inline image goes first, so the pool's image only fills an item that has none.
+  const { stored, itemImage, vocabImages } = splitInlineImages(data);
+  let imagesChanged = storeInlineImage(itemImage, userId, now);
+  if (pool && linkSentenceEnrichmentImage(id, userId, pool.imageContentHash, pool.imageMimeType, now)) {
     imagesChanged = true;
   }
-  const { imageUrl: _topImageUrl, ...rest } = data;
-  const finalData: any = rest;
-  if (Array.isArray(data.vocabs)) {
-    finalData.vocabs = data.vocabs.map((v: any) => {
-      if (v && typeof v === 'object') {
-        captureImage(v.id, v.imageUrl);
-        if ('imageUrl' in v) {
-          const { imageUrl: _vImageUrl, ...vRest } = v;
-          return vRest;
-        }
-      }
-      return v;
-    });
+  for (const image of vocabImages) {
+    if (storeInlineImage(image, userId, now)) imagesChanged = true;
   }
 
+  const content = staleContent && existing
+    ? {
+        type: existing.type,
+        data: existing.data,
+        saved_at: existing.saved_at,
+        is_deleted: existing.is_deleted,
+        is_archived: existing.is_archived,
+      }
+    : {
+        type: item.type,
+        data: JSON.stringify(stored),
+        saved_at: item.savedAt || now,
+        is_deleted: item.isDeleted ? 1 : 0,
+        is_archived: item.isArchived ? 1 : 0,
+      };
   const row = {
-    id: data.id,
-    type: staleContent ? existing.type : item.type,
-    data: staleContent ? existing.data : JSON.stringify(finalData),
-    srs: JSON.stringify(selectedSrs),
-    saved_at: staleContent ? existing.saved_at : (item.savedAt || now),
+    id,
+    ...content,
+    srs: JSON.stringify(srs),
     updated_at: staleContent && !srsChanged ? existingUpdatedAt : Math.max(existingUpdatedAt, incomingUpdatedAt),
-    is_deleted: staleContent ? existing.is_deleted : (item.isDeleted ? 1 : 0),
-    is_archived: staleContent ? existing.is_archived : (item.isArchived ? 1 : 0),
     user_id: userId,
     project: null,
   };
@@ -309,25 +283,23 @@ export function writeItem(item: any, userId: string, options: UpsertOptions): Up
   // data at an unchanged revision and pushes that copy again, so a revision per push would never settle.
   if (existing && keptServerFields && !imagesChanged && !enriched &&
       (Object.keys(row) as Array<keyof typeof row>).every(key => row[key] === existing[key])) {
-    return { revision: existingRevision, conflicted: false, enriched: false };
+    return { id, revision: existingRevision, conflicted: false, enriched: false };
   }
-  const revision = staleContent && !srsChanged
-    ? existingRevision
-    : ((nextRevision.get() as { value: number }).value);
+  const revision = staleContent && !srsChanged ? existingRevision : allocateRevision();
   stmts.upsert.run({ ...row, revision });
-  return { revision, conflicted: staleContent, enriched };
+  return { id, revision, conflicted: staleContent, enriched };
 }
 
 // The item row, its captured images and its revision commit together.
 const writeItemTransaction = writeTransaction(writeItem);
 
-export function upsertItem(item: any, userId: string, options: UpsertOptions = {}): UpsertResult {
+export function upsertItem(item: ItemWrite, userId: string, options: UpsertOptions = {}): UpsertResult {
   const { revision, conflicted } = writeItemTransaction(item, userId, options);
   return { revision, conflicted };
 }
 
 /** `enriched` lists the sentences the example-enrichment pool just gave an analysis. */
-export const upsertMany = writeTransaction((items: any[], userId: string, options: UpsertOptions = {}): {
+export const upsertMany = writeTransaction((items: ItemWrite[], userId: string, options: UpsertOptions = {}): {
   revisions: Record<string, number>;
   conflicts: string[];
   enriched: string[];
@@ -337,9 +309,9 @@ export const upsertMany = writeTransaction((items: any[], userId: string, option
   const enriched: string[] = [];
   for (const item of items) {
     const result = writeItem(item, userId, options);
-    if (result.conflicted) conflicts.push(item.data.id);
-    else revisions[item.data.id] = result.revision;
-    if (result.enriched) enriched.push(item.data.id);
+    if (result.conflicted) conflicts.push(result.id);
+    else revisions[result.id] = result.revision;
+    if (result.enriched) enriched.push(result.id);
   }
   return { revisions, conflicts, enriched };
 });
@@ -347,8 +319,7 @@ export const upsertMany = writeTransaction((items: any[], userId: string, option
 export const softDeleteItem = writeTransaction((id: string, userId: string): boolean => {
   // Deleting an id the user doesn't have changes nothing, so it must not advance the revision clock.
   if (!stmts.existsScoped.get(id, userId)) return false;
-  const revision = (nextRevision.get() as { value: number }).value;
-  stmts.softDelete.run(Date.now(), revision, id, userId);
+  stmts.softDelete.run(Date.now(), allocateRevision(), id, userId);
   return true;
 });
 
@@ -358,8 +329,8 @@ export function getItemById(id: string, userId: string, includeImages = true) {
   if (!includeImages) return rowsToItems([row], userId)[0];
   const item = rowToItem(row);
   // Re-inject base64 from item_images for this single item.
-  const d = item.data as any;
-  const ids = [d.id, ...(Array.isArray(d.vocabs) ? d.vocabs.map((v: any) => v.id) : [])].filter(Boolean);
+  const d = item.data;
+  const ids = [d.id, ...(Array.isArray(d.vocabs) ? d.vocabs.map((v: { id: unknown }) => v.id) : [])].filter(Boolean);
   const imgs = getItemImagesBatch(ids, userId);
   if (imgs[d.id]) d.imageUrl = imgs[d.id];
   if (Array.isArray(d.vocabs)) for (const v of d.vocabs) if (imgs[v.id]) v.imageUrl = imgs[v.id];
@@ -383,11 +354,11 @@ export const touchItemRevisions = writeTransaction((imageIds: readonly string[],
     for (const phrase of phrases) {
       try {
         const vocabs = JSON.parse(phrase.data).vocabs;
-        if (Array.isArray(vocabs) && vocabs.some((vocab: any) => vocab?.id === imageId)) owners.add(phrase.id);
+        if (Array.isArray(vocabs) && vocabs.some(vocab => vocab?.id === imageId)) owners.add(phrase.id);
       } catch { /* an unparseable row shows no images */ }
     }
   }
-  for (const id of owners) touchStmts.bump.run((nextRevision.get() as { value: number }).value, id, userId);
+  for (const id of owners) touchStmts.bump.run(allocateRevision(), id, userId);
 });
 
 /** Store an image for an item or phrase vocab id, together with the revisions that announce it to delta clients. */

@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { isSupportedImageMime, isValidImage } from '../image-format.js';
-import { hasCompleteSentenceAnalysis } from '../sentence-analysis.js';
+import { hasCompleteSentenceAnalysis, type SentenceAnalysis } from '../sentence-analysis.js';
 import { sentenceLookupHash, type SentenceEnrichmentEntry } from '../sentence-enrichment.js';
 import { db, writeTransaction } from './connection.js';
 import { deleteUnreferencedBlobs, imageStmts } from './images.js';
@@ -78,7 +78,7 @@ export function getSentenceEnrichmentCount(): number {
 }
 
 export function getSentenceEnrichmentForText(text: string): {
-  analysis: any;
+  analysis: SentenceAnalysis;
   generatedAt: number;
   imageContentHash: string | null;
   imageMimeType: string | null;

@@ -1,14 +1,16 @@
 import { ConflictError } from '../errors.js';
 import type { ReviewRating, ReviewTaskType } from '../shared/review.js';
 import { advanceReviewSrs } from '../srs.js';
+import type { ItemType } from '../validation-helpers.js';
 import { db, writeTransaction } from './connection.js';
-import { getItemById, stmts, writeItem, type ItemRow } from './items.js';
-import { nextRevision } from './revisions.js';
+import { getItemById, stmts, writeItem, type ItemRead, type ItemRow, type ItemWrite } from './items.js';
+import { compareReviewProgress, sortedKeys } from './item-write.js';
+import { allocateRevision } from './revisions.js';
 
-export interface ReviewEventRow {
+export interface ReviewEvent {
   id: string;
   itemId: string;
-  itemType: 'vocab' | 'phrase' | 'sentence';
+  itemType: ItemType;
   reviewedAt: number;
   previousStep: number;
   nextStep: number;
@@ -16,6 +18,36 @@ export interface ReviewEventRow {
   taskType?: ReviewTaskType;
   durationMs?: number;
   sessionId?: string;
+}
+
+interface ReviewEventColumns {
+  id: string;
+  item_id: string;
+  item_type: ItemType;
+  reviewed_at: number;
+  previous_step: number;
+  next_step: number;
+  rating: ReviewRating | null;
+  task_type: ReviewTaskType | null;
+  duration_ms: number | null;
+  session_id: string | null;
+}
+
+interface ReviewEventDbRow extends ReviewEventColumns {
+  user_id: string;
+  undone_at: number | null;
+}
+
+/** A stored review as the API sends it: optional fields a review didn't record are left out. */
+function rowToReviewEvent(row: ReviewEventColumns): ReviewEvent {
+  return {
+    id: row.id, itemId: row.item_id, itemType: row.item_type, reviewedAt: row.reviewed_at,
+    previousStep: row.previous_step, nextStep: row.next_step,
+    rating: row.rating || 'good',
+    ...(row.task_type ? { taskType: row.task_type } : {}),
+    ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
+    ...(row.session_id ? { sessionId: row.session_id } : {}),
+  };
 }
 
 const reviewStmts = {
@@ -37,22 +69,15 @@ const reviewStmts = {
   markUndone: db.prepare(`UPDATE review_events SET undone_at = ? WHERE id = ? AND user_id = ? AND undone_at IS NULL`),
 };
 
-export function getReviewEvents(userId: string, since: number): ReviewEventRow[] {
-  return (reviewStmts.recent.all(userId, since) as any[]).map(row => ({
-    id: row.id, itemId: row.item_id, itemType: row.item_type, reviewedAt: row.reviewed_at,
-    previousStep: row.previous_step, nextStep: row.next_step,
-    rating: row.rating || 'good',
-    ...(row.task_type ? { taskType: row.task_type } : {}),
-    ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
-    ...(row.session_id ? { sessionId: row.session_id } : {}),
-  }));
+export function getReviewEvents(userId: string, since: number): ReviewEvent[] {
+  return (reviewStmts.recent.all(userId, since) as ReviewEventColumns[]).map(rowToReviewEvent);
 }
 
 /** A year and a day: as far back as the study dashboard's streak can reach. */
 const REVIEW_TIMES_REACH = 366 * 24 * 60 * 60 * 1000;
 
 export interface ReviewHistoryRows {
-  recent: ReviewEventRow[];
+  recent: ReviewEvent[];
   olderTimes: number[];
   olderCount: number;
 }
@@ -72,8 +97,8 @@ export function getReviewHistory(userId: string, recentSince: number): ReviewHis
 
 export interface AppliedReviewResult {
   applied: boolean;
-  event: ReviewEventRow;
-  items: any[];
+  event: ReviewEvent;
+  items: ItemRead[];
   /**
    * Each item's revision before the review, for items the review was the last change to. A client whose
    * copy has that revision knows the server changed nothing else, so its unsynced edits still apply.
@@ -90,16 +115,16 @@ interface ReviewSnapshotRow {
 }
 
 const applyReviewTransaction = writeTransaction((
-  incoming: ReviewEventRow,
+  incoming: ReviewEvent,
   itemIds: string[],
   userId: string,
-  seedItem: unknown,
-): { applied: boolean; event: ReviewEventRow; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
+  seedItem: ItemWrite | undefined,
+): { applied: boolean; event: ReviewEvent; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
   let seededRevision: number | undefined;
   if (seedItem !== undefined && !stmts.getByIdScoped.get(incoming.itemId, userId)) {
     seededRevision = writeItem(seedItem, userId, {}).revision;
   }
-  const previous = reviewStmts.byId.get(incoming.id) as any;
+  const previous = reviewStmts.byId.get(incoming.id) as ReviewEventDbRow | undefined;
   if (previous) {
     if (previous.user_id !== userId) throw new ConflictError('Review event id belongs to another user');
     const snapshots = reviewStmts.snapshotsByEvent.all(incoming.id) as ReviewSnapshotRow[];
@@ -115,18 +140,7 @@ const applyReviewTransaction = writeTransaction((
     }
     return {
       applied: false,
-      event: {
-        id: previous.id,
-        itemId: previous.item_id,
-        itemType: previous.item_type,
-        reviewedAt: previous.reviewed_at,
-        previousStep: previous.previous_step,
-        nextStep: previous.next_step,
-        rating: previous.rating || 'good',
-        taskType: previous.task_type || undefined,
-        durationMs: previous.duration_ms ?? undefined,
-        sessionId: previous.session_id || undefined,
-      },
+      event: rowToReviewEvent(previous),
       itemIds: storedIds.length > 0 ? storedIds : itemIds,
       baseRevisions,
     };
@@ -138,14 +152,10 @@ const applyReviewTransaction = writeTransaction((
   const target = rows.find(row => row.id === incoming.itemId);
   if (!target) return null;
 
-  const canonical = rows.reduce((best, row) => {
-    const bestSrs = JSON.parse(best.srs);
-    const rowSrs = JSON.parse(row.srs);
-    const bestReview = Number(bestSrs.lastReviewDate) || 0;
-    const rowReview = Number(rowSrs.lastReviewDate) || 0;
-    if (rowReview !== bestReview) return rowReview > bestReview ? row : best;
-    return (Number(rowSrs.totalReviews) || 0) > (Number(bestSrs.totalReviews) || 0) ? row : best;
-  }, target);
+  const canonical = rows.reduce(
+    (best, row) => (compareReviewProgress(JSON.parse(row.srs), JSON.parse(best.srs)) > 0 ? row : best),
+    target,
+  );
   const baseSrs = JSON.parse(canonical.srs);
   const serverNow = Date.now();
   const reviewedAt = Math.max(
@@ -154,10 +164,10 @@ const applyReviewTransaction = writeTransaction((
   );
   const rating = incoming.rating || 'good';
   const nextSrs = advanceReviewSrs(baseSrs, reviewedAt, rating);
-  const event: ReviewEventRow = {
+  const event: ReviewEvent = {
     id: incoming.id,
     itemId: target.id,
-    itemType: target.type as ReviewEventRow['itemType'],
+    itemType: target.type,
     reviewedAt,
     previousStep: Number(baseSrs.totalReviews) || 0,
     nextStep: Number(nextSrs.totalReviews) || 0,
@@ -183,7 +193,7 @@ const applyReviewTransaction = writeTransaction((
 
   const baseRevisions: Record<string, number> = {};
   for (const row of rows) {
-    const revision = (nextRevision.get() as { value: number }).value;
+    const revision = allocateRevision();
     const siblingSrs = { ...nextSrs, id: row.id, type: row.type };
     const appliedSrs = JSON.stringify(siblingSrs);
     // A seed is the reviewing client's own copy, so the server held nothing that client hasn't seen: its base
@@ -196,15 +206,18 @@ const applyReviewTransaction = writeTransaction((
   return { applied: true, event, itemIds: rows.map(row => row.id), baseRevisions };
 });
 
+const itemsById = (ids: string[], userId: string): ItemRead[] =>
+  ids.map(id => getItemById(id, userId, false)).filter((item): item is ItemRead => !!item);
+
 /**
  * `seedItem` is the reviewing client's copy of the reviewed item, stored only when the server holds no item
  * with that id. It commits in the review's transaction, so a failed review leaves no seed behind.
  */
 export function applyReviewEvent(
-  event: ReviewEventRow,
+  event: ReviewEvent,
   itemIds: string[],
   userId: string,
-  seedItem?: unknown,
+  seedItem?: ItemWrite,
 ): AppliedReviewResult | null {
   const uniqueIds = Array.from(new Set([event.itemId, ...itemIds])).slice(0, 100);
   const result = applyReviewTransaction(event, uniqueIds, userId, seedItem);
@@ -212,7 +225,7 @@ export function applyReviewEvent(
   return {
     applied: result.applied,
     event: result.event,
-    items: result.itemIds.map(id => getItemById(id, userId, false)).filter(Boolean),
+    items: itemsById(result.itemIds, userId),
     baseRevisions: result.baseRevisions,
   };
 }
@@ -220,15 +233,9 @@ export function applyReviewEvent(
 export interface UndoneReviewResult {
   undone: boolean;
   eventId: string;
-  items: any[];
+  items: ItemRead[];
   /** Each item's revision before the undo, as AppliedReviewResult reports it for a review. */
   baseRevisions: Record<string, number>;
-}
-
-function sortedKeys(value: any): any {
-  if (Array.isArray(value)) return value.map(sortedKeys);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.keys(value).sort().map(key => [key, sortedKeys(value[key])]));
 }
 
 // A device that pushes the reviewed item back can store the same schedule with its keys in another order.
@@ -245,7 +252,7 @@ const undoReviewTransaction = writeTransaction((
   eventId: string,
   userId: string,
 ): { undone: boolean; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
-  const event = reviewStmts.byId.get(eventId) as any;
+  const event = reviewStmts.byId.get(eventId) as ReviewEventDbRow | undefined;
   if (!event) return null;
   if (event.user_id !== userId) throw new ConflictError('Review event id belongs to another user');
 
@@ -266,8 +273,7 @@ const undoReviewTransaction = writeTransaction((
 
   const now = Date.now();
   for (const snapshot of snapshots) {
-    const revision = (nextRevision.get() as { value: number }).value;
-    stmts.updateSrs.run(snapshot.previous_srs, now, revision, snapshot.item_id, userId);
+    stmts.updateSrs.run(snapshot.previous_srs, now, allocateRevision(), snapshot.item_id, userId);
   }
   const marked = reviewStmts.markUndone.run(now, eventId, userId);
   if (marked.changes !== 1) throw new Error('Review undo could not be stored');
@@ -280,7 +286,7 @@ export function undoReviewEvent(eventId: string, userId: string): UndoneReviewRe
   return {
     undone: result.undone,
     eventId,
-    items: result.itemIds.map(id => getItemById(id, userId, false)).filter(Boolean),
+    items: itemsById(result.itemIds, userId),
     baseRevisions: result.baseRevisions,
   };
 }
