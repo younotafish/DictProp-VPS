@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
 import { TextAnalyzer } from '../components/TextAnalyzer';
@@ -24,6 +24,7 @@ import { useAutoHidingHeader } from './notebook/useAutoHidingHeader';
 import { useNotebookAISearch } from './notebook/useNotebookAISearch';
 import { useVoiceSearch } from './notebook/useVoiceSearch';
 import { useNotebookSearch } from './notebook/useNotebookSearch';
+import { useHorizontalSwipe } from './notebook/useHorizontalSwipe';
 
 const virtualRowKey = (_index: number, row: NotebookRow) => row.key;
 
@@ -97,37 +98,15 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   }, [performAISearch]);
   const { isRecording, isTranscribing, toggleRecording } = useVoiceSearch(isOnline, handleTranscript, setSearchError);
 
-  // Touch swipe handling to clear search
-  const touchStart = useRef<{x: number, y: number} | null>(null);
-  const SWIPE_THRESHOLD = 50;
-
-  const handleSwipeTouchStart = (e: React.TouchEvent) => {
-    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  };
-
-  const handleSwipeTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStart.current) return;
-    
-    // Check if user is selecting text - don't interfere with text selection
-    const selection = window.getSelection();
-    if (selection && selection.toString().trim().length > 0) {
-      touchStart.current = null;
-      return;
-    }
-    
-    const diffX = e.changedTouches[0].clientX - touchStart.current.x;
-    const diffY = e.changedTouches[0].clientY - touchStart.current.y;
-    const absX = Math.abs(diffX);
-    const absY = Math.abs(diffY);
-    
-    // Only trigger swipe if horizontal movement is significantly greater than vertical
-    // and swipe is to the right (positive diffX)
-    if (diffX > 0 && absX > absY * 1.5 && absX > SWIPE_THRESHOLD && localSearchQuery.trim()) {
-      setLocalSearchQuery('');
-      clearSearchResults();
-    }
-    touchStart.current = null;
-  };
+  // Touch swipe handling to clear search: a swipe to the right across the search bar
+  const clearSwipe = useHorizontalSwipe({
+    onSwipeRight: () => {
+      if (localSearchQuery.trim()) {
+        setLocalSearchQuery('');
+        clearSearchResults();
+      }
+    },
+  });
 
   // Handle keyboard Enter to trigger AI search
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -334,8 +313,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           query={localSearchQuery}
           onQueryChange={setLocalSearchQuery}
           onKeyDown={handleSearchKeyDown}
-          onTouchStart={handleSwipeTouchStart}
-          onTouchEnd={handleSwipeTouchEnd}
+          onTouchStart={clearSwipe.onTouchStart}
+          onTouchEnd={clearSwipe.onTouchEnd}
           isOnline={isOnline}
           isRecording={isRecording}
           isTranscribing={isTranscribing}

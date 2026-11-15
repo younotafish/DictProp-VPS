@@ -1,10 +1,12 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Wand2 } from 'lucide-react';
+import { Wand2 } from 'lucide-react';
 import type { VocabCard } from '../../types';
 import { VocabCardDisplay } from '../../components/VocabCard';
 import { useWheelNavigation } from '../../hooks';
 import { speakWord } from '../../services/lazyTts';
 import { isDialogOpenOutside, isTypingTarget } from '../../components/keyboardTarget';
+import { CarouselArrow, CarouselDots } from './Carousel';
+import { useHorizontalSwipe } from './useHorizontalSwipe';
 
 // Search results carousel component
 interface SearchResultsCarouselProps {
@@ -24,10 +26,7 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
   const [currentIndex, setCurrentIndex] = useState(0);
   const carouselRef = useRef<HTMLDivElement>(null);
   const totalItems = vocabs.length;
-  
-  const touchStart = useRef<{x: number, y: number} | null>(null);
-  const SWIPE_THRESHOLD = 50;
-  
+
   // Navigate and pronounce - called by user interactions
   const navigateTo = useCallback((newIndex: number) => {
     setCurrentIndex(newIndex);
@@ -66,37 +65,17 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [totalItems, currentIndex, navigateTo, keyboardEnabled]);
 
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStart.current) return;
-    
-    const selection = window.getSelection();
-    if (selection && selection.toString().trim().length > 0) {
-      touchStart.current = null;
-      return;
-    }
-    
-    const diffX = e.changedTouches[0].clientX - touchStart.current.x;
-    const diffY = e.changedTouches[0].clientY - touchStart.current.y;
-    const absX = Math.abs(diffX);
-    const absY = Math.abs(diffY);
-    if (absX > absY * 1.5 && absX > SWIPE_THRESHOLD) {
-      if (diffX < 0) {
-        // Left swipe -> next item, loops forever
-        navigateTo((currentIndex + 1) % totalItems);
-      } else {
-        // Right swipe -> previous item, stops at first
-        if (currentIndex > 0) {
-          navigateTo(currentIndex - 1);
-        }
+  const swipe = useHorizontalSwipe({
+    // Left swipe -> next item, loops forever
+    onSwipeLeft: () => navigateTo((currentIndex + 1) % totalItems),
+    // Right swipe -> previous item, stops at first
+    onSwipeRight: () => {
+      if (currentIndex > 0) {
+        navigateTo(currentIndex - 1);
       }
-    }
-    touchStart.current = null;
-  };
-  
+    },
+  });
+
   const currentVocab = vocabs[currentIndex];
   
   return (
@@ -116,27 +95,11 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
       <div ref={carouselRef} className="relative max-w-screen-md lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto" style={{ touchAction: 'pan-y' }}>
         {/* Navigation arrows for desktop */}
         {/* Previous arrow - only shows when not at first item */}
-        {totalItems > 1 && currentIndex > 0 && (
-          <button
-            onClick={(e) => { e.stopPropagation(); navigateTo(currentIndex - 1); }}
-            className="absolute -left-2 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-violet-600 rounded-full flex items-center justify-center shadow-md hover:bg-violet-50 transition-colors hidden md:flex"
-            aria-label="Previous meaning"
-          >
-            <ChevronLeft size={16} />
-          </button>
-        )}
+        {totalItems > 1 && currentIndex > 0 && <CarouselArrow direction="previous" onClick={() => navigateTo(currentIndex - 1)} />}
         {/* Next arrow - always shows (loops forever) */}
-        {totalItems > 1 && (
-          <button
-            onClick={(e) => { e.stopPropagation(); navigateTo((currentIndex + 1) % totalItems); }}
-            className="absolute -right-2 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-violet-600 rounded-full flex items-center justify-center shadow-md hover:bg-violet-50 transition-colors hidden md:flex"
-            aria-label="Next meaning"
-          >
-            <ChevronRight size={16} />
-          </button>
-        )}
-        
-        <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        {totalItems > 1 && <CarouselArrow direction="next" onClick={() => navigateTo((currentIndex + 1) % totalItems)} />}
+
+        <div onTouchStart={swipe.onTouchStart} onTouchEnd={swipe.onTouchEnd}>
           <VocabCardDisplay
             data={currentVocab}
             isSaved={isVocabSaved(currentVocab)}
@@ -152,23 +115,7 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = ({
         
         {/* Dot indicators */}
         {totalItems > 1 && (
-          <div className="flex justify-center mt-1">
-            {vocabs.map((_, idx) => (
-              <button
-                key={idx}
-                onClick={(e) => { e.stopPropagation(); navigateTo(idx); }}
-                className="group/dot h-6 px-[3px] flex items-center"
-                aria-label={`Meaning ${idx + 1} of ${totalItems}`}
-                aria-current={idx === currentIndex ? 'true' : undefined}
-              >
-                <span className={`block w-2 h-2 rounded-full transition-all ${
-                  idx === currentIndex 
-                    ? 'bg-violet-500 w-4' 
-                    : 'bg-slate-300 group-hover/dot:bg-slate-400'
-                }`} />
-              </button>
-            ))}
-          </div>
+          <CarouselDots count={totalItems} index={currentIndex} onSelect={navigateTo} className="flex justify-center mt-1" />
         )}
       </div>
       
