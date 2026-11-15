@@ -4,11 +4,12 @@ import { Hono } from 'hono';
 import type { FetchLike } from '../src/ai-client.js';
 import { createAiRoutes } from '../src/routes/ai.js';
 
-// The AI routes on a bare app, with DeepInfra answering one fixed reply.
-function harness(content: unknown) {
+// The AI routes on a bare app, with DeepInfra answering these replies in turn (the last one repeats).
+function harness(...contents: unknown[]) {
   const requests: any[] = [];
   const fetch: FetchLike = async (_url, init = {}) => {
     requests.push(JSON.parse(String(init.body)));
+    const content = contents[Math.min(requests.length, contents.length) - 1];
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }));
   };
   const app = new Hono().route('/api', createAiRoutes({ fetch, apiKey: () => 'test-key', retryDelayMs: 0 }));
@@ -65,4 +66,25 @@ test('in a sentence the cap is per word, so other words keep their cards', async
   assert.equal(words.filter((word: string) => word === 'bank').length, 8);
   assert.equal(words.filter((word: string) => word === 'river').length, 2);
   assert.match(h.requests[0].messages[0].content, /at most 8 cards for any one word/);
+});
+
+const senses = (body: { vocabs: Array<{ sense: string }> }): string[] => body.vocabs.map(vocab => vocab.sense);
+const numbered = (...indexes: number[]) => indexes.map(index => `noun: meaning number ${index}`);
+
+test('a failing card past the cap gets no repair round, since it would be cut anyway', async () => {
+  const vocabs = Array.from({ length: 9 }, (_, index) => card('bank', index + 1));
+  vocabs[8] = { ...vocabs[8], mnemonic: '' };
+  const h = harness({ query: 'bank', vocabs }, { vocabs: [card('bank', 9)] });
+  const body = await h.analyze('bank');
+  assert.deepEqual(senses(body), numbered(1, 2, 3, 4, 5, 6, 7, 8));
+  assert.equal(h.requests.length, 1);
+});
+
+test('when an earlier card repeats, the ninth card is the eighth distinct one and is still repaired', async () => {
+  const vocabs = [...Array.from({ length: 7 }, (_, index) => card('bank', index + 1)), card('bank', 3), { ...card('bank', 9), mnemonic: '' }];
+  const h = harness({ query: 'bank', vocabs }, { vocabs: [card('bank', 9)] });
+  const body = await h.analyze('bank');
+  assert.deepEqual(senses(body), numbered(1, 2, 3, 4, 5, 6, 7, 9));
+  assert.equal(h.requests.length, 2);
+  assert.match(h.requests[1].messages[1].content, /meaning number 9/);
 });

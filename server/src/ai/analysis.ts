@@ -194,13 +194,23 @@ export async function generateAnalysisData(
 
     const passing: CardSlot[] = [];
     let failing: FailingCard[] = [];
+    // A failing card past its headword's cap would be cut by finalizeCards even once repaired, so it gets no repair.
+    // Its rank counts the headword's distinct cards so far, as finalizeCards does after dropping repeats; passing
+    // cards past the cap stay, to fill a place a card that can't be repaired leaves.
+    const distinctCards = new Map<string, Set<string>>();
+    let pastCap = 0;
     data.vocabs.forEach((card, index) => {
+      const headword = trimmedString(card.word).toLowerCase();
+      const seen = distinctCards.get(headword) ?? new Set<string>();
+      distinctCards.set(headword, seen.add(cardKey(card)));
       const issues = liveIssues(card);
       if (issues.length === 0) passing.push({ card, index });
-      else failing.push({ card, index, issues });
+      else if (seen.size <= MAX_CARDS_PER_HEADWORD) failing.push({ card, index, issues });
+      else pastCap++;
     });
     console.log(`Analysis attempt ${attempt}: ${passing.length}/${data.vocabs.length} cards passed validation` +
-      (failing.length ? `; repairing ${failing.length}` : ''));
+      (failing.length ? `; repairing ${failing.length}` : '') +
+      (pastCap ? `; dropping ${pastCap} failing past the ${MAX_CARDS_PER_HEADWORD}-card cap` : ''));
     for (const entry of failing) {
       console.warn(`  failed "${entry.card.word}" (${entry.card.sense}): ${entry.issues.join('; ').slice(0, 500)}`);
     }
