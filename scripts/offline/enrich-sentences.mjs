@@ -15,6 +15,7 @@ import {
   batchFiles,
   batchFingerprint,
   createStageLifecycle,
+  pruneStageCache,
   runCachedModelBatch,
   runPool,
   runSplittingBatches,
@@ -49,6 +50,7 @@ const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'analysis-work'));
 mkdirSync(workDir, { recursive: true });
+pruneStageCache(workDir);
 
 const source = JSON.parse(readFileSync(inputPath, 'utf8'));
 if (source?.version !== 1 || !Array.isArray(source.sentences) || source.sentences.length === 0) {

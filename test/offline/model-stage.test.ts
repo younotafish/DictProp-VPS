@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import {
   batchFingerprint,
   indexedResults,
   jitteredDelay,
+  pruneStageCache,
   runCachedModelBatch,
   runPool,
   runSplittingBatches,
@@ -277,4 +278,37 @@ test('the first failure in the pool stops the stage and is rethrown', async () =
   }), /batch 2 failed/);
   assert.equal(stage.terminated, 1);
   assert.equal(stage.aborting, true);
+});
+
+test('cached batch results and split markers older than two weeks are cleared, and nothing else', t => {
+  const dir = workDir(t);
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1_000;
+  const file = (name: string, ageDays: number, contents = 'x'.repeat(1_000)) => {
+    writeFileSync(join(dir, name), contents);
+    const time = new Date(now - ageDays * DAY);
+    utimesSync(join(dir, name), time, time);
+  };
+  file('batch-0001-0123456789abcdef.json', 15);
+  file('split-0002-0123456789abcdef.json', 30, 'x'.repeat(500));
+  file('batch-0003-0123456789abcdef.json', 13);
+  file('failures.json', 40);
+  file('progress.json', 40);
+  file('batch-0004-0123456789abcdef.json.123.cafebabe.tmp', 40);
+  mkdirSync(join(dir, 'batch-0005-0123456789abcdef.json'));
+  const outside = join(dir, 'outside.json');
+  file('outside.json', 40);
+  symlinkSync(outside, join(dir, 'batch-0006-0123456789abcdef.json'));
+
+  assert.deepEqual(pruneStageCache(dir, { now }), { files: 2, bytes: 1_500 });
+  assert.deepEqual(readdirSync(dir).sort(), [
+    'batch-0003-0123456789abcdef.json',
+    'batch-0004-0123456789abcdef.json.123.cafebabe.tmp',
+    'batch-0005-0123456789abcdef.json',
+    'batch-0006-0123456789abcdef.json',
+    'failures.json',
+    'outside.json',
+    'progress.json',
+  ]);
+  assert.deepEqual(pruneStageCache(dir, { now, maxAgeMs: 12 * DAY }), { files: 1, bytes: 1_000 });
 });

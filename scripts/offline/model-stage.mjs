@@ -4,7 +4,7 @@
 // it accepts as an answer.
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeJsonAtomic } from './atomic-file.mjs';
 import { installSignalCleanup, killProcessGroup } from './codex-process.mjs';
@@ -103,6 +103,31 @@ export function batchFiles(workDir, batchIndex, fingerprint) {
     result: join(workDir, `batch-${position}-${fingerprint}.json`),
     splitMarker: join(workDir, `split-${position}-${fingerprint}.json`),
   };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const CACHE_FILE_PATTERN = /^(?:batch|split)-\d{4}-[0-9a-f]{16}\.json$/;
+
+// A stage whose work directory outlives the cycle (vocabulary completion, sentence analysis) clears cached
+// results and split markers older than maxAgeMs when it starts. Their fingerprints change whenever a batch's
+// cards do, so an old one is almost never read again; one that would have been is just asked for again.
+export function pruneStageCache(workDir, { maxAgeMs = 14 * DAY_MS, now = Date.now() } = {}) {
+  let files = 0;
+  let bytes = 0;
+  for (const name of readdirSync(workDir)) {
+    if (!CACHE_FILE_PATTERN.test(name)) continue;
+    const path = join(workDir, name);
+    const stat = lstatSync(path);
+    if (!stat.isFile() || now - stat.mtimeMs <= maxAgeMs) continue;
+    unlinkSync(path);
+    files++;
+    bytes += stat.size;
+  }
+  if (files > 0) {
+    process.stderr.write(`Removed ${files} cached batch file(s) older than ${Math.round(maxAgeMs / DAY_MS)} days ` +
+      `(${(bytes / 1e6).toFixed(1)} MB) from ${workDir}\n`);
+  }
+  return { files, bytes };
 }
 
 // The model answers a batch with one result per itemIndex. This maps them by index and refuses a wrong count

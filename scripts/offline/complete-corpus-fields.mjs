@@ -15,6 +15,7 @@ import {
   batchFiles,
   batchFingerprint,
   createStageLifecycle,
+  pruneStageCache,
   runCachedModelBatch,
   runPool,
   runSplittingBatches,
@@ -41,6 +42,7 @@ const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
 const workDir = resolve(workArg || join(dirname(outputPath), 'completion-work'));
 mkdirSync(workDir, { recursive: true });
+pruneStageCache(workDir);
 const failureLedger = ledgerFromEnvironment('vocab');
 const failuresPath = join(workDir, 'failures.json');
 
