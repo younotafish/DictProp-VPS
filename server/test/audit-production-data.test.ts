@@ -38,7 +38,7 @@ save('ap-s1', 'sentence', {
 });
 addItemImage(owner.id, 'ap-s1');
 save('ap-s2', 'sentence', { text: 'keep going until the [[end]].', sourceWord: 'Candid' });
-// The same sentence with a straight and a curly apostrophe.
+// The same sentence with a straight and a curly apostrophe: one sentence, as the server's lookup reads it.
 save('ap-s3', 'sentence', { text: "I don't know.", sourceWord: 'orphan-word' });
 save('ap-s4', 'sentence', { text: 'I don’t know.', sourceWord: 'orphan-word' });
 save('ap-inline', 'vocab', { word: 'inline', note: 'data:image/png;base64,AAAA' });
@@ -153,9 +153,9 @@ test('the production audit reports storage, sentences, example enrichments, imag
     vocabSenseGroups: [{ ids: ['ap-candid', 'ap-candid-2'] }],
     phraseGroupCount: 1,
     phraseGroups: [{ ids: ['ap-phrase-1', 'ap-phrase-2'] }],
-    sentenceGroupCount: 1,
-    sentenceGroups: [{ ids: ['ap-s1', 'ap-s2'] }],
-    exactSentenceGroupCount: 1,
-    exactSentenceGroups: [{ ids: ['ap-s1', 'ap-s2'] }],
+    sentenceGroupCount: 2,
+    sentenceGroups: [{ ids: ['ap-s1', 'ap-s2'] }, { ids: ['ap-s3', 'ap-s4'] }],
+    exactSentenceGroupCount: 2,
+    exactSentenceGroups: [{ ids: ['ap-s1', 'ap-s2'] }, { ids: ['ap-s3', 'ap-s4'] }],
   });
 });
