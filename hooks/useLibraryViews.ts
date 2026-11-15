@@ -124,7 +124,8 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     return pickSavedItem(bases, savedVocabByBase);
   }, [variantIndex, savedVocabByBase]);
 
-  // Cheap boolean variant check (no card collection) — for Notebook's "auto-AI if no match" gate.
+  // Cheap boolean variant check (no card collection). Nothing reads it since the notebook's 'notebook-search'
+  // listener went; App still passes it to the notebook until that prop is dropped (handoff).
   const hasSavedVariant = useCallback((q: string) => matchBaseWords(q, variantIndex).size > 0, [variantIndex]);
 
   return {

@@ -35,7 +35,8 @@ interface NotebookProps {
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
   onForceSync?: () => void;
   isOnline?: boolean;
-  hasSavedVariant: (query: string) => boolean;
+  /** Unused: the 'notebook-search' listener that read it is gone. App still passes it until it stops (handoff). */
+  hasSavedVariant?: (query: string) => boolean;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onFindDuplicates?: () => void;
   onArchive?: (id: string) => void;
@@ -58,7 +59,7 @@ interface NotebookProps {
 export const NotebookView: React.FC<NotebookProps> = React.memo(({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline = true,
-    hasSavedVariant, isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
+    isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
     onGenerateAllSpeech, ttsGenProgress,
@@ -79,7 +80,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const searchGenerationIdRef = useRef(0); // Incremented on each search to discard stale analysis results
   
   // Text Analyzer modal state
@@ -174,7 +174,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     setSearchError(null);
     setSearchResults(null);
 
-    // Increment generation ID to cancel stale image updates from previous searches
+    // Increment generation ID so a superseded search's result is discarded when it lands
     const currentGenId = ++searchGenerationIdRef.current;
 
     try {
@@ -297,24 +297,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       startRecording();
     }
   }, [isRecording, startRecording, stopRecording]);
-
-  // Listen for notebook-search events from App.tsx
-  useEffect(() => {
-    const handleNotebookSearch = (e: CustomEvent<{ query: string; forceAI: boolean; autoAIIfNoMatch?: boolean }>) => {
-      const { query, forceAI, autoAIIfNoMatch } = e.detail;
-      setLocalSearchQuery(query);
-      if (forceAI && query.trim()) {
-        performAISearch(query);
-      } else if (autoAIIfNoMatch && query.trim() && !hasSavedVariant(query)) {
-        // Skip the AI call if a saved item matches the query OR any inflected variant
-        // of it (running→run, cats→cat).
-        performAISearch(query);
-      }
-    };
-
-    window.addEventListener('notebook-search', handleNotebookSearch as EventListener);
-    return () => window.removeEventListener('notebook-search', handleNotebookSearch as EventListener);
-  }, [performAISearch, hasSavedVariant]);
 
   // Global Escape (works even when the input is not focused) clears the search, and a second one leaves compare
   // mode. It's the notebook's own Escape, so it stands down while an overlay (DetailView, a modal) is open and
@@ -612,7 +594,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         <div className="w-full max-w-sm">
           <form onSubmit={(e) => { e.preventDefault(); if (localSearchQuery.trim()) onSearch(localSearchQuery.trim()); }} className="relative">
             <input
-              ref={searchInputRef}
               type="text"
               value={localSearchQuery}
               onChange={(e) => setLocalSearchQuery(e.target.value)}
@@ -768,7 +749,6 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           <div className="relative group">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16} />
             <input 
-              ref={searchInputRef}
               type="text"
               value={localSearchQuery}
               onChange={(e) => setLocalSearchQuery(e.target.value)}
