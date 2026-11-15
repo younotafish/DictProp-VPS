@@ -19,15 +19,16 @@ export const JSONImport: React.FC<JSONImportProps> = ({
   const [status, setStatus] = useState<'idle' | 'importing' | 'done' | 'error'>('idle');
   const [result, setResult] = useState<string>('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // An import is on its way to the server. The sheet stays mounted while closed, so this outlives a close.
+  const inFlightRef = useRef(false);
 
+  // On opening: focus the box, and start from a clean status, unless an import from before is still running.
   useEffect(() => {
-    if (isOpen && textareaRef.current) {
+    if (!isOpen) return;
+    if (textareaRef.current) {
       setTimeout(() => textareaRef.current?.focus(), 200);
     }
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (isOpen) {
+    if (!inFlightRef.current) {
       setStatus('idle');
       setResult('');
     }
@@ -41,7 +42,10 @@ export const JSONImport: React.FC<JSONImportProps> = ({
     [deferredText],
   );
 
+  // One import at a time. The server gives every card without an id a new one, so sending the same cards twice
+  // saves them twice.
   const handleSubmit = useCallback(async () => {
+    if (inFlightRef.current) return;
     const { items, error } = parseImportText(inputText);
     if (!items || error) {
       setStatus('error');
@@ -49,6 +53,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
       return;
     }
 
+    inFlightRef.current = true;
     setStatus('importing');
     setResult('');
 
@@ -59,10 +64,14 @@ export const JSONImport: React.FC<JSONImportProps> = ({
       if (res.imagesFetched > 0) parts.push(`${res.imagesFetched} images fetched`);
       if (res.skipped > 0) parts.push(`${res.skipped} skipped`);
       setResult(parts.join(' · '));
+      // The cards are in the notebook now; emptying the box, as batch import does, leaves nothing to send again.
+      setInputText('');
       onImported();
     } catch (e) {
       setStatus('error');
       setResult(importErrorMessage(e));
+    } finally {
+      inFlightRef.current = false;
     }
   }, [inputText, onImported]);
 
@@ -76,7 +85,8 @@ export const JSONImport: React.FC<JSONImportProps> = ({
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
-      handleSubmit();
+      // A held shortcut repeats; only the first press imports.
+      if (!e.repeat) handleSubmit();
     }
   }, [handleSubmit]);
 
