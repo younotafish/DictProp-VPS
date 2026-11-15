@@ -104,7 +104,7 @@ export function useDetailView(
 
       if (newGroups.length === 0) return null;
 
-      let newGroupIndex = Math.min(prev.groupIndex, newGroups.length - 1);
+      const newGroupIndex = Math.min(prev.groupIndex, newGroups.length - 1);
       let newItemIndex = Math.min(prev.itemIndex, newGroups[newGroupIndex].items.length - 1);
       newItemIndex = Math.max(0, newItemIndex);
 

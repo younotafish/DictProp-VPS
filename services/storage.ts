@@ -16,7 +16,7 @@ const getSnapshotKey = (userId: string) => `items_${userId}`;
 const getCursorKey = (userId: string) => `cursor_${userId}`;
 
 // Fallback storage for iOS Safari private mode
-let inMemoryStorage: Record<string, StoredItem[]> = {};
+const inMemoryStorage: Record<string, StoredItem[]> = {};
 const inMemoryCursors: Record<string, RevisionCursor> = {};
 let dbPromise: Promise<IDBDatabase> | null = null;
 const UPGRADE_BLOCKED = 'IndexedDB upgrade blocked by another tab';
@@ -157,10 +157,10 @@ const getDB = (): Promise<IDBDatabase> => {
 // from then on. Such a failure gets one more try on a new connection; the work is a single transaction,
 // which either applied in full or not at all.
 const LOST_CONNECTION_ERRORS = new Set(['InvalidStateError', 'UnknownError']);
-const withDB = async <T,>(use: (db: IDBDatabase) => Promise<T>): Promise<T> => {
+const withDB = async <T,>(work: (db: IDBDatabase) => Promise<T>): Promise<T> => {
   const db = await getDB();
   try {
-    return await use(db);
+    return await work(db);
   } catch (error) {
     const name = (error as { name?: unknown } | null)?.name;
     if (typeof name !== 'string' || !LOST_CONNECTION_ERRORS.has(name)) throw error;
@@ -169,7 +169,7 @@ const withDB = async <T,>(use: (db: IDBDatabase) => Promise<T>): Promise<T> => {
       dbPromise = null;
       db.close();
     }
-    return use(await getDB());
+    return work(await getDB());
   }
 };
 

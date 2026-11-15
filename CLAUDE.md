@@ -96,6 +96,7 @@ curl -X POST http://localhost:3001/api/analyze ...       # AI search works
 npm run dev              # Vite dev server (port 3000)
 npm run build            # Production build to dist/
 npm test                 # Tests in test/: client, contract, offline-script and workflow tests
+npm run lint             # ESLint over client, server, scripts and tests (not in check yet; don't add warnings)
 npm run check            # Full release gate: both type checks, both test suites, both builds, bundle budget
 
 # Server (run from server/ directory)
