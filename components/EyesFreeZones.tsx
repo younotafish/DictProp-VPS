@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * Visual guide for the "eyes-free" tap zones used across the app: the TOP HALF of a surface is split
@@ -21,6 +21,31 @@ export interface ZoneFlash {
   n: number;    // increment on every tap so the animation re-fires
 }
 
+/**
+ * The band a tap lands in, from its distance below the top of the reference box (the screen, or the element
+ * the guide fills) and that box's height: 0 for the top quarter, 1 for the second quarter, -1 for the inert
+ * bottom half. The guide below draws exactly these bands.
+ */
+export const eyesFreeZoneAt = (offsetY: number, height: number): 0 | 1 | -1 =>
+  offsetY < height / 4 ? 0 : offsetY < height / 2 ? 1 : -1;
+
+const FLASH_MS = 500;
+
+/** The tap-confirmation flash for the guide: `flashZone(zone)` shows it over a band for half a second. */
+export const useZoneFlash = (): { zoneFlash: ZoneFlash | null; flashZone: (zone: number) => void } => {
+  const [zoneFlash, setZoneFlash] = useState<ZoneFlash | null>(null);
+  const zoneFlashN = useRef(0);
+  const zoneFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashZone = useCallback((zone: number) => {
+    zoneFlashN.current += 1;
+    setZoneFlash({ zone, n: zoneFlashN.current });
+    if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current);
+    zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), FLASH_MS);
+  }, []);
+  useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
+  return { zoneFlash, flashZone };
+};
+
 interface Props {
   /** How many bands are live (1 = only the 1st example exists, 2 = both). 0 renders nothing. */
   bands: number;
@@ -36,7 +61,7 @@ const ZONE = [
 export const EyesFreeZones: React.FC<Props> = ({ bands, anchor, flash }) => {
   if (bands < 1) return null;
   // The overlay always covers the top HALF of the reference box; each band is half of that (a quarter
-  // of the box), exactly matching the `< height/4` / `< height/2` split in the zone handlers.
+  // of the box), exactly matching eyesFreeZoneAt's split.
   const root =
     anchor === 'viewport'
       ? 'fixed inset-x-0 top-0 h-[50dvh]'
