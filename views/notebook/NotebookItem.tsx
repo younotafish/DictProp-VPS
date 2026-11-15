@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Trash2, RefreshCw, Archive, ArchiveRestore, MoreHorizontal } from 'lucide-react';
-import type { StoredItem } from '../../types';
+import { getItemTitle, isPhraseItem, isVocabItem, type StoredItem } from '../../types';
+import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { PronunciationBlock } from '../../components/PronunciationBlock';
 import { useLongPress } from './useLongPress';
 
@@ -46,18 +47,14 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
     handleClick();
   };
 
-  const isPhrase = item.type === 'phrase';
-  const title = isPhrase 
-    ? (item.data as any).query 
-    : (item.data as any).word;
-  const subtitle = isPhrase 
-    ? (item.data as any).translation 
-    : (item.data as any).chinese;
-  
-  const ipa = isPhrase ? (item.data as any).pronunciation : (item.data as any).ipa;
-  const examples = !isPhrase ? (item.data as any).examples : [];
-  const history = !isPhrase ? (item.data as any).history : null;
-  const sense = !isPhrase ? (item.data as any).sense : null;
+  const title = getItemTitle(item);
+  const vocab = isVocabItem(item) ? item.data : null;
+  const subtitle = isPhraseItem(item) ? item.data.translation : vocab?.chinese;
+  const ipa = isPhraseItem(item) ? item.data.pronunciation : vocab?.ipa;
+  const examples = vocab?.examples;
+  const hasExample = !!examples && examples.length > 0;
+  const history = vocab?.history;
+  const sense = vocab?.sense;
 
   const isDue = (item.srs?.nextReview ?? 0) <= Date.now();
   const intervalDays = Math.round((item.srs?.interval ?? 0) / (24 * 60));
@@ -98,11 +95,11 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
           </div>
           <p className="text-sm text-slate-500 truncate mb-2">{subtitle}</p>
 
-          {(examples?.length > 0 || history) && (
+          {(hasExample || history) && (
             <div className="space-y-2 mt-2 pt-2 border-t border-slate-50">
-              {examples?.length > 0 && (
+              {hasExample && (
                 <div className="text-xs text-slate-600 italic border-l-2 border-indigo-200 pl-2 line-clamp-2">
-                  "{(examples[0] || '').replace(/\[\[(.+?)\]\]/g, '$1').replace(/\{\{(.+?)\}\}/g, '$1')}"
+                  "{stripSentenceMarkers(examples[0])}"
                 </div>
               )}
               {history && (

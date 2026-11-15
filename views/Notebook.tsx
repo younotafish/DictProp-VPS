@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import { StoredItem, SyncStatus, AppUser, ItemGroup, VocabCard, SearchResult } from '../types';
+import { getItemTitle, type AppUser, type ItemGroup, type StoredItem, type SyncStatus, type VocabCard } from '../types';
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
 import { JSONImport } from '../components/JSONImport';
@@ -210,12 +210,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     const { group, groupIndex, section } = row;
 
     if (compareMode && section === 'main') {
-      const firstItem = group.items[0];
-      const displayWord = firstItem
-        ? (firstItem.type === 'phrase'
-            ? (firstItem.data as SearchResult).query
-            : (firstItem.data as VocabCard).word) || group.title
-        : group.title;
+      const displayWord = getItemTitle(group.items[0]) || group.title;
       const isSelected = selectedForCompare.includes(displayWord);
       const canSelect = selectedForCompare.length < 3 || isSelected;
       const toggleSelected = () => {

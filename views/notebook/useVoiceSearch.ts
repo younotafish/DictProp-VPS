@@ -75,9 +75,9 @@ export function useVoiceSearch(
             // Auto-search after transcription
             onTranscript(transcribedText.trim());
           }
-        } catch (err: any) {
+        } catch (err) {
           logError('Transcription failed:', err);
-          reportError(err.message === 'QUOTA_EXCEEDED'
+          reportError((err as Error).message === 'QUOTA_EXCEEDED'
             ? 'Voice transcription quota exceeded. Please type your search.'
             : 'Voice transcription failed. Please try again.');
         } finally {
@@ -87,7 +87,7 @@ export function useVoiceSearch(
 
       mediaRecorder.start();
       setIsRecording(true);
-    } catch (err: any) {
+    } catch (err) {
       logError('Failed to start recording:', err);
       reportError('Microphone access denied. Please enable microphone permissions.');
     }

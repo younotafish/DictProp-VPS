@@ -42,9 +42,9 @@ export function useNotebookAISearch(isOnline: boolean, typedQuery: string) {
         // The immediate result is intentionally text-only. The Mac's local enrichment cycle creates
         // the advanced metadata and image after the item is saved.
       }
-    } catch (err: any) {
+    } catch (err) {
       logError('AI Search failed:', err);
-      setSearchError(err.message || 'Search failed. Please try again.');
+      setSearchError((err as Error).message || 'Search failed. Please try again.');
     } finally {
       setIsSearching(false);
     }
