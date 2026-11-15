@@ -78,9 +78,14 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const { headerRef, handleScroll } = useAutoHidingHeader(onScroll);
 
   // AI Search state
-  const {
-    isSearching, searchResults, searchError, setSearchError, performAISearch, clearSearchResults,
-  } = useNotebookAISearch(isOnline, localSearchQuery);
+  const { isSearching, searchResults, searchError, setSearchError, performAISearch, clearAISearch } = useNotebookAISearch(isOnline);
+
+  // Every change to the query goes through here. Emptying it, by any path, drops the AI card, its error and a
+  // lookup still on its way, so none of them shows up later under an empty box.
+  const changeQuery = useCallback((query: string) => {
+    setLocalSearchQuery(query);
+    if (!query.trim()) clearAISearch();
+  }, [clearAISearch]);
 
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
@@ -93,18 +98,15 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
 
   // Voice search: the transcript becomes the query and is looked up with AI.
   const handleTranscript = useCallback((text: string) => {
-    setLocalSearchQuery(text);
+    changeQuery(text);
     performAISearch(text);
-  }, [performAISearch]);
+  }, [changeQuery, performAISearch]);
   const { isRecording, isTranscribing, toggleRecording } = useVoiceSearch(isOnline, handleTranscript, setSearchError);
 
   // Touch swipe handling to clear search: a swipe to the right across the search bar
   const clearSwipe = useHorizontalSwipe({
     onSwipeRight: () => {
-      if (localSearchQuery.trim()) {
-        setLocalSearchQuery('');
-        clearSearchResults();
-      }
+      if (localSearchQuery.trim()) changeQuery('');
     },
   });
 
@@ -120,7 +122,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       e.preventDefault();
       e.stopPropagation();
       if (localSearchQuery) {
-        setLocalSearchQuery('');
+        changeQuery('');
       } else {
         (e.target as HTMLInputElement).blur();
       }
@@ -138,8 +140,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       if (localSearchQuery || searchResults) {
         e.preventDefault();
         e.stopPropagation();
-        setLocalSearchQuery('');
-        clearSearchResults();
+        changeQuery('');
       } else if (compareMode) {
         e.preventDefault();
         setCompareMode(false);
@@ -148,7 +149,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [localSearchQuery, searchResults, compareMode, hasOverlay, clearSearchResults]);
+  }, [localSearchQuery, searchResults, compareMode, hasOverlay, changeQuery]);
 
   // Save a vocab from search results into the unified notebook.
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
@@ -261,7 +262,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   }, []);
 
   if (!hasSavedItems && !localSearchQuery) {
-    return <EmptyNotebook query={localSearchQuery} onQueryChange={setLocalSearchQuery} onSearch={onSearch} />;
+    return <EmptyNotebook query={localSearchQuery} onQueryChange={changeQuery} onSearch={onSearch} />;
   }
 
   return (
@@ -308,7 +309,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         {/* Search Bar - swipe right to clear */}
         <NotebookSearchBar
           query={localSearchQuery}
-          onQueryChange={setLocalSearchQuery}
+          onQueryChange={changeQuery}
           onKeyDown={handleSearchKeyDown}
           onTouchStart={clearSwipe.onTouchStart}
           onTouchEnd={clearSwipe.onTouchEnd}
@@ -318,10 +319,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           isSearching={isSearching}
           onToggleRecording={toggleRecording}
           onSearchWithAI={() => performAISearch(localSearchQuery)}
-          onClear={() => {
-            setLocalSearchQuery('');
-            clearSearchResults();
-          }}
+          onClear={() => changeQuery('')}
         />
       </NotebookHeader>
 
