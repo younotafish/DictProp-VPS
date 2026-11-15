@@ -127,6 +127,45 @@ test('example pool carries encrypted production enrichment coverage into local r
   }
 });
 
+test('example pool identities follow the server lookup rule for curly quotes, dashes, NFKC forms and markup', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-example-identity-'));
+  try {
+    const corpusPath = join(root, 'corpus.json');
+    const outputPath = join(root, 'pool.json');
+    const curly = 'She said, “Don’t {{give up}} now.”';
+    const straight = '  She said,\t"don\'t [[give up]]   NOW."';
+    const examples = [
+      curly,
+      'An en dash – and an em dash — in the ﬁnal ＡＢＣ line.',
+      'Tabs\tand spaces   between [[marked]] {{words}}.',
+    ];
+    writeFileSync(corpusPath, JSON.stringify({
+      version: 1,
+      items: [
+        { id: 'first', type: 'vocab', data: { id: 'first', word: 'give up', examples } },
+        { id: 'second', type: 'vocab', data: { id: 'second', word: 'give up', examples: [straight] } },
+      ],
+      exampleEnrichmentCoverage: [],
+    }));
+
+    execFileSync(process.execPath, [buildPoolScript, corpusPath, outputPath]);
+
+    const output = JSON.parse(readFileSync(outputPath, 'utf8')) as {
+      sentences: Array<{ id: string; text: string; lookupHash: string; provenance: Array<{ parentId: string }> }>;
+    };
+    assert.equal(output.sentences.length, examples.length);
+    for (const entry of output.sentences) {
+      assert.equal(entry.lookupHash, sentenceLookupHash(entry.text));
+      assert.equal(entry.id, `example-${entry.lookupHash.slice(0, 40)}`);
+    }
+    // The straight-quoted copy is the same lookup identity, so it joins the first text's provenance.
+    const shared = output.sentences.find(entry => entry.text === curly);
+    assert.deepEqual(shared?.provenance.map(entry => entry.parentId), ['first', 'second']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('example pool uses a same-cycle local vocabulary overlay', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-example-overlay-'));
   try {

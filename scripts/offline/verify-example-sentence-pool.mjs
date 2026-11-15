@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { isDetailedSentenceAnalysis, isSentenceAnalysis } from './sentence-analysis-contract.mjs';
+import {
+  exampleSentenceId, sentenceImageFilename, sentenceLookupHash, sentenceTextHash,
+} from './sentence-pool.mjs';
 
 const [sourceArg, analysisArg, imageBundleArg] = process.argv.slice(2);
 if (!sourceArg || !analysisArg) {
@@ -28,11 +30,11 @@ for (const sentence of source.sentences) {
   assertString(sentence?.lookupHash, `${sentence.id}: lookupHash`);
   if (sourceById.has(sentence.id)) throw new Error(`Duplicate source id: ${sentence.id}`);
   if (sourceByLookupHash.has(sentence.lookupHash)) throw new Error(`Duplicate lookup hash: ${sentence.lookupHash}`);
-  if (sentence.id !== `example-${sentence.lookupHash.slice(0, 40)}`) {
+  if (sentence.id !== exampleSentenceId(sentence.lookupHash)) {
     throw new Error(`${sentence.id}: id does not match lookup hash`);
   }
-  if (sha256(sentence.text) !== sentence.textHash) throw new Error(`${sentence.id}: text hash mismatch`);
-  if (sha256(normalizeSentence(sentence.text)) !== sentence.lookupHash) {
+  if (sentenceTextHash(sentence.text) !== sentence.textHash) throw new Error(`${sentence.id}: text hash mismatch`);
+  if (sentenceLookupHash(sentence.text) !== sentence.lookupHash) {
     throw new Error(`${sentence.id}: normalized lookup hash mismatch`);
   }
   if (!Array.isArray(sentence.provenance) || sentence.provenance.length === 0) {
@@ -75,8 +77,9 @@ if (imageBundleArg) {
     if (!sentence) throw new Error(`Image target has no source: ${target?.imageId}`);
     if (sentence.hasImage === true) throw new Error(`Image target is already covered in production: ${target?.imageId}`);
     if (targetsById.has(target.imageId)) throw new Error(`Duplicate image target: ${target.imageId}`);
-    const expectedFilename = `${sha256(target.imageId).slice(0, 32)}.webp`;
-    if (target.filename !== expectedFilename) throw new Error(`${target.imageId}: unexpected image filename`);
+    if (target.filename !== sentenceImageFilename(target.imageId)) {
+      throw new Error(`${target.imageId}: unexpected image filename`);
+    }
     if (target.prompt !== analysisById.get(target.imageId).analysis.imagePrompt) {
       throw new Error(`${target.imageId}: image prompt differs from sentence analysis`);
     }
@@ -136,23 +139,6 @@ process.stdout.write(`${JSON.stringify({
 
 function readJson(path) {
   return JSON.parse(readFileSync(resolve(path), 'utf8'));
-}
-
-function sha256(value) {
-  return createHash('sha256').update(value).digest('hex');
-}
-
-function normalizeSentence(value) {
-  return String(value || '')
-    .replace(/\{\{([^{}]+)\}\}/g, '$1')
-    .replace(/\[\[([^\[\]]+)\]\]/g, '$1')
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201c\u201d]/g, '"')
-    .replace(/[\u2013\u2014]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function assertString(value, label) {

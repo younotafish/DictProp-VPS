@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { sentenceImageFilename } from './sentence-pool.mjs';
 
 const [sentenceExportArg, analysisArg, outputArg, modelArg, ...fallbackImageDirArgs] = process.argv.slice(2);
 if (!sentenceExportArg || !analysisArg || !outputArg) {
@@ -28,7 +28,7 @@ const targets = [];
 const entries = analysis.entries.filter(entry => sources.get(entry.id)?.hasImage !== true).map(entry => {
   const source = sources.get(entry.id);
   if (!source || source.textHash !== entry.textHash) throw new Error(`Sentence source mismatch: ${entry.id}`);
-  const filename = `${createHash('sha256').update(entry.id).digest('hex').slice(0, 32)}.webp`;
+  const filename = sentenceImageFilename(entry.id);
   const destination = join(outputImageDir, filename);
   if (!existsSync(destination)) {
     for (const fallbackImageDir of fallbackImageDirs) {

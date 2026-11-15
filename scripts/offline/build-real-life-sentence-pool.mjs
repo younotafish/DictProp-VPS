@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { poolSentence, sentenceLookupHash } from './sentence-pool.mjs';
 
 const [catalogArg, outputArg, collectionArg, sectionArg] = process.argv.slice(2);
 if (!catalogArg || !outputArg) {
@@ -18,18 +18,6 @@ if (catalog?.version !== 1 || !Array.isArray(catalog.collections)) {
 const selectedCollectionIds = new Set(
   String(collectionArg || '').split(',').map(value => value.trim()).filter(Boolean),
 );
-
-const sha256 = value => createHash('sha256').update(value).digest('hex');
-const normalizeSentence = value => String(value || '')
-  .replace(/\{\{([^{}]+)\}\}/g, '$1')
-  .replace(/\[\[([^\[\]]+)\]\]/g, '$1')
-  .normalize('NFKC')
-  .toLowerCase()
-  .replace(/[\u2018\u2019]/g, "'")
-  .replace(/[\u201c\u201d]/g, '"')
-  .replace(/[\u2013\u2014]/g, '-')
-  .replace(/\s+/g, ' ')
-  .trim();
 
 const sentences = [];
 const seenLookupHashes = new Set();
@@ -49,29 +37,25 @@ for (const collection of catalog.collections) {
       if (!text || !focus || !text.toLocaleLowerCase('en-US').includes(focus.toLocaleLowerCase('en-US'))) {
         throw new Error(`${collection.id}/${section.id} sentence ${index + 1} is invalid`);
       }
-      const lookupHash = sha256(normalizeSentence(text));
+      const lookupHash = sentenceLookupHash(text);
       if (seenLookupHashes.has(lookupHash)) {
         throw new Error(`${collection.id}/${section.id} duplicates a normalized sentence`);
       }
       seenLookupHashes.add(lookupHash);
       const catalogSentenceId = `${collection.id}:${section.id}:${String(index + 1).padStart(2, '0')}`;
-      sentences.push({
-        id: `example-${lookupHash.slice(0, 40)}`,
+      sentences.push(poolSentence({
         text,
+        lookupHash,
         sourceWord: focus,
         sourceSense: `${collection.title} — ${section.title}`,
-        textHash: sha256(text),
-        lookupHash,
-        hasAnalysis: false,
-        hasImage: false,
-        provenance: [{
+        provenance: {
           catalogSentenceId,
           collectionId: collection.id,
           collectionTitle: collection.title,
           sectionId: section.id,
           sectionTitle: section.title,
-        }],
-      });
+        },
+      }));
     });
   }
 }

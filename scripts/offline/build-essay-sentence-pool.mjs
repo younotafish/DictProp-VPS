@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { poolSentence, sentenceLookupHash } from './sentence-pool.mjs';
 
 const [catalogArg, outputArg, essayArg] = process.argv.slice(2);
 if (!catalogArg || !outputArg) {
@@ -16,18 +16,6 @@ if (catalog?.version !== 1 || !Array.isArray(catalog.essays) || catalog.essays.l
 const selectedEssayIds = new Set(
   String(essayArg || '').split(',').map(value => value.trim()).filter(Boolean),
 );
-
-const sha256 = value => createHash('sha256').update(value).digest('hex');
-const normalizeSentence = value => String(value || '')
-  .replace(/\{\{([^{}]+)\}\}/g, '$1')
-  .replace(/\[\[([^\[\]]+)\]\]/g, '$1')
-  .normalize('NFKC')
-  .toLowerCase()
-  .replace(/[\u2018\u2019]/g, "'")
-  .replace(/[\u201c\u201d]/g, '"')
-  .replace(/[\u2013\u2014]/g, '-')
-  .replace(/\s+/g, ' ')
-  .trim();
 
 const byLookupHash = new Map();
 for (const essay of catalog.essays) {
@@ -56,7 +44,7 @@ for (const essay of catalog.essays) {
           !text.toLocaleLowerCase('en-US').includes(focus.toLocaleLowerCase('en-US'))) {
         throw new Error(`${essay.id}/${paragraph.id} contains an invalid sentence`);
       }
-      const lookupHash = sha256(normalizeSentence(text));
+      const lookupHash = sentenceLookupHash(text);
       const provenance = {
         essaySentenceId: entry.id,
         essayId: essay.id,
@@ -69,18 +57,14 @@ for (const essay of catalog.essays) {
         existing.provenance.push(provenance);
         continue;
       }
-      byLookupHash.set(lookupHash, {
-        id: `example-${lookupHash.slice(0, 40)}`,
+      byLookupHash.set(lookupHash, poolSentence({
         text,
+        lookupHash,
         sourceWord: focus,
         sourceSense: `${essay.title} — ${essay.author}`,
-        ...contextBySentenceId.get(entry.id),
-        textHash: sha256(text),
-        lookupHash,
-        hasAnalysis: false,
-        hasImage: false,
-        provenance: [provenance],
-      });
+        context: contextBySentenceId.get(entry.id),
+        provenance,
+      }));
     }
   }
 }

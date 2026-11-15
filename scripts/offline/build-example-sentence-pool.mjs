@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { normalizeSentenceLookup, poolSentence, sentenceLookupHash } from './sentence-pool.mjs';
 
 const [corpusArg, outputArg, overlayArg] = process.argv.slice(2);
 if (!corpusArg || !outputArg) {
@@ -34,22 +34,9 @@ const enrichmentCoverage = new Map(
     .map(entry => [entry.lookupHash, entry]),
 );
 
-const sha256 = value => createHash('sha256').update(value).digest('hex');
-const plainSentence = value => String(value || '')
-  .replace(/\{\{([^{}]+)\}\}/g, '$1')
-  .replace(/\[\[([^\[\]]+)\]\]/g, '$1');
-const normalizedSentence = value => plainSentence(value)
-  .normalize('NFKC')
-  .toLowerCase()
-  .replace(/[\u2018\u2019]/g, "'")
-  .replace(/[\u201c\u201d]/g, '"')
-  .replace(/[\u2013\u2014]/g, '-')
-  .replace(/\s+/g, ' ')
-  .trim();
-
 const savedTexts = new Set(records
   .filter(record => record.type === 'sentence' && typeof record.data?.text === 'string')
-  .map(record => normalizedSentence(record.data.text))
+  .map(record => normalizeSentenceLookup(record.data.text))
   .filter(Boolean));
 
 const pooled = new Map();
@@ -62,13 +49,13 @@ function addCard(record, card, cardIndex) {
     if (typeof example !== 'string' || !example.trim()) continue;
     exampleSlots++;
     const text = example.trim();
-    const normalized = normalizedSentence(text);
+    const normalized = normalizeSentenceLookup(text);
     if (!normalized) continue;
     if (savedTexts.has(normalized)) {
       savedSlots++;
       continue;
     }
-    const lookupHash = sha256(normalized);
+    const lookupHash = sentenceLookupHash(text);
     const prepared = enrichmentCoverage.get(lookupHash);
     const provenance = {
       parentId: record.id,
@@ -88,17 +75,15 @@ function addCard(record, card, cardIndex) {
       }
       continue;
     }
-    pooled.set(lookupHash, {
-      id: `example-${lookupHash.slice(0, 40)}`,
+    pooled.set(lookupHash, poolSentence({
       text,
+      lookupHash,
       sourceWord: card.word || '',
       sourceSense: card.sense || '',
-      textHash: sha256(text),
-      lookupHash,
       hasAnalysis: prepared?.hasAnalysis === true,
       hasImage: prepared?.hasImage === true,
-      provenance: [provenance],
-    });
+      provenance,
+    }));
   }
 }
 
