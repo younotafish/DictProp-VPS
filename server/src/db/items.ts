@@ -2,7 +2,9 @@ import { ConflictError } from '../errors.js';
 import { serverImageMarker } from '../shared/image-markers.js';
 import { keepServerOwnedData } from '../shared/server-owned-data.js';
 import { db, writeTransaction } from './connection.js';
-import { getItemImagesBatch, imageStmts, linkSentenceEnrichmentImage, storeImage, upsertItemImageBinary } from './images.js';
+import {
+  getItemImagesBatch, hasItemImage, imageStmts, linkSentenceEnrichmentImage, storeImage, upsertItemImageBinary,
+} from './images.js';
 import {
   isJsonObject, isStaleContent, resolveSrs, sameJson, splitInlineImages, withPoolAnalysis, type InlineImage, type JsonObject,
 } from './item-write.js';
@@ -202,9 +204,6 @@ export interface ItemWrite {
   isArchived?: boolean;
 }
 
-const storeInlineImage = (image: InlineImage | undefined, userId: string, now: number): boolean =>
-  !!image && storeImage(image.id, userId, image.dataUri, now);
-
 export function writeItem(item: ItemWrite, userId: string, options: UpsertOptions): UpsertResult & {
   id: string;
   enriched: boolean;
@@ -249,14 +248,19 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   const data = keepFrom ? keepServerOwnedData(analysed, item.type, storedData, keepFrom.type) : analysed;
   const keptServerFields = data !== analysed;
 
+  // A stale copy's content lost to the stored row, so its images only fill ids that have none: a newer
+  // stored image stays.
+  const storeInlineImage = (image: InlineImage | undefined): boolean =>
+    !!image && (!staleContent || !hasItemImage(image.id, userId)) && storeImage(image.id, userId, image.dataUri, now);
+
   // The item's own inline image goes first, so the pool's image only fills an item that has none.
   const { stored, itemImage, vocabImages } = splitInlineImages(data);
-  let imagesChanged = storeInlineImage(itemImage, userId, now);
+  let imagesChanged = storeInlineImage(itemImage);
   if (pool && linkSentenceEnrichmentImage(id, userId, pool.imageContentHash, pool.imageMimeType, now)) {
     imagesChanged = true;
   }
   for (const image of vocabImages) {
-    if (storeInlineImage(image, userId, now)) imagesChanged = true;
+    if (storeInlineImage(image)) imagesChanged = true;
   }
 
   const content = staleContent && existing
@@ -290,7 +294,8 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   if (existing && keptServerFields && !imagesChanged && !enriched && (Object.keys(row) as Array<keyof typeof row>).every(sameColumn)) {
     return { id, revision: existingRevision, conflicted: false, enriched: false };
   }
-  const revision = staleContent && !srsChanged ? existingRevision : allocateRevision();
+  // An image a stale copy fills in still needs a revision, or delta clients would never see its marker.
+  const revision = staleContent && !srsChanged && !imagesChanged ? existingRevision : allocateRevision();
   stmts.upsert.run({ ...row, revision });
   return { id, revision, conflicted: staleContent, enriched };
 }
