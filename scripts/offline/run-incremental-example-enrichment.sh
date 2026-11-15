@@ -55,6 +55,8 @@ CORPUS_EXPORT_WAIT_SECONDS="${CORPUS_EXPORT_WAIT_SECONDS:-7200}"
 export PUBLISH_DEADLINE_SECONDS="${PUBLISH_DEADLINE_SECONDS:-7200}"
 export DISPATCH_WAIT_DEADLINE_SECONDS="${DISPATCH_WAIT_DEADLINE_SECONDS:-3600}"
 LOCK_FILE="$ROOT/.cycle.lock"
+# The LaunchAgent appends each cycle's output to launchd.out.log and launchd.err.log in ROOT.
+LAUNCHD_LOG_MAX_BYTES="${LAUNCHD_LOG_MAX_BYTES:-20000000}"
 # Items that keep failing a stage wait out a growing backoff here instead of failing every cycle.
 FAILURE_LEDGER="$ROOT/failure-ledger.json"
 CURRENT_CORPUS="$ROOT/current-corpus.json"
@@ -98,7 +100,7 @@ esac
 # Every model-calling stage, including the image loop's judge and prompt refiner, inherits this choice.
 export ENRICHMENT_MODEL_PROVIDER CLAUDE_MODEL CLAUDE_REASONING_EFFORT CODEX_MODEL CODEX_REASONING_EFFORT
 for setting in TEXT_STAGE_TIMEOUT_SECONDS IMAGE_STAGE_TIMEOUT_SECONDS CORPUS_EXPORT_WAIT_SECONDS \
-  PUBLISH_DEADLINE_SECONDS DISPATCH_WAIT_DEADLINE_SECONDS; do
+  PUBLISH_DEADLINE_SECONDS DISPATCH_WAIT_DEADLINE_SECONDS LAUNCHD_LOG_MAX_BYTES; do
   if ! [[ "${!setting}" =~ ^[1-9][0-9]*$ ]]; then
     echo "$setting must be a positive integer" >&2
     exit 1
@@ -527,6 +529,14 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# Nothing else trims the LaunchAgent's logs, so one past LAUNCHD_LOG_MAX_BYTES becomes <log>.1, replacing
+# the one before. This cycle goes on writing to the renamed file, and the next launch starts a fresh log.
+for launchd_log in "$ROOT/launchd.out.log" "$ROOT/launchd.err.log"; do
+  if [ -f "$launchd_log" ] && [ "$(wc -c < "$launchd_log" | tr -d ' ')" -gt "$LAUNCHD_LOG_MAX_BYTES" ]; then
+    mv -f "$launchd_log" "$launchd_log.1"
+  fi
+done
 
 # 75 (EX_TEMPFAIL) marks a cycle that stopped before starting in the LaunchAgent log; the next cycle checks
 # again, and after a fast-forward that changed this code, it runs the new code.

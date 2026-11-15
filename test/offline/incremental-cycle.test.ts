@@ -166,8 +166,9 @@ interface Scenario {
   model?: number[];
   dispatch?: Record<string, number>;
   busy?: 'image' | 'text';
-  // Files an earlier cycle left in the cycle root.
-  seed?: string[];
+  // Files an earlier cycle left in the cycle root, with their contents.
+  seed?: Record<string, string>;
+  env?: Record<string, string>;
 }
 
 const writeFile = (path: string, value: unknown) => {
@@ -234,7 +235,10 @@ async function runCycle(fixture: Fixture, name: string, scenario: Scenario) {
   const trace = join(scenarioRoot, 'trace.log');
   writeJson(scenarioFile, scenario);
   writeFileSync(trace, '');
-  for (const path of scenario.seed ?? []) writeFile(join(scenarioRoot, 'cycle', path), { earlierCycle: true });
+  for (const [path, contents] of Object.entries(scenario.seed ?? {})) {
+    mkdirSync(dirname(join(scenarioRoot, 'cycle', path)), { recursive: true });
+    writeFileSync(join(scenarioRoot, 'cycle', path), contents);
+  }
   const child = spawn('/bin/bash', [
     'scripts/offline/run-incremental-example-enrichment.sh',
     join(scenarioRoot, 'cycle'),
@@ -254,6 +258,7 @@ async function runCycle(fixture: Fixture, name: string, scenario: Scenario) {
       SCENARIO: scenarioFile,
       TRACE: trace,
       FAKE_BUSY: scenario.busy ?? '',
+      ...scenario.env,
     },
   });
   let stdout = '';
@@ -303,7 +308,16 @@ const SCENARIOS: Record<string, Scenario> = {
   'text-busy': { busy: 'text' },
   'image-busy': { examples: [1], exampleMissing: [0], exampleImages: 1, itemImages: 1, busy: 'image' },
   previous: {
-    seed: ['unfiltered-source.json', 'source.json', 'saved-sentences/source.json', 'saved-sentences/analysis-cache.json'],
+    seed: {
+      'unfiltered-source.json': '{}\n',
+      'source.json': '{}\n',
+      'saved-sentences/source.json': '{}\n',
+      'saved-sentences/analysis-cache.json': '{}\n',
+      'launchd.out.log': 'x'.repeat(64),
+      'launchd.out.log.1': 'older output\n',
+      'launchd.err.log': 'errors\n',
+    },
+    env: { LAUNCHD_LOG_MAX_BYTES: '32' },
   },
 };
 
@@ -540,7 +554,7 @@ test('the example stage ends the cycle when every sentence is backing off or rec
   assert.deepEqual(incomplete.stderr, ['Incremental sentence analysis reconciliation is incomplete']);
 });
 
-test('a cycle builds its sources on what the previous cycle left', async () => {
+test('a cycle builds its sources on what the previous cycle left, and sets an outgrown log aside', async () => {
   const result = await cycle('previous');
   assert.equal(result.status, 0, result.stderr.join('\n'));
   // The unfiltered example source carries each sentence's first identity over; the filtered source.json is
@@ -557,6 +571,12 @@ test('a cycle builds its sources on what the previous cycle left', async () => {
     exampleFilter,
     summary,
   ]);
+  // The output log outgrew the limit and replaced the older copy; the error log did not.
+  const cycleRoot = join(fixture.root, 'previous', 'cycle');
+  assert.equal(existsSync(join(cycleRoot, 'launchd.out.log')), false);
+  assert.equal(readFileSync(join(cycleRoot, 'launchd.out.log.1'), 'utf8'), 'x'.repeat(64));
+  assert.equal(readFileSync(join(cycleRoot, 'launchd.err.log'), 'utf8'), 'errors\n');
+  assert.equal(existsSync(join(cycleRoot, 'launchd.err.log.1')), false);
 });
 
 test('a model that stops answering after a failed stage ends the cycle there', async () => {
