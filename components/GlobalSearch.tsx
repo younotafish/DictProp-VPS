@@ -1,15 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue, useId } from 'react';
-import { Search, X, Loader2, Send, ChevronLeft, ChevronRight, Sparkles, Scale, BookmarkPlus, MessageSquareQuote } from 'lucide-react';
-import { SearchResult, VocabCard, StoredItem, SentenceData, ComparisonResult, comparisonKey } from '../types';
+import { SearchResult, VocabCard, StoredItem, ComparisonResult, comparisonKey } from '../types';
 import { analyzeInput, detectVocabulary, compareWords } from '../services/api';
-import { VocabCardDisplay } from './VocabCard';
-import { ComparisonBody } from './ComparisonBody';
-import { ErrorBoundary } from './ErrorBoundary';
 import { makeVocabStoredItem } from '../services/items';
 import { speakWord, prefetchTTS, ensureTTS, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../services/lazyTts';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { useSentenceSearch } from '../services/sentenceSearch';
-import { EyesFreeZones, type ZoneFlash } from './EyesFreeZones';
+import type { ZoneFlash } from './EyesFreeZones';
 import { log, warn } from '../services/logger';
 import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../services/searchRecovery';
 import { useEscapeLayer } from './escapeStack';
@@ -18,20 +14,12 @@ import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../services/queryMode';
-
-interface QueueItem {
-  id: string;
-  kind: 'search' | 'compare';            // 'search' = analyze a word; 'compare' = compare 2+ words
-  query: string;                         // search: the query; compare: "a vs b" for display
-  status: 'pending' | 'searching' | 'ready' | 'failed';
-  results: SearchResult | null;          // search result
-  words?: string[];                      // compare: the words being compared
-  comparison?: ComparisonResult | null;  // compare result
-  forceAI?: boolean; // refresh: re-run the AI, bypassing the saved-card reuse
-  refreshing?: boolean; // in-place refresh in flight: keep showing the old results with a spinner
-  analyzeMode?: 'batch'; // expressions auto-extracted from a sentence search: analyze as a pre-identified
-                         // unit (don't re-split multi-word idioms) and don't auto-open the popup.
-}
+import type { QueueItem } from './search/searchQueue';
+import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
+import { SearchInputBar } from './search/SearchInputBar';
+import { SearchResultsSheet } from './search/SearchResultsSheet';
+import { SearchVocabPane } from './search/SearchVocabPane';
+import { SearchFab } from './search/SearchFab';
 
 type Mode = 'idle' | 'input' | 'viewing';
 
@@ -63,7 +51,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const [mode, setMode] = useState<Mode>('idle');
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [error, setError] = useState<{ msg: string; query?: string; analyzeMode?: 'batch' } | null>(null);
+  const [error, setError] = useState<SearchErrorToast | null>(null);
   // Viewing state: which queue item and which vocab within it
   const [viewingQueueIdx, setViewingQueueIdx] = useState(0);
   const [viewingVocabIdx, setViewingVocabIdx] = useState(0);
@@ -665,430 +653,92 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     speakNatural(sentence, { allowDownload: true });
   }, [viewingVocab, flashZone, holdKeepAlive]);
 
+  // The error toast's retry: replays the query the failure carries.
+  const retryFailedSearch = (failed: SearchErrorToast) => {
+    const q = failed.query; const mode = failed.analyzeMode; setError(null);
+    if (!q) return;
+    // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
+    // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
+    if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else void submitQuery(q);
+  };
+
   return (
     <>
-      {/* Save toast */}
-      {saveToast && (
-        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-full shadow-lg fade-in">
-          {saveToast}
-        </div>
-      )}
-      {/* Status toast — neutral notices (sentence scanning / found N expressions) */}
-      {statusToast && (
-        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-[90vw] text-center bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-full shadow-lg fade-in">
-          {statusToast}
-        </div>
-      )}
-      {/* Error toast — failures surface here instead of vanishing. Tapping the message retries the failed
-          query (force-refresh bypasses the saved-card reuse + dedup); the X closes the toast without one. */}
-      {error && (
-        <div
-          role="alert"
-          className="fixed bottom-44 right-4 z-[56] max-w-[18rem] flex bg-red-50 text-red-600 text-xs font-medium rounded-lg shadow-lg fade-in duration-200"
-        >
-          <button
-            onClick={() => {
-              const q = error.query; const mode = error.analyzeMode; setError(null);
-              if (!q) return;
-              // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
-              // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
-              if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else void submitQuery(q);
-            }}
-            className="min-w-0 flex-1 text-left pl-3 pr-1 py-2 rounded-l-lg hover:bg-red-100 transition-colors"
-          >
-            {error.msg}{error.query ? ' · Tap to retry' : ''}
-          </button>
-          <button
-            onClick={() => setError(null)}
-            aria-label="Dismiss error"
-            title="Dismiss"
-            className="shrink-0 flex items-center px-2.5 rounded-r-lg text-red-400 hover:text-red-600 hover:bg-red-100 transition-colors"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
+      <SearchToasts
+        saveToast={saveToast}
+        statusToast={statusToast}
+        error={error}
+        onRetry={retryFailedSearch}
+        onDismissError={() => setError(null)}
+      />
 
       {/* Input overlay */}
       {mode === 'input' && (
-        <div className="fixed bottom-20 right-4 left-4 z-[56]">
-          {/* Saved-sentence suggestions (fuzzy). ↑/↓ or hover to highlight; Enter/click opens the card. */}
-          {suggestions.length > 0 && (
-            <div className="max-w-md ml-auto mb-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden fade-in">
-              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                Saved sentences
-              </div>
-              <div ref={suggestionsListRef} id={suggestionsId} role="listbox" aria-label="Saved sentences" className="max-h-64 overflow-y-auto overscroll-contain">
-                {suggestions.map((s, idx) => {
-                  const d = s.data as SentenceData;
-                  return (
-                    <button
-                      key={d.id}
-                      id={`${suggestionsId}-${idx}`}
-                      role="option"
-                      aria-selected={idx === highlightedIndex}
-                      tabIndex={-1}
-                      onClick={() => openSuggestion(idx)}
-                      onMouseEnter={() => setHighlightedIndex(idx)}
-                      className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors border-b border-slate-50 last:border-0 ${idx === highlightedIndex ? 'bg-indigo-50' : 'hover:bg-indigo-50'}`}
-                    >
-                      <MessageSquareQuote size={14} className="text-indigo-400 shrink-0 mt-0.5" />
-                      <span className="flex-1 min-w-0">
-                        <span className="block text-sm text-slate-700 line-clamp-2">{stripSentenceMarkers(d.text)}</span>
-                        {d.sourceWord && (
-                          <span className="mt-0.5 inline-block text-[11px] text-indigo-500 font-medium">{d.sourceWord}</span>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 flex items-center gap-2 px-4 py-3 max-w-md ml-auto">
-            <Search size={18} className="text-slate-400 shrink-0" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={e => { setQuery(e.target.value); setHighlightedIndex(-1); }}
-              onKeyDown={e => {
-                // ↑/↓ move the highlight through the saved-sentence suggestions.
-                if (e.key === 'ArrowDown' && suggestions.length > 0) {
-                  e.preventDefault();
-                  setHighlightedIndex(i => (i + 1) % suggestions.length);
-                  return;
-                }
-                if (e.key === 'ArrowUp' && suggestions.length > 0) {
-                  e.preventDefault();
-                  setHighlightedIndex(i => (i <= 0 ? suggestions.length - 1 : i - 1));
-                  return;
-                }
-                if (e.key === 'Enter') {
-                  // A highlighted suggestion → jump to that card; otherwise run the real AI search.
-                  if (highlightedIndex >= 0 && suggestions[highlightedIndex]) {
-                    e.preventDefault();
-                    openSuggestion(highlightedIndex);
-                  } else if (query.trim()) {
-                    e.preventDefault();
-                    handleSubmit();
-                  }
-                }
-                // Escape (clear and close) is handled by the escape layer above.
-              }}
-              role="combobox"
-              aria-label="Look up a word"
-              aria-autocomplete="list"
-              aria-expanded={suggestions.length > 0}
-              aria-controls={suggestions.length > 0 ? suggestionsId : undefined}
-              aria-activedescendant={suggestions[highlightedIndex] ? `${suggestionsId}-${highlightedIndex}` : undefined}
-              placeholder="Look up a word..."
-              className="flex-1 text-sm outline-none bg-transparent text-slate-800 placeholder:text-slate-400"
-              autoComplete="off"
-              autoCapitalize="off"
-            />
-            {query.trim() && looksLikeSentence(query) && onSaveSentence && (
-              <button
-                onClick={handleSaveSentenceClick}
-                title="Save this sentence to your Sentences list"
-                aria-label="Save this sentence"
-                className="shrink-0 w-8 h-8 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center hover:bg-violet-200 transition-colors"
-              >
-                <BookmarkPlus size={15} />
-              </button>
-            )}
-            {query.trim() && (
-              <button
-                onClick={handleSubmit}
-                title="Analyze (sentence → its uncommon expressions)"
-                aria-label="Analyze"
-                className="shrink-0 w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center hover:bg-indigo-600 transition-colors"
-              >
-                <Send size={14} />
-              </button>
-            )}
-            {readyCount > 0 && (
-              <button
-                onClick={handleViewResults}
-                aria-label={`Show ${readyCount} ${readyCount === 1 ? 'result' : 'results'}`}
-                className="shrink-0 h-7 px-2.5 rounded-full bg-indigo-500 text-white text-xs font-bold flex items-center gap-1 hover:bg-indigo-600 transition-colors animate-pulse"
-              >
-                <Search size={12} />
-                {readyCount}
-              </button>
-            )}
-            <button
-              onClick={() => setMode('idle')}
-              aria-label="Close search"
-              className="shrink-0 text-slate-400 hover:text-slate-600"
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </div>
+        <SearchInputBar
+          inputRef={inputRef}
+          query={query}
+          setQuery={setQuery}
+          suggestions={suggestions}
+          highlightedIndex={highlightedIndex}
+          setHighlightedIndex={setHighlightedIndex}
+          suggestionsListRef={suggestionsListRef}
+          suggestionsId={suggestionsId}
+          onOpenSuggestion={openSuggestion}
+          onSubmit={handleSubmit}
+          canSaveSentence={!!(query.trim() && looksLikeSentence(query) && onSaveSentence)}
+          onSaveSentence={handleSaveSentenceClick}
+          readyCount={readyCount}
+          onViewResults={handleViewResults}
+          onClose={handleClose}
+        />
       )}
 
       {/* Results popup */}
       {resultsOpen && viewingItem && (
-        <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 z-[54] bg-black/30 fade-in"
-            onClick={handleClose}
-          />
-          {/* Popup */}
-          <div className="fixed inset-x-0 bottom-0 z-[55]">
-            <div
-              ref={resultsDialogRef}
-              tabIndex={-1}
-              role="dialog"
-              aria-modal="true"
-              aria-label={`Search result: ${viewingResult?.query || viewingItem.query}`}
-              className="bg-white rounded-t-3xl shadow-2xl max-h-[85dvh] flex flex-col outline-none"
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100">
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  {viewingItem.kind === 'compare'
-                    ? <Scale size={14} className="text-indigo-500 shrink-0" />
-                    : <Search size={14} className="text-indigo-500 shrink-0" />}
-                  <span className="text-sm font-semibold text-slate-700 truncate">"{viewingResult?.query || viewingItem.query}"</span>
-                  {viewingItem.refreshing && (
-                    <span className="flex items-center gap-1 text-xs font-medium text-indigo-500 shrink-0">
-                      <Loader2 size={12} className="animate-spin" /> Refreshing…
-                    </span>
-                  )}
-                  {viewingVocabCount > 1 && (
-                    <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full shrink-0">
-                      {viewingVocabIdx + 1}/{viewingVocabCount}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {/* Queue navigation — if multiple ready items */}
-                  {readyItems.length > 1 && (
-                    <div className="flex items-center gap-1 mr-2">
-                      <button
-                        onClick={() => { setViewingQueueIdx(prev => Math.max(0, prev - 1)); setViewingVocabIdx(0); }}
-                        disabled={viewingQueueIdx === 0}
-                        aria-label="Previous result"
-                        className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30"
-                      >
-                        <ChevronLeft size={14} />
-                      </button>
-                      <span className="text-xs font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">
-                        {viewingQueueIdx + 1}/{readyItems.length}
-                      </span>
-                      <button
-                        onClick={() => { setViewingQueueIdx(prev => Math.min(readyItems.length - 1, prev + 1)); setViewingVocabIdx(0); }}
-                        disabled={viewingQueueIdx >= readyItems.length - 1}
-                        aria-label="Next result"
-                        className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30"
-                      >
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  )}
-                  {/* Save all meanings of current word (searches only — comparisons auto-save) */}
-                  {viewingItem.kind !== 'compare' && (() => {
-                    const allSaved = viewingResult?.vocabs?.every(v => isVocabSaved(v)) ?? false;
-                    const meaningCount = viewingResult?.vocabs?.length ?? 0;
-                    return (
-                      <button
-                        onClick={() => handleSaveWord(viewingResult ?? null)}
-                        className={`h-8 px-3 rounded-full flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
-                          allSaved
-                            ? 'bg-indigo-100 text-indigo-600 border border-indigo-200'
-                            : 'bg-indigo-500 text-white hover:bg-indigo-600 shadow-sm'
-                        }`}
-                      >
-                        <Sparkles size={14} fill={allSaved ? 'currentColor' : 'none'} />
-                        {allSaved ? 'All saved' : meaningCount > 1 ? `Save all ${meaningCount}` : 'Save'}
-                      </button>
-                    );
-                  })()}
-                  {/* Dismiss this result */}
-                  <button
-                    onClick={() => dismissQueueItem(viewingItem.id)}
-                    className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
-                    title="Dismiss"
-                    aria-label="Dismiss this result"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Card area — onClick on THIS scroll container (not the card) so the eyes-free quarter-bands
-                  are anchored to the visible popup body and work regardless of how far the card is scrolled.
-                  The relative wrapper hosts the zone guides as a non-scrolling sibling overlay. */}
-              <div className="relative flex-1 min-h-0 flex flex-col">
-              {viewingItem.kind === 'compare' ? (
-                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4">
-                  <div className="max-w-screen-md mx-auto">
-                    {viewingItem.comparison
-                      ? (
-                        <ErrorBoundary key={viewingItem.id} variant="inline" fallbackMessage="This comparison couldn't be displayed.">
-                          <ComparisonBody result={viewingItem.comparison} />
-                        </ErrorBoundary>
-                      )
-                      : <div className="text-center text-slate-400 py-12 text-sm">Comparison unavailable.</div>}
-                  </div>
-                </div>
-              ) : viewingVocab ? (
-              <>
-              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
-                <div className="relative max-w-screen-md mx-auto">
-                  {/* Navigation arrows for vocabs */}
-                  {viewingVocabCount > 1 && viewingVocabIdx > 0 && (
-                    <button
-                      onClick={() => { setViewingVocabIdx(viewingVocabIdx - 1); }}
-                      aria-label="Previous meaning"
-                      className="absolute -left-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                  )}
-                  {viewingVocabCount > 1 && (
-                    <button
-                      onClick={() => { setViewingVocabIdx((viewingVocabIdx + 1) % viewingVocabCount); }}
-                      aria-label="Next meaning"
-                      className="absolute -right-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  )}
-
-                  <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-                    <VocabCardDisplay
-                      data={viewingVocab}
-                      isSaved={isVocabSaved(viewingVocab)}
-                      onSave={() => handleSaveVocab(viewingVocab)}
-                      showSave={true}
-                      onSearch={onSearch}
-                      onRefresh={handleRefreshCard}
-                      onCompare={onCompare}
-                      scrollable={false}
-                      onLazyLoadImage={onLazyLoadImage}
-                      onSaveSentence={onSaveSentence}
-                      isSentenceSaved={isSentenceSaved}
-                      className="!h-auto !overflow-visible border-indigo-200 shadow-sm bg-white"
-                    />
-                  </div>
-
-                  {/* Vocab dot indicators */}
-                  {viewingVocabCount > 1 && (
-                    <div className="flex justify-center gap-1.5 mt-3">
-                      {viewingResult!.vocabs.map((_, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => setViewingVocabIdx(idx)}
-                          aria-label={`Meaning ${idx + 1}`}
-                          aria-current={idx === viewingVocabIdx ? 'true' : undefined}
-                          className={`w-2 h-2 rounded-full transition-all ${
-                            idx === viewingVocabIdx
-                              ? 'bg-indigo-500 w-4'
-                              : 'bg-slate-300 hover:bg-slate-400'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <EyesFreeZones
-                anchor="fill"
-                bands={Math.min(2, (viewingVocab?.examples || []).map(s => stripSentenceMarkers(s || '').trim()).filter(Boolean).length)}
-                flash={zoneFlash}
-              />
-              </>
-              ) : (
-                <div className="flex-1 grid place-items-center text-sm text-slate-400">
-                  No vocabulary card was returned.
-                </div>
-              )}
-              </div>
-
-              {/* Queue strip — show all ready items as tabs at bottom */}
-              {readyItems.length > 1 && (
-                <div className="px-4 pb-3 pt-2 border-t border-slate-100 flex gap-2 overflow-x-auto no-scrollbar">
-                  {readyItems.map((item, idx) => (
-                    <button
-                      key={item.id}
-                      onClick={() => { setViewingQueueIdx(idx); setViewingVocabIdx(0); }}
-                      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                        idx === viewingQueueIdx
-                          ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      {item.query}
-                    </button>
-                  ))}
-                  {readyItems.length > 1 && (
-                    <>
-                      <button
-                        onClick={handleSaveAll}
-                        className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-indigo-500 text-white hover:bg-indigo-600 transition-colors shadow-sm"
-                      >
-                        Save all
-                      </button>
-                      <button
-                        onClick={clearQueue}
-                        className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors"
-                      >
-                        Clear all
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
+        <SearchResultsSheet
+          dialogRef={resultsDialogRef}
+          viewingItem={viewingItem}
+          viewingResult={viewingResult}
+          viewingVocabIdx={viewingVocabIdx}
+          viewingVocabCount={viewingVocabCount}
+          readyItems={readyItems}
+          viewingQueueIdx={viewingQueueIdx}
+          setViewingQueueIdx={setViewingQueueIdx}
+          setViewingVocabIdx={setViewingVocabIdx}
+          isVocabSaved={isVocabSaved}
+          onClose={handleClose}
+          onSaveWord={handleSaveWord}
+          onDismiss={dismissQueueItem}
+          onSaveAll={handleSaveAll}
+          onClearAll={clearQueue}
+        >
+          {viewingVocab && (
+            <SearchVocabPane
+              vocabs={viewingResult!.vocabs}
+              viewingVocab={viewingVocab}
+              viewingVocabIdx={viewingVocabIdx}
+              viewingVocabCount={viewingVocabCount}
+              setViewingVocabIdx={setViewingVocabIdx}
+              onCardZoneRead={handleCardZoneRead}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+              zoneFlash={zoneFlash}
+              isVocabSaved={isVocabSaved}
+              onSaveVocab={handleSaveVocab}
+              onSearch={onSearch}
+              onRefresh={handleRefreshCard}
+              onCompare={onCompare}
+              onLazyLoadImage={onLazyLoadImage}
+              onSaveSentence={onSaveSentence}
+              isSentenceSaved={isSentenceSaved}
+            />
+          )}
+        </SearchResultsSheet>
       )}
 
       {/* Floating button — hidden when input or viewing is open */}
       {mode !== 'input' && mode !== 'viewing' && (
-        <button
-          onClick={handleFloatingClick}
-          aria-label={readyCount > 0
-            ? `Search (${readyCount} ${readyCount === 1 ? 'result' : 'results'} ready)`
-            : isBusy ? 'Search (in progress)' : 'Search'}
-          className={`fixed bottom-24 right-4 z-[55] w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
-            ${readyCount > 0 && !isBusy
-              ? 'bg-indigo-500 text-white shadow-indigo-300'
-              : isBusy
-              ? 'bg-white/90 text-indigo-500 border border-slate-200'
-              : 'bg-white/70 text-slate-500 border border-slate-200/50 opacity-60 hover:opacity-100'
-            }`}
-        >
-          {isBusy && (
-            <>
-              <Loader2 size={20} className="animate-spin" />
-              {/* Count badge — analyses in flight/queued (omitted during the pre-enqueue sentence scan) */}
-              {busyCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-indigo-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white">
-                  {busyCount}
-                </span>
-              )}
-            </>
-          )}
-          {!isBusy && readyCount > 0 && (
-            <>
-              <Search size={20} />
-              {/* Pulse ring */}
-              <span className="absolute inset-0 rounded-full border-2 border-indigo-400 animate-ping opacity-40" />
-              {/* Count badge */}
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white">
-                {readyCount}
-              </span>
-            </>
-          )}
-          {!isBusy && readyCount === 0 && (
-            <Search size={20} />
-          )}
-        </button>
+        <SearchFab readyCount={readyCount} busyCount={busyCount} isBusy={isBusy} onClick={handleFloatingClick} />
       )}
     </>
   );
