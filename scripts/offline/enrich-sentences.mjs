@@ -111,6 +111,7 @@ function runBatch(batch, index) {
     ask: askModel,
     validate: parsed => readAnalysisResults(parsed, batch, checkOptions),
     retryDelayMs,
+    splittable: batch.length > 1,
     lifecycle,
   });
 }

@@ -13,6 +13,7 @@ import {
   runSplittingBatches,
   stageSettings,
 } from '../../scripts/offline/model-stage.mjs';
+import { ModelCallError } from '../../scripts/offline/structured-model.mjs';
 import { sha256 } from '../support/fs.ts';
 
 type Lifecycle = { aborting: boolean; activeChildren: Set<unknown>; terminate: () => Promise<void> };
@@ -136,6 +137,52 @@ test('an invalid answer is deleted and asked again with the reason, three times 
   assert.deepEqual(prompts, ['ask', 'ask [fix: bad answer 1]', 'ask [fix: bad answer 2]']);
   // The last answer stays cached for inspection; the earlier ones were deleted before each retry.
   assert.deepEqual(JSON.parse(readFileSync(resultPath, 'utf8')), { attempt: 3 });
+});
+
+test('a call that failed outright is repeated as it was sent, without a validation correction', async t => {
+  const dir = workDir(t);
+  const prompts: string[] = [];
+  const results = await runCachedModelBatch({
+    resultPath: join(dir, 'batch.json'),
+    prompt: (correction: string) => `ask${correction}`,
+    correction: (message: string) => ` [fix: ${message}]`,
+    ask: async ({ prompt }: { prompt: string }) => {
+      prompts.push(prompt);
+      if (prompts.length === 1) return { valid: false };
+      if (prompts.length === 2) throw new ModelCallError('exit', 'Claude exited with 1: API Error: 529 overloaded');
+      return { valid: true };
+    },
+    validate: (parsed: { valid: boolean }) => {
+      if (!parsed.valid) throw new Error('missing field');
+      return ['done'];
+    },
+    retryDelayMs: 0,
+    splittable: true,
+    lifecycle: lifecycle(),
+  });
+  assert.deepEqual(results, ['done']);
+  // The overload neither replaced the earlier correction nor became one.
+  assert.deepEqual(prompts, ['ask', 'ask [fix: missing field]', 'ask [fix: missing field]']);
+});
+
+test('a batch that times out is handed back for splitting at once, and a single item gets one more try', async t => {
+  const dir = workDir(t);
+  const attempts = async (splittable: boolean) => {
+    let asked = 0;
+    await assert.rejects(runCachedModelBatch({
+      resultPath: join(dir, `batch-${splittable}.json`),
+      prompt: () => 'ask',
+      correction: () => '',
+      ask: async () => { asked++; throw new ModelCallError('timeout', 'Claude did not answer within 40 min'); },
+      validate: () => [],
+      retryDelayMs: 0,
+      splittable,
+      lifecycle: lifecycle(),
+    }), /did not answer within 40 min/);
+    return asked;
+  };
+  assert.equal(await attempts(true), 1);
+  assert.equal(await attempts(false), 2);
 });
 
 test('a stage that is aborting does not retry a failed batch', async t => {

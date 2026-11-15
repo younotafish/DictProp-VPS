@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
+  ModelCallError,
   checkModelReady,
   claudeStructuredResult,
   resolveStructuredModel,
@@ -33,6 +34,16 @@ process.stdin.on('end', () => {
     effortOverride: process.env.CLAUDE_CODE_EFFORT_LEVEL,
     streamIdleTimeout: process.env.CLAUDE_STREAM_IDLE_TIMEOUT_MS,
   }));
+  if (process.env.FAKE_CLAUDE_SLEEP) return setTimeout(() => {}, 60_000);
+  if (process.env.FAKE_CLAUDE_EXIT) {
+    process.stderr.write('Warning: some CLI warning\\n');
+    process.stdout.write(JSON.stringify({
+      type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'abc', total_cost_usd: 0.01,
+      result: 'API Error: 529 overloaded',
+    }) + '\\n');
+    process.exitCode = 1;
+    return;
+  }
   const structuredOutput = process.env.FAKE_STRUCTURED_OUTPUT ? JSON.parse(process.env.FAKE_STRUCTURED_OUTPUT) : { value: 'claude' };
   const envelope = process.env.FAKE_CLAUDE_FAIL
     ? { type: 'result', subtype: 'error_max_structured_output_retries', is_error: true, result: 'schema retries exhausted' }
@@ -210,3 +221,70 @@ test('the readiness check sends the app icon at low effort and accepts only {"ok
       /unexpected response \{"ok":false\}/);
   },
 ));
+
+async function callError(promise: Promise<unknown>): Promise<{ kind: string; message: string }> {
+  try {
+    await promise;
+  } catch (error) {
+    assert.ok(error instanceof ModelCallError, String(error));
+    return { kind: error.kind, message: error.message };
+  }
+  throw new Error('the call succeeded');
+}
+
+test('a call that runs out of time fails as a timeout, not as a crash', withFakeModel(
+  fakeClaude,
+  async ({ root, bin }) => {
+    process.env.CLAUDE_BIN = bin;
+    process.env.FAKE_CLAUDE_SLEEP = '1';
+    const failure = await callError(runStructuredModel(resolveStructuredModel({}), {
+      prompt: 'Return a value.', schema, resultPath: join(root, 'result.json'), timeoutMs: 1_000,
+    }));
+    assert.deepEqual(failure, { kind: 'timeout', message: 'Claude did not answer within 1 s' });
+  },
+));
+
+test('a CLI that exits with an error is reported by its own error text, without its raw output', withFakeModel(
+  fakeClaude,
+  async ({ root, bin }) => {
+    process.env.CLAUDE_BIN = bin;
+    process.env.FAKE_CLAUDE_EXIT = '1';
+    const failure = await callError(runStructuredModel(resolveStructuredModel({}), {
+      prompt: 'Return a value.', schema, resultPath: join(root, 'result.json'), timeoutMs: 10_000,
+    }));
+    assert.deepEqual(failure, { kind: 'exit', message: 'Claude exited with 1: API Error: 529 overloaded' });
+    assert.doesNotMatch(failure.message, /session_id|total_cost_usd|warning/);
+  },
+));
+
+test('without a result envelope, the end of standard error explains the exit', withFakeModel(
+  `#!/usr/bin/env node
+process.stdout.write('{"partial": ');
+process.stderr.write('Error: rate limited\\n');
+process.exitCode = 2;
+`,
+  async ({ root, bin }) => {
+    process.env.CODEX_BIN = bin;
+    const failure = await callError(runStructuredModel(resolveStructuredModel({ ENRICHMENT_MODEL_PROVIDER: 'codex' }), {
+      prompt: 'Return a value.', schema, resultPath: join(root, 'result.json'), timeoutMs: 10_000,
+    }));
+    assert.deepEqual(failure, { kind: 'exit', message: 'Codex exited with 2: Error: rate limited' });
+  },
+));
+
+test('a CLI that cannot be started fails as a spawn error', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-structured-model-'));
+  const previous = process.env.CLAUDE_BIN;
+  process.env.CLAUDE_BIN = join(root, 'missing-claude');
+  try {
+    const failure = await callError(runStructuredModel(resolveStructuredModel({}), {
+      prompt: 'Return a value.', schema, resultPath: join(root, 'result.json'), timeoutMs: 10_000,
+    }));
+    assert.equal(failure.kind, 'spawn');
+    assert.match(failure.message, /^Claude could not start: spawn .*missing-claude ENOENT$/);
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_BIN;
+    else process.env.CLAUDE_BIN = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});

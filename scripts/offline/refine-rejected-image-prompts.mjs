@@ -82,6 +82,7 @@ async function refineBatch(batch, batchIndex) {
     }),
     validate: parsed => readRefinements(parsed, batch, batchIndex + 1),
     retryDelayMs,
+    splittable: batch.length > 1,
     lifecycle,
   });
   return refinements.map((refined, index) => ({ target: batch[index], refined }));

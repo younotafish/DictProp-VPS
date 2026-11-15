@@ -8,7 +8,7 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeJsonAtomic } from './atomic-file.mjs';
 import { installSignalCleanup, killProcessGroup } from './codex-process.mjs';
-import { checkModelReady } from './structured-model.mjs';
+import { ModelCallError, checkModelReady } from './structured-model.mjs';
 
 export function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -114,14 +114,17 @@ export function indexedResults(parsed, count, { wrongCount, duplicate }) {
   return byIndex;
 }
 
-// Up to three attempts at one batch, with jittered backoff from retryDelayMs. A cached result is reused. A
-// result that fails validation is deleted, and the next attempt's prompt carries the reason so the model can
-// correct it.
+// Up to three attempts at one batch, with jittered backoff from retryDelayMs. A cached result is reused. An
+// answer that fails validation is deleted, and the next attempt's prompt carries the reason so the model can
+// correct it; a call that failed outright (a ModelCallError) is repeated as it was sent. A batch that can be
+// split is split as soon as it times out, since its halves may fit the time; a single item gets one more try.
 //   prompt(correction)  the full prompt, with the correction text ('' on the first attempt) in its place
 //   correction(message) the correction text for a failure
 //   ask(request)        sends { prompt, resultPath } to the model and resolves to the parsed result
 //   validate(parsed)    returns the batch's results, or throws why the answer is unusable
-export async function runCachedModelBatch({ resultPath, prompt, correction, ask, validate, retryDelayMs, lifecycle }) {
+export async function runCachedModelBatch({
+  resultPath, prompt, correction, ask, validate, retryDelayMs, splittable = false, lifecycle,
+}) {
   let correctionText = '';
   for (let attempt = 0; ; attempt++) {
     try {
@@ -130,8 +133,10 @@ export async function runCachedModelBatch({ resultPath, prompt, correction, ask,
         : await ask({ prompt: prompt(correctionText), resultPath });
       return validate(parsed);
     } catch (error) {
-      if (lifecycle.aborting || attempt === 2) throw error;
-      correctionText = correction(errorMessage(error));
+      const failedCall = error instanceof ModelCallError ? error.kind : undefined;
+      const outOfTime = failedCall === 'timeout' && (splittable || attempt > 0);
+      if (lifecycle.aborting || attempt === 2 || outOfTime) throw error;
+      if (!failedCall) correctionText = correction(errorMessage(error));
       if (existsSync(resultPath)) unlinkSync(resultPath);
       await sleep(jitteredDelay(retryDelayMs, attempt));
     }

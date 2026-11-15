@@ -161,6 +161,7 @@ function runBatch(batch, batchIndex) {
     ask: askModel,
     validate: parsed => readCompletionResults(parsed, batch),
     retryDelayMs,
+    splittable: batch.length > 1,
     lifecycle,
   });
 }

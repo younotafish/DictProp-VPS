@@ -93,6 +93,7 @@ async function judgeBatch(batch, batchIndex) {
     }),
     validate: parsed => readVerdicts(parsed, batch, candidates, batchIndex + 1),
     retryDelayMs,
+    splittable: batch.length > 1,
     lifecycle,
   });
   for (const { target, result, candidate } of verdicts) {

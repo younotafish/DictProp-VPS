@@ -112,8 +112,8 @@ test('an image the reviewer cannot judge is rejected on its own, and the rest of
   const [two, three] = rejected();
   assert.deepEqual([two.imageId, two.rejectionReason], ['two', 'Fake judgment.']);
   assert.equal(three.imageId, 'three');
-  assert.match(three.rejectionReason!, /^The reviewer could not judge this image: Claude exited with 1: /);
-  assert.ok(three.rejectionReason!.length <= 'The reviewer could not judge this image: '.length + 200);
+  assert.equal(three.rejectionReason,
+    'The reviewer could not judge this image: Claude exited with 1: API Error: 400 output blocked by content filtering policy');
   for (const accepted of ['one', 'four', 'five']) {
     assert.equal(readFileSync(join(paths.images, `${accepted}.webp`), 'utf8'), `candidate for ${accepted}`);
   }
@@ -124,7 +124,7 @@ test('an image the reviewer cannot judge is rejected on its own, and the rest of
   const judged = calls().filter(call => call.kind === 'judge').map(call => call.briefs!.length);
   assert.deepEqual(judged, [5, 5, 5, 3, 3, 3, 2, 1, 1, 1, 2]);
   assert.equal(calls().filter(call => call.kind === 'ready').length, 1);
-  assert.match(result.stderr, /Image judgment batch 1 failed \([\s\S]*?\); splitting 5 images into 3\+2/);
+  assert.match(result.stderr, /Image judgment batch 1 failed \(Claude exited with 1: API Error: 400 output blocked by content filtering policy\); splitting 5 images into 3\+2\n/);
   assert.match(result.stderr, /Image three could not be judged; rejecting this candidate: /);
   assert.ok(readdirSync(paths.work).some(name => /^split-0001-[0-9a-f]{16}\.json$/.test(name)));
 });

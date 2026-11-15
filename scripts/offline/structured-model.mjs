@@ -39,6 +39,29 @@ export function resolveStructuredModel(env = process.env) {
   throw new Error(`ENRICHMENT_MODEL_PROVIDER must be "claude" or "codex", not "${provider}"`);
 }
 
+// A model call that failed before giving an answer to check: kind is 'timeout' when it ran out of time,
+// 'exit' when the CLI exited with an error, and 'spawn' when it could not be started. Its message carries what
+// the CLI said about the failure, never its raw output, which can hold a whole response envelope.
+export class ModelCallError extends Error {
+  constructor(kind, message, options) {
+    super(message, options);
+    this.name = 'ModelCallError';
+    this.kind = kind;
+  }
+}
+
+function formatDuration(milliseconds) {
+  return milliseconds >= 60_000
+    ? `${Number((milliseconds / 60_000).toFixed(1))} min`
+    : `${Number((milliseconds / 1_000).toFixed(1))} s`;
+}
+
+// The text of the last Claude result envelope on stdout, else the end of stderr.
+function failureSummary(output, stderr) {
+  const envelopeText = String(lastResultEnvelope(output)?.result ?? '').trim().slice(0, 2_000);
+  return envelopeText || stderr.trim().slice(-2_000);
+}
+
 function runModelProcess(command, args, {
   input, timeoutMs, activeChildren, captureStdout = false, cwd, env = process.env, label,
 }) {
@@ -57,7 +80,9 @@ function runModelProcess(command, args, {
     let settled = false;
     let hardKillTimeout;
     let drainTimeout;
+    let timedOut = false;
     const timeout = setTimeout(() => {
+      timedOut = true;
       killProcessGroup(child, 'SIGTERM');
       hardKillTimeout = setTimeout(() => killProcessGroup(child, 'SIGKILL'), 10_000);
     }, timeoutMs);
@@ -74,8 +99,14 @@ function runModelProcess(command, args, {
     const finish = () => {
       if (!exit || !stdoutEnded) return;
       const output = Buffer.concat(stdout).toString('utf8');
-      if (exit.code === 0) settle(null, output);
-      else settle(new Error(`${label} exited with ${exit.code ?? exit.signal}: ${stderr}${output.slice(-10_000)}`));
+      if (exit.code === 0) {
+        settle(null, output);
+      } else if (timedOut) {
+        settle(new ModelCallError('timeout', `${label} did not answer within ${formatDuration(timeoutMs)}`));
+      } else {
+        const summary = failureSummary(output, stderr);
+        settle(new ModelCallError('exit', `${label} exited with ${exit.code ?? exit.signal}${summary ? `: ${summary}` : ''}`));
+      }
     };
     child.stdout?.on('data', chunk => stdout.push(chunk));
     child.stdout?.on('end', () => {
@@ -83,7 +114,7 @@ function runModelProcess(command, args, {
       finish();
     });
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-30_000); });
-    child.on('error', error => settle(error));
+    child.on('error', error => settle(new ModelCallError('spawn', `${label} could not start: ${error.message}`, { cause: error })));
     child.on('exit', (code, signal) => {
       exit = { code, signal };
       // A helper process that inherited stdout must not hold a finished call open.
@@ -120,19 +151,22 @@ function parseJsonText(value, label) {
   }
 }
 
-export function claudeStructuredResult(output) {
-  let envelope;
+function lastResultEnvelope(output) {
   const lines = output.split('\n').map(line => line.trim()).filter(Boolean);
-  for (let index = lines.length - 1; index >= 0 && !envelope; index--) {
+  for (let index = lines.length - 1; index >= 0; index--) {
     if (!lines[index].startsWith('{')) continue;
     try {
       const message = JSON.parse(lines[index]);
-      if (message?.type === 'result') envelope = message;
+      if (message?.type === 'result') return message;
     } catch {
       // Launcher banners and partial lines are not result messages.
     }
   }
-  envelope ??= parseJsonText(output, 'Claude');
+  return undefined;
+}
+
+export function claudeStructuredResult(output) {
+  const envelope = lastResultEnvelope(output) ?? parseJsonText(output, 'Claude');
   if (envelope.is_error || (envelope.subtype && envelope.subtype !== 'success')) {
     throw new Error(`Claude failed (${envelope.subtype || 'error'}): ${String(envelope.result || '').slice(0, 2_000)}`);
   }
