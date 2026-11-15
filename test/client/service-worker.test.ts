@@ -70,11 +70,13 @@ async function device(builds: Build[], caches = new MemoryCacheStorage()) {
 const asset = (path: string) => new Response(contents(path), { headers: { 'content-type': 'text/javascript' } });
 
 test('the build precaches every hashed file except the voice runtime, which is cached on first use', () => {
+  // The voice engine is precached: its name changes with nearly every build, so it can't wait for first use.
   assert.deepEqual(stampedList(ONE.worker, 'PRECACHE'), [
-    '/assets/DetailView-d1.js', '/assets/index-a1.css', '/assets/index-a1.js', '/assets/react-vendor-r0.js',
+    '/assets/DetailView-d1.js', '/assets/index-a1.css', '/assets/index-a1.js', '/assets/neuralTts-n1.js',
+    '/assets/react-vendor-r0.js',
   ]);
   assert.deepEqual(stampedList(ONE.worker, 'OPTIONAL'), [
-    '/assets/kokoroWorker-k1.js', '/assets/neuralTts-n1.js', '/assets/ort-wasm-simd-threaded.jsep-w1.wasm',
+    '/assets/kokoroWorker-k1.js', '/assets/ort-wasm-simd-threaded.jsep-w1.wasm',
   ]);
   const library = stampServiceWorker(SOURCE, { html: '', files: ['assets/transformers.web-t1.js'] });
   assert.deepEqual(stampedList(library, 'OPTIONAL'), ['/assets/transformers.web-t1.js']);
@@ -109,7 +111,7 @@ test('installing a build caches its shell, hashed files and icons, the shell las
   const cache = await sw.caches.open(ONE.cache);
   assert.deepEqual(cache.paths(), [
     '/', '/apple-touch-icon.png', '/assets/DetailView-d1.js', '/assets/index-a1.css', '/assets/index-a1.js',
-    '/assets/react-vendor-r0.js', '/favicon-32x32.png', '/manifest.json', '/pwa-192x192.png',
+    '/assets/neuralTts-n1.js', '/assets/react-vendor-r0.js', '/favicon-32x32.png', '/manifest.json', '/pwa-192x192.png',
   ]);
   assert.equal(cache.stored.at(-1), '/', 'a cached shell always has every file it loads');
   assert.equal(await cache.text('/'), ONE.html);
@@ -126,7 +128,7 @@ test('installing the next build reuses the files earlier builds cached and downl
   await next.install();
 
   const downloaded = network.paths().slice(fetchedBefore).filter(path => path.startsWith('/assets/')).sort();
-  assert.deepEqual(downloaded, ['/assets/DetailView-d2.js', '/assets/index-a2.css', '/assets/index-a2.js']);
+  assert.deepEqual(downloaded, ['/assets/DetailView-d2.js', '/assets/index-a2.css', '/assets/index-a2.js', '/assets/neuralTts-n2.js']);
   assert.equal(await (await caches.open(TWO.cache)).text('/assets/react-vendor-r0.js'), contents('/assets/react-vendor-r0.js'));
 });
 
@@ -266,6 +268,13 @@ test('hashed files come from any build\'s cache, so a page still running the pre
   for (const path of ['/assets/DetailView-d1.js', '/assets/DetailView-d2.js', '/assets/react-vendor-r0.js']) {
     assert.equal(await (await sw.fetch(path).response)?.text(), contents(path), path);
   }
+});
+
+test('after an update installs in the background, an offline launch still loads the voice engine', async () => {
+  const { sw, network } = await device([ONE, TWO]);
+  network.online = false;
+  assert.equal(await (await sw.fetch('/', { mode: 'navigate' }).response)?.text(), TWO.html);
+  assert.equal(await (await sw.fetch('/assets/neuralTts-n2.js').response)?.text(), contents('/assets/neuralTts-n2.js'));
 });
 
 test('a hashed file in no cache comes from the network; offline it fails, and a page sent in its place passes through', async () => {

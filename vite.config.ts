@@ -8,8 +8,10 @@ import react from '@vitejs/plugin-react';
 // This checkout's root, so the watcher's ignores below apply here and not to a worktree nested under tmp/.
 const here = fileURLToPath(new URL('.', import.meta.url));
 
-// The neural voice runtime: large and only needed once neural voices are used, so it's cached on first use.
-const OPTIONAL_MEDIA = /^assets\/(?:neuralTts|transformers\.web|kokoro|ort-wasm)[^/]*\.(?:js|wasm)$/;
+// The Kokoro voice runtime (its worker, transformers.js and the ONNX runtime): megabytes that only neural voices need,
+// so the service worker caches it on first use. The voice engine (neuralTts) stays out of this list: it's small, and
+// its file name changes with nearly every deploy, so an offline launch after one would find it in no cache.
+const OPTIONAL_MEDIA = /^assets\/(?:transformers\.web|kokoro|ort-wasm)[^/]*\.(?:js|wasm)$/;
 
 /**
  * The service worker a build ships: public/sw.js stamped with the build's hashed files to precache, the voice
