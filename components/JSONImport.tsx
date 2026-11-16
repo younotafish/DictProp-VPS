@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo, useDeferredValue } from 'react';
-import { X, ClipboardPaste, Trash2, FileJson, Upload, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { ClipboardPaste, Trash2, FileJson, Upload, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { importJSON } from '../services/api/jsonImport';
 import { importErrorMessage, parseImportText } from '../services/notebook/jsonImport';
 import { modifierKeyLabel } from '../services/platform';
+import { Sheet } from './Sheet';
 
 interface JSONImportProps {
   isOpen: boolean;
@@ -90,26 +91,8 @@ export const JSONImport: React.FC<JSONImportProps> = ({
     }
   }, [handleSubmit]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col">
-      {/* Header */}
-      <div className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white flex items-center gap-3">
-        <button
-          onClick={onClose}
-          className="w-9 h-9 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 transition-colors"
-        >
-          <X size={20} />
-        </button>
-        <div className="flex-1">
-          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <FileJson size={20} className="text-emerald-600" />
-            Import JSON
-          </h2>
-        </div>
-      </div>
-
+    <Sheet isOpen={isOpen} onClose={onClose} title="Import JSON" icon={<FileJson size={20} className="text-emerald-600" />}>
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-8">
         {/* Locked while an import runs, Clear and Paste with it: a second import can't start, and the box empties
@@ -227,6 +210,6 @@ export const JSONImport: React.FC<JSONImportProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </Sheet>
   );
 };

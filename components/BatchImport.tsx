@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { X, ClipboardPaste, Trash2, ListPlus, Sparkles } from 'lucide-react';
+import { ClipboardPaste, Trash2, ListPlus, Sparkles } from 'lucide-react';
 import { parseWordList } from '../services/notebook/wordList';
 import { modifierKeyLabel } from '../services/platform';
+import { Sheet } from './Sheet';
 
 interface BatchImportProps {
   isOpen: boolean;
@@ -48,26 +49,8 @@ export const BatchImport: React.FC<BatchImportProps> = ({
     }
   }, [handleSubmit]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col">
-      {/* Header */}
-      <div className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white flex items-center gap-3">
-        <button
-          onClick={onClose}
-          className="w-9 h-9 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 transition-colors"
-        >
-          <X size={20} />
-        </button>
-        <div className="flex-1">
-          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <ListPlus size={20} className="text-indigo-600" />
-            Batch Import
-          </h2>
-        </div>
-      </div>
-
+    <Sheet isOpen={isOpen} onClose={onClose} title="Batch Import" icon={<ListPlus size={20} className="text-indigo-600" />}>
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-8">
         <div className="relative">
@@ -141,6 +124,6 @@ run the gamut"
           </div>
         )}
       </div>
-    </div>
+    </Sheet>
   );
 };
