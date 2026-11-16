@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../../services/lazyTts';
+import { toggleActionFor } from '../../services/audio/playbackToggle';
 
 /**
  * The review popup's audio: the word and sentence playback it starts, the audio session it holds open while
@@ -36,13 +37,12 @@ export function usePopupPlayback(examplesList: readonly string[]) {
     const sentence = stripSentenceMarkers(raw || '').trim();
     if (!sentence) return;
     holdKeepAlive();
-    const pb = getPlaybackState();
-    if (pb.text === sentence) {
-      if (pb.status === 'loading') return;
-      if (pb.status === 'paused') { resumeCurrent(); return; }
-      if (pb.status === 'playing' && getPlaybackProgress() < 0.85) { pauseCurrent(); return; }
+    switch (toggleActionFor(getPlaybackState(), sentence, getPlaybackProgress(), { onLoading: 'ignore', restartNearEnd: true })) {
+      case 'ignore': case 'cancel': return; // already starting this one
+      case 'resume': resumeCurrent(); return;
+      case 'pause': pauseCurrent(); return;
+      case 'restart': case 'start': speakPopupNatural(sentence, { allowDownload: true });
     }
-    speakPopupNatural(sentence, { allowDownload: true });
   }, [holdKeepAlive, speakPopupNatural]);
 
   // E: read both example sentences in turn; press again to pause / resume.

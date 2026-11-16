@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { StoredItem, VocabCard } from '../../types';
-
-const senseKey = (s?: string) => (s || '').trim().toLowerCase();
+import { senseMatchKey, type StoredItem, type VocabCard } from '../../types';
 
 // One page of the popup: a saved sense (with SRS) or an AI sense not yet in the library.
 export type SensePage =
@@ -40,11 +38,11 @@ export function useSensePages(
     const out: SensePage[] = [];
     for (const it of items) {
       const v = it.data as VocabCard;
-      const s = senseKey(v.sense);
+      const s = senseMatchKey(v.sense);
       if (!seen.has(s)) { seen.add(s); out.push({ kind: 'saved', item: it, vocab: v, sense: s }); }
     }
     for (const v of aiVocabs) {
-      const s = senseKey(v.sense);
+      const s = senseMatchKey(v.sense);
       if (!seen.has(s)) { seen.add(s); out.push({ kind: 'unsaved', vocab: v, sense: s }); }
     }
     return out;
@@ -54,7 +52,7 @@ export function useSensePages(
   // keeps the same sense), unlike an id which changes when a sense is saved.
   const [currentSense, setCurrentSense] = useState<string>(() => {
     const init = initialId ? items.find(i => i.data.id === initialId) : undefined;
-    return senseKey((init?.data as VocabCard)?.sense ?? (items[0]?.data as VocabCard)?.sense);
+    return senseMatchKey((init?.data as VocabCard)?.sense ?? (items[0]?.data as VocabCard)?.sense);
   });
   const current = pages.find(p => p.sense === currentSense) ?? pages[0];
   useEffect(() => {

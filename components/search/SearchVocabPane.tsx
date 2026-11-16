@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useRef } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { VocabCard } from '../../types';
 import { VocabCardDisplay } from '../VocabCard';
-import { EyesFreeZones, type ZoneFlash } from '../EyesFreeZones';
+import { EyesFreeZones, eyesFreeZoneAt, type ZoneFlash } from '../EyesFreeZones';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { stepMeaning } from './searchViewing';
 
@@ -84,8 +84,7 @@ export const SearchVocabPane: React.FC<Props> = ({
     if (target?.closest('button, a, [role="button"], input, textarea, select, label')) return; // a control
     if (!plainExamples.length) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const rel = e.clientY - rect.top;
-    const zone = rel < rect.height / 4 ? 0 : rel < rect.height / 2 ? 1 : -1; // top ¼ → 1st, 2nd ¼ → 2nd
+    const zone = eyesFreeZoneAt(e.clientY - rect.top, rect.height); // top ¼ → 1st, 2nd ¼ → 2nd
     if (zone < 0) return;
     flashZone(zone);
     playOrToggleSentence(plainExamples[Math.min(zone, plainExamples.length - 1)]);

@@ -13,6 +13,7 @@ import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/lazyT
 import { useLatest } from '../hooks/useStableValue';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';
+import { useZoneFlash } from './EyesFreeZones';
 import { isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
@@ -197,17 +198,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     return type ? type !== 'mouse' : isTouch;
   }, [isTouch]);
 
-  // Eyes-free zone tap-confirmation flash (mirrors DetailView).
-  const [zoneFlash, setZoneFlash] = useState<{ zone: number; n: number } | null>(null);
-  const zoneFlashN = useRef(0);
-  const zoneFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashZone = useCallback((zone: number) => {
-    zoneFlashN.current += 1;
-    setZoneFlash({ zone, n: zoneFlashN.current });
-    if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current);
-    zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
-  }, []);
-  useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
+  // Eyes-free zone tap-confirmation flash (see EyesFreeZones).
+  const { zoneFlash, flashZone } = useZoneFlash();
 
   // PHONE (<sm, full-width sheet): eyes-free read zones on the CARD's left/right EDGES — a tap in the top
   // quarter of either side reads example 1, the second quarter reads example 2. Touch-only; bows out on
