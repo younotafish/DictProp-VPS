@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { autoPlayTexts, exampleAt, keyVocabExample, preloadSession, readableExamples, wordZoneBands, zoneText } from '../../views/detail/cardReading.ts';
+import {
+  autoPlayTexts, exampleAt, keyVocabExample, preloadSession, pronounceOnCardChange, readableExamples, wordZoneBands, zoneText,
+  type CardPronunciation,
+} from '../../views/detail/cardReading.ts';
 import type { SearchResult, StoredItem, VocabCard } from '../../types.ts';
 
 const srs = (id: string, type: StoredItem['type']) => ({
@@ -87,4 +90,21 @@ test('the auto-play preload takes listed sentences in sentence review, else each
   const cards = preloadSession([vocab('a', ['A {{b}}.', 'C.'], { imageUrl: 'server:has_image' }), phrase('q', [], { imageUrl: 'server:has_image:' })], false);
   assert.deepEqual(cards.texts, ['A b.', 'C.', 'q']);
   assert.deepEqual([...cards.images], [['p', '']], 'an unversioned server marker is not preloaded');
+});
+
+test('the word card says its word once per card, never over example auto-play, and not when auto-play stops on it', () => {
+  // The card view's effect: each change of card or of auto-play asks once; a card it said, or auto-play read, is the last.
+  let lastKey: string | null = null;
+  const show = (cardKey: string, examplesPlaying: boolean): CardPronunciation => {
+    const action = pronounceOnCardChange({ cardKey, lastKey, examplesPlaying });
+    if (action !== 'skip') lastKey = cardKey;
+    return action;
+  };
+  assert.equal(show('0:0:gamut', false), 'say', 'the card it opens on');
+  assert.equal(show('0:0:gamut', true), 'handled', 'auto-play starts on it');
+  assert.equal(show('1:0:sway', true), 'handled', 'auto-play moves on and reads the next card');
+  assert.equal(show('1:0:sway', false), 'skip', 'stopping auto-play doesn\'t say the word');
+  assert.equal(show('2:0:tilt', false), 'say', 'the next card, by hand');
+  assert.equal(show('1:0:sway', false), 'say', 'and back to the last one');
+  assert.equal(show('1:1:sway', false), 'say', 'another meaning of the same word');
 });

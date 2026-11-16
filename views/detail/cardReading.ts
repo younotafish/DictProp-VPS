@@ -67,6 +67,21 @@ export const zoneText = (item: StoredItem, zone: 0 | 1): string | null => {
   return texts.length > 0 ? texts[Math.min(zone, texts.length - 1)] : null;
 };
 
+/** What the word card does about saying its word, as the card on screen or example auto-play changes. */
+export type CardPronunciation = 'say' | 'handled' | 'skip';
+
+/**
+ * The word card says its word once as each card shows: never while example auto-play reads the card (which counts as
+ * the card's turn), and not again for the same card, so stopping auto-play doesn't say the word it was reading over.
+ * `cardKey` names the card on screen (its word's place, its meaning's place and its word); `lastKey` the last card whose
+ * word was said or that auto-play read.
+ */
+export const pronounceOnCardChange = ({ cardKey, lastKey, examplesPlaying }: {
+  cardKey: string;
+  lastKey: string | null;
+  examplesPlaying: boolean;
+}): CardPronunciation => examplesPlaying ? 'handled' : cardKey === lastKey ? 'skip' : 'say';
+
 /**
  * What sentence auto-play preloads once it starts (see SessionPreload): the listed sentences in sentence review,
  * else every card's auto-play texts, and the pictures stored on the device or the server.

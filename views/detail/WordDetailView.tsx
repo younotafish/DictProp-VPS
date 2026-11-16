@@ -15,7 +15,7 @@ import { useKeyboardNavigation, useWheelNavigation } from '../../hooks/useKeyboa
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
 import { prefetchTTS, speakWord, stopCurrent } from '../../services/neuralTts';
-import { autoPlayTexts, preloadSession, wordZoneBands as countWordZoneBands } from './cardReading';
+import { autoPlayTexts, preloadSession, pronounceOnCardChange, wordZoneBands as countWordZoneBands } from './cardReading';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { DetailActionMenu } from './DetailActionMenu';
@@ -132,13 +132,21 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // Saved comparisons that involve THIS word, surfaced as a "Comparisons" section below the card.
   const wordComparisons = comparisonsInvolving(comparisons, title);
 
-  // Auto-pronounce the word when the card changes — but NOT during sentence auto-play, which
-  // reads the example sentence instead (we don't want the word spoken over it).
+  // Auto-pronounce the word when the card changes — but NOT during sentence auto-play, which reads the example
+  // sentence instead (we don't want the word spoken over it), nor when auto-play stops on a card it read.
+  const pronouncedCardRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!title || isSentenceAutoPlaying) return;
+    if (!title) return;
+    const cardKey = `${currentGroupIndex}:${currentItemIndex}:${title}`;
+    switch (pronounceOnCardChange({ cardKey, lastKey: pronouncedCardRef.current, examplesPlaying: isSentenceAutoPlaying })) {
+      case 'handled': pronouncedCardRef.current = cardKey; return;
+      case 'skip': return;
+      case 'say': break;
+    }
 
-    // Small delay to let animation settle before pronouncing
+    // Small delay to let animation settle before pronouncing; a card left within it isn't counted as said.
     const timer = setTimeout(() => {
+      pronouncedCardRef.current = cardKey;
       speakWord(title);
     }, 100);
 
