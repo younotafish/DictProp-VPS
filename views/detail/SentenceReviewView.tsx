@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { getItemImageUrl, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../../types';
 import { OfflineImage } from '../../components/OfflineImage';
 import { SentenceAnalysisView } from '../../components/SentenceAnalysisView';
@@ -31,7 +31,7 @@ import { SentenceImageFab, SentenceImagePanel } from './SentenceImageAttach';
 import { useCardNavigation } from './useCardNavigation';
 import { useCommandKeyHeld } from './useCommandKeyHeld';
 import { useAutoPlay } from './useAutoPlay';
-import { useAutoPlayReader } from './useAutoPlayReader';
+import { useAutoPlayReader, type AutoPlayReaderControls } from './useAutoPlayReader';
 import { useSpeechStyle } from './useSpeechStyle';
 import { useRememberToast } from './useRememberToast';
 import { useSavedSentenceIndex } from './useSavedSentenceIndex';
@@ -279,12 +279,15 @@ export function SentenceReviewView({
   // their pictures.
   const getPreloadSession = (): PreloadSession => preloadSession(sentenceItems, true);
 
+  // Auto-play's pause for the taps and keys below, which are set up before its reader (whose listens they count).
+  const autoPlayControlsRef = useRef<AutoPlayReaderControls | null>(null);
   const {
-    noteListened, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
+    noteListened, readCurrentSentence, toggleSentencePlayback, handleSpace, playFromWordOffset, handleEnterFromSelection,
     goToSentence,
   } = useSentencePlayback({
     currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay,
-    setCurrentGroupIndex, setCurrentItemIndex, onListened: handleListened,
+    startAutoPlay: toggleSentenceAutoPlay, autoPlayRef: autoPlayControlsRef, setCurrentGroupIndex, setCurrentItemIndex,
+    onListened: handleListened,
   });
 
   const autoPlayReader = useAutoPlayReader({
@@ -311,6 +314,7 @@ export function SentenceReviewView({
     setTimerExpiry,
     rearm: rearmAutoPlay,
   });
+  useLayoutEffect(() => { autoPlayControlsRef.current = autoPlayReader; }, [autoPlayReader]);
 
   // Fresh ref to the source card so the Cmd/Ctrl+1–4 readers read current data without re-subscribing.
   const currentItemRef = useLatest(currentItem);
@@ -403,6 +407,7 @@ export function SentenceReviewView({
     handleDeleteItem,
     isSentenceAutoPlaying,
     toggleSentenceAutoPlay,
+    onSpace: handleSpace,
   });
 
   // The hero's props, shared by its two layouts (beside an attached picture, or on its own).
@@ -416,6 +421,8 @@ export function SentenceReviewView({
     onWordTouchStartCapture: isMobile ? handleMobileWordTouchStart : undefined,
     onWordClickCapture: handleSentenceWordClickCapture,
     onListened: () => noteListened(currentSentence.data.id),
+    // During auto-play the speaker pauses and resumes auto-play, between reads too.
+    onSpeakerToggle: isSentenceAutoPlaying ? autoPlayReader.togglePause : undefined,
     copyState: sentenceCopy,
     onCopy: () => { void handleCopySentence(); },
   } : null;

@@ -44,6 +44,8 @@ interface ExampleSpeechOptions {
   sentenceReview: boolean;
   /** Ends whichever auto-play runs, as a manual read starts. */
   stopAutoPlay: () => void;
+  /** Word cards: E during example auto-play pauses or resumes it instead of reading the card. */
+  toggleAutoPlayPause?: () => void;
 }
 
 /**
@@ -51,15 +53,19 @@ interface ExampleSpeechOptions {
  * shared playback state so the megaphone icons stay in sync: the same clip playing pauses, paused resumes, almost
  * done restarts from the top, and anything else starts fresh.
  */
-export function useExampleSpeech({ currentItemRef, isSentenceAutoPlayingRef, sentenceReview, stopAutoPlay }: ExampleSpeechOptions) {
-  // E: read the displayed card's example sentences in turn. Press again to pause; once more to resume.
+export function useExampleSpeech({
+  currentItemRef, isSentenceAutoPlayingRef, sentenceReview, stopAutoPlay, toggleAutoPlayPause,
+}: ExampleSpeechOptions) {
+  // E: read the displayed card's example sentences in turn. Press again to pause; once more to resume. During example
+  // auto-play, pause or resume it, between reads too.
   const readCardExamples = useCallback(() => {
+    if (toggleAutoPlayPause && isSentenceAutoPlayingRef.current) { toggleAutoPlayPause(); return; }
     const item = currentItemRef.current;
     if (!item) return;
     const sentences = readableExamples(item);
     if (!sentences.length) return;
     readInTurnOrToggle(sentences, stopAutoPlay);
-  }, [currentItemRef, stopAutoPlay]);
+  }, [currentItemRef, isSentenceAutoPlayingRef, stopAutoPlay, toggleAutoPlayPause]);
 
   const toggleSpeak = useCallback((raw: string) => {
     const sentence = stripSentenceMarkers(raw || '').trim();

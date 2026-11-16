@@ -176,6 +176,8 @@ test('sentence review\'s word tap plays the sentence from the word inside the ta
       currentGroupIndexRef: { current: 0 },
       isSentenceAutoPlayingRef: { get current() { return autoPlaying; } },
       stopAutoPlay: () => { stops++; },
+      startAutoPlay: () => {},
+      autoPlayRef: { current: null },
       setCurrentGroupIndex: () => {},
       setCurrentItemIndex: () => {},
       onListened: heard => listened.push(heard.data.id),

@@ -93,6 +93,15 @@ test('each change that shipped with this release has its row', () => {
   assert.ok(hasRow(at('trackpad'), ['Two-finger swipe ←/→'], 'In a sentence: the sentence or its analysis page'));
 });
 
+test('during auto-play the blank-space tap or click, E and Space pause or resume it', () => {
+  const during = 'during auto-play, pause or resume it';
+  assert.ok(hasRow(section(phone, 'touch').rows, ['Tap'], `In a sentence, on blank space: play or pause; ${during}`));
+  assert.ok(hasRow(section(mac, 'sentences').rows, ['Click'], `On blank space: play or pause; ${during}`));
+  assert.ok(hasRow(section(mac, 'sentences').rows, ['E'], `Read the sentence; press again to pause or resume; ${during}`));
+  assert.ok(hasRow(section(mac, 'sentences').rows, ['Space'], `Pause or resume; with nothing playing, start auto-play; ${during}`));
+  assert.ok(hasRow(section(mac, 'card').rows, ['E'], `Read the examples; press again to pause or resume; ${during}`));
+});
+
 test('every row says what to press and what it does, and gestures stay in their own sections', () => {
   for (const item of phone) {
     for (const row of item.rows) {

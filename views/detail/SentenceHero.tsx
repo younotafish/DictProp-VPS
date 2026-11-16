@@ -24,6 +24,8 @@ interface SentenceHeroProps {
   onWordClickCapture: React.MouseEventHandler<HTMLElement>;
   /** The speaker played the sentence to its end. */
   onListened: () => void;
+  /** Takes the speaker's tap instead of its own play and pause: during auto-play, auto-play's pause. */
+  onSpeakerToggle?: () => void;
   copyState: SentenceCopyState;
   onCopy: () => void;
 }
@@ -35,7 +37,7 @@ interface SentenceHeroProps {
  */
 export function SentenceHero({
   layout, text, sourceWord, findSaved, onOpenCard, onSearchWord, commandHeld,
-  onWordTouchStartCapture, onWordClickCapture, onListened, copyState, onCopy,
+  onWordTouchStartCapture, onWordClickCapture, onListened, onSpeakerToggle, copyState, onCopy,
 }: SentenceHeroProps) {
   const { isMobile, isMacDesktop } = PLATFORM;
   const split = layout === 'split';
@@ -67,6 +69,7 @@ export function SentenceHero({
         <SentenceSpeakerButton
           text={stripSentenceMarkers(text)}
           onComplete={onListened}
+          onToggle={onSpeakerToggle}
         />
         {/* Copies the plain sentence, to paste into Meta AI or anywhere. */}
         <button

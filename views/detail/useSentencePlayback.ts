@@ -4,6 +4,7 @@ import { getPlaybackState, pauseCurrent, resumeCurrent, speakNatural, speakNatur
 import { setTtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { readInTurnOrToggle } from './useExampleSpeech';
+import type { AutoPlayReaderControls } from './useAutoPlayReader';
 
 interface SentencePlaybackOptions {
   /** The sentence under review. */
@@ -13,6 +14,10 @@ interface SentencePlaybackOptions {
   isSentenceAutoPlayingRef: RefObject<boolean>;
   /** End whichever auto-play runs. */
   stopAutoPlay: () => void;
+  /** Start sentence auto-play (Space with nothing playing). */
+  startAutoPlay: () => void;
+  /** Sentence auto-play's controls, read as each tap or key arrives: the view sets its reader up after these readers. */
+  autoPlayRef: RefObject<Pick<AutoPlayReaderControls, 'togglePause'> | null>;
   setCurrentGroupIndex: Dispatch<SetStateAction<number>>;
   setCurrentItemIndex: Dispatch<SetStateAction<number>>;
   /** The sentence on screen was heard to its end; the view decides whether that writes anything. */
@@ -22,13 +27,14 @@ interface SentencePlaybackOptions {
 /**
  * Sentence review's reading: the sentence from the top, from a chosen word, or after moving to another sentence.
  * All speech funnels through the shared playback state, so the speaker icons stay in sync and a second press
- * pauses, resumes or restarts what's playing. Sentence auto-play owns the audio chain while it runs: these
- * readers may pause or resume its clip, but never start one over it. A read heard to its end is a listen, which
- * onListened hears about while its sentence is still the one on screen.
+ * pauses, resumes or restarts what's playing. Sentence auto-play owns the audio chain while it runs: a tap on blank
+ * space, E and Space then pause or resume auto-play itself (between reads and while a sentence loads too), and no
+ * reader starts a clip over it. A read heard to its end is a listen, which onListened hears about while its sentence
+ * is still the one on screen.
  */
 export function useSentencePlayback({
-  currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay,
-  setCurrentGroupIndex, setCurrentItemIndex, onListened,
+  currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay, startAutoPlay,
+  autoPlayRef, setCurrentGroupIndex, setCurrentItemIndex, onListened,
 }: SentencePlaybackOptions) {
   // A finished read of `expectedSentenceId` (by default, whatever is on screen) is a listen of the sentence on
   // screen, unless the learner has moved on to another one since.
@@ -38,25 +44,17 @@ export function useSentencePlayback({
     onListened(sentence);
   }, [onListened, currentSentenceRef]);
 
-  // E: read the saved sentence. Press again to pause; once more to resume.
+  // E: read the saved sentence. Press again to pause; once more to resume. During auto-play, pause or resume it.
   const readCurrentSentence = useCallback(() => {
+    // Continuous sentence autoplay owns the audio chain until its explicit Stop control is used.
+    if (isSentenceAutoPlayingRef.current) { autoPlayRef.current?.togglePause(); return; }
     const sentence = currentSentenceRef.current;
     if (!sentence) return;
     const sentenceId = sentence.data.id;
     const sentences = [stripSentenceMarkers((sentence.data as SentenceData).text)].filter(Boolean);
     if (!sentences.length) return;
-
-    // Continuous sentence autoplay owns the audio chain until its explicit Stop control is used.
-    // Keyboard/manual read commands may pause or resume its current clip, but never replace the chain.
-    if (isSentenceAutoPlayingRef.current) {
-      const status = getPlaybackState().status;
-      if (status === 'playing') pauseCurrent();
-      else if (status === 'paused') resumeCurrent();
-      return;
-    }
-
     readInTurnOrToggle(sentences, stopAutoPlay, () => noteListened(sentenceId));
-  }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
+  }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, autoPlayRef, stopAutoPlay]);
 
   // Speak the saved sentence from the top (shared by the swipe gestures and the arrow keys).
   const speakCurrentSentence = useCallback(() => {
@@ -72,10 +70,11 @@ export function useSentencePlayback({
     });
   }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
-  // Tap the sentence (or context-aware Space): pause it if it's playing, resume if paused, otherwise
-  // (re)start it from the top. Routed through the shared playback state so it stays in sync with the
-  // megaphone button — whoever started the audio, this controls it.
+  // Tap the sentence on blank space: pause it if it's playing, resume if paused, otherwise (re)start it from the top.
+  // Routed through the shared playback state so it stays in sync with the megaphone button — whoever started the
+  // audio, this controls it. During auto-play it pauses or resumes auto-play, wherever its reading is.
   const toggleSentencePlayback = useCallback(() => {
+    if (isSentenceAutoPlayingRef.current) { autoPlayRef.current?.togglePause(); return; }
     const s = currentSentenceRef.current;
     if (!s) return;
     const sentence = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
@@ -86,13 +85,22 @@ export function useSentencePlayback({
       if (pb.status === 'playing') { pauseCurrent(); return; }
       if (pb.status === 'paused') { resumeCurrent(); return; }
     }
-    if (isSentenceAutoPlayingRef.current) return;
     stopAutoPlay();
     speakNatural(sentence, {
       allowDownload: true,
       onEnd: () => noteListened(s.data.id),
     });
-  }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
+  }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, autoPlayRef, stopAutoPlay]);
+
+  // Space: during auto-play, pause or resume it; otherwise pause or resume what's playing, and with nothing playing
+  // start auto-play.
+  const handleSpace = useCallback(() => {
+    if (isSentenceAutoPlayingRef.current) { autoPlayRef.current?.togglePause(); return; }
+    const status = getPlaybackState().status;
+    if (status === 'playing') pauseCurrent();
+    else if (status === 'paused') resumeCurrent();
+    else startAutoPlay();
+  }, [isSentenceAutoPlayingRef, autoPlayRef, startAutoPlay]);
 
   // Play the current sentence from a tapped or selected word (its character offset in the sentence as shown), in the
   // sentence's own voice, inside the tap. The speakers show the whole sentence; a clip of it already playing moves to
@@ -153,7 +161,7 @@ export function useSentencePlayback({
   ]);
 
   return {
-    noteListened, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
+    noteListened, readCurrentSentence, toggleSentencePlayback, handleSpace, playFromWordOffset, handleEnterFromSelection,
     goToSentence,
   };
 }

@@ -242,7 +242,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // sentences, and the pictures the session shows.
   const getPreloadSession = (): PreloadSession => preloadSession(groups.flatMap(g => g.items), false);
 
-  useAutoPlayReader({
+  const autoPlayReader = useAutoPlayReader({
     active: isSentenceAutoPlaying,
     stop: stopSentenceAutoPlay,
     repeatsRef: sentenceRepeatsRef,
@@ -266,6 +266,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
 
   const { readCardExamples, toggleSpeak, speakSentenceAt } = useExampleSpeech({
     currentItemRef, isSentenceAutoPlayingRef, sentenceReview: false, stopAutoPlay,
+    toggleAutoPlayPause: autoPlayReader.togglePause,
   });
 
   // Stop any playback when the view closes (covers a manual read still going at close time).

@@ -5,9 +5,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AutoPlayCountdown } from '../../components/AutoPlayCountdown.tsx';
 import { SentencePlaybackControls, autoPlayFabAction } from '../../views/detail/SentencePlaybackControls.tsx';
 import { WordPlaybackControls } from '../../views/detail/WordPlaybackControls.tsx';
+import { useSentencePlayback } from '../../views/detail/useSentencePlayback.ts';
+import type { StoredItem } from '../../types.ts';
 
 // The card view's playback controls (views/detail/SentencePlaybackControls.tsx, WordPlaybackControls.tsx) and the
-// Duration countdown (components/AutoPlayCountdown.tsx), rendered to markup.
+// Duration countdown (components/AutoPlayCountdown.tsx), rendered to markup, and what sentence review's taps and keys do
+// to auto-play (views/detail/useSentencePlayback.ts).
 
 const noop = () => {};
 const sentenceControls = (props: Partial<ComponentProps<typeof SentencePlaybackControls>> = {}) =>
@@ -75,4 +78,37 @@ test('the countdown shows the preset while stopped, the time left while running,
   assert.equal(countdown({ deadline: null, frozenRemainingMs: 0, minutes: 20 }), '0:00');
   assert.equal(countdown({ deadline: Date.now() + 90_000, frozenRemainingMs: null, minutes: 20 }), '1:30');
   assert.equal(countdown({ deadline: Date.now() - 5_000, frozenRemainingMs: null, minutes: 20 }), '0:00', 'never below zero');
+});
+
+test('during auto-play a tap on blank space, E and Space pause or resume auto-play; without it Space starts it', () => {
+  const item = { data: { id: 'sentence-1', text: 'A sentence to read.' } } as unknown as StoredItem;
+  let autoPlaying = true;
+  const calls: string[] = [];
+  let playback: ReturnType<typeof useSentencePlayback> | undefined;
+  const Probe = () => {
+    playback = useSentencePlayback({
+      currentSentenceRef: { current: item },
+      sentenceItemsRef: { current: [item] },
+      currentGroupIndexRef: { current: 0 },
+      isSentenceAutoPlayingRef: { get current() { return autoPlaying; } },
+      stopAutoPlay: () => calls.push('stop'),
+      startAutoPlay: () => calls.push('start'),
+      autoPlayRef: { current: { togglePause: () => calls.push('toggle-pause') } },
+      setCurrentGroupIndex: noop,
+      setCurrentItemIndex: noop,
+      onListened: noop,
+    });
+    return null;
+  };
+  renderToStaticMarkup(createElement(Probe));
+  assert.ok(playback);
+  playback.toggleSentencePlayback();
+  playback.readCurrentSentence();
+  playback.handleSpace();
+  assert.deepEqual(calls, ['toggle-pause', 'toggle-pause', 'toggle-pause'], 'auto-play keeps running underneath');
+
+  autoPlaying = false;
+  calls.length = 0;
+  playback.handleSpace();
+  assert.deepEqual(calls, ['start'], 'with nothing playing, Space starts auto-play');
 });
