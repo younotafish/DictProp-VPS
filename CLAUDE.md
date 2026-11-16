@@ -48,6 +48,12 @@ git add <files> && git commit -m "description" && git push vps main
 #      if the new container fails its health check, the previous image comes back
 ```
 
+- A run deploys exactly its own commit, and only a commit on main. A run for a commit production already contains changes nothing, so rerunning an old run can't roll production back: a rollback is a revert commit.
+- After a healthy release the deploy removes the images no release runs. It never prunes the BuildKit cache while the app is live.
+- `check.yml` runs the same `npm run check` for pull requests only, since the deploy's verify job covers every push to main.
+- `dependency-audit.yml` runs `npm audit --omit=dev --audit-level=high` in `server/` every Monday at 06:17 UTC (or by hand). It fails, emailing the owner, while a high or critical advisory is open. It is not part of the deploy gate.
+- `recover-production.yml` restarts the app container and waits for its health check. `diagnose-production.yml` prints the disk, the database's storage counters, duplicate saved sentences, Docker storage and the containers, all read-only. Its log is public, so it prints counts and ids only.
+
 To check deploy status:
 ```bash
 /Users/cjs/DictProp-VPS/.tools/gh run list --repo younotafish/DictProp-VPS --limit 1
@@ -127,12 +133,16 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 ├── App.tsx                    # Root component (~500 lines): wires the hooks to screens, overlays and toasts
 ├── types.ts                   # StoredItem, VocabCard, SearchResult, SRS types
 ├── services/
-│   ├── api.ts                 # REST + AI client for the Hono backend
+│   ├── api/                   # The server API by domain: library, images, ai, tts, comparisons, essays, JSON import
 │   ├── auth.ts                # Client auth helpers (calls /api/auth/*)
-│   ├── storage.ts             # Per-item IndexedDB v4 storage + compatibility journal
+│   ├── idb.ts                 # Opens PopDictDB; libraryStore.ts (per-item records + compatibility journal) and
+│   │                          #   imageStore.ts (pictures) are the two stores in it
 │   ├── sync.ts                # mergeDatasets() for local↔server conflict resolution
 │   ├── srsAlgorithm.ts        # Deterministic FSRS v6 + lazy legacy migration
-│   ├── reviewQueue.ts         # Durable idempotent review outbox (one localStorage key per review) + refused-review log
+│   ├── reviewQueue.ts         # Durable idempotent review outbox (one localStorage key per review)
+│   ├── refusedReviews.ts      # Reviews the server refused, kept for the refused-reviews notice
+│   ├── audio/                 # Speech playback: the player, clip store, warmers, auto-play, media session, voices
+│   ├── notebook/              # The Notebook's list view, search ranking, search box and JSON import
 │   ├── appUpdate.ts           # New-version detection and the flush-then-reload flow
 │   ├── libraryImages.ts       # Image marker helpers for lazy and offline images
 │   ├── mergeDuplicates.ts     # Duplicate-card merging
@@ -162,16 +172,24 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │       ├── tts.ts         # /api/tts/* — cached clips and timings, generation, the backfill
 │   │       └── ai.ts          # /api/analyze, /api/compare, /api/extract-vocabulary, /api/transcribe
 │   └── package.json
-├── views/                     # Notebook, StudyEnhanced, SentencesView, DetailView, ComparisonView
+├── views/                     # Notebook, StudyEnhanced, SentencesView, RealLifeView, EssaysView, DetailView
+│   ├── detail/                # The card view: SentenceReviewView, WordDetailView and their hooks
+│   ├── notebook/              # The Notebook's parts
+│   └── reading/               # The Real Life and Essays screens
 ├── components/                # UI components (incl. UserMenu — Google auth is active)
+│   ├── search/                # The global search: queue, results sheet, notices
+│   ├── review/                # The card review popup's parts
+│   └── study/                 # The study session's parts
 ├── hooks/                     # App state and behavior, split out of App.tsx:
 │   ├── useLibrary.ts          # The library in memory: latestItemsRef, updateItems(), pushNow(), pulls
 │   ├── useLibrarySync.ts      # Device load/save, first sync, background pulls, debounced pushes, flush before sign-out/reload
 │   ├── useLibraryActions.ts   # Save, delete, archive and reset handlers
 │   ├── useReviewOutbox.ts     # Review outbox drain and refused reviews
-│   ├── useUndoOffer.ts        # The undo toast for deletes, archives and resets
+│   ├── useUndoOffer.ts        # The undo pill for deletes, archives, unarchives, resets and refreshes
 │   └── ...                    # Detail view, overlays, offline images, batch import, shortcuts, keyboard/gestures
-├── scripts/offline/           # The Mac's enrichment cycle and the encrypted bridge to production (see Offline Data Bridge)
+├── scripts/offline/           # The Mac's enrichment cycle and the encrypted bridge to production (see Offline Data Bridge);
+│                              #   scripts/offline/README.md indexes every script
+├── ops/RESTORE.md             # Restoring production's database: the copies, what a restore loses, same-VPS and new-VPS restores
 ├── test/                      # Client, contract, offline-script and workflow tests (server tests: server/test/)
 ├── Dockerfile                 # Multi-stage, one digest-pinned node image: client build, server build (tsc), slim runtime
 ├── docker-compose.yml         # Single service, SQLite volume at ./data
@@ -207,7 +225,8 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 - On save (5s debounce): bounded `PUT /api/items` batches push dirty items
 - Visible clients pull paginated server-revision deltas every 8 seconds and on focus/reconnect/tab signals
 - Reviews use a local outbox plus atomic `POST /api/reviews/apply`; retries are idempotent
-- Deletions, archives and SRS resets stay on the device while their 6-second undo toast is open (`undoOfferRef` in `pushNow`), then push at once
+- Deletions, archives, unarchives, SRS resets and Refresh with AI stay on the device while their 6-second undo pill is open (useLibrary's holdFromPush), then push at once
+- A push that fails is retried on its own: after 8 seconds, then after longer waits up to 5 minutes, and at once when the connection returns (`services/syncRetry.ts`)
 - Per-item dirty tracking via `lastSyncedHash` content hashing
 
 ## Offline Data Bridge
@@ -221,9 +240,19 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
   ```
   The fetch decrypts the artifact and checks the JSON, then deletes the artifact and the run's log. An export is plaintext production data: keep it out of the repository and delete it when done.
 - **Imports** (Mac → production): the publisher uploads an encrypted release asset; the workflow decrypts it on the runner, for that operation and release tag only, and streams it to the VPS through `scripts/offline/vps-ssh.sh`, which trusts only the pinned host keys.
+  - A publisher dispatches its import only while no deploy is queued or running (`scripts/offline/deploy-state.sh`), because a job queued in `dictprop-production` cancels the one waiting there.
+  - It reruns a failed deploy at most once, while that deploy's commit is still main's head, and otherwise gives up with the reason.
+- **Off-site backups** (production → Mac): the cycle's last step, `scripts/offline/offsite-backup.sh`, dispatches `offsite-backup.yml` when all of these hold:
+  - the newest copy in `data/offsite-backups/` is 162 hours old;
+  - production runs the cycle's commit;
+  - no deploy, import, repair, recovery or backup is queued or running.
+
+  It keeps the newest three. Each is a gzipped tar of the database copy from the VPS's backup slot, the live Caddyfile and a manifest, encrypted for `db-backup:<run id>`, verified without writing plaintext, and kept beside a `.json` sidecar. A failed attempt fails the cycle and holds the next one back for a day.
+
+  The cycle makes no copy until the first one is made by hand; `ops/RESTORE.md` says how, and how to restore. Every copy needs the bridge key, so keep a copy of the key file off this Mac.
 - `~/.config/dictprop/sentence_bridge_key` must match the `SENTENCE_BRIDGE_KEY` secret. To rotate: write a new key to the file (mode 0600), set the secret from the file, and fetch an export to check both.
-- A cycle runs only the code at `vps/main`, the code GitHub deployed (`scripts/offline/vetted-checkout.sh`). A clean `main` behind it is fast-forwarded first, and when that changes the cycle's own code the cycle exits 75 so the next one runs the new code. Uncommitted changes to that code, local commits, another branch or a detached HEAD make it log why and exit 75.
-- Each cycle sweeps what the bridge leaves behind (`scripts/offline/sweep-bridge-leftovers.sh`): releases idle for six hours, failed waves idle for a week, the archives of published waves, and the plaintext temp files a killed decryption leaves under `data/offline-backfill` once a day old. No publisher waits longer than five hours (`cap_publish_deadline` in `deadline.sh`), so the sweep never takes a live release.
+- A cycle runs only the code at `vps/main`, the code GitHub deployed (`scripts/offline/vetted-checkout.sh`). A clean `main` behind it is fast-forwarded first, and when that changes the cycle's own code the cycle exits 75 so the next one runs the new code. Uncommitted changes to that code, local commits, another branch or a detached HEAD make it log why and exit 75. So does a root or `server/` `node_modules` that differs from its `package-lock.json` (`scripts/offline/check-installed-dependencies.mjs`): run `npm ci` in that folder, holding the cycle lock. A corpus export that ends without success is requested once more.
+- Each cycle sweeps what the bridge leaves behind (`scripts/offline/sweep-bridge-leftovers.sh`): releases idle for six hours, past cycles' directories (publish-state/<stage>/<cycle>, and the stages' old fingerprint directories) and failed waves once idle for a week, the archives of published waves, the image loops' `streaming-quality/<cycle>` folders once a week idle, and the temp files a killed encryption or decryption leaves under `data/offline-backfill` once a day old; a decryption's hold plaintext. No publisher waits longer than five hours (`cap_publish_deadline` in `deadline.sh`), so the sweep never takes a live release.
 - Before a deploy, an export or a publish by hand, check that no cycle is running and hold its lock, `data/offline-backfill/incremental-example-enrichment/.cycle.lock` (`shlock`). Afterwards, `launchctl kickstart` the agent. Never `launchctl bootout` it: the sandbox can't bootstrap it again.
 
 ## Critical Patterns
@@ -233,7 +262,7 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 
 ### Sharing code between client and server
 - Runtime code both sides run lives in `server/src/shared/` and imports nothing, so the client bundle, the server and plain-node offline scripts all load it (see its README for the import forms). The client reaches the rest of `server/src` only through `import type` / `export type`, which the bundler erases.
-- A contract that needs a dependency (FSRS through ts-fsrs, the TTS key's hash) keeps two implementations and a behavioral parity test. A server module that an offline script imports has no relative imports, because plain Node can't map `./x.js` to `x.ts`.
+- A contract that needs a dependency (FSRS through ts-fsrs, the TTS key's hash) keeps two implementations and a behavioral parity test. A server module that an offline script imports has no relative imports, because plain Node can't map `./x.js` to `x.ts`. Node 22.18 or later loads those modules without a flag, so both package.json files require `>=22.18 <23`, and `test/offline/offline-server-imports.test.ts` checks each one: node: imports only, and it loads under plain node.
 - `test/contracts/shared-contracts.test.ts` checks the folder's modules, the client's imports and the Dockerfile's copy of the folder ahead of the client build.
 
 ### Storage Keys (per-origin)
