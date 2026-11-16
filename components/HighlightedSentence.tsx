@@ -8,6 +8,8 @@ import { tokenizeSentence, type SentenceUnit } from '../services/sentenceTokens'
  *
  *   {{studied item}}   — the word/phrase being studied (or the variant that appears).
  *                        Emphasis (color A). Looked up only in tap-any-word mode, or opened when saved.
+ *                        In a list row (studiedItemInteractive false) it is emphasis only, so a tap on
+ *                        it opens the row's sentence like a tap anywhere else on the row.
  *   [[uncommon word]]  — an uncommon / C1-C2 word, idiom, or phrase worth looking up.
  *                        Emphasis (color B) AND clickable → triggers a lookup search.
  *
@@ -55,6 +57,9 @@ interface HighlightedSentenceProps {
   findSaved?: (term: string) => StoredItem | null;
   /** Open a saved item's full card (a saved word or phrase tapped in the sentence). */
   onOpenCard?: (item: StoredItem) => void;
+  /** Whether the {{studied item}} can be tapped, opening its card when saved (default true). False in list rows: it
+   *  stays emphasis, with no role, tab stop or handler, so the tap goes to the row. Other words are unaffected. */
+  studiedItemInteractive?: boolean;
 }
 
 const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
@@ -64,6 +69,7 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
   searchAnyWord = false,
   findSaved,
   onOpenCard,
+  studiedItemInteractive = true,
 }) => {
   if (!text) return null;
 
@@ -86,6 +92,10 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
         return <span key={unit.key} className={ITEM_CLASS}>{unit.text}</span>;
 
       case 'saved': {
+        // The studied item in a list row: emphasis only, even saved.
+        if (unit.studied && !studiedItemInteractive) {
+          return <span key={unit.key} className={ITEM_CLASS} data-word-offset={unit.offset}>{unit.text}</span>;
+        }
         // The highlight (indigo + dotted underline) is the affordance: tapping the word opens the card.
         const { item } = unit;
         const openCard = (e: React.SyntheticEvent) => {
@@ -154,8 +164,8 @@ const HighlightedSentenceImpl: React.FC<HighlightedSentenceProps> = ({
       }
 
       case 'item': {
-        // The studied word: if unsaved, looked up in tap-any-word mode; otherwise emphasis only.
-        const { term } = unit;
+        // The unsaved studied word: tap-any-word mode looks it up when it's interactive; otherwise emphasis only.
+        const term = studiedItemInteractive ? unit.term : '';
         return (
           <span
             key={unit.key}

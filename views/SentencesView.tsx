@@ -11,6 +11,7 @@ import {
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
 import { needsReview, summarizeReviewStates } from '../services/sentenceReviewState';
+import { acceptListReview } from '../services/actionGuards';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
 import { useListClock } from '../hooks/useNow';
@@ -32,6 +33,7 @@ interface SentenceRowProps {
   dueLabel?: string;
   confirmingDelete: boolean;
   onOpen: (item: StoredItem) => void;
+  /** Reviewed: records a review of the sentence. The list guards it, so one press reviews one row. */
   onUpdateSRS: (itemId: string) => Promise<boolean>;
   onDelete: (itemId: string) => void;
   onConfirmDelete: (itemId: string | null) => void;
@@ -72,7 +74,14 @@ export const SentenceRow = React.memo(function SentenceRow({
         <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
         <div className="pl-3">
           <p className="text-sm xl:text-base text-slate-700 leading-relaxed mb-2">
-            <HighlightedSentence text={d.text} itemWord={d.sourceWord} onSearchWord={onSearch} findSaved={findSaved} onOpenCard={onOpenCard} />
+            <HighlightedSentence
+              text={d.text}
+              itemWord={d.sourceWord}
+              onSearchWord={onSearch}
+              findSaved={findSaved}
+              onOpenCard={onOpenCard}
+              studiedItemInteractive={false}
+            />
           </p>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -91,7 +100,12 @@ export const SentenceRow = React.memo(function SentenceRow({
             <div className="flex items-center gap-1">
               {toReview && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); void onUpdateSRS(d.id); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // A double click's second click is no second review (the list's 0.5 s guard catches a double tap's).
+                    if (e.detail > 1) return;
+                    void onUpdateSRS(d.id);
+                  }}
                   className="flex items-center gap-1 min-h-8 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 rounded-lg transition-colors"
                   title="Mark as reviewed"
                 >
@@ -193,6 +207,13 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
     return search.results.filter(s => activeIds.has(s.data.id));
   }, [activeItems, filter, now, settledQuery, search.results]);
 
+  // One Reviewed per press across the list: a reviewed row moves away, and the row taking its place mustn't take a
+  // second tap meant for the first (one within 0.5 s of the last review is ignored).
+  const lastListReviewAt = useRef(-Infinity);
+  const reviewFromList = useCallback((itemId: string) => (
+    acceptListReview(lastListReviewAt, Date.now()) ? onUpdateSRS(itemId) : Promise.resolve(false)
+  ), [onUpdateSRS]);
+
   // Rows open the sentence in the order on screen, read when tapped, so the row callbacks stay the same
   // while the list changes.
   const latest = useLatest({ sorted, onOpenSentence });
@@ -214,7 +235,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
         dueLabel={!toReview && item.srs?.nextReview ? formatDueLabel(item.srs.nextReview, now) : undefined}
         confirmingDelete={confirmDeleteId === item.data.id}
         onOpen={openSentence}
-        onUpdateSRS={onUpdateSRS}
+        onUpdateSRS={reviewFromList}
         onDelete={onDelete}
         onConfirmDelete={setConfirmDeleteId}
         onSearch={onSearch}
@@ -222,7 +243,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
         onOpenCard={onOpenCard}
       />
     );
-  }, [now, confirmDeleteId, openSentence, onUpdateSRS, onDelete, onSearch, findSaved, onOpenCard]);
+  }, [now, confirmDeleteId, openSentence, reviewFromList, onDelete, onSearch, findSaved, onOpenCard]);
 
   return (
     <div className="h-full min-h-0 flex flex-col">

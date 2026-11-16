@@ -25,7 +25,9 @@ const render = (props: Props) => renderToStaticMarkup(createElement(HighlightedS
 
 // What the handlers read from an event, and what the tests read from a span.
 interface FakeEvent { key?: string; preventDefault(): void; stopPropagation(): void }
-type Span = ReactElement<{ children?: unknown; role?: string; onClick?: (event: FakeEvent) => void; onKeyDown?: (event: FakeEvent) => void }>;
+type Span = ReactElement<{
+  children?: unknown; role?: string; className?: string; onClick?: (event: FakeEvent) => void; onKeyDown?: (event: FakeEvent) => void;
+}>;
 
 // The memo's inner component has no hooks, so calling it returns the element tree to walk: the spans inside
 // the selectable wrapper, in order.
@@ -119,4 +121,46 @@ test('without onSearchWord an unsaved [[term]] is emphasis only, and a saved one
 test('an empty sentence renders nothing, and the wrapper keeps the text selectable', () => {
   assert.equal(render({ text: '' }), '');
   assert.equal(render({ text: 'Plain.' }), '<span class="sentence-selectable">Plain.</span>');
+});
+
+test('in a list row the studied item is emphasis only, saved or not, while dotted saved words still open their cards', () => {
+  const opened: string[] = [];
+  const row: Props = {
+    text: 'Jokes {{break the ice}} at parties, on thin ice.',
+    itemWord: 'break the ice',
+    findSaved,
+    onOpenCard: item => opened.push(item.data.id),
+    onSearchWord: () => {},
+    studiedItemInteractive: false,
+  };
+  const html = render(row);
+  // The studied item keeps its emphasis and its offset, with no role or tab stop; the dotted 'ice' is still a button.
+  assert.ok(html.includes('<span class="text-indigo-700 font-semibold bg-indigo-50 rounded px-0.5" data-word-offset="6">break the ice</span>'));
+  assert.equal(html.match(/role="button"/g)?.length, 1);
+  const [studied, ice] = spans(row).filter(span => span.props.children === 'break the ice' || span.props.children === 'ice.');
+  assert.equal(studied.props.onClick, undefined);
+  assert.equal(studied.props.onKeyDown, undefined);
+  assert.equal(ice.props.role, 'button');
+  click(ice);
+  assert.deepEqual(opened, ['ice']);
+
+  // Everywhere else (the sentence page) the saved studied item opens its card, as before.
+  const page = spans({ ...row, studiedItemInteractive: undefined }).find(span => span.props.children === 'break the ice')!;
+  assert.equal(page.props.role, 'button');
+  click(page);
+  assert.deepEqual(opened, ['ice', 'break the ice']);
+});
+
+test('an unsaved studied item that tap-any-word mode would look up stays plain when it is not interactive', () => {
+  const searched: string[] = [];
+  const props: Props = { text: 'I {{need}} it.', itemWord: 'need', onSearchWord: term => searched.push(term), searchAnyWord: true };
+  const studied = (p: Props) => spans(p).find(span => span.props.children === 'need')!;
+  const interactive = studied(props);
+  assert.match(interactive.props.className!, /cursor-pointer/);
+  click(interactive);
+  assert.deepEqual(searched, ['need']);
+
+  const plain = studied({ ...props, studiedItemInteractive: false });
+  assert.equal(plain.props.onClick, undefined);
+  assert.doesNotMatch(plain.props.className!, /cursor-pointer/);
 });

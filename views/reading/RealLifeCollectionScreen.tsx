@@ -1,4 +1,4 @@
-import React, { useCallback, useDeferredValue, useMemo, useState } from 'react';
+import React, { useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -17,6 +17,7 @@ import { activateOnEnterOrSpace } from '../../components/activateOnKey';
 import { isImeKey } from '../../components/keyboardTarget';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
+import { acceptListReview } from '../../services/actionGuards';
 import type { RealLifeCollection, RealLifeSentence } from '../../services/realLifeCatalog';
 import { buildRealLifeStudyItems, createRealLifeProgressItem } from '../../services/realLifeProgress';
 import { realLifeProgressItemId } from '../../services/realLifeProgressIdentity';
@@ -42,6 +43,7 @@ interface RealLifeSentenceRowProps {
   state: SentenceReviewState;
   masteryPercent: number;
   onOpen: (sentence: RealLifeSentence) => void;
+  /** Reviewed: records a review of the line. The list guards it, so one press reviews one row. */
   onMarkReviewed: (sentence: RealLifeSentence) => void;
   findSaved?: (term: string) => StoredItem | null;
   onOpenCard?: (item: StoredItem) => void;
@@ -81,6 +83,7 @@ export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
                 itemWord={sentence.focus}
                 findSaved={findSaved}
                 onOpenCard={onOpenCard}
+                studiedItemInteractive={false}
               />
             </p>
             <div className="mt-2.5 flex items-center gap-2">
@@ -103,7 +106,12 @@ export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
                 {state !== 'memorized' && (
                   <button
                     type="button"
-                    onClick={event => { event.stopPropagation(); onMarkReviewed(sentence); }}
+                    onClick={event => {
+                      event.stopPropagation();
+                      // A double click's second click is no second review (the list's 0.5 s guard catches a double tap's).
+                      if (event.detail > 1) return;
+                      onMarkReviewed(sentence);
+                    }}
                     className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
                     title="Mark as reviewed"
                   >
@@ -186,7 +194,11 @@ export function RealLifeCollectionScreen({
     const { filtered, openSentence } = latest.current;
     openSentence(filtered, filtered.indexOf(sentence));
   }, [latest]);
+  // One Reviewed per press across the list: under the Unreviewed and Due chips a reviewed row leaves, and the row taking
+  // its place mustn't take a second tap meant for the first (one within 0.5 s of the last review is ignored).
+  const lastListReviewAt = useRef(-Infinity);
   const markReviewed = useCallback((sentence: RealLifeSentence) => {
+    if (!acceptListReview(lastListReviewAt, Date.now())) return;
     void onUpdateSRS(realLifeProgressItemId(sentence.id), 'good', { seedItem: createRealLifeProgressItem(sentence) });
   }, [onUpdateSRS]);
   const softClass = collectionStyle[collection.accent].soft;
