@@ -164,7 +164,7 @@ These modules are imported by other scripts and never run on their own.
 - `sentence-analysis-checks.mjs` — The sentence-analysis stage's own logic: the records it sends and the checks a fresh analysis must pass, which are stricter than the import contract. `enrich-sentences.mjs` runs it.
 - `image-review.mjs` — The image judge's and the prompt refiner's own logic: the records each sends and how each reads the model's answer. `judge-image-candidates.mjs` and `refine-rejected-image-prompts.mjs` run it.
 - `wave-manifests.mjs` — The wave preparers' common parts: parsing the entry cap, reading earlier waves' published manifests, writing a wave's manifest, and printing its summary. Its header documents each wave's manifest.
-- `sentence-pool.mjs` — Sentence identity: lookup normalization, the hashes, example ids, image filenames, and the shape of a pool record. It copies the server's normalization in `server/src/sentence-enrichment.ts`, and `server/test/sentence-pool.test.ts` keeps the two in step.
+- `sentence-pool.mjs` — Sentence identity: lookup normalization, the hashes, example ids, image filenames, and the shape of a pool record. The normalization, the hashes and the ids are the server's own, imported from `server/src/sentence-lookup.ts`.
 - `image-model.mjs` — The label of the default local image model.
 - `themed-collection-codex.mjs` — The `codex exec` call that the two themed-collection tools share.
 - `structured-model.mjs` — Sends one schema-bound request to Claude Code or Codex, whichever `ENRICHMENT_MODEL_PROVIDER` selects.
