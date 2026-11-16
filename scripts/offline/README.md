@@ -61,6 +61,8 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
 - `run-incremental-example-enrichment.sh` — Runs the whole cycle, in the stage order above, and holds `.cycle.lock` while it runs. Every model stage uses `ENRICHMENT_MODEL_PROVIDER` (`claude` or `codex`).
   `scripts/offline/run-incremental-example-enrichment.sh [root] [baseline-source.json] [baseline-image-root] [required-deploy-sha]`
 - `vetted-checkout.sh` — Sourced by the runner. If the checkout is a clean `main` behind `vps/main`, it fast-forwards it. The runner exits 75 when the code it runs has uncommitted changes, when the checkout has a local commit, is on another branch or has a detached HEAD, or when the fast-forward changed that code.
+- `check-installed-dependencies.mjs` — Checks that each tree's installed packages are the versions its `package-lock.json` locks, reading each installed `package.json`. A package the lockfile marks optional may be missing, since npm skips the platform packages that don't fit the machine, and packages installed but not locked are ignored. When a tree differs, it exits 1 and names up to five differences.
+  `node scripts/offline/check-installed-dependencies.mjs <tree>...`
 - `deadline.sh` — Sourced by the runner and by most of the shell scripts it calls, so that no wait holds the cycle lock forever. It provides wall-clock deadlines; `run_bounded` and `run_stage`, which run a command in its own process group under a time limit; `gh_bounded` for GitHub CLI calls; and `cap_publish_deadline`.
 - `sweep-bridge-leftovers.sh` — Deletes the leftovers of killed runs:
   - publisher releases that have been idle for six hours;

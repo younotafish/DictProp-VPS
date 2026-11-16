@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -304,4 +304,115 @@ test('the cycle moves main up to a newer vps/main, and exits 75 when that change
   assert.doesNotMatch(carried.stdout, /refusing to run/);
   assert.match(`${carried.stdout}${carried.stderr}`, /Required incremental enrichment input is missing|deferring this cycle/);
   assert.equal(git(work, 'rev-parse', 'HEAD'), docs);
+});
+
+// check-installed-dependencies.mjs, which holds the checkout's node_modules trees to their lockfiles.
+const dependencyChecker = join(offlineDir, 'check-installed-dependencies.mjs');
+
+/** Writes a package-lock.json locking `locked`, and installs `installed` (lockfile key -> version) beside it. */
+function dependencyTree(root: string, locked: Record<string, object>, installed: Record<string, string> = {}) {
+  write(root, 'package-lock.json', `${JSON.stringify({
+    name: 'tree', lockfileVersion: 3, requires: true, packages: { '': { name: 'tree' }, ...locked },
+  }, null, 2)}\n`);
+  for (const [key, version] of Object.entries(installed)) {
+    write(root, `${key}/package.json`, `${JSON.stringify({ name: key.split('node_modules/').at(-1), version })}\n`);
+  }
+}
+
+function checkDependencies(cwd: string, ...trees: string[]) {
+  const result = spawnSync(process.execPath, [dependencyChecker, ...trees], { cwd, encoding: 'utf8', timeout: 30_000 });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+const mismatch = (tree: string, differences: string) =>
+  `node_modules in ${tree} does not match its package-lock.json (${differences}); run npm ci there, holding the cycle lock\n`;
+
+test('a tree installed as locked passes, whatever optional packages it lacks or unlocked ones it holds', t => {
+  const root = mkdtempSync(join(tmpdir(), 'dependency-check-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  dependencyTree(root, {
+    'node_modules/a': { version: '1.0.0' },
+    'node_modules/@scope/b': { version: '2.0.0', dev: true },
+    'node_modules/a/node_modules/c': { version: '3.0.0' },
+    // npm skips the platform packages that don't fit the machine.
+    'node_modules/@esbuild/linux-x64': { version: '0.25.0', dev: true, optional: true, os: ['linux'], cpu: ['x64'] },
+    'node_modules/fsevents': { version: '2.3.3', optional: true, os: ['darwin'] },
+    'node_modules/d': { version: '4.0.0', devOptional: true },
+  }, {
+    'node_modules/a': '1.0.0',
+    'node_modules/@scope/b': '2.0.0',
+    'node_modules/a/node_modules/c': '3.0.0',
+    'node_modules/unlocked': '9.9.9',
+  });
+  assert.deepEqual(checkDependencies(root, root), { status: 0, stdout: '', stderr: '' });
+  // A folder with no lockfile, such as a test's checkout, has nothing to hold its tree to.
+  mkdirSync(join(root, 'no-lockfile'));
+  assert.deepEqual(checkDependencies(root, '.', 'no-lockfile'), { status: 0, stdout: '', stderr: '' });
+});
+
+test('a package missing or at another version than its lockfile says is named, an optional one at another version too', t => {
+  const root = mkdtempSync(join(tmpdir(), 'dependency-check-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  dependencyTree(root, {
+    'node_modules/a': { version: '1.0.0' },
+    'node_modules/a/node_modules/c': { version: '3.0.0' },
+    'node_modules/@scope/b': { version: '2.0.0', dev: true },
+    'node_modules/fsevents': { version: '2.3.3', optional: true },
+  }, {
+    'node_modules/a': '1.0.1',
+    'node_modules/@scope/b': '2.0.0',
+    'node_modules/fsevents': '2.3.2',
+  });
+  assert.deepEqual(checkDependencies(root, root), {
+    status: 1,
+    stdout: mismatch(root, 'a is 1.0.1, locked at 1.0.0; a/node_modules/c is missing; fsevents is 2.3.2, locked at 2.3.3'),
+    stderr: '',
+  });
+});
+
+test('a tree with no node_modules is one difference, and a long list names five and counts the rest', t => {
+  const root = mkdtempSync(join(tmpdir(), 'dependency-check-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const names = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'];
+  const locked = Object.fromEntries(names.map(name => [`node_modules/${name}`, { version: '1.0.0' }]));
+  dependencyTree(join(root, 'bare'), locked);
+  dependencyTree(join(root, 'stale'), locked, Object.fromEntries(names.map(name => [`node_modules/${name}`, '0.9.0'])));
+
+  const bare = checkDependencies(root, join(root, 'bare'));
+  assert.equal(bare.status, 1, bare.stderr);
+  assert.equal(bare.stdout, mismatch(join(root, 'bare'), 'there is no node_modules folder'));
+
+  const stale = checkDependencies(root, join(root, 'stale'));
+  assert.equal(stale.status, 1, stale.stderr);
+  assert.equal(stale.stdout, mismatch(join(root, 'stale'),
+    'p1 is 0.9.0, locked at 1.0.0; p2 is 0.9.0, locked at 1.0.0; p3 is 0.9.0, locked at 1.0.0; '
+    + 'p4 is 0.9.0, locked at 1.0.0; p5 is 0.9.0, locked at 1.0.0; and 2 more'));
+});
+
+test('every tree given is checked, relative to the working directory, and what cannot be checked exits 2', t => {
+  const root = mkdtempSync(join(tmpdir(), 'dependency-check-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  dependencyTree(root, { 'node_modules/a': { version: '1.0.0' } }, { 'node_modules/a': '1.0.0' });
+  dependencyTree(join(root, 'server'), { 'node_modules/hono': { version: '4.13.12' } }, { 'node_modules/hono': '4.12.30' });
+  // The checkout's trees, named as the cycle names them; the message gives the folder npm ci has to run in.
+  assert.deepEqual(checkDependencies(root, '.', 'server'), {
+    status: 1,
+    stdout: mismatch(join(realpathSync(root), 'server'), 'hono is 4.12.30, locked at 4.13.12'),
+    stderr: '',
+  });
+
+  const usage = checkDependencies(root);
+  assert.equal(usage.status, 2);
+  assert.match(usage.stderr, /^Usage: check-installed-dependencies\.mjs <tree>\.\.\.$/m);
+
+  write(root, 'broken/package-lock.json', '{"packages": ');
+  const broken = checkDependencies(root, join(root, 'broken'));
+  assert.equal(broken.status, 2);
+  assert.match(broken.stderr, /^check-installed-dependencies: .*broken\/package-lock\.json: /m);
+
+  // npm 6 lockfiles list dependencies, not the installed packages this compares.
+  write(root, 'npm6/package-lock.json', '{"lockfileVersion": 1, "dependencies": {}}\n');
+  const npm6 = checkDependencies(root, join(root, 'npm6'));
+  assert.equal(npm6.status, 2);
+  assert.match(npm6.stderr, /npm6\/package-lock\.json lists no packages/);
 });
