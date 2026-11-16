@@ -2,7 +2,7 @@
 
 DictProp is a vocabulary app for advanced learners of English. You look up a word, phrase or sentence, and an AI writes a card for each meaning. Every meaning you save is scheduled for review with FSRS v6. Saved sentences and the example sentences on cards become listening lessons with a detailed analysis, and two reading tabs offer curated sentences: Real Life conversations and American essays. The app runs at https://dictprop.online as an installable web app for phones and laptops, and it admits one Google account, its owner's.
 
-This document describes what the code on branch `w3/docs` does (16 November 2026). Keys and gestures match the in-app Gestures & shortcuts sheet, which is built from `services/shortcutSheet.ts`, the canonical list. README.md covers running the code; CLAUDE.md covers operating it.
+This document describes what the code does as of 16 November 2026. Keys and gestures match the in-app Gestures & shortcuts sheet, which is built from `services/shortcutSheet.ts`, the canonical list. README.md covers running the code; CLAUDE.md covers operating it.
 
 ## 1. Terms
 
@@ -78,7 +78,7 @@ One rule, shared by the client and the server (`server/src/shared/query-mode.ts`
 - A tap or click in the top quarter of the card area reads example 1, in the second quarter example 2; a second one pauses or resumes.
 - A comparison opens in the same sheet. A lookup that returns no card says "No vocabulary card was returned."
 
-**Keys (laptop):** ← → meanings; ↑ ↓ results; S saves the meaning (or says it's already saved); Shift+S saves every meaning of the open result; P says the word; E reads the first two examples (again: pause or resume, or past 85% start again; one still loading is left alone); Space plays or pauses (the first example when nothing plays); ⌘1-4 read example 1-4; Esc closes. Held keys other than the arrows act once, and a dialog above the sheet keeps the keys.
+**Keys (laptop):** ← → meanings; ↑ ↓ results; S saves the meaning (or says it's already saved); Shift+S saves every meaning of the open result; P says the word; E reads the first two examples (again: pause or resume, or past 85% start again; one still loading is left alone); Space plays or pauses (the first example when nothing plays; a read still loading is left alone); ⌘1-4 read example 1-4; Esc closes. Held keys other than the arrows act once, and a dialog above the sheet keeps the keys.
 
 ### 3.5 Errors and offline
 
@@ -185,7 +185,7 @@ Rows that need a connection grey out with "Needs a connection" once the connecti
 - A picture loads from the device, then from the server, and is kept on the device once loaded; one that can't be found shows "No Image".
 - After a sync, the app quietly stores the pictures of up to 60 cards due within 24 hours and of the 20 most recently saved, except with Save-Data on, on a 2G connection, or when storage is more than 85% full.
 - **Download image pack** fetches every missing picture in the library, archived cards included, 20 at a time, soonest due first: "Offline images · 120/340" with ×, then "Saved 340 images for offline use", "Saved 300 of 340 images · 40 couldn’t download", "All images are already offline" or "No images to download".
-- **Restore server images** uploads the pictures this device has that the server lacks: "Restored 12 images to the server", "Restored 10 of 12 images; 2 failed", "All images already on the server" or "Couldn’t restore images. Try again later." Pictures that failed to upload are also sent again by themselves after the next sync that gets through.
+- **Restore server images** uploads the pictures this device has that the server lacks, showing "Checking which images the server is missing…" and then "Restoring images to server: 3/12" on an indigo pill with a spinner, and ending with "Restored 12 images to the server", "Restored 10 of 12 images; 2 failed", "All images already on the server" or "Couldn’t restore images. Try again later." Pictures that failed to upload are also sent again by themselves after the next sync that gets through.
 
 ### 4.10 An empty notebook
 
@@ -533,7 +533,7 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 
 - **Launch:** the app reads the device's copy, then sends queued reviews, pulls changes and pushes local edits. A first visit takes a full copy, 500 items a page. If the device's copy can't be read: "Couldn’t open your library", with Try again, Reload app and Use the server copy (which may lose changes not yet synced).
 - **Pulls:** while the app is visible and online, it pulls the server's changes since its last revision, 500 at a time, every 8 seconds, when the window gets focus or the page becomes visible, when the connection returns, and when another tab of the app has sent something.
-- **Pushes:** 5 seconds after edits pause, and no later than 30 seconds into a steady stream of edits such as a study session, in batches of 200; deletes, archives and resets go at once, after their undo window. A failed push is retried after 8 seconds, then after longer waits up to 5 minutes, and at once when the connection returns. Two failures in a row and a minute without success bring up the stuck-sync pill. An item the server refuses (invalid, or too large) stays on the device, with the refused-changes pill, until it changes; Retry can't help it, so it doesn't count toward the stuck-sync pill.
+- **Pushes:** 5 seconds after edits pause, and no later than 30 seconds into a steady stream of edits such as a study session, in batches of 200; deletes, archives, unarchives, resets, refreshes and removing a word from a phrase go at once, after their undo window. A failed push is retried after 8 seconds, then after longer waits up to 5 minutes, and at once when the connection returns. Two failures in a row and a minute without success bring up the stuck-sync pill. An item the server refuses (invalid, or too large) stays on the device, with the refused-changes pill, until it changes; Retry can't help it, so it doesn't count toward the stuck-sync pill.
 - **Merging:** the server's revision numbers decide which copy is newer, and unsynced edits on the device survive a pull. A deletion wins unless the other copy is newer. A delete or archive made on the device applies on top of a server copy that changed meanwhile (an enrichment, for example). For schedules, the newer review wins. A copy stripped of its content never replaces a full one.
 
 ### 11.3 Reviews
