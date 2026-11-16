@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createElement } from 'react';
+import { createElement, Fragment } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { Flame } from 'lucide-react';
 import type { SRSData } from '../../types.ts';
 import { SrsStats } from '../../components/review/SrsStats.tsx';
-import { getMasteryColors } from '../../components/mastery.tsx';
+import { MasteryBadge, getMasteryColors } from '../../components/mastery.tsx';
 import { formatReviewInterval, formatTimeUntil, reviewIntervalDays } from '../../services/reviewTime.ts';
 import * as studySession from '../../services/studySession.ts';
 
@@ -77,4 +78,37 @@ test('without a schedule the row reads no reviews and due', t => {
   t.mock.method(Date, 'now', () => NOW);
   const markup = render({ srs: undefined, mastery: { label: 'New', color: 'slate', percentage: 0 }, colors: getMasteryColors('slate'), compact: true });
   assert.match(markup, /<span class="text-slate-400 whitespace-nowrap">0×<\/span><span class="text-slate-500 whitespace-nowrap">due<\/span>$/);
+});
+
+/** The review popup's SRS row as it was written out before it rendered SrsStats, kept to show the row didn't change. */
+function FormerPopupRow({ srs, mastery }: { srs: SRSData; mastery: { label: string; color: string; percentage: number } }) {
+  const colors = getMasteryColors(mastery.color || 'slate');
+  const totalReviews = srs.totalReviews ?? 0;
+  const streak = srs.correctStreak ?? 0;
+  const nextReview = srs.nextReview ?? 0;
+  const now = Date.now();
+  return createElement(Fragment, null,
+    createElement(MasteryBadge, mastery),
+    createElement('div', { className: 'hidden sm:block flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden' },
+      createElement('div', { className: `h-full ${colors.bar} transition-all duration-300`, style: { width: `${mastery.percentage}%` } })),
+    createElement('span', { className: 'text-slate-400 whitespace-nowrap' }, totalReviews, '×'),
+    streak > 0 && createElement('span', { className: 'text-orange-500 flex items-center gap-0.5' }, createElement(Flame, { size: 12 }), streak),
+    createElement('span', { className: 'text-slate-500 whitespace-nowrap' }, nextReview <= now ? 'due' : formatTimeUntil(nextReview, now)),
+  );
+}
+
+test('the review popup\'s compact row is the one it used to write out, due or not, with or without a streak', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  for (const nextReview of [NOW - DAY, NOW, NOW + 30 * MINUTE, NOW + 5 * HOUR, NOW + 12 * DAY]) {
+    for (const correctStreak of [0, 3]) {
+      for (const mastery of [learning, { label: 'Mastered', color: 'purple', percentage: 96 }]) {
+        const schedule = srs({ nextReview, correctStreak });
+        assert.equal(
+          render({ srs: schedule, mastery, colors: getMasteryColors(mastery.color), compact: true }),
+          renderToStaticMarkup(createElement(FormerPopupRow, { srs: schedule, mastery })),
+          `${nextReview - NOW} ms, streak ${correctStreak}, ${mastery.label}`,
+        );
+      }
+    }
+  }
 });

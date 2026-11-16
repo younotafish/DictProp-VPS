@@ -1,14 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, RotateCcw, Trash2, CheckCircle2, Flame, ChevronLeft, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
+import { X, RotateCcw, Trash2, CheckCircle2, ChevronLeft, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
 import { StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { updateAfterRating } from '../services/fsrsScheduler';
 import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
-import { MasteryBadge, getMasteryColors } from './mastery';
+import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
-import { formatTimeUntil } from '../services/studySession';
 import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/neuralTts';
 import { useLatest } from '../hooks/useStableValue';
 import { useWarmImages } from '../hooks/useWarmImages';
@@ -19,6 +18,7 @@ import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
 import { resolvePopupShortcut } from './review/popupShortcuts';
 import { edgeZoneAt, gutterZoneAt } from './review/readZones';
+import { SrsStats } from './review/SrsStats';
 import { usePopupPlayback } from './review/usePopupPlayback';
 import { useSensePages } from './review/useSensePages';
 import { ZoneGuides } from './review/ZoneGuides';
@@ -149,10 +149,6 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     ? SRSAlgorithm.getMasteryLevel(SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type))
     : null;
   const colors = getMasteryColors(mastery?.color || 'slate');
-  const totalReviews = currentSaved?.srs?.totalReviews ?? 0;
-  const streak = currentSaved?.srs?.correctStreak ?? 0;
-  const nextReview = currentSaved?.srs?.nextReview ?? 0;
-  const now = Date.now();
 
   const handleGotIt = useCallback(() => {
     if (!currentSaved) return;
@@ -316,17 +312,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
           {/* Action row — SRS for a saved sense, or a Save button for an unsaved AI sense */}
           {currentSaved && mastery ? (
             <div className="flex items-center gap-2 text-xs">
-              <MasteryBadge {...mastery} />
-              <div className="hidden sm:block flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                <div className={`h-full ${colors.bar} transition-all duration-300`} style={{ width: `${mastery.percentage}%` }} />
-              </div>
-              <span className="text-slate-400 whitespace-nowrap">{totalReviews}×</span>
-              {streak > 0 && (
-                <span className="text-orange-500 flex items-center gap-0.5"><Flame size={12} />{streak}</span>
-              )}
-              <span className="text-slate-500 whitespace-nowrap">
-                {nextReview <= now ? 'due' : formatTimeUntil(nextReview, now)}
-              </span>
+              <SrsStats srs={currentSaved.srs} mastery={mastery} colors={colors} compact />
               <div className="ml-auto flex items-center gap-1">
                 <button onClick={handleReset} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)">
                   <RotateCcw size={15} />
