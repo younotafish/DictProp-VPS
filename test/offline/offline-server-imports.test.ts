@@ -1,16 +1,86 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import { contentHash, parentHash, sentenceHash } from '../../scripts/offline/failure-ledger.mjs';
 import { corpusSourceHash as corpusAuditSourceHash } from '../../server/src/corpus-audit.ts';
 import { corpusSourceHash } from '../../server/src/corpus-hash.ts';
 import { advancedVocabContentHash, imagePromptHash } from '../../server/src/local-enrichment-markers.ts';
 import { sha256 } from '../support/fs.ts';
+import { REPO_ROOT, repoPath } from '../support/paths.ts';
 
-// The offline scripts and the server share their contracts through server modules the scripts load under plain node.
-// The cycle keys what it records by hashes those modules compute: the failure ledger its entries, every bundle it
-// publishes its entries' sourceHash, the enrichment markers their content and prompt hashes. A changed value would
+// The offline scripts and the server share their contracts through server modules the scripts load under plain node,
+// which strips the modules' types but can't map a relative './x.js' import to its .ts file. So a server module an
+// offline script imports has no imports but node: builtins, and the scripts import it by its .ts path.
+//
+// The cycle also keys what it records by hashes those modules compute: the failure ledger its entries, every bundle
+// it publishes its entries' sourceHash, the enrichment markers their content and prompt hashes. A changed value would
 // make every recorded failure look like a new item and every published entry look edited since its export, so the
 // values below, taken before the hashing code moved into those modules, pin them.
+
+const SERVER_SRC = repoPath('server', 'src');
+
+/** The modules a file references: import and export declarations, import() calls and require() calls. */
+function moduleSpecifiers(path: string): string[] {
+  const kind = path.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const file = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, kind);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    let specifier: ts.Expression | undefined;
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) specifier = node.moduleSpecifier;
+    else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      specifier = node.moduleReference.expression;
+    } else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+      specifier = node.arguments[0];
+    }
+    if (specifier) found.push(ts.isStringLiteralLike(specifier) ? specifier.text : specifier.getText(file));
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+/** Each server module an offline script imports, by its absolute path, with the scripts that import it. */
+function serverModulesImportedOffline(): Map<string, string[]> {
+  const imports = new Map<string, string[]>();
+  for (const name of readdirSync(repoPath('scripts', 'offline')).filter(name => name.endsWith('.mjs')).sort()) {
+    const script = repoPath('scripts', 'offline', name);
+    for (const specifier of moduleSpecifiers(script)) {
+      if (!specifier.startsWith('.')) continue;
+      const target = resolve(dirname(script), specifier);
+      if (target.startsWith(SERVER_SRC + sep)) imports.set(target, [...imports.get(target) ?? [], name]);
+    }
+  }
+  return imports;
+}
+
+test('a server module that an offline script imports has no imports but node: builtins', () => {
+  const imports = serverModulesImportedOffline();
+  assert.ok(imports.size > 0, 'the offline scripts import server modules');
+  for (const [target, scripts] of imports) {
+    const module = relative(REPO_ROOT, target);
+    assert.ok(existsSync(target), `${module}, imported by ${scripts.join(', ')}, does not exist: import the .ts file`);
+    for (const specifier of moduleSpecifiers(target)) {
+      assert.match(specifier, /^node:/,
+        `${module} imports ${specifier}, but plain node loads it for ${scripts.join(', ')}, so it may import only node: builtins`);
+    }
+  }
+});
+
+test('plain node loads every server module an offline script imports', () => {
+  // Without the test runner's loader, as the cycle runs the scripts.
+  const { NODE_OPTIONS: _nodeOptions, ...env } = process.env;
+  for (const target of serverModulesImportedOffline().keys()) {
+    const child = spawnSync(process.execPath, [
+      '--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(target).href)});`,
+    ], { encoding: 'utf8', env });
+    assert.equal(child.status, 0, `${relative(REPO_ROOT, target)}: ${child.stderr}`);
+  }
+});
 
 // A phrase with a sentence's server-written fields, carrying an imageUrl at every depth the hashes strip it from.
 const item = {
