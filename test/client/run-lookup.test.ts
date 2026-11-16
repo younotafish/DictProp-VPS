@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runLookup, type Lookup, type LookupEffects } from '../../components/search/runLookup.ts';
+import { createRefreshLog } from '../../components/search/searchQueue.ts';
 import { HttpError } from '../../services/http.ts';
 import type { SearchResult, VocabCard } from '../../types.ts';
 
@@ -16,9 +17,9 @@ const result = (query: string): SearchResult => ({
 /**
  * A lookup whose request answers only when the test says so, with effects that record what they were asked to do.
  * `library` (the saved cards when the request starts) and `current` are what savedCards and isCurrent report, so a
- * test can change them mid-request.
+ * test can change them mid-request; `isCurrent` replaces the latter with a caller's own check.
  */
-function harness(lookup: Partial<Lookup> = {}, saved: Record<string, VocabCard[]> = {}) {
+function harness(lookup: Partial<Lookup> = {}, saved: Record<string, VocabCard[]> = {}, isCurrent?: () => boolean) {
   let answer!: (value: SearchResult) => void;
   let refuse!: (error: unknown) => void;
   const request = new Promise<SearchResult>((resolve, reject) => { answer = resolve; refuse = reject; });
@@ -28,7 +29,7 @@ function harness(lookup: Partial<Lookup> = {}, saved: Record<string, VocabCard[]
   const errors: Array<[string, string | undefined]> = [];
   const effects: LookupEffects = {
     analyze: () => request,
-    isCurrent: () => { calls.push('isCurrent'); return state.current; },
+    isCurrent: () => { calls.push('isCurrent'); return isCurrent ? isCurrent() : state.current; },
     savedCards: word => { calls.push('savedCards'); return state.library.get(word) ?? []; },
     showResult: () => calls.push('showResult'),
     showFailure: () => calls.push('showFailure'),
@@ -103,4 +104,30 @@ test('a failure marks the entry failed and shows the toast, offering a retry onl
   final.refuse(new HttpError('Analysis failed (422)', 422, 'No dictionary entry found.'));
   await final.settled;
   assert.deepEqual(final.errors, [['No dictionary entry found for "gamut". Check the spelling and try again.', undefined]]);
+});
+
+test('an in-place refresh that a forced lookup of its query replaced changes nothing; a dismissed one still saves and toasts', async () => {
+  // As in useSearchQueue: an in-place refresh is current until a forced lookup of its entry's query is asked for.
+  const log = createRefreshLog();
+  const inPlace = (saved: Record<string, VocabCard[]> = {}) => {
+    const replaced = log.watch('gamut');
+    return harness({}, saved, () => !replaced());
+  };
+
+  const replacedRefresh = inPlace({ gamut: [vocab('gamut')] });
+  log.note('Gamut'); // the word's page refreshes it while the sheet's refresh runs, which drops the sheet's entry
+  replacedRefresh.answer(result('gamut'));
+  await replacedRefresh.settled;
+  assert.deepEqual(replacedRefresh.calls, ['isCurrent'], 'the newer request owns the saved cards');
+
+  // Dismissing the entry, or Clear all, asks for no lookup.
+  const dismissedRefresh = inPlace({ gamut: [vocab('gamut')] });
+  dismissedRefresh.answer(result('gamut'));
+  await dismissedRefresh.settled;
+  assert.equal(dismissedRefresh.replaced.length, 1, 'the refresh the user asked for still saves');
+
+  const dismissedFailure = inPlace();
+  dismissedFailure.refuse(new Error('network down'));
+  await dismissedFailure.settled;
+  assert.deepEqual(dismissedFailure.calls, ['isCurrent', 'showFailure', 'showError'], 'and still reports its failure');
 });

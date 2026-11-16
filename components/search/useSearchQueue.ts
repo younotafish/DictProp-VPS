@@ -9,7 +9,7 @@ import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
 import { runLookup } from './runLookup';
 import {
-  busyCountOf, findLiveComparison, isQueued, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
+  busyCountOf, createRefreshLog, findLiveComparison, isQueued, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
   type QueueAction, type QueueItem,
 } from './searchQueue';
 
@@ -41,6 +41,7 @@ export function useSearchQueue({
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
   const queueRef = useRef<QueueItem[]>([]); // the latest queue, for checks outside a render (dedup, a superseded request)
   const [scanning, setScanning] = useState(false); // sentence → expression scan in flight (pre-enqueue)
+  const [refreshLog] = useState(createRefreshLog); // the forced lookups asked for, so an in-place refresh knows it was replaced
 
   // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
   // replace any existing queue entry for it so the fresh result supersedes the old/reused one.
@@ -50,13 +51,14 @@ export function useSearchQueue({
     const forceAI = !!opts?.forceAI;
     const analyzeMode = opts?.analyzeMode;
     const id = `q-${++queueIdCounter}`;
+    if (forceAI) refreshLog.note(trimmed);
     setQueue(prev => {
       const next = searchQueueReducer(prev, { type: 'add-search', id, query: trimmed, forceAI, analyzeMode });
       if (next === prev) log('🔍 Queue: skipping duplicate "' + trimmed + '"');
       else log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : '') + (analyzeMode ? ' (' + analyzeMode + ')' : ''));
       return next;
     });
-  }, []);
+  }, [refreshLog]);
 
   // OAuth redirects preserve sessionStorage. Resume the exact failed query once the user signs in again.
   useEffect(() => {
@@ -191,17 +193,21 @@ export function useSearchQueue({
     if (!query || item.refreshing) return;
     const { id, analyzeMode } = item;
     setQueue(queueUpdate({ type: 'refresh-start', id }));
+    // A forced lookup of the entry's query (a refresh from a word's page, say) replaces the entry; the outcome then
+    // belongs to that newer request, so this one changes nothing. An entry the user dismissed or cleared still saves
+    // its result and reports its failure: the user asked for that refresh.
+    const replaced = refreshLog.watch(item.query);
     // An expression taken from a sentence is refreshed as the same unit, not re-split into its words.
     void runLookup({ query, analyzeMode, refresh: true }, {
       ...lookupEffects,
-      isCurrent: () => true,
+      isCurrent: () => !replaced(),
       showResult: results => {
         setQueue(queueUpdate({ type: 'refresh-ready', id, query, results }));
         onFresh();
       },
       showFailure: () => setQueue(queueUpdate({ type: 'refresh-fail', id })),
     });
-  }, [lookupEffects]);
+  }, [lookupEffects, refreshLog]);
 
   // Driver: start every pending text-model job immediately. DeepInfra owns provider capacity; locally we
   // only de-duplicate starts so a re-render while a request is in flight cannot submit the same item twice.

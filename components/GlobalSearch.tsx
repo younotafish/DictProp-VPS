@@ -14,7 +14,7 @@ import { looksLikeSentence } from '../services/queryMode';
 import { useSearchQueue } from './search/useSearchQueue';
 import { useSheetPlayback } from './search/useSheetPlayback';
 import { useTimedMessage } from './search/useTimedMessage';
-import { stepMeaning, viewingIndexAfterDismiss, type SearchMode } from './search/searchViewing';
+import { meaningAfterRefresh, stepMeaning, viewingIndexAfterDismiss, type SearchMode } from './search/searchViewing';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
@@ -335,12 +335,16 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [viewingVocab]);
 
   // Refresh button on the card: a real re-run of the AI for this word, refreshing the open result in place (see
-  // refreshInPlace), which then opens at its first meaning. It reads the open result through a ref, so the card's
-  // onRefresh stays the same while other results arrive.
+  // refreshInPlace). The fresh result shows its first meaning, unless the user has moved to another result by then.
+  // It reads the open result through a ref, so the card's onRefresh stays the same while other results arrive.
   const viewingItemRef = useLatest(viewingItem);
   const handleRefreshCard = useCallback((word: string) => {
     const item = viewingItemRef.current;
-    if (item) refreshInPlace(item, word, () => setViewingVocabIdx(0));
+    if (!item) return;
+    refreshInPlace(item, word, () => {
+      const openId = viewingItemRef.current?.id;
+      setViewingVocabIdx(index => meaningAfterRefresh(openId, item.id, index));
+    });
   }, [viewingItemRef, refreshInPlace]);
 
   // The error toast's retry: replays the query the failure carries.

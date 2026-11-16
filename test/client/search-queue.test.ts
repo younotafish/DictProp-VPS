@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  busyCountOf, findLiveComparison, hasLiveDuplicate, isQueued, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
-  type QueueAction, type QueueItem,
+  busyCountOf, createRefreshLog, findLiveComparison, hasLiveDuplicate, isQueued, queueUpdate, readyItemsOf, savedCardsResult,
+  searchQueueReducer, type QueueAction, type QueueItem,
 } from '../../components/search/searchQueue.ts';
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types.ts';
 
@@ -170,3 +170,28 @@ test('a lookup replaced by a refresh of the same word is no longer queued', () =
   assert.equal(isQueued(refreshed, 'q-1'), false);
   assert.equal(isQueued(refreshed, 'q-2'), true);
 });
+
+test('a forced lookup of a query is noted against every request watching that query, whatever its case', () => {
+  const log = createRefreshLog();
+  const replaced = log.watch('Gamut');
+  log.note('gamut');
+  const later = log.watch('gamut');
+  assert.equal(replaced(), true, 'refreshed after the watch began');
+  assert.equal(later(), false, 'a watch begun after the refresh sees none');
+  log.note('impasse');
+  assert.equal(later(), false, "another query's refresh doesn't count");
+  log.note('GAMUT');
+  assert.equal(later(), true);
+});
+
+test("a forced lookup drops an entry mid-way through an in-place refresh, as the log's watch on its query reports", () => {
+  const queue = run([
+    add('q-1', 'gamut'), { type: 'search-ready', id: 'q-1', results: result('gamut') }, { type: 'refresh-start', id: 'q-1' },
+  ]);
+  const log = createRefreshLog();
+  const replaced = log.watch(queue[0].query);
+  log.note('Gamut');
+  assert.equal(isQueued(searchQueueReducer(queue, add('q-2', 'Gamut', { forceAI: true })), 'q-1'), false);
+  assert.equal(replaced(), true);
+});
+

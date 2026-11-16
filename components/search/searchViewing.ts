@@ -23,3 +23,12 @@ export function viewingIndexAfterDismiss(queue: readonly QueueItem[], dismissedI
   const remaining = queue.filter(item => item.id !== dismissedId && item.status === 'ready').length;
   return remaining === 0 ? null : Math.min(viewingIndex, remaining - 1);
 }
+
+/**
+ * The meaning to show once the entry `refreshedId` has its fresh result: the first, when that entry is the open result
+ * (the fresh result may have fewer meanings), and otherwise the meaning already shown, since the open result is
+ * another one.
+ */
+export function meaningAfterRefresh(openId: string | undefined, refreshedId: string, meaningIndex: number): number {
+  return openId === refreshedId ? 0 : meaningIndex;
+}

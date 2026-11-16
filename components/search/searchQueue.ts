@@ -2,8 +2,9 @@ import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard
 
 /**
  * The search queue as data: every lookup and comparison the search button runs, and the state changes it goes
- * through. Lookups and comparisons share the queue, so every count includes both. The functions here are pure;
- * useSearchQueue runs the requests and applies their outcomes through searchQueueReducer.
+ * through. Lookups and comparisons share the queue, so every count includes both. The functions here are pure, apart
+ * from the counts the refresh log keeps; useSearchQueue runs the requests and applies their outcomes through
+ * searchQueueReducer.
  */
 
 /** One entry of the search queue: a lookup or a comparison, from the moment it's asked for until it's dismissed. */
@@ -40,7 +41,9 @@ export type QueueAction =
   /** Clear all: drops every finished entry (ready or failed) and keeps the ones still running. */
   | { type: 'clear-finished' };
 
-const sameQuery = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+/** A query as the queue matches it: case doesn't count. */
+const queryKey = (query: string): string => query.toLowerCase();
+const sameQuery = (a: string, b: string): boolean => queryKey(a) === queryKey(b);
 
 const patch = (queue: QueueItem[], id: string, fields: Partial<QueueItem>): QueueItem[] =>
   queue.map(item => item.id === id ? { ...item, ...fields } : item);
@@ -90,6 +93,29 @@ export const queueUpdate = (action: QueueAction) => (queue: QueueItem[]): QueueI
 
 /** Whether the entry `id` is still in the queue (a refresh of the same word replaces it, a dismissal drops it). */
 export const isQueued = (queue: readonly QueueItem[], id: string): boolean => queue.some(item => item.id === id);
+
+/**
+ * The refreshes (forced lookups) asked for so far, by query. A forced lookup replaces every entry for its query, so a
+ * request whose entry's query has been refreshed since the request started belongs to a replaced entry, whether the
+ * entry was still queued or the user had already dismissed it.
+ */
+export function createRefreshLog() {
+  const counts = new Map<string, number>();
+  const countOf = (key: string): number => counts.get(key) ?? 0;
+  return {
+    /** A forced lookup of `query` was asked for. */
+    note(query: string): void {
+      const key = queryKey(query);
+      counts.set(key, countOf(key) + 1);
+    },
+    /** A check for later: whether a forced lookup of `query` has been asked for since this call. */
+    watch(query: string): () => boolean {
+      const key = queryKey(query);
+      const seen = countOf(key);
+      return () => countOf(key) !== seen;
+    },
+  };
+}
 
 /** The results the sheet can show, in the order they were asked for. */
 export const readyItemsOf = (queue: readonly QueueItem[]): QueueItem[] => queue.filter(item => item.status === 'ready');

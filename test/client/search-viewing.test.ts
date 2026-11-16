@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { QueueItem } from '../../components/search/searchQueue.ts';
-import { stepMeaning, viewingIndexAfterDismiss } from '../../components/search/searchViewing.ts';
+import { meaningAfterRefresh, stepMeaning, viewingIndexAfterDismiss } from '../../components/search/searchViewing.ts';
 
 test('stepping forward through the meanings comes round to the first after the last', () => {
   assert.deepEqual([0, 1, 2].map(index => stepMeaning(index, 3, 1, true)), [1, 2, 0]);
@@ -44,3 +44,10 @@ test('dismissing the last ready result closes the sheet', () => {
   assert.equal(viewingIndexAfterDismiss([item('a', 'ready'), item('b', 'pending'), item('c', 'failed')], 'a', 0), null);
   assert.equal(viewingIndexAfterDismiss([], 'a', 0), null);
 });
+
+test('a refreshed result opens at its first meaning, and another open result keeps the meaning it shows', () => {
+  assert.equal(meaningAfterRefresh('q-1', 'q-1', 3), 0);
+  assert.equal(meaningAfterRefresh('q-2', 'q-1', 3), 3, 'the user moved to another result while the refresh ran');
+  assert.equal(meaningAfterRefresh(undefined, 'q-1', 2), 2, 'the sheet is closed');
+});
+
