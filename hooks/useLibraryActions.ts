@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { IMAGE_IDB_MARKER, attachImage, extractInlineImages, offloadImages, restoreInlineImages, unsavedImages } from '../services/libraryImages';
-import { makeVocabStoredItem, saveOverExisting } from '../services/items';
+import { findSavedCopyIndex, makeVocabStoredItem, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { planReset, unarchiveUndo } from '../services/undoRules';
 import { log, logError, warn } from '../services/logger';
@@ -32,20 +32,12 @@ export function useLibraryActions(
       }
       log('⭐ handleSave: saving', incomingTitle, 'type:', item.type, 'id:', item.data.id);
 
-      // The saved copy of this item: the same id, else the same title and type, and for vocab the same
-      // sense, so each meaning of a word keeps its own card. Resolve it before offloading images: the
-      // saved item's stable id is also the image key, so uploading under a transient AI id would
-      // orphan the new image when the content is merged into an existing card.
-      const incomingSense = isVocabItem(item) ? (item.data.sense || '') : '';
-      const findExistingIndex = (items: StoredItem[]): number => {
-        const byId = items.findIndex(existing => existing.data.id === item.data.id);
-        if (byId >= 0) return byId;
-        return items.findIndex(existing => {
-          if (existing.type !== item.type || getItemSpelling(existing) !== incomingTitle) return false;
-          return !isVocabItem(item) || (isVocabItem(existing) && (existing.data.sense || '') === incomingSense);
-        });
-      };
-      const canonicalItemId = latestItemsRef.current[findExistingIndex(latestItemsRef.current)]?.data.id || item.data.id;
+      // The saved copy of this item (services/items findSavedCopyIndex): the same id, else the same type and
+      // spelling and, for a word, the exact sense label, so each meaning of a word keeps its own card. Deleted
+      // cards count, so saving one again brings its history back. Resolve it before offloading images: the saved
+      // item's stable id is also the image key, so uploading under a transient AI id would orphan the new image
+      // when the content is merged into an existing card.
+      const canonicalItemId = latestItemsRef.current[findSavedCopyIndex(latestItemsRef.current, item)]?.data.id || item.data.id;
 
       // Offload any base64 images to IDB before putting into state. Pictures saved nowhere, neither on this
       // device nor on the server, go back inline, where the next push carries them to the server, instead of
@@ -74,7 +66,7 @@ export function useLibraryActions(
       };
 
       updateItems(items => {
-        const existingIndex = findExistingIndex(items);
+        const existingIndex = findSavedCopyIndex(items, item);
         if (existingIndex < 0) {
           // Each meaning owns its own FSRS card. A newly saved sense must not inherit another
           // sense's difficulty, lapses, or due date just because the spelling matches.
