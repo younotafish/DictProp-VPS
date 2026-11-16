@@ -3,6 +3,9 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useLibraryActions } from '../../hooks/useLibraryActions.ts';
+import { useReviewOutbox } from '../../hooks/useReviewOutbox.ts';
+import { readPendingReviewMutations } from '../../services/reviewQueue.ts';
+import { MemoryStorage } from '../support/memory-storage.ts';
 import { isMacKeyboard, isUndoShortcut, planReset, shouldReset, unarchiveUndo, type UndoShortcutContext } from '../../services/undoRules.ts';
 import { isMacPlatform } from '../../services/platform.ts';
 import type { StoredItem } from '../../types.ts';
@@ -153,4 +156,47 @@ test('the shell tells a ⌘ keyboard as the shortcut sheet\'s labels do', () => 
   }
   assert.equal(isMacKeyboard({ platform: 'MacIntel' }), true);
   assert.equal(isMacKeyboard({ platform: 'Win32' }), false);
+});
+
+// A deleted record and its next review (UX-04's shell half): hooks/useReviewOutbox.ts, run once through a server render.
+// Its review goes into the localStorage outbox; Node reports no connection, so nothing is sent.
+function renderOutbox(initial: StoredItem[]) {
+  (globalThis as unknown as { localStorage: MemoryStorage }).localStorage = new MemoryStorage();
+  let items = initial;
+  const library = {
+    latestItemsRef: { get current() { return items; }, set current(next: StoredItem[]) { items = next; } },
+    updateItems: (transform: (current: StoredItem[]) => StoredItem[]) => (items = transform(items)),
+    storeItemUpdates: async () => {},
+  };
+  let outbox: ReturnType<typeof useReviewOutbox> | undefined;
+  const Probe = () => { outbox = useReviewOutbox('u1', library); return null; };
+  renderToStaticMarkup(createElement(Probe));
+  return { outbox: outbox!, items: () => items };
+}
+const catalogLine = (fields: Partial<StoredItem> = {}): StoredItem => ({
+  type: 'sentence',
+  data: { id: 'real-life-sentence:line-1', text: 'Mind the gap.', sourceWord: 'gap', catalogSentenceId: 'line-1', catalogCollectionId: 'london', catalogKind: 'real-life' },
+  srs: { ...reviewed(0), id: 'real-life-sentence:line-1', type: 'sentence' },
+  savedAt: 1,
+  ...fields,
+});
+
+test('the next review of a deleted catalog line brings its record back, reviewed, in place of the deletion', async () => {
+  const { outbox, items } = renderOutbox([card(), catalogLine({ isDeleted: true, srs: { ...catalogLine().srs, totalReviews: 6 } })]);
+  await outbox.updateSRS('real-life-sentence:line-1', 'good', { seedItem: catalogLine() });
+  const line = items()[1];
+  assert.equal(items().length, 2);
+  assert.equal(line.data.id, 'real-life-sentence:line-1');
+  assert.equal(line.isDeleted, undefined);
+  assert.equal(line.srs.totalReviews, 1, 'it starts from the seed, not the deleted record');
+  const [queued] = readPendingReviewMutations('u1');
+  assert.equal(queued.seedItem?.data.id, 'real-life-sentence:line-1', 'the review carries the seed the server revives it from');
+});
+
+test('a review of any other deleted card does nothing', async () => {
+  const deleted = card({ isDeleted: true, srs: reviewed(3) });
+  const { outbox, items } = renderOutbox([deleted]);
+  assert.equal(await outbox.updateSRS('w1', 'good'), false);
+  assert.equal(items()[0], deleted);
+  assert.deepEqual(readPendingReviewMutations('u1'), []);
 });

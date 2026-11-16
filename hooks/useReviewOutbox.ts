@@ -118,7 +118,9 @@ export function useReviewOutbox(
     const { updateAfterRating } = fsrsScheduler ?? await loadFsrsScheduler();
     const now = Date.now();
 
-    const savedItem = latestItemsRef.current.find(i => i.data.id === itemId);
+    // A deleted record isn't reviewed. A catalog sentence's comes back with the review, through its seed below,
+    // in place of the deletion; anything else deleted stays so, and the review does nothing.
+    const savedItem = latestItemsRef.current.find(i => i.data.id === itemId && !i.isDeleted);
     const requestedSeed = context?.seedItem;
     const catalogSeed = !savedItem && requestedSeed?.data.id === itemId && isCatalogProgressItem(requestedSeed)
       ? requestedSeed
