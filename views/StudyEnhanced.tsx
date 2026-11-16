@@ -2,8 +2,8 @@
  * The study tab: the progress dashboard between sessions (StudyDashboard) and the review session itself.
  *
  * Review sessions use the same item-level FSRS state and authoritative event stream as quick review. This
- * component holds the session and its keys; each step of the session (start, grade, undo, cards passed over)
- * is a pure function in services/studySession.ts, and components/study draws the card and the summary. The
+ * component holds the session, its keys and its audio; each step of the session (start, grade, undo, cards passed
+ * over) is a pure function in services/studySession.ts, and components/study draws the card and the summary. The
  * session's record (services/studySessionRecord.ts) lets it survive a reload.
  */
 
@@ -18,12 +18,14 @@ import {
   findSessionCard,
   gradeSessionCard,
   isSessionCardLive,
+  listeningPrompt,
   moveSessionTo,
   receiptText,
   resumeSession,
   sessionSiblingCounts,
   startStudySession,
   summarizeSession,
+  upcomingListeningPrompts,
   type SessionGrade,
   type StudySession,
 } from '../services/studySession';
@@ -33,10 +35,12 @@ import { resolveStudyKey } from '../services/studyKeys';
 import { StudyDashboard } from '../components/StudyDashboard';
 import { StudyCard } from '../components/study/StudyCard';
 import { StudySummary } from '../components/study/StudySummary';
+import { createSessionAudio, type SessionAudioEngine } from '../components/study/sessionAudio';
 import { useEscapeLayer } from '../components/escapeStack';
 import { isDialogOpenOutside, isKeyboardFocusedControl, isTypingTarget } from '../components/keyboardTarget';
 import { useLatest } from '../hooks/useStableValue';
 import { warn } from '../services/logger';
+import { getPlaybackProgress, getPlaybackState, pauseCurrent, prefetchTTS, resumeCurrent, speakNatural, speakWord } from '../services/neuralTts';
 import { readPendingReviewMutations } from '../services/reviewQueue';
 import { decodeStudySession, encodeStudySession, recordChanged, restoreQueue, restoredSession } from '../services/studySessionRecord';
 import { clearStoredStudySession, readStoredStudySession, writeStoredStudySession } from '../services/studySessionStore';
@@ -69,6 +73,11 @@ interface LastGrade extends SessionGrade {
   /** The grade is still in the review outbox, not yet on the server. */
   waiting: boolean;
 }
+
+/** The speech engine a session's audio goes through. */
+const SESSION_AUDIO_ENGINE: SessionAudioEngine = {
+  speakNatural, speakWord, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, prefetchTTS,
+};
 
 /** How long a failed undo is said in the receipt line before the receipt comes back. */
 const UNDO_ERROR_MS = 4_000;
@@ -142,12 +151,30 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     writeStoredStudySession(encodeStudySession(session, userId, Date.now()));
   }, [session, userId]);
 
+  // The session's own audio (components/study/sessionAudio.ts). A grade, an end or an undo stops what it started, and
+  // so does leaving the tab; audio it didn't start plays on.
+  const [audio] = useState(() => createSessionAudio(SESSION_AUDIO_ENGINE));
+  // The listening prompt played last, by session and position, so each showing of a card plays its prompt once.
+  const playedPromptRef = useRef<string | null>(null);
+  // Leaving the tab stops the session's audio; coming back plays the card's listening prompt again.
+  useEffect(() => () => {
+    audio.stopAll();
+    playedPromptRef.current = null;
+  }, [audio]);
+
   const startSession = useCallback((queue: StoredItem[]) => {
     if (queue.length === 0) return;
     setLastGrade(null);
     setUndoError('');
-    setSession(startStudySession(crypto.randomUUID(), queue, Date.now(), sessionSiblingCounts(queue, items)));
-  }, [items]);
+    const started = startStudySession(crypto.randomUUID(), queue, Date.now(), sessionSiblingCounts(queue, items));
+    setSession(started);
+    // A first card that is a listening prompt plays inside the Start press, where iOS lets a page start its first sound.
+    const firstPrompt = listeningPrompt(queue[0]);
+    if (firstPrompt !== null) {
+      playedPromptRef.current = `${started.id}:0`;
+      audio.playPrompt(firstPrompt);
+    }
+  }, [items, audio]);
 
   // While the last grade waits in the outbox, look every few seconds for it to have reached the server.
   const waitingEventId = lastGrade?.waiting ? lastGrade.eventId : undefined;
@@ -175,6 +202,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   const gradeCurrent = (rating: ReviewRating) => {
     if (!session || !currentItem || !session.revealed || undoing) return;
+    audio.stopAll();
     lastActionAtRef.current = performance.now();
     const eventId = crypto.randomUUID();
     const now = Date.now();
@@ -211,6 +239,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const undoLastGrade = async () => {
     const grade = lastGrade;
     if (!grade || !session || grade.sessionId !== session.id || grade.undoing) return;
+    audio.stopAll();
     setLastGrade(current => current?.eventId === grade.eventId ? { ...current, undoing: true } : current);
     setUndoError('');
     try {
@@ -242,6 +271,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // Done, Esc on a summary, or ending before the first grade: the session is over, and a reload doesn't bring it back.
   // A session ended early keeps its record, so a reload takes it up at its card.
   const closeSession = () => {
+    audio.stopAll();
     setLastGrade(null);
     setUndoError('');
     setSession(null);
@@ -251,10 +281,35 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // Ending a session after a grade shows its summary, 'Ended early', where Resume takes it up again; with no grade
   // yet there is nothing to sum up, so it closes.
   const endSession = () => {
+    audio.stopAll();
     if (session && session.grades.length > 0) setSession(current => current && endSessionEarly(current));
     else closeSession();
   };
-  const resume = () => setSession(current => current && resumeSession(current, Date.now()));
+  // Taken up again, the card plays its listening prompt again.
+  const resume = () => {
+    playedPromptRef.current = null;
+    setSession(current => current && resumeSession(current, Date.now()));
+  };
+
+  // A listening card plays its prompt as it shows, unrevealed and with nothing over it, without the Kokoro download a
+  // miss would start: the first card inside the Start press (startSession), each later one here, once per showing. A
+  // session restored at launch tries once; iOS may wait for a tap, and the prompt's button always plays it.
+  const shownPrompt = showingCard && !interactionLocked && currentItem && !session.revealed ? listeningPrompt(currentItem) : null;
+  const shownPromptKey = shownPrompt !== null && session ? `${session.id}:${currentIndex}` : null;
+  useEffect(() => {
+    if (shownPromptKey === null || shownPrompt === null || playedPromptRef.current === shownPromptKey) return;
+    playedPromptRef.current = shownPromptKey;
+    audio.playPrompt(shownPrompt);
+  }, [shownPromptKey, shownPrompt, audio]);
+
+  // The clips of the next listening prompts are fetched as each card shows (never generated), so they start at once.
+  const cardKey = session ? `${session.id}:${currentIndex}` : null;
+  const upcomingRef = useLatest({ session, currentIndex, itemsById });
+  useEffect(() => {
+    const upcoming = upcomingRef.current;
+    if (cardKey === null || !upcoming.session) return;
+    audio.prefetch(upcomingListeningPrompts(upcoming.session, upcoming.currentIndex, id => upcoming.itemsById.get(id)));
+  }, [cardKey, audio, upcomingRef]);
 
   // Escape leaves the answer box first, then ends the session on a card or closes the summary. It goes through the
   // escape stack, so a search box or dialog opened over the session closes before the session does.

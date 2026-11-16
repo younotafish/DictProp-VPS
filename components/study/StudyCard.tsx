@@ -1,12 +1,12 @@
 import { useLayoutEffect } from 'react';
-import { Eye, Maximize2, Volume2, X } from 'lucide-react';
+import { Eye, Maximize2, X } from 'lucide-react';
 import { getItemSense, type ReviewRating, type StoredItem } from '../../types';
 import { previewRatings } from '../../services/fsrsScheduler';
-import { speakNatural } from '../../services/neuralTts';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { RATINGS, formatReviewInterval, getStudyContent, selectReviewTask, type GradeReceiptText, type StudySession } from '../../services/studySession';
 import { TASK_INSTRUCTIONS, judgeTypedAnswer, studyPrompt, verdictLine } from '../../services/studyPrompt';
 import { isImeKey } from '../keyboardTarget';
+import { SentenceSpeakerButton } from '../SentenceSpeakerButton';
 import { GradeReceipt } from './GradeReceipt';
 
 const RATING_STYLES: Record<ReviewRating, string> = {
@@ -103,13 +103,14 @@ export function StudyCard({
       <section key={session.index} className="flex-1 min-h-0 overflow-y-auto px-4">
         <div className="max-w-2xl mx-auto pt-[8vh] pb-6 text-center">
           {task === 'listening' ? (
-            <button
-              onClick={() => speakNatural(example, { allowDownload: true })}
-              className="mx-auto w-16 h-16 rounded-full bg-slate-900 text-white grid place-items-center hover:bg-slate-800"
-              aria-label="Play listening prompt"
-            >
-              <Volume2 size={26} />
-            </button>
+            // The prompt plays as the card shows (views/StudyEnhanced.tsx); this pauses, resumes or plays it again, and
+            // the next card stops what it started.
+            <SentenceSpeakerButton
+              text={example}
+              tone="dark"
+              iconSize={26}
+              className="mx-auto w-16 h-16 rounded-full grid place-items-center bg-slate-900 hover:bg-slate-800"
+            />
           ) : (
             <>
               <div className={task === 'meaning' ? `${prompt.multiWord ? 'text-2xl' : 'text-4xl'} font-bold text-slate-900` : 'text-xl leading-relaxed text-slate-800'}>{prompt.text}</div>

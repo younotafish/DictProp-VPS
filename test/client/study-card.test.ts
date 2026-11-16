@@ -27,6 +27,10 @@ function card(fields: Partial<VocabCard> = {}, srs: Partial<SRSData> = {}): Stor
 }
 
 const PRODUCTION = { memoryStrength: 40, totalReviews: 2 };
+/** Strong enough, on an odd review, with an example the word can be blanked from: a listening prompt. */
+const LISTENING = { memoryStrength: 70, totalReviews: 5 };
+const listening = (fields: Partial<VocabCard> = {}) =>
+  card({ examples: ['She looked {{crestfallen}} after the loss.'], ...fields }, LISTENING);
 
 const session = (overrides: Partial<StudySession> = {}): StudySession => ({
   id: 's', itemIds: ['a', 'b'], index: 0, revealed: false, typedAnswer: '', promptStartedAt: 0, startedAt: 0, grades: [],
@@ -119,6 +123,17 @@ test('once revealed the same slot holds the four grades in one row, in key order
   assert.deepEqual(grades, ['1', '2', '3', '4']);
   assert.deepEqual([...footer.matchAll(/<span class="block">([a-z]+)<\/span>/g)].map(match => match[1]), ['again', 'hard', 'good', 'easy']);
   assert.doesNotMatch(footer, /Show answer/);
+});
+
+test('a listening card\'s prompt is the 64 px dark speaker, which pauses, resumes or plays the sentence again', () => {
+  const { header, body } = partsOf(render({ item: listening() }));
+  assert.match(header, />Listen to the sentence</);
+  const buttons = buttonsOf(body);
+  assert.equal(buttons.length, 1);
+  assert.match(buttons[0], /class=" transition-colors text-white mx-auto w-16 h-16 rounded-full grid place-items-center bg-slate-900 hover:bg-slate-800"/);
+  assert.match(buttons[0], /aria-label="Listen to this sentence"/);
+  assert.match(body, /<svg[^>]* width="26" height="26"[^>]*class="lucide lucide-volume2 /);
+  assert.doesNotMatch(textOf(body), /crestfallen|loss/, 'the sentence is heard, not read');
 });
 
 test('the header keeps the count, the instruction and End, and no longer holds Undo', () => {
