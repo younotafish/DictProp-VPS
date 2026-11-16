@@ -10,7 +10,8 @@ let loadedEssays: readonly Essay[] = ESSAYS;
 
 /**
  * The essays to show: the public ones, joined by the owner's private ones once the server sends them. The
- * request goes out when the tab mounts and again on `retry`.
+ * request goes out when the tab mounts and again on `retry`, which a failed request also does by itself once the
+ * connection comes back or the page is shown again.
  */
 export function useEssayCatalog(): { essays: readonly Essay[]; status: PrivateCatalogStatus; retry: () => void } {
   const [essays, setEssays] = useState(() => loadedEssays);
@@ -34,5 +35,17 @@ export function useEssayCatalog(): { essays: readonly Essay[]; status: PrivateCa
   }, [attempt]);
 
   const retry = useCallback(() => setAttempt(previous => previous + 1), []);
+
+  useEffect(() => {
+    if (status !== 'error') return;
+    const retryIfShown = () => { if (document.visibilityState === 'visible') retry(); };
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', retryIfShown);
+    return () => {
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', retryIfShown);
+    };
+  }, [status, retry]);
+
   return { essays, status, retry };
 }
