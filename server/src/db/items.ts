@@ -44,6 +44,8 @@ export const stmts = {
   // Reviews record their item's id and the time the review set as the schedule's lastReviewDate.
   undoneReviewAt: db.prepare(`SELECT 1 FROM review_events
     WHERE user_id = ? AND reviewed_at = ? AND item_id = ? AND undone_at IS NOT NULL LIMIT 1`),
+  phrasesMentioning: db.prepare(`SELECT id, data FROM items WHERE user_id = ? AND type = 'phrase' AND data LIKE ?`),
+  bumpRevision: db.prepare(`UPDATE items SET revision = ? WHERE id = ? AND user_id = ?`),
 };
 
 // Row → StoredItem JSON
@@ -349,11 +351,6 @@ export function getItemById(id: string, userId: string, includeImages = true) {
   return item;
 }
 
-const touchStmts = {
-  phrasesMentioning: db.prepare(`SELECT id, data FROM items WHERE user_id = ? AND type = 'phrase' AND data LIKE ?`),
-  bump: db.prepare(`UPDATE items SET revision = ? WHERE id = ? AND user_id = ?`),
-};
-
 /**
  * Image bytes live outside item rows, so storing one changes no revision. Bump every item that shows
  * one of these images, itself or as a phrase vocab, so revision-delta clients pick up its new marker.
@@ -362,7 +359,7 @@ export const touchItemRevisions = writeTransaction((imageIds: readonly string[],
   const owners = new Set<string>();
   for (const imageId of new Set(imageIds)) {
     if (stmts.existsScoped.get(imageId, userId)) owners.add(imageId);
-    const phrases = touchStmts.phrasesMentioning.all(userId, `%"id":"${imageId}"%`) as Array<{ id: string; data: string }>;
+    const phrases = stmts.phrasesMentioning.all(userId, `%"id":"${imageId}"%`) as Array<{ id: string; data: string }>;
     for (const phrase of phrases) {
       try {
         const vocabs = JSON.parse(phrase.data).vocabs;
@@ -370,7 +367,7 @@ export const touchItemRevisions = writeTransaction((imageIds: readonly string[],
       } catch { /* an unparseable row shows no images */ }
     }
   }
-  for (const id of owners) touchStmts.bump.run(allocateRevision(), id, userId);
+  for (const id of owners) stmts.bumpRevision.run(allocateRevision(), id, userId);
 });
 
 /** Store an image for an item or phrase vocab id, together with the revisions that announce it to delta clients. */

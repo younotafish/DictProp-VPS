@@ -3,7 +3,7 @@ import { db, writeTransaction } from './connection.js';
 
 // Accounts and sign-in sessions.
 
-const userStmts = {
+export const userStmts = {
   findByGoogleId: db.prepare(`SELECT * FROM users WHERE google_id = ?`),
   create: db.prepare(`
     INSERT INTO users (id, google_id, email, display_name, photo_url, is_approved, is_admin, created_at)
@@ -24,7 +24,7 @@ const sessionStmts = {
 };
 
 // The first user claims the rows a single-user database held before accounts existed.
-const orphanStmts = {
+export const orphanStmts = {
   items: db.prepare(`UPDATE items SET user_id = ? WHERE user_id IS NULL`),
   images: db.prepare(`UPDATE item_images SET user_id = ? WHERE user_id IS NULL`),
 };

@@ -243,28 +243,6 @@ test('blob cleanup keeps a blob a prepared example sentence still uses', () => {
   assert.ok(getItemImage('blob-shared', USER));
 });
 
-test('blob cleanup and phrase scans search their indexes instead of scanning tables', () => {
-  const plan = (sql: string, ...params: unknown[]) =>
-    (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{ detail: string }>)
-      .map(row => row.detail).join('\n');
-  // The reference checks of deleteUnreferencedBlobs in db.ts.
-  const references = `NOT EXISTS (
-      SELECT 1 FROM item_images WHERE item_images.content_hash = image_blobs.content_hash
-    ) AND NOT EXISTS (
-      SELECT 1 FROM sentence_enrichments WHERE sentence_enrichments.image_content_hash = image_blobs.content_hash
-    )`;
-  for (const cleanup of [
-    plan(`DELETE FROM image_blobs WHERE content_hash = ? AND ${references}`, 'hash'),
-    plan(`DELETE FROM image_blobs WHERE ${references}`),
-  ]) {
-    assert.match(cleanup, /SEARCH item_images USING COVERING INDEX idx_item_images_content_hash/);
-    assert.match(cleanup, /SEARCH sentence_enrichments USING COVERING INDEX idx_sentence_enrichments_image/);
-  }
-  // The phrase lookups of touchItemRevisions and the inline-image fallback.
-  const phrases = plan(`SELECT id, data FROM items WHERE user_id = ? AND type = 'phrase' AND data LIKE ?`, USER, '%x%');
-  assert.match(phrases, /SEARCH items USING INDEX idx_items_user_type/);
-});
-
 test('soft-deleting an id the user does not have leaves the revision clock alone', () => {
   const before = headRevision();
   assert.equal(softDeleteItem('never-saved', USER), false);

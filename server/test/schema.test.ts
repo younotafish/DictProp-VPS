@@ -6,6 +6,7 @@ import { applySchema } from '../src/db/schema.js';
 const { db } = await import('../src/db.js');
 const { stmts } = await import('../src/db/items.js');
 const { imageStmts } = await import('../src/db/images.js');
+const { orphanStmts, userStmts } = await import('../src/db/users.js');
 
 // A database file as the server created it in March, before accounts, revisions, ratings and image blobs,
 // with the indexes the schema has since retired.
@@ -92,16 +93,23 @@ test('the retired indexes are gone, and the projects table stays until the audit
   assert.ok(names.has('idx_projects_user_id'));
 });
 
-test('lookups search the indexes that remain', () => {
+test('statements search the indexes that remain instead of scanning tables', () => {
   const plan = (sql: string, ...params: unknown[]) =>
     (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{ detail: string }>).map(row => row.detail).join('\n');
   assert.match(plan(stmts.getById.source, 'id'), /SEARCH items USING INDEX sqlite_autoindex_items_1 \(id=\?\)/);
   assert.match(plan(stmts.getAfterRevision.source, 'user', 0, 0, '', 10), /SEARCH items USING INDEX idx_items_user_revision/);
   assert.doesNotMatch(plan(stmts.getAfterRevision.source, 'user', 0, 0, '', 10), /TEMP B-TREE/);
   assert.match(plan(stmts.undoneReviewAt.source, 'user', 1, 'id'), /SEARCH review_events USING INDEX idx_review_events_user_time/);
+  // The phrase scan that finds the owners of an image.
+  assert.match(plan(stmts.phrasesMentioning.source, 'user', '%x%'), /SEARCH items USING INDEX idx_items_user_type/);
   assert.match(plan(imageStmts.manifest.source, 'user'), /SEARCH i USING COVERING INDEX idx_item_images_user_versions/);
-  // users.ts and the sign-up claim of rows from before accounts.
-  assert.match(plan('SELECT * FROM users WHERE google_id = ?', 'g'), /SEARCH users USING INDEX sqlite_autoindex_users_2/);
-  assert.match(plan('UPDATE items SET user_id = ? WHERE user_id IS NULL', 'user'), /SEARCH items USING (COVERING )?INDEX idx_items_user_/);
-  assert.match(plan('UPDATE item_images SET user_id = ? WHERE user_id IS NULL', 'user'), /SEARCH item_images USING (COVERING )?INDEX idx_item_images_user_versions/);
+  // Blob cleanup's checks for anything that still references a blob.
+  for (const cleanup of [plan(imageStmts.deleteUnreferencedBlob.source, 'hash'), plan(imageStmts.deleteAllUnreferencedBlobs.source)]) {
+    assert.match(cleanup, /SEARCH item_images USING COVERING INDEX idx_item_images_content_hash/);
+    assert.match(cleanup, /SEARCH sentence_enrichments USING COVERING INDEX idx_sentence_enrichments_image/);
+  }
+  // Sign-in, and the sign-up claim of rows from before accounts.
+  assert.match(plan(userStmts.findByGoogleId.source, 'g'), /SEARCH users USING INDEX sqlite_autoindex_users_2/);
+  assert.match(plan(orphanStmts.items.source, 'user'), /SEARCH items USING (COVERING )?INDEX idx_items_user_/);
+  assert.match(plan(orphanStmts.images.source, 'user'), /SEARCH item_images USING (COVERING )?INDEX idx_item_images_user_versions/);
 });
