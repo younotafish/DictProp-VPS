@@ -117,6 +117,8 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
   `node scripts/offline/prepare-sentence-images.mjs <sentence-export.json> <analysis-manifest.json> <output-directory> [model] [fallback-image-directory]...`
 - `bootstrap-mflux-runtime.sh` — Installs the pinned mflux runtime that the image loop renders with. Run it once.
   `scripts/offline/bootstrap-mflux-runtime.sh [runtime-root]`
+- `offsite-backup.sh` — Keeps encrypted copies of production's database on this Mac, in `data/offsite-backups/`; nothing calls it yet. Once the newest copy is 162 hours old (`OFFSITE_BACKUP_INTERVAL_HOURS`), and only while production runs the required commit and `deploy-state.sh` finds nothing queued or running in `dictprop-production`, it dispatches `offsite-backup.yml`, downloads the artifact, checks it with `bridge-crypto.mjs verify`, which writes no plaintext, keeps it beside a `.json` sidecar, prunes to the newest three (`OFFSITE_BACKUP_KEEP`), and deletes the artifact and the run's log. A failed attempt leaves `.last-attempt`, and the next one waits a day. While the folder holds no copy, only a run by hand makes one: `OFFSITE_BACKUP_INTERVAL_HOURS=0` forces an attempt. Hold the cycle lock to run it. `ops/RESTORE.md` restores from a copy.
+  `OFFSITE_BACKUP_INTERVAL_HOURS=0 GH_BIN=.tools/gh scripts/offline/offsite-backup.sh <required-deploy-sha> [root=data/offsite-backups]`
 
 ## Publishing
 
