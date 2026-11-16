@@ -1,0 +1,79 @@
+name: Off-site Database Backup
+# The Mac's cycle dispatches this about once a week (scripts/offline/offsite-backup.sh), downloads the encrypted
+# artifact and keeps it off the VPS's one disk; ops/RESTORE.md restores from it. Run by hand only to test, holding the
+# cycle lock: an artifact nothing downloads expires within a day.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The bridge's own OpenSSH (scripts/offline/vps-ssh.sh) trusts only these host keys, the same two lines
+  # sentence-backfill.yml pins.
+  VPS_KNOWN_HOSTS: |
+    107.152.47.101 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLB6yrbgTM0awD4dC9m2xnVS3P6j4DQt01T6Km5u01xVw4/G3QtMjKeOBeMiPv06s8FdC/x30TMBh70fv+eMcf0=
+    107.152.47.101 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILKRKN8J56mPFYuCucDWxCSMH2j7tEGz6OchWZ9ur3lW
+
+jobs:
+  # The database copy leaves the runner only as this run's encrypted artifact, which the Mac downloads, verifies and
+  # then deletes together with the run's log.
+  db-backup:
+    name: db-backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The job may write the VPS's one backup slot and deletes a partial copy a crashed run left there, so it queues
+    # with the deploys and imports that write production, never beside one. The Mac dispatches it only while that
+    # queue is empty, since a newly queued job cancels a pending one.
+    concurrency:
+      group: dictprop-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/offline/bridge-crypto.mjs
+            scripts/offline/bridge-export.sh
+            scripts/offline/vps-ssh.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # The log shows only the encrypted blob's size and hash, and the scripts' error lines.
+      - name: Export the encrypted database backup
+        timeout-minutes: 50
+        env:
+          SENTENCE_BRIDGE_KEY: ${{ secrets.SENTENCE_BRIDGE_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          # Runs on the VPS, in root's login shell, zsh. prepare-db-backup.js names the slot's copy, under twelve hours
+          # old or fresh, in its one-line manifest. The copy, the live Caddyfile and the manifest stream out as a
+          # gzipped tar, with no temporary copy on the VPS's disk. GNU tar resolves a relative -C against the one
+          # before it, so both are absolute; POSIX format records members over 8 GiB.
+          REMOTE_SCRIPT: |
+            set -eo pipefail
+            cd /opt/dictprop-vps
+            root=$PWD
+            work=$(mktemp -d)
+            trap 'rm -rf "$work"' EXIT
+            docker compose exec -T app nice -n 19 node server/dist/scripts/prepare-db-backup.js > "$work/manifest.json"
+            copy=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["copy"])' "$work/manifest.json")
+            case "$copy" in
+              (*/*) echo "unexpected backup name: $copy" >&2; exit 1 ;;
+              (pre-*.db|dictprop-*.db) ;;
+              (*) echo "unexpected backup name: $copy" >&2; exit 1 ;;
+            esac
+            cp /etc/caddy/Caddyfile "$work/Caddyfile"
+            nice -n 19 tar --format=posix -cf - -C "$work" manifest.json Caddyfile -C "$root/data/backups" "$copy" | nice -n 19 gzip -1
+        run: bash scripts/offline/bridge-export.sh db-backup "$RUNNER_TEMP/db-backup.dpb"
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: db-backup
+          path: ${{ runner.temp }}/db-backup.dpb
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
