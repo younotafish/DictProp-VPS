@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { installSignalCleanup, killProcessGroup } from './codex-process.mjs';
+import { runPool } from './model-stage.mjs';
 import { readJson, writePrivateJson } from './offline-io.mjs';
 import { runThemedCodex, themedCodexSettings } from './themed-collection-codex.mjs';
 
@@ -152,24 +153,18 @@ async function generateSection(section) {
 }
 
 const generatedSections = new Array(brief.sections.length);
-let nextSection = 0;
-async function worker() {
-  for (;;) {
-    const index = nextSection++;
-    if (index >= brief.sections.length) return;
-    const section = brief.sections[index];
-    process.stderr.write(`Generating ${section.title} (${index + 1}/${brief.sections.length})\n`);
-    generatedSections[index] = await generateSection(section);
-  }
-}
-
-try {
-  await Promise.all(Array.from({ length: Math.min(concurrency, brief.sections.length) }, () => worker()));
-} catch (error) {
-  aborting = true;
-  for (const child of activeChildren) killProcessGroup(child, 'SIGTERM');
-  throw error;
-}
+// The first failure marks the run as aborting, so no section retries, and sends SIGTERM to every Codex run still
+// going; the exit handler installSignalCleanup registered SIGKILLs any that outlive the process.
+await runPool(brief.sections.length, concurrency, {
+  async terminate() {
+    aborting = true;
+    for (const child of activeChildren) killProcessGroup(child, 'SIGTERM');
+  },
+}, async index => {
+  const section = brief.sections[index];
+  process.stderr.write(`Generating ${section.title} (${index + 1}/${brief.sections.length})\n`);
+  generatedSections[index] = await generateSection(section);
+});
 
 const allSentenceKeys = new Set();
 for (let sectionIndex = 0; sectionIndex < generatedSections.length; sectionIndex++) {

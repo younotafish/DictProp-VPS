@@ -11,14 +11,26 @@ const generator = repoPath('scripts', 'offline', 'generate-themed-sentence-colle
 const audit = repoPath('scripts', 'offline', 'audit-themed-sentence-collection.mjs');
 
 // Stands in for `codex exec`: it writes FAKE_CODEX_OUTPUT to the -o path, or else a valid section for the prompt,
-// and records each call's arguments.
+// and records each call's arguments. With FAKE_CODEX_HANG, the hotel section's call writes its pid to that file and
+// never finishes, and every other call waits for the file before it answers.
 const fakeCodex = `#!/usr/bin/env node
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 let prompt = '';
 process.stdin.on('data', chunk => { prompt += chunk; });
 process.stdin.on('end', () => {
   if (process.env.FAKE_CODEX_CALLS) appendFileSync(process.env.FAKE_CODEX_CALLS, JSON.stringify(args) + '\\n');
+  const hang = process.env.FAKE_CODEX_HANG;
+  if (!hang) return answer();
+  if (/SECTION ID: hotel\\b/.test(prompt)) {
+    writeFileSync(hang, String(process.pid));
+    setInterval(() => {}, 1_000);
+    return;
+  }
+  const waitForHang = () => existsSync(hang) ? answer() : setTimeout(waitForHang, 20);
+  waitForHang();
+});
+function answer() {
   if (process.env.FAKE_CODEX_EXIT) process.exit(Number(process.env.FAKE_CODEX_EXIT));
   let output = process.env.FAKE_CODEX_OUTPUT;
   if (!output) {
@@ -33,7 +45,7 @@ process.stdin.on('end', () => {
     });
   }
   writeFileSync(args[args.indexOf('-o') + 1], output);
-});
+}
 `;
 
 const brief = {
@@ -53,6 +65,15 @@ function setup() {
   writeExecutable(codex, fakeCodex);
   writeJson(join(root, 'brief.json'), brief);
   return { root, codex, calls: join(root, 'calls.jsonl') };
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function run(script: string, args: string[], env: Record<string, string>) {
@@ -105,6 +126,31 @@ test('the themed generator retries a section that fails validation, then gives u
   assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, 3);
   assert.equal(existsSync(output), false);
   assert.deepEqual(readdirSync(root).filter(name => name.startsWith('collection')), []);
+});
+
+test('a section that keeps failing stops the sections still running, and the generator exits non-zero', async () => {
+  const { root, codex } = setup();
+  const hung = join(root, 'hung.pid');
+  let pid = 0;
+  try {
+    // The airport section fails its three attempts while the hotel section's call would run forever.
+    const result = spawnSync(process.execPath, [generator, join(root, 'brief.json'), join(root, 'collection.json')], {
+      encoding: 'utf8',
+      env: { ...process.env, CODEX_BIN: codex, FAKE_CODEX_HANG: hung, FAKE_CODEX_EXIT: '3', CODEX_CONCURRENCY: '2' },
+      timeout: 60_000,
+    });
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Codex exited with 3/);
+    assert.equal(existsSync(join(root, 'collection.json')), false);
+    pid = Number(readFileSync(hung, 'utf8'));
+    // Its process group was stopped, so no Codex run outlives the generator.
+    const deadline = Date.now() + 5_000;
+    while (processExists(pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(processExists(pid), false, 'the hotel section\'s Codex run is still going');
+  } finally {
+    if (pid && processExists(pid)) process.kill(pid, 'SIGKILL');
+  }
 });
 
 test('the collection audit writes its report only after checking it, and leaves an earlier report alone otherwise', () => {
