@@ -55,31 +55,31 @@ export function WordCardHeader({
             )}
           </div>
           <div className="flex items-center gap-1">
-            <Button 
-              variant="ghost" 
-              size="sm" 
+            <Button
+              variant="plain"
+              size="sm"
               onClick={onRefresh}
-              className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+              className="text-slate-600 hover:bg-slate-100 hover:text-indigo-600"
               title="Refresh with AI"
             >
               <RefreshCw size={18} />
             </Button>
             {isSaved && (
               <Button
-                variant="ghost"
+                variant="plain"
                 size="sm"
                 onClick={onDelete}
-                className="text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                className="text-slate-600 hover:bg-slate-100 hover:text-rose-600"
                 title="Delete (D)"
               >
                 <Trash2 size={18} />
               </Button>
             )}
             <Button
-              variant="ghost"
+              variant="plain"
               size="sm"
               onClick={onToggleSave}
-              className={`px-3 gap-1.5 rounded-lg border ${isSaved ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+              className={`gap-1.5 border text-slate-600 hover:bg-slate-100 ${isSaved ? 'border-indigo-200' : 'border-transparent'}`}
             >
               {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
               <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
@@ -87,11 +87,11 @@ export function WordCardHeader({
             {/* Action menu for saved items */}
             {isSaved && (
               <div ref={moreActionsRef} className="relative">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
+                <Button
+                  variant="plain"
+                  size="sm"
                   onClick={onToggleActionMenu}
-                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                  className="text-slate-600 hover:bg-slate-100"
                   title="More actions"
                   aria-haspopup="menu"
                   aria-expanded={showActionMenu}
