@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } fr
 import type { ViewState } from './types';
 import { Loader2 } from 'lucide-react';
 import { lazyLoadImage } from './services/libraryImages';
-import { loginRedirect, type AuthState, type AuthUser } from './services/auth';
+import { loginRedirect, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
@@ -71,7 +71,7 @@ const readSavedView = (): ViewState => {
  * it per account, so the account id holds for its whole life, and unmounts it if the session lapses: the
  * library's unmount flush then saves it under that account, and signing in again reloads the page.
  */
-function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState }) {
+function SignedInApp({ user }: { user: AuthUser }) {
   const [currentView, setCurrentView] = useState<ViewState>(readSavedView);
 
   // Persist current view
@@ -82,7 +82,7 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
   const library = useLibrary(user.id);
   const { latestItemsRef } = library;
   const { reviewHistory, flushPendingReviews, undoSRSReview, updateSRS } = useReviewOutbox(user.id, library);
-  const { comparisons, handleCompareReady, handleCompare } = useComparisons(authState);
+  const { comparisons, handleCompareReady, handleCompare } = useComparisons(user.id);
   const libraryViews = useLibraryViews(library.savedItems);
   const {
     allActiveItems, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems,
@@ -434,7 +434,7 @@ const App: React.FC = () => {
     return <PendingApprovalScreen />;
   }
 
-  return <SignedInApp key={authState.user.id} user={authState.user} authState={authState} />;
+  return <SignedInApp key={authState.user.id} user={authState.user} />;
 };
 
 export default App;

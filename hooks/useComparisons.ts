@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { comparisonKey, type ComparisonResult, type StoredComparison } from '../types';
-import type { AuthState } from '../services/auth';
 import { loadComparisons, saveComparisonApi } from '../services/api/comparisons';
 import { warn } from '../services/logger';
 import { mergeComparisons, readCachedComparisons, writeCachedComparisons } from '../components/search/storedComparisons';
@@ -8,25 +7,23 @@ import { mergeComparisons, readCachedComparisons, writeCachedComparisons } from 
 // ── Word comparisons (persisted server + local, keyed by the word-set) ──────
 // The GENERATION queue is the search queue (components/search/useSearchQueue, which GlobalSearch hosts), so
 // comparisons behave exactly like word searches. This hook just owns the persisted store + the save/lookup callbacks.
-export function useComparisons(authState: AuthState) {
+// Comparisons belong to the signed-in account `userId`; the search that produces them only runs signed in.
+export function useComparisons(userId: string) {
   const [comparisons, setComparisons] = useState<StoredComparison[]>([]);
   // The current list, set together with the state (as useLibrary's latestItemsRef is), so a change made before
   // React renders the previous one still builds on it.
   const comparisonsRef = useRef<StoredComparison[]>([]);
-  // Comparisons belong to the signed-in user; the search that produces them only runs signed in.
-  const userId = authState.user?.id;
 
   const persistComparisons = useCallback((list: StoredComparison[]) => {
     comparisonsRef.current = list;
     setComparisons(list);
-    if (userId) writeCachedComparisons(userId, list);
+    writeCachedComparisons(userId, list);
   }, [userId]);
 
-  // Restore from localStorage instantly, then merge in the server's list, once auth resolves. The merge keeps the
-  // comparisons the server doesn't have yet, and the newer copy of each, and sends the server the ones it doesn't
-  // have: a save that failed (offline, a deploy, an expired session) is tried again at each load until it lands.
+  // Restore from localStorage instantly, then merge in the server's list. The merge keeps the comparisons the
+  // server doesn't have yet, and the newer copy of each, and sends the server the ones it doesn't have: a save that
+  // failed (offline, a deploy, an expired session) is tried again at each load until it lands.
   useEffect(() => {
-    if (authState.loading || !userId) return;
     const cached = readCachedComparisons(userId);
     if (cached) {
       comparisonsRef.current = cached;
@@ -40,7 +37,7 @@ export function useComparisons(authState: AuthState) {
       for (const c of toUpload) saveComparisonApi(c).catch((e) => warn('Failed to save comparison to server:', e));
     }).catch((e) => warn('Failed to load comparisons:', e));
     return () => { cancelled = true; };
-  }, [authState.loading, userId, persistComparisons]);
+  }, [userId, persistComparisons]);
 
   // A finished comparison from the search queue → save it (state + local cache + server).
   const handleCompareReady = useCallback((words: string[], data: ComparisonResult) => {
