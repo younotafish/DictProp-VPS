@@ -16,7 +16,7 @@ import {
 import { partitionBackfillTexts } from '../src/tts/backfill.js';
 
 test('a clip key is the SHA-256 of the voice, a newline and the trimmed text, as the client computes it', () => {
-  // Literal digests: the client (services/api.ts ttsKey) derives the same keys, so the format must not drift.
+  // Literal digests: the client (services/api/tts.ts ttsKey) derives the same keys, so the format must not drift.
   assert.equal(ttsKey('Hello there.', 'Mia'), '34a7fda7ef25705c6b91e942cfa7f3ee00e54fc69077e90d38e3fc19feb04474');
   assert.equal(ttsKey('  Hello there.\n', 'Mia'), ttsKey('Hello there.', 'Mia'));
   assert.equal(ttsKey('Hello there.', 'casual'), 'd32c1ac7577ce5d329f49b606bcc9e6ccb7b4fe22541ae2fbcc95d4f4e0a12b1');

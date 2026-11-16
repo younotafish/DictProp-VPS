@@ -13,7 +13,7 @@ test('the top quarter reads the first sentence, the second quarter the second, a
 });
 
 test('the split agrees with each handler\'s own arithmetic, quarters and halves alike', () => {
-  // DetailView and the search sheet divide by 4 and 2; the review popup multiplies by 0.25 and 0.5.
+  // DetailView and the search sheet divided by 4 and 2, and the review popup multiplied by 0.25 and 0.5, before all three called eyesFreeZoneAt.
   for (const height of [667, 844.5, 1180, 1366]) {
     for (let y = 0; y <= height; y += 0.5) {
       const divided = y < height / 4 ? 0 : y < height / 2 ? 1 : -1;

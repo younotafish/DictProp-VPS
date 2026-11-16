@@ -26,6 +26,16 @@ const LAZY_ONLY = [
   'services/jobNotices.ts',
   'services/lessonTrail.ts',
   'services/studySessionRecord.ts',
+  'components/AppGateScreens.tsx',
+  'services/authGate.ts',
+  'services/catalogQueue.ts',
+  'services/reviewGestures.ts',
+  'services/studyKeys.ts',
+  'services/studyPrompt.ts',
+  'services/notebook/listScroll.ts',
+  'services/notebook/listView.ts',
+  'services/notebook/searchBox.ts',
+  'services/notebook/searchRank.ts',
 ];
 
 const ENTRY = 'index.tsx';

@@ -13,7 +13,7 @@ export interface RealLifeListScope {
 
 /**
  * A collection's lines that match the theme, the review chip and the search, in catalog order. The search finds
- * its text anywhere in a line, its studied phrase or its theme, ignoring case, accents and curly apostrophes.
+ * its text anywhere in a line, its studied phrase or its theme, ignoring case, accents, curly quotes and dashes.
  */
 export function filterRealLifeSentences(
   sentences: readonly RealLifeSentence[],

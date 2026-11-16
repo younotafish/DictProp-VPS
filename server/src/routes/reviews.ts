@@ -37,7 +37,7 @@ reviewRoutes.post('/reviews/apply', async (c) => {
   // A review can reach the server before its item: an implicit catalog sentence on its first review, or an
   // item whose first push hasn't landed. The seed is stored in the review's own transaction, so an
   // offline/retried review cannot race the ordinary item sync or an importer, or advance the schedule twice.
-  // Existing items always win; the seed is used only for a genuinely absent id.
+  // Existing items win, except a deleted catalog record, which the seed brings back (db/reviews.ts); otherwise the seed is used only for an absent id.
   const result = applyReviewEvent(event, itemIds, userId, seed);
   if (!result) return c.json({ error: 'Review item not found' }, 404);
   return c.json(result, result.applied ? 201 : 200);

@@ -4,7 +4,7 @@ type JsonRecord = Record<string, unknown>;
 
 const isRecord = (value: unknown): value is JsonRecord => typeof value === 'object' && value !== null;
 
-// The server's first check of each item (POST /api/import in server/src/routes/items.ts): a full item needs its
+// The server's first check of each item (POST /api/import in server/src/routes/import.ts): a full item needs its
 // data and type, a simplified card a word that isn't blank. The server checks every item more closely after that,
 // so an item counted here can still be skipped.
 const isImportable = (item: unknown): boolean =>
