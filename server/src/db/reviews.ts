@@ -106,6 +106,20 @@ export interface AppliedReviewResult {
   baseRevisions: Record<string, number>;
 }
 
+/**
+ * The records that keep review progress for a line of a read-only catalog, Real Life or the Essays: sentence items
+ * whose id is the catalog's prefix followed by the line's id (services/catalogProgressIdentity.ts on the client).
+ */
+const CATALOG_RECORD_PREFIXES = ['real-life-sentence:', 'essay-sentence:'];
+
+/**
+ * Whether a review's seed takes the place of this stored row: a catalog record deleted on some device. The line it kept
+ * progress for is still in its catalog, where it shows as never reviewed, so reviewing it brings the record back as the
+ * reviewing device seeds it instead of being refused.
+ */
+const isDeletedCatalogRecord = (row: ItemRow): boolean =>
+  row.is_deleted === 1 && row.type === 'sentence' && CATALOG_RECORD_PREFIXES.some(prefix => row.id.startsWith(prefix));
+
 interface ReviewSnapshotRow {
   item_id: string;
   previous_srs: string;
@@ -120,8 +134,11 @@ const applyReviewTransaction = writeTransaction((
   seedItem: ItemWrite | undefined,
 ): { applied: boolean; event: ReviewEvent; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
   let seededRevision: number | undefined;
-  if (seedItem !== undefined && !stmts.getByIdScoped.get(incoming.itemId, userId)) {
-    seededRevision = writeItem(seedItem, userId, {}).revision;
+  if (seedItem !== undefined) {
+    const stored = stmts.getByIdScoped.get(incoming.itemId, userId) as ItemRow | undefined;
+    if (!stored || isDeletedCatalogRecord(stored)) {
+      seededRevision = writeItem(seedItem, userId, stored ? { replaceTombstone: true } : {}).revision;
+    }
   }
   const previous = reviewStmts.byId.get(incoming.id) as ReviewEventDbRow | undefined;
   if (previous) {
@@ -198,8 +215,8 @@ const itemsById = (ids: string[], userId: string): ItemRead[] =>
 /**
  * Apply a review to `event.itemId`. `_itemIds` is the item list the request carries: clients have only ever sent
  * the reviewed item there, and anything else is ignored. `seedItem` is the reviewing client's copy of the item,
- * stored only when the server holds no item with that id. It commits in the review's transaction, so a failed
- * review leaves no seed behind.
+ * stored only when the server holds no item with that id, or in place of a deleted catalog record, which the review
+ * brings back. It commits in the review's transaction, so a failed review leaves no seed behind.
  */
 export function applyReviewEvent(
   event: ReviewEvent,

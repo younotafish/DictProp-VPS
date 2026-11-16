@@ -305,6 +305,52 @@ test('concurrent review events advance authoritative item progress exactly once 
   assert.deepEqual(getReviewEvents('review-user', 0), []);
 });
 
+test('a review with a seed brings back a deleted catalog record as the reviewing device seeds it; other deleted items stay deleted', () => {
+  const userId = 'catalog-revival-user';
+  const record = (id: string, totalReviews: number, lastReviewDate: number) => ({
+    type: 'sentence',
+    data: {
+      id, text: 'Could we {{pressure-test}} that assumption?', sourceWord: 'pressure-test',
+      catalogSentenceId: id.slice(id.indexOf(':') + 1), catalogCollectionId: 'collection',
+    },
+    srs: {
+      id, type: 'sentence', nextReview: lastReviewDate, interval: 0, memoryStrength: 0, lastReviewDate, totalReviews,
+      correctStreak: totalReviews, stability: 0.5,
+    },
+    savedAt: 1,
+    updatedAt: 1,
+  });
+  const review = (id: string, itemId: string) => ({
+    id, itemId, itemType: 'sentence' as const, reviewedAt: Date.now(), previousStep: 0, nextStep: 1, rating: 'good' as const,
+  });
+
+  for (const id of ['real-life-sentence:collection:01', 'essay-sentence:essay:01']) {
+    // Reviewed three times, then deleted by a device whose clock runs an hour ahead of the server's.
+    upsertItem(record(id, 3, 5_000), userId);
+    upsertItem({ ...record(id, 3, 5_000), isDeleted: true, updatedAt: Date.now() + 3_600_000 }, userId);
+    assert.equal(applyReviewEvent(review(`${id} unseeded`, id), [id], userId), null);
+
+    // The line shows in its catalog as never reviewed, so the device reviews a new record and sends it as the seed.
+    const revived = applyReviewEvent(review(`${id} seeded`, id), [id], userId, record(id, 0, 0));
+    assert.equal(revived?.applied, true);
+    assert.equal(revived.event.previousStep, 0);
+    assert.equal(revived.items[0].isDeleted, undefined);
+    assert.equal(revived.items[0].srs.totalReviews, 1);
+    // The seed was the device's own copy, which holds no revision yet.
+    assert.deepEqual(revived.baseRevisions, { [id]: 0 });
+
+    // Back, it is an ordinary record again: a later seed changes nothing, and the review counts on top.
+    assert.equal(applyReviewEvent(review(`${id} again`, id), [id], userId, record(id, 0, 0))?.items[0].srs.totalReviews, 2);
+  }
+
+  const ordinary = 'ordinary-sentence';
+  upsertItem(record(ordinary, 3, 5_000), userId);
+  upsertItem({ ...record(ordinary, 3, 5_000), isDeleted: true, updatedAt: 2 }, userId);
+  assert.equal(applyReviewEvent(review('ordinary seeded', ordinary), [ordinary], userId, record(ordinary, 0, 0)), null);
+  assert.equal(getItemById(ordinary, userId)?.isDeleted, true);
+  assert.equal(getItemById(ordinary, userId)?.srs.totalReviews, 3);
+});
+
 test('revision cursor returns every row when revisions are tied', () => {
   upsertItem(makeItem('cursor-a', 'a', 1, 0, 0), 'cursor-user');
   upsertItem(makeItem('cursor-b', 'b', 1, 0, 0), 'cursor-user');

@@ -192,6 +192,11 @@ export interface UpsertOptions {
    * stored row. Only the corpus-audit import writes items this way: its data must match audited hashes.
    */
   replaceServerFields?: boolean;
+  /**
+   * A deleted row of the writer's own counts as no row at all: the write's content and schedule replace it, whatever
+   * the clocks say. Only a review's seed for a deleted catalog record is written this way (db/reviews.ts).
+   */
+  replaceTombstone?: boolean;
 }
 
 /** An item as a client or an importer writes it. The item routes validate this shape; importers build it. */
@@ -215,10 +220,11 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   const id = String(incoming.id);
 
   const now = Date.now();
-  const existing = stmts.getById.get(id) as ItemRow | undefined;
-  if (existing?.user_id && existing.user_id !== userId) {
+  const storedRow = stmts.getById.get(id) as ItemRow | undefined;
+  if (storedRow?.user_id && storedRow.user_id !== userId) {
     throw new ConflictError('Item id belongs to another user');
   }
+  const existing = options.replaceTombstone && storedRow?.is_deleted === 1 ? undefined : storedRow;
 
   const incomingUpdatedAt = item.updatedAt || now;
   const existingUpdatedAt = existing?.updated_at || 0;
