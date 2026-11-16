@@ -1,5 +1,5 @@
 import type { ReviewEvent, ReviewHistory, RevisionCursor, StoredItem } from '../../types';
-import { HttpError, jsonRequest, requestJson, requestVoid } from '../http';
+import { HttpError, jsonRequest, requestJson } from '../http';
 import { publishServerMutation } from '../syncSignals';
 
 // The library on the server: item changes in pages, pushes, and the review history and review mutations.
@@ -113,9 +113,6 @@ export const saveItems = async (items: readonly StoredItem[]): Promise<SaveItems
 
 export const loadReviewHistory = async (recentSince: number): Promise<ReviewHistory> =>
   requestJson(`/api/reviews/history?recentSince=${recentSince}`, undefined, 'Load review history');
-
-export const saveReviewEvent = async (event: ReviewEvent): Promise<void> =>
-  requestVoid('/api/reviews', jsonRequest('POST', event), 'Save review event');
 
 export interface AppliedReviewResponse {
   applied: boolean;

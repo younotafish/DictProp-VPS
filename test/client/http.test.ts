@@ -27,7 +27,7 @@ test('a stalled request times out instead of holding sync guards forever', async
 
   globalThis.fetch = stallingFetch('headers');
   await assert.rejects(requestJson('/api/items', undefined, 'Load', 20), { name: 'TimeoutError' });
-  await assert.rejects(requestVoid('/api/reviews', { method: 'POST' }, 'Save', 20), { name: 'TimeoutError' });
+  await assert.rejects(requestVoid('/api/reviews/apply', { method: 'POST' }, 'Save', 20), { name: 'TimeoutError' });
 
   // The deadline covers the body read too, so a response that stalls mid-body also settles.
   globalThis.fetch = stallingFetch('body');

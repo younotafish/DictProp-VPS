@@ -3,7 +3,7 @@
 export { loadPrivateEssayCatalog } from './api/essays';
 export {
   applyReviewMutation, loadAllItems, loadItemChanges, loadItemChangesSince, loadReviewHistory, saveItems,
-  saveReviewEvent, undoReviewMutation,
+  undoReviewMutation,
   type AppliedReviewResponse, type ItemChanges, type ItemChangesSince, type SaveItemsResult, type UndoReviewResponse,
 } from './api/library';
 export { getServerImageManifest, loadItemImage, loadItemImagesBatch, uploadImages } from './api/images';
