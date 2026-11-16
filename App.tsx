@@ -369,6 +369,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
         <TabScreen shown={currentView === 'essays'}>
           <EssaysView
+            userId={user.id}
             onOpenSentence={handleViewSentence}
             progressItems={essayProgressItems}
             onScroll={handleScroll}
