@@ -121,7 +121,8 @@ jobs:
   # Exports leave the runner only as this run's encrypted artifact, which the local cycle downloads,
   # decrypts and then deletes together with the run's log.
   export:
-    # The cycle and the corrections publisher find their export's job by its name, the operation.
+    # The cycle (export_corpus in scripts/offline/run-incremental-example-enrichment.sh) finds the corpus
+    # export's job by its name, the operation.
     name: ${{ inputs.operation }}
     if: inputs.operation == 'export' || inputs.operation == 'corpus-export'
     runs-on: ubuntu-latest
