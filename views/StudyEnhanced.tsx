@@ -43,7 +43,8 @@ interface StudyEnhancedProps {
    *  it; without it the receipt never says a grade is waiting. */
   userId?: string;
   items: StoredItem[];
-  reviewHistory: ReviewHistory;
+  /** The review history, and whether a load of it has succeeded yet (useReviewHistory). */
+  reviewHistory: ReviewHistory & { loaded?: boolean };
   onReview: (
     itemId: string,
     rating: ReviewRating,

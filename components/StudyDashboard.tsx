@@ -30,7 +30,9 @@ const MASTERY_SHADES: Record<MasteryKey, string> = {
 
 interface StudyDashboardProps {
   items: StoredItem[];
-  reviewHistory: ReviewHistory;
+  /** The review history, and whether a load of it has succeeded yet (useReviewHistory); without the flag it counts
+   *  as loaded. */
+  reviewHistory: ReviewHistory & { loaded?: boolean };
   onStart: (queue: StoredItem[]) => void;
   /** Something covers the tab (the card view), which has the keys. */
   interactionLocked?: boolean;
@@ -107,6 +109,11 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
     return saveScroll;
   }, []);
 
+  // Until the history has loaded, its numbers read '—' in slots that keep their width, and the chart's bars are
+  // empty, rather than counting only this device's unsent reviews.
+  const historyLoaded = reviewHistory.loaded !== false;
+  const last7Days = historyLoaded ? stats.last7Days : stats.last7Days.map(day => ({ ...day, reviews: 0 }));
+
   // Mastery breakdown data for stacked bar, strongest band first
   const masteryData = MASTERY_LEVELS.map(level => ({
     label: level.label,
@@ -115,7 +122,7 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
   }));
 
   // Max reviews for chart scaling, at least 1
-  const maxReviews = Math.max(...stats.last7Days.map(d => d.reviews), 1);
+  const maxReviews = Math.max(...last7Days.map(d => d.reviews), 1);
 
   return (
     <div 
@@ -170,17 +177,19 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         </div>
         <div className="grid grid-cols-3 gap-3 text-center">
           <div>
-            <p className="text-xl font-bold text-slate-800">{stats.weeklyReviews}</p>
+            <p className="text-xl font-bold text-slate-800 tabular-nums">{historyLoaded ? stats.weeklyReviews : '—'}</p>
             <p className="text-xs text-slate-500">Reviews</p>
           </div>
           <div>
-            <p className="text-xl font-bold text-emerald-700">{stats.weeklyStudyRecallRate === null ? '—' : `${stats.weeklyStudyRecallRate}%`}</p>
+            <p className="text-xl font-bold text-emerald-700 tabular-nums">
+              {historyLoaded && stats.weeklyStudyRecallRate !== null ? `${stats.weeklyStudyRecallRate}%` : '—'}
+            </p>
             <p className="text-xs text-slate-500">Recall (study)</p>
           </div>
           <div className="flex flex-col items-center">
             <div className="flex items-center gap-1">
-              <Flame size={16} className={stats.streak > 0 ? 'text-orange-500' : 'text-slate-300'} />
-              <p className="text-xl font-bold text-slate-800">{stats.streak}</p>
+              <Flame size={16} className={historyLoaded && stats.streak > 0 ? 'text-orange-500' : 'text-slate-300'} />
+              <p className="text-xl font-bold text-slate-800 tabular-nums">{historyLoaded ? stats.streak : '—'}</p>
             </div>
             <p className="text-xs text-slate-500">Day Streak</p>
           </div>
@@ -234,7 +243,7 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         
         {/* Mini Bar Chart */}
         <div className="flex items-end justify-between gap-1 h-20 mb-2">
-          {stats.last7Days.map((day, idx) => {
+          {last7Days.map((day, idx) => {
             const height = (day.reviews / maxReviews) * 100;
             const isToday = idx === 6;
             return (
@@ -249,7 +258,7 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
                         : 'bg-slate-200'
                     }`}
                     style={{ height: `${Math.max(height, 8)}%` }}
-                    title={`${day.reviews} reviews`}
+                    title={historyLoaded ? `${day.reviews} reviews` : undefined}
                   />
                 </div>
                 <span className={`text-[10px] ${isToday ? 'font-bold text-slate-700' : 'text-slate-400'}`}>
@@ -261,10 +270,10 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         </div>
         
         {/* Summary row */}
-        <div className="flex justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
-          <span>Total: {stats.weeklyReviews} reviews</span>
+        <div className="flex justify-between text-xs text-slate-500 pt-2 border-t border-slate-100 tabular-nums">
+          <span>Total: {historyLoaded ? stats.weeklyReviews : '—'} reviews</span>
           <span>
-            Avg: {Math.round(stats.weeklyReviews / 7)}/day
+            Avg: {historyLoaded ? Math.round(stats.weeklyReviews / 7) : '—'}/day
           </span>
         </div>
       </section>
@@ -293,8 +302,8 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
               <Clock size={14} className="text-blue-500" />
               <span className="text-xs font-medium text-slate-600">Total Reviews</span>
             </div>
-            <p className="text-2xl font-bold text-slate-800">
-              {stats.totalLifetimeReviews}
+            <p className="text-2xl font-bold text-slate-800 tabular-nums">
+              {historyLoaded ? stats.totalLifetimeReviews : '—'}
             </p>
             <p className="text-xs text-slate-500">all time</p>
           </div>

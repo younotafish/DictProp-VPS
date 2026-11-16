@@ -32,7 +32,7 @@ const review = (reviewedAt: number, rating: ReviewEvent['rating'] = 'good', task
   ({ id: String(nextEventId++), itemId: 'x', itemType: 'vocab', reviewedAt, previousStep: 0, nextStep: 1, rating, taskType });
 
 /** The dashboard's markup, rendered as the server would, with the history given. Tests set the clock to NOW first. */
-const render = (items: StoredItem[], reviewHistory: ReviewHistory = EMPTY_HISTORY) =>
+const render = (items: StoredItem[], reviewHistory: ReviewHistory & { loaded?: boolean } = EMPTY_HISTORY) =>
   renderToStaticMarkup(createElement(StudyDashboard, { items, reviewHistory, onStart: () => {} }));
 
 const textOf = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/\s+/g, ' ').trim();
@@ -98,4 +98,28 @@ test('the dashboard says Recall (study) and Best card streak, and shows — for 
   assert.doesNotMatch(text, /Recalled|Best Streak/);
   const studied: ReviewHistory = { recent: [review(NOW - HOUR, 'again'), review(NOW - HOUR, 'good'), review(NOW - HOUR, 'good', 'quick')], olderTimes: [], olderCount: 0 };
   assert.match(textOf(render(items, studied)), /3 Reviews 50% Recall \(study\)/);
+});
+
+test('until the history has loaded, every number drawn from it reads —, and the chart\'s bars are empty', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const items = [vocab('run', { reviews: 7, streak: 3, due: NOW - HOUR })];
+  const outboxOnly = { recent: [review(NOW - HOUR, 'again')], olderTimes: [], olderCount: 0, loaded: false };
+  const markup = render(items, outboxOnly);
+  const text = textOf(markup);
+  assert.match(text, /Weekly Stats Last 7 days — Reviews — Recall \(study\) — Day Streak/);
+  assert.match(text, /Total: — reviews Avg: —\/day/);
+  assert.match(text, /Total Reviews — all time/);
+  const filledBar = /rounded-t transition-all duration-300 bg-(?:violet-500|indigo-400)/;
+  assert.doesNotMatch(markup, filledBar, 'no bar is filled');
+  assert.doesNotMatch(markup, /title="\d+ reviews"/);
+  // The numbers counted from the items don't wait: the due count and the best card streak.
+  assert.match(text, /1 Ready 1 Due/);
+  assert.match(text, /Best card streak 3 correct in a row/);
+
+  const loadedMarkup = render(items, { ...outboxOnly, loaded: true });
+  assert.match(loadedMarkup, filledBar, "today's bar fills once the history has loaded");
+  const loaded = textOf(loadedMarkup);
+  assert.match(loaded, /Weekly Stats Last 7 days 1 Reviews 0% Recall \(study\) 1 Day Streak/);
+  assert.match(loaded, /Total: 1 reviews Avg: 0\/day/);
+  assert.match(loaded, /Total Reviews 7 all time/);
 });
