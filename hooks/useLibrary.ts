@@ -120,8 +120,9 @@ export function useLibrary(userId: string) {
 
   /**
    * Pushes the dirty items (all, or those in `ids`) and records what the server kept. Returns the count. A push that
-   * doesn't reach the server counts as a failure for the retries (services/syncRetry), and one that does ends them, as
-   * does finding nothing at all left to send (a pull can bring back what a push whose answer was lost had saved).
+   * doesn't reach the server counts as a failure for the retries (services/syncRetry), and one that does ends them. So
+   * does a full push that finds nothing unsent at all, queued reviews and items held for an undo included (a pull can
+   * bring back what a push whose answer was lost had saved); while those wait, the retries go on.
    */
   const pushNow = useCallback(async (ids?: ReadonlySet<string>): Promise<number> => {
     const refused = refusedPushesRef.current;
@@ -129,7 +130,7 @@ export function useLibrary(userId: string) {
     // Items with an unsent review wait for the review outbox, which applies the review atomically.
     const toPush = excludePendingReviewItems(unsent, userId);
     if (toPush.length === 0) {
-      if (!ids) notePushTrouble(pushSucceeded());
+      if (!ids && !hasUnsentChanges()) notePushTrouble(pushSucceeded());
       return 0;
     }
     const result = await saveItems(toPush).catch((error: unknown) => {
@@ -146,7 +147,7 @@ export function useLibrary(userId: string) {
     }
     if (result.error) throw result.error;
     return toPush.length;
-  }, [updateItems, userId, notePushTrouble]);
+  }, [updateItems, userId, notePushTrouble, hasUnsentChanges]);
 
   /** Pushes again when a failed push's next try is due (services/syncRetry). Call it in the sync lane, as pushNow. */
   const retryPushIfDue = useCallback(
