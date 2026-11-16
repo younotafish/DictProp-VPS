@@ -61,6 +61,19 @@ test('accents, case, curly apostrophes, markup and the source word are all searc
   assert.deepEqual(search(items, 'unprecedented result'), ['marked']);
 });
 
+test('curly double quotes and en or em dashes match the plain ones typed, either way round, in the literal tiers', () => {
+  const items = [
+    sentence('quoted', 'She called it “a quick fix” and left.'),
+    sentence('dashed', 'It was a well–known spot—quiet and cheap.'),
+    sentence('straight', 'He said "no way" twice.'),
+  ];
+  const literal = (query: string) => searchSentencesLiteral(query, buildSentenceIndex(items))?.map(item => item.data.id) ?? null;
+  assert.deepEqual(literal('"a quick fix"'), ['quoted']);
+  assert.deepEqual(literal('well-known'), ['dashed']);
+  assert.deepEqual(literal('spot-quiet'), ['dashed']);
+  assert.deepEqual(literal('“no way”'), ['straight']);
+});
+
 test('text in a script without spaces matches anywhere, and punctuation-led fragments inside words', () => {
   const items = [
     sentence('chinese', '我喜欢吃冰淇淋。'),
