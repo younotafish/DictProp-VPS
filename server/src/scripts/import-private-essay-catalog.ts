@@ -1,22 +1,12 @@
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { env } from '../env.js';
-import {
-  validatePrivateEssayCatalog,
-  type RawEssayCatalog,
-} from '../essay-catalog.js';
+import { readPrivateEssayCatalogFile } from '../essay-catalog.js';
 
 const inputPath = process.argv[2];
 if (!inputPath) throw new Error('Usage: import-private-essay-catalog <catalog.json>');
 
-const resolvedInput = resolve(inputPath);
-const input = readFileSync(resolvedInput);
-if (input.length === 0 || input.length > 25 * 1024 * 1024) {
-  throw new Error('Private essay catalog size is invalid');
-}
-
-const source = JSON.parse(input.toString('utf8')) as RawEssayCatalog;
-validatePrivateEssayCatalog(source);
+const source = readPrivateEssayCatalogFile(resolve(inputPath));
 
 const destination = resolve(env.DATA_DIR, 'private-essay-catalog.json');
 const temporary = resolve(env.DATA_DIR, `.private-essay-catalog-${process.pid}.tmp`);

@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { MAX_PRIVATE_ESSAY_CATALOG_BYTES } from '../src/essay-catalog.js';
 import { REPO_ROOT, repoPath } from './support/paths.js';
 import { lastJsonLine, spawnScript } from './support/scripts.js';
 
@@ -76,6 +77,22 @@ test("a catalog the importer would refuse fails with the importer's reason", () 
     assert.match(run.stderr, reason, name);
     assert.equal(run.stdout, '', name);
   }
+});
+
+test('a catalog file larger than the importer takes fails, however valid the catalog in it', () => {
+  // JSON allows trailing whitespace, so the padding keeps the catalog valid and leaves only the size to decide.
+  const padded = (bytes: number) => {
+    const text = JSON.stringify(catalog);
+    return text + ' '.repeat(bytes - Buffer.byteLength(text));
+  };
+  const atLimit = validate(input('at-limit.json', padded(MAX_PRIVATE_ESSAY_CATALOG_BYTES)));
+  assert.equal(atLimit.status, 0, atLimit.stderr);
+  assert.deepEqual(lastJsonLine(atLimit.stdout), { valid: true, essays: 1, sentences: 2 });
+
+  const over = validate(input('over-limit.json', padded(MAX_PRIVATE_ESSAY_CATALOG_BYTES + 1)));
+  assert.equal(over.status, 1);
+  assert.match(over.stderr, /Private essay catalog size is invalid/);
+  assert.equal(over.stdout, '');
 });
 
 test('the validator names its argument when it is given none', () => {

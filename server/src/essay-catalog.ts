@@ -63,6 +63,8 @@ interface BuiltCatalog {
 const ACCENTS = new Set<EssayAccent>(['indigo', 'amber', 'violet', 'rose', 'emerald']);
 const COLLECTIONS = new Set<EssayCollection>(['classic', 'modern']);
 const PRIVATE_CATALOG_PATH = resolve(env.DATA_DIR, 'private-essay-catalog.json');
+/** The largest private catalog file the importer takes, and the largest stored copy the server reads. */
+export const MAX_PRIVATE_ESSAY_CATALOG_BYTES = 25 * 1024 * 1024;
 const EMPTY_PRIVATE_CATALOG: RawEssayCatalog = {
   version: 1,
   generatedAt: '',
@@ -198,7 +200,7 @@ function loadPrivateCatalog(): typeof privateCache {
   let signature = 'missing';
   try {
     const stat = statSync(PRIVATE_CATALOG_PATH);
-    if (!stat.isFile() || stat.size > 25 * 1024 * 1024) {
+    if (!stat.isFile() || stat.size > MAX_PRIVATE_ESSAY_CATALOG_BYTES) {
       throw new Error('Private essay catalog file is invalid');
     }
     signature = `${stat.mtimeMs}:${stat.size}`;
@@ -231,6 +233,20 @@ export function validatePrivateEssayCatalog(source: RawEssayCatalog): void {
     reservedEssayIds: staticEssayIds,
     reservedSentenceIds: staticSentenceIds,
   });
+}
+
+/**
+ * A private catalog file as the importer takes it, and the Mac's validator checks it: not empty, at most
+ * MAX_PRIVATE_ESSAY_CATALOG_BYTES, and a catalog validatePrivateEssayCatalog accepts. Otherwise it throws the reason.
+ */
+export function readPrivateEssayCatalogFile(path: string): RawEssayCatalog {
+  const input = readFileSync(path);
+  if (input.length === 0 || input.length > MAX_PRIVATE_ESSAY_CATALOG_BYTES) {
+    throw new Error('Private essay catalog size is invalid');
+  }
+  const source = JSON.parse(input.toString('utf8')) as RawEssayCatalog;
+  validatePrivateEssayCatalog(source);
+  return source;
 }
 
 export function getPrivateEssayCatalog(): RawEssayCatalog {
