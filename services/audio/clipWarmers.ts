@@ -1,6 +1,7 @@
 // Batch warm-ups: fetching the clips (and word timings) of many sentences ahead of a tap, so a later play is
 // instant and an unstable network can't interrupt a session. One bounded, abortable routine serves the three
-// public entry points below.
+// public entry points below, on the shared worker pool (server/src/shared/pool.ts).
+import { runPool } from '../../server/src/shared/pool';
 import { requestTTSGeneration, ttsKey } from '../api/tts';
 import { audioCacheReady, getStoredAudioKeys, getStoredTimingKeys, markAudioUsed, putAudioBlob, putTimings } from '../audioCache';
 import { stripSentenceMarkers } from '../sentenceMarkers';
@@ -26,15 +27,6 @@ export interface WarmOptions {
   /** Once aborted, no new clip is fetched or generated. */
   signal?: AbortSignal;
 }
-
-/** Run `work` over `items`, at most `limit` at a time, until they run out or `signal` aborts. */
-const eachLimited = async <T>(items: readonly T[], limit: number, signal: AbortSignal | undefined, work: (item: T) => Promise<void>): Promise<void> => {
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length && !signal?.aborted) await work(items[next++]);
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-};
 
 // A clip, then its timings, from the server straight into IndexedDB: no object URL, so nothing to evict. A download
 // playback started is joined rather than repeated, and timings playback already holds aren't fetched again (it
@@ -77,7 +69,7 @@ export const warmClips = async (texts: string[], options: WarmOptions = {}): Pro
     if (!generate || !missing.length || signal?.aborted) return;
     const voice = STYLE_VOICES[style].generate;
     try { await requestTTSGeneration(missing.map(text => ({ text, voice }))); } catch { /* best-effort */ }
-    await eachLimited(missing, WARM_CONCURRENCY, signal, async (plain) => {
+    await runPool(missing, WARM_CONCURRENCY, async (plain) => {
       try {
         const key = await ttsKey(plain, voice);
         if (intoMemory) {
@@ -88,7 +80,7 @@ export const warmClips = async (texts: string[], options: WarmOptions = {}): Pro
         }
       } catch { /* ignore */ }
       tick();
-    });
+    }, signal);
   };
   // The request to generate goes out as soon as every clip has been looked up, while the clips found still warm
   // their timings.
@@ -112,14 +104,14 @@ const warmIntoMemory = async (
     if (!signal?.aborted) await loadTimingsCached(key).catch(() => null);
     tick();
   };
-  await eachLimited(plains, WARM_CONCURRENCY, signal, async (plain) => {
+  await runPool(plains, WARM_CONCURRENCY, async (plain) => {
     try {
       const clip = await resolveCachedClip(plain, style);
       if (!clip) { missing.push(plain); return; } // absent everywhere → generate
       const lane = found++ % WARM_CONCURRENCY;
       lanes[lane] = (lanes[lane] ?? Promise.resolve()).then(() => warmTimings(clip.key));
     } catch { tick(); }
-  });
+  }, signal);
   return { missing, timingsWarmed: Promise.all(lanes).then(() => undefined) };
 };
 
@@ -144,7 +136,7 @@ const warmIntoStorage = async (plains: string[], style: TtsStyle, tick: () => vo
   });
 
   const missing: string[] = [];
-  await eachLimited(pending, WARM_CONCURRENCY, signal, async ({ plain, keys }) => {
+  await runPool(pending, WARM_CONCURRENCY, async ({ plain, keys }) => {
     try {
       for (const key of keys) {
         if (hasClip(key)) {
@@ -157,7 +149,7 @@ const warmIntoStorage = async (plains: string[], style: TtsStyle, tick: () => vo
       }
       missing.push(plain); // absent everywhere → generate
     } catch { tick(); }
-  });
+  }, signal);
   // Reading each clip used to mark it as recently used; one transaction does that for the clips found here.
   void markAudioUsed(used);
   return missing;

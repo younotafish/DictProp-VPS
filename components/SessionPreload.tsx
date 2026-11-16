@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { runPool } from '../server/src/shared/pool';
 import { preloadAudio } from '../services/neuralTts';
 import { getStoredImageIds } from '../services/imageStore';
 import { useLatest } from '../hooks/useStableValue';
@@ -36,7 +37,7 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
-    const audioStop = new AbortController();
+    const stop = new AbortController();
     const { texts, images } = getSessionRef.current();
     const loadImage = onLazyLoadImageRef.current;
     const ids = [...images.keys()];
@@ -56,7 +57,7 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
 
     // Audio: one progress-reporting batch, which dedupes and generates what's missing itself. Once it settles
     // the audio part is done, even when the speech engine couldn't load, so the pill never sticks.
-    preloadAudio(texts, done => { audioDone = done; report(); }, { intoMemory: false, signal: audioStop.signal })
+    preloadAudio(texts, done => { audioDone = done; report(); }, { intoMemory: false, signal: stop.signal })
       .catch(() => {})
       .then(() => { audioDone = audioTotal; report(); });
 
@@ -71,23 +72,18 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
       const missing = ids.filter(id => !stored.has(id));
       imageDone = ids.length - missing.length;
       report();
-      let next = 0;
-      const worker = async () => {
-        while (next < missing.length && !cancelled) {
-          const id = missing[next++];
-          try {
-            await loadImage(id, images.get(id));
-          } catch { /* best-effort */ }
-          imageDone++;
-          report();
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(IMAGE_CONCURRENCY, missing.length) }, worker));
+      await runPool(missing, IMAGE_CONCURRENCY, async (id) => {
+        try {
+          await loadImage(id, images.get(id));
+        } catch { /* best-effort */ }
+        imageDone++;
+        report();
+      }, stop.signal);
     })();
 
     return () => {
       cancelled = true;
-      audioStop.abort();
+      stop.abort();
       setProgress(null);
     };
   }, [active, getSessionRef, onLazyLoadImageRef]);
