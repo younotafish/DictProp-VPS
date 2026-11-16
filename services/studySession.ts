@@ -12,9 +12,6 @@ import { REVIEW_RATINGS } from '../server/src/shared/review';
 import { formatReviewInterval } from './reviewTime';
 import { sentenceReviewState } from './sentenceReviewState';
 import { createClozePrompt, pickExample } from './studyPrompt';
-// The review-time labels live in services/reviewTime.ts; these names stay reachable here for the modules that import
-// them from this file.
-export { formatReviewInterval, formatTimeUntil } from './reviewTime';
 
 /** What a card's prompts and answer are made from. */
 export interface StudyContent {

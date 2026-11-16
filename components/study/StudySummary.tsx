@@ -16,9 +16,8 @@ interface StudySummaryProps {
   onResume?: () => void;
   /** The missed words still in the library, in the order they were first missed. */
   missed: MissedWord[];
-  /** Opens the card view on the missed word at `index`, with the missed words as its list. Without it they're only
-   *  listed. */
-  onOpenMissed?: (index: number) => void;
+  /** Opens the card view on the missed word at `index`, with the missed words as its list. */
+  onOpenMissed: (index: number) => void;
   /** Whether the session's last grade can still be undone, and whether an undo is under way. */
   canUndo: boolean;
   undoing: boolean;
@@ -58,14 +57,12 @@ export function StudySummary({ summary, endedEarly, onResume, missed, onOpenMiss
         <section className="mb-6">
           <div className="flex items-baseline justify-between gap-3 mb-2">
             <h3 className="text-sm font-semibold text-slate-700">Missed ({missed.length})</h3>
-            {onOpenMissed && (
-              <button onClick={() => onOpenMissed(0)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">Review missed words</button>
-            )}
+            <button onClick={() => onOpenMissed(0)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">Review missed words</button>
           </div>
           <div className="flex flex-wrap gap-2">
-            {missed.map((word, index) => onOpenMissed
-              ? <button key={word.id} onClick={() => onOpenMissed(index)} className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-sm hover:bg-rose-100">{word.title}</button>
-              : <span key={word.id} className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-sm">{word.title}</span>)}
+            {missed.map((word, index) => (
+              <button key={word.id} onClick={() => onOpenMissed(index)} className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-sm hover:bg-rose-100">{word.title}</button>
+            ))}
           </div>
         </section>
       )}

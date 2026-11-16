@@ -4,8 +4,8 @@
  * small state). The study screen writes it as the session moves on and reads it when it mounts again
  * (views/StudyEnhanced.tsx); services/studySessionStore.ts keeps it.
  */
-import type { ReviewRating } from '../types';
-import { RATINGS, type StandingGrade, type StudySession } from './studySession';
+import { isReviewRating } from '../server/src/shared/review';
+import type { StandingGrade, StudySession } from './studySession';
 
 /** How long a session waits to be taken up again: one left longer is over. */
 export const SESSION_RECORD_MAX_AGE_MS = 6 * 3_600_000;
@@ -42,9 +42,8 @@ export function encodeStudySession(session: RecordedSession, userId: string, now
 
 const isString = (value: unknown): value is string => typeof value === 'string';
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
-const isRating = (value: unknown): value is ReviewRating => (RATINGS as readonly unknown[]).includes(value);
 const isGrade = (value: unknown): value is StandingGrade =>
-  !!value && typeof value === 'object' && isString((value as StandingGrade).itemId) && isRating((value as StandingGrade).rating);
+  !!value && typeof value === 'object' && isString((value as StandingGrade).itemId) && isReviewRating((value as StandingGrade).rating);
 
 /**
  * The record `raw` holds, when `userId` can take it up at `now`: well formed, theirs, saved within the last six hours

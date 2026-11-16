@@ -40,7 +40,7 @@ const session = (overrides: Partial<StudySession> = {}): StudySession => ({
 const noop = () => {};
 const render = (props: Partial<StudyCardProps> & Pick<StudyCardProps, 'item'>) => renderToStaticMarkup(createElement(StudyCard, {
   session: session(), canUndo: false, undoing: false, receipt: null, undoError: '', onUndo: noop, onClose: noop, onReveal: noop,
-  onFooterReveal: noop, onFooterGrade: noop, onTypeAnswer: noop, onOpenExampleSentence: noop, ...props,
+  onFooterReveal: noop, onFooterGrade: noop, onTypeAnswer: noop, onOpenExampleSentence: noop, onOpenCard: noop, ...props,
 }));
 
 const textOf = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -176,12 +176,11 @@ test('the revealed example has its speaker beside Open sentence review', () => {
 
 test('once the answer shows, Open card sits under it, to see the whole card; there is none before', () => {
   const item = card({ examples: ['She looked {{crestfallen}}.'] });
-  const revealed = partsOf(render({ item, session: session({ revealed: true }), onOpenCard: noop })).body;
+  const revealed = partsOf(render({ item, session: session({ revealed: true }) })).body;
   const open = buttonsOf(revealed).at(-1) ?? '';
   assert.match(open, /class="mt-2 inline-flex h-11 items-center rounded-md text-sm font-semibold text-indigo-600 /);
   assert.match(revealed, />Open card<\/button><\/div><\/div><\/section>$/, 'the last thing in the answer');
-  assert.doesNotMatch(render({ item, onOpenCard: noop }), /Open card/, 'it would show the answer');
-  assert.doesNotMatch(render({ item, session: session({ revealed: true }) }), /Open card/, 'nothing to open it with');
+  assert.doesNotMatch(render({ item }), /Open card/, 'it would show the answer');
 });
 
 test('the header keeps the count, the instruction and End, and no longer holds Undo', () => {

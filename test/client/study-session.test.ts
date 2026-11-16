@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { StoredItem, VocabCard } from '../../types.ts';
 import { StudySummary } from '../../components/study/StudySummary.tsx';
 import { previewRatings, updateAfterRating } from '../../services/fsrsScheduler.ts';
+import { formatReviewInterval, formatTimeUntil } from '../../services/reviewTime.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import {
   acceptFooterTap,
@@ -14,8 +15,6 @@ import {
   endSessionEarly,
   cappedDuration,
   findSessionCard,
-  formatReviewInterval,
-  formatTimeUntil,
   getStudyContent,
   gradeSessionCard,
   isDueForReview,
@@ -446,26 +445,21 @@ const summaryMarkup = (props: Partial<Parameters<typeof StudySummary>[0]> = {}) 
   summary: { total: 50, graded: 50, counts: { again: 3, hard: 2, good: 40, easy: 5 }, missedIds: ['a', 'b'] },
   endedEarly: false,
   missed: [{ id: 'a', title: 'crestfallen' }, { id: 'b', title: 'give up' }],
-  canUndo: false, undoing: false, undoError: '', onUndo: () => {}, onDone: () => {},
+  onOpenMissed: () => {}, canUndo: false, undoing: false, undoError: '', onUndo: () => {}, onDone: () => {},
   ...props,
 }));
 const summaryText = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
-test('the summary names the session\'s cards, the missed words in order, and ends with Done', () => {
-  const markup = summaryMarkup({ onOpenMissed: () => {} });
+test('the summary names the session\'s cards, the missed words in order, and ends with Done; with none missed there is no list', () => {
+  const markup = summaryMarkup();
   assert.match(markup, /<h2 class="text-2xl font-bold text-slate-800">Session complete · 50 cards<\/h2>/);
   assert.match(summaryText(markup), /Recalled 47 of 50 prompts\. Missed \(2\) Review missed words crestfallen give up Done$/);
   assert.match(markup, /<button class="px-2\.5 py-1 rounded-full bg-rose-50 text-rose-700 text-sm hover:bg-rose-100">crestfallen<\/button><button [^>]*>give up<\/button>/);
   assert.match(markup, /<button class="w-full h-12 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800" aria-keyshortcuts="Enter">Done<\/button><\/div>$/);
   assert.doesNotMatch(markup, /Return to study/);
-  assert.match(summaryMarkup({ summary: { total: 1, graded: 1, counts: { again: 0, hard: 0, good: 1, easy: 0 }, missedIds: [] }, missed: [] }), />Session complete · 1 card</);
-});
-
-test('without a way to open cards the missed words are only listed, and with none missed there is no list', () => {
-  const listed = summaryMarkup();
-  assert.match(listed, /<span class="px-2\.5 py-1 rounded-full bg-rose-50 text-rose-700 text-sm">crestfallen<\/span>/);
-  assert.doesNotMatch(listed, /Review missed words/);
-  assert.doesNotMatch(summaryMarkup({ missed: [] }), /Missed/);
+  const noneMissed = summaryMarkup({ summary: { total: 1, graded: 1, counts: { again: 0, hard: 0, good: 1, easy: 0 }, missedIds: [] }, missed: [] });
+  assert.match(noneMissed, />Session complete · 1 card</);
+  assert.doesNotMatch(noneMissed, /Missed/, 'with none missed there is no list');
 });
 
 test('the summary keeps its undo for the last rating, and says when an undo failed', () => {

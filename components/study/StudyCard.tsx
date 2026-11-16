@@ -2,8 +2,9 @@ import { useLayoutEffect } from 'react';
 import { Eye, Maximize2, X } from 'lucide-react';
 import { getItemSense, type ReviewRating, type StoredItem } from '../../types';
 import { previewRatings } from '../../services/fsrsScheduler';
+import { formatReviewInterval } from '../../services/reviewTime';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
-import { RATINGS, formatReviewInterval, getStudyContent, selectReviewTask, type GradeReceiptText, type StudySession } from '../../services/studySession';
+import { RATINGS, getStudyContent, selectReviewTask, type GradeReceiptText, type StudySession } from '../../services/studySession';
 import { TASK_INSTRUCTIONS, judgeTypedAnswer, studyPrompt, verdictLine } from '../../services/studyPrompt';
 import { isImeKey } from '../keyboardTarget';
 import { PronunciationBlock } from '../PronunciationBlock';
@@ -52,8 +53,8 @@ interface StudyCardProps {
   onFooterGrade: (rating: ReviewRating) => void;
   onTypeAnswer: (text: string) => void;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
-  /** Open card, under the answer: the card view on this card over the session. Without it there's no Open card. */
-  onOpenCard?: () => void;
+  /** Open card, under the answer: the card view on this card over the session. */
+  onOpenCard: () => void;
 }
 
 /** One card of a study session: its prompt and the answer once revealed, over a footer with the receipt line and the grades. */
@@ -189,15 +190,13 @@ export function StudyCard({
                 </div>
               )}
               {/* The card's picture, mnemonic and other senses, in the card view; closing it comes back here. */}
-              {onOpenCard && (
-                <button
-                  type="button"
-                  onClick={onOpenCard}
-                  className="mt-2 inline-flex h-11 items-center rounded-md text-sm font-semibold text-indigo-600 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-                >
-                  Open card
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={onOpenCard}
+                className="mt-2 inline-flex h-11 items-center rounded-md text-sm font-semibold text-indigo-600 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              >
+                Open card
+              </button>
             </div>
           )}
         </div>

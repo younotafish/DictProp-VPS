@@ -6,8 +6,7 @@ import { Flame } from 'lucide-react';
 import type { SRSData } from '../../types.ts';
 import { SrsStats } from '../../components/review/SrsStats.tsx';
 import { MasteryBadge, getMasteryColors } from '../../components/mastery.tsx';
-import { formatReviewInterval, formatTimeUntil, reviewIntervalDays } from '../../services/reviewTime.ts';
-import * as studySession from '../../services/studySession.ts';
+import { formatTimeUntil, reviewIntervalDays } from '../../services/reviewTime.ts';
 
 const NOW = 1_700_000_000_000;
 const MINUTE = 60_000;
@@ -33,11 +32,6 @@ test('a schedule\'s interval is its whole days from now, rounded, and never unde
   assert.equal(reviewIntervalDays(NOW, NOW), 1);
   assert.equal(reviewIntervalDays(NOW - DAY, NOW), 1);
   assert.equal(reviewIntervalDays(NOW + 120 * DAY, NOW), 120);
-});
-
-test('the study session still hands out the review-time labels it used to hold', () => {
-  assert.equal(studySession.formatTimeUntil, formatTimeUntil);
-  assert.equal(studySession.formatReviewInterval, formatReviewInterval);
 });
 
 const srs = (fields: Partial<SRSData>): SRSData => ({
