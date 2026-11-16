@@ -57,4 +57,3 @@ export {
   type UserRow,
 } from './db/users.js';
 export { getComparisons, upsertComparison, type StoredComparisonRow } from './db/comparisons.js';
-export { migrateLegacyProjects } from './db/legacy-projects.js';

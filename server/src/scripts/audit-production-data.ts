@@ -222,8 +222,6 @@ const missingSentenceSources = sentenceItems
   .filter(item => normalizeLabel(item.data.sourceWord) && !liveVocabWords.has(normalizeLabel(item.data.sourceWord)))
   .map(item => item.data.id);
 
-const projectTagCount = countQuery('SELECT COUNT(*) AS count FROM items WHERE user_id = ? AND project IS NOT NULL', owner.id);
-const projectRowCount = countQuery('SELECT COUNT(*) AS count FROM projects WHERE user_id = ?', owner.id);
 const inlineImageItemCount = countQuery(
   `SELECT COUNT(*) AS count FROM items WHERE user_id = ? AND data LIKE '%data:image/%'`,
   owner.id,
@@ -272,8 +270,6 @@ const report = {
   storageIntegrity: {
     invalidItemCount: invalidItems.length,
     invalidItems: invalidItems.slice(0, 100),
-    legacyProjectTagCount: projectTagCount,
-    legacyProjectRowCount: projectRowCount,
     inlineImageItemCount,
     registeredUserCount: users.length,
     registeredAdminCount: users.filter(user => user.is_admin === 1).length,

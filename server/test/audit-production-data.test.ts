@@ -50,9 +50,7 @@ db.prepare(`INSERT INTO item_images (id, user_id, data, updated_at, mime_type, c
   VALUES ('ap-broken-image', ?, x'', 1, 'image/png', ?)`).run(owner.id, sha256('no such blob'));
 storeRawBlob(png('nobody refers to this blob'));
 
-// Legacy rows the audit still has to count: a project tag, a projects row, a row no account owns.
-db.prepare(`UPDATE items SET project = 'legacy' WHERE id = 'ap-phrase-2'`).run();
-db.prepare(`INSERT INTO projects (id, name, user_id, created_at) VALUES ('legacy', 'Legacy', ?, 1)`).run(owner.id);
+// A row no account owns, from before accounts existed.
 db.prepare(`INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, revision)
   VALUES ('ap-unowned', 'vocab', ?, ?, 1, 1, 0, 0, NULL, 0)`)
   .run(JSON.stringify({ id: 'ap-unowned', word: 'stray' }), JSON.stringify(srs('ap-unowned', 'vocab')));
@@ -84,8 +82,6 @@ test('the production audit reports storage, sentences, example enrichments, imag
   assert.deepEqual(report.storageIntegrity, {
     invalidItemCount: 1,
     invalidItems: [{ id: 'ap-inline', error: 'item has an inline image outside imageUrl' }],
-    legacyProjectTagCount: 1,
-    legacyProjectRowCount: 1,
     inlineImageItemCount: 1,
     registeredUserCount: 2,
     registeredAdminCount: 1,

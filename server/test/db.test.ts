@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { enrichmentId } from '../src/example-enrichment-coverage.js';
 
-const { getItemById, getItemsAfterRevision, upsertItem, touchItemRevisions, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, migrateLegacyProjects, db } = await import('../src/db.js');
+const { getItemById, getItemsAfterRevision, upsertItem, touchItemRevisions, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const makeItem = (
@@ -109,18 +109,6 @@ test('legacy project tags cannot split the unified library again', () => {
   assert.equal((stored as any).project, undefined);
   const row = db.prepare('SELECT project FROM items WHERE id = ?').get('legacy-project-item') as { project: string | null };
   assert.equal(row.project, null);
-});
-
-test('legacy project cleanup runs as a resumable background migration', async () => {
-  const id = 'background-project-item';
-  upsertItem(makeItem(id, 'background cleanup', 1_000, 0, 0), 'project-user');
-  db.prepare('UPDATE items SET project = ? WHERE id = ?').run('legacy-project', id);
-  db.prepare('INSERT INTO projects (id, name, user_id, created_at) VALUES (?, ?, ?, ?)')
-    .run('legacy-project', 'Legacy', 'project-user', 1);
-  await migrateLegacyProjects();
-  const row = db.prepare('SELECT project FROM items WHERE id = ?').get(id) as { project: string | null };
-  assert.equal(row.project, null);
-  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM projects').get() as { count: number }).count, 0);
 });
 
 test('image ids cannot overwrite another user', () => {

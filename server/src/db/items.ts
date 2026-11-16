@@ -22,8 +22,8 @@ export const stmts = {
     WHERE user_id = ? AND (revision > ? OR (revision = ? AND id > ?))
     ORDER BY revision, id LIMIT ?`),
   upsert: db.prepare(`
-    INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, project, revision)
-    VALUES (@id, @type, @data, @srs, @saved_at, @updated_at, @is_deleted, @is_archived, @user_id, @project, @revision)
+    INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, revision)
+    VALUES (@id, @type, @data, @srs, @saved_at, @updated_at, @is_deleted, @is_archived, @user_id, @revision)
     ON CONFLICT(id) DO UPDATE SET
       type = @type,
       data = @data,
@@ -32,7 +32,6 @@ export const stmts = {
       updated_at = @updated_at,
       is_deleted = @is_deleted,
       is_archived = @is_archived,
-      project = @project,
       revision = @revision
     WHERE items.user_id IS NULL OR items.user_id = @user_id
   `),
@@ -59,7 +58,6 @@ export interface ItemRow {
   is_deleted: number;
   is_archived: number;
   user_id: string | null;
-  project: string | null;
   revision: number;
 }
 
@@ -288,7 +286,6 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
     srs: JSON.stringify(srs),
     updated_at: staleContent && !srsChanged ? existingUpdatedAt : Math.max(existingUpdatedAt, incomingUpdatedAt),
     user_id: userId,
-    project: null,
   };
   // A copy that differs from the row only by lacking kept fields changes nothing. Its client keeps its own
   // data at an unchanged revision and pushes that copy again, so a revision per push would never settle.

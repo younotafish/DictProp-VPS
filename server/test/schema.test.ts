@@ -108,17 +108,33 @@ test('applying the schema again changes nothing', () => {
   assert.deepEqual(shape(database), before);
 });
 
-test('the retired indexes are gone, and the projects table stays until the audit allows dropping it', () => {
-  const names = new Set((fresh().prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as Array<{ name: string }>)
+test('the retired indexes and the projects table are gone', () => {
+  const database = fresh();
+  const names = new Set((database.prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as Array<{ name: string }>)
     .map(index => index.name));
   for (const retired of [
     'idx_items_type', 'idx_items_updated', 'idx_items_user_id', 'idx_users_google_id',
     'idx_sentence_enrichments_source_id', 'idx_item_images_user_id', 'idx_review_event_items_event',
+    'idx_items_project', 'idx_projects_user_id',
   ]) {
     assert.equal(names.has(retired), false, retired);
   }
-  assert.ok(names.has('idx_items_project'));
-  assert.ok(names.has('idx_projects_user_id'));
+  assert.equal(database.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects'`).get(), undefined);
+});
+
+test('a file that still has the projects table, a row in it and its two indexes upgrades to exactly a fresh database, twice', () => {
+  // As the image before the drop left a file: the retired table and the indexes it kept for the audit's project counts.
+  const database = fresh();
+  database.exec(`
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL);
+    INSERT INTO projects (id, name, user_id, created_at) VALUES ('legacy', 'Legacy', 'user', 1);
+    CREATE INDEX idx_projects_user_id ON projects(user_id);
+    CREATE INDEX idx_items_project ON items(project);
+  `);
+  applySchema(database);
+  assert.deepEqual(shape(database), shape(fresh()));
+  applySchema(database);
+  assert.deepEqual(shape(database), shape(fresh()));
 });
 
 test('statements search the indexes that remain instead of scanning tables', () => {

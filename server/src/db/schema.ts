@@ -10,7 +10,8 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
 export function applySchema(db: Database.Database): void {
   // Columns that older files gained by ALTER TABLE come last, in the order those files have them.
   db.exec(`
-    -- project is retired: reads leave it out and writes clear it. Only the production audit still queries it.
+    -- project is retired and always NULL: nothing reads or writes it. The column stays because an older image's
+    -- upsert still names it, so a rollback to that image can write rows.
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       type TEXT NOT NULL CHECK(type IN ('vocab', 'phrase', 'sentence')),
@@ -75,10 +76,6 @@ export function applySchema(db: Database.Database): void {
       applied_revision INTEGER,
       PRIMARY KEY (event_id, item_id)
     );
-
-    -- Retired with the project column, and nothing writes it. It stays while the production audit still counts
-    -- its rows (legacyProjectRowCount) beside the column's tags (legacyProjectTagCount).
-    CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL);
 
     -- Images live here, out of items.data, so item reads and writes never touch image bytes. Keyed by id, a
     -- keyspace shared by top-level item ids and phrase vocab ids (a vocab id can be both; see DetailView's
@@ -149,12 +146,9 @@ export function applySchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_items_user_revision ON items(user_id, revision, id);
     -- Phrase scans (the owners of an image) read the user's phrase rows, not the library.
     CREATE INDEX IF NOT EXISTS idx_items_user_type ON items(user_id, type);
-    -- The audit's count of project tags; without it the count reads every item to reach the column.
-    CREATE INDEX IF NOT EXISTS idx_items_project ON items(project);
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_review_events_user_time ON review_events(user_id, reviewed_at);
-    CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
     -- Covers stripped-item image markers without reading legacy rows, whose data column can still hold a
     -- large base64 payload, so the first sync after a restart doesn't block Node.
     CREATE INDEX IF NOT EXISTS idx_item_images_user_versions ON item_images(user_id, id, content_hash, updated_at);
@@ -178,6 +172,14 @@ export function applySchema(db: Database.Database): void {
     DROP INDEX IF EXISTS idx_sentence_enrichments_source_id;
     DROP INDEX IF EXISTS idx_item_images_user_id;
     DROP INDEX IF EXISTS idx_review_event_items_event;
+  `);
+
+  // The retired projects table, whose index goes with it, and the index the audit counted project tags with. The
+  // 2026-11-15 production audit counted no project rows and no tags, and nothing reads either any more. Rolling back to
+  // an older image brings both back, empty.
+  db.exec(`
+    DROP INDEX IF EXISTS idx_items_project;
+    DROP TABLE IF EXISTS projects;
   `);
 
   // Refresh planner statistics for tables whose indexes changed, bounded so it stays quick on a large file.
