@@ -66,14 +66,15 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
           <p className="text-sm text-slate-600 leading-relaxed">
             These look like the same word saved under different forms. Pick the headword to keep: the other forms’
             cards are relabeled to it, and every form is kept. Review progress isn’t merged: each card keeps its own,
-            and a sense saved twice keeps only its more-reviewed card.
+            and where two cards carry the same meaning label, only the more-reviewed one is kept.
           </p>
           {effect.removed > 0 && (
             <div className="mt-3 flex items-start gap-2 text-[12px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
               <AlertTriangle size={14} className="shrink-0 mt-0.5" />
               <span>
-                Merging removes {effect.removed} duplicate {effect.removed === 1 ? 'card' : 'cards'} of the same sense.
-                Close other open tabs and devices first, so sync doesn’t bring {effect.removed === 1 ? 'it' : 'them'} back.
+                Merging removes {effect.removed} {effect.removed === 1 ? 'card that repeats' : 'cards that repeat'} another
+                card’s meaning label. Close other open tabs and devices first, so sync
+                doesn’t bring {effect.removed === 1 ? 'it' : 'them'} back.
               </span>
             </div>
           )}

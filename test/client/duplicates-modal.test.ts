@@ -27,9 +27,10 @@ test('the dialog says the cards are relabeled to the headword and keep their own
   const html = render([card('ran', RAN, 'ran'), card('run', RUN, 'run')]);
   assert.ok(html.includes(
     'Pick the headword to keep: the other forms’ cards are relabeled to it, and every form is kept. Review progress isn’t merged: '
-    + 'each card keeps its own, and a sense saved twice keeps only its more-reviewed card.',
+    + 'each card keeps its own, and where two cards carry the same meaning label, only the more-reviewed one is kept.',
   ));
   assert.doesNotMatch(html, /review progress is merged/);
+  assert.doesNotMatch(html, /\bsense\b/i, 'the app says "meaning"');
 });
 
 test('with nothing to remove among the ticked merges, the dialog cautions about nothing', () => {
@@ -44,11 +45,11 @@ test('with nothing to remove among the ticked merges, the dialog cautions about 
   assert.equal(caution(html), null);
 });
 
-test('a ticked merge that removes duplicates of one sense says how many, and to close other tabs and devices first', () => {
+test('a ticked merge that removes cards repeating a meaning label says how many, and to close other tabs and devices first', () => {
   const one = render([card('ran', RAN, 'ran', { sense: 'move' }), card('run', RUN, 'run', { sense: 'Move', reviews: 3 })]);
   assert.match(one, /relabels 0 cards, removes 1/);
-  assert.equal(caution(one),
-    'Merging removes 1 duplicate card of the same sense. Close other open tabs and devices first, so sync doesn’t bring it back.');
+  assert.equal(caution(one), 'Merging removes 1 card that repeats another card’s meaning label. '
+    + 'Close other open tabs and devices first, so sync doesn’t bring it back.');
 
   const two = render([
     card('ran', RAN, 'ran-move', { sense: 'move' }),
@@ -56,7 +57,8 @@ test('a ticked merge that removes duplicates of one sense says how many, and to 
     card('run', RUN, 'run-move', { sense: 'move', reviews: 3 }),
     card('run', RUN, 'run-manage', { sense: 'manage', reviews: 3 }),
   ]);
+  // Two meanings, move and manage, each saved under both forms: each removed card repeats another one's label.
   assert.match(two, /removes 2/);
-  assert.equal(caution(two),
-    'Merging removes 2 duplicate cards of the same sense. Close other open tabs and devices first, so sync doesn’t bring them back.');
+  assert.equal(caution(two), 'Merging removes 2 cards that repeat another card’s meaning label. '
+    + 'Close other open tabs and devices first, so sync doesn’t bring them back.');
 });
