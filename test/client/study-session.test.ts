@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { StoredItem } from '../../types.ts';
+import type { StoredItem, VocabCard } from '../../types.ts';
 import { previewRatings, updateAfterRating } from '../../services/fsrsScheduler.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import {
@@ -11,6 +11,7 @@ import {
   findSessionCard,
   formatReviewInterval,
   formatTimeUntil,
+  getStudyContent,
   gradeSessionCard,
   isDueForReview,
   isSessionCardLive,
@@ -18,6 +19,7 @@ import {
   requeueShortStep,
   selectReviewTask,
   sessionRatings,
+  sessionSiblingCounts,
   startStudySession,
   undoSessionGrade,
   type StudySession,
@@ -32,6 +34,7 @@ function vocab(
     nextReview?: number;
     strength?: number;
     example?: string;
+    examples?: string[];
     savedAt?: number;
     lastReviewed?: number;
   } = {},
@@ -49,7 +52,7 @@ function vocab(
       synonyms: [],
       antonyms: [],
       confusables: [],
-      examples: options.example ? [options.example] : [],
+      examples: options.examples ?? (options.example ? [options.example] : []),
       history: '',
       register: '',
       mnemonic: '',
@@ -111,6 +114,41 @@ test('review task selection increases recall difficulty only when the prompt con
   })), 'production');
 });
 
+test('cloze and listening take turns through a card\'s examples, and the cloze check uses the example the prompt will', () => {
+  const examples = ['They {{led}} the group.', 'Nothing relevant appears here.'];
+  const at = (reviews: number) => vocab(`r${reviews}`, 'lead', { strength: 70, reviews, examples });
+  assert.deepEqual([4, 5, 6, 7, 8, 9].map(reviews => getStudyContent(at(reviews)).example), [
+    examples[0], examples[0], examples[1], examples[1], examples[0], examples[0],
+  ]);
+  // Two reviews each: cloze, then listening, with the first example; then the second, which has no blank to make.
+  assert.deepEqual([4, 5, 6, 7].map(reviews => selectReviewTask(at(reviews))), ['cloze', 'listening', 'production', 'production']);
+});
+
+test('study content carries the forms and synonyms a typed answer is checked against', () => {
+  const lead = vocab('a', 'lead', { sense: 'verb: guide' });
+  const leadCard = { ...lead, data: { ...lead.data, forms: ['leads, led'], synonyms: ['guide'] } };
+  assert.deepEqual(getStudyContent(leadCard), {
+    word: 'lead', sense: 'verb: guide', chinese: 'meaning', definition: 'definition', example: '',
+    forms: ['leads, led'], synonyms: ['guide'],
+  });
+
+  const giveUp: VocabCard = {
+    id: 'v', word: 'give up', chinese: '放弃', ipa: '', definition: 'stop trying', forms: ['gave up'], synonyms: ['quit'],
+    antonyms: [], confusables: [], examples: [], history: '', register: '', mnemonic: '',
+  };
+  const phrase = (query: string): StoredItem => ({
+    type: 'phrase',
+    data: { id: query, query, translation: '', grammar: '', visualKeyword: '', pronunciation: '', timestamp: 0, vocabs: [giveUp] },
+    srs: lead.srs,
+    savedAt: 0,
+  });
+  const own = getStudyContent(phrase('Give up'));
+  assert.deepEqual([own.sense, own.forms, own.synonyms], ['', ['gave up'], ['quit']]);
+  // Another word's card fills in the meaning, but its forms and synonyms aren't the phrase's.
+  const other = getStudyContent(phrase('give up smoking'));
+  assert.deepEqual([other.chinese, other.definition, other.forms, other.synonyms], ['放弃', 'stop trying', [], []]);
+});
+
 test('rating interval labels remain compact', () => {
   assert.equal(formatReviewInterval(10), '10m');
   assert.equal(formatReviewInterval(120), '2h');
@@ -170,16 +208,27 @@ const session = (overrides: Partial<StudySession> = {}): StudySession => ({
   promptStartedAt: 1_000,
   startedAt: 500,
   grades: [{ itemId: 'a', rating: 'good' }],
+  siblingCounts: {},
   ...overrides,
 });
 
 test('a session starts at its first card, unrevealed, with no grades', () => {
-  const started = startStudySession('s1', [vocab('a', 'run'), vocab('b', 'walk')], 5_000);
+  const started = startStudySession('s1', [vocab('a', 'run'), vocab('b', 'walk')], 5_000, { a: 2 });
   assert.deepEqual(started, {
     id: 's1', itemIds: ['a', 'b'], index: 0, revealed: false, typedAnswer: '', promptStartedAt: 5_000,
-    startedAt: 5_000, grades: [],
+    startedAt: 5_000, grades: [], siblingCounts: { a: 2 },
   });
   assert.deepEqual(sessionRatings(started), { again: 0, hard: 0, good: 0, easy: 0 });
+});
+
+test('a session knows how many study items share each queued card\'s spelling, when others do', () => {
+  const items = [
+    vocab('lead-verb', 'lead'), vocab('lead-noun', 'Lead '), vocab('lead-metal', 'lead'),
+    vocab('walk', 'walk'), vocab('run-1', 'run'), vocab('run-2', 'run'),
+  ];
+  const queue = [items[0], items[3], items[4]];
+  assert.deepEqual(sessionSiblingCounts(queue, items), { 'lead-verb': 3, 'run-1': 2 });
+  assert.deepEqual(sessionSiblingCounts([], items), {});
 });
 
 test('the session counts each grade that stands', () => {

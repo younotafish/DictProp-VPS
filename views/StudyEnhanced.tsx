@@ -17,6 +17,7 @@ import {
   isSessionCardLive,
   moveSessionTo,
   sessionRatings,
+  sessionSiblingCounts,
   startStudySession,
   type SessionGrade,
   type StudySession,
@@ -87,8 +88,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     if (queue.length === 0) return;
     setLastGrade(null);
     setUndoError('');
-    setSession(startStudySession(crypto.randomUUID(), queue, Date.now()));
-  }, []);
+    setSession(startStudySession(crypto.randomUUID(), queue, Date.now(), sessionSiblingCounts(queue, items)));
+  }, [items]);
 
   // While an undo is under way, grading and revealing wait: the undo is about to bring back the card it undoes.
   const undoing = lastGrade?.undoing ?? false;

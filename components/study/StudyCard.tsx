@@ -4,7 +4,7 @@ import { previewRatings } from '../../services/fsrsScheduler';
 import { speakNatural } from '../../services/neuralTts';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { RATINGS, formatReviewInterval, getStudyContent, selectReviewTask, type StudySession } from '../../services/studySession';
-import { createClozePrompt } from '../../services/studyPrompt';
+import { TASK_INSTRUCTIONS, judgeTypedAnswer, studyPrompt, verdictLine } from '../../services/studyPrompt';
 import { isImeKey } from '../keyboardTarget';
 
 const RATING_STYLES: Record<ReviewRating, string> = {
@@ -13,6 +13,13 @@ const RATING_STYLES: Record<ReviewRating, string> = {
   good: 'border-emerald-300 text-emerald-700 bg-emerald-50',
   easy: 'border-blue-300 text-blue-700 bg-blue-50',
 };
+
+// The typed answer's verdict: right, nearly (a typo or a synonym), or not.
+const VERDICT_STYLES = { correct: 'text-emerald-700', close: 'text-amber-700', wrong: 'text-rose-700' } as const;
+
+/** Cmd+Z, or Ctrl+Z: undo, not redo (with Shift) or another chord. */
+const isUndoChord = (event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>) =>
+  (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'z';
 
 interface StudyCardProps {
   session: StudySession;
@@ -48,20 +55,18 @@ export function StudyCard({
   const task = selectReviewTask(item);
   const content = getStudyContent(item);
   const example = stripSentenceMarkers(content.example);
+  const sense = getItemSense(item);
   // The grade buttons show each grade's next interval; they appear with the answer.
   const previews = session.revealed ? previewRatings(item.srs) : null;
-  const prompt = task === 'meaning'
-    ? content.word
-    : task === 'production'
-      ? (content.chinese || content.definition)
-      : task === 'cloze'
-        ? createClozePrompt(content.example, content.word)
-        : '';
+  const prompt = studyPrompt(content, task, session.siblingCounts[item.data.id] ?? 1);
+  const verdict = task === 'production' && session.revealed
+    ? verdictLine(judgeTypedAnswer(session.typedAnswer, content), content.word)
+    : null;
   return (
     <div className="max-w-2xl mx-auto min-h-full flex flex-col">
       <header className="h-14 flex items-center justify-between border-b border-slate-200">
         <span className="text-sm font-semibold text-slate-600">{session.index + 1} / {session.itemIds.length}</span>
-        <span className="text-xs font-medium uppercase text-slate-400">{task}</span>
+        <span className="text-xs font-medium uppercase text-slate-400">{TASK_INSTRUCTIONS[task]}</span>
         <div className="flex items-center gap-1">
           {canUndo && (
             <button onClick={onUndo} disabled={undoing} className="w-11 h-11 grid place-items-center rounded-full text-slate-500 hover:bg-slate-200 disabled:opacity-50" aria-label="Undo last rating" aria-keyshortcuts="U" title="Undo last rating">
@@ -84,7 +89,11 @@ export function StudyCard({
             <Volume2 size={26} />
           </button>
         ) : (
-          <div className={task === 'meaning' ? 'text-4xl font-bold text-slate-900' : 'text-xl leading-relaxed text-slate-800'}>{prompt}</div>
+          <>
+            <div className={task === 'meaning' ? `${prompt.multiWord ? 'text-2xl' : 'text-4xl'} font-bold text-slate-900` : 'text-xl leading-relaxed text-slate-800'}>{prompt.text}</div>
+            {prompt.sub && <div className="mt-2 text-sm text-slate-400">{prompt.sub}</div>}
+            {prompt.detail && <div className="mt-2 text-sm text-slate-500">{prompt.detail}</div>}
+          </>
         )}
 
         {task === 'production' && !session.revealed && (
@@ -93,15 +102,28 @@ export function StudyCard({
             value={session.typedAnswer}
             onChange={event => onTypeAnswer(event.target.value)}
             onKeyDown={event => {
-              // The Enter that picks an input-method candidate is not the answer.
-              if (event.key === 'Enter' && !isImeKey(event.nativeEvent)) {
+              // A key the input method is using (the Enter that picks a pinyin candidate) is not the answer.
+              if (isImeKey(event.nativeEvent)) return;
+              if (event.key === 'Enter') {
                 event.preventDefault();
                 onReveal();
+                return;
+              }
+              // In an empty box, Space shows the answer and Cmd/Ctrl+Z undoes the last rating, as they do outside it.
+              if (session.typedAnswer.trim()) return;
+              if (event.key === ' ') {
+                event.preventDefault();
+                onReveal();
+              } else if (isUndoChord(event) && canUndo && !undoing) {
+                event.preventDefault();
+                onUndo();
               }
             }}
             className="mt-8 mx-auto w-full max-w-md h-12 px-4 rounded-lg border border-slate-300 bg-white text-center text-lg text-slate-900 focus:border-slate-600 focus:outline-none"
             aria-label="Type the recalled word"
             autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
             spellCheck={false}
           />
         )}
@@ -109,9 +131,8 @@ export function StudyCard({
         {session.revealed ? (
           <div className="mt-10 pt-8 border-t border-slate-200 text-left" aria-live="polite">
             <div className="text-3xl font-bold text-slate-900 mb-2">{content.word}</div>
-            {task === 'production' && session.typedAnswer && (
-              <div className="text-sm text-slate-500 mb-3">Your answer: <span className="font-medium text-slate-700">{session.typedAnswer}</span></div>
-            )}
+            {sense && <div className="text-sm text-slate-500 mb-2">{sense}</div>}
+            {verdict && <div className={`text-sm font-medium mb-3 ${VERDICT_STYLES[verdict.tone]}`}>{verdict.text}</div>}
             {content.chinese && <div className="text-lg text-slate-700 mb-2">{content.chinese}</div>}
             {content.definition && <div className="text-sm leading-relaxed text-slate-600 mb-4">{content.definition}</div>}
             {example && (

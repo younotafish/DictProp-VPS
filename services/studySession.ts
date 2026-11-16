@@ -8,17 +8,27 @@ import {
   isVocabItem,
 } from '../types';
 import { sentenceReviewState } from './sentenceReviewState';
-import { createClozePrompt } from './studyPrompt';
+import { createClozePrompt, pickExample } from './studyPrompt';
 // The review-time labels live in services/reviewTime.ts; these names stay reachable here for the modules that import
 // them from this file.
 export { formatReviewInterval, formatTimeUntil } from './reviewTime';
 
+/** What a card's prompts and answer are made from. */
 export interface StudyContent {
   word: string;
+  /** The sense label ('noun: emotion'); '' for a phrase. */
+  sense: string;
   chinese: string;
   definition: string;
+  /** The example its cloze and listening prompts use this time (pickExample). */
   example: string;
+  /** The word's listed forms and synonyms, which a typed answer is checked against. */
+  forms: string[];
+  synonyms: string[];
 }
+
+/** The tasks a study session sets; 'quick' is the review popup's. */
+export type StudyTaskType = Exclude<ReviewTaskType, 'quick'>;
 
 /**
  * Whether a card is due: studied before, and its next review has come ('due' in services/sentenceReviewState.ts).
@@ -30,29 +40,38 @@ export function isDueForReview(item: StoredItem, now: number): boolean {
 }
 
 export function getStudyContent(item: StoredItem): StudyContent {
+  const reviews = item.srs?.totalReviews ?? 0;
   if (isVocabItem(item)) {
     return {
       word: item.data.word,
+      sense: item.data.sense ?? '',
       chinese: item.data.chinese,
       definition: item.data.definition,
-      example: item.data.examples?.[0] || '',
+      example: pickExample(item.data.examples, reviews),
+      forms: item.data.forms ?? [],
+      synonyms: item.data.synonyms ?? [],
     };
   }
   if (isPhraseItem(item)) {
-    const vocab = item.data.vocabs?.find(candidate =>
+    const exact = item.data.vocabs?.find(candidate =>
       candidate.word.trim().toLowerCase() === item.data.query.trim().toLowerCase()
-    ) || item.data.vocabs?.[0];
+    );
+    const vocab = exact || item.data.vocabs?.[0];
     return {
       word: item.data.query,
+      sense: '',
       chinese: item.data.translation || vocab?.chinese || '',
       definition: vocab?.definition || item.data.grammar || '',
-      example: vocab?.examples?.[0] || '',
+      example: pickExample(vocab?.examples, reviews),
+      // Only the phrase's own card lists its forms and synonyms; another word of the phrase has its own.
+      forms: exact?.forms ?? [],
+      synonyms: exact?.synonyms ?? [],
     };
   }
-  return { word: getItemTitle(item), chinese: '', definition: '', example: '' };
+  return { word: getItemTitle(item), sense: '', chinese: '', definition: '', example: '', forms: [], synonyms: [] };
 }
 
-export function selectReviewTask(item: StoredItem): ReviewTaskType {
+export function selectReviewTask(item: StoredItem): StudyTaskType {
   const strength = item.srs?.memoryStrength || 0;
   const reviews = item.srs?.totalReviews || 0;
   if (strength < 30) return 'meaning';
@@ -109,6 +128,8 @@ export interface StudySession {
   startedAt: number;
   /** The session's grades that stand, in the order they were given; undoing one takes it back off the end. */
   grades: StandingGrade[];
+  /** For each card whose spelling other study items share, how many share it (sessionSiblingCounts). */
+  siblingCounts: Record<string, number>;
   /** Where the cards just passed over begin. One that comes back before the next grade, as an undone
    *  delete or archive brings it, is shown again where it was. */
   passedOverFrom?: number;
@@ -129,7 +150,12 @@ export interface SessionGrade {
 }
 
 /** A new session over `queue`, at its first card. */
-export function startStudySession(id: string, queue: readonly StoredItem[], now: number): StudySession {
+export function startStudySession(
+  id: string,
+  queue: readonly StoredItem[],
+  now: number,
+  siblingCounts: Record<string, number>,
+): StudySession {
   return {
     id,
     itemIds: queue.map(item => item.data.id),
@@ -139,7 +165,27 @@ export function startStudySession(id: string, queue: readonly StoredItem[], now:
     promptStartedAt: now,
     startedAt: now,
     grades: [],
+    siblingCounts,
   };
+}
+
+/**
+ * How many study items (`items`) share each queued card's spelling, for the cards that share it with another: a
+ * meaning prompt for one of them says it asks for one of that many meanings. A session counts them once, as it
+ * starts, so a prompt's line never changes under the learner.
+ */
+export function sessionSiblingCounts(queue: readonly StoredItem[], items: readonly StoredItem[]): Record<string, number> {
+  const perSpelling = new Map<string, number>();
+  for (const item of items) {
+    const spelling = getItemSpelling(item);
+    if (spelling) perSpelling.set(spelling, (perSpelling.get(spelling) ?? 0) + 1);
+  }
+  const counts: Record<string, number> = {};
+  for (const item of queue) {
+    const count = perSpelling.get(getItemSpelling(item)) ?? 0;
+    if (count >= 2) counts[item.data.id] = count;
+  }
+  return counts;
 }
 
 /** How many times the session gave each grade, counting the grades that stand. */
