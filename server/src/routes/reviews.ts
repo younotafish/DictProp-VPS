@@ -1,13 +1,10 @@
 import { Hono } from 'hono';
-import { applyReviewEvent, getReviewHistory, undoReviewEvent, type ItemWrite } from '../db.js';
+import { applyReviewEvent, getReviewHistory, undoReviewEvent } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonObject } from '../middleware/json-body.js';
-import { isItemId, MAX_ID_LENGTH, parseReviewEvent, validateStoredItem } from '../validation.js';
+import { checkStoredItem, isItemId, MAX_ID_LENGTH, parseReviewEvent, type ValidStoredItem } from '../validation.js';
 
 export const reviewRoutes = new Hono<AppEnv>();
-
-/** An item validateStoredItem accepted: its data and schedule are objects, and data.id is a string. */
-type ValidItem = ItemWrite & { data: { id: string }; srs: { id?: unknown; totalReviews?: unknown } };
 
 reviewRoutes.get('/reviews/history', (c) => {
   const userId = c.get('user').id;
@@ -27,11 +24,11 @@ reviewRoutes.post('/reviews/apply', async (c) => {
   if (!event || !Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 100 || !itemIds.every(isItemId)) {
     return c.json({ error: 'Invalid review mutation' }, 400);
   }
-  let seed: ValidItem | undefined;
+  let seed: ValidStoredItem | undefined;
   if (seedItem !== undefined) {
-    const validationError = validateStoredItem(seedItem);
-    if (validationError) return c.json({ error: `Invalid review seed: ${validationError}` }, 400);
-    seed = seedItem as ValidItem;
+    const checked = checkStoredItem(seedItem);
+    if ('error' in checked) return c.json({ error: `Invalid review seed: ${checked.error}` }, 400);
+    seed = checked.item;
     if (seed.data.id !== event.itemId || seed.type !== event.itemType ||
         seed.srs.id !== event.itemId || seed.srs.totalReviews !== event.previousStep) {
       return c.json({ error: 'Review seed does not match event' }, 400);

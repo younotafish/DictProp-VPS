@@ -1,8 +1,15 @@
-import type { ReviewEvent } from './db.js';
+import type { ItemWrite, ReviewEvent } from './db.js';
 import { isSentenceAnalysis } from './sentence-analysis.js';
 import { isReviewRating, isReviewTaskType } from './shared/review.js';
 import { isUsageAudit } from './shared/usage-audit.js';
-import { isFiniteNonNegative, isItemType, isPositiveFinite, isRecord, isSha256 } from './validation-helpers.js';
+import {
+  isFiniteNonNegative,
+  isItemType,
+  isPositiveFinite,
+  isRecord,
+  isSha256,
+  type ItemType,
+} from './validation-helpers.js';
 
 /** The longest id the API accepts for an item, a review event or a review session. */
 export const MAX_ID_LENGTH = 200;
@@ -173,13 +180,29 @@ export function validateStoredItem(value: unknown): string | null {
   return null;
 }
 
-export function validateStoredItemBatch(value: unknown, maxItems: number): string | null {
-  if (!Array.isArray(value)) return 'Expected array of items';
-  if (value.length === 0) return 'At least one item is required';
-  if (value.length > maxItems) return `At most ${maxItems} items are allowed per request`;
+/** An item validateStoredItem accepted: a known type, JSON-object data and schedule, and an id in data.id. */
+export type ValidStoredItem = ItemWrite & {
+  type: ItemType;
+  data: Record<string, unknown> & { id: string };
+  srs: Record<string, unknown>;
+};
+
+/** The item, typed as what validateStoredItem accepted, or why it was refused. */
+export function checkStoredItem(value: unknown): { item: ValidStoredItem } | { error: string } {
+  const error = validateStoredItem(value);
+  // validateStoredItem checks every part of this type.
+  return error ? { error } : { item: value as ValidStoredItem };
+}
+
+/** A request's batch of items, each checked by validateStoredItem, or why the batch was refused. */
+export function checkStoredItemBatch(value: unknown, maxItems: number): { items: ValidStoredItem[] } | { error: string } {
+  if (!Array.isArray(value)) return { error: 'Expected array of items' };
+  if (value.length === 0) return { error: 'At least one item is required' };
+  if (value.length > maxItems) return { error: `At most ${maxItems} items are allowed per request` };
   for (let index = 0; index < value.length; index++) {
     const error = validateStoredItem(value[index]);
-    if (error) return `Invalid item at index ${index}: ${error}`;
+    if (error) return { error: `Invalid item at index ${index}: ${error}` };
   }
-  return null;
+  // validateStoredItem accepted every one.
+  return { items: value as ValidStoredItem[] };
 }

@@ -5,7 +5,7 @@ import { detectImageMimeType } from '../image-format.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonArray } from '../middleware/json-body.js';
 import { fetchPublicHttpUrl } from '../safe-url.js';
-import { isItemId, validateStoredItem } from '../validation.js';
+import { checkStoredItem, isItemId } from '../validation.js';
 import { isRecord } from '../validation-helpers.js';
 import { MAX_IMAGE_BYTES } from './item-images.js';
 
@@ -81,13 +81,6 @@ function wrapVocabCard(card: Record<string, unknown>) {
   };
 }
 
-/** An import entry once it is a StoredItem: its data, and a phrase's vocabs, are open JSON objects. */
-interface ImportedItem {
-  type: string;
-  data: Record<string, unknown> & { imageUrl?: unknown; vocabs?: unknown };
-  srs: object;
-}
-
 export interface ImportRouteDependencies {
   /** Fetch a remote image as a data URI, or undefined when it can't be had. */
   fetchImage?: (url: string) => Promise<string | undefined>;
@@ -116,8 +109,10 @@ export function createImportRoutes({ fetchImage = fetchImageAsBase64 }: ImportRo
       if (typeof item.word === 'string' && item.word.trim()) return wrapVocabCard(item); // plain VocabCard
       return null;
     };
-    // validateStoredItem checked the shape of every item kept.
-    const items = body.map(normalize).filter(item => !!item && validateStoredItem(item) === null) as ImportedItem[];
+    const items = body.map(normalize).flatMap((item) => {
+      const checked = checkStoredItem(item);
+      return 'item' in checked ? [checked.item] : [];
+    });
 
     if (items.length === 0) {
       return c.json({ error: 'No valid items found' }, 400);
@@ -127,9 +122,9 @@ export function createImportRoutes({ fetchImage = fetchImageAsBase64 }: ImportRo
     // fetched into data URIs, a few at a time; the rest, and any that fail, lose their URL so it doesn't break
     // the client.
     const isRemote = (url: unknown): url is string => !!url && typeof url === 'string' && url.startsWith('http');
-    const holders: Array<{ imageUrl?: unknown }> = items.filter(item => isRemote(item.data?.imageUrl)).map(item => item.data);
+    const holders: Array<Record<string, unknown>> = items.filter(item => isRemote(item.data.imageUrl)).map(item => item.data);
     for (const item of items) {
-      if (Array.isArray(item.data?.vocabs)) {
+      if (Array.isArray(item.data.vocabs)) {
         for (const vocab of item.data.vocabs) if (isRecord(vocab) && isRemote(vocab.imageUrl)) holders.push(vocab);
       }
     }

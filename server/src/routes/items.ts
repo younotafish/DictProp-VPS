@@ -3,7 +3,7 @@ import { stream } from 'hono/streaming';
 import { getItemById, getItemsAfterRevision, upsertMany, type ItemRead } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonArray } from '../middleware/json-body.js';
-import { MAX_ID_LENGTH, validateStoredItemBatch } from '../validation.js';
+import { checkStoredItemBatch, MAX_ID_LENGTH } from '../validation.js';
 
 export const itemsRoutes = new Hono<AppEnv>();
 
@@ -70,11 +70,9 @@ itemsRoutes.get('/items/:id', (c) => {
 // PUT /api/items — batch upsert (array of items)
 itemsRoutes.put('/items', async (c) => {
   const userId = c.get('user').id;
-  const body = await readJsonArray(c);
-  const validationError = validateStoredItemBatch(body, 500);
-  if (validationError || !body) return c.json({ error: validationError }, 400);
-  // validateStoredItemBatch checked every item.
-  const { enriched, ...result } = upsertMany(body as Parameters<typeof upsertMany>[0], userId);
+  const batch = checkStoredItemBatch(await readJsonArray(c), 500);
+  if ('error' in batch) return c.json({ error: batch.error }, 400);
+  const { enriched, ...result } = upsertMany(batch.items, userId);
   // Return sentences the enrichment pool just analysed immediately instead of waiting for the next
   // 8-second delta pull. Conflicts use this same bounded canonical response path. Fields the server
   // merely kept from its stored copy are left out, since adopting a canonical copy drops an edit made
@@ -84,5 +82,5 @@ itemsRoutes.put('/items', async (c) => {
   const canonical = [...canonicalIds]
     .map(id => getItemById(id, userId, false))
     .filter((item): item is ItemRead => !!item);
-  return c.json({ ok: true, count: body.length, ...result, canonical });
+  return c.json({ ok: true, count: batch.items.length, ...result, canonical });
 });
