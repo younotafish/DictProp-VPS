@@ -1,3 +1,4 @@
+import type { SentenceData, StoredItem } from '../types';
 import { stripSentenceMarkers } from './sentenceMarkers';
 
 /**
@@ -15,3 +16,10 @@ export const normalizeSentenceIdentity = (text: string): string =>
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+
+/**
+ * Two copies of a saved sentence say the same thing: the same id and the same text. A review or a listen changes
+ * only the schedule, and an enrichment only what's beside the text, so neither tells them apart.
+ */
+export const sameSentenceText = (a: StoredItem, b: StoredItem): boolean =>
+  a.data.id === b.data.id && (a.data as SentenceData).text === (b.data as SentenceData).text;

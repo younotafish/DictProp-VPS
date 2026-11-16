@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isVocabItem, savedVocabKey, type SentenceData, type StoredItem, type VocabCard } from '../types';
-import { normalizeSentenceIdentity } from '../services/sentenceIdentity';
+import { normalizeSentenceIdentity, sameSentenceText } from '../services/sentenceIdentity';
 import { sameItemContent } from '../services/items';
 import { buildVariantIndex, matchBaseWords } from '../services/wordMatch';
 import { buildSavedVocabByBase, pickSavedItem, savedCardsForBases } from '../services/notebook/libraryLookups';
-import { isRealLifeProgressItem } from '../services/realLifeProgressIdentity';
-import { isEssayProgressItem } from '../services/essayProgressIdentity';
-import { isCatalogProgressItem } from '../services/catalogProgressIdentity';
+import { catalogProgressKind, type CatalogKind } from '../services/catalogProgressIdentity';
 import { useStableArray } from './useStableValue';
 
 // Words and phrases still in the library, archived or not. Sentences have their own lists.
@@ -41,18 +39,16 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     [savedItems],
   );
   const allSentenceItems = useStableArray(filteredSentenceItems);
-  const realLifeProgressItems = useMemo(
-    () => allSentenceItems.filter(isRealLifeProgressItem),
-    [allSentenceItems],
-  );
-  const essayProgressItems = useMemo(
-    () => allSentenceItems.filter(isEssayProgressItem),
-    [allSentenceItems],
-  );
-  const sentenceItems = useMemo(
-    () => allSentenceItems.filter(item => !isCatalogProgressItem(item)),
-    [allSentenceItems],
-  );
+  // One pass sorts them into the three queues, each in library order. A queue keeps its array while none of its own
+  // records changes, so a review in one catalog doesn't hand the other catalog's tab or the Sentences list a new one.
+  const sentenceQueues = useMemo(() => {
+    const queues: Record<CatalogKind | 'saved', StoredItem[]> = { 'real-life': [], essay: [], saved: [] };
+    for (const item of allSentenceItems) queues[catalogProgressKind(item) ?? 'saved'].push(item);
+    return queues;
+  }, [allSentenceItems]);
+  const realLifeProgressItems = useStableArray(sentenceQueues['real-life']);
+  const essayProgressItems = useStableArray(sentenceQueues.essay);
+  const sentenceItems = useStableArray(sentenceQueues.saved);
   const sentenceItemsById = useMemo(
     () => new Map(allSentenceItems.map(item => [item.data.id, item])),
     [allSentenceItems],
@@ -82,9 +78,10 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     };
   }, [sentenceItems, sentenceDueClock]);
 
-  // Both checks run once per rendered sentence or search result, so they look up prebuilt sets. They
-  // read content only, so sentence reviews don't rebuild them.
-  const sentenceContent = useStableArray(sentenceItems, sameItemContent);
+  // Both checks run once per rendered sentence or search result, so they look up prebuilt sets, which reviews and
+  // listens don't rebuild: the sentence set reads only the sentences' texts (an enrichment that leaves a text alone
+  // keeps it too), and the vocab set only the words' content.
+  const sentenceContent = useStableArray(sentenceItems, sameSentenceText);
   const savedSentenceIdentities = useMemo(
     () => new Set(sentenceContent.map(s => normalizeSentenceIdentity((s.data as SentenceData).text))),
     [sentenceContent],
