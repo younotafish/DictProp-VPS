@@ -7,6 +7,7 @@ import {
   isPhraseItem,
   isVocabItem,
 } from '../types';
+import { REVIEW_RATINGS } from '../server/src/shared/review';
 import { formatReviewInterval } from './reviewTime';
 import { sentenceReviewState } from './sentenceReviewState';
 import { createClozePrompt, pickExample } from './studyPrompt';
@@ -106,8 +107,8 @@ export function buildReviewQueue(
   return [...burySiblings(due, dueLimit), ...burySiblings(fresh, newLimit)];
 }
 
-/** The four grades, in the order of their buttons and of keys 1–4. */
-export const RATINGS = ['again', 'hard', 'good', 'easy'] as const satisfies readonly ReviewRating[];
+/** The four grades, in the order of their buttons and of keys 1–4: the order the review events record them in. */
+export const RATINGS = REVIEW_RATINGS;
 
 export const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
 
