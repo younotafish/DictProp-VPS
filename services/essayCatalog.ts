@@ -5,6 +5,7 @@ import type {
   RawEssayCatalog,
   RawEssaySentence,
 } from '../server/src/essay-catalog';
+import { markItem } from './sentenceMarkers';
 
 // The raw catalog is the server's type: the server validates the owner's private catalog in this shape and serves
 // it from GET /api/essays/catalog. A type-only import, so nothing of the server reaches the bundle.
@@ -36,12 +37,6 @@ export interface Essay extends Omit<RawEssay, 'collection' | 'paragraphs'> {
   collection: EssayCollection;
   paragraphs: EssayParagraph[];
   sentences: EssaySentence[];
-}
-
-function markFocus(text: string, focus: string): string {
-  const index = text.toLocaleLowerCase('en-US').indexOf(focus.toLocaleLowerCase('en-US'));
-  if (index < 0) return text;
-  return `${text.slice(0, index)}{{${text.slice(index, index + focus.length)}}}${text.slice(index + focus.length)}`;
 }
 
 function buildCatalog(
@@ -87,7 +82,7 @@ function buildCatalog(
             essayTitle: essay.title,
             author: essay.author,
             paragraphId: paragraph.id,
-            markedText: markFocus(sentence.text, sentence.focus),
+            markedText: markItem(sentence.text, sentence.focus),
             position,
           };
         }),

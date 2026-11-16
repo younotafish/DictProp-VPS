@@ -1,4 +1,5 @@
 import catalogSource from '../content/real-life-catalog.json';
+import { markItem } from './sentenceMarkers';
 
 export type RealLifeAccent = 'indigo' | 'emerald' | 'amber' | 'rose' | 'sky';
 
@@ -59,12 +60,6 @@ export interface RealLifeCollection extends Omit<RawCollection, 'sections'> {
   sentences: RealLifeSentence[];
 }
 
-function markFocus(text: string, focus: string): string {
-  const index = text.toLocaleLowerCase('en-US').indexOf(focus.toLocaleLowerCase('en-US'));
-  if (index < 0) return text;
-  return `${text.slice(0, index)}{{${text.slice(index, index + focus.length)}}}${text.slice(index + focus.length)}`;
-}
-
 /**
  * A line's id is `${collection.id}:${section.id}:${sentence.id}`, and every user's synced progress on the line is kept
  * under it (real-life-sentence:<id>). So an id stays with its line and never passes to another: lines may be
@@ -89,7 +84,7 @@ function buildCatalog(source: RawCatalog): RealLifeCollection[] {
           sectionId: section.id,
           sectionTitle: section.title,
           text: sentence.text,
-          markedText: markFocus(sentence.text, sentence.focus),
+          markedText: markItem(sentence.text, sentence.focus),
           focus: sentence.focus,
           position,
         };
