@@ -8,8 +8,8 @@ import { styleChangeReplay, toggleActionFor } from '../../services/audio/playbac
 
 /**
  * The review popup's audio: the word and sentence playback it starts, the audio session it holds open while
- * it plays, the example toggles, and the replay when Clear or Casual is clicked. `examplesList` is what E reads in
- * turn (the first two examples).
+ * it plays, the example toggles, Space, and the replay when Clear or Casual is clicked. `examplesList` is what E reads
+ * in turn (the first two examples); Space reads its first when nothing is playing.
  */
 export function usePopupPlayback(examplesList: readonly string[]) {
   const popupPlaybackRef = useRef<ReturnType<typeof speakNatural> | null>(null);
@@ -49,6 +49,20 @@ export function usePopupPlayback(examplesList: readonly string[]) {
     }
   }, [holdKeepAlive, speakPopupNatural]);
 
+  // Space: pauses or resumes the sentence playing, waits for a read still loading, and with nothing playing reads the
+  // first example. A sentence near its end pauses too, as Space has it on word cards and in sentence review.
+  const togglePlayback = useCallback(() => {
+    switch (getPlaybackState().status) {
+      case 'playing': pauseCurrent(); return;
+      case 'paused': resumeCurrent(); return;
+      case 'loading': return;
+      case 'idle':
+        if (!examplesList[0]) return;
+        holdKeepAlive();
+        speakPopupNatural(examplesList[0], { allowDownload: true });
+    }
+  }, [examplesList, holdKeepAlive, speakPopupNatural]);
+
   // E: read both example sentences in turn; press again to pause / resume.
   const readBothExamples = useCallback(() => {
     if (!examplesList.length) return;
@@ -82,5 +96,5 @@ export function usePopupPlayback(examplesList: readonly string[]) {
   // so cleanup only stops audio this popup actually started and is still responsible for.
   useEffect(() => () => { popupPlaybackRef.current?.stop(); }, []);
 
-  return { speakPopupWord, speakPopupNatural, holdKeepAlive, toggleSpeak, readBothExamples, replayInNewStyle };
+  return { speakPopupWord, holdKeepAlive, toggleSpeak, togglePlayback, readBothExamples, replayInNewStyle };
 }

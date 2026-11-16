@@ -9,7 +9,6 @@ import { SpeechStyleToggle } from './SpeechStyleToggle';
 import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
-import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/neuralTts';
 import { detectPlatform } from '../services/platform';
 import { acceptRemember } from '../services/reviewGestures';
 import { reviewIntervalDays } from '../services/reviewTime';
@@ -130,7 +129,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     [shortcutExamples],
   );
 
-  const { speakPopupWord, speakPopupNatural, holdKeepAlive, toggleSpeak, readBothExamples, replayInNewStyle } = usePopupPlayback(examplesList);
+  const { speakPopupWord, holdKeepAlive, toggleSpeak, togglePlayback, readBothExamples, replayInNewStyle } = usePopupPlayback(examplesList);
 
   // Auto-pronounce the word on each meaning switch. This MUST run as an effect (after the new sense has
   // committed), not synchronously inside goTo: switching remounts <VocabCardDisplay> via its `key`, and
@@ -282,13 +281,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       switch (action.type) {
         case 'prev': goPrev(); break;
         case 'next': goNext(); break;
-        case 'togglePlayback': {
-          const st = getPlaybackState().status;
-          if (st === 'playing') pauseCurrent();
-          else if (st === 'paused') resumeCurrent();
-          else if (examplesList[0]) { holdKeepAlive(); speakPopupNatural(examplesList[0], { allowDownload: true }); }
-          break;
-        }
+        case 'togglePlayback': togglePlayback(); break;
         case 'pronounce': if (vocab.word) { holdKeepAlive(); speakPopupWord(vocab.word); } break;
         case 'readExample': { const s = shortcutExamples[action.index]; if (s) toggleSpeak(s); break; }
         case 'readBoth': readBothExamples(); break;
@@ -301,7 +294,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
-  }, [vocab, currentSaved, handleGotIt, handleReset, handleDelete, handleSaveThis, examplesList, shortcutExamples, toggleSpeak, readBothExamples, goPrev, goNext, count, holdKeepAlive, speakPopupNatural, speakPopupWord]);
+  }, [vocab, currentSaved, handleGotIt, handleReset, handleDelete, handleSaveThis, shortcutExamples, toggleSpeak, togglePlayback, readBothExamples, goPrev, goNext, count, holdKeepAlive, speakPopupWord]);
 
   return (
     <div
