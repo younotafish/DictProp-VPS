@@ -52,7 +52,7 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onSelect, busy, disabl
 );
 
 type NotebookToolsPanelProps = NotebookToolsMenuProps & {
-  /** Runs before the chosen tool, to close the menu. */
+  /** Runs before the chosen tool, to close the menu with focus back on ⋯. */
   onChosen: () => void;
 };
 
@@ -65,7 +65,7 @@ export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
   forceSyncRunning, onGenerateAllSpeech, speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning,
   onFindDuplicates, onShowShortcuts, onChosen,
 }) => {
-  // Choosing a tool closes the menu first.
+  // Choosing a tool closes the menu first, so a sheet the tool opens finds focus on ⋯ and gives it back there.
   const choose = (tool: () => void) => () => {
     onChosen();
     tool();
@@ -103,6 +103,7 @@ export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
 export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = props => {
   const [showMaintenanceMenu, setShowMaintenanceMenu] = useState(false);
   const maintenanceMenuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
 
   useEffect(() => {
@@ -116,7 +117,7 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = props => {
       if (event.key !== 'Escape') return;
       event.preventDefault(); // closing the menu is all this Escape does
       setShowMaintenanceMenu(false);
-      maintenanceMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+      triggerRef.current?.focus();
     };
     document.addEventListener('mousedown', handleClick);
     document.addEventListener('keydown', handleKey);
@@ -126,9 +127,17 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = props => {
     };
   }, [showMaintenanceMenu]);
 
+  // Focus goes back to ⋯ before the chosen tool runs: the row that had it leaves with the menu, and a sheet the tool
+  // opens then takes ⋯ as its opener, so closing the sheet focuses ⋯ rather than the page.
+  const closeForTool = () => {
+    triggerRef.current?.focus();
+    setShowMaintenanceMenu(false);
+  };
+
   return (
     <div className="relative shrink-0" ref={maintenanceMenuRef}>
       <button
+        ref={triggerRef}
         onClick={() => setShowMaintenanceMenu(open => !open)}
         className="w-11 h-11 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
         aria-label="Notebook tools"
@@ -140,7 +149,7 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = props => {
       </button>
       {showMaintenanceMenu && (
         <div id={panelId} className="absolute right-0 top-full mt-1 w-64 max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-          <NotebookToolsPanel {...props} onChosen={() => setShowMaintenanceMenu(false)} />
+          <NotebookToolsPanel {...props} onChosen={closeForTool} />
         </div>
       )}
     </div>

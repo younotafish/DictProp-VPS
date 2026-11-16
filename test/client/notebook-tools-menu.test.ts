@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createElement, type ComponentProps } from 'react';
+import { createElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { NotebookToolsPanel } from '../../views/notebook/NotebookToolsMenu.tsx';
 
@@ -62,4 +62,29 @@ test('while a batch import runs, its row is busy and disabled, so a second impor
   assert.match(row, /animate-spin/, 'the spinner takes the icon\'s place');
   assert.doesNotMatch(row, /lucide-list-plus/);
   assert.match(renderPanel(), /lucide-list-plus/, 'the row\'s own icon, while no import runs');
+});
+
+test('a chosen tool runs after the menu closes with focus back on ⋯, so the sheet it opens gives focus back there', () => {
+  // The panel uses no hooks, so calling it returns its elements: each row's onSelect is the choice a click makes.
+  const calls: string[] = [];
+  const tool = (name: string) => () => { calls.push(name); };
+  const panel = NotebookToolsPanel({
+    offline: false, onAnalyzeText: tool('Analyze text'), onBatchImport: tool('Batch import'), batchImportRunning: false,
+    onImportJSON: tool('Import JSON'), onDownloadOfflineImages: tool('Download image pack'), onForceSync: tool('Sync now'),
+    forceSyncRunning: false, onGenerateAllSpeech: tool('Generate speech cache'), speechGenerationRunning: false,
+    onRestoreImagesToServer: tool('Restore server images'), imageRestoreRunning: false,
+    onFindDuplicates: tool('Merge duplicates'), onShowShortcuts: tool('Gestures & shortcuts'),
+    onChosen: () => { calls.push('menu closed, focus on ⋯'); },
+  }) as ReactNode;
+  const rows: ReactElement<{ label: string; onSelect: () => void }>[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!isValidElement<Record<string, unknown>>(node)) return;
+    if (typeof node.props.onSelect === 'function') rows.push(node as ReactElement<{ label: string; onSelect: () => void }>);
+    walk(node.props.children);
+  };
+  walk(panel);
+  assert.equal(rows.length, 9);
+  for (const row of rows) row.props.onSelect();
+  assert.deepEqual(calls, rows.flatMap(row => ['menu closed, focus on ⋯', row.props.label]));
 });
