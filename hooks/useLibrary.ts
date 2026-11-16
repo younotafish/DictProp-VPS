@@ -103,7 +103,7 @@ export function useLibrary(userId: string) {
     const result = await saveItems(toPush);
     const next = updateItems(items => applyServerSave(items, toPush, result));
     await saveData(next, userId);
-    for (const [id, reason] of result.rejected ?? []) {
+    for (const [id, reason] of result.rejected) {
       const item = toPush.find(candidate => candidate.data.id === id);
       if (item) refused.set(id, getItemContentHash(item));
       logError(`The server refused item ${id}, which stays on this device until it changes: ${reason}`);
