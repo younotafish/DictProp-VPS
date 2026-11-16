@@ -130,7 +130,7 @@ async function retry(command, args) {
       attempt += 1;
       const message = error instanceof Error ? error.message : String(error);
       if (attempt >= retryLimit) {
-        throw new Error(`quality command failed ${attempt} time(s); giving up: ${message}`);
+        throw new Error(`quality command failed ${attempt} time(s); giving up: ${message}`, { cause: error });
       }
       process.stderr.write(`[${new Date().toISOString()}] quality command failed (attempt ${attempt}); retrying in ${retryDelaySeconds}s: ${message}\n`);
       await sleep(retryDelaySeconds * 1_000);
