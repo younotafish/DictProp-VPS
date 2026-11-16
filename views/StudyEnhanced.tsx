@@ -49,9 +49,8 @@ import { clearStoredStudySession, readStoredStudySession, writeStoredStudySessio
 
 interface StudyEnhancedProps {
   /** The signed-in user, whose review outbox tells when a grade has reached the server, and whose session record a
-   *  reload brings back. Optional until App passes it; without it the receipt never says a grade is waiting, and a
-   *  session doesn't survive a reload. */
-  userId?: string;
+   *  reload brings back. */
+  userId: string;
   items: StoredItem[];
   /** The review history, and whether a load of it has succeeded yet (useReviewHistory). */
   reviewHistory: ReviewHistory & { loaded?: boolean };
@@ -63,8 +62,8 @@ interface StudyEnhancedProps {
   onUndoReview: (eventId: string) => Promise<void>;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
   /** Opens the card view on `groups` (App's handleViewStoredItem): the summary's missed words open their cards
-   *  through it. Optional until App passes it; without it they're only listed. */
-  onViewCards?: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
+   *  through it. */
+  onViewCards: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
   interactionLocked?: boolean;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
@@ -86,9 +85,9 @@ const UNDO_ERROR_MS = 4_000;
 /** How often the receipt looks for a waiting grade to have left the review outbox. */
 const OUTBOX_RECHECK_MS = 3_000;
 
-/** Whether a review is still in the user's outbox, not yet on the server. Without a user it can't tell, so it says no. */
-const isQueuedReview = (userId: string | undefined, eventId: string): boolean =>
-  !!userId && readPendingReviewMutations(userId).some(mutation => mutation.event.id === eventId);
+/** Whether a review is still in the user's outbox, not yet on the server. */
+const isQueuedReview = (userId: string, eventId: string): boolean =>
+  readPendingReviewMutations(userId).some(mutation => mutation.event.id === eventId);
 
 const revealAnswer = (current: StudySession | null): StudySession | null => current ? { ...current, revealed: true } : null;
 
@@ -96,8 +95,8 @@ const revealAnswer = (current: StudySession | null): StudySession | null => curr
  * The session this user had going on this device before a reload, from its record: at the card it was on, unrevealed,
  * when the record is theirs, under six hours old and has a card left. A record that can't be taken up is cleared.
  */
-function restoreSession(userId: string | undefined, items: readonly StoredItem[], now: number): StudySession | null {
-  if (!userId || items.length === 0) return null;
+function restoreSession(userId: string, items: readonly StoredItem[], now: number): StudySession | null {
+  if (items.length === 0) return null;
   const raw = readStoredStudySession();
   if (raw === null) return null;
   const record = decodeStudySession(raw, userId, now);
@@ -148,7 +147,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // or shown. The newest write wins across tabs. A restored session is already written.
   const recordedRef = useRef(session);
   useEffect(() => {
-    if (!session || !userId || !recordChanged(recordedRef.current, session)) return;
+    if (!session || !recordChanged(recordedRef.current, session)) return;
     recordedRef.current = session;
     writeStoredStudySession(encodeStudySession(session, userId, Date.now()));
   }, [session, userId]);
@@ -293,7 +292,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // comes back to the same card, revealed; a Got it given there counts, and the session moves past the card, as it
   // does past any card reviewed elsewhere.
   const openCard = () => {
-    if (!currentItem || !onViewCards) return;
+    if (!currentItem) return;
     const { group, index } = openCardGroup(currentItem, items);
     onViewCards([group], 0, index);
   };
@@ -392,9 +391,9 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       const summary = summarizeSession(session);
       // The missed words still in the library; each opens the card view with them all as its list.
       const missedItems = summary.missedIds.flatMap(id => itemsById.get(id) ?? []);
-      const openMissed = onViewCards && ((index: number) => onViewCards(
+      const openMissed = (index: number) => onViewCards(
         missedItems.map(item => ({ title: getItemTitle(item), items: [item] })), index, 0,
-      ));
+      );
       return (
         <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-[calc(var(--nav-h,95px)+1rem)]">
           <StudySummary
@@ -429,7 +428,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           onFooterGrade={footerGrade}
           onTypeAnswer={typedAnswer => setSession(current => current ? { ...current, typedAnswer } : null)}
           onOpenExampleSentence={onOpenExampleSentence}
-          onOpenCard={onViewCards && openCard}
+          onOpenCard={openCard}
         />
       </div>
     );

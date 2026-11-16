@@ -180,9 +180,9 @@ test('the study screen takes a session up at its card after a reload, and clears
   t.after(() => { Reflect.deleteProperty(globalThis, 'localStorage'); });
   t.mock.method(Date, 'now', () => NOW);
   const items = ['a', 'b', 'c', 'd'].map(card);
-  const render = (userId?: string) => renderToStaticMarkup(createElement(StudyEnhanced, {
+  const render = (userId: string) => renderToStaticMarkup(createElement(StudyEnhanced, {
     userId, items, reviewHistory: { recent: [], olderTimes: [], olderCount: 0 },
-    onReview: async () => true, onUndoReview: async () => {}, onOpenExampleSentence: () => {},
+    onReview: async () => true, onUndoReview: async () => {}, onOpenExampleSentence: () => {}, onViewCards: () => {},
   }));
   storage.setItem(STUDY_SESSION_KEY, encodeStudySession(session(), USER, NOW - HOUR / 2));
 
@@ -192,9 +192,7 @@ test('the study screen takes a session up at its card after a reload, and clears
   assert.match(restored, />word-c</);
   assert.match(restored, /<\/svg> Show answer<\/button>/);
 
-  // Without a user the record isn't read; another user's record goes.
-  assert.match(render(), /Today&#x27;s Study/);
-  assert.notEqual(storage.getItem(STUDY_SESSION_KEY), null);
+  // Another user's record goes.
   assert.match(render('user-2'), /Today&#x27;s Study/);
   assert.equal(storage.getItem(STUDY_SESSION_KEY), null);
 
@@ -203,7 +201,7 @@ test('the study screen takes a session up at its card after a reload, and clears
   const reviewedElsewhere = items.map(item => ({ ...item, srs: { ...item.srs, totalReviews: 1, lastReviewDate: NOW - 60_000 } }));
   assert.match(renderToStaticMarkup(createElement(StudyEnhanced, {
     userId: USER, items: reviewedElsewhere, reviewHistory: { recent: [], olderTimes: [], olderCount: 0 },
-    onReview: async () => true, onUndoReview: async () => {}, onOpenExampleSentence: () => {},
+    onReview: async () => true, onUndoReview: async () => {}, onOpenExampleSentence: () => {}, onViewCards: () => {},
   })), /Today&#x27;s Study/);
   assert.equal(storage.getItem(STUDY_SESSION_KEY), null);
 });
