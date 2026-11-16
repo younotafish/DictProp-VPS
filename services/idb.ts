@@ -1,7 +1,8 @@
-import { warn } from './logger';
+import { log, warn } from './logger';
 
 // The browser database that holds this device's library and its pictures: opening it, whether it works here,
-// and the request helpers the stores share (services/libraryStore.ts, services/imageStore.ts).
+// and the request helpers the stores share (services/libraryStore.ts, services/imageStore.ts). Also the request
+// that the browser keep the origin's storage, this database's and the audio cache's alike.
 
 const DB_NAME = 'PopDictDB';
 const DB_VERSION = 4;
@@ -128,3 +129,17 @@ export const transactionDone = (tx: IDBTransaction): Promise<void> => new Promis
   tx.onerror = () => reject(tx.error);
   tx.onabort = () => reject(tx.error);
 });
+
+/**
+ * Asks the browser to keep this origin's storage (the library, its pictures and the audio cache) when space runs
+ * low, so it isn't evicted under pressure. Best-effort: a no-op where the API is missing or the storage is already
+ * kept, and a denial or a failure changes nothing. App calls it once at launch.
+ */
+export const requestPersistentStorage = async (): Promise<void> => {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.persist || !navigator.storage.persisted) return;
+    if (await navigator.storage.persisted()) return; // already durable
+    const granted = await navigator.storage.persist();
+    log(`Storage: persistent storage ${granted ? 'granted' : 'denied'}`);
+  } catch { /* ignore */ }
+};

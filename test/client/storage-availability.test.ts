@@ -79,3 +79,38 @@ test('a library loaded from memory stays there until a load reads the stored cop
   await saveData([item('stored')], 'memory-user');
   assert.deepEqual((await loadData('memory-user')).items.map(value => value.data.id), ['stored'], 'once read, the library is stored again');
 });
+
+test('launch asks the browser to keep this origin’s storage only while it isn’t kept, and no answer or failure matters', async () => {
+  const { requestPersistentStorage } = await import('../../services/idb.ts');
+  const asked: string[] = [];
+  const storageManager = (persisted: () => Promise<boolean>, persist: () => Promise<boolean> = async () => true) => ({
+    persisted: () => { asked.push('persisted?'); return persisted(); },
+    persist: () => { asked.push('persist'); return persist(); },
+  });
+  const install = (storage: unknown) => Object.defineProperty(navigator, 'storage', { configurable: true, value: storage });
+  try {
+    install(storageManager(async () => false));
+    await requestPersistentStorage();
+    assert.deepEqual(asked.splice(0), ['persisted?', 'persist'], 'storage not kept yet is asked for');
+
+    install(storageManager(async () => true));
+    await requestPersistentStorage();
+    assert.deepEqual(asked.splice(0), ['persisted?'], 'storage already kept isn’t asked for again');
+
+    install(storageManager(async () => false, async () => false));
+    await requestPersistentStorage();
+    install(storageManager(async () => false, async () => { throw new DOMException('Denied', 'NotAllowedError'); }));
+    await requestPersistentStorage();
+    install(storageManager(async () => { throw new Error('unavailable'); }));
+    await requestPersistentStorage();
+    assert.deepEqual(asked.splice(0), ['persisted?', 'persist', 'persisted?', 'persist', 'persisted?'], 'a denial or a failure is swallowed');
+
+    install(undefined);
+    await requestPersistentStorage();
+    install({ persisted: () => { asked.push('persisted?'); return Promise.resolve(false); } });
+    await requestPersistentStorage();
+    assert.deepEqual(asked, [], 'a browser without the API is left alone');
+  } finally {
+    delete (navigator as { storage?: unknown }).storage;
+  }
+});

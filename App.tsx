@@ -12,6 +12,7 @@ import { AppBanners, AppStatusPills } from './components/AppStatus';
 import { useFrozenWhile } from './hooks/useStableValue';
 import { warn } from './services/logger';
 import { installDebugItems } from './services/debugItems';
+import { requestPersistentStorage } from './services/idb';
 import { useAuthState } from './hooks/useAuthState';
 import { useLibrary } from './hooks/useLibrary';
 import { loadFsrsScheduler, useReviewOutbox } from './hooks/useReviewOutbox';
@@ -396,9 +397,7 @@ function SignedInApp({ user, authState }: { user: AuthUser; authState: AuthState
 const App: React.FC = () => {
   const authState = useAuthState();
 
-  useEffect(() => {
-    void import('./services/audioCache').then(({ requestPersistentStorage }) => requestPersistentStorage());
-  }, []);
+  useEffect(() => { void requestPersistentStorage(); }, []);
 
   // Fetch screen code ahead of use. A screen whose code isn't in yet shows its fallback for at least 300 ms
   // (React holds a fallback that long once it's shown), so the first screen's code is fetched while the

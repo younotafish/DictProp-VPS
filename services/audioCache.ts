@@ -7,7 +7,7 @@
  * worker deliberately skips /api/*, so nothing durable held the audio. On iOS/iPadOS that meant every
  * launch re-downloaded every clip from the 1-vCPU VPS — a multi-minute wait before sentences could play.
  *
- * This store gives audio the durability images already have (services/storage.ts): a clip fetched once
+ * This store gives audio the durability images already have (services/imageStore.ts): a clip fetched once
  * is written through to here, so the NEXT launch loads it from local disk (sub-ms) with no server round
  * trip. Because keys are content hashes, a cached blob is valid forever — there is no invalidation:
  * changed text = a new key = fetched once; the old key simply goes unused and ages out via LRU.
@@ -25,8 +25,8 @@
  * no-ops (reads return null, writes are dropped) and callers fall straight through to the network — i.e.
  * exactly the behaviour before this cache existed. Writes never block or break playback.
  */
-import type { WordTiming } from './api';
-import { log, warn } from './logger';
+import type { WordTiming } from './api/tts';
+import { warn } from './logger';
 
 const DB_NAME = 'DictPropAudioCache';
 const DB_VERSION = 1;
@@ -330,18 +330,4 @@ export const markAudioUsed = async (keys: readonly string[]): Promise<void> => {
       tx.onabort = () => resolve();
     });
   } catch { /* best-effort */ }
-};
-
-// ── Misc ─────────────────────────────────────────────────────────────────────
-/**
- * Ask the browser to mark our storage persistent (best-effort) so it isn't evicted under pressure.
- * Safe no-op where the API is missing or the grant is denied. Call once at app start.
- */
-export const requestPersistentStorage = async (): Promise<void> => {
-  try {
-    if (typeof navigator === 'undefined' || !navigator.storage?.persist || !navigator.storage.persisted) return;
-    if (await navigator.storage.persisted()) return; // already durable
-    const granted = await navigator.storage.persist();
-    log(`🔊 Audio cache: persistent storage ${granted ? 'granted' : 'denied'}`);
-  } catch { /* ignore */ }
 };
