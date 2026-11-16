@@ -23,12 +23,12 @@ const comparison = (words: string[]): ComparisonResult => ({
 const run = (actions: QueueAction[], start: QueueItem[] = []): QueueItem[] => actions.reduce(searchQueueReducer, start);
 
 const add = (id: string, query: string, extra: Partial<Extract<QueueAction, { type: 'add-search' }>> = {}): QueueAction =>
-  ({ type: 'add-search', id, query, forceAI: false, ...extra });
+  ({ type: 'add-search', id, query, forceAI: false, openOnReady: 'saved-hit', ...extra });
 const start = (id: string, at = 1_000): QueueAction => ({ type: 'start', id, at });
 
-test('a lookup joins the queue as pending and unseen, keeping its refresh flag and analysis mode', () => {
-  assert.deepEqual(run([add('q-1', 'gamut', { analyzeMode: 'batch' })]), [
-    { id: 'q-1', kind: 'lookup', query: 'gamut', status: 'pending', results: null, seen: false, forceAI: false, analyzeMode: 'batch' },
+test('a lookup joins the queue as pending and unseen, keeping its refresh flag, analysis mode and open policy', () => {
+  assert.deepEqual(run([add('q-1', 'gamut', { analyzeMode: 'batch', openOnReady: 'never' })]), [
+    { id: 'q-1', kind: 'lookup', query: 'gamut', status: 'pending', results: null, seen: false, forceAI: false, analyzeMode: 'batch', openOnReady: 'never' },
   ]);
 });
 
@@ -103,7 +103,7 @@ test('an in-place refresh keeps the old result showing until the fresh one repla
   const refreshed = searchQueueReducer(queue, { type: 'refresh-ready', id: 'q-1', query: 'run out', results: fresh });
   assert.deepEqual(
     { ...refreshed[0], results: refreshed[0].results?.query },
-    { id: 'q-1', kind: 'lookup', query: 'run out', status: 'ready', results: 'run out', seen: false, forceAI: false, analyzeMode: 'batch', refreshing: false },
+    { id: 'q-1', kind: 'lookup', query: 'run out', status: 'ready', results: 'run out', seen: false, forceAI: false, analyzeMode: 'batch', openOnReady: 'saved-hit', refreshing: false },
   );
 
   const failed = searchQueueReducer(queue, { type: 'refresh-fail', id: 'q-1' });

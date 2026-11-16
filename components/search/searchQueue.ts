@@ -20,8 +20,10 @@ export interface QueueItem {
   comparison?: ComparisonResult | null;  // compare result
   forceAI?: boolean; // refresh: re-run the AI, bypassing the saved-card reuse
   refreshing?: boolean; // in-place refresh in flight: keep showing the old results with a spinner
-  analyzeMode?: 'batch'; // expressions auto-extracted from a sentence search: analyze as a pre-identified
-                         // unit (don't re-split multi-word idioms) and don't auto-open the popup.
+  analyzeMode?: 'batch'; // analyze as one entry, without re-splitting a multi-word idiom: an expression a scan found
+                         // in a sentence, or a term picked on screen that reads like a sentence
+  /** lookup: when its result opens in the sheet by itself (see OpenPolicy). */
+  openOnReady?: OpenPolicy;
   /** When its request went out ('start'). A saved word is answered without one, so it has none. */
   startedAt?: number;
   /** When the lookup was last asked for again while it was still running. */
@@ -37,11 +39,18 @@ export interface QueueItem {
   finishedAt?: number;
 }
 
+/**
+ * When a lookup's result opens in the sheet by itself: 'saved-hit' only when the library answers it at once (a lookup
+ * asked for directly), 'any' as soon as it's ready (a refresh), 'never' (an expression a scan found). Other results
+ * wait for the user, on the search button.
+ */
+export type OpenPolicy = 'saved-hit' | 'any' | 'never';
+
 export type QueueAction =
   /** A lookup of `query` (trimmed). A refresh (forceAI) replaces every entry for the same query; otherwise a
    *  duplicate that hasn't failed leaves the queue as it is, and a failed lookup of the query gives way to it. An
    *  expression a scan found carries the scan's id. Scans are never duplicates of a lookup, nor replaced by one. */
-  | { type: 'add-search'; id: string; query: string; forceAI: boolean; analyzeMode?: 'batch'; scanId?: string }
+  | { type: 'add-search'; id: string; query: string; forceAI: boolean; analyzeMode?: 'batch'; scanId?: string; openOnReady: OpenPolicy }
   /** A comparison of `words` (trimmed, two or more): ready at once when it was saved before. */
   | { type: 'add-compare'; id: string; words: string[]; cached: ComparisonResult | null }
   /** A scan of the sentence `query` (trimmed): nothing while a scan of it is still running; a failed one gives way. */
@@ -82,14 +91,14 @@ export const hasLiveDuplicate = (queue: readonly QueueItem[], query: string): bo
 export function searchQueueReducer(queue: QueueItem[], action: QueueAction): QueueItem[] {
   switch (action.type) {
     case 'add-search': {
-      const { id, query, forceAI, analyzeMode, scanId } = action;
+      const { id, query, forceAI, analyzeMode, scanId, openOnReady } = action;
       if (!forceAI && hasLiveDuplicate(queue, query)) return queue;
       const replaces = forceAI
         ? (item: QueueItem) => item.kind !== 'scan' && sameQuery(item.query, query)
         : (item: QueueItem) => item.kind === 'lookup' && item.status === 'failed' && sameQuery(item.query, query);
       return [
         ...queue.filter(item => !replaces(item)),
-        { id, kind: 'lookup', query, status: 'pending', results: null, seen: false, forceAI, analyzeMode, ...(scanId ? { scanId } : {}) },
+        { id, kind: 'lookup', query, status: 'pending', results: null, seen: false, forceAI, analyzeMode, openOnReady, ...(scanId ? { scanId } : {}) },
       ];
     }
     case 'add-compare': {

@@ -7,17 +7,23 @@ import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetry
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
-import { subscribeSearchRequests } from '../../services/searchRequests';
+import { subscribeSearchRequests, type CompareRequest, type LookupRequest } from '../../services/searchRequests';
+import { routeLookup } from './searchRouting';
 import { runLookup } from './runLookup';
 import {
   createRefreshLog, findLiveComparison, findLiveLookup, isBusyOf, isQueued, queueUpdate, readyItemsOf, runningCountOf,
-  savedCardsResult, searchQueueReducer, unseenReadyCount, type QueueAction, type QueueItem,
+  savedCardsResult, searchQueueReducer, unseenReadyCount, type OpenPolicy, type QueueAction, type QueueItem,
 } from './searchQueue';
 
 let queueIdCounter = 0;
 
+/** What a lookup or a comparison that needs the network says when the device is offline. */
+const OFFLINE_LOOKUP = "You're offline, so only saved words can be looked up.";
+const OFFLINE_COMPARE = "You're offline, so only saved comparisons can be opened.";
+
 interface Options {
   findSavedByWord: (word: string) => VocabCard[];
+  isOnline: boolean;
   /** Replace an already-saved word's card(s) with a freshly re-run AI result (refresh). Keeps SRS. */
   onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
   /** A finished comparison — persist it (server + local) so it shows on each involved word's page. */
@@ -38,53 +44,89 @@ interface Options {
  * expression it found.
  */
 export function useSearchQueue({
-  findSavedByWord, onRefreshReplace, onCompareReady, openWhenReady, showError, clearError, showStatus,
+  findSavedByWord, isOnline, onRefreshReplace, onCompareReady, openWhenReady, showError, clearError, showStatus,
 }: Options) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
   const queueRef = useLatest(queue); // the latest queue, for checks outside a render (asking again, a superseded request)
   const [refreshLog] = useState(createRefreshLog); // the forced lookups asked for, so an in-place refresh knows it was replaced
 
-  // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
-  // replace any existing queue entry for it so the fresh result supersedes the old/reused one.
-  // Asking again for a word whose result is ready opens it, and for one still running says so instead of sending it
-  // again. An expression found in a sentence never opens by itself, so its repeat is only skipped.
-  const enqueue = useCallback((q: string, opts?: { forceAI?: boolean; analyzeMode?: 'batch'; scanId?: string }) => {
+  // Add a lookup of `q` to the queue, to be analyzed (see processItem) and opened by itself as `openOnReady` says.
+  // forceAI = a refresh: re-run the AI even if the word is saved, and replace any existing queue entry for it so the
+  // fresh result supersedes the old/reused one. A duplicate of a lookup still running or ready is skipped.
+  const enqueue = useCallback((q: string, opts: { forceAI?: boolean; analyzeMode?: 'batch'; scanId?: string; openOnReady: OpenPolicy }) => {
     const trimmed = q.trim();
     if (!trimmed) return;
-    const forceAI = !!opts?.forceAI;
-    const analyzeMode = opts?.analyzeMode;
-    const live = forceAI || analyzeMode ? undefined : findLiveLookup(queueRef.current, trimmed);
-    if (live?.status === 'ready') {
-      log('🔍 Queue: opening "' + trimmed + '", already looked up');
-      openWhenReady(live.id);
-      return;
-    }
-    if (live) {
-      log('🔍 Queue: "' + trimmed + '" is still being looked up');
-      setQueue(queueUpdate({ type: 'repeat-asked', id: live.id, at: Date.now() }));
-      showStatus(`Still looking up “${trimmed}”…`);
-      return;
-    }
+    const forceAI = !!opts.forceAI;
+    const { analyzeMode, scanId, openOnReady } = opts;
     const id = `q-${++queueIdCounter}`;
     if (forceAI) refreshLog.note(trimmed);
     setQueue(prev => {
-      const next = searchQueueReducer(prev, { type: 'add-search', id, query: trimmed, forceAI, analyzeMode, scanId: opts?.scanId });
+      const next = searchQueueReducer(prev, { type: 'add-search', id, query: trimmed, forceAI, analyzeMode, scanId, openOnReady });
       if (next === prev) log('🔍 Queue: skipping duplicate "' + trimmed + '"');
       else log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : '') + (analyzeMode ? ' (' + analyzeMode + ')' : ''));
       return next;
     });
-  }, [queueRef, refreshLog, openWhenReady, showStatus]);
+  }, [refreshLog]);
+
+  // A typed sentence is first scanned for its uncommon expressions, and each is then queued for its OWN full analysis
+  // (batch mode), so they show up in the popup exactly like manually-searched words — to browse and save. Chinese is
+  // translated to English inside the scan. The scan is a queue entry of its own (see processItem), so overlapping
+  // scans each keep the button busy.
+  const scan = useCallback((q: string) => {
+    const id = `q-${++queueIdCounter}`;
+    setQueue(prev => {
+      const next = searchQueueReducer(prev, { type: 'add-scan', id, query: q });
+      log(next === prev ? '🔍 Queue: already scanning "' + q + '"' : '🔍 Queue: scanning "' + q + '"');
+      return next;
+    });
+  }, []);
+
+  // A lookup asked for anywhere: typed in the box, picked on screen, or a refresh. Asking again for a word whose result
+  // is ready opens it, and for one still running says so instead of sending it again; neither needs the network.
+  // Otherwise routeLookup decides how it runs, the same way for every entry point: a direct lookup opens by itself
+  // only when the library answers it, a refresh as soon as it's ready. Returns false when the device is offline and
+  // the lookup needs the network, after saying so.
+  const findSavedByWordRef = useLatest(findSavedByWord);
+  const isOnlineRef = useLatest(isOnline);
+  const lookUp = useCallback((request: LookupRequest): boolean => {
+    const query = request.query.trim();
+    if (!query) return true;
+    const live = request.forceAI ? undefined : findLiveLookup(queueRef.current, query);
+    if (live?.status === 'ready') {
+      log('🔍 Queue: opening "' + query + '", already looked up');
+      openWhenReady(live.id);
+      return true;
+    }
+    if (live) {
+      log('🔍 Queue: "' + query + '" is still being looked up');
+      setQueue(queueUpdate({ type: 'repeat-asked', id: live.id, at: Date.now() }));
+      showStatus(`Still looking up “${query}”…`);
+      return true;
+    }
+    const route = routeLookup(request, {
+      online: isOnlineRef.current,
+      saved: findSavedByWordRef.current(query).length > 0,
+      sentence: looksLikeSentence(query),
+    });
+    if (route.kind === 'offline') {
+      showError(OFFLINE_LOOKUP);
+      return false;
+    }
+    if (route.kind === 'scan') scan(query);
+    else enqueue(query, { forceAI: route.forceAI, analyzeMode: route.analyzeMode, openOnReady: route.forceAI ? 'any' : 'saved-hit' });
+    return true;
+  }, [queueRef, isOnlineRef, findSavedByWordRef, openWhenReady, showStatus, showError, scan, enqueue]);
 
   // OAuth redirects preserve sessionStorage. Resume the exact failed query once the user signs in again.
   useEffect(() => {
     const retry = consumeSearchRetry();
-    if (retry) enqueue(retry.query, { forceAI: true, analyzeMode: retry.analyzeMode });
+    if (retry) enqueue(retry.query, { forceAI: true, analyzeMode: retry.analyzeMode, openOnReady: 'any' });
   }, [enqueue]);
 
-  // Add a comparison to the SAME queue as searches. With a cachedResult (already saved) it drops in as
-  // 'ready' and auto-opens; otherwise it's 'pending' and generates in the background like a search.
-  const enqueueCompare = useCallback((words: string[], cachedResult?: ComparisonResult | null) => {
+  // Add a comparison to the SAME queue as searches. With a saved result it drops in as 'ready' and opens at once;
+  // otherwise it's 'pending' and generates in the background like a search, which needs the network.
+  const enqueueCompare = useCallback(({ words, cached }: CompareRequest) => {
     const clean = words.map(w => w.trim()).filter(Boolean);
     if (clean.length < 2) return;
     const key = comparisonKey(clean);
@@ -93,36 +135,19 @@ export function useSearchQueue({
       if (existing.status === 'ready') openWhenReady(existing.id); // already done → just open it
       return; // already queued/generating → don't duplicate
     }
-    const id = `q-${++queueIdCounter}`;
-    log('⚖️ Queue: comparing "' + clean.join(' vs ') + '"' + (cachedResult ? ' (saved)' : ''));
-    setQueue(queueUpdate({ type: 'add-compare', id, words: clean, cached: cachedResult ?? null }));
-    if (cachedResult) openWhenReady(id); // saved comparison → open instantly in the popup
-  }, [queueRef, openWhenReady]);
-
-  // Typed-search entry. A single word/short phrase analyzes directly (current behavior). A full sentence
-  // is first scanned for its uncommon expressions, and each is then queued for its OWN full analysis
-  // (batch mode), so they show up in the popup exactly like manually-searched words — to browse and save.
-  // Chinese is translated to English inside the scan; a Chinese word/short phrase still analyzes directly.
-  // The scan is a queue entry of its own (see processItem), so overlapping scans each keep the button busy.
-  const submitQuery = useCallback((raw: string) => {
-    const q = raw.trim();
-    if (!q) return;
-    if (!looksLikeSentence(q)) {
-      enqueue(q); // word / short phrase → current direct path (one card set)
+    if (!cached && !isOnlineRef.current) {
+      showError(OFFLINE_COMPARE);
       return;
     }
     const id = `q-${++queueIdCounter}`;
-    setQueue(prev => {
-      const next = searchQueueReducer(prev, { type: 'add-scan', id, query: q });
-      log(next === prev ? '🔍 Queue: already scanning "' + q + '"' : '🔍 Queue: scanning "' + q + '"');
-      return next;
-    });
-  }, [enqueue]);
+    log('⚖️ Queue: comparing "' + clean.join(' vs ') + '"' + (cached ? ' (saved)' : ''));
+    setQueue(queueUpdate({ type: 'add-compare', id, words: clean, cached }));
+    if (cached) openWhenReady(id); // saved comparison → open instantly in the popup
+  }, [queueRef, isOnlineRef, openWhenReady, showError]);
 
   // What every AI lookup reads and changes beyond its own queue entry (see runLookup). The library is read through a
   // ref, as it is when a request settles, not as it was when the request started. The audio is generated if it
   // isn't cached yet, so the first play is instant.
-  const findSavedByWordRef = useLatest(findSavedByWord);
   const lookupEffects = useMemo(() => ({
     analyze: (query: string, analyzeMode?: 'batch') => analyzeInput(query, analyzeMode ? { mode: analyzeMode } : undefined),
     savedCards: (word: string) => findSavedByWordRef.current(word),
@@ -151,7 +176,7 @@ export function useSearchQueue({
         const n = words.length;
         const noun = n === 1 ? 'expression' : 'expressions';
         showStatus(english ? `“${english}” — analyzing ${n} ${noun}…` : `Found ${n} ${noun} — analyzing…`);
-        for (const w of words) enqueue(w.word, { analyzeMode: 'batch', scanId: itemId });
+        for (const w of words) enqueue(w.word, { analyzeMode: 'batch', scanId: itemId, openOnReady: 'never' });
       }).catch(err => {
         warn('🔍 Sentence scan failed "' + q + '":', (err as Error | undefined)?.message);
         setQueue(queueUpdate({ type: 'fail', id: itemId }));
@@ -183,7 +208,7 @@ export function useSearchQueue({
     if (savedVocabs.length > 0) {
       log('🔍 Queue: "' + item.query + '" already saved (' + savedVocabs.length + ' meanings), skipping API');
       setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: savedCardsResult(itemId, item.query, savedVocabs, Date.now()) }));
-      if (!item.analyzeMode) openWhenReady(itemId); // direct DB hit auto-opens; sentence-expanded items just accumulate
+      if (item.openOnReady !== 'never') openWhenReady(itemId); // a direct lookup opens; a scan's expressions accumulate
       done();
       return;
     }
@@ -200,7 +225,7 @@ export function useSearchQueue({
       showResult: result => {
         clearError(); // a fresh success clears any lingering failure toast
         setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: result }));
-        if (item.forceAI) openWhenReady(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
+        if (item.openOnReady === 'any') openWhenReady(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
       },
       showFailure: () => setQueue(queueUpdate({ type: 'fail', id: itemId })),
     }).finally(done);
@@ -241,27 +266,26 @@ export function useSearchQueue({
     }
   }, [queue, processItem]);
 
-  // Listen for programmatic search triggers (e.g., from inline highlighted words)
-  useEffect(() => {
-    const handleTrigger = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      const q = detail?.query;
-      if (q && typeof q === 'string') {
-        enqueue(q, { forceAI: !!detail?.forceAI });
-      }
-    };
-    window.addEventListener('global-search', handleTrigger);
-    return () => window.removeEventListener('global-search', handleTrigger);
-  }, [enqueue]);
-
   // Requests from the rest of the app (services/searchRequests), including the ones made before the search loaded.
   // They go through refs, so the subscription lasts as long as the search does.
-  const enqueueRef = useLatest(enqueue);
+  const lookUpRef = useLatest(lookUp);
   const enqueueCompareRef = useLatest(enqueueCompare);
   useEffect(() => subscribeSearchRequests({
-    lookup: ({ query, forceAI }) => enqueueRef.current(query, { forceAI: !!forceAI }),
-    compare: ({ words, cached }) => enqueueCompareRef.current(words, cached),
-  }), [enqueueRef, enqueueCompareRef]);
+    lookup: request => { lookUpRef.current(request); },
+    compare: request => enqueueCompareRef.current(request),
+  }), [lookUpRef, enqueueCompareRef]);
+
+  // wave-2 adapter: remove in P3
+  // App's lookups (a tapped word, a term's button, a refresh) and the Notebook row's Refresh still arrive as this window
+  // event until they call requestLookup. Each one is an expression picked on screen, as their requests will say.
+  useEffect(() => {
+    const onWindowLookup = (e: Event) => {
+      const detail = (e as CustomEvent<{ query?: unknown; forceAI?: unknown } | null>).detail;
+      if (typeof detail?.query === 'string') lookUpRef.current({ query: detail.query, source: 'expression', forceAI: !!detail.forceAI });
+    };
+    window.addEventListener('global-search', onWindowLookup);
+    return () => window.removeEventListener('global-search', onWindowLookup);
+  }, [lookUpRef]);
 
   // Derived state — searches AND comparisons are both queue items, so every count of results includes both; a scan
   // running keeps the search busy without adding to the count.
@@ -272,5 +296,5 @@ export function useSearchQueue({
   // Applies a state change GlobalSearch makes itself: a dismissal, Clear all, a result shown.
   const updateQueue = useCallback((action: QueueAction) => setQueue(queueUpdate(action)), []);
 
-  return { queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, enqueue, submitQuery, refreshInPlace };
+  return { queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, enqueue, lookUp, refreshInPlace };
 }

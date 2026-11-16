@@ -17,7 +17,7 @@ import { useTimedMessage } from '../hooks/useTimedMessage';
 import {
   clampMeaning, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, stepMeaning, type SearchMode,
 } from './search/searchViewing';
-import { classifyEnqueue, openIndexForResults } from './search/searchQueue';
+import { openIndexForResults } from './search/searchQueue';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
@@ -124,9 +124,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [suggestions, onOpenSentence]);
 
   const {
-    queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, enqueue, submitQuery, refreshInPlace,
+    readyItems, unseenCount, runningCount, isBusy, updateQueue, enqueue, lookUp, refreshInPlace,
   } = useSearchQueue({
-    findSavedByWord, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showError, clearError, showStatus,
+    findSavedByWord, isOnline, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showError, clearError, showStatus,
   });
   const readyCount = readyItems.length;
 
@@ -231,20 +231,15 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }
   }, [mode]);
 
-  // Submit from input box — add to queue and switch to viewing once ready. Offline, a word asked for before still
-  // answers (its result opens, or it says it's still running), and so does a saved word (the queue reuses saved
-  // cards without the network); anything else needs the AI.
+  // Submit from input box: look the typed text up (see useSearchQueue's lookUp) and go back to the button, whose spinner
+  // shows the lookup running. Offline, a word asked for before or a saved word still answers; anything that needs the
+  // AI says so in the error toast, and the box keeps the text.
   const handleSubmit = useCallback(() => {
     const q = query.trim();
-    if (!q) return;
-    if (!isOnline && (looksLikeSentence(q) || (classifyEnqueue(queue, q) === 'new' && findSavedByWord(q).length === 0))) {
-      showError("You're offline, so only saved words can be looked up.");
-      return;
-    }
-    submitQuery(q);
+    if (!q || !lookUp({ query: q, source: 'text' })) return;
     setQuery('');
-    setMode('idle'); // Go back to idle — spinner shows on floating button
-  }, [query, queue, isOnline, submitQuery, findSavedByWord, showError]);
+    setMode('idle');
+  }, [query, lookUp]);
 
   // Save a single vocab
   const saveOneVocab = useCallback((vocab: VocabCard) => {
@@ -376,8 +371,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const q = failed.query; const mode = failed.analyzeMode; clearError();
     if (!q) return;
     // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
-    // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
-    if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else submitQuery(q);
+    // user query (word or sentence) is looked up again as typed (a sentence is scanned again).
+    if (mode) enqueue(q, { forceAI: true, analyzeMode: mode, openOnReady: 'any' }); else lookUp({ query: q, source: 'text' });
   };
 
   return (
