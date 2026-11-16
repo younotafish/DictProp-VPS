@@ -327,12 +327,14 @@ export function requestOf(item: QueueItem): SearchRequest {
 /**
  * What a reload would lose, in the order it was asked for: the lookups and comparisons still running or whose results
  * haven't been seen, and the scans still running (a finished scan's expressions are lookups of their own). Each goes
- * with when its request went out, or `now` for one that hasn't yet or never needed one.
+ * with when its request went out, or `now` for one that hasn't yet or never needed one. A refresh stays one only while
+ * it runs: once its result is in, its word's saved cards have been replaced, so it comes back as a plain lookup, which
+ * those cards answer, rather than replacing them again after every reload.
  */
 export const pendingRequestsOf = (queue: readonly QueueItem[], now: number): PendingRequest[] =>
   queue
     .filter(item => isRunning(item) || (item.status === 'ready' && item.kind !== 'scan' && !item.seen))
-    .map(item => ({ request: requestOf(item), at: item.startedAt ?? now }));
+    .map(item => ({ request: requestOf(isRunning(item) ? item : { ...item, forceAI: false }), at: item.startedAt ?? now }));
 
 /** The comparison of the word set `key` (a comparisonKey) that's queued, running or ready, if any. */
 export const findLiveComparison = (queue: readonly QueueItem[], key: string): QueueItem | undefined =>

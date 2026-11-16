@@ -480,6 +480,23 @@ test('a reload would lose the requests still running and the results not seen ye
   assert.deepEqual(pendingRequestsOf([], 0), []);
 });
 
+test('a refresh comes back from a reload as a refresh only while it runs, and once its result is in as a plain lookup', () => {
+  const asked = run([add('q-1', 'run the gamut', { forceAI: true, analyzeMode: 'batch', openOnReady: 'never' })]);
+  const refresh = { kind: 'analyze', query: 'run the gamut', analyzeMode: 'batch', forceAI: true } as const;
+  const lookup = { kind: 'analyze', query: 'run the gamut', analyzeMode: 'batch' } as const;
+  assert.deepEqual(pendingRequestsOf(asked, 5), [{ request: refresh, at: 5 }], 'queued');
+  const running = run([start('q-1', 1_000)], asked);
+  assert.deepEqual(pendingRequestsOf(running, 5), [{ request: refresh, at: 1_000 }], 'waiting on its answer');
+  const landed = run([{ type: 'search-ready', id: 'q-1', results: result('run the gamut') }], running);
+  assert.equal(landed[0].forceAI, true, 'the entry itself is still the refresh it was');
+  assert.deepEqual(pendingRequestsOf(landed, 5), [{ request: lookup, at: 1_000 }], 'its result in, not seen yet');
+  const refreshedInPlace = run([
+    { type: 'mark-seen', id: 'q-1' }, { type: 'refresh-start', id: 'q-1' },
+    { type: 'refresh-ready', id: 'q-1', query: 'run the gamut', results: result('run the gamut') },
+  ], landed);
+  assert.deepEqual(pendingRequestsOf(refreshedInPlace, 5), [{ request: lookup, at: 1_000 }], 'refreshed again in the sheet, then left unseen');
+});
+
 test('a lookup keeps the sentence it came from, through a refresh in place, but never in the request run again', () => {
   const queue = run([add('q-1', 'gamut', { context: 'It ran the gamut.' }), { type: 'search-ready', id: 'q-1', results: result('gamut') }]);
   assert.equal(queue[0].context, 'It ran the gamut.');
