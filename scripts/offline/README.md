@@ -19,7 +19,7 @@ Some scripts import server modules from `server/src` to share their contracts wi
 
 ## The cycle
 
-The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` starts `run-incremental-example-enrichment.sh` every six hours. The paths in the stages below are relative to the cycle's root, `data/offline-backfill/incremental-example-enrichment/`. Each publishing step waits until production has imported what it sent. When a stage fails without crashing, the runner logs it and usually carries on with the remaining stages, and the cycle then exits 1. To find where the runner calls a script, search the runner for the script's name.
+The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` starts `run-incremental-example-enrichment.sh` every six hours. The paths in the stages below are relative to the cycle's root, `data/offline-backfill/incremental-example-enrichment/`. Each publishing step waits until production has imported what it sent. When a stage fails without crashing, the runner logs it and usually carries on with the remaining stages, and the cycle then exits 1. When the model stops answering or the corpus export fails, the runner skips the stages left and goes on to the off-site backup and the summary, and the cycle exits 1 too. To find where the runner calls a script, search the runner for the script's name.
 
 1. **Guards.**
    - `vetted-checkout.sh` refuses to run code that differs from `vps/main`, or to run it on packages that differ from its lockfiles.
@@ -79,7 +79,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
   `scripts/offline/sweep-bridge-leftovers.sh [--dry-run] <wave-state-root>...`
 - `bridge-leftovers.mjs` — The sweep's decisions: which releases, cycle directories, waves and temp files count as leftovers.
   `node scripts/offline/bridge-leftovers.mjs <releases|local|temp-files> ...`
-- `check-structured-model.mjs` — Sends one small request with an image through `structured-model.mjs`. If it fails, the cycle stops before it exports anything.
+- `check-structured-model.mjs` — Sends one small request with an image through `structured-model.mjs`. If it fails, the cycle exports nothing and goes straight to the off-site backup.
   `node scripts/offline/check-structured-model.mjs`
 - `fetch-workflow-export.sh` — Fetches the encrypted artifact that a `sentence-backfill.yml` export run left and decrypts it, for that run only. It replaces the output only once the JSON parses, then deletes the artifact and the run's log.
   `GH_BIN=.tools/gh scripts/offline/fetch-workflow-export.sh <run-id> <corpus-export|sentence-export> <output.json>`
@@ -119,7 +119,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
   `node scripts/offline/prepare-sentence-images.mjs <sentence-export.json> <analysis-manifest.json> <output-directory> [model] [fallback-image-directory]...`
 - `bootstrap-mflux-runtime.sh` — Installs the pinned mflux runtime that the image loop renders with. Run it once.
   `scripts/offline/bootstrap-mflux-runtime.sh [runtime-root]`
-- `offsite-backup.sh` — Keeps encrypted copies of production's database on this Mac, in `data/offsite-backups/`. The runner calls it after the last stage, and a failed attempt fails the cycle. Once the newest copy is 162 hours old (`OFFSITE_BACKUP_INTERVAL_HOURS`), and only while production runs the required commit and `deploy-state.sh` finds nothing queued or running in `dictprop-production`, it dispatches `offsite-backup.yml`, downloads the artifact, checks it with `bridge-crypto.mjs verify`, which writes no plaintext, keeps it beside a `.json` sidecar, prunes to the newest three (`OFFSITE_BACKUP_KEEP`), and deletes the artifact and the run's log. A failed attempt leaves `.last-attempt`, and the next one waits a day. While the folder holds no copy, only a run by hand makes one: `OFFSITE_BACKUP_INTERVAL_HOURS=0` forces an attempt. Hold the cycle lock to run it. `ops/RESTORE.md` restores from a copy.
+- `offsite-backup.sh` — Keeps encrypted copies of production's database on this Mac, in `data/offsite-backups/`. The runner calls it last, after the last stage or once the model or the corpus export has failed, and a failed attempt fails the cycle. Once the newest copy is 162 hours old (`OFFSITE_BACKUP_INTERVAL_HOURS`), and only while production runs the required commit and `deploy-state.sh` finds nothing queued or running in `dictprop-production`, it dispatches `offsite-backup.yml`, downloads the artifact, checks it with `bridge-crypto.mjs verify`, which writes no plaintext, keeps it beside a `.json` sidecar, prunes to the newest three (`OFFSITE_BACKUP_KEEP`), and deletes the artifact and the run's log. A failed attempt leaves `.last-attempt`, and the next one waits a day. While the folder holds no copy, only a run by hand makes one: `OFFSITE_BACKUP_INTERVAL_HOURS=0` forces an attempt. Hold the cycle lock to run it. `ops/RESTORE.md` restores from a copy.
   `OFFSITE_BACKUP_INTERVAL_HOURS=0 GH_BIN=.tools/gh scripts/offline/offsite-backup.sh <required-deploy-sha> [root=data/offsite-backups]`
 
 ## Publishing

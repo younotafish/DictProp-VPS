@@ -3,7 +3,7 @@
 # from the repository root every six hours. It exports the production corpus, then goes stage by stage:
 # vocabulary completion, saved-sentence analyses, saved-item images, then example-sentence analyses and
 # images. Each stage publishes what it made, and a later stage builds on it only once production has it.
-# Last comes the weekly off-site database backup, when one is due.
+# Last comes the weekly off-site database backup, when one is due, also when the model or the corpus export failed.
 #
 # Usage: run-incremental-example-enrichment.sh [cycle-root] [baseline-source.json] [baseline-image-root]
 #          [required-deploy-sha]
@@ -140,10 +140,12 @@ stage_failed() {
 CYCLE_MESSAGE=""
 # How many sentences the running sentence stage works on: those of its source not waiting out a failure backoff.
 SENTENCE_COUNT=0
+# Ends the cycle with MESSAGE. From the model check on, the cycle ends here unless a step crashes or a signal stops it,
+# so the off-site database backup (offsite-backup.sh), when one is due, runs last, once every publisher has finished.
+# It needs production to run this cycle's commit, whose server has the backup script, and a failed attempt fails the
+# cycle.
 finish_cycle() {
   log "$1"
-  # Once every publisher has finished, the off-site database backup, when one is due (offsite-backup.sh). It needs
-  # production to run this cycle's commit, whose server has the backup script, and a failed attempt fails the cycle.
   if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
     bash scripts/offline/offsite-backup.sh "$REQUIRED_DEPLOY_SHA"; then
     stage_failed "off-site backup"
@@ -261,17 +263,28 @@ image_pipeline_busy() {
   log "another local image pipeline is active (pid ${pids% }); $1 wait for a later cycle"
 }
 
+# The corpus export failed, as MESSAGE says. With no corpus to work on, the cycle skips its stages, and finish_cycle
+# still runs the off-site backup.
+corpus_export_failed() {
+  echo "$1" >&2
+  stage_failed "corpus export"
+  finish_cycle "no production corpus to work on; ending this cycle"
+}
+
 # Has the sentence-backfill workflow export the production corpus and waits for that run, EXPORT_RUN_ID, to end;
-# EXPORT_CONCLUSION says how it ended. A run it can't find, or one that doesn't finish in time, ends the cycle.
+# EXPORT_CONCLUSION says how it ended. A run it can't dispatch or find, or one that doesn't finish in time, ends the
+# cycle.
 run_corpus_export() {
   PREVIOUS_RUN_ID="$(gh_bounded run list \
     --repo "$REPO" --workflow sentence-backfill.yml --event workflow_dispatch --limit 1 \
-    --json databaseId --jq 'if length == 0 then 0 else .[0].databaseId end')"
+    --json databaseId --jq 'if length == 0 then 0 else .[0].databaseId end')" \
+    || corpus_export_failed "Could not list the runs of the corpus export workflow"
   if ! [[ "$PREVIOUS_RUN_ID" =~ ^[0-9]+$ ]]; then PREVIOUS_RUN_ID=0; fi
   # Only runs created after this dispatch qualify, so an older queued export is never taken for this one.
   EXPORT_SINCE="$(utc_timestamp_ago 120)"
   log "requesting a fresh encrypted production corpus export"
-  gh_bounded workflow run sentence-backfill.yml --repo "$REPO" --ref main -f operation=corpus-export
+  gh_bounded workflow run sentence-backfill.yml --repo "$REPO" --ref main -f operation=corpus-export \
+    || corpus_export_failed "Could not dispatch the corpus export workflow"
 
   EXPORT_RUN_ID=""
   DISCOVERY_DEADLINE="$(deadline_after 600)"
@@ -291,8 +304,7 @@ run_corpus_export() {
       2>/dev/null | sort -n)
   done
   if [ -z "$EXPORT_RUN_ID" ]; then
-    echo "Could not identify the dispatched corpus export workflow" >&2
-    exit 1
+    corpus_export_failed "Could not identify the dispatched corpus export workflow"
   fi
 
   log "waiting for corpus export run $EXPORT_RUN_ID"
@@ -303,8 +315,7 @@ run_corpus_export() {
     IFS=$'\t' read -r EXPORT_STATUS EXPORT_CONCLUSION <<< "$EXPORT_STATE"
     if [ "$EXPORT_STATUS" = completed ]; then return 0; fi
     if deadline_passed "$EXPORT_DEADLINE"; then
-      echo "Corpus export run $EXPORT_RUN_ID did not finish within ${CORPUS_EXPORT_WAIT_SECONDS}s; ending this cycle" >&2
-      exit 1
+      corpus_export_failed "Corpus export run $EXPORT_RUN_ID did not finish within ${CORPUS_EXPORT_WAIT_SECONDS}s"
     fi
     sleep 10
   done
@@ -321,13 +332,13 @@ export_corpus() {
     run_corpus_export
   fi
   if [ "$EXPORT_CONCLUSION" != success ]; then
-    echo "Corpus export run $EXPORT_RUN_ID ended as $EXPORT_CONCLUSION" >&2
-    exit 1
+    corpus_export_failed "Corpus export run $EXPORT_RUN_ID ended as $EXPORT_CONCLUSION"
   fi
   CYCLE_ID="$EXPORT_RUN_ID"
   # The run left the corpus as an encrypted artifact; fetching it deletes the artifact and the run's log.
   GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
-    scripts/offline/fetch-workflow-export.sh "$EXPORT_RUN_ID" corpus-export "$CURRENT_CORPUS"
+    scripts/offline/fetch-workflow-export.sh "$EXPORT_RUN_ID" corpus-export "$CURRENT_CORPUS" \
+    || corpus_export_failed "Could not fetch the corpus export of run $EXPORT_RUN_ID"
 }
 
 # Completes new or incomplete vocabulary records and publishes them. VOCAB_OVERLAY is the completed records
@@ -605,7 +616,10 @@ if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" GITHUB_REPOSITORY="$REPO" scripts/off
 fi
 
 log "checking that local $MODEL_LABEL can answer before exporting production data"
-"$NODE_BIN" scripts/offline/check-structured-model.mjs
+if ! "$NODE_BIN" scripts/offline/check-structured-model.mjs; then
+  stage_failed "model check"
+  finish_cycle "local $MODEL_LABEL can't answer; ending this cycle before it exports anything"
+fi
 
 export_corpus
 stage_vocabulary

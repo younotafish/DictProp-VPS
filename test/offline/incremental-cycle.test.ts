@@ -73,8 +73,10 @@ const pipeline = path => path.includes('saved-sentences') ? 'saved' : 'example';
 switch (name) {
   case 'gh': {
     // The newest export run is 100 until the first dispatch, which starts run 101, the next one 102, and so on.
-    // Each run ends as the scenario's exportConclusions say, the last one repeating.
+    // Each run ends as the scenario's exportConclusions say, the last one repeating. A call that starts with the
+    // scenario's ghFails fails.
     const call = args.join(' ');
+    if (scenario.ghFails && call.startsWith(scenario.ghFails)) finish(1);
     const runs = count('exports', call.startsWith('workflow run') ? 1 : 0);
     if (call.startsWith('run list')) console.log(String(100 + runs));
     else if (call.startsWith('run view') && call.includes('--json jobs')) console.log('corpus-export');
@@ -85,7 +87,10 @@ switch (name) {
     break;
   }
   case 'tsx': write(args[2], { version: 1, sentences: [] }); break;
-  case 'fetch-workflow-export.sh': write(args[2], { version: 1, items: [] }); break;
+  case 'fetch-workflow-export.sh':
+    if (scenario.fetchStatus) finish(scenario.fetchStatus);
+    write(args[2], { version: 1, items: [] });
+    break;
   case 'check-structured-model.mjs': finish(next('model', 0));
   case 'prepare-incremental-vocab-source.mjs': write(args[1], { entries: list(scenario.vocab ?? 0, index => ({ id: 'vocab-' + index })) }); break;
   case 'complete-corpus-fields.mjs': {
@@ -168,6 +173,10 @@ const shellStub = (name: string, stub: string) =>
 interface Scenario {
   // How each corpus export run ends, the last one repeating; success unless given.
   exportConclusions?: string[];
+  // The start of the GitHub CLI calls that fail, such as 'workflow run'.
+  ghFails?: string;
+  // How the corpus fetch exits; 0 unless given.
+  fetchStatus?: number;
   vocab?: number;
   vocabStatus?: number;
   saved?: number[];
@@ -328,6 +337,7 @@ const SCENARIOS: Record<string, Scenario> = {
   backoff: { examples: [2, 0], exampleMissing: [2], exampleEnrichStatus: 3 },
   incomplete: { examples: [1, 1], exampleMissing: [1, 1] },
   'model-down': { vocab: 1, vocabStatus: 124, model: [0, 1] },
+  'model-unavailable': { model: [1] },
   'text-busy': { busy: 'text' },
   // An item image an earlier cycle accepted is still waiting to be published.
   'image-busy': {
@@ -337,6 +347,9 @@ const SCENARIOS: Record<string, Scenario> = {
   'bad-setting': { env: { INCREMENTAL_VOCAB_LOOKBACK_HOURS: 'week' } },
   'export-retried': { exportConclusions: ['failure', 'success'] },
   'export-failed': { exportConclusions: ['cancelled', 'timed_out'] },
+  'export-list-failed': { ghFails: 'run list' },
+  'export-dispatch-failed': { ghFails: 'workflow run' },
+  'export-fetch-failed': { fetchStatus: 1 },
   'backup-failed': { backupStatus: 1 },
   'no-base-images': { baseImageRoot: 'missing-images' },
   previous: {
@@ -411,9 +424,16 @@ const pool = (overlay: string) => `build-example-sentence-pool.mjs ${C}/current-
 const exampleSource = (previous = '-') =>
   `prepare-incremental-example-source.mjs ${C}/current-source.json <root>/base/source.json ${C}/source.json.tmp ${previous}`;
 const exampleFilter = `failure-ledger.mjs filter-sentences ${LEDGER} example-sentence ${C}/unfiltered-source.json ${C}/source.json`;
-// How every cycle that gets through its export ends: the off-site backup, given the vetted commit, then the summary.
+// How every cycle that reaches its model check ends, short of a crash: the off-site backup, given the vetted commit,
+// then the summary.
 const backup = 'offsite-backup.sh <head>';
 const summary = `failure-ledger.mjs summary ${LEDGER}`;
+// What the runner logs when the corpus export fails, after the reason it gives on standard error.
+const EXPORT_FAILED_LOG = [
+  'corpus export did not complete this cycle',
+  'no production corpus to work on; ending this cycle',
+  'stages that did not complete this cycle: corpus export',
+];
 
 test('a cycle with nothing new exports the corpus, checks every stage and publishes nothing', async () => {
   const result = await cycle('idle');
@@ -657,18 +677,43 @@ test('a corpus export that ends without success is requested once more, and the 
   assert.equal(result.lock, false);
 });
 
-test('a second corpus export that ends without success ends the cycle', async () => {
+test('a second corpus export that ends without success ends the cycle before its stages, and the off-site backup still runs', async () => {
   const result = await cycle('export-failed');
   assert.equal(result.status, 1);
-  assert.deepEqual(result.trace, [...PREPARE, ...exportCalls(101), ...exportCalls(102)]);
+  assert.deepEqual(result.trace, [...PREPARE, ...exportCalls(101), ...exportCalls(102), backup, summary]);
   assert.deepEqual(result.log, [
     ...START_LOG,
     'corpus export run 101 ended as cancelled; requesting one more export',
     'requesting a fresh encrypted production corpus export',
     'waiting for corpus export run 102',
+    ...EXPORT_FAILED_LOG,
   ]);
   assert.deepEqual(result.stderr, ['Corpus export run 102 ended as timed_out']);
   assert.equal(result.lock, false);
+});
+
+test('a corpus export that cannot be listed, dispatched or fetched ends the cycle the same way', async () => {
+  const [listed, dispatched, fetched] = await Promise.all(
+    ['export-list-failed', 'export-dispatch-failed', 'export-fetch-failed'].map(cycle));
+  const [listCall, dispatchCall] = exportCalls(101);
+
+  assert.equal(listed.status, 1);
+  assert.deepEqual(listed.trace, [...PREPARE, listCall, backup, summary]);
+  assert.deepEqual(listed.log, [START_LOG[0], ...EXPORT_FAILED_LOG]);
+  assert.deepEqual(listed.stderr, ['Could not list the runs of the corpus export workflow']);
+  assert.equal(listed.lock, false);
+
+  assert.equal(dispatched.status, 1);
+  assert.deepEqual(dispatched.trace, [...PREPARE, listCall, dispatchCall, backup, summary]);
+  assert.deepEqual(dispatched.log, [...START_LOG.slice(0, 2), ...EXPORT_FAILED_LOG]);
+  assert.deepEqual(dispatched.stderr, ['Could not dispatch the corpus export workflow']);
+  assert.equal(dispatched.lock, false);
+
+  assert.equal(fetched.status, 1);
+  assert.deepEqual(fetched.trace, [...START, backup, summary]);
+  assert.deepEqual(fetched.log, [...START_LOG, ...EXPORT_FAILED_LOG]);
+  assert.deepEqual(fetched.stderr, ['Could not fetch the corpus export of run 101']);
+  assert.equal(fetched.lock, false);
 });
 
 test('the off-site backup runs last, with the vetted commit, and a failed attempt fails the cycle', async () => {
@@ -688,6 +733,20 @@ test('a baseline image root without its images folder stops the cycle before it 
   assert.equal(result.status, 1);
   assert.deepEqual(result.stderr, ['Required incremental enrichment input is missing: <root>/base/missing-images/images']);
   assert.deepEqual(result.trace, []);
+  assert.equal(result.lock, false);
+});
+
+test('a model that cannot answer at the start ends the cycle before its export, and the off-site backup still runs', async () => {
+  const result = await cycle('model-unavailable');
+  // The cycle exits 1 whatever the backup does, so the outage shows in the LaunchAgent's log.
+  assert.equal(result.status, 1, result.stderr.join('\n'));
+  assert.deepEqual(result.trace, [...PREPARE, backup, summary]);
+  assert.deepEqual(result.log, [
+    START_LOG[0],
+    'model check did not complete this cycle',
+    "local Claude claude-opus-5-5 can't answer; ending this cycle before it exports anything",
+    'stages that did not complete this cycle: model check',
+  ]);
   assert.equal(result.lock, false);
 });
 
