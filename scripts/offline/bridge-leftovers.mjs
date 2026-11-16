@@ -3,16 +3,17 @@
 // Finds what the bridge leaves behind when a run ends early. A publisher deletes its release once the
 // import is verified or it gives up, but one that is killed outright leaves the release, encrypted
 // archive and all, on the public repository. A wave whose publication failed is set aside as
-// wave-N.failed for inspection, and a published wave keeps its archive, which nothing reads again: every
-// run encrypts a fresh one. A decryption that is killed outright leaves its temp file, plaintext and all,
-// beside the file it was writing.
+// wave-N.failed for inspection, a wave a cycle left unpublished stays in that cycle's directory, and a
+// published wave keeps its archive, which nothing reads again: every run encrypts a fresh one. A
+// decryption that is killed outright leaves its temp file, plaintext and all, beside the file it was
+// writing.
 //
 //   bridge-leftovers.mjs releases [--now <iso>] [--max-age-hours <n>] < releases.json
 //     Reads `gh api --paginate --slurp repos/<owner>/<repo>/releases` (or a single page) and prints each
 //     publisher release idle longer than the limit as "<tag><TAB><idle hours>".
 //   bridge-leftovers.mjs local [--dry-run] [--now <iso>] [--failed-max-age-days <n>] <wave-state-root>...
-//     Removes failed waves idle longer than the limit and the archives of published waves; with
-//     --dry-run it lists them and removes nothing.
+//     Removes failed waves idle longer than the limit, a past cycle's unpublished ones included, and the
+//     archives of published waves; with --dry-run it lists them and removes nothing.
 //   bridge-leftovers.mjs temp-files [--dry-run] [--now <iso>] [--max-age-hours <n>] <root>...
 //     Removes decryption temp files anywhere under the roots that are idle longer than the limit, a day
 //     unless given; with --dry-run it lists them and removes nothing.
@@ -98,19 +99,29 @@ function marked(path) {
 
 // Waves sit directly in a state root, as in the roots cycles shared until 2026-11-15, or one level down: in
 // a stage's per-cycle directories (publish-state/<stage>/<cycle>), or the fingerprint directories the
-// vocabulary and item-image stages used before those. Nothing inside a wave other than its archives is
-// touched.
+// vocabulary and item-image stages used before those. A failed wave goes whole; of a published one, only
+// its archives go.
 export function selectLocalLeftovers(roots, { now = Date.now(), failedMaxAgeMs = FAILED_WAVE_MAX_AGE_MS } = {}) {
   // Keyed by path, since overlapping roots can reach the same wave twice.
   const leftovers = new Map();
+  const failedIfIdle = path => {
+    const idleMs = now - newestChange(path);
+    if (idleMs > failedMaxAgeMs) leftovers.set(path, { kind: 'failed wave', path, idleMs });
+  };
   const visit = (directory, depth) => {
     for (const name of directoryNames(directory)) {
       const path = join(directory, name);
       if (FAILED_WAVE_PATTERN.test(name)) {
-        const idleMs = now - newestChange(path);
-        if (idleMs > failedMaxAgeMs) leftovers.set(path, { kind: 'failed wave', path, idleMs });
+        failedIfIdle(path);
       } else if (WAVE_PATTERN.test(name)) {
-        if (!marked(join(path, 'published')) && !marked(join(path, 'publisher', 'complete'))) continue;
+        if (!marked(join(path, 'published')) && !marked(join(path, 'publisher', 'complete'))) {
+          // A dispatcher's next run sets aside, or prepares again, a wave an earlier run left unpublished in its
+          // root. One level down, though, the wave sits in a past cycle's own directory (or an old fingerprint
+          // one), which no run opens again: it counts as failed, and later cycles publish whatever of it
+          // production still lacks.
+          if (depth === 1) failedIfIdle(path);
+          continue;
+        }
         for (const entry of readdirSync(path, { withFileTypes: true })) {
           if (entry.isFile() && entry.name.endsWith('.enc')) {
             const archive = join(path, entry.name);

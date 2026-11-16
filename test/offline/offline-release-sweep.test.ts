@@ -179,6 +179,39 @@ test('failed waves go after a week idle, and only archives leave published waves
   assert.deepEqual(selectLocalLeftovers([root, fingerprints], { now }), []);
 });
 
+test('a wave a past cycle left unpublished in its own directory goes after a week idle, like a failed wave', t => {
+  const root = tempDir(t);
+  const stage = join(root, 'publish-state', 'saved-sentences');
+  // Cycle 1001's publisher stopped short: its wave is sealed, release tag and archive included, but neither
+  // published nor set aside, and no later cycle opens 1001's directory again.
+  const abandoned = wave(join(stage, '1001'), 'wave-0001', {
+    'manifest.json': '{}', 'release-tag': 'tag\n', 'sentence-backfill.enc': 'blob', 'publisher/attempts': '1\n',
+  });
+  age(abandoned, now - 8 * DAY);
+  const recent = wave(join(stage, '1002'), 'wave-0001', { 'manifest.json': '{}', 'sentence-backfill.enc': 'blob' });
+  age(recent, now - 6 * DAY);
+  const published = wave(join(stage, '1003'), 'wave-0001', { 'manifest.json': '{}', published: 'x', 'sentence-backfill.enc': 'blob' });
+  age(published, now - 30 * DAY);
+  // Directly in a root, an unpublished wave stays, however old: its dispatcher's next run sets it aside or
+  // prepares it again.
+  const shared = join(root, 'publish-state-detailed-v1');
+  const inShared = wave(shared, 'wave-0002', { 'manifest.json': '{}', 'sentence-backfill.enc': 'blob' });
+  age(inShared, now - 30 * DAY);
+
+  const leftovers = selectLocalLeftovers([stage, shared], { now });
+  assert.deepEqual(leftovers.map(({ kind, path }: { kind: string; path: string }) => [kind, path]).sort(), [
+    ['failed wave', abandoned],
+    ['published archive', join(published, 'sentence-backfill.enc')],
+  ].sort());
+  const lines: string[] = [];
+  removeLeftovers(leftovers, { log: (line: string) => lines.push(line) });
+  assert.match(lines[0] ?? '', /^removed failed wave .*\/1001\/wave-0001 \(idle 8\.0 days\)$/);
+  assert.equal(existsSync(abandoned), false);
+  for (const path of [join(recent, 'sentence-backfill.enc'), join(inShared, 'sentence-backfill.enc'), join(published, 'manifest.json')]) {
+    assert.ok(existsSync(path), path);
+  }
+});
+
 test('symlinks are never followed or removed', t => {
   const root = tempDir(t);
   const outside = tempDir(t);

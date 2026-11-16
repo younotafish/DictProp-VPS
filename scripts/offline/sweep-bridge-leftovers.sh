@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Deletes publisher releases idle for six hours, which a killed publisher leaves on the public
-# repository with their encrypted archive, then removes failed waves idle for a week and the archives of
-# published waves under each wave-state root, and the plaintext temp files a killed decryption leaves,
-# once a day old, anywhere under OFFLINE_DATA_ROOT. --dry-run lists all of it and deletes nothing.
+# repository with their encrypted archive, then removes failed waves idle for a week (a wave a past
+# cycle left unpublished counts as failed) and the archives of published waves under each wave-state
+# root, and the plaintext temp files a killed decryption leaves, once a day old, anywhere under
+# OFFLINE_DATA_ROOT. --dry-run lists all of it and deletes nothing.
 # Every part runs even if another fails; the exit status is 1 if any did.
 
 set -euo pipefail
