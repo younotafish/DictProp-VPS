@@ -1,20 +1,20 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
   getAllEssayCatalogSentenceTexts,
-  getEssayCatalogSentence,
-  getEssayCatalogSentenceCount,
-  getEssayCatalogSummaries,
+  getPrivateEssayCatalog,
   validatePrivateEssayCatalog,
   type RawEssayCatalog,
 } from '../src/essay-catalog.js';
+import { repoPath } from './support/paths.js';
 
 test('Essay catalog starts with five complete, stable public-domain texts', () => {
-  const summaries = getEssayCatalogSummaries();
+  // The server refuses to load an essay whose sentences don't add up to its sentenceCount.
+  const source = JSON.parse(readFileSync(repoPath('content/essay-catalog.json'), 'utf8')) as RawEssayCatalog;
   assert.deepEqual(
-    summaries.slice(0, 5).map(summary => [summary.id, summary.sentenceCount]),
+    source.essays.map(essay => [essay.id, essay.sentenceCount]),
     [
       ['self-reliance', 504],
       ['corn-pone-opinions', 97],
@@ -23,13 +23,11 @@ test('Essay catalog starts with five complete, stable public-domain texts', () =
       ['how-it-feels-to-be-colored-me', 105],
     ],
   );
+  assert.equal(source.essays[0].title, 'Self-Reliance');
   // The test runner's DATA_DIR holds no private catalog, so only the static texts count.
-  assert.equal(getEssayCatalogSentenceCount(), 825);
-  assert.equal(getAllEssayCatalogSentenceTexts().length, getEssayCatalogSentenceCount());
-  const first = getEssayCatalogSentence('self-reliance:p001:s01');
-  assert.equal(first?.essayTitle, 'Self-Reliance');
-  assert.match(first?.text || '', /eminent painter/);
-  assert.equal(getEssayCatalogSentence('self-reliance:missing'), undefined);
+  const texts = getAllEssayCatalogSentenceTexts();
+  assert.equal(texts.length, 825);
+  assert.match(texts[0], /eminent painter/);
 });
 
 const privateCatalog: RawEssayCatalog = {
@@ -130,14 +128,17 @@ test('a private catalog in DATA_DIR joins the static texts, and its removal take
   const path = join(dataDir, 'private-essay-catalog.json');
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(path, JSON.stringify(privateCatalog));
+  const privateText = 'Attention becomes deliberate when routine stops feeling invisible.';
   try {
-    assert.equal(getEssayCatalogSentenceCount(), 826);
-    assert.deepEqual(getEssayCatalogSummaries().map(summary => summary.id).slice(-2), ['how-it-feels-to-be-colored-me', 'modern-test-essay']);
-    assert.equal(getEssayCatalogSentence('modern-test-essay:p001:s01')?.text, 'Attention becomes deliberate when routine stops feeling invisible.');
-    assert.equal(getEssayCatalogSentence('self-reliance:p001:s01')?.essayTitle, 'Self-Reliance');
+    const texts = getAllEssayCatalogSentenceTexts();
+    assert.equal(texts.length, 826);
+    assert.match(texts[0], /eminent painter/);
+    assert.equal(texts.at(-1), privateText);
+    assert.deepEqual(getPrivateEssayCatalog().essays.map(essay => essay.id), ['modern-test-essay']);
   } finally {
     rmSync(path, { force: true });
   }
-  assert.equal(getEssayCatalogSentenceCount(), 825);
-  assert.equal(getEssayCatalogSentence('modern-test-essay:p001:s01'), undefined);
+  assert.equal(getAllEssayCatalogSentenceTexts().length, 825);
+  assert.ok(!getAllEssayCatalogSentenceTexts().includes(privateText));
+  assert.deepEqual(getPrivateEssayCatalog().essays, []);
 });

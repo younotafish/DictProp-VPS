@@ -28,25 +28,18 @@ interface RawCatalog {
   collections: RawCollection[];
 }
 
-export interface RealLifeCatalogSentence extends RawSentence {
-  id: string;
-  collectionId: string;
-  collectionTitle: string;
-  sectionId: string;
-  sectionTitle: string;
-}
-
 function readCatalog(): RawCatalog {
   const path = fileURLToPath(new URL('../../content/real-life-catalog.json', import.meta.url));
   return JSON.parse(readFileSync(path, 'utf8')) as RawCatalog;
 }
 
-function buildCatalog(source: RawCatalog): { byId: Map<string, RealLifeCatalogSentence> } {
+/** Checks the catalog and returns each line's text by its id, in catalog order. */
+function buildCatalog(source: RawCatalog): Map<string, string> {
   if (source.version !== 1 || !Array.isArray(source.collections) || source.collections.length === 0) {
     throw new Error('Real Life catalog must contain version 1 collections');
   }
 
-  const byId = new Map<string, RealLifeCatalogSentence>();
+  const sentenceTexts = new Map<string, string>();
   const collectionIds = new Set<string>();
 
   for (const collection of source.collections) {
@@ -71,15 +64,8 @@ function buildCatalog(source: RawCatalog): { byId: Map<string, RealLifeCatalogSe
           throw new Error(`${collection.id}/${section.id} contains an invalid sentence at index ${index}`);
         }
         const id = `${collection.id}:${section.id}:${String(index + 1).padStart(2, '0')}`;
-        if (byId.has(id)) throw new Error(`Real Life catalog duplicates sentence id ${id}`);
-        byId.set(id, {
-          ...sentence,
-          id,
-          collectionId: collection.id,
-          collectionTitle: collection.title,
-          sectionId: section.id,
-          sectionTitle: section.title,
-        });
+        if (sentenceTexts.has(id)) throw new Error(`Real Life catalog duplicates sentence id ${id}`);
+        sentenceTexts.set(id, sentence.text);
         sentenceCount += 1;
       });
     }
@@ -89,19 +75,12 @@ function buildCatalog(source: RawCatalog): { byId: Map<string, RealLifeCatalogSe
     }
   }
 
-  return { byId };
+  return sentenceTexts;
 }
 
 const catalog = buildCatalog(readCatalog());
 
-export function getRealLifeCatalogSentence(id: string): RealLifeCatalogSentence | undefined {
-  return catalog.byId.get(id);
-}
-
-export function getRealLifeCatalogSentenceCount(): number {
-  return catalog.byId.size;
-}
-
+/** Every Real Life line's text, in catalog order. */
 export function getAllRealLifeCatalogSentenceTexts(): string[] {
-  return Array.from(catalog.byId.values(), sentence => sentence.text);
+  return Array.from(catalog.values());
 }

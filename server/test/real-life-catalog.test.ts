@@ -1,18 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import {
-  getRealLifeCatalogSentence,
-  getRealLifeCatalogSentenceCount,
-  getAllRealLifeCatalogSentenceTexts,
-} from '../src/real-life-catalog.js';
+import { getAllRealLifeCatalogSentenceTexts } from '../src/real-life-catalog.js';
 import { repoPath } from './support/paths.js';
-
-const firstSentenceId = 'career-conversations:rapport-and-small-talk:01';
 
 test('Real Life catalog contains five substantial, stable collections', () => {
   const source = JSON.parse(readFileSync(repoPath('content/real-life-catalog.json'), 'utf8')) as {
-    collections: Array<{ id: string; sections: Array<{ sentences: unknown[] }> }>;
+    collections: Array<{ id: string; sections: Array<{ sentences: Array<{ text: string; focus: string }> }> }>;
   };
   assert.deepEqual(
     source.collections.map(collection =>
@@ -25,10 +19,12 @@ test('Real Life catalog contains five substantial, stable collections', () => {
       ['travel-conversations', 200],
     ],
   );
-  assert.equal(getRealLifeCatalogSentenceCount(), 1120);
-  assert.equal(new Set(getAllRealLifeCatalogSentenceTexts()).size, 1120);
-  const sentence = getRealLifeCatalogSentence(firstSentenceId);
-  assert.equal(sentence?.focus, 'unplug');
-  assert.match(sentence?.text || '', /unplug/);
-  assert.equal(getRealLifeCatalogSentence('career-conversations:missing:01'), undefined);
+  const texts = getAllRealLifeCatalogSentenceTexts();
+  assert.equal(texts.length, 1120);
+  assert.equal(new Set(texts).size, 1120);
+  // The server reads every line, in catalog order.
+  assert.deepEqual(texts, source.collections.flatMap(collection =>
+    collection.sections.flatMap(section => section.sentences.map(sentence => sentence.text))));
+  assert.equal(source.collections[0].sections[0].sentences[0].focus, 'unplug');
+  assert.match(texts[0], /unplug/);
 });

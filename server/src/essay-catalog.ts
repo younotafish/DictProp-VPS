@@ -53,23 +53,11 @@ export interface RawEssayCatalog {
   essays: RawEssay[];
 }
 
-export interface EssayCatalogSentence extends RawEssaySentence {
-  essayId: string;
-  essayTitle: string;
-  author: string;
-  paragraphId: string;
-}
-
-export interface EssayCatalogSummary {
-  id: string;
-  title: string;
-  author: string;
-  sentenceCount: number;
-}
-
 interface BuiltCatalog {
-  byId: Map<string, EssayCatalogSentence>;
-  summaries: EssayCatalogSummary[];
+  /** Each sentence's text, by sentence id, in reading order. */
+  sentenceTexts: Map<string, string>;
+  /** Its essays' ids, which a private catalog may not reuse. */
+  essayIds: Set<string>;
 }
 
 const ACCENTS = new Set<EssayAccent>(['indigo', 'amber', 'violet', 'rose', 'emerald']);
@@ -126,8 +114,7 @@ function buildCatalog(
     throw new Error('Essay catalog metadata is invalid');
   }
 
-  const byId = new Map<string, EssayCatalogSentence>();
-  const summaries: EssayCatalogSummary[] = [];
+  const sentenceTexts = new Map<string, string>();
   const essayIds = new Set<string>();
   let totalSentences = 0;
   let totalTextBytes = 0;
@@ -173,16 +160,10 @@ function buildCatalog(
         if (!sentence || !validText(sentence.id, 250) || !sentence.id.startsWith(`${essay.id}:`) ||
             !validText(sentence.text, 4_000) || !validText(sentence.focus, 300) ||
             !sentence.text.toLocaleLowerCase('en-US').includes(sentence.focus.toLocaleLowerCase('en-US')) ||
-            byId.has(sentence.id) || options.reservedSentenceIds?.has(sentence.id)) {
+            sentenceTexts.has(sentence.id) || options.reservedSentenceIds?.has(sentence.id)) {
           throw new Error(`Essay ${essay.id} contains an invalid sentence: ${sentence?.id || 'unknown'}`);
         }
-        byId.set(sentence.id, {
-          ...sentence,
-          essayId: essay.id,
-          essayTitle: essay.title,
-          author: essay.author,
-          paragraphId: paragraph.id,
-        });
+        sentenceTexts.set(sentence.id, sentence.text);
         sentenceCount += 1;
         totalSentences += 1;
         totalTextBytes += Buffer.byteLength(sentence.text);
@@ -191,23 +172,17 @@ function buildCatalog(
     if (sentenceCount !== essay.sentenceCount) {
       throw new Error(`Essay ${essay.id} sentence count mismatch: ${sentenceCount}/${essay.sentenceCount}`);
     }
-    summaries.push({
-      id: essay.id,
-      title: essay.title,
-      author: essay.author,
-      sentenceCount,
-    });
   }
   if (totalSentences > 10_000 || totalTextBytes > 20 * 1024 * 1024) {
     throw new Error('Essay catalog exceeds the private catalog size limit');
   }
-  return { byId, summaries };
+  return { sentenceTexts, essayIds };
 }
 
 const staticSource = readStaticCatalog();
 const staticCatalog = buildCatalog(staticSource, { expectedEssayCount: 5 });
-const staticEssayIds = new Set(staticCatalog.summaries.map(summary => summary.id));
-const staticSentenceIds = new Set(staticCatalog.byId.keys());
+const staticEssayIds = staticCatalog.essayIds;
+const staticSentenceIds = new Set(staticCatalog.sentenceTexts.keys());
 
 let privateCache: {
   signature: string;
@@ -216,7 +191,7 @@ let privateCache: {
 } = {
   signature: 'missing',
   source: EMPTY_PRIVATE_CATALOG,
-  catalog: { byId: new Map(), summaries: [] },
+  catalog: { sentenceTexts: new Map(), essayIds: new Set() },
 };
 
 function loadPrivateCatalog(): typeof privateCache {
@@ -235,7 +210,7 @@ function loadPrivateCatalog(): typeof privateCache {
     privateCache = {
       signature,
       source: EMPTY_PRIVATE_CATALOG,
-      catalog: { byId: new Map(), summaries: [] },
+      catalog: { sentenceTexts: new Map(), essayIds: new Set() },
     };
     return privateCache;
   }
@@ -262,21 +237,7 @@ export function getPrivateEssayCatalog(): RawEssayCatalog {
   return loadPrivateCatalog().source;
 }
 
-export function getEssayCatalogSentence(id: string): EssayCatalogSentence | undefined {
-  return staticCatalog.byId.get(id) ?? loadPrivateCatalog().catalog.byId.get(id);
-}
-
-export function getEssayCatalogSummaries(): readonly EssayCatalogSummary[] {
-  return [...staticCatalog.summaries, ...loadPrivateCatalog().catalog.summaries];
-}
-
-export function getEssayCatalogSentenceCount(): number {
-  return staticCatalog.byId.size + loadPrivateCatalog().catalog.byId.size;
-}
-
+/** Every essay sentence's text, the static essays' first and then the private ones', each in reading order. */
 export function getAllEssayCatalogSentenceTexts(): string[] {
-  return [
-    ...Array.from(staticCatalog.byId.values(), sentence => sentence.text),
-    ...Array.from(loadPrivateCatalog().catalog.byId.values(), sentence => sentence.text),
-  ];
+  return [...staticCatalog.sentenceTexts.values(), ...loadPrivateCatalog().catalog.sentenceTexts.values()];
 }
