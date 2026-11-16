@@ -234,3 +234,20 @@ test('the collection\'s stats strip and the essay\'s progress card count due rev
     `<div><p class="text-lg font-bold text-orange-600">1</p><p class="text-[10px] uppercase tracking-wider text-stone-400">due · ${essay.sentences.length - 1} new</p></div>`,
   ));
 });
+
+test('on a phone the collection header drops its stats strip and shows mastery and reviewed under the title instead', () => {
+  const career = REAL_LIFE_COLLECTIONS[0];
+  const progress = indexCatalogProgress([
+    withSchedule(createRealLifeProgressItem(career.sentences[0], 1), { ...DUE, memoryStrength: 50 }),
+    withSchedule(createRealLifeProgressItem(career.sentences[1], 1), { ...MEMORIZED, memoryStrength: 90 }),
+  ], 'real-life');
+  const markup = renderCollection(career, progress);
+  const mastery = Math.round(140 / career.sentences.length);
+  assert.ok(markup.includes(
+    `<p class="truncate text-[11px] text-slate-500 sm:hidden">${mastery}% mastery · 2/${career.sentences.length} reviewed</p>`,
+  ));
+  // From sm up, the description, the level badge and the strip as before.
+  assert.ok(markup.includes(`<p class="hidden truncate text-[11px] text-slate-500 sm:block sm:text-xs">${career.description}</p>`));
+  assert.ok(markup.includes(`<span class="hidden rounded-full px-2.5 py-1 text-xs font-bold sm:inline-flex bg-indigo-50 text-indigo-700">${career.level}</span>`));
+  assert.ok(markup.includes('<div class="mt-3 hidden grid-cols-3 gap-2 rounded-xl bg-slate-50 px-3 py-2 text-center sm:grid">'));
+});

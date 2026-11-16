@@ -249,7 +249,11 @@ export function RealLifeCollectionScreen({
                 <h1 className="truncate text-base font-bold text-slate-900 sm:text-lg">{collection.title}</h1>
                 <span className="shrink-0 text-xs font-medium text-slate-400">{collection.sentences.length}</span>
               </div>
-              <p className="truncate text-[11px] text-slate-500 sm:text-xs">{collection.description}</p>
+              {/* On a phone the stats strip is left out, and its first two numbers take the description's place. */}
+              <p className="truncate text-[11px] text-slate-500 sm:hidden">
+                {progress.masteryScore}% mastery · {progress.reviewed}/{progress.total} reviewed
+              </p>
+              <p className="hidden truncate text-[11px] text-slate-500 sm:block sm:text-xs">{collection.description}</p>
             </div>
             <span className={`hidden rounded-full px-2.5 py-1 text-xs font-bold sm:inline-flex ${style.soft}`}>
               {collection.level}
@@ -266,7 +270,7 @@ export function RealLifeCollectionScreen({
             </button>
           </div>
 
-          <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 px-3 py-2 text-center">
+          <div className="mt-3 hidden grid-cols-3 gap-2 rounded-xl bg-slate-50 px-3 py-2 text-center sm:grid">
             <div><p className="text-sm font-bold text-slate-800">{progress.masteryScore}%</p><p className="text-[10px] text-slate-400">mastery</p></div>
             <div><p className="text-sm font-bold text-slate-800">{progress.reviewed}/{progress.total}</p><p className="text-[10px] text-slate-400">reviewed</p></div>
             <div><p className="text-sm font-bold text-orange-600">{progress.due}</p><p className="text-[10px] text-slate-400">due · {progress.unreviewed} new</p></div>
