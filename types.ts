@@ -271,7 +271,7 @@ export const getItemImageUrl = (item: StoredItem): string | undefined => {
   return item.data.imageUrl;
 };
 
-// Word Comparison — AI-generated side-by-side analysis of 2 to MAX_COMPARE_WORDS (services/queryMode.ts) similar words
+// Word Comparison — AI-generated side-by-side analysis of 2 to MAX_COMPARE_WORDS (server/src/shared/query-mode.ts) similar words
 interface ComparisonDimension {
   label: string;
   analysis: string;

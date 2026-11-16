@@ -1,7 +1,7 @@
 // How a query is routed, decided once for both sides: the search box scans a sentence for its expressions
 // first, and the analysis route picks the word or sentence instructions. The comparison size limit that the
 // client and /api/compare both enforce lives here too. Like everything in server/src/shared it imports
-// nothing (see README.md): the client imports it through services/queryMode.ts, the server directly.
+// nothing (see README.md), and the client and the server both import it directly.
 
 /** The most words one comparison accepts. The prompt keys every per-word map by word, so the output grows with each. */
 export const MAX_COMPARE_WORDS = 8;

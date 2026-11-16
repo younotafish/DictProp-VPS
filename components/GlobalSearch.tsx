@@ -12,7 +12,7 @@ import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
 import { useLatest } from '../hooks/useStableValue';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
-import { looksLikeSentence } from '../services/queryMode';
+import { looksLikeSentence } from '../server/src/shared/query-mode';
 import { useSearchQueue } from './search/useSearchQueue';
 import { useSheetPlayback } from './search/useSheetPlayback';
 import { useTimedMessage } from '../hooks/useTimedMessage';

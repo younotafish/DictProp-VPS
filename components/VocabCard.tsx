@@ -6,7 +6,7 @@ import { ExternalLinkChip, chipClassName } from './ExternalLinkChip';
 import { OfflineImage } from './OfflineImage';
 import { HighlightedSentence } from './HighlightedSentence';
 import { SentenceSpeakerButton } from './SentenceSpeakerButton';
-import { MAX_COMPARE_WORDS } from '../services/queryMode';
+import { MAX_COMPARE_WORDS } from '../server/src/shared/query-mode';
 import { wordCardLinks, youglishUrl } from '../services/externalLinks';
 import { PLATFORM } from '../services/platform';
 

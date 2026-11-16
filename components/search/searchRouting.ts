@@ -15,7 +15,7 @@ export interface LookupFacts {
   online: boolean;
   /** The library has cards for the query, so it opens without the network. */
   saved: boolean;
-  /** The query reads as a sentence (services/queryMode's looksLikeSentence). */
+  /** The query reads as a sentence (server/src/shared/query-mode's looksLikeSentence). */
   sentence: boolean;
 }
 

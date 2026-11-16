@@ -8,7 +8,7 @@ import {
   type SearchRequest,
 } from '../../services/searchRecovery';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
-import { looksLikeSentence } from '../../services/queryMode';
+import { looksLikeSentence } from '../../server/src/shared/query-mode';
 import { useLatest } from '../../hooks/useStableValue';
 import { subscribeSearchRequests, type CompareRequest, type LookupRequest } from '../../services/searchRequests';
 import { routeLookup } from './searchRouting';

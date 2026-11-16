@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import * as client from '../../services/queryMode.ts';
 import * as server from '../../server/src/shared/query-mode.ts';
 
 const SENTENCES = [
@@ -35,11 +34,9 @@ const PHRASES = [
   '不屈不挠',
 ];
 
-test('the search box and the analysis route share one routing decision', () => {
-  // The client module re-exports the shared one, so both sides run the same functions.
-  assert.equal(client.isWordOrPhrase, server.isWordOrPhrase);
-  assert.equal(client.looksLikeSentence, server.looksLikeSentence);
-  assert.equal(client.MAX_COMPARE_WORDS, server.MAX_COMPARE_WORDS);
+// The search box and the analysis route import this one module, so they share one routing decision
+// (test/contracts/shared-contracts.test.ts keeps the client's runtime imports of server/src inside shared/).
+test('a comparison takes at most eight words', () => {
   assert.equal(server.MAX_COMPARE_WORDS, 8);
 });
 
