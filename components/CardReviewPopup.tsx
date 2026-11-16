@@ -126,7 +126,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     [shortcutExamples],
   );
 
-  const { speakPopupWord, speakPopupNatural, holdKeepAlive, toggleSpeak, readBothExamples } = usePopupPlayback(examplesList);
+  const { speakPopupWord, speakPopupNatural, holdKeepAlive, toggleSpeak, readBothExamples, replayInNewStyle } = usePopupPlayback(examplesList);
 
   // Auto-pronounce the word on each meaning switch. This MUST run as an effect (after the new sense has
   // committed), not synchronously inside goTo: switching remounts <VocabCardDisplay> via its `key`, and
@@ -333,7 +333,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
                   <button onClick={goNext} aria-label="Next meaning" className="p-1 rounded-lg hover:bg-slate-100 transition-colors"><ChevronRight size={16} /></button>
                 </div>
               )}
-              <SpeechStyleToggle />
+              {/* Clicked while one of the card's examples plays, Clear or Casual reads it again in the new voice. */}
+              <SpeechStyleToggle onStyleClicked={(_style, before) => replayInNewStyle(before, shortcutExamples)} />
               <PlaybackSpeedToggle className="bg-slate-100 hover:bg-slate-200" />
               <button
                 onClick={onClose}

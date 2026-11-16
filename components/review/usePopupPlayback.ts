@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
-import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../../services/neuralTts';
-import { toggleActionFor } from '../../services/audio/playbackToggle';
+import {
+  speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive,
+  type PlaybackState,
+} from '../../services/neuralTts';
+import { styleChangeReplay, toggleActionFor } from '../../services/audio/playbackToggle';
 
 /**
  * The review popup's audio: the word and sentence playback it starts, the audio session it holds open while
- * it plays, and the example toggles. `examplesList` is what E reads in turn (the first two examples).
+ * it plays, the example toggles, and the replay when Clear or Casual is clicked. `examplesList` is what E reads in
+ * turn (the first two examples).
  */
 export function usePopupPlayback(examplesList: readonly string[]) {
   const popupPlaybackRef = useRef<ReturnType<typeof speakNatural> | null>(null);
@@ -64,9 +68,19 @@ export function usePopupPlayback(examplesList: readonly string[]) {
     playNext();
   }, [examplesList, holdKeepAlive, speakPopupNatural]);
 
+  // Clear or Casual, clicked (SpeechStyleToggle's onStyleClicked): one of the popup's `examples` that was playing or
+  // loading starts again from its top in the new voice, inside the click, where iOS lets it, and is still the popup's
+  // to stop. The engine has already stopped it. A paused one stays stopped, and any other sentence (one auto-play
+  // reads under the popup, say) is left to whoever started it.
+  const replayInNewStyle = useCallback((before: PlaybackState, examples: readonly string[]) => {
+    if (styleChangeReplay(before.status) !== 'replay' || !before.text || !examples.includes(before.text)) return;
+    holdKeepAlive();
+    speakPopupNatural(before.text, { allowDownload: true });
+  }, [holdKeepAlive, speakPopupNatural]);
+
   // Do not stop a sentence that was already playing beneath the popup. The handle is token-scoped,
   // so cleanup only stops audio this popup actually started and is still responsible for.
   useEffect(() => () => { popupPlaybackRef.current?.stop(); }, []);
 
-  return { speakPopupWord, speakPopupNatural, holdKeepAlive, toggleSpeak, readBothExamples };
+  return { speakPopupWord, speakPopupNatural, holdKeepAlive, toggleSpeak, readBothExamples, replayInNewStyle };
 }
