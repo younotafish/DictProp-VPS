@@ -47,6 +47,7 @@ import { useExampleSpeech } from './useExampleSpeech';
 import { usePassKeysToFocusedControl } from './usePassKeysToFocusedControl';
 import { useSentenceActions } from './useSentenceActions';
 import { useSentenceGestures } from './useSentenceGestures';
+import { useSelectionLookup } from './useSelectionLookup';
 import { useSentenceShortcuts } from './useSentenceShortcuts';
 import type { SentenceReviewViewProps } from './types';
 
@@ -441,12 +442,16 @@ export function SentenceReviewView({
     onUpdateSRS, tryRemember, showRemembered,
   });
 
+  // On a laptop, a phrase selected in the sentence and Cmd/Ctrl-clicked inside the selection looks itself up whole.
+  const selectionLookup = useSelectionLookup({ findSaved, onOpenCard, onSearch: searchWithContext });
+
   const {
     onContentTouchStart, onContentTouchEnd, handleMobileWordTouchStart, handleSentenceWordClickCapture,
     handleDoubleClick, handleSentenceSurfaceClick,
   } = useSentenceGestures({
     rootRef, heroScrollRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel,
     onClose, currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
+    lookUpSelection: selectionLookup.lookUpSelection,
   });
 
   useSentenceShortcuts({
@@ -473,6 +478,7 @@ export function SentenceReviewView({
     commandHeld: isCommandHeld,
     onWordTouchStartCapture: isMobile ? handleMobileWordTouchStart : undefined,
     onWordClickCapture: handleSentenceWordClickCapture,
+    onSentencePointerDownCapture: isMobile ? undefined : selectionLookup.onPointerDownCapture,
     onListened: () => noteListened(currentSentence.data.id),
     // During auto-play the speaker pauses and resumes auto-play, between reads too.
     onSpeakerToggle: isSentenceAutoPlaying ? autoPlayReader.togglePause : undefined,

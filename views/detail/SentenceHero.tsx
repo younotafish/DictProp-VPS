@@ -22,6 +22,8 @@ interface SentenceHeroProps {
   /** The phone's word gestures, taken before the words' own handlers (see useSentenceGestures). */
   onWordTouchStartCapture?: React.TouchEventHandler<HTMLElement>;
   onWordClickCapture: React.MouseEventHandler<HTMLElement>;
+  /** A laptop's pointerdown on the sentence, before a click inside a selection collapses it (useSelectionLookup). */
+  onSentencePointerDownCapture?: React.PointerEventHandler<HTMLElement>;
   /** The speaker played the sentence to its end. */
   onListened: () => void;
   /** Takes the speaker's tap instead of its own play and pause: during auto-play, auto-play's pause. */
@@ -37,7 +39,7 @@ interface SentenceHeroProps {
  */
 export function SentenceHero({
   layout, text, sourceWord, findSaved, onOpenCard, onSearchWord, commandHeld,
-  onWordTouchStartCapture, onWordClickCapture, onListened, onSpeakerToggle, copyState, onCopy,
+  onWordTouchStartCapture, onWordClickCapture, onSentencePointerDownCapture, onListened, onSpeakerToggle, copyState, onCopy,
 }: SentenceHeroProps) {
   const { isMobile, isMacDesktop } = PLATFORM;
   const split = layout === 'split';
@@ -49,6 +51,7 @@ export function SentenceHero({
           ? `text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${commandHeld ? 'sentence-command-lookup-active' : ''} text-xl sm:text-3xl`
           : `max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${commandHeld ? 'sentence-command-lookup-active' : ''} text-2xl sm:text-4xl`}
         onTouchStartCapture={onWordTouchStartCapture}
+        onPointerDownCapture={onSentencePointerDownCapture}
         onClickCapture={onWordClickCapture}
         title={isMobile
           ? 'Tap a word to play from it · two-finger tap a word to look it up'

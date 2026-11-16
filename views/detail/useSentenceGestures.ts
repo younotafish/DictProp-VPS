@@ -21,6 +21,11 @@ interface SentenceGesturesOptions {
   handleRemember: () => void;
   toggleSentencePlayback: () => void;
   playFromWordOffset: (offset: number) => void;
+  /**
+   * A laptop's Command/Ctrl-click inside a phrase selected in the sentence: looks the phrase up and says whether it did
+   * (useSelectionLookup). Without it, or when it didn't, the click looks up the word under the pointer.
+   */
+  lookUpSelection?: () => boolean;
 }
 
 /**
@@ -32,7 +37,7 @@ interface SentenceGesturesOptions {
  */
 export function useSentenceGestures({
   rootRef, heroScrollRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel,
-  onClose, currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
+  onClose, currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset, lookUpSelection,
 }: SentenceGesturesOptions) {
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
@@ -234,6 +239,12 @@ export function useSentenceGestures({
       return;
     }
     if (e.metaKey || e.ctrlKey) {
+      // Inside a phrase selected in the sentence, the phrase is looked up instead, so the word's handler stays out.
+      if (lookUpSelection?.()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       // The word's own handler looks it up; it flashes now, unless text still selected keeps that handler from acting.
       const target = e.target instanceof Element ? e.target : null;
       const word = target?.closest('[data-word-offset]') as HTMLElement | null;

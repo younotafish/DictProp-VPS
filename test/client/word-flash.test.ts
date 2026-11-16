@@ -102,8 +102,11 @@ after(() => {
   if (!had.Element) delete globals.Element;
 });
 
-/** Sentence review's word gestures on a phone or a laptop, with a sentence holding the word "gamut" at offset 12. */
-function sentence(isMobile: boolean) {
+/**
+ * Sentence review's word gestures on a phone or a laptop, with a sentence holding the word "gamut" at offset 12.
+ * `lookUpSelection` stands for useSelectionLookup's: whether a Cmd/Ctrl-click found a selected phrase to look up.
+ */
+function sentence(isMobile: boolean, lookUpSelection?: () => boolean) {
   const log: string[] = [];
   const hero = new FakeNode(null, log);
   const gamut = new FakeNode(hero, log, 12);
@@ -115,6 +118,7 @@ function sentence(isMobile: boolean) {
       setSentencePage: () => {}, isSentenceAutoPlayingRef: { current: false }, setShowSentenceAutoPlayPanel: () => {},
       onClose: () => {}, currentGroupIndexRef: { current: 0 }, goToSentence: () => {}, handleRemember: () => {},
       toggleSentencePlayback: () => {}, playFromWordOffset: offset => { log.push(`play from ${offset}`); },
+      lookUpSelection,
     });
     return null;
   };
@@ -169,4 +173,20 @@ test('on a phone a tap on a word flashes it and plays from it; a two-finger tap 
   phone.twoFingerTap(phone.gamut);
   assert.deepEqual(phone.log.splice(0), ['flash 450', 'click']);
   assert.equal(phone.gamut.clicks, 1);
+});
+
+test('a Cmd or Ctrl-click inside a selected phrase is the phrase\'s: the word under it neither flashes nor looks itself up', () => {
+  selection = '';
+  let phraseFound = true;
+  const asked: string[] = [];
+  const laptop = sentence(false, () => { asked.push('phrase?'); return phraseFound; });
+  assert.equal(laptop.click(laptop.gamut, { metaKey: true }), true, 'kept from the word\'s own look-up');
+  assert.deepEqual(laptop.log.splice(0), []);
+  // No phrase found: the word is looked up as before. A plain click never asks.
+  phraseFound = false;
+  assert.equal(laptop.click(laptop.gamut, { ctrlKey: true }), false);
+  assert.deepEqual(laptop.log.splice(0), ['flash 450']);
+  laptop.click(laptop.gamut);
+  assert.deepEqual(laptop.log.splice(0), ['flash 300', 'play from 12']);
+  assert.deepEqual(asked, ['phrase?', 'phrase?']);
 });
