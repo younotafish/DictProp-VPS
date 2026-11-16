@@ -2,7 +2,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { IncomingMessage } from 'http';
 import { isIP } from 'net';
 import type { AppEnv } from './auth.js';
-import { isPrivateNetworkAddress, parseIpv6 } from '../safe-url.js';
+import { isPrivateNetworkAddress, parseIpv6 } from '../ip.js';
 
 /** A fixed-window limit per signed-in user and path. */
 export function createRateLimit(limit: number, windowMs: number): MiddlewareHandler<AppEnv> {

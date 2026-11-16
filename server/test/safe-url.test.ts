@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isPrivateNetworkAddress, resolvePublicHttpUrl } from '../src/safe-url.js';
+import { isPrivateNetworkAddress } from '../src/ip.js';
+import { resolvePublicHttpUrl } from '../src/safe-url.js';
 
 test('SSRF address checks reject private IPv4, IPv6, and mapped forms', () => {
   for (const address of [
