@@ -88,13 +88,13 @@ test('with nothing to review, Start is a disabled All caught up captioned with w
   assert.match(render([vocab('jump', { reviews: 3, due: tonight + 9 * HOUR })]), />Next card due in 17h 30m<\/p>/);
 });
 
-test('the dashboard says Recall (study) and Best card streak, and shows — for recall until a study grade is made', t => {
+test('the dashboard says Recall (study) and Best card streak, captioned as the run a card holds now, and shows — for recall until a study grade is made', t => {
   t.mock.method(Date, 'now', () => NOW);
   const items = [vocab('run', { reviews: 3, streak: 4 })];
   const quickOnly: ReviewHistory = { recent: [review(NOW - HOUR, 'good', 'quick')], olderTimes: [], olderCount: 0 };
   const text = textOf(render(items, quickOnly));
   assert.match(text, /1 Reviews — Recall \(study\)/);
-  assert.match(text, /Best card streak 4 correct in a row/);
+  assert.match(text, /Best card streak 4 correct in a row, now Total Reviews/);
   assert.doesNotMatch(text, /Recalled|Best Streak/);
   const studied: ReviewHistory = { recent: [review(NOW - HOUR, 'again'), review(NOW - HOUR, 'good'), review(NOW - HOUR, 'good', 'quick')], olderTimes: [], olderCount: 0 };
   assert.match(textOf(render(items, studied)), /3 Reviews 50% Recall \(study\)/);
@@ -114,7 +114,7 @@ test('until the history has loaded, every number drawn from it reads —, and th
   assert.doesNotMatch(markup, /title="\d+ reviews"/);
   // The numbers counted from the items don't wait: the due count and the best card streak.
   assert.match(text, /1 Ready 1 Due/);
-  assert.match(text, /Best card streak 3 correct in a row/);
+  assert.match(text, /Best card streak 3 correct in a row, now Total Reviews/);
 
   const loadedMarkup = render(items, { ...outboxOnly, loaded: true });
   assert.match(loadedMarkup, filledBar, "today's bar fills once the history has loaded");

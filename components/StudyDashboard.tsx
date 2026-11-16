@@ -286,14 +286,14 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         </div>
         
         <div className="grid grid-cols-2 divide-x divide-slate-200 border-y border-slate-200">
-          {/* Longest Streak */}
+          {/* The longest run of correct answers a card holds now, which an Again or a Reset on that card ends */}
           <div className="py-4 pr-4">
             <div className="flex items-center gap-2 mb-1">
               <Zap size={14} className="text-amber-500" />
               <span className="text-xs font-medium text-slate-600">Best card streak</span>
             </div>
             <p className="text-2xl font-bold text-slate-800">{stats.longestStreak}</p>
-            <p className="text-xs text-slate-500">correct in a row</p>
+            <p className="text-xs text-slate-500">correct in a row, now</p>
           </div>
           
           {/* Total Reviews */}

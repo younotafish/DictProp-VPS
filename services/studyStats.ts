@@ -18,6 +18,7 @@ export interface StudyStats {
    *  popup's Got it, always Good, isn't a recall test, so it doesn't count. */
   weeklyStudyRecallRate: number | null;
   totalLifetimeReviews: number;
+  /** The longest run of correct answers a studied card holds now (its correctStreak, which Again and Reset end). */
   longestStreak: number;
   /** Up to three reviewed items, the most reviewed first. */
   mostReviewed: StoredItem[];
