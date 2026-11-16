@@ -12,26 +12,22 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { validateOfflineTtsBundle, type OfflineTtsBundle } from '../offline-tts-import.js';
 import type { WordTiming } from '../tts-alignment.js';
 import { audioPath, timingsPath } from '../tts/cache.js';
 import { isProcessRunning } from '../tts/lock.js';
+import { errorMessage, readBundleManifest, resolveInBundle } from './support/bundle.js';
 
-const manifestPath = process.argv[2];
-if (!manifestPath) throw new Error('Usage: import-offline-tts <manifest.json>');
-
-const resolvedManifest = resolve(manifestPath);
-const bundle = JSON.parse(readFileSync(resolvedManifest, 'utf8')) as OfflineTtsBundle;
-const validationError = validateOfflineTtsBundle(bundle);
-if (validationError) throw new Error(validationError);
-
-const bundleRoot = dirname(resolvedManifest);
+const { bundle, bundleRoot } = readBundleManifest<OfflineTtsBundle>(
+  'Usage: import-offline-tts <manifest.json>',
+  validateOfflineTtsBundle,
+);
 
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
 const insideBundle = (relativePath: string): string => {
-  const path = resolve(bundleRoot, relativePath);
-  if (!path.startsWith(`${bundleRoot}${sep}`)) throw new Error('path escapes bundle root');
+  const path = resolveInBundle(bundleRoot, relativePath);
+  if (!path) throw new Error('path escapes bundle root');
   return path;
 };
 
@@ -142,7 +138,7 @@ for (const entry of bundle.entries) {
     if (audioState === 'missing') installFile(targetAudio, audio);
     result.imported++;
   } catch (error) {
-    result.errors.push({ key: entry.key, error: error instanceof Error ? error.message : String(error) });
+    result.errors.push({ key: entry.key, error: errorMessage(error) });
   }
 }
 
