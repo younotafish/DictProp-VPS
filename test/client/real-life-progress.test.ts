@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createElement } from 'react';
+import { createElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { REAL_LIFE_COLLECTIONS } from '../../services/realLifeCatalog.ts';
 import { summarizeCatalogProgress } from '../../services/catalogProgress.ts';
@@ -13,6 +13,7 @@ import { catalogProgressItemId, catalogProgressKind } from '../../services/catal
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import type { SentenceReviewState } from '../../services/sentenceReviewState.ts';
 import type { SentenceData } from '../../types.ts';
+import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton.tsx';
 import { RealLifeSentenceRow } from '../../views/reading/RealLifeCollectionScreen.tsx';
 
 const NOW = 2_000_000;
@@ -83,6 +84,7 @@ test('a row\'s pill says where its line stands, Due in orange when it is due, at
   const sentence = REAL_LIFE_COLLECTIONS[0].sentences[0];
   const row = (state: SentenceReviewState) => renderToStaticMarkup(createElement(RealLifeSentenceRow, {
     sentence, softClass: 'bg-indigo-50 text-indigo-700', saved: false, state, masteryPercent: 64, onOpen: () => {}, onMarkReviewed: () => {},
+    onPlaybackStart: () => {},
   }));
   const pill = 'flex min-w-[4.5rem] shrink-0 items-center justify-center rounded-full px-2 py-0.5 text-[10px]';
   const reviewed = '<button type="button" class="flex min-h-8 items-center gap-1 rounded-lg bg-emerald-50 px-2.5 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100" title="Mark as reviewed">';
@@ -100,4 +102,28 @@ test('a row\'s pill says where its line stands, Due in orange when it is due, at
   const unreviewed = row('unreviewed');
   assert.ok(unreviewed.includes(`<span class="${pill} bg-slate-100 font-semibold text-slate-500">Unreviewed</span>`));
   assert.ok(unreviewed.includes(reviewed));
+});
+
+/** A row's elements, depth first: the memoized row's inner function uses no hooks, so calling it returns them. */
+function rowElements(props: ComponentProps<typeof RealLifeSentenceRow>): ReactElement<Record<string, unknown>>[] {
+  const out: ReactElement<Record<string, unknown>>[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!isValidElement<Record<string, unknown>>(node)) return;
+    out.push(node);
+    walk(node.props.children);
+  };
+  walk((RealLifeSentenceRow as unknown as { type: (rowProps: typeof props) => ReactNode }).type(props));
+  return out;
+}
+
+test('a row\'s speaker hands each read to the list and leaves it playing when the row goes', () => {
+  const keepRead = () => {};
+  const speaker = rowElements({
+    sentence: REAL_LIFE_COLLECTIONS[0].sentences[0], softClass: 'bg-indigo-50 text-indigo-700', saved: false, state: 'due',
+    masteryPercent: 0, onOpen: () => {}, onMarkReviewed: () => {}, onPlaybackStart: keepRead,
+  }).find(element => element.type === SentenceSpeakerButton);
+  assert.ok(speaker, 'the row has its speaker');
+  assert.equal(speaker.props.stopOnUnmount, false, 'a row that scrolls out of the list leaves its read playing');
+  assert.equal(speaker.props.onPlaybackStart, keepRead, 'the list keeps the read, to stop it when it closes');
 });

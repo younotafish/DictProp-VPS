@@ -1,4 +1,4 @@
-import React, { useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -16,6 +16,7 @@ import { HighlightedSentence } from '../../components/HighlightedSentence';
 import { activateOnEnterOrSpace } from '../../components/activateOnKey';
 import { useEscapeLayer } from '../../components/escapeStack';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
+import type { SpeakHandle } from '../../services/neuralTts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { acceptListReview } from '../../services/actionGuards';
 import type { RealLifeCollection, RealLifeSentence } from '../../services/realLifeCatalog';
@@ -28,6 +29,7 @@ import { sentenceReviewState, type SentenceReviewState } from '../../services/se
 import { useLatest } from '../../hooks/useStableValue';
 import { collectionStyle } from './realLifeStyle';
 import { filterRealLifeSentences } from './realLifeFilter';
+import { createSpeechSlot } from './speechSlot';
 
 const sentenceKey = (_index: number, sentence: RealLifeSentence) => sentence.id;
 const listComponents = { Footer: () => <div className="h-[calc(6rem+env(safe-area-inset-bottom))]" /> };
@@ -45,6 +47,8 @@ interface RealLifeSentenceRowProps {
   onOpen: (sentence: RealLifeSentence) => void;
   /** Reviewed: records a review of the line. The list guards it, so one press reviews one row. */
   onMarkReviewed: (sentence: RealLifeSentence) => void;
+  /** Hears each read the row's speaker starts. The list keeps it, since the read goes on when the row scrolls away. */
+  onPlaybackStart: (handle: SpeakHandle) => void;
   findSaved?: (term: string) => StoredItem | null;
   onOpenCard?: (item: StoredItem) => void;
 }
@@ -59,6 +63,7 @@ export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
   masteryPercent,
   onOpen,
   onMarkReviewed,
+  onPlaybackStart,
   findSaved,
   onOpenCard,
 }: RealLifeSentenceRowProps) {
@@ -118,7 +123,13 @@ export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
                     <Check size={12} /> Reviewed
                   </button>
                 )}
-                <SentenceSpeakerButton text={sentence.text} className="rounded-full p-1.5 hover:bg-indigo-50" iconSize={15} />
+                <SentenceSpeakerButton
+                  text={sentence.text}
+                  className="rounded-full p-1.5 hover:bg-indigo-50"
+                  iconSize={15}
+                  stopOnUnmount={false}
+                  onPlaybackStart={onPlaybackStart}
+                />
                 <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-400" />
               </div>
             </div>
@@ -206,6 +217,11 @@ export function RealLifeCollectionScreen({
     if (!acceptListReview(lastListReviewAt, Date.now())) return;
     void onUpdateSRS(catalogProgressItemId('real-life', sentence.id), 'good', { seedItem: createRealLifeProgressItem(sentence) });
   }, [onUpdateSRS]);
+  // A sentence read from a row's speaker plays on when its row goes: Virtuoso unmounts a row that scrolls out of view,
+  // and a filter or a review can take one out of the list. So the list keeps the read rather than the row, and stops it
+  // when the collection closes or the tab is left (a hidden tab's effects are cleaned up).
+  const [speech] = useState(createSpeechSlot);
+  useEffect(() => () => speech.stop(), [speech]);
   const softClass = collectionStyle[collection.accent].soft;
   const renderSentence = useCallback((_index: number, sentence: RealLifeSentence) => {
     const progressItem = progressIndex.get(sentence.id);
@@ -219,11 +235,12 @@ export function RealLifeCollectionScreen({
         masteryPercent={progressItem?.srs ? Math.round(SRSAlgorithm.getMasteryLevel(progressItem.srs).percentage) : 0}
         onOpen={openFromList}
         onMarkReviewed={markReviewed}
+        onPlaybackStart={speech.remember}
         findSaved={findSaved}
         onOpenCard={onOpenCard}
       />
     );
-  }, [now, progressIndex, softClass, isSentenceSaved, openFromList, markReviewed, findSaved, onOpenCard]);
+  }, [now, progressIndex, softClass, isSentenceSaved, openFromList, markReviewed, speech, findSaved, onOpenCard]);
 
   const style = collectionStyle[collection.accent];
   const CollectionIcon = style.icon;
