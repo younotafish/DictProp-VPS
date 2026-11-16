@@ -36,8 +36,11 @@ interface PhraseBodyProps {
   onSaveVocab: (vocab: VocabCard) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onSearch: (text: string) => void;
-  /** A key-vocabulary card's Refresh: runs the AI for its word again, as the card header's Refresh does. */
-  onRefresh?: (text: string) => void;
+  /**
+   * A key-vocabulary card's Refresh: runs the AI for its word again, as the card header's Refresh does. Required, though
+   * it may be undefined, so a caller can't leave it out by omission: a card without it refreshes with a plain lookup.
+   */
+  onRefresh: ((text: string) => void) | undefined;
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string, prepared?: SentenceData) => void;
   onOpenExampleSentence?: (text: string, word: string, sense?: string) => void;

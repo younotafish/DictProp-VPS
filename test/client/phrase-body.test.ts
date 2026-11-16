@@ -18,7 +18,7 @@ function elementsOf(node: ReactNode, type: unknown): ReactElement<Record<string,
 
 const vocab = (id: string, word: string) => ({ id, word, examples: [] }) as Partial<VocabCard> as VocabCard;
 
-test('a Key Vocabulary card\'s Refresh is the card view\'s forced AI lookup, as the header\'s Refresh is, not a plain search', () => {
+test('PhraseBody hands its Key Vocabulary cards the onRefresh it is given', () => {
   const onRefresh = (_text: string) => {};
   const onSearch = (_text: string) => {};
   const phrase = {
