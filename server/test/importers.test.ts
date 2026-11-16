@@ -277,6 +277,31 @@ test('the corpus audit import applies explicit archive states and accepts unaudi
   assert.deepEqual(stored('sa-audited').data.usageAudit, usageAudit);
 });
 
+test('the corpus audit import writes a failed batch again one item at a time, so a bad item fails alone', () => {
+  const usageAudit = { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high', auditedAt: 300 };
+  const ids = ['cb-written', 'cb-refused'];
+  for (const id of ids) save(id, 'vocab', { word: id, definition: 'honest' });
+  const entries = ids.map(id => ({
+    id, type: 'vocab', sourceHash: corpusSourceHash(stored(id).data), data: { ...stored(id).data, usageAudit },
+    wasArchived: false, archiveForUsage: false,
+  }));
+  // The import runs in a process of its own: a trigger in the database file makes it unable to write one of the rows.
+  db.exec(`CREATE TRIGGER refuse_cb_refused BEFORE UPDATE ON items WHEN NEW.id = 'cb-refused'
+    BEGIN SELECT RAISE(ABORT, 'refused by the test'); END`);
+  try {
+    const run = runServerScript('import-corpus-audit', [auditBundle(entries)]);
+    assert.equal(run.status, 1, run.stderr);
+    assert.equal(run.output.updated, 1);
+    assert.equal(run.output.skipped, 1);
+    assert.equal(run.output.stale, 0);
+    assert.deepEqual(run.output.errors, [{ id: 'cb-refused', error: 'refused by the test' }]);
+  } finally {
+    db.exec('DROP TRIGGER refuse_cb_refused');
+  }
+  assert.deepEqual(stored('cb-written').data.usageAudit, usageAudit);
+  assert.equal(stored('cb-refused').data.usageAudit, undefined);
+});
+
 test('the repair only previews by default, and on --apply backs up first and keeps every image still in use', () => {
   const addImage = (id: string) => assert.equal(upsertItemImageBinary(id, png(id), 'image/png', owner.id), true);
   save('repair-live', 'vocab', { word: 'serene' });
