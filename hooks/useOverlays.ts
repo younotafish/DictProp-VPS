@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getItemSpelling, type StoredItem } from '../types';
 import { sortStoredSensesByUsage } from '../services/usageAudit';
 import type { DuplicateClusterView } from '../components/DuplicatesModal';
+import { useAnyModalDialogOpen } from '../components/overlayStack';
 
 /** The card popup: the word it shows, by spelling, and the sense it opened on. */
 export interface CardPopup { spelling: string; initialId: string }
@@ -11,24 +12,27 @@ export const popupIsEmpty = (cardPopup: CardPopup | null, popupItems: readonly S
   cardPopup !== null && popupItems.length === 0;
 
 /**
- * What covers the page. modalOpen: a dialog that asks for a decision or lists something (the shortcut sheet, the
- * refused reviews or the duplicates), which keeps every key, the undo shortcut included. dialogOpen: one of those, or
- * the card popup showing a card.
+ * What covers the page. modalOpen: a dialog that asks for a decision or lists something, which keeps every key, the
+ * undo shortcut included: App's own (the shortcut sheet, the refused reviews or the duplicates) from the moment it's
+ * asked for, while its code may still be loading, or any other dialog on screen, such as UserMenu's sign-out
+ * confirmations or an overlay's crash dialog. dialogOpen: one of those, or the card popup showing a card.
  */
-export function openDialogs({ cardPopup, popupItems, showKeyboardHelp, showRefusedReviews, duplicateClusters }: {
+export function openDialogs({ cardPopup, popupItems, modalShowing, showKeyboardHelp, showRefusedReviews, duplicateClusters }: {
   cardPopup: CardPopup | null;
   popupItems: readonly StoredItem[];
+  /** A dialog (components/Modal) is on screen, wherever it renders (components/overlayStack's useAnyModalDialogOpen). */
+  modalShowing: boolean;
   showKeyboardHelp: boolean;
   showRefusedReviews: boolean;
   duplicateClusters: readonly DuplicateClusterView[] | null;
 }): { modalOpen: boolean; dialogOpen: boolean } {
-  const modalOpen = showKeyboardHelp || showRefusedReviews || duplicateClusters !== null;
+  const modalOpen = modalShowing || showKeyboardHelp || showRefusedReviews || duplicateClusters !== null;
   return { modalOpen, dialogOpen: modalOpen || (cardPopup !== null && popupItems.length > 0) };
 }
 
 /**
- * What can open over the page: the card popup, the duplicates dialog, the shortcuts and the refused reviews, and
- * whether any of them covers it (openDialogs).
+ * What can open over the page: the card popup, the duplicates dialog, the shortcuts and the refused reviews; and
+ * whether any of them, or any other dialog on screen, covers it (openDialogs).
  */
 export function useOverlays(libraryWords: StoredItem[]) {
   // The card popup — keyed by the word's SPELLING (so deleting one sense doesn't lose the rest)
@@ -57,7 +61,10 @@ export function useOverlays(libraryWords: StoredItem[]) {
   const [showRefusedReviews, setShowRefusedReviews] = useState(false);
   const openRefusedReviews = useCallback(() => setShowRefusedReviews(true), []);
 
-  const { modalOpen, dialogOpen } = openDialogs({ cardPopup, popupItems, showKeyboardHelp, showRefusedReviews, duplicateClusters });
+  const modalShowing = useAnyModalDialogOpen();
+  const { modalOpen, dialogOpen } = openDialogs({
+    cardPopup, popupItems, modalShowing, showKeyboardHelp, showRefusedReviews, duplicateClusters,
+  });
 
   return {
     cardPopup, setCardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters,

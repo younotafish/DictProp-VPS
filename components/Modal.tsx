@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { useLatest } from '../hooks/useStableValue';
 import { useBackdropClick } from './backdropPress';
 import { useEscapeLayer } from './escapeStack';
-import { useOverlay } from './overlayStack';
+import { useModalDialog, useOverlay } from './overlayStack';
 
 interface ModalProps {
   onClose: () => void;
@@ -51,12 +51,14 @@ export function useModalFocus(panelRef: React.RefObject<HTMLElement | null>, act
  * focus restore on close — plus role="dialog"/aria-modal. Extracted so the half-dozen modals stop
  * re-implementing the same backdrop markup (and gain the a11y they were each missing). Render your
  * header/body as children, and render the modal outside the app's `<main>` (beside it, or in a portal).
+ * Wherever it renders, App counts it among the dialogs that keep the keys (hooks/useOverlays' modalOpen).
  */
 export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max-w-md', panelClassName = '', ariaLabel }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   useEscapeLayer(onClose, 100);
 
   useOverlay();
+  useModalDialog();
   useModalFocus(panelRef);
   // A press that began in the panel, such as a text selection, doesn't close the dialog where it ends.
   const backdrop = useBackdropClick(onClose);

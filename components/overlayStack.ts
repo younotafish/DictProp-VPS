@@ -47,6 +47,24 @@ const anyOpen = () => openCount > 0;
 /** Whether any overlay is open. */
 export const useAnyOverlayOpen = (): boolean => useSyncExternalStore(subscribe, anyOpen, () => false);
 
+// The dialogs open (components/Modal), wherever they render: App's own, UserMenu's sign-out confirmations and an
+// overlay's crash dialog alike. A dialog keeps the keys, so App stands its shortcuts down while any is open (see
+// hooks/useOverlays' modalOpen).
+let openModalCount = 0;
+
+/** Registers the calling dialog (components/Modal) while it's mounted. */
+export function useModalDialog(): void {
+  useEffect(() => {
+    if (openModalCount++ === 0) emit();
+    return () => { if (--openModalCount === 0) emit(); };
+  }, []);
+}
+
+const anyModalOpen = () => openModalCount > 0;
+
+/** Whether a dialog (components/Modal) is open anywhere in the app. */
+export const useAnyModalDialogOpen = (): boolean => useSyncExternalStore(subscribe, anyModalOpen, () => false);
+
 /** The element that had focus when the first open overlay opened; reading it clears it. */
 export function takeOverlayOpener(): Element | null {
   const element = opener;
