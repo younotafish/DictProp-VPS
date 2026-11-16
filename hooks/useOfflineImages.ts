@@ -82,7 +82,9 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
       if (version) imageVersions.set(id, version);
     };
     for (const item of candidates) {
-      if (item.isDeleted || item.isArchived) continue;
+      // The offline download covers archived cards too, which the archived section and search still open; the
+      // priority set holds none.
+      if (item.isDeleted) continue;
       for (const { id, imageUrl } of picturesOf(item)) addImageMarker(id, imageUrl);
     }
     // Only the offline download shows a pill (the quiet priority caching reports nothing, so `end` does nothing for it
