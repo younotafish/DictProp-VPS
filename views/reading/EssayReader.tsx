@@ -1,5 +1,5 @@
 import React, { Fragment, useCallback, useMemo } from 'react';
-import { ArrowLeft, Clock3, ExternalLink, Play } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clock3, ExternalLink, Play } from 'lucide-react';
 import type { StoredItem } from '../../types';
 import { useEscapeLayer } from '../../components/escapeStack';
 import type { Essay, EssayBodyParagraph, EssaySentence } from '../../services/essayCatalog';
@@ -63,13 +63,25 @@ interface EssayReaderProps {
   onBack: () => void;
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
+  /** The next reading of the same publication (nextReading), linked at the end. */
+  nextEssay?: Essay | null;
+  onOpenEssay?: (essayId: string) => void;
 }
 
 /**
  * An essay on one page, each body sentence a button that opens its lesson, and Study for its due reviews and then its
  * new sentences.
  */
-export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence, onScroll }: EssayReaderProps) {
+export function EssayReader({
+  essay,
+  progressIndex,
+  now,
+  onBack,
+  onOpenSentence,
+  onScroll,
+  nextEssay,
+  onOpenEssay,
+}: EssayReaderProps) {
   const progress = useMemo(
     () => summarizeCatalogProgress(essay.sentences, progressIndex, now),
     [essay, now, progressIndex],
@@ -169,6 +181,19 @@ export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence,
               );
             })}
           </div>
+
+          {nextEssay && onOpenEssay && (
+            <div className="mx-auto mt-12 max-w-3xl">
+              <button
+                type="button"
+                onClick={() => onOpenEssay(nextEssay.id)}
+                className="group flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3 text-left text-sm font-semibold text-stone-800 shadow-sm transition-colors hover:border-indigo-200 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 sm:text-base"
+              >
+                <span className="min-w-0 truncate">Next: {nextEssay.title}</span>
+                <ArrowRight size={18} className="shrink-0 text-stone-400 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-500" />
+              </button>
+            </div>
+          )}
 
           <footer className="mx-auto mt-12 max-w-3xl border-t border-stone-300 pt-6 text-xs leading-relaxed text-stone-500">
             <p>{essay.rightsNote ?? essay.publicDomainNote}</p>

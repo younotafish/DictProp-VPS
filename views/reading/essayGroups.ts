@@ -20,3 +20,16 @@ export function groupModernEssays(modernEssays: readonly Essay[]): { title: stri
   }
   return [...groups.entries()].map(([title, groupedEssays]) => ({ title, essays: groupedEssays }));
 }
+
+/**
+ * The reading after `essayId` for the reader's 'Next' link: the next essay in catalog order from the same publication,
+ * among the modern essays grouped under one (groupModernEssays). Null for a classic, a standalone essay and the last of
+ * its publication.
+ */
+export function nextReading(essays: readonly Essay[], essayId: string): Essay | null {
+  const essay = essays.find(candidate => candidate.id === essayId);
+  if (!essay || essay.collection !== 'modern') return null;
+  const publication = essays.filter(candidate => candidate.collection === 'modern' && candidate.publication === essay.publication);
+  if (publication.length < 2) return null;
+  return publication[publication.indexOf(essay) + 1] ?? null;
+}

@@ -5,6 +5,7 @@ import { useListClock } from '../hooks/useNow';
 import { useEssayCatalog } from './reading/useEssayCatalog';
 import { EssayIndex } from './reading/EssayIndex';
 import { EssayReader } from './reading/EssayReader';
+import { nextReading } from './reading/essayGroups';
 
 interface EssaysViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
@@ -43,14 +44,18 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
     );
   }
 
+  // Each essay mounts afresh, so the next reading opens at its own start rather than at the last one's scroll.
   return (
     <EssayReader
+      key={selectedEssay.id}
       essay={selectedEssay}
       progressIndex={progressIndex}
       now={now}
       onBack={() => setSelectedEssayId(null)}
       onOpenSentence={openSentence}
       onScroll={onScroll}
+      nextEssay={nextReading(essays, selectedEssay.id)}
+      onOpenEssay={setSelectedEssayId}
     />
   );
 };
