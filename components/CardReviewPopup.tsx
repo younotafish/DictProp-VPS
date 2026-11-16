@@ -9,6 +9,7 @@ import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/neuralTts';
+import { detectPlatform } from '../services/platform';
 import { useLatest } from '../hooks/useStableValue';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';
@@ -43,6 +44,14 @@ interface CardReviewPopupProps {
   /** Save a not-yet-saved sense into the library. */
   onSaveVocab?: (vocab: VocabCard) => void;
 }
+
+/**
+ * Whether the device reports touch points, asked of the app's one detector on each render as the popup always
+ * did. Unlike the card view's PLATFORM.isTouchCapable it has no coarse-pointer fallback, so a device that reports
+ * a coarse pointer but no touch points gets the card view's zone guides and not the popup's.
+ */
+const hasTouchPoints = (): boolean =>
+  detectPlatform(typeof navigator === 'undefined' ? undefined : navigator, () => false).isTouchCapable;
 
 /**
  * The full review card for a saved word, shown in an overlay — opened by tapping a saved word in a
@@ -186,7 +195,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   }, [current, onSaveVocab]);
 
   // Eyes-free read zones are for touch only — on macOS the keyboard (P / E / Cmd+1–4) covers reading.
-  const isTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+  const isTouch = hasTouchPoints();
   // Judge each click by what made it where the browser says, so a mouse or trackpad on a touchscreen
   // laptop (or an iPad's trackpad) still closes from the gutter instead of reading.
   const isTouchClick = useCallback((e: React.MouseEvent) => {
