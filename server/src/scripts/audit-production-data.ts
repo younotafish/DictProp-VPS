@@ -226,6 +226,12 @@ const inlineImageItemCount = countQuery(
   `SELECT COUNT(*) AS count FROM items WHERE user_id = ? AND data LIKE '%data:image/%'`,
   owner.id,
 );
+// Image rows from before image_blobs keep a data URI in their own data column and no content hash. The image reads
+// still fall back to that column; once this counts none, the fallback can go.
+const legacyImageRowCount = countQuery(
+  'SELECT COUNT(*) AS count FROM item_images WHERE user_id = ? AND content_hash IS NULL',
+  owner.id,
+);
 const nonOwnerItemCount = countQuery('SELECT COUNT(*) AS count FROM items WHERE user_id IS NULL OR user_id != ?', owner.id);
 const nonOwnerSessionCount = countQuery(
   'SELECT COUNT(*) AS count FROM sessions WHERE user_id != ? AND expires_at > ?',
@@ -271,6 +277,7 @@ const report = {
     invalidItemCount: invalidItems.length,
     invalidItems: invalidItems.slice(0, 100),
     inlineImageItemCount,
+    legacyImageRowCount,
     registeredUserCount: users.length,
     registeredAdminCount: users.filter(user => user.is_admin === 1).length,
     nonOwnerItemCount,

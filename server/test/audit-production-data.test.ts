@@ -49,6 +49,10 @@ addItemImage(owner.id, 'ap-orphan-image');
 db.prepare(`INSERT INTO item_images (id, user_id, data, updated_at, mime_type, content_hash)
   VALUES ('ap-broken-image', ?, x'', 1, 'image/png', ?)`).run(owner.id, sha256('no such blob'));
 storeRawBlob(png('nobody refers to this blob'));
+// An image row from before image_blobs: a data URI in its own data column, and no content hash.
+db.prepare(`INSERT INTO item_images (id, user_id, data, updated_at, mime_type, content_hash)
+  VALUES ('ap-candid', ?, ?, 1, NULL, NULL)`)
+  .run(owner.id, `data:image/png;base64,${png('legacy image').toString('base64')}`);
 
 // A row no account owns, from before accounts existed.
 db.prepare(`INSERT INTO items (id, type, data, srs, saved_at, updated_at, is_deleted, is_archived, user_id, revision)
@@ -83,6 +87,7 @@ test('the production audit reports storage, sentences, example enrichments, imag
     invalidItemCount: 1,
     invalidItems: [{ id: 'ap-inline', error: 'item has an inline image outside imageUrl' }],
     inlineImageItemCount: 1,
+    legacyImageRowCount: 1,
     registeredUserCount: 2,
     registeredAdminCount: 1,
     nonOwnerItemCount: 1,
@@ -135,7 +140,7 @@ test('the production audit reports storage, sentences, example enrichments, imag
     missingImageIds: ids(examples.slice(1)),
   });
   assert.deepEqual(report.images, {
-    storedCount: 3,
+    storedCount: 4,
     orphanReferenceCount: 1,
     orphanReferenceIds: ['ap-orphan-image'],
     deletedItemReferenceCount: 1,
