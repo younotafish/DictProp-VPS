@@ -1,5 +1,5 @@
 import type { SRSData, StoredItem } from '../types';
-import type { AppliedReviewResponse } from './api';
+import type { AppliedReviewResponse } from './api/library';
 import type { PendingReviewMutation } from './reviewQueue';
 
 /** What draining the review outbox reads, sends and records. */

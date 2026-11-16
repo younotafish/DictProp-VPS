@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { comparisonKey, type ComparisonResult, type StoredComparison } from '../types';
 import type { AuthState } from '../services/auth';
-import { loadComparisons, saveComparisonApi } from '../services/api';
+import { loadComparisons, saveComparisonApi } from '../services/api/comparisons';
 import { warn } from '../services/logger';
 import { mergeComparisons, readCachedComparisons, writeCachedComparisons } from '../components/search/storedComparisons';
 

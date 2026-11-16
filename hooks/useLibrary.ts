@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState } from 'react';
 import type { RevisionCursor, StoredItem } from '../types';
-import { deleteItemRecords, saveData, saveItemUpdates } from '../services/storage';
+import { deleteItemRecords, saveData, saveItemUpdates } from '../services/libraryStore';
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../services/sync';
 import { getItemContentHash } from '../services/itemHash';
-import { loadAllItems, loadItemChanges, saveItems } from '../services/api';
+import { loadAllItems, loadItemChanges, saveItems } from '../services/api/library';
 import { excludePendingReviewItems, readPendingReviewMutations } from '../services/reviewQueue';
 import { createSerialLane } from '../services/serialLane';
 import { pullOrSnapshot, syncSnapshot } from '../services/serverSync';

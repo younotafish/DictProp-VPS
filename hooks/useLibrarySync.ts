@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StoredItem, SyncStatus } from '../types';
 import { logout } from '../services/auth';
-import { deleteItemRecords, loadData, saveData, storeMissingItemHashes, subscribeLibraryWriteFailures } from '../services/storage';
+import { deleteItemRecords, loadData, saveData, storeMissingItemHashes, subscribeLibraryWriteFailures } from '../services/libraryStore';
 import { dropExpiredTombstones } from '../services/sync';
 import { isItemDirty } from '../services/itemHash';
 import { createImageUploadRetry, stripAndStoreImages } from '../services/libraryImages';

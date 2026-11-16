@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { StoredItem } from '../types';
 import { getServerImageVersion, isLazyImageMarker, picturesOf } from '../services/libraryImages';
-import { decodeImage, warmImage } from '../services/storage';
+import { decodeImage, warmImage } from '../services/imageStore';
 
 type LoadMissingImage = (itemId: string, imageVersion?: string) => Promise<string | null>;
 

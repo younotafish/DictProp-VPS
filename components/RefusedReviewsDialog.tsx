@@ -3,7 +3,7 @@ import { AlertTriangle, X } from 'lucide-react';
 import { Button } from './Button';
 import { Modal } from './Modal';
 import { useRefusedReviews } from './RefusedReviews';
-import { clearRefusedReviews, dismissRefusedReviews } from '../services/reviewQueue';
+import { clearRefusedReviews, dismissRefusedReviews } from '../services/refusedReviews';
 
 interface Props {
   userId: string;

@@ -6,7 +6,7 @@ import {
   subscribeRefusedReviews,
   unseenRefusedReviews,
   type RefusedReviewLog,
-} from '../services/reviewQueue';
+} from '../services/refusedReviews';
 
 /** The reviews the server refused for this account, as stored on this device, kept current across tabs. */
 export function useRefusedReviews(userId: string | undefined): RefusedReviewLog {

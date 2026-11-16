@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { getTtsBackfillStatus, startTtsBackfill } from '../services/api';
+import { getTtsBackfillStatus, startTtsBackfill } from '../services/api/tts';
 import type { Overlays } from './useOverlays';
 
 export function useSpeechBackfill({ setConfirmModal }: Pick<Overlays, 'setConfirmModal'>) {

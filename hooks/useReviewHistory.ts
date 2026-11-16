@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReviewEvent, ReviewHistory } from '../types';
-import { loadReviewHistory } from '../services/api';
+import { loadReviewHistory } from '../services/api/library';
 import { warn } from '../services/logger';
 import { readPendingReviewMutations } from '../services/reviewQueue';
 

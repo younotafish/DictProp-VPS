@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { StoredItem } from '../types';
-import { getAllStoredImageIds, getStoredImageIds, loadImagesByIds, saveImagesBatch } from '../services/storage';
-import { getServerImageManifest, loadItemImagesBatch, uploadImages } from '../services/api';
+import { getAllStoredImageIds, getStoredImageIds, loadImagesByIds, saveImagesBatch } from '../services/imageStore';
+import { getServerImageManifest, loadItemImagesBatch, uploadImages } from '../services/api/images';
 import { getServerImageVersion, isImageMarker, picturesOf } from '../services/libraryImages';
 import type { ImageRestoreProgress } from '../services/imageRestore';
 import { log, warn } from '../services/logger';
