@@ -63,7 +63,8 @@ const searchText = (item: StoredItem): string => {
 // Spelling per content object, which grouping and search read for every item on each rebuild.
 const spellingCache = new WeakMap<object, string>();
 
-const spellingOf = (item: StoredItem): string => {
+/** An item's spelling (getItemSpelling), cached per content object: the title the list groups its senses under. */
+export const spellingOf = (item: StoredItem): string => {
   if (!item?.data) return '';
   let spelling = spellingCache.get(item.data);
   if (spelling === undefined) {
@@ -80,6 +81,7 @@ let fuzzyIndex: { spellings: string[]; fuse: Fuse<string> } | null = null;
 const sameSpellings = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((spelling, i) => spelling === b[i]);
 
+// The spellings that fuzzily match, best first.
 const fuzzySpellings = (items: StoredItem[], needle: string): string[] => {
   const distinct = new Set<string>();
   for (const item of items) distinct.add(spellingOf(item));
@@ -91,7 +93,8 @@ const fuzzySpellings = (items: StoredItem[], needle: string): string[] => {
   return fuzzyIndex.fuse.search(needle).map(result => result.item);
 };
 
-const withAllSenses = (items: StoredItem[], spellings: Iterable<string>): StoredItem[] => {
+/** The items with one of `spellings`, in library order: every sense of each. */
+export const withAllSenses = (items: StoredItem[], spellings: Iterable<string>): StoredItem[] => {
   const wanted = new Set(spellings);
   wanted.delete('');
   return items.filter(item => wanted.has(spellingOf(item)));
@@ -109,11 +112,18 @@ export const findLiteralMatches = (items: StoredItem[], query: string): StoredIt
 };
 
 /**
- * Items whose spelling fuzzily matches the query, with their other senses, so typos still find their word.
- * It scans every spelling, tens of ms, so it's the fallback for a query nothing contains.
+ * Items whose spelling fuzzily matches the query, with their other senses, so typos still find their word, and the
+ * matched spellings in Fuse's order, best first. It scans every spelling, tens of ms, so it's the fallback for a
+ * query nothing contains.
  */
+export const findFuzzyMatchesRanked = (items: StoredItem[], query: string): { matches: StoredItem[]; order: string[] } => {
+  const order = fuzzySpellings(items, query.trim().toLowerCase());
+  return { matches: withAllSenses(items, order), order };
+};
+
+/** findFuzzyMatchesRanked's matches alone. */
 export const findFuzzyMatches = (items: StoredItem[], query: string): StoredItem[] =>
-  withAllSenses(items, fuzzySpellings(items, query.trim().toLowerCase()));
+  findFuzzyMatchesRanked(items, query).matches;
 
 /** The whole search at once: literal matches, else fuzzy ones. The notebook runs the two steps separately. */
 export const findNotebookMatches = (items: StoredItem[], query: string): StoredItem[] =>
@@ -160,10 +170,14 @@ const reuseGroups = (groups: ItemGroup[], before: ItemGroup[] | undefined): Item
   });
 };
 
+/** A search's order: each matched spelling's rank (see services/notebook/searchRank.ts), lowest first. */
+export type SearchRank = ReadonlyMap<string, number>;
+
 /**
  * The notebook's sections. `matches` is the search result, or null when not searching; while searching,
- * the due items outside the results are listed after them so review can continue. Given the `previous` list,
- * a group whose senses haven't changed keeps its earlier object, in the same section.
+ * the due items outside the results are listed after them so review can continue, and `rank` puts the best
+ * matches first, the list's sort ordering each rank. Given the `previous` list, a group whose senses haven't
+ * changed keeps its earlier object, in the same section.
  */
 export const buildNotebookList = (
   items: StoredItem[],
@@ -172,18 +186,22 @@ export const buildNotebookList = (
   filter: NotebookFilter,
   now = Date.now(),
   previous?: NotebookList | null,
+  rank?: SearchRank,
 ): NotebookList => {
   const isListed = (item: StoredItem) =>
     !!item?.data?.id && !item.isDeleted && (filter === 'all' || item.type === filter);
   const byPriority = byReviewPriority(now);
+  const rankOf = (item: StoredItem) => rank?.get(spellingOf(item)) ?? Number.MAX_SAFE_INTEGER;
+  const byRankThen = (order: (a: StoredItem, b: StoredItem) => number) =>
+    rank ? (a: StoredItem, b: StoredItem) => rankOf(a) - rankOf(b) || order(a, b) : order;
 
   const active: StoredItem[] = [];
   const archived: StoredItem[] = [];
   for (const item of matches ?? items) {
     if (isListed(item)) (item.isArchived ? archived : active).push(item);
   }
-  active.sort(sort === 'alphabetical' ? byTitle : byPriority);
-  archived.sort(byTitle);
+  active.sort(byRankThen(sort === 'alphabetical' ? byTitle : byPriority));
+  archived.sort(byRankThen(byTitle));
 
   let dueGroups: ItemGroup[] = [];
   if (matches) {
@@ -265,17 +283,21 @@ export const listNoteFor = ({ searchQuery, searchSettled, groupCount, archivedCo
 export type NotebookRow =
   | { key: string; type: 'group'; group: ItemGroup; section: NotebookSection }
   | { key: string; type: 'due-header'; count: number }
+  | { key: string; type: 'archived-header'; count: number }
   | { key: string; type: 'archived-toggle'; count: number }
   | { key: string; type: 'compare-banner' }
   | { key: string; type: 'list-note' };
 
 /**
- * The list flattened for virtualization: the compare banner, the list note, the groups, then while searching
- * the due groups under their header, and last the archived toggle with the archived groups when it's open.
+ * The list flattened for virtualization: the compare banner, the list note and the groups. A search then lists its
+ * archived matches open under an 'Archived matches · N' heading (N spellings) and the due groups it leaves out under
+ * theirs; browsing ends with the archived toggle, and the archived groups when it's open.
  */
 export const buildNotebookRows = (
   list: Pick<NotebookList, 'groups' | 'dueGroups' | 'archived' | 'archivedGroups'>,
-  { compareMode, showListNote, showArchived }: { compareMode: boolean; showListNote: boolean; showArchived: boolean },
+  { searching, compareMode, showListNote, showArchived }: {
+    searching: boolean; compareMode: boolean; showListNote: boolean; showArchived: boolean;
+  },
 ): NotebookRow[] => {
   const rows: NotebookRow[] = [];
   const addGroups = (groups: ItemGroup[], section: NotebookSection) => groups.forEach(group => {
@@ -285,12 +307,16 @@ export const buildNotebookRows = (
   if (compareMode) rows.push({ key: 'compare-banner', type: 'compare-banner' });
   if (showListNote) rows.push({ key: 'list-note', type: 'list-note' });
   addGroups(list.groups, 'main');
+  if (searching && list.archivedGroups.length > 0) {
+    rows.push({ key: 'archived-header', type: 'archived-header', count: list.archivedGroups.length });
+    addGroups(list.archivedGroups, 'archived');
+  }
   // While searching, the due items outside the results follow them
   if (list.dueGroups.length > 0) {
     rows.push({ key: 'due-header', type: 'due-header', count: list.dueGroups.length });
     addGroups(list.dueGroups, 'due');
   }
-  if (list.archived.length > 0) {
+  if (!searching && list.archived.length > 0) {
     rows.push({ key: 'archived-toggle', type: 'archived-toggle', count: list.archived.length });
     if (showArchived) addGroups(list.archivedGroups, 'archived');
   }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, startTransition } from 'react';
-import { Virtuoso } from 'react-virtuoso';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { getItemTitle, type AppUser, type ItemGroup, type StoredItem, type SyncStatus, type VocabCard } from '../types';
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
@@ -13,6 +13,7 @@ import {
 } from '../services/notebookList';
 import { readNotebookListView, writeNotebookListView } from '../services/notebook/listView';
 import { aiCardStillValid, retryOffered, shouldBlurOnDrag } from '../services/notebook/searchBox';
+import { firstVisibleRowIndex, nextScrollAction, type ListScrollInputs } from '../services/notebook/listScroll';
 import { PLATFORM } from '../services/platform';
 import { isImeKey, isTypingTarget } from '../components/keyboardTarget';
 import { NotebookGroup } from './notebook/NotebookGroup';
@@ -20,7 +21,7 @@ import { SearchResultsCarousel } from './notebook/SearchResultsCarousel';
 import { NotebookHeader } from './notebook/NotebookHeader';
 import { NotebookToolsMenu } from './notebook/NotebookToolsMenu';
 import { NotebookSearchBar } from './notebook/NotebookSearchBar';
-import { ArchivedToggle, DueHeader, ListNote } from './notebook/ListRows';
+import { ArchivedMatchesHeader, ArchivedToggle, DueHeader, ListNote } from './notebook/ListRows';
 import { CompareBanner, CompareRow, CompareSelectedButton } from './notebook/CompareMode';
 import { EmptyNotebook } from './notebook/EmptyNotebook';
 import { BatchImportBanner } from './notebook/BatchImportBanner';
@@ -32,6 +33,9 @@ import { useNotebookSearch } from './notebook/useNotebookSearch';
 import { useHorizontalSwipe } from './notebook/useHorizontalSwipe';
 
 const virtualRowKey = (_index: number, row: NotebookRow) => row.key;
+
+/** Where the browse list was when a search began: its first visible row and the scroll position. */
+interface BrowseSpot { key: string | undefined; scrollTop: number }
 
 interface NotebookProps {
   items: StoredItem[];
@@ -47,6 +51,10 @@ interface NotebookProps {
   isOnline: boolean;
   /** Unused: the 'notebook-search' listener that read it is gone. App still passes it until it stops (handoff). */
   hasSavedVariant?: (query: string) => boolean;
+  /** The saved base words a query inflects (ran -> run), which a search lists first after the word typed. */
+  matchSavedBases?: (query: string) => Set<string>;
+  /** Tells the nav bar that the notebook moved its list itself, so the jump doesn't hide the bar. */
+  onSyncScroll?: (element: Element) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onFindDuplicates: () => void;
   onArchive: (id: string) => void;
@@ -74,7 +82,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
     onGenerateAllSpeech, ttsGenProgress,
-    onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages
+    onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages, matchSavedBases, onSyncScroll,
 }) => {
   // The sort and filter last chosen on this device (review priority and words only at first), kept across relaunches.
   const [initialView] = useState(readNotebookListView);
@@ -85,7 +93,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [showArchived, setShowArchived] = useState(false);
   // Moves the list's clock on (see useNotebookSearch) when a card opens over the list.
   const [clockBump, setClockBump] = useState(0);
-  const { headerRef, handleScroll, showHeader } = useAutoHidingHeader(onScroll);
+  const { headerRef, handleScroll, showHeader, syncScrollPosition } = useAutoHidingHeader(onScroll);
 
   // AI Search state
   const {
@@ -103,6 +111,15 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (!query.trim() || !aiCardStillValid(submittedQueryRef.current, query)) clearAISearch();
   }, [clearAISearch, submittedQueryRef]);
 
+  // Every AI lookup starts here (Enter, the wand, a voice transcript, 'Look it up with AI', Retry), and the list
+  // jumps to the top as it starts, where its card or its banner will show.
+  const [aiSubmitKey, setAiSubmitKey] = useState(0);
+  const startAISearch = useCallback((query: string) => {
+    if (!query.trim()) return;
+    setAiSubmitKey(n => n + 1);
+    performAISearch(query);
+  }, [performAISearch]);
+
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
@@ -115,8 +132,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   // Voice search: the transcript becomes the query and is looked up with AI.
   const handleTranscript = useCallback((text: string) => {
     changeQuery(text);
-    performAISearch(text);
-  }, [changeQuery, performAISearch]);
+    startAISearch(text);
+  }, [changeQuery, startAISearch]);
   // A voice failure shows in the lookup's banner, with no Retry: Retry looks up the typed query, not the recording.
   const reportVoiceError = useCallback(
     (message: string | null) => setSearchError(message ? { message, retryable: false } : null),
@@ -139,7 +156,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (isImeKey(e.nativeEvent)) return;
     if (e.key === 'Enter' && localSearchQuery.trim()) {
       e.preventDefault();
-      performAISearch(localSearchQuery);
+      startAISearch(localSearchQuery);
       // On a phone the keyboard would hide the card the lookup brings, so it goes.
       if (PLATFORM.isMobile) e.currentTarget.blur();
     }
@@ -181,7 +198,9 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onSave(makeVocabStoredItem(vocab));
   }, [onSave]);
 
-  const { searchQuery, list, searchSettled } = useNotebookSearch(items, localSearchQuery, sortMode, filterMode, clockBump);
+  const { searchQuery, list, searchSettled } = useNotebookSearch({
+    items, query: localSearchQuery, sortMode, filterMode, clockBump, matchSavedBases,
+  });
 
   // The header counts the notebook's spellings under the current filter at the list's clock, not the search
   // results: outside a search "N saved" is the listed groups, and "N to review" the ones listed with a Due badge.
@@ -204,8 +223,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       searchQuery, searchSettled, groupCount: list.groups.length, archivedCount: list.archived.length, filter: filterMode, canLookUp,
     });
     if (!note) return null;
-    return <ListNote note={note} onLookUp={() => performAISearch(localSearchQuery)} onShowAll={() => setFilterMode('all')} />;
-  }, [list, searchSettled, searchQuery, filterMode, canLookUp, performAISearch, localSearchQuery]);
+    return <ListNote note={note} onLookUp={() => startAISearch(localSearchQuery)} onShowAll={() => setFilterMode('all')} />;
+  }, [list, searchSettled, searchQuery, filterMode, canLookUp, startAISearch, localSearchQuery]);
   const showListNote = listNote !== null;
 
   // DetailView pages through the section the card was opened from. The list is read when a card opens, so this
@@ -224,9 +243,10 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     startTransition(() => setClockBump(n => n + 1));
   }, [listRef, onViewDetail]);
 
+  const searching = !!searchQuery;
   const virtualRows = useMemo(
-    () => buildNotebookRows(list, { compareMode, showListNote, showArchived }),
-    [list, showArchived, compareMode, showListNote],
+    () => buildNotebookRows(list, { searching, compareMode, showListNote, showArchived }),
+    [list, searching, showArchived, compareMode, showListNote],
   );
 
   const renderVirtualRow = useCallback((_index: number, row: NotebookRow) => {
@@ -242,6 +262,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     }
 
     if (row.type === 'due-header') return <DueHeader count={row.count} filter={filterMode} />;
+
+    if (row.type === 'archived-header') return <ArchivedMatchesHeader count={row.count} />;
 
     if (row.type === 'archived-toggle') {
       return <ArchivedToggle count={row.count} expanded={showArchived} onToggle={() => setShowArchived(open => !open)} />;
@@ -322,6 +344,56 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     };
   }, [searchFocused, scrollParent, headerRef]);
 
+  // Where the list goes (nextScrollAction): a search's results come into view at the top once they settle, as does
+  // the list after a new sort or filter and as an AI lookup starts; emptying the box goes back to the browse spot the
+  // first character typed remembered. A jump keeps the header, and through onSyncScroll the nav bar, on screen.
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const browseSpotRef = useRef<BrowseSpot | null>(null);
+  const typedQuery = localSearchQuery.trim();
+  const scrollInputs = useMemo<ListScrollInputs>(() => ({
+    query: typedQuery,
+    // The list shows the typed query once the deferred search has caught up with it, and a search has settled.
+    settled: searchQuery === typedQuery && (!typedQuery || searchSettled),
+    sort: sortMode,
+    filter: filterMode,
+    aiSubmitKey,
+  }), [typedQuery, searchQuery, searchSettled, sortMode, filterMode, aiSubmitKey]);
+  const shownScrollInputs = useRef(scrollInputs);
+  useLayoutEffect(() => {
+    const prev = shownScrollInputs.current;
+    shownScrollInputs.current = scrollInputs;
+    if (prev === scrollInputs || !scrollParent) return;
+    const action = nextScrollAction(prev, scrollInputs, browseSpotRef.current !== null);
+    if (action.anchor === 'save') {
+      // The rows on screen are still the browse list's: a search renders a moment after the typing.
+      const headerBottom = headerRef.current?.getBoundingClientRect().bottom ?? -Infinity;
+      const visibleTop = Math.max(scrollParent.getBoundingClientRect().top, headerBottom);
+      const rendered = Array.from(scrollParent.querySelectorAll<HTMLElement>('[data-item-index]'), row => ({
+        index: Number(row.dataset.itemIndex),
+        bottom: row.getBoundingClientRect().bottom,
+      }));
+      const index = firstVisibleRowIndex(rendered, visibleTop);
+      browseSpotRef.current = { key: index === null ? undefined : virtualRows[index]?.key, scrollTop: scrollParent.scrollTop };
+    }
+    if (action.scroll === 'top') {
+      scrollParent.scrollTop = 0;
+    } else if (action.scroll === 'restore' && browseSpotRef.current) {
+      const spot = browseSpotRef.current;
+      const index = spot.key === undefined ? -1 : virtualRows.findIndex(row => row.key === spot.key);
+      // By the row, under the header, wherever the list has moved it; failing that, by the position.
+      if (index >= 0 && virtuosoRef.current) {
+        virtuosoRef.current.scrollToIndex({ index, align: 'start', offset: -(headerRef.current?.offsetHeight ?? 0) });
+      } else {
+        scrollParent.scrollTop = spot.scrollTop;
+      }
+    }
+    if (action.scroll) {
+      syncScrollPosition(scrollParent);
+      onSyncScroll?.(scrollParent);
+    }
+    if (action.anchor === 'drop') browseSpotRef.current = null;
+  }, [scrollInputs, scrollParent, virtualRows, headerRef, syncScrollPosition, onSyncScroll]);
+
   // An empty notebook keeps its header, with the tools and the account menu, over an invitation in place of the
   // list. The header and the sheets keep their place when the first word arrives, so an open menu or sheet
   // carries on.
@@ -380,7 +452,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             isTranscribing={isTranscribing}
             isSearching={isSearching}
             onToggleRecording={toggleRecording}
-            onSearchWithAI={() => performAISearch(localSearchQuery)}
+            onSearchWithAI={() => startAISearch(localSearchQuery)}
             onClear={() => changeQuery('')}
             inputRef={searchInputRef}
             onFocusChange={setSearchFocused}
@@ -396,7 +468,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           {searchError && (
             <SearchErrorBanner
               message={searchError.message}
-              onRetry={retryOffered(searchError, isOnline, localSearchQuery) ? () => performAISearch(localSearchQuery) : undefined}
+              onRetry={retryOffered(searchError, isOnline, localSearchQuery) ? () => startAISearch(localSearchQuery) : undefined}
             />
           )}
 
@@ -415,6 +487,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           <div className="w-full max-w-screen-md lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto pb-[calc(5rem+env(safe-area-inset-bottom))]">
             {scrollParent && (
               <Virtuoso
+                ref={virtuosoRef}
                 customScrollParent={scrollParent}
                 data={virtualRows}
                 overscan={400}

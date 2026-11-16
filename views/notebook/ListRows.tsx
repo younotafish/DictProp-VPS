@@ -39,6 +39,16 @@ export const DueHeader: React.FC<{ count: number; filter: NotebookFilter }> = ({
   </div>
 );
 
+/** Heads a search's archived matches, listed open after its other results. */
+export const ArchivedMatchesHeader: React.FC<{ count: number }> = ({ count }) => (
+  <div className="px-3 mt-4 pt-3 border-t border-dashed border-slate-200">
+    <div className="flex items-center gap-2 px-1 mb-3">
+      <Archive size={14} className="text-slate-400" />
+      <span className="text-xs font-bold text-slate-500">Archived matches · {count}</span>
+    </div>
+  </div>
+);
+
 /** Opens and closes the archived section at the end of the list. */
 export const ArchivedToggle: React.FC<{ count: number; expanded: boolean; onToggle: () => void }> = ({ count, expanded, onToggle }) => (
   <div className="px-3 mt-6 pt-4 border-t-2 border-slate-200">

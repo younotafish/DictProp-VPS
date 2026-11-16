@@ -7,7 +7,7 @@ import { useLongPress } from './useLongPress';
 
 interface NotebookItemProps {
   item: StoredItem;
-  /** Whether the card is due at the list's clock. */
+  /** Whether the card is due at the list's clock (never for an archived card, which says Archived instead). */
   isDue: boolean;
   /** Its place among its spelling's senses, which onOpen gets back. */
   itemIndex: number;
@@ -74,8 +74,8 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
         className="bg-white p-4 relative cursor-pointer select-none [-webkit-touch-callout:none]"
         style={{ touchAction: 'pan-y' }}
       >
-        {/* SRS Indicator Strip */}
-        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${isDue ? 'bg-orange-400' : (intervalDays > 21 ? 'bg-emerald-400' : 'bg-slate-200')}`}></div>
+        {/* SRS Indicator Strip: neutral on an archived card */}
+        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${isDue ? 'bg-orange-400' : (intervalDays > 21 && !item.isArchived ? 'bg-emerald-400' : 'bg-slate-200')}`}></div>
 
         <div className="pl-3 pr-2">
           <div className="mb-2 pr-8">
@@ -94,6 +94,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
                 </span>
               )}
               {isDue && <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide">Due</span>}
+              {item.isArchived && <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-wide">Archived</span>}
             </div>
           </div>
           <p className="text-sm text-slate-500 truncate mb-2">{subtitle}</p>

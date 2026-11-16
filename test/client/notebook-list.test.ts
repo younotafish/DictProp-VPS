@@ -9,7 +9,8 @@ import {
 } from '../../services/notebookList.ts';
 import type { ItemGroup, SearchResult, StoredItem, UsageStatus, VocabCard } from '../../types.ts';
 import { NotebookHeader } from '../../views/notebook/NotebookHeader.tsx';
-import { DueHeader } from '../../views/notebook/ListRows.tsx';
+import { ArchivedMatchesHeader, DueHeader } from '../../views/notebook/ListRows.tsx';
+import { NotebookItem } from '../../views/notebook/NotebookItem.tsx';
 
 const DAY = 86_400_000;
 const NOW = 1_000 * DAY;
@@ -296,7 +297,10 @@ test('the list note explains an empty list and offers the way out, but says noth
   assert.equal(note({ searchQuery: 'bank', searchSettled: true, canLookUp: false })?.offerLookUp, false);
 });
 
-test('rows run compare banner, note, groups, due header and due groups, then the archived toggle and its open groups', () => {
+const rowSummary = (rows: NotebookRow[]) => rows.map(row =>
+  row.type === 'due-header' || row.type === 'archived-toggle' || row.type === 'archived-header' ? `${row.key}(${row.count})` : row.key);
+
+test('browse rows run compare banner, note, groups, due header and due groups, then the archived toggle and its open groups', () => {
   const group = (title: string) => ({ title, items: [vocab(title)] });
   const list = {
     groups: [group('bank'), group('banker')],
@@ -304,15 +308,33 @@ test('rows run compare banner, note, groups, due header and due groups, then the
     archived: [vocab('pond', { archived: true })],
     archivedGroups: [group('pond')],
   };
-  const summary = (rows: NotebookRow[]) => rows.map(row =>
-    row.type === 'due-header' || row.type === 'archived-toggle' ? `${row.key}(${row.count})` : row.key);
 
-  assert.deepEqual(summary(buildNotebookRows(list, { compareMode: false, showListNote: false, showArchived: false })),
+  assert.deepEqual(rowSummary(buildNotebookRows(list, { searching: false, compareMode: false, showListNote: false, showArchived: false })),
     ['main:bank', 'main:banker', 'due-header(1)', 'due:river', 'archived-toggle(1)']);
-  assert.deepEqual(summary(buildNotebookRows(list, { compareMode: true, showListNote: true, showArchived: true })),
+  assert.deepEqual(rowSummary(buildNotebookRows(list, { searching: false, compareMode: true, showListNote: true, showArchived: true })),
     ['compare-banner', 'list-note', 'main:bank', 'main:banker', 'due-header(1)', 'due:river', 'archived-toggle(1)', 'archived:pond']);
-  assert.deepEqual(summary(buildNotebookRows({ groups: [], dueGroups: [], archived: [], archivedGroups: [] },
-    { compareMode: false, showListNote: true, showArchived: true })), ['list-note']);
+  assert.deepEqual(rowSummary(buildNotebookRows({ groups: [], dueGroups: [], archived: [], archivedGroups: [] },
+    { searching: false, compareMode: false, showListNote: true, showArchived: true })), ['list-note']);
+});
+
+test('search rows list the matches, then the archived matches open under their heading, then the due cards left out', () => {
+  const items = [
+    vocab('bank', { due: NOW + DAY }),
+    vocab('bankrupt', { archived: true }),
+    vocab('embankment', { archived: true, sense: 'wall' }),
+    vocab('embankment', { archived: true, sense: 'road' }),
+    vocab('river', { due: NOW - DAY }),
+  ];
+  const list = buildNotebookList(items, findNotebookMatches(items, 'bank'), 'familiarity', 'all', NOW);
+  // N counts the archived spellings listed, whatever the toggle says.
+  for (const showArchived of [false, true]) {
+    assert.deepEqual(rowSummary(buildNotebookRows(list, { searching: true, compareMode: false, showListNote: false, showArchived })),
+      ['main:bank', 'archived-header(2)', 'archived:bankrupt', 'archived:embankment', 'due-header(1)', 'due:river']);
+  }
+  // With nothing archived among the matches there's no heading, and no archived toggle either.
+  const unarchived = buildNotebookList(items, findNotebookMatches(items, 'river'), 'familiarity', 'all', NOW);
+  assert.deepEqual(rowSummary(buildNotebookRows(unarchived, { searching: true, compareMode: false, showListNote: false, showArchived: true })),
+    ['main:river']);
 });
 
 test('the list orders by the clock it is given and carries that clock, so its rows count Due from the same instant', () => {
@@ -408,4 +430,26 @@ test('the header line names what the filter lists, then reviewed today and to re
   assert.match(due(1, 'vocab'), />1 word to revisit</);
   assert.match(due(3, 'phrase'), />3 phrases to revisit</);
   assert.match(due(2, 'all'), />2 items to revisit</);
+});
+
+test('an archived card says Archived on a neutral strip instead of Due, and a search heads its archived matches', () => {
+  const noop = () => {};
+  const card = (item: StoredItem, isDue: boolean) => renderToStaticMarkup(createElement(NotebookItem, {
+    item, isDue, itemIndex: 0, onOpen: noop, onDelete: noop,
+  }));
+  const STRIP = /<div class="absolute left-0 top-0 bottom-0 w-1\.5 ([^"]+)"><\/div>/;
+  const archived = { ...vocab('pond', { archived: true, due: NOW - DAY }), srs: { ...vocab('pond').srs, interval: 60 * 24 * 60 } };
+  const archivedHtml = card(archived, isNotebookDue(archived, NOW));
+  assert.match(archivedHtml, />Archived<\/span>/);
+  assert.doesNotMatch(archivedHtml, />Due<\/span>/);
+  assert.equal(archivedHtml.match(STRIP)?.[1], 'bg-slate-200');
+
+  const dueHtml = card(vocab('river', { due: NOW - DAY }), true);
+  assert.match(dueHtml, />Due<\/span>/);
+  assert.doesNotMatch(dueHtml, />Archived<\/span>/);
+  assert.equal(dueHtml.match(STRIP)?.[1], 'bg-orange-400');
+  const learned = { ...vocab('lake'), srs: { ...vocab('lake').srs, interval: 60 * 24 * 60 } };
+  assert.equal(card(learned, false).match(STRIP)?.[1], 'bg-emerald-400');
+
+  assert.match(renderToStaticMarkup(createElement(ArchivedMatchesHeader, { count: 2 })), />Archived matches · 2</);
 });

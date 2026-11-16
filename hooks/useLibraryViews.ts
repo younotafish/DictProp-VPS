@@ -125,13 +125,15 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     return pickSavedItem(bases, savedVocabByBase);
   }, [variantIndex, savedVocabByBase]);
 
+  // The saved base words a query is a variant of (ran -> run): the notebook's search lists their cards with its matches.
+  const matchSavedBases = useCallback((q: string) => matchBaseWords(q, variantIndex), [variantIndex]);
   // Cheap boolean variant check (no card collection). Nothing reads it since the notebook's 'notebook-search'
   // listener went; App still passes it to the notebook until that prop is dropped (handoff).
-  const hasSavedVariant = useCallback((q: string) => matchBaseWords(q, variantIndex).size > 0, [variantIndex]);
+  const hasSavedVariant = useCallback((q: string) => matchSavedBases(q).size > 0, [matchSavedBases]);
 
   return {
     allActiveItems, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems, sentenceItemsById,
-    sentenceDueCount, isSentenceSaved, isVocabSaved, findSavedByWord, findSavedItem, hasSavedVariant,
+    sentenceDueCount, isSentenceSaved, isVocabSaved, findSavedByWord, findSavedItem, matchSavedBases, hasSavedVariant,
   };
 }
 
