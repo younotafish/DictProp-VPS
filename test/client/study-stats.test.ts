@@ -3,7 +3,14 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReviewEvent, ReviewHistory, ReviewRating, StoredItem } from '../../types.ts';
-import { combineStudyStats, computeHistoryStats, computeItemStats, computeStudyStats, countDueSpellings } from '../../services/studyStats.ts';
+import {
+  combineStudyStats,
+  computeHistoryStats,
+  computeItemStats,
+  computeStudyStats,
+  countDueSpellings,
+  nextStudyClockChange,
+} from '../../services/studyStats.ts';
 import { LibraryCounts } from '../../views/detail/LibraryCounts.tsx';
 
 const HOUR = 3_600_000;
@@ -236,4 +243,19 @@ test('the numbers come from one pass over the items and one over the history, th
   assert.deepEqual(computeStudyStats(items, history, NOW), combineStudyStats(itemStats, historyStats));
   assert.equal(computeStudyStats(items, history, NOW).totalLifetimeReviews, 7, 'the items count more reviews than the history holds');
   assert.equal(computeStudyStats(items, { ...history, olderCount: 30 }, NOW).totalLifetimeReviews, 32);
+});
+
+test('the numbers next change with the clock when a reviewed card falls due, or at midnight if none does first', () => {
+  const tonight = midnight(-1);
+  assert.equal(nextStudyClockChange([], NOW), tonight);
+  assert.equal(nextStudyClockChange([vocab('a', 'a', { reviews: 1, due: NOW + 2 * HOUR }), vocab('b', 'b', { reviews: 2, due: NOW + HOUR })], NOW), NOW + HOUR);
+  // Cards already due, due after midnight, or never reviewed change nothing before midnight.
+  const unchanged = [
+    vocab('due', 'due', { reviews: 1, due: NOW - HOUR }),
+    vocab('now', 'now', { reviews: 1, due: NOW }),
+    vocab('later', 'later', { reviews: 1, due: tonight + HOUR }),
+    vocab('new', 'new', { due: NOW + HOUR }),
+  ];
+  assert.equal(nextStudyClockChange(unchanged, NOW), tonight);
+  assert.equal(nextStudyClockChange([{ ...vocab('bare', 'bare'), srs: undefined } as unknown as StoredItem], NOW), tonight);
 });

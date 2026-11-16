@@ -35,7 +35,7 @@ const review = (reviewedAt: number, rating: ReviewEvent['rating'] = 'good', task
 const render = (items: StoredItem[], reviewHistory: ReviewHistory = EMPTY_HISTORY) =>
   renderToStaticMarkup(createElement(StudyDashboard, { items, reviewHistory, onStart: () => {} }));
 
-const textOf = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+const textOf = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/\s+/g, ' ').trim();
 
 test('Most Practiced lists only reviewed cards, each once', t => {
   t.mock.method(Date, 'now', () => NOW);
@@ -56,4 +56,10 @@ test('the weekly reviews and the 7-day chart\'s total count the same reviews', t
   // 15:30 now: six days and 23 hours back is 16:30 seven days ago, before the chart's first day.
   assert.match(text, /Weekly Stats Last 7 days 2 Reviews/);
   assert.match(text, /Total: 2 reviews Avg: 0\/day/);
+});
+
+test('the dashboard counts what is due at the present time', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const items = [vocab('run', { reviews: 2, due: NOW - HOUR }), vocab('walk', { reviews: 1, due: NOW + HOUR }), vocab('jump', { reviews: 4, due: NOW })];
+  assert.match(textOf(render(items)), /^Today's Study 2 Ready 2 Due/);
 });

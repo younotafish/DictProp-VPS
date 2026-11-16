@@ -1,9 +1,10 @@
-import React, { useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Clock, Flame, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
 import { getItemTitle, type ReviewHistory, type StoredItem } from '../types';
 import { MASTERY_LEVELS, type MasteryKey } from '../services/srsAlgorithm';
 import { buildReviewQueue } from '../services/studySession';
-import { computeStudyStats } from '../services/studyStats';
+import { combineStudyStats, computeHistoryStats, computeItemStats, nextStudyClockChange } from '../services/studyStats';
+import { useNow } from '../hooks/useNow';
 
 const SCROLL_KEY = 'study_dashboard_scroll';
 
@@ -26,15 +27,33 @@ interface StudyDashboardProps {
 
 /**
  * The study tab between sessions: what's ready, and progress so far. It's only mounted while no session
- * runs, so grading a card never recomputes these numbers, and it returns to where it was scrolled.
+ * runs, so grading a card never recomputes these numbers, and it returns to where it was scrolled. Its clock moves
+ * on whenever the numbers would change with time, so what's due stays current while the tab is left open.
  */
 export const StudyDashboard = React.memo(function StudyDashboard({ items, reviewHistory, onStart, onScroll }: StudyDashboardProps) {
   const dashboardScrollRef = useRef<HTMLDivElement>(null);
   // The latest scroll position not yet saved, and the timer that saves it.
   const unsavedScrollRef = useRef<number | null>(null);
   const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const reviewQueue = useMemo(() => buildReviewQueue(items), [items]);
-  const stats = useMemo(() => computeStudyStats(items, reviewHistory), [items, reviewHistory]);
+  // The time the numbers are counted at. It's read again when the items change, when the page or the tab is shown
+  // again (useNow), and at each moment the numbers change with time alone: a card falling due, or midnight.
+  const [clockTick, setClockTick] = useState(0);
+  const now = useNow(useMemo(() => ({ items, clockTick }), [items, clockTick]));
+  useEffect(() => {
+    // Counted a while ago (a tab shown again runs this again): count from the present.
+    if (Date.now() - now > 1_000) { setClockTick(tick => tick + 1); return; }
+    // A timer holds at most 2^31 - 1 ms; a later change is picked up then.
+    const delay = Math.min(nextStudyClockChange(items, now) - now + 50, 2 ** 31 - 1);
+    const timer = window.setTimeout(() => setClockTick(tick => tick + 1), delay);
+    return () => window.clearTimeout(timer);
+  }, [items, now]);
+
+  const reviewQueue = useMemo(() => buildReviewQueue(items, now), [items, now]);
+  const itemStats = useMemo(() => computeItemStats(items, now), [items, now]);
+  // The history's numbers change only with the history and the day.
+  const today = new Date(now).setHours(0, 0, 0, 0);
+  const historyStats = useMemo(() => computeHistoryStats(reviewHistory, today), [reviewHistory, today]);
+  const stats = combineStudyStats(itemStats, historyStats);
 
   const saveScroll = () => {
     clearTimeout(scrollSaveTimerRef.current);

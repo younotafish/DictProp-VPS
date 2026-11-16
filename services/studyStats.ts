@@ -55,6 +55,20 @@ export function countDueSpellings(items: readonly StoredItem[], now: number): nu
   return spellings.size;
 }
 
+/**
+ * When the dashboard's numbers next change with the clock alone: at the next local midnight, or sooner, when the first
+ * reviewed card falls due. Never-reviewed cards are new whatever the time.
+ */
+export function nextStudyClockChange(items: readonly StoredItem[], now: number): number {
+  let next = new Date(now).setHours(24, 0, 0, 0);
+  for (const item of items) {
+    const srs = item.srs;
+    if (!srs || !(srs.totalReviews > 0)) continue;
+    if (srs.nextReview > now && srs.nextReview < next) next = srs.nextReview;
+  }
+  return next;
+}
+
 /** The study dashboard's numbers from one pass over the items (and countDueSpellings'). */
 export function computeItemStats(items: readonly StoredItem[], now: number): ItemStats {
   const mastery: Record<MasteryKey, number> = { grandmaster: 0, mastered: 0, proficient: 0, learning: 0, struggling: 0, new: 0 };
