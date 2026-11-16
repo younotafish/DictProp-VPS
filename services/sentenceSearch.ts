@@ -1,4 +1,3 @@
-import { useMemo, useCallback } from 'react';
 import Fuse from 'fuse.js';
 import { type StoredItem, isSentenceItem } from '../types';
 import { normalizeSearchText } from './searchText';
@@ -177,20 +176,4 @@ export function searchSentencesFuzzy(query: string, index: SentenceIndex, limit?
  */
 export function searchSentences(query: string, index: SentenceIndex, limit?: number): StoredItem[] {
   return searchSentencesLiteral(query, index, limit) ?? searchSentencesFuzzy(query, index, limit);
-}
-
-/**
- * Hook: memoize the index over the given sentence items (rebuilt only when they change, and built only
- * when searched), and return a stable search function. Pass the SAME memoized `sentenceItems` array
- * (e.g. App's `sentenceItems` memo) so the index isn't rebuilt on every render.
- *
- * @deprecated hooks/useSentenceSearch replaces it: it runs the fuzzy tier once typing pauses rather than
- * on every keystroke, and says when an answer is still pending. This one goes once GlobalSearch and
- * SentencesView use that one.
- */
-export function useSentenceSearch(
-  sentenceItems: StoredItem[]
-): (query: string, limit?: number) => StoredItem[] {
-  const index = useMemo(() => buildSentenceIndex(sentenceItems), [sentenceItems]);
-  return useCallback((query: string, limit?: number) => searchSentences(query, index, limit), [index]);
 }
