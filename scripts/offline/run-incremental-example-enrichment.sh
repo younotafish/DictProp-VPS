@@ -555,7 +555,8 @@ case "$VETTED_STATUS" in
     exit 75
     ;;
   *)
-    log "refusing to run code that differs from vps/main; exiting 75"
+    # Every refusal in require_vetted_checkout, whether over the code or its packages, logs its reason first.
+    log "refusing to run this cycle (the reason is logged above); exiting 75"
     exit 75
     ;;
 esac

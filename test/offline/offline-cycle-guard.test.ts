@@ -304,6 +304,11 @@ test('the code is vetted before its packages, and a fast-forward that changed co
   assert.equal(next.log, mismatch(join(realpathSync(work), 'server'), 'hono is 4.12.30, locked at 4.13.12'));
 });
 
+/** The cycle's log lines, without their timestamps. */
+const logLines = (stdout: string) => stdout.trim().split('\n').map(line => line.replace(/^\[[^\]]*\] /, ''));
+/** The cycle's last line when the guard refuses. It names no cause, since the guard's own line before it says why. */
+const REFUSAL = 'refusing to run this cycle (the reason is logged above); exiting 75';
+
 // Runs the cycle in the checkout. It finds no inputs, so once past the guard it stops at its next check.
 function runCycle(root: string, work: string, env: Record<string, string> = {}) {
   let path = process.env.PATH ?? '/usr/bin:/bin';
@@ -328,8 +333,7 @@ test('the cycle exits 75 on an unvetted checkout before doing anything else, and
   write(work, 'scripts/offline/stage.sh', 'echo unreviewed\n');
   const refused = run();
   assert.equal(refused.status, 75, refused.stderr);
-  assert.match(refused.stdout, /uncommitted changes to code the cycle runs: scripts\/offline\/stage\.sh/);
-  assert.match(refused.stdout, /refusing to run code that differs from vps\/main; exiting 75/);
+  assert.deepEqual(logLines(refused.stdout).slice(-2), ['uncommitted changes to code the cycle runs: scripts/offline/stage.sh', REFUSAL]);
   assert.equal(existsSync(join(cycleRoot, '.cycle.lock')), false);
 
   // Vetted again, the cycle gets past the guard and stops at its next check instead. The publishers it
@@ -404,8 +408,9 @@ test('the cycle exits 75 while a node_modules tree differs from its lockfile, an
   installPackages(join(work, 'server'), { 'node_modules/hono': '4.12.30' });
   const refused = runCycle(root, work);
   assert.equal(refused.status, 75, refused.stderr);
-  assert.ok(refused.stdout.includes(mismatch(join(realpathSync(work), 'server'), 'hono is 4.12.30, locked at 4.13.12')), refused.stdout);
-  assert.match(refused.stdout, /refusing to run code that differs from vps\/main; exiting 75/);
+  assert.deepEqual(logLines(refused.stdout).slice(-2), [mismatch(join(realpathSync(work), 'server'), 'hono is 4.12.30, locked at 4.13.12'), REFUSAL]);
+  // HEAD is vps/main, so no line may send the owner looking for an edit or a local commit.
+  assert.doesNotMatch(refused.stdout, /differs from vps\/main/);
   assert.equal(existsSync(join(root, 'cycle', '.cycle.lock')), false);
 
   // Once npm ci has run, the cycle gets past the guard and stops at its next check instead.
