@@ -140,15 +140,26 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   └── logger.ts              # Console logging (silenced in production)
 ├── server/
 │   ├── src/
-│   │   ├── index.ts           # Process startup and graceful shutdown
+│   │   ├── index.ts           # Process startup; hands signals and fatal errors to the shutdown
+│   │   ├── shutdown.ts        # Graceful shutdown, whose forced exit (SHUTDOWN_DEADLINE_MS) beats Docker's SIGKILL
 │   │   ├── app.ts             # Injectable Hono app, middleware, routes, static serving
-│   │   ├── db.ts              # SQLite schema + CRUD (better-sqlite3)
+│   │   ├── db.ts              # Re-exports db/: the SQLite schema + CRUD, split by table group (better-sqlite3)
 │   │   ├── env.ts             # Environment variables (.env from project root)
 │   │   ├── proxy-fetch.ts     # MUST use for ALL outbound HTTP (proxy-aware)
-│   │   ├── middleware/auth.ts # requireAuth — session-cookie gate for /api/*
+│   │   ├── middleware/        # auth.ts (requireAuth — session-cookie gate for /api/*), json-body.ts, rate-limit.ts
+│   │   ├── shared/            # Import-free code the client, the server and the offline scripts all run
+│   │   ├── ai/                # The AI routes' prompts, card generation and repair, and output sanitizers
+│   │   ├── tts/               # The speech cache: synthesis, clips, the casual respelling and the backfill
 │   │   └── routes/
 │   │       ├── auth.ts        # /api/auth/* — Google OAuth login + session
-│   │       ├── items.ts       # GET/PUT/DELETE /api/items, POST /api/import
+│   │       ├── items.ts       # GET /api/items, GET /api/items/:id, PUT /api/items
+│   │       ├── item-images.ts # GET/PUT /api/items/:id/image, GET /api/items/images/manifest
+│   │       ├── import.ts      # POST /api/import
+│   │       ├── reviews.ts     # POST /api/reviews/apply, POST /api/reviews/:id/undo, GET /api/reviews/history
+│   │       ├── sentence-enrichments.ts  # POST /api/sentence-enrichments/lookup and its images
+│   │       ├── comparisons.ts # GET/PUT /api/comparisons
+│   │       ├── essays.ts      # GET /api/essays/catalog
+│   │       ├── tts.ts         # /api/tts/* — cached clips and timings, generation, the backfill
 │   │       └── ai.ts          # /api/analyze, /api/compare, /api/extract-vocabulary, /api/transcribe
 │   └── package.json
 ├── views/                     # Notebook, StudyEnhanced, SentencesView, DetailView, ComparisonView
@@ -188,7 +199,7 @@ Images are stored as binary blobs in the server `image_blobs`/`item_images` tabl
 - `POST /api/import` — bulk import endpoint (used for Firebase migration)
 
 ### IMPORTANT: Response size awareness
-The full dataset with images is ~150MB. NEVER return all items with images in a single response — the browser will hang parsing it. The `stripImages` default in `db.ts` exists for this reason.
+The full dataset with images is ~150MB. NEVER return all items with images in a single response — the browser will hang parsing it. That is why item JSON carries only image markers and `GET /api/items` refuses `images=true`.
 
 ## Sync Behavior
 

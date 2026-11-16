@@ -14,7 +14,8 @@ services:
     environment:
       - PORT=3000
       - DATA_DIR=/app/data
-    # Docker sends SIGKILL this long after SIGTERM, so server/src/index.ts's forced exit must come sooner to ever run.
+    # Docker sends SIGKILL this long after SIGTERM, so the server's forced exit, SHUTDOWN_DEADLINE_MS in
+    # server/src/shutdown.ts, must come sooner to ever run (server/test/shutdown.test.ts checks it).
     # A longer grace would lengthen every deploy's container swap while an AI request is in flight.
     stop_grace_period: 3s
     restart: unless-stopped
