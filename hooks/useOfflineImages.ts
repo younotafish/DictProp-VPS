@@ -147,7 +147,7 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
 
   const handleDownloadOfflineImages = useCallback(() => {
     void prefetchImages(latestItemsRef.current, 'all');
-  }, [prefetchImages]);
+  }, [latestItemsRef, prefetchImages]);
 
   // Recovery: re-upload images that exist in THIS device's IndexedDB but are missing on
   // the server (e.g. images corrupted by the old marker-clobber bug). Run from a device
@@ -179,7 +179,7 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
       warn('Restore images to server failed:', e);
       finish({ phase: 'failed', done: 0, total: 0, failed: 0 });
     }
-  }, []);
+  }, [latestItemsRef]);
 
   return { imagePrefetchProgress, imageRestoreProgress, prefetchImages, stopImageDownload, handleDownloadOfflineImages, handleRestoreImagesToServer };
 }

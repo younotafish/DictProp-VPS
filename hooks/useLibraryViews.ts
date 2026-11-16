@@ -57,6 +57,7 @@ export function useLibraryViews(savedItems: StoredItem[]) {
   const sentenceDueCount = useMemo(() => {
     const now = Date.now();
     return sentenceItems.filter(s => !s.isArchived && ((s.srs?.nextReview ?? 0) <= now)).length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sentenceDueClock is the recount trigger: the count reads the time itself
   }, [sentenceItems, sentenceDueClock]);
   useEffect(() => {
     const now = Date.now();

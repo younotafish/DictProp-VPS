@@ -52,7 +52,19 @@ const entry = (hash: string, retryAfter: number, lastFailedAt = retryAfter - HOU
   error: 'earlier failure',
 });
 
-function readJson(path: string): any {
+/** What these tests read back: a ledger, a filter's output, or a stage's progress and failures files. */
+interface WrittenJson {
+  version: number;
+  updatedAt: number;
+  exportedAt: number;
+  status: string;
+  stages: Record<string, Record<string, { failures: number; hash: string }>>;
+  sentences: unknown[];
+  entries: Array<{ id: string }>;
+  failures: Array<{ id: string }>;
+}
+
+function readJson(path: string): WrittenJson {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
