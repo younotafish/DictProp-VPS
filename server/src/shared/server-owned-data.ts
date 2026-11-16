@@ -8,6 +8,13 @@ type Fields = Record<string, unknown>;
 
 const isObject = (value: unknown): value is Fields => !!value && typeof value === 'object';
 
+/** The server-owned fields `value` holds, and nothing else. */
+const ownedFieldsOf = (value: Fields): Fields => {
+  const owned: Fields = {};
+  for (const field of SERVER_OWNED_FIELDS) if (value[field] !== undefined) owned[field] = value[field];
+  return owned;
+};
+
 /** `target` with each server-owned field it lacks taken from `stored`; `target` itself when nothing is missing. */
 export function withServerOwnedFields<T>(target: T, stored: unknown): T {
   if (!isObject(target) || !isObject(stored)) return target;
@@ -46,4 +53,33 @@ export function keepServerOwnedData<T>(data: T, type: string, stored: unknown, s
     if (changed) result = { ...result, vocabs };
   }
   return result as T;
+}
+
+/**
+ * Only what keepServerOwnedData can take from `stored` for an item of `type`: its server-owned fields, a sentence's
+ * analysis with the text it analyzed, and each phrase vocab's server-owned fields by vocab id. Keeping from this part
+ * keeps exactly what keeping from `stored` does, so the server can send it to the client whose save it kept fields
+ * for. Undefined when there is nothing to take.
+ */
+export function serverOwnedPart(stored: unknown, type: string): Fields | undefined {
+  if (!isObject(stored)) return undefined;
+  const part = ownedFieldsOf(stored);
+  if (type === 'sentence' && stored.analysis !== undefined) {
+    // With the text it analyzed: a copy keeps the analysis only while it has that text.
+    for (const key of ['text', 'analysis', 'analysisGeneratedAt']) {
+      if (stored[key] !== undefined) part[key] = stored[key];
+    }
+  }
+  if (type === 'phrase' && Array.isArray(stored.vocabs)) {
+    // As in keepServerOwnedData, the last vocab with an id is the one whose fields are kept.
+    const byId = new Map<string, Fields>();
+    for (const vocab of stored.vocabs) if (isObject(vocab) && typeof vocab.id === 'string') byId.set(vocab.id, vocab);
+    const vocabs: Fields[] = [];
+    for (const [id, vocab] of byId) {
+      const owned = ownedFieldsOf(vocab);
+      if (Object.keys(owned).length > 0) vocabs.push({ id, ...owned });
+    }
+    if (vocabs.length > 0) part.vocabs = vocabs;
+  }
+  return Object.keys(part).length > 0 ? part : undefined;
 }

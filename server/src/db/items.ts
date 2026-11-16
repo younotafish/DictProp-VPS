@@ -1,6 +1,6 @@
 import { ConflictError } from '../errors.js';
 import { imageVersionFromContentHash, serverImageMarker } from '../shared/image-markers.js';
-import { keepServerOwnedData } from '../shared/server-owned-data.js';
+import { keepServerOwnedData, serverOwnedPart } from '../shared/server-owned-data.js';
 import type { ItemType } from '../validation-helpers.js';
 import { db, writeTransaction } from './connection.js';
 import {
@@ -240,6 +240,8 @@ export interface ItemWrite {
 export function writeItem(item: ItemWrite, userId: string, options: UpsertOptions): UpsertResult & {
   id: string;
   enriched: boolean;
+  /** The stored server-owned fields the write kept because it left them out (serverOwnedPart), when it did. */
+  kept?: Record<string, unknown>;
 } {
   const incoming = item.data as JsonObject;
   if (!incoming || !incoming.id) throw new Error('Item missing data.id');
@@ -275,13 +277,16 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
     : null;
   const { data: analysed, enriched } = withPoolAnalysis(incoming, pool);
 
-  // After the pool, which returns the sentence it analyses to the saving client. Kept fields aren't returned.
+  // After the pool, which returns the sentence it analyses to the saving client whole. A stale copy, a deletion and a
+  // whole-item import keep nothing.
   const keepFrom = existing && existing.is_deleted !== 1 && !staleContent && !item.isDeleted && !options.replaceServerFields
     ? existing
     : undefined;
   const storedData: unknown = keepFrom ? JSON.parse(keepFrom.data) : undefined;
   const data = keepFrom ? keepServerOwnedData(analysed, item.type, storedData, keepFrom.type) : analysed;
   const keptServerFields = data !== analysed;
+  // What the saving client adds to its copy to match the row; an enriched sentence goes back whole instead.
+  const kept = keptServerFields && !enriched ? serverOwnedPart(storedData, item.type) : undefined;
 
   // A stale copy's content lost to the stored row, so its images only fill those of the row's ids that have none:
   // a newer stored image stays, and a vocab only the stale copy has, which the row doesn't show, gets none.
@@ -328,12 +333,12 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   const sameColumn = (key: keyof typeof row) =>
     key === 'data' ? sameJson(stored, storedData) : key === 'srs' ? sameJson(srs, storedSrs) : row[key] === existing?.[key];
   if (existing && keptServerFields && !imagesChanged && !enriched && (Object.keys(row) as Array<keyof typeof row>).every(sameColumn)) {
-    return { id, revision: existingRevision, conflicted: false, enriched: false };
+    return { id, revision: existingRevision, conflicted: false, enriched: false, kept };
   }
   // An image a stale copy fills in still needs a revision, or delta clients would never see its marker.
   const revision = staleContent && !srsChanged && !imagesChanged ? existingRevision : allocateRevision();
   stmts.upsert.run({ ...row, revision });
-  return { id, revision, conflicted: staleContent, enriched };
+  return { id, revision, conflicted: staleContent, enriched, kept };
 }
 
 // The item row, its captured images and its revision commit together.
@@ -344,22 +349,30 @@ export function upsertItem(item: ItemWrite, userId: string, options: UpsertOptio
   return { revision, conflicted };
 }
 
-/** `enriched` lists the sentences the example-enrichment pool just gave an analysis. */
+/**
+ * `enriched` lists the sentences the example-enrichment pool just gave an analysis, and `kept` holds, by id, the stored
+ * server-owned fields a write kept because it left them out.
+ */
 export const upsertMany = writeTransaction((items: ItemWrite[], userId: string, options: UpsertOptions = {}): {
   revisions: Record<string, number>;
   conflicts: string[];
   enriched: string[];
+  kept: Record<string, Record<string, unknown>>;
 } => {
   const revisions: Record<string, number> = {};
   const conflicts: string[] = [];
   const enriched: string[] = [];
+  const kept = new Map<string, Record<string, unknown>>();
   for (const item of items) {
     const result = writeItem(item, userId, options);
     if (result.conflicted) conflicts.push(result.id);
     else revisions[result.id] = result.revision;
     if (result.enriched) enriched.push(result.id);
+    // The last write of an id speaks for its row.
+    if (result.kept) kept.set(result.id, result.kept);
+    else kept.delete(result.id);
   }
-  return { revisions, conflicts, enriched };
+  return { revisions, conflicts, enriched, kept: Object.fromEntries(kept) };
 });
 
 export const softDeleteItem = writeTransaction((id: string, userId: string): boolean => {

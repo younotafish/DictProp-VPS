@@ -22,32 +22,64 @@ const send = (method: string, body: unknown) => ({
   body: typeof body === 'string' ? body : JSON.stringify(body),
 });
 const putItems = (items: unknown) => app.request('/api/items', send('PUT', items));
+/** A PUT /api/items reply, as far as these tests read it. */
+interface PutReply {
+  revisions: Record<string, number>;
+  conflicts: string[];
+  canonical: Array<{ data: Record<string, unknown> }>;
+  kept?: Record<string, Record<string, unknown>>;
+}
+const putReply = async (items: unknown): Promise<PutReply> => {
+  const response = await putItems(items);
+  assert.equal(response.status, 200);
+  return await response.json() as PutReply;
+};
 const putImage = (id: string, bytes: Buffer) => app.request(`/api/items/${id}/image`, {
   method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: bytes,
 });
 const manifest = async () => await (await app.request('/api/items/images/manifest')).json() as string[];
 
-test('a push that leaves out a field the server keeps saves the edit without returning the item as canonical', async () => {
+test('a push that leaves out a field the server keeps saves the edit and returns the field, not the item as canonical', async () => {
   const audit = { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high', auditedAt: 1 };
-  let response = await putItems([vocab('route-carry', { usageAudit: audit })]);
-  assert.equal(response.status, 200);
-  const revision = (await response.json() as any).revisions['route-carry'];
+  const created = await putReply([vocab('route-carry', { usageAudit: audit })]);
+  const revision = created.revisions['route-carry'];
+  assert.equal('kept' in created, false);
 
   const edited = vocab('route-carry', { definition: 'easy to understand' }, { serverRevision: revision, updatedAt: 2 });
-  response = await putItems([edited]);
-  assert.equal(response.status, 200);
-  const saved = await response.json() as any;
+  const saved = await putReply([edited]);
   assert.deepEqual(saved.conflicts, []);
   assert.deepEqual(saved.canonical, []);
   assert.ok(saved.revisions['route-carry'] > revision);
+  assert.deepEqual(saved.kept, { 'route-carry': { usageAudit: audit } });
 
   const item = await (await app.request('/api/items/route-carry')).json() as any;
   assert.equal(item.data.definition, 'easy to understand');
   assert.deepEqual(item.data.usageAudit, audit);
 
-  // The client keeps its copy at the unchanged revision and pushes it again; that changes nothing.
-  response = await putItems([{ ...edited, serverRevision: saved.revisions['route-carry'] }]);
-  assert.equal((await response.json() as any).revisions['route-carry'], saved.revisions['route-carry']);
+  // A client that ignores the kept field pushes its copy again at the unchanged revision: that changes nothing, and
+  // the reply carries the field again.
+  const repeated = await putReply([{ ...edited, serverRevision: saved.revisions['route-carry'] }]);
+  assert.equal(repeated.revisions['route-carry'], saved.revisions['route-carry']);
+  assert.deepEqual(repeated.canonical, []);
+  assert.deepEqual(repeated.kept, { 'route-carry': { usageAudit: audit } });
+
+  // A push that carries the field keeps nothing, so its reply has no kept fields.
+  const carrying = vocab('route-carry', { definition: 'easy to understand', usageAudit: audit }, {
+    serverRevision: saved.revisions['route-carry'], updatedAt: 3,
+  });
+  assert.equal('kept' in await putReply([carrying]), false);
+});
+
+test('a stale push gets the server\'s copy back as canonical, with no kept fields beside it', async () => {
+  const audit = { status: 'modern_american', reason: 'Common in the US.', confidence: 'high', auditedAt: 1 };
+  const revision = (await putReply([vocab('route-stale', { usageAudit: audit }, { updatedAt: 5 })])).revisions['route-stale'];
+  await putReply([vocab('route-stale', { definition: 'newer', usageAudit: audit }, { serverRevision: revision, updatedAt: 6 })]);
+
+  const stale = await putReply([vocab('route-stale', { definition: 'older' }, { serverRevision: revision, updatedAt: 7 })]);
+  assert.deepEqual(stale.conflicts, ['route-stale']);
+  assert.equal(stale.canonical[0].data.definition, 'newer');
+  assert.deepEqual(stale.canonical[0].data.usageAudit, audit);
+  assert.equal('kept' in stale, false);
 });
 
 test('item writes are refused when their data is oversized or holds an inline image outside imageUrl', async () => {

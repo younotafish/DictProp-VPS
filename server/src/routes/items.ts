@@ -72,15 +72,22 @@ itemsRoutes.put('/items', async (c) => {
   const userId = c.get('user').id;
   const batch = checkStoredItemBatch(await readJsonArray(c), 500);
   if ('error' in batch) return c.json({ error: batch.error }, 400);
-  const { enriched, ...result } = upsertMany(batch.items, userId);
+  const { enriched, kept, ...result } = upsertMany(batch.items, userId);
   // Return sentences the enrichment pool just analysed immediately instead of waiting for the next
-  // 8-second delta pull. Conflicts use this same bounded canonical response path. Fields the server
-  // merely kept from its stored copy are left out, since adopting a canonical copy drops an edit made
-  // while the push was in flight. The saving client keeps its own data at an unchanged revision, so it
-  // lacks those fields until the row next changes.
+  // 8-second delta pull. Conflicts use this same bounded canonical response path.
   const canonicalIds = new Set([...result.conflicts, ...enriched]);
   const canonical = [...canonicalIds]
     .map(id => getItemById(id, userId, false))
     .filter((item): item is ItemRead => !!item);
-  return c.json({ ok: true, count: batch.items.length, ...result, canonical });
+  // When a save left out server-owned fields the server kept from its stored copy, the stored copy's server-owned part
+  // goes back by id instead of a canonical copy, which would drop an edit made while the push was in flight. The
+  // client fills in what its copy lacks, so it matches the row without waiting for a pull, which a save that changed
+  // nothing else never gets. Conflicted and enriched items, which come back whole, report none (db/items.ts).
+  return c.json({
+    ok: true,
+    count: batch.items.length,
+    ...result,
+    canonical,
+    ...(Object.keys(kept).length > 0 ? { kept } : {}),
+  });
 });

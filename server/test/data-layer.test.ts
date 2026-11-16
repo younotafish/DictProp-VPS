@@ -117,14 +117,17 @@ test('a copy that differs from the row only by lacking kept fields leaves it and
   // A fresh result saved over the card: new content, without the marker.
   const base: number = stored('carry-settles').serverRevision;
   const fresh = vocab('carry-settles', { definition: 'easily understood' }, 2_000, { serverRevision: base });
-  const revision = upsertMany([fresh], USER).revisions['carry-settles'];
+  const write = upsertMany([fresh], USER);
+  const revision = write.revisions['carry-settles'];
   assert.ok(revision > base);
   assert.deepEqual(stored('carry-settles').data.localImageEnrichment, localImage);
+  assert.deepEqual(write.kept, { 'carry-settles': { localImageEnrichment: localImage } });
 
-  // Its client keeps its own copy at that revision and pushes the same copy again.
+  // A client that ignores what was kept stays on its own copy at that revision and pushes the same copy again.
   const head = headRevision();
   assert.deepEqual(upsertMany([{ ...fresh, serverRevision: revision }], USER), {
     revisions: { 'carry-settles': revision }, conflicts: [], enriched: [],
+    kept: { 'carry-settles': { localImageEnrichment: localImage } },
   });
   assert.equal(headRevision(), head);
   assert.equal(stored('carry-settles').serverRevision, revision);
@@ -140,6 +143,59 @@ test('a copy that differs from the row only by lacking kept fields leaves it and
   assert.ok(archived > imaged);
   assert.equal(stored('carry-settles').isArchived, true);
   assert.deepEqual(stored('carry-settles').data.localImageEnrichment, localImage);
+});
+
+test('a write reports the stored server-owned fields it kept, by id, and nothing when it kept none', () => {
+  const kept = (items: Parameters<typeof upsertMany>[0], options = {}) => upsertMany(items, USER, options).kept;
+  upsertItem(vocab('kept-report', { definition: 'clear', usageAudit: audit, advancedEnrichment: advanced }, 1_000), USER);
+  const revision = () => stored('kept-report').serverRevision as number;
+  assert.deepEqual(kept([vocab('kept-report', { definition: 'edited' }, 2_000, { serverRevision: revision() })]), {
+    'kept-report': { usageAudit: audit, advancedEnrichment: advanced },
+  });
+  // A write that carries every field the row has keeps nothing.
+  assert.deepEqual(kept([vocab('kept-report', {
+    definition: 'edited again', usageAudit: audit, advancedEnrichment: advanced,
+  }, 3_000, { serverRevision: revision() })]), {});
+  // Nor do a stale copy, a deletion or a whole-item import, which keep no field.
+  assert.deepEqual(kept([vocab('kept-report', { definition: 'stale' }, 2_500, { serverRevision: revision() - 1 })]), {});
+  assert.deepEqual(kept([vocab('kept-report', {}, 4_000, { serverRevision: revision() })], { replaceServerFields: true }), {});
+  upsertItem(vocab('kept-deleted', { usageAudit: audit }, 1_000), USER);
+  assert.deepEqual(kept([vocab('kept-deleted', {}, 2_000, { isDeleted: true })]), {});
+
+  // A sentence's analysis goes with the text it analyzed; a phrase's fields go by vocab id.
+  const sentence = (data: Record<string, unknown>, updatedAt: number) => ({
+    type: 'sentence', data: { id: 'kept-sentence', text: 'Her lucid reply settled it.', sourceWord: 'lucid', ...data },
+    srs: srs('kept-sentence', 'sentence'), savedAt: 1, updatedAt,
+  });
+  upsertItem(sentence({ analysis, analysisGeneratedAt: 7 }, 1_000), USER);
+  assert.deepEqual(kept([sentence({ preferredSpeechStyle: 'casual' }, 2_000)]), {
+    'kept-sentence': { text: 'Her lucid reply settled it.', analysis, analysisGeneratedAt: 7 },
+  });
+  const phrase = (vocabs: unknown[], updatedAt: number) => ({
+    type: 'phrase', data: { id: 'kept-phrase', query: 'lucid dream', vocabs }, srs: srs('kept-phrase', 'phrase'),
+    savedAt: 1, updatedAt,
+  });
+  upsertItem(phrase([{ id: 'kept-lucid', word: 'lucid', usageAudit: audit }, { id: 'kept-dream', word: 'dream' }], 1_000), USER);
+  assert.deepEqual(kept([phrase([{ id: 'kept-dream', word: 'dream' }, { id: 'kept-lucid', word: 'lucid' }], 2_000)]), {
+    'kept-phrase': { vocabs: [{ id: 'kept-lucid', usageAudit: audit }] },
+  });
+});
+
+test('a sentence the pool analyses as it is saved goes back whole, so nothing is reported as kept for it', () => {
+  const text = 'A lucid preface framed the whole report.';
+  const sentence = (data: Record<string, unknown>, updatedAt: number) => ({
+    type: 'sentence', data: { id: 'pool-kept', text, sourceWord: 'lucid', ...data }, srs: srs('pool-kept', 'sentence'),
+    savedAt: 1, updatedAt,
+  });
+  // Saved before the pool had the sentence; the save after it carries neither the audit nor an analysis.
+  upsertItem(sentence({ usageAudit: audit }, 1_000), USER);
+  assert.equal(stored('pool-kept').data.analysis, undefined);
+  enrich(text, png('pool-kept'));
+  const write = upsertMany([sentence({}, 2_000)], USER);
+  assert.deepEqual(write.enriched, ['pool-kept']);
+  assert.deepEqual(write.kept, {});
+  assert.deepEqual(stored('pool-kept').data.usageAudit, audit);
+  assert.deepEqual(stored('pool-kept').data.analysis, analysis);
 });
 
 test('a prepared example saved again without its analysis still gets it back from the pool in the response', () => {
