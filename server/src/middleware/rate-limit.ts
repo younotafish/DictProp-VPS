@@ -3,6 +3,7 @@ import type { IncomingMessage } from 'http';
 import { isIP } from 'net';
 import type { AppEnv } from './auth.js';
 import { isPrivateNetworkAddress, parseIpv6 } from '../ip.js';
+import { signInFailure, SIGN_IN_FAILURES } from '../sign-in-failure.js';
 
 /** A fixed-window limit per signed-in user and path. */
 export function createRateLimit(limit: number, windowMs: number): MiddlewareHandler<AppEnv> {
@@ -66,9 +67,10 @@ export function clientAddress(c: Context): string {
 }
 
 /**
- * A fixed-window limit per client address for routes that run before sign-in. It keeps at most `maxClients`
- * windows: windows are stored oldest first, so expired ones are dropped from the front, and when the map is
- * full the oldest live window goes too.
+ * A fixed-window limit per client address for the sign-in routes, which run before there is a user to key a limit on.
+ * A request over it gets the sign-in failure for too many attempts (sign-in-failure.ts), a page in a browser and the
+ * JSON error elsewhere, with Retry-After. It keeps at most `maxClients` windows: windows are stored oldest first, so
+ * expired ones are dropped from the front, and when the map is full the oldest live window goes too.
  */
 export function createClientRateLimit(limit: number, windowMs: number, maxClients = 10_000): MiddlewareHandler {
   const windows = new Map<string, { count: number; resetAt: number }>();
@@ -87,7 +89,7 @@ export function createClientRateLimit(limit: number, windowMs: number, maxClient
     }
     if (window.count >= limit) {
       c.header('Retry-After', String(Math.max(1, Math.ceil((window.resetAt - now) / 1000))));
-      return c.json({ error: 'Too many sign-in attempts. Try again shortly.' }, 429);
+      return signInFailure(c, SIGN_IN_FAILURES.tooManyAttempts);
     }
     window.count++;
     await next();

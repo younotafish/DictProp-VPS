@@ -1,11 +1,12 @@
 import type { Context } from 'hono';
 
-// How the OAuth callback (routes/auth.ts) answers a sign-in it can't finish. The callback is a full-page navigation back
-// from Google, so a browser gets a short page saying why, with a link back to the app; any other caller gets the JSON
-// error the rest of the API sends.
+// How sign-in answers when it can't go on: the OAuth callback (routes/auth.ts) for a sign-in it can't finish, and the
+// rate limit on /api/auth/login and /api/auth/callback (middleware/rate-limit.ts) for one attempt too many. Both routes
+// are full-page navigations, the login to Google and the callback back from it, so a browser gets a short page saying
+// why, with a link back to the app; any other caller gets the JSON error the rest of the API sends.
 
 interface SignInFailure {
-  status: 400 | 403 | 502 | 503;
+  status: 400 | 403 | 429 | 502 | 503;
   /** The JSON reply's error. */
   error: string;
   /** What the page tells the visitor. */
@@ -42,6 +43,12 @@ export const SIGN_IN_FAILURES = {
     status: 403,
     error: 'This DictProp instance is private.',
     page: 'This DictProp instance is private. If it’s yours, sign in with the Google account that owns it.',
+  },
+  // An address over its sign-in limit. The limit's windows are a minute long (app.ts), so a minute's wait always ends it.
+  tooManyAttempts: {
+    status: 429,
+    error: 'Too many sign-in attempts. Try again shortly.',
+    page: 'Too many sign-in attempts from this device. Wait a minute, then start again from DictProp.',
   },
 } as const satisfies Record<string, SignInFailure>;
 

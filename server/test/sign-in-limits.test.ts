@@ -28,6 +28,30 @@ test('login allows 20 attempts a minute per client and callback 10, each counted
   assert.equal((await callback('203.0.113.10')).status, 400);
 });
 
+test('over the limit a browser gets the sign-in failure page, and any other caller the JSON error, both with Retry-After', async () => {
+  const app = createApp({ logging: false, serveStaticFiles: false });
+  // What a browser's navigation accepts.
+  const BROWSER = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+  for (const [path, limit] of [['/api/auth/login', 20], ['/api/auth/callback?code=c&state=s', 10]] as const) {
+    const send = (accept: string) => app.request(`https://dictprop.online${path}`, { headers: { Accept: accept } }, from('203.0.113.9'));
+    const retryAfter = (response: Response) => Number(response.headers.get('retry-after'));
+    for (let attempt = 0; attempt < limit; attempt++) assert.notEqual((await send(BROWSER)).status, 429, path);
+
+    const page = await send(BROWSER);
+    assert.equal(page.status, 429, path);
+    assert.match(page.headers.get('content-type') ?? '', /^text\/html/, path);
+    assert.ok(retryAfter(page) >= 1 && retryAfter(page) <= 60, path);
+    const html = await page.text();
+    assert.ok(html.includes('<p>Too many sign-in attempts from this device. Wait a minute, then start again from DictProp.</p>'), path);
+    assert.ok(html.includes('<a href="/">Back to DictProp</a>'), path);
+
+    const reply = await send('application/json');
+    assert.equal(reply.status, 429, path);
+    assert.ok(retryAfter(reply) >= 1 && retryAfter(reply) <= 60, path);
+    assert.deepEqual(await reply.json(), { error: 'Too many sign-in attempts. Try again shortly.' }, path);
+  }
+});
+
 test('behind Caddy the client is the last forwarded hop; anyone else cannot choose their address', async () => {
   const probe = new Hono().get('/', c => c.text(clientAddress(c)));
   const addressOf = async (peer: string | undefined, forwardedFor?: string) => (await probe.request('/', {
