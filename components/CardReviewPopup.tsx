@@ -12,6 +12,7 @@ import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/neura
 import { detectPlatform } from '../services/platform';
 import { useLatest } from '../hooks/useStableValue';
 import { useWarmImages } from '../hooks/useWarmImages';
+import { useBackdropClick } from './backdropPress';
 import { useEscapeLayer } from './escapeStack';
 import { useZoneFlash } from './EyesFreeZones';
 import { isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
@@ -63,7 +64,8 @@ const hasTouchPoints = (): boolean =>
  * sticky top bar (only the card body scrolls). It owns the keyboard while open (Esc, ←/→, R/Shift+R, D,
  * P, E, Cmd/Ctrl+1–4, Space; see review/popupShortcuts) and traps Tab; the parent disables the underlying
  * view via interactionLocked. On ≥sm the left/right gutters beside the card are eyes-free read zones (top
- * quarter = example 1, 2nd = example 2), responding to tap or mouse.
+ * quarter = example 1, 2nd = example 2) for a tap; a mouse click there closes, as anywhere on the backdrop. A
+ * press that began inside the card, such as a text selection, neither closes nor reads where it ends.
  *
  * The pages come from review/useSensePages, the audio from review/usePopupPlayback, and where a tap reads
  * from review/readZones.
@@ -233,6 +235,9 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     }
     onClose();
   }, [isTouchClick, examplesList, toggleSpeak, flashZone, onClose]);
+  // Only a press that began on the backdrop counts: a text selection dragged out of the card and released over
+  // the backdrop neither closes the popup nor reads a gutter zone.
+  const backdrop = useBackdropClick<HTMLDivElement>(onBackdrop);
 
   // Escape closes the popup, unless a dialog opened above it is still open.
   useEscapeLayer(onClose, 100);
@@ -277,7 +282,8 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   return (
     <div
       className="fixed inset-0 z-[100] bg-black/40 flex items-end sm:items-center justify-center sm:px-16 sm:py-4 fade-in"
-      onClick={onBackdrop}
+      onPointerDown={backdrop.onPointerDown}
+      onClick={backdrop.onClick}
     >
       <div
         ref={panelRef}
