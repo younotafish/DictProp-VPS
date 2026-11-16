@@ -1,6 +1,4 @@
-/**
- * Strip the {{studied item}} and [[uncommon term]] emphasis markers, leaving plain,
- * speakable text. Used for TTS (and anywhere the raw sentence is needed without markup).
- */
-export const stripSentenceMarkers = (text: string): string =>
-  (text || '').replace(/\{\{(.+?)\}\}/g, '$1').replace(/\[\[(.+?)\]\]/g, '$1');
+// The speech cache keys a clip by its sentence with these markers stripped, and the server's backfill strips them
+// with the same function before it generates clips, so the client runs the shared one instead of keeping a copy
+// that could drift and miss those clips. Client code imports it from here.
+export { stripSentenceMarkers } from '../server/src/shared/sentence-markers';
