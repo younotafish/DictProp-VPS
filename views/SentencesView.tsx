@@ -40,7 +40,7 @@ interface SentenceRowProps {
 
 /** A saved sentence in the list. Rows re-render only when their own sentence or state changes, not for
  *  every keystroke in the search box or every change elsewhere in the library. */
-const SentenceRow = React.memo(function SentenceRow({
+export const SentenceRow = React.memo(function SentenceRow({
   item,
   toReview,
   dueLabel,
@@ -55,7 +55,7 @@ const SentenceRow = React.memo(function SentenceRow({
 }: SentenceRowProps) {
   const d = item.data;
   const mastery = item.srs ? SRSAlgorithm.getMasteryLevel(item.srs) : null;
-  const barColor = barColorFor(mastery?.percentage);
+  const barColor = barColorFor((item.srs?.totalReviews ?? 0) > 0 ? mastery?.percentage : null);
 
   return (
     <div className="px-3 pt-2 w-full max-w-screen-md xl:max-w-4xl 2xl:max-w-5xl mx-auto">
