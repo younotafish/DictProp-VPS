@@ -1,9 +1,9 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue, useId } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useDeferredValue, useId } from 'react';
 import { SearchResult, VocabCard, StoredItem, ComparisonResult } from '../types';
 import { makeVocabStoredItem } from '../services/items';
 import { speakWord, prefetchTTS } from '../services/neuralTts';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
-import { useSentenceSearch } from '../services/sentenceSearch';
+import { useSentenceSearch } from '../hooks/useSentenceSearch';
 import { useEscapeLayer } from './escapeStack';
 import { isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
@@ -23,6 +23,9 @@ import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
 import { SearchVocabPane } from './search/SearchVocabPane';
 import { SearchFab } from './search/SearchFab';
+
+/** No saved sentences: one array for every render, so the suggestions' index isn't rebuilt each time. */
+const NO_SENTENCES: StoredItem[] = [];
 
 interface Props {
   onSave: (item: StoredItem) => void;
@@ -84,12 +87,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
   // Fuzzy autocomplete over SAVED SENTENCES: as you type, suggest matching saved sentences. Navigate
   // them with ↑/↓ or the mouse, and open one for review with Enter (on a highlight) or a click. Plain
-  // Enter with nothing highlighted still runs the real AI search. Purely local (works offline).
-  const runSentenceSearch = useSentenceSearch(sentenceItems || []);
+  // Enter with nothing highlighted still runs the real AI search. Purely local (works offline). The exact matches
+  // follow every keystroke; the typo-tolerant ones come once typing pauses, and the list stays empty until they do.
   const deferredQuery = useDeferredValue(query);
-  const suggestions = useMemo(
-    () => (mode === 'input' && onOpenSentence && deferredQuery.trim() ? runSentenceSearch(deferredQuery, 6) : []),
-    [mode, onOpenSentence, deferredQuery, runSentenceSearch],
+  const { results: suggestions } = useSentenceSearch(
+    sentenceItems ?? NO_SENTENCES, mode === 'input' && onOpenSentence ? deferredQuery : '', 6,
   );
   // Which suggestion is highlighted for keyboard/mouse navigation (-1 = none → plain Enter AI-searches).
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
