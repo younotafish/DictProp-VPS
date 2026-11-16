@@ -392,6 +392,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         sentenceItems={sentenceItems}
         onOpenSentence={handleViewSentence}
         aboveTabBar={!detailContext}
+        statusHidden={modalOpen}
       />
       </ErrorBoundary>
       </Suspense>
