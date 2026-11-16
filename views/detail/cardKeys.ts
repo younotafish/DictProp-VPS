@@ -69,10 +69,11 @@ export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers
     }
   }
 
-  // D: Delete the sentence directly (a preview has nothing to delete)
+  // D: Delete the sentence directly (a preview has nothing to delete, and a catalog lesson's lines aren't the
+  // learner's to delete)
   if (e.key === 'd' || e.key === 'D') {
     e.preventDefault();
-    if (!isSentencePreview) handleDeleteItem();
+    if (!isSentencePreview && !catalogSentencePreview) handleDeleteItem();
   }
 
   // Space: pause/resume the sentence that's playing; if nothing is playing, start continuous auto-play.

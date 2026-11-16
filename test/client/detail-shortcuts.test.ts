@@ -90,6 +90,19 @@ test('a sentence preview deletes nothing on D; R and Shift+R stay the browser\'s
   assert.deepEqual(done, ['remember catalog line']);
 });
 
+test('D deletes nothing in a catalog lesson, whether or not its line has a record yet, and stays the view\'s key', () => {
+  const done: string[] = [];
+  const reviewedLine = sentenceOnScreen('reviewed line', done, { catalogSentencePreview: true });
+  const newLine = sentenceOnScreen('new line', done, { isSentencePreview: true, catalogSentencePreview: true });
+  for (const handlers of [reviewedLine, newLine]) {
+    const key = press('d');
+    handleSentenceKey(key, handlers);
+    assert.equal(key.prevented, true);
+  }
+  handleSentenceKey(press('R', { shiftKey: true }), reviewedLine);
+  assert.deepEqual(done, ['reset reviewed line'], 'a reviewed line can still be reset');
+});
+
 test('Cmd or Ctrl with 1 to 4 reads that example of the source card; other modified keys are left alone', () => {
   const done: string[] = [];
   const handlers = sentenceOnScreen('A', done);

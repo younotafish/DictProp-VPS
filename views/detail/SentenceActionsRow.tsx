@@ -12,7 +12,7 @@ interface SentenceActionsRowProps {
   memorizedCount: number;
   /** Nothing in the library backs the sentence yet. */
   preview: boolean;
-  /** A Real Life or essay sentence: Got it creates its progress record. */
+  /** A Real Life or essay sentence: Got it creates its progress record, and the lesson's lines have no Delete. */
   catalog: boolean;
   catalogKind: 'real-life' | 'essay' | undefined;
   onRemember: () => void;
@@ -22,7 +22,10 @@ interface SentenceActionsRowProps {
   onDelete: () => void;
 }
 
-/** Sentence review's bottom row: the sentence's memory on the left, and Got it, Reset and Delete (or Save) on the right. */
+/**
+ * Sentence review's bottom row: the sentence's memory on the left, and on the right Got it, Reset and, outside the
+ * catalog lessons, Delete (or Save for an unsaved example).
+ */
 export function SentenceActionsRow({
   srs, mastery, masteryColors, memorizedCount, preview, catalog, catalogKind, onRemember, onSaveSentence, onReset, onDelete,
 }: SentenceActionsRowProps) {
@@ -62,9 +65,11 @@ export function SentenceActionsRow({
             <button onClick={onReset} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)" aria-label="Reset memory">
               <RotateCcw size={15} />
             </button>
-            <button onClick={onDelete} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete sentence (D)" aria-label="Delete sentence">
-              <Trash2 size={15} />
-            </button>
+            {!catalog && (
+              <button onClick={onDelete} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete sentence (D)" aria-label="Delete sentence">
+                <Trash2 size={15} />
+              </button>
+            )}
             <button onClick={onRemember} className="-my-1 flex min-h-9 items-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-3 rounded-lg transition-colors" title="Remember (R)">
               <CheckCircle2 size={14} /> Got it
             </button>

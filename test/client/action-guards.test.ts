@@ -6,6 +6,7 @@ import type { StoredItem } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { acceptDestructive, acceptListReview, acceptRepeat } from '../../services/actionGuards.ts';
 import { getMasteryColors } from '../../components/mastery.tsx';
+import { SentenceActionsRow } from '../../views/detail/SentenceActionsRow.tsx';
 import { WordCardHeader } from '../../views/detail/WordCardHeader.tsx';
 import { useSentenceActions } from '../../views/detail/useSentenceActions.ts';
 import { useWordActions } from '../../views/detail/useWordActions.ts';
@@ -155,4 +156,34 @@ test('Save only ever saves: on a saved card it does nothing, on an unsaved one i
   assert.equal(saves.length, 1);
   assert.equal(saves[0].data, apple.data);
   assert.equal(saves[0].srs.totalReviews, 0);
+});
+
+test('a catalog lesson\'s line has no Delete: the row shows Reset and Got it, and the delete handler refuses it', () => {
+  const srs = SRSAlgorithm.createNew('real-life-sentence:1', 'sentence', 0);
+  const mastery = SRSAlgorithm.getMasteryLevel(srs);
+  const row = (catalog: boolean) => renderToStaticMarkup(createElement(SentenceActionsRow, {
+    srs, mastery, masteryColors: getMasteryColors(mastery.color), memorizedCount: 0, preview: false, catalog,
+    catalogKind: catalog ? 'real-life' : undefined, onRemember: () => {}, onReset: () => {}, onDelete: () => {},
+  }));
+  assert.doesNotMatch(row(true), /Delete sentence/);
+  assert.match(row(true), /title="Reset memory \(Shift\+R\)"/);
+  assert.match(row(true), /title="Remember \(R\)"/);
+  assert.match(row(false), /title="Delete sentence \(D\)" aria-label="Delete sentence"/);
+
+  const deleted: string[] = [];
+  const line: StoredItem = {
+    type: 'sentence',
+    data: {
+      id: 'real-life-sentence:1', text: 'Mind the gap.', sourceWord: 'mind', catalogKind: 'real-life',
+      catalogSentenceId: '1', catalogCollectionId: 'london',
+    },
+    savedAt: 0,
+    srs,
+  };
+  const { handleDeleteItem } = capture(() => useSentenceActions({
+    currentSentence: line, currentSentenceRef: { current: line }, isSentencePreview: false, catalogSentencePreview: true,
+    onSave: () => {}, onDelete: id => { deleted.push(id); }, tryRemember: () => true, showRemembered: () => {},
+  }));
+  handleDeleteItem();
+  assert.deepEqual(deleted, []);
 });

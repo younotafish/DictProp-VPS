@@ -12,6 +12,7 @@ interface SentenceActionsOptions {
   currentSentenceRef: RefObject<StoredItem | null>;
   /** Nothing in the library backs the sentence yet; only a catalog sentence can be reviewed that way. */
   isSentencePreview: boolean;
+  /** A Real Life or essay line: the lesson's, not the learner's, so it can't be deleted. */
   catalogSentencePreview: boolean;
   onSave: (item: StoredItem) => void;
   onDelete: (id: string) => void;
@@ -23,7 +24,10 @@ interface SentenceActionsOptions {
   showRemembered: (next: SRSData, now: number, id: string) => void;
 }
 
-/** Remember, Reset and Delete for the sentence under review. A preview has none of them, except a catalog sentence's Remember. */
+/**
+ * Remember, Reset and Delete for the sentence under review. A preview has none of them, except a catalog sentence's
+ * Remember, and a catalog lesson's line is never deleted.
+ */
 export function useSentenceActions({
   currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
   onUpdateSRS, tryRemember, showRemembered,
@@ -34,7 +38,8 @@ export function useSentenceActions({
 
   // Delete the SENTENCE (App removes its group + advances/closes the flow).
   const handleDeleteItem = () => {
-    if (!currentSentence || isSentencePreview || !acceptDestructive(lastDestructiveAtRef, performance.now())) return;
+    if (!currentSentence || isSentencePreview || catalogSentencePreview) return;
+    if (!acceptDestructive(lastDestructiveAtRef, performance.now())) return;
     log('🗑️ DetailView: Deleting sentence:', currentSentence.data.id);
     onDelete(currentSentence.data.id);
   };
