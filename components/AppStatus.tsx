@@ -53,8 +53,9 @@ interface AppStatusPillsProps {
   /** An open card or the card popup covers the page, so a new version's reload offer waits for it to close. */
   holdUpdate: boolean;
   /**
-   * The card popup is open and a notice the user has to reach over it shows (the undo offer, the couldn't-save alert):
-   * the stack rises above the popup. Otherwise it stays beneath the popup and every dialog.
+   * The card popup is open with no dialog over it, and a notice the user has to reach over it shows (the undo offer, the
+   * couldn't-save alert): the stack rises above the popup (hooks/useOverlays' liftNoticesAbovePopup). Otherwise it stays
+   * beneath the popup and every dialog.
    */
   liftAbovePopup: boolean;
 }

@@ -3,10 +3,13 @@ import test from 'node:test';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useModalDialog } from '../../components/overlayStack.ts';
-import { openDialogs, popupIsEmpty, useOverlays, type CardPopup, type Overlays } from '../../hooks/useOverlays.ts';
+import {
+  liftNoticesAbovePopup, openDialogs, popupIsEmpty, useOverlays, type CardPopup, type Overlays,
+} from '../../hooks/useOverlays.ts';
 import type { StoredItem } from '../../types.ts';
 
-// hooks/useOverlays.ts: which dialogs cover the page, and when the card popup has nothing left to show.
+// hooks/useOverlays.ts: which dialogs cover the page, when the card popup has nothing left to show, and when the
+// notice stack rises above it.
 
 const sense = (id: string): StoredItem => ({
   type: 'vocab',
@@ -46,6 +49,17 @@ test('the card popup covers the page while it shows a card, without counting as 
     openDialogs({ ...closed, cardPopup: popup, popupItems: [sense('s1')], showKeyboardHelp: true }),
     { modalOpen: true, dialogOpen: true },
   );
+});
+
+test('over the card popup, an undo offer or the couldn\'t-save alert lifts the notices, unless a dialog is open over the popup', () => {
+  const quiet = { cardPopup: popup, modalOpen: false, undoOffered: false, writeFailed: false };
+  assert.equal(liftNoticesAbovePopup(quiet), false, 'nothing to reach');
+  assert.equal(liftNoticesAbovePopup({ ...quiet, undoOffered: true }), true);
+  assert.equal(liftNoticesAbovePopup({ ...quiet, writeFailed: true }), true);
+  assert.equal(liftNoticesAbovePopup({ ...quiet, undoOffered: true, cardPopup: null }), false, 'no popup to rise above');
+  // The shortcut sheet or the refused reviews opened over the popup: the stack stays beneath the dialog.
+  assert.equal(liftNoticesAbovePopup({ ...quiet, undoOffered: true, modalOpen: true }), false);
+  assert.equal(liftNoticesAbovePopup({ ...quiet, writeFailed: true, modalOpen: true }), false);
 });
 
 // Just enough of a browser for React to mount components that draw nothing, as in connectivity-notice.test.ts,

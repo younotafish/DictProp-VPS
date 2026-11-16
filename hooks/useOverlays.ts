@@ -31,6 +31,18 @@ export function openDialogs({ cardPopup, popupItems, modalShowing, showKeyboardH
 }
 
 /**
+ * Whether the notice stack rises above the card popup (components/AppStatus' liftAbovePopup): the popup is open, a
+ * notice the user has to reach over it shows (the undo offer, the couldn't-save alert), and no dialog is open over the
+ * popup. A dialog keeps the stack beneath it, and the stack rises again when the dialog closes.
+ */
+export const liftNoticesAbovePopup = ({ cardPopup, modalOpen, undoOffered, writeFailed }: {
+  cardPopup: CardPopup | null;
+  modalOpen: boolean;
+  undoOffered: boolean;
+  writeFailed: boolean;
+}): boolean => cardPopup !== null && !modalOpen && (undoOffered || writeFailed);
+
+/**
  * What can open over the page: the card popup, the duplicates dialog, the shortcuts and the refused reviews; and
  * whether any of them, or any other dialog on screen, covers it (openDialogs).
  */

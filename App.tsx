@@ -23,7 +23,7 @@ import { useLibraryViews } from './hooks/useLibraryViews';
 import { useDetailView } from './hooks/useDetailView';
 import { useUndoOffer } from './hooks/useUndoOffer';
 import { useNavBar } from './hooks/useNavBar';
-import { useOverlays } from './hooks/useOverlays';
+import { liftNoticesAbovePopup, useOverlays } from './hooks/useOverlays';
 import { useJobNotice } from './hooks/useJobNotice';
 import { useAppShortcuts } from './hooks/useAppShortcuts';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -253,7 +253,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         offlineChip={connectivityNotice({ offline: offlineSettled, onTab: !detailContext && !cardPopup }) === 'chip'}
         aboveTabBar={!detailContext}
         holdUpdate={!!detailContext || !!cardPopup}
-        liftAbovePopup={!!cardPopup && (!!undoMessage || libraryWriteFailed)}
+        liftAbovePopup={liftNoticesAbovePopup({ cardPopup, modalOpen, undoOffered: !!undoMessage, writeFailed: libraryWriteFailed })}
       />
 
       {detailContext && (
