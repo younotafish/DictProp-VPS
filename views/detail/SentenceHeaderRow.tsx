@@ -11,7 +11,7 @@ interface SentenceHeaderRowProps {
   loadingLesson: boolean;
   position: number;
   total: number;
-  /** What's left to review in this run (lessonReviewPill), on every sentence of it; null for an unsaved example's preview. */
+  /** What's left to review in this run (lessonReviewPill), on every sentence of it; null for an example's preview. */
   reviewPill: LessonReviewPill | null;
 }
 

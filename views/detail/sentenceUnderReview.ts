@@ -12,6 +12,11 @@ export interface SentenceUnderReview {
   catalogPreviewKind: 'real-life' | 'essay' | undefined;
   /** Nothing in the library backs it yet, so reviews and deletes need a save first (catalog Got it creates one). */
   isSentencePreview: boolean;
+  /**
+   * The run is an example's preview rather than sentences from the library: a word card's example until it's saved, or
+   * one opened under a study answer, whose run keeps the preview after a save too. Nothing in it is for a pill to count.
+   */
+  examplePreview: boolean;
   /** Where Back returns to. */
   sentenceExitLabel: 'Essays' | 'Real Life' | 'Word' | 'Sentences';
 }
@@ -55,5 +60,8 @@ export function resolveSentenceUnderReview(
     : isSentencePreview
       ? 'Word'
       : 'Sentences';
-  return { currentSentence, catalogSentencePreview, catalogPreviewKind, isSentencePreview, sentenceExitLabel };
+  return {
+    currentSentence, catalogSentencePreview, catalogPreviewKind, isSentencePreview, examplePreview: previewOnly || isPreviewId,
+    sentenceExitLabel,
+  };
 }

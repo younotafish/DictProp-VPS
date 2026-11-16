@@ -41,6 +41,20 @@ test('a sentence the caller marks preview-only stays read-only unless it binds t
   assert.equal(result.sentenceExitLabel, 'Word');
 });
 
+test('an example\'s preview has no list for the lesson pill to count: a word card\'s until it\'s saved, a study answer\'s always', () => {
+  // An example opened under a study answer gets a preview id, and its run keeps that preview after Save sentence.
+  const example = sentence('sentence-preview:7', 'An example.');
+  assert.equal(resolveSentenceUnderReview(example, undefined, [], noText, false).examplePreview, true);
+  const saved = sentence('s9', 'An example.');
+  assert.equal(resolveSentenceUnderReview(example, undefined, [saved], () => saved, false).examplePreview, true);
+  // A word card marks its unsaved example preview-only, and once it's saved shows the saved copy instead.
+  assert.equal(resolveSentenceUnderReview(example, undefined, [], noText, true).examplePreview, true);
+  assert.equal(resolveSentenceUnderReview(saved, undefined, [saved], () => saved, false).examplePreview, false);
+  // A list's sentences: saved ones, and Real Life or essay lines with or without their records.
+  const line = sentence('real-life:c1:s9', 'Catalog.', { catalogKind: 'real-life', catalogSentenceId: 's9', catalogCollectionId: 'c1' });
+  assert.equal(resolveSentenceUnderReview(line, undefined, [], noText, false).examplePreview, false);
+});
+
 test('a catalog sentence binds to its progress record by id, or by catalog sentence and collection', () => {
   const listed = sentence('real-life:c1:s9', 'Catalog.', { catalogKind: 'real-life', catalogSentenceId: 's9', catalogCollectionId: 'c1' });
   const unsaved = resolveSentenceUnderReview(listed, undefined, [], noText, false);

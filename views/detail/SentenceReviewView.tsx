@@ -150,7 +150,7 @@ export function SentenceReviewView({
     sentenceItems, sentenceIndex, savedSentenceItemsRef, onPatchItemRef,
   });
   const {
-    currentSentence, catalogSentencePreview, catalogPreviewKind, isSentencePreview, sentenceExitLabel,
+    currentSentence, catalogSentencePreview, catalogPreviewKind, isSentencePreview, examplePreview, sentenceExitLabel,
   } = resolveSentenceUnderReview(
     currentSentenceSnapshot,
     currentSentenceSnapshot ? preparedSentenceById[currentSentenceSnapshot.data.id] : undefined,
@@ -517,7 +517,7 @@ export function SentenceReviewView({
               loadingLesson={analysisLoading}
               position={sentenceIndex + 1}
               total={sentenceItems.length}
-              reviewPill={sentencePreviewOnly ? null : sentenceReviewPill}
+              reviewPill={examplePreview ? null : sentenceReviewPill}
             />
 
             {/* Row 2: the sentence — the hero, filling the page and centered in it. */}
