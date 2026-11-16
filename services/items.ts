@@ -74,6 +74,22 @@ export const findSavedCopy = (items: readonly StoredItem[], probe: SavedCopyProb
 };
 
 /**
+ * `item` with `patch` applied and stamped `now`, for the writes the app makes on its own, such as a listen's speech
+ * style or an analysis arriving. Unlike a save, it never brings a deleted item back: a deleted item comes back
+ * unchanged, without calling `patch`, and so does an item whose patch returns null (nothing to change) or the item
+ * itself.
+ */
+export const patchLiveCopy = (
+  item: StoredItem,
+  patch: (item: StoredItem) => StoredItem | null,
+  now: number,
+): StoredItem => {
+  if (item.isDeleted) return item;
+  const patched = patch(item);
+  return patched && patched !== item ? { ...patched, updatedAt: now } : item;
+};
+
+/**
  * True when two copies share their content object. Reviews and archiving replace only the wrapper,
  * so indexes built from content can skip those changes.
  */

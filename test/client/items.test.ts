@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  findSavedCopy, findSavedCopyIndex, makeSentenceStoredItem, makeVocabStoredItem, sameItemContent, type SavedCopyProbe,
+  findSavedCopy, findSavedCopyIndex, makeSentenceStoredItem, makeVocabStoredItem, patchLiveCopy, sameItemContent,
+  type SavedCopyProbe,
 } from '../../services/items.ts';
 import type { SearchResult, SentenceAnalysis, SentenceData, StoredItem, VocabCard } from '../../types.ts';
 
@@ -96,4 +97,23 @@ test('a saved copy is the item with the same id, else the same spelling and type
 test('a deleted copy is still found, so saving a deleted card again brings its history back', () => {
   const deleted: StoredItem = { ...word('old', 'visceral', 'adj: instinctive'), isDeleted: true };
   assert.equal(findSavedCopy([deleted], word('fresh-ai-id', 'visceral', 'adj: instinctive')), deleted);
+});
+
+test('an automatic write patches a live item and stamps it, but leaves a deleted one, or a patch with nothing to change, alone', () => {
+  const sentence = makeSentenceStoredItem('She ran home.', 'run');
+  const withStyle = (item: StoredItem): StoredItem => ({ ...item, data: { ...item.data, preferredSpeechStyle: 'casual' } as SentenceData });
+
+  const patched = patchLiveCopy(sentence, withStyle, 1_700_000_000_000);
+  assert.equal((patched.data as SentenceData).preferredSpeechStyle, 'casual');
+  assert.equal(patched.updatedAt, 1_700_000_000_000);
+  assert.equal(patched.isDeleted, undefined);
+  assert.equal(sentence.updatedAt, undefined, 'the original is not touched');
+
+  const deleted: StoredItem = { ...sentence, isDeleted: true, updatedAt: 5 };
+  let patchCalls = 0;
+  assert.equal(patchLiveCopy(deleted, item => { patchCalls++; return withStyle(item); }, 1_700_000_000_000), deleted);
+  assert.equal(patchCalls, 0, 'a deleted item is never patched, so the write cannot bring it back');
+
+  assert.equal(patchLiveCopy(sentence, () => null, 1_700_000_000_000), sentence);
+  assert.equal(patchLiveCopy(sentence, item => item, 1_700_000_000_000), sentence);
 });
