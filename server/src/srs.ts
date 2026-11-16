@@ -7,8 +7,9 @@
  * through both copies and compares every schedule field, or each review would visibly jump after the next sync.
  */
 import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
+import type { ReviewRating } from './shared/review.js';
 
-export type ReviewRating = 'again' | 'hard' | 'good' | 'easy';
+export type { ReviewRating };
 
 /** The fields of a stored schedule that a review reads. Rows from the fixed-schedule era lack the FSRS ones. */
 export interface SrsLike {
