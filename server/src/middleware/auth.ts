@@ -1,9 +1,10 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { wantsSecureCookies } from '../canonical-host.js';
-import { deleteSession, getSessionUser, SESSION_LIFETIME_MS, type UserRow } from '../db.js';
+import { deleteSession, getSessionUser, type UserRow } from '../db.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
+import { SESSION_LIFETIME_MS } from '../session-renewal.js';
 
 export type AuthUser = {
   id: string;
@@ -33,17 +34,18 @@ export const DEV_AUTH_USER: AuthUser = {
 export const SESSION_COOKIE = 'session';
 
 /**
- * Send the session cookie: to every path, never to scripts, and for as long as the session row lasts, through
- * Max-Age rather than an Expires date the device's clock would judge. Anything that hands out or renews a
- * session sends the cookie through here.
+ * Send the session cookie: to every path, never to scripts, and for as long as the session row lasts, `maxAgeMs`
+ * (a new session's lifetime unless told otherwise), through Max-Age rather than an Expires date the device's clock
+ * would judge. Anything that hands out or renews a session sends the cookie through here, so a renewed cookie
+ * carries the sign-in's attributes.
  */
-export function setSessionCookie(c: Context, token: string): void {
+export function setSessionCookie(c: Context, token: string, maxAgeMs: number = SESSION_LIFETIME_MS): void {
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'Lax',
     secure: wantsSecureCookies(c.req),
     path: '/',
-    maxAge: SESSION_LIFETIME_MS / 1000,
+    maxAge: Math.floor(maxAgeMs / 1000),
   });
 }
 

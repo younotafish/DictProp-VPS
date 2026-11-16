@@ -6,6 +6,7 @@ process.env.OWNER_GOOGLE_EMAIL = 'owner@example.com';
 process.env.GOOGLE_CLIENT_ID = 'test-client';
 
 const { createAuthRoutes } = await import('../src/routes/auth.js');
+const { setSessionCookie } = await import('../src/middleware/auth.js');
 const { getSessionUser } = await import('../src/db.js');
 
 const owner = { sub: 'owner-google-id', email: 'owner@example.com', email_verified: true as const };
@@ -71,4 +72,19 @@ test('signing out clears the cookie at the path it was set on', async () => {
   assert.equal(cleared?.attributes['max-age'], '0');
   assert.equal(cleared?.attributes.path, '/');
   assert.equal(getSessionUser(cookie.value), null);
+});
+
+test('a renewed cookie carries the sign-in cookie\'s attributes, with Max-Age the whole seconds the session has left', async () => {
+  const renewing = new Hono().get('/renew', (c) => {
+    setSessionCookie(c, 'session-token', 10 * 24 * 60 * 60 * 1000 + 999);
+    return c.body(null, 204);
+  });
+  const response = await renewing.request('http://dictprop.online/renew', {
+    headers: { Host: 'dictprop.online', 'X-Forwarded-Proto': 'https' },
+  });
+  const cookie = sessionCookieOf(response);
+  assert.equal(cookie?.value, 'session-token');
+  assert.deepEqual(cookie?.attributes, {
+    'max-age': String(10 * 24 * 60 * 60), path: '/', httponly: '', secure: '', samesite: 'Lax',
+  });
 });

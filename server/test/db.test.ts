@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { enrichmentId } from '../src/example-enrichment-coverage.js';
 
-const { getItemById, getItemsAfterRevision, upsertItem, touchItemRevisions, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSessionUser, deleteSession, db } = await import('../src/db.js');
+const { getItemById, getItemsAfterRevision, upsertItem, touchItemRevisions, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSession, getSessionUser, extendSession, deleteSession, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const makeItem = (
@@ -384,4 +384,32 @@ test('a sign-in deletes expired sessions, and looking a session up writes nothin
   const fresh = createSession(user.id);
   assert.equal(sessions(), 1);
   assert.equal(getSessionUser(fresh.token)?.id, user.id);
+});
+
+test('a session renews only to a later expiry and never once expired, and a renewal the database refuses changes nothing', () => {
+  const user = createUserAndClaimItems({ googleId: 'renew-google-id', email: 'renew@example.com', displayName: null, photoUrl: null });
+  const { token, expiresAt } = createSession(user.id);
+  const session = getSession(token);
+  assert.equal(session?.user.id, user.id);
+  assert.equal(session?.expiresAt, expiresAt);
+  assert.ok(session.createdAt <= Date.now() && session.createdAt < expiresAt);
+
+  assert.equal(extendSession(token, expiresAt - 1), false);
+  assert.equal(getSession(token)?.expiresAt, expiresAt);
+  assert.equal(extendSession(token, expiresAt + 1_000), true);
+  assert.equal(getSession(token)?.expiresAt, expiresAt + 1_000);
+
+  // As when an importer holds the write lock past busy_timeout: the caller learns the session didn't move.
+  db.exec(`CREATE TEMP TRIGGER refuse_renewal BEFORE UPDATE OF expires_at ON sessions
+    BEGIN SELECT RAISE(ABORT, 'database is locked'); END`);
+  try {
+    assert.equal(extendSession(token, expiresAt + 2_000), false);
+  } finally {
+    db.exec('DROP TRIGGER refuse_renewal');
+  }
+  assert.equal(getSession(token)?.expiresAt, expiresAt + 1_000);
+
+  db.prepare('UPDATE sessions SET expires_at = ? WHERE user_id = ?').run(Date.now() - 1, user.id);
+  assert.equal(extendSession(token, Date.now() + 1_000_000), false);
+  assert.equal(getSession(token), null);
 });

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { SESSION_LIFETIME_MS } from '../session-renewal.js';
 import { db, writeTransaction } from './connection.js';
 
 // Accounts and sign-in sessions.
@@ -15,10 +16,13 @@ export const userStmts = {
 
 const sessionStmts = {
   create: db.prepare(`INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (@token, @user_id, @created_at, @expires_at)`),
-  getUser: db.prepare(`
-    SELECT u.* FROM sessions s JOIN users u ON s.user_id = u.id
+  get: db.prepare(`
+    SELECT u.*, s.created_at AS session_created_at, s.expires_at AS session_expires_at
+    FROM sessions s JOIN users u ON s.user_id = u.id
     WHERE s.token = ? AND s.expires_at > ?
   `),
+  // Only ever later, so of two renewals at once the later expiry stays, and never for a session that has expired.
+  extend: db.prepare(`UPDATE sessions SET expires_at = ? WHERE token = ? AND expires_at < ? AND expires_at > ?`),
   delete: db.prepare(`DELETE FROM sessions WHERE token = ?`),
   deleteExpired: db.prepare(`DELETE FROM sessions WHERE expires_at < ?`),
 };
@@ -77,8 +81,6 @@ export function listAllUsers(): UserRow[] {
   return userStmts.listAll.all() as UserRow[];
 }
 
-/** How long a sign-in lasts: the session row's expiry and the cookie's Max-Age. */
-export const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 const sessionTokenHash = (token: string): string => createHash('sha256').update(token).digest('hex');
 
 export function createSession(userId: string): { token: string; expiresAt: number } {
@@ -96,10 +98,39 @@ export function createSession(userId: string): { token: string; expiresAt: numbe
   return { token, expiresAt };
 }
 
-export function getSessionUser(token: string): UserRow | null {
-  const now = Date.now();
+/** A session that hasn't expired: whose it is, when it was created and when it expires. */
+export interface UserSession {
+  user: UserRow;
+  createdAt: number;
+  expiresAt: number;
+}
+
+export function getSession(token: string): UserSession | null {
   // Only the hash of a cookie is ever looked up, so a copy of the sessions table can't be replayed as a cookie.
-  return (sessionStmts.getUser.get(sessionTokenHash(token), now) as UserRow | undefined) || null;
+  const row = sessionStmts.get.get(sessionTokenHash(token), Date.now()) as
+    (UserRow & { session_created_at: number; session_expires_at: number }) | undefined;
+  if (!row) return null;
+  const { session_created_at: createdAt, session_expires_at: expiresAt, ...user } = row;
+  return { user, createdAt, expiresAt };
+}
+
+export function getSessionUser(token: string): UserRow | null {
+  return getSession(token)?.user ?? null;
+}
+
+/**
+ * Move a live session's expiry to `expiresAt` if that is later, and say whether it moved; an expired session stays
+ * expired. Best effort: when the database can't take the write (an importer holding it past busy_timeout, say), the
+ * session keeps its expiry for a later request to renew, and the request this rides on goes on as if nothing had been
+ * asked.
+ */
+export function extendSession(token: string, expiresAt: number): boolean {
+  try {
+    return sessionStmts.extend.run(expiresAt, sessionTokenHash(token), expiresAt, Date.now()).changes > 0;
+  } catch (error) {
+    console.warn('A session renewal was left for a later request:', error instanceof Error ? error.message : error);
+    return false;
+  }
 }
 
 export function deleteSession(token: string) {
