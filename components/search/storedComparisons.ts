@@ -1,9 +1,11 @@
 import type { StoredComparison } from '../../types';
+import { sanitizeStoredComparisons } from '../../services/api/comparisons';
 import { parseJson, type StorageLike } from '../../services/browserStorage';
 
 /**
- * The comparisons a device keeps for its signed-in user, so they show before the server's list arrives. The list
- * is read back as it was written: entries a build before the comparison cleaning wrote can still be malformed.
+ * The comparisons a device keeps for its signed-in user, so they show before the server's list arrives. The list is
+ * cleaned when it's read, as the server's is, since a build from before the comparison cleaning may have cached
+ * malformed entries.
  */
 
 /** The cache only reads and writes, so a test can pass a storage that has just those two methods. */
@@ -11,11 +13,11 @@ type ReadWriteStorage = Pick<StorageLike, 'getItem' | 'setItem'>;
 
 const cacheKey = (userId: string): string => `vps_comparisons_cache_${userId}`;
 
-/** The list kept for `userId`, or null when there's none or it can't be read. */
+/** The list kept for `userId`, cleaned for display, or null when there's none or it can't be read. */
 export function readCachedComparisons(userId: string, storage?: ReadWriteStorage): StoredComparison[] | null {
   try {
     const parsed = parseJson((storage ?? localStorage).getItem(cacheKey(userId)));
-    return Array.isArray(parsed) ? parsed as StoredComparison[] : null;
+    return Array.isArray(parsed) ? sanitizeStoredComparisons(parsed) : null;
   } catch {
     return null;
   }

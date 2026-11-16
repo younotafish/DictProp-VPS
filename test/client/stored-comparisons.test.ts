@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mergeComparisons, readCachedComparisons, writeCachedComparisons } from '../../components/search/storedComparisons.ts';
+import { sanitizeStoredComparisons } from '../../services/api/comparisons.ts';
 import { defaultSessionStorage, defaultStorage } from '../../services/browserStorage.ts';
 import type { StoredComparison } from '../../types.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
@@ -29,6 +30,49 @@ test('a missing, unreadable or non-list cache reads as nothing', () => {
   assert.equal(readCachedComparisons('user-a', storage), null);
   storage.setItem('vps_comparisons_cache_user-a', '{"key":"a|b"}');
   assert.equal(readCachedComparisons('user-a', storage), null);
+  storage.setItem('vps_comparisons_cache_user-a', '[]');
+  assert.deepEqual(readCachedComparisons('user-a', storage), [], 'while an empty list is a list');
+});
+
+test('a malformed entry an older build cached reads back cleaned, as the server list does', () => {
+  const storage = new MemoryStorage();
+  const cached = [
+    null,
+    'fable|parable',
+    {
+      key: 'affect|effect',
+      words: ['affect', 3, 'effect'],
+      data: {
+        words: ['affect', null],
+        summary: 7,
+        dimensions: [{ label: 'Register', perWord: { affect: ['neutral'], effect: 'formal' } }, { analysis: 'no label' }],
+        examples: 'none',
+        commonMistakes: [{ wrong: true }],
+        verdict: 'Affect is the verb.',
+      },
+      updatedAt: 5,
+    },
+    comparison('decay|rot', 2),
+  ];
+  storage.setItem('vps_comparisons_cache_user-a', JSON.stringify(cached));
+  const read = readCachedComparisons('user-a', storage);
+  assert.deepEqual(read, [
+    {
+      key: 'affect|effect',
+      words: ['affect', 'effect'],
+      data: {
+        words: ['affect', 'effect'],
+        summary: '',
+        dimensions: [{ label: 'Register', analysis: '', perWord: { effect: 'formal' } }],
+        examples: [],
+        commonMistakes: [],
+        verdict: 'Affect is the verb.',
+      },
+      updatedAt: 5,
+    },
+    comparison('decay|rot', 2),
+  ]);
+  assert.deepEqual(read, sanitizeStoredComparisons(cached));
 });
 
 test('storage that refuses a write or a read is ignored', () => {
