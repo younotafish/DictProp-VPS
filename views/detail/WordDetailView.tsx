@@ -91,7 +91,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
 
   // State for 2D navigation
   const {
-    currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentGroup, currentItem,
+    currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentGroup, currentItem, shownKey,
     hasNextGroup, hasPrevGroup, hasPrevItem,
   } = useCardNavigation(groups, { initialGroupIndex, initialItemIndex, navigationKey, scrollContainerRef, sentenceReview: false });
 
@@ -250,7 +250,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
 
   useWordSlideshow({
     isAutoPlaying, stopSlideshow, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
-    setCurrentItemIndex, autoPlaySpeedRef, title,
+    setCurrentItemIndex, autoPlaySpeedRef, title, shownKey,
   });
 
   // What example auto-play preloads (see SessionPreload): the cards it can reach in the time left, in reading order from
@@ -282,6 +282,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     setCurrentGroupIndex,
     setCurrentItemIndex,
     currentGroupIndexRef,
+    shownKey,
     currentItem,
     sentenceReview: false,
     readCard: () => ({ texts: autoPlayTexts(currentItem), title, artist: 'DictProp' }),

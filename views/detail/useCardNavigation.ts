@@ -75,6 +75,9 @@ export function useCardNavigation(groups: ItemGroup[], options: CardNavigationOp
   const currentGroup = groups[safeGroupIndex];
   const safeItemIndex = Math.max(0, Math.min(currentItemIndex, currentGroup.items.length - 1));
   const currentItem = currentGroup.items[safeItemIndex];
+  const shownKey = sentenceIds
+    ? sentenceIds[Math.max(0, Math.min(currentGroupIndex, sentenceIds.length - 1))]
+    : currentItem.data.id;
   const hasNextGroup = safeGroupIndex < groups.length - 1;
   const hasPrevGroup = safeGroupIndex > 0;
   const hasPrevItem = safeItemIndex > 0;
@@ -130,6 +133,11 @@ export function useCardNavigation(groups: ItemGroup[], options: CardNavigationOp
 
   return {
     currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentGroup, currentItem,
+    /**
+     * The card on screen by the key the view follows it by: its id, or in sentence review its sentence's `sentenceIds`
+     * entry. It stays while the card only moves, as when one before it leaves, and changes when another card shows.
+     */
+    shownKey,
     hasNextGroup, hasPrevGroup, hasPrevItem,
   };
 }

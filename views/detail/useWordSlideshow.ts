@@ -14,6 +14,8 @@ interface WordSlideshowOptions {
   autoPlaySpeedRef: RefObject<number>;
   /** The word on screen, pronounced again when a one-meaning word takes its second turn. */
   title: string;
+  /** The card on screen (useCardNavigation's shownKey), whose turns the slideshow counts. */
+  shownKey: string;
 }
 
 /**
@@ -22,15 +24,16 @@ interface WordSlideshowOptions {
  */
 export function useWordSlideshow({
   isAutoPlaying, stopSlideshow, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
-  setCurrentItemIndex, autoPlaySpeedRef, title,
+  setCurrentItemIndex, autoPlaySpeedRef, title, shownKey,
 }: WordSlideshowOptions) {
-  // Counts displays of the current group during auto-play. Single-meaning words
-  // need a second display to satisfy "play each word at least twice".
-  const [groupPlayCount, setGroupPlayCount] = useState(1);
-  // Reads the count from the render that moved, and resets it only when needed (see the group reset in
-  // useCardNavigation); listing the count would undo every increment.
+  // The turns the card on screen has had during auto-play: a word with one meaning needs a second, so it plays twice.
+  // The count starts again when another card shows, not when the card only moves, as when a word before it leaves the
+  // view, so a word on its second turn isn't given a third.
+  const [cardTurns, setCardTurns] = useState(1);
+  // Reads the count from the render that changed, and resets it only when needed; listing the count would undo every
+  // increment.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (groupPlayCount !== 1) setGroupPlayCount(1); }, [currentGroupIndex, isAutoPlaying]);
+  useEffect(() => { if (cardTurns !== 1) setCardTurns(1); }, [shownKey, isAutoPlaying]);
 
   useEffect(() => {
     if (!isAutoPlaying || !groups) return;
@@ -43,15 +46,14 @@ export function useWordSlideshow({
       const safeItemIdx = Math.min(currentItemIndex, group.items.length - 1);
       const isLastItem = safeItemIdx >= group.items.length - 1;
       const isLastGroup = safeGroupIdx >= groups.length - 1;
-      const needsRepeat = isLastItem && group.items.length < 2 && groupPlayCount < 2;
+      const needsRepeat = isLastItem && group.items.length < 2 && cardTurns < 2;
 
       if (!isLastItem) {
         // Advance to next meaning within current group
         setCurrentItemIndex(prev => prev + 1);
-        setGroupPlayCount(prev => prev + 1);
       } else if (needsRepeat) {
         // Single-meaning word: show it for another turn and re-pronounce
-        setGroupPlayCount(prev => prev + 1);
+        setCardTurns(prev => prev + 1);
         if (title) speakWord(title);
       } else if (!isLastGroup) {
         // Advance to next group (word)
@@ -65,5 +67,5 @@ export function useWordSlideshow({
 
     return () => clearTimeout(timer);
     // The title follows from the cards and the indices, so listing it adds no restart.
-  }, [isAutoPlaying, currentGroupIndex, currentItemIndex, groups, groupPlayCount, title, autoPlaySpeedRef, stopSlideshow, setCurrentGroupIndex, setCurrentItemIndex]);
+  }, [isAutoPlaying, currentGroupIndex, currentItemIndex, groups, cardTurns, title, autoPlaySpeedRef, stopSlideshow, setCurrentGroupIndex, setCurrentItemIndex]);
 }

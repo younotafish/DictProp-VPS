@@ -96,7 +96,7 @@ export function SentenceReviewView({
   // follows the sentence on screen by its id, or by the caller's followIds, when the run changes.
   const sentenceIds = useMemo(() => followIds ?? sentenceItems.map(item => item.data.id), [followIds, sentenceItems]);
   const {
-    currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentItem,
+    currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentItem, shownKey,
   } = useCardNavigation(groups, {
     initialGroupIndex, initialItemIndex, navigationKey, scrollContainerRef: heroScrollRef, sentenceReview: true, sentenceIds,
   });
@@ -347,6 +347,7 @@ export function SentenceReviewView({
     setCurrentGroupIndex,
     setCurrentItemIndex,
     currentGroupIndexRef,
+    shownKey,
     currentItem,
     sentenceReview: true,
     sentenceItemsRef,

@@ -15,12 +15,22 @@ interface AutoPlayReaderOptions {
   /** Times each sentence is read, and the silence between reads, read as the chain goes. */
   repeatsRef: RefObject<number>;
   gapRef: RefObject<number>;
+  /**
+   * The cards and where the view is in them, read as the reading moves on rather than when it starts: to find the next
+   * card when one ends, and for the lock screen's next and previous.
+   */
   groups: ItemGroup[];
   currentGroupIndex: number;
   currentItemIndex: number;
   setCurrentGroupIndex: Dispatch<SetStateAction<number>>;
   setCurrentItemIndex: Dispatch<SetStateAction<number>>;
   currentGroupIndexRef: RefObject<number>;
+  /**
+   * The card on screen by the key the view follows it by (useCardNavigation's shownKey). The reading starts again only
+   * when it changes or auto-play is switched, so a card that only moves, as when one before it leaves the view, keeps
+   * its read, its count of repeats and its pause.
+   */
+  shownKey: string;
   /** The card on screen (in sentence review, the sentence's source card), for the lock-screen picture. */
   currentItem: StoredItem;
   /**
@@ -64,10 +74,12 @@ export interface AutoPlayReaderControls {
  */
 export function useAutoPlayReader({
   active, stop, repeatsRef, gapRef, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
-  setCurrentItemIndex, currentGroupIndexRef, currentItem, sentenceReview, sentenceItemsRef, readCard, onRoundListened,
-  onPausedChange, setTimerExpiry, rearm,
+  setCurrentItemIndex, currentGroupIndexRef, shownKey, currentItem, sentenceReview, sentenceItemsRef, readCard,
+  onRoundListened, onPausedChange, setTimerExpiry, rearm,
 }: AutoPlayReaderOptions): AutoPlayReaderControls {
   const controllerRef = useRef<AutoplayController | null>(null);
+  // Where the view is, read as the reading moves on, so a card that only moved goes on to the card after it.
+  const placeRef = useLatest({ groups, currentGroupIndex, currentItemIndex });
   const stopRef = useLatest(stop);
   const onRoundListenedRef = useLatest(onRoundListened);
   const onPausedChangeRef = useLatest(onPausedChange);
@@ -123,7 +135,7 @@ export function useAutoPlayReader({
 
   useEffect(() => {
     const controller = controllerRef.current;
-    if (!active || !groups || !controller) return;
+    if (!active || !controller) return;
     const card = readCard();
 
     // Lock-screen "now playing" for this card/sentence (refreshed as autoplay advances).
@@ -135,12 +147,13 @@ export function useAutoPlayReader({
     });
 
     const advanceCard = () => {
-      const safeGroupIdx = Math.min(currentGroupIndex, groups.length - 1);
-      const group = groups[safeGroupIdx];
+      const { groups: cards, currentGroupIndex: groupIndex, currentItemIndex: itemIndex } = placeRef.current;
+      const safeGroupIdx = Math.min(groupIndex, cards.length - 1);
+      const group = cards[safeGroupIdx];
       if (!group) { stopRef.current(); return; }
-      const safeItemIdx = Math.min(currentItemIndex, group.items.length - 1);
+      const safeItemIdx = Math.min(itemIndex, group.items.length - 1);
       const isLastItem = safeItemIdx >= group.items.length - 1;
-      const isLastGroup = safeGroupIdx >= groups.length - 1;
+      const isLastGroup = safeGroupIdx >= cards.length - 1;
       if (!isLastItem) {
         setCurrentItemIndex(p => p + 1);
       } else if (!isLastGroup) {
@@ -155,10 +168,11 @@ export function useAutoPlayReader({
     // sentences (both) in turn, then advance to the next card. A new card always reads, though the last one was paused.
     controller.startCard(card.texts, advanceCard);
     return () => controller.cancelCard();
-    // The chain reads the card's text, title and picture when it starts, and restarts only when auto-play is
-    // switched, the view moves or the cards change; a review or a refreshed copy mid-read doesn't restart it.
+    // The chain reads the card's text, title and picture when it starts, and restarts only when auto-play is switched
+    // or another card shows. A card that only moves (one before it left the view), a review or a refreshed copy
+    // mid-read neither restarts the read nor ends a pause.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, currentGroupIndex, currentItemIndex, groups]);
+  }, [active, shownKey]);
 
   // Background sentence autoplay — while it runs, hold the audio session open (silent keep-alive) and
   // expose lock-screen controls so the installed PWA keeps reading sentences with the screen off.
@@ -167,7 +181,7 @@ export function useAutoPlayReader({
     if (!active) return;
     acquireKeepAlive();
     const step = (delta: number) => {
-      const len = sentenceReview ? (sentenceItemsRef?.current?.length ?? 0) : (groups?.length ?? 0);
+      const len = sentenceReview ? (sentenceItemsRef?.current?.length ?? 0) : placeRef.current.groups.length;
       if (!len) return;
       const cur = currentGroupIndexRef.current;
       const nextIdx = Math.max(0, Math.min(cur + delta, len - 1));
@@ -186,9 +200,10 @@ export function useAutoPlayReader({
       setMediaSessionHandlers(null);
       releaseKeepAlive();
     };
-    // The rest are refs, state setters and a flag fixed for the view's life, so this re-registers only when
-    // auto-play is switched or the cards change.
-  }, [active, groups, sentenceReview, sentenceItemsRef, currentGroupIndexRef, stop, setCurrentGroupIndex, setCurrentItemIndex]);
+    // The rest are refs, state setters, the view's stop and a flag fixed for the view's life, so this registers once
+    // per run of auto-play. A change of cards leaves it be: clearing the handlers clears the lock screen's title and
+    // picture too, which only a new card's reading sets again.
+  }, [active, placeRef, sentenceReview, sentenceItemsRef, currentGroupIndexRef, stop, setCurrentGroupIndex, setCurrentItemIndex]);
 
   const togglePause = useCallback(() => controllerRef.current?.togglePause(), []);
   const pause = useCallback(() => controllerRef.current?.pause(), []);

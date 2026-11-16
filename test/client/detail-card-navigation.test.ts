@@ -227,6 +227,32 @@ test('an undo that puts the deleted card back moves the view to it, and a move s
   }
 });
 
+test('the key of the card on screen stays while the card only moves, and changes when another takes its place', async () => {
+  const words = await navigationHarness();
+  try {
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map(id => group(card(id)));
+    await words.show({ groups: [a, b, c, d], initialGroupIndex: 2 });
+    assert.equal(words.navigation().shownKey, 'c');
+    await words.show({ groups: [b, c, d], initialGroupIndex: 2 });
+    assert.equal(words.navigation().shownKey, 'c', 'a word before it left');
+    await words.show({ groups: [b, d], initialGroupIndex: 1 });
+    assert.equal(words.navigation().shownKey, 'd', 'it left, and the next word took its place');
+  } finally {
+    await words.close();
+  }
+  // In sentence review it's the sentence's key, though sentences of one word share its source card.
+  const sentences = await navigationHarness();
+  try {
+    const river = group(card('river'));
+    await sentences.show({ groups: [river, river, river], sentenceIds: ['s1', 's2', 's3'], initialGroupIndex: 1 });
+    assert.equal(sentences.navigation().shownKey, 's2');
+    await sentences.show({ groups: [river, river], sentenceIds: ['s2', 's3'], initialGroupIndex: 1 });
+    assert.equal(sentences.navigation().shownKey, 's2');
+  } finally {
+    await sentences.close();
+  }
+});
+
 /** The SentenceReviewView element in `node`, found through each element's children. */
 function sentenceReviewIn(node: ReactNode): ReactElement<SentenceReviewViewProps> | undefined {
   if (Array.isArray(node)) return node.map(sentenceReviewIn).find(Boolean);
@@ -266,8 +292,10 @@ test('Save sentence in a word card\'s example keeps the sentence page where it w
     await view.show({ groups: [source], sentenceIds: before.followIds, initialGroupIndex: 0 });
     view.scroller.scrollTop = 200;
     view.takeShown();
+    const shownKey = view.navigation().shownKey;
     await view.show({ groups: [source], sentenceIds: after.followIds, initialGroupIndex: 0 });
     assert.equal(view.scroller.scrollTop, 200, 'Save sentence leaves the page where it was');
+    assert.equal(view.navigation().shownKey, shownKey, 'and auto-play\'s read, which starts again only for another key');
     // The saved copy deleted on another device turns back into the preview, which stays open.
     await view.show({ groups: [source], sentenceIds: before.followIds, initialGroupIndex: 0 });
     assert.equal(view.scroller.scrollTop, 200);
