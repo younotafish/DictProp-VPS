@@ -5,13 +5,15 @@ import { Hono } from 'hono';
 import { getComparisons, upsertComparison } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonObject } from '../middleware/json-body.js';
+import { MAX_COMPARE_WORDS } from '../query-mode.js';
 
 export const comparisonsRoutes = new Hono<AppEnv>();
 
-// A comparison covers two or three words of at most 100 characters (see /api/compare); these caps leave
-// room for that and stop a client from storing arbitrary keys.
+// A comparison covers 2 to MAX_COMPARE_WORDS words of at most 100 characters (see /api/compare). These caps
+// leave headroom, since a save carries the words as the search passed them rather than the de-duplicated list
+// /api/compare used, and they stop a client from storing arbitrary keys.
 const MAX_KEY_LENGTH = 1_000;
-const MAX_WORDS = 10;
+const MAX_WORDS = MAX_COMPARE_WORDS + 2;
 const MAX_WORD_LENGTH = 200;
 // A device with a fast clock would otherwise stamp a comparison no later save could replace.
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
