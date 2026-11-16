@@ -89,7 +89,8 @@ interface SheetProps {
  * In the app root, z-[45] puts it above the tab bar (z-30) and beneath the root's z-50 and higher layers, which can
  * open over it: a card view opened from the search, the search, the notices and the dialogs. Its Escape layer sits at
  * the same z, so any of those open over it takes Escape first. In a portal to <body> it would paint over all of them,
- * since the app root is a stacking context of its own.
+ * since the app root is a stacking context of its own. A card view hides it entirely, so App makes the slot inert
+ * while one is open, and the sheet takes focus back when the card closes.
  */
 export const Sheet: React.FC<SheetProps> = ({ isOpen, onClose, title, icon, children, subtitle, button }) => {
   const panelRef = useRef<HTMLDivElement>(null);

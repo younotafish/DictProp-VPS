@@ -105,6 +105,25 @@ test('the sheets slot sits in the app root after the page, taking no room and st
   const slot = children.findIndex(child => jsxAttributes(child).get('ref') === '{sheetSlotRef}');
   assert.ok(page >= 0 && slot > page, 'after <main>, so outside the page that goes inert');
   assert.equal(openingOf(children[slot]).tagName.getText(), 'div');
-  assert.deepEqual([...jsxAttributes(children[slot])], [['ref', '{sheetSlotRef}'], ['className', 'contents']], 'display: contents, and nothing else');
+  assert.deepEqual(
+    [...jsxAttributes(children[slot])],
+    [['ref', '{sheetSlotRef}'], ['className', 'contents'], ['inert', '{!!detailContext}']],
+    'display: contents, and inert while a card view covers it',
+  );
   assert.doesNotMatch(readRepoFile('components/Sheet.tsx'), /document\.body/, 'a sheet portals into the slot, never into <body>');
+});
+
+test('a card view opened over a sheet leaves the sheet out of reach, and the sheet takes focus back when the card closes', () => {
+  // The search opens a saved sentence's card over Batch import (z-50 over z-[45]). A live slot let Tab into the hidden
+  // sheet, whose trap then held focus there, and Space or Enter pressed its hidden Import button. So the slot is inert
+  // while a card view is open (the test above), and when the card closes, the sheet takes back the focus it took.
+  const app = ts.createSourceFile('App.tsx', readRepoFile('App.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const calls: string[][] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && node.expression.getText() === 'useFocusBackWhenUncovered') calls.push(node.arguments.map(arg => arg.getText()));
+    ts.forEachChild(node, visit);
+  };
+  visit(app);
+  assert.deepEqual(calls, [['!!detailContext', 'readSheetsSlot']], 'covered while the slot is inert');
+  assert.match(readRepoFile('App.tsx'), /^const readSheetsSlot = \(\) => readNoticeSlot\('sheets'\);$/m, 'the same function on every render');
 });

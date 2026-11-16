@@ -6,9 +6,9 @@ import { loginRedirect, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
-import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
+import { useFocusBackWhenUncovered, useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppStatusPills } from './components/AppStatus';
-import { sheetSlotRef } from './components/noticeSlots';
+import { readNoticeSlot, sheetSlotRef } from './components/noticeSlots';
 import { connectivityNotice } from './services/connectivityNotice';
 import { requestLookup } from './services/searchRequests';
 import { clearPendingSearches } from './services/searchSessionKeys';
@@ -69,6 +69,9 @@ const TAB_SCREENS = {
 } satisfies Record<ViewState, { preload: () => void }>;
 
 const isTabView = (value: string): value is ViewState => Object.prototype.hasOwnProperty.call(TAB_SCREENS, value);
+
+/** The Notebook tools' sheets slot as it is now (see the slot in SignedInApp). */
+const readSheetsSlot = () => readNoticeSlot('sheets');
 
 /** While sign-in is checked or the library is read, and while a screen standing in for the app loads. */
 const LoadingScreen: React.FC = () => (
@@ -137,6 +140,9 @@ function SignedInApp({ user }: { user: AuthUser }) {
   useOverlay(!!cardPopup && popupItems.length > 0);
   // While anything covers the page, the page and the nav bar are inert; focus comes back when it closes.
   const overlayOpen = useOverlayFocusReturn(mainRef, navRef);
+  // A card view opened from the search covers a Notebook tool's sheet too, which is inert meanwhile (the sheets slot
+  // below). When the card closes, the sheet takes back the focus the card took with it.
+  useFocusBackWhenUncovered(!!detailContext, readSheetsSlot);
 
   // The console's item inspector, for diagnosing sync and schedule problems: __debugItems('atlas').
   useEffect(() => installDebugItems(() => latestItemsRef.current), [latestItemsRef]);
@@ -454,8 +460,10 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
       {/* The Notebook tools' sheets (components/Sheet) render here, outside the page, which goes inert while one is open.
           The slot takes no room and starts no stacking context, so a sheet's z-[45] places it among this root's layers:
-          over the tab bar, beneath the card views, the search, the notices and the dialogs. */}
-      <div ref={sheetSlotRef} className="contents" />
+          over the tab bar, beneath the card views, the search, the notices and the dialogs. A card view hides a sheet
+          entirely, so the slot is inert while one is open: Tab, typing, Space and Enter can't reach the hidden sheet.
+          The search, the card popup and the dialogs keep focus in themselves. */}
+      <div ref={sheetSlotRef} className="contents" inert={!!detailContext} />
 
       {/* The gestures and shortcuts sheet */}
       <Suspense fallback={null}>

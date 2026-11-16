@@ -72,6 +72,12 @@ export function takeOverlayOpener(): Element | null {
   return element;
 }
 
+/** Whether focus is nowhere a keyboard can use: on the body, on an element taken off the page, or in an inert part of it. */
+function focusLost(): boolean {
+  const active = document.activeElement;
+  return !active || active === document.body || !active.isConnected || !!active.closest('[inert]');
+}
+
 /**
  * Gives focus back once the last overlay has closed, to the control that opened the first. `main` is the page
  * and `nav` the nav bar, read as they are now, when the page has just become live again.
@@ -79,9 +85,7 @@ export function takeOverlayOpener(): Element | null {
 function returnFocus(mainRef: RefObject<HTMLElement | null>, navRef: RefObject<HTMLElement | null>): void {
   const opener = takeOverlayOpener();
   const main = mainRef.current;
-  const active = document.activeElement;
-  const focusLost = !active || active === document.body || !active.isConnected || !!active.closest('[inert]');
-  if (!focusLost || !main) return;
+  if (!focusLost() || !main) return;
   // Not into a text field, where focus would bring up the on-screen keyboard.
   if (opener instanceof HTMLElement && opener.isConnected && !opener.closest('[inert]')
     && (main.contains(opener) || navRef.current?.contains(opener))
@@ -114,4 +118,19 @@ export function useOverlayFocusReturn(mainRef: RefObject<HTMLElement | null>, na
     return () => returnFocus(mainRef, navRef);
   }, [overlayOpen, mainRef, navRef]);
   return overlayOpen;
+}
+
+/**
+ * For a part of the app shell that goes inert while something covers it (the Notebook tools' sheets slot beneath a
+ * card view): when `covered` turns false and focus is nowhere, gone with the control that had it, the dialog in the
+ * part takes it, as the dialog on top again. Focus on a control still there stays put. `part` reads the element as it
+ * is then, after the commit that made it live again; pass the same function on every render.
+ */
+export function useFocusBackWhenUncovered(covered: boolean, part: () => HTMLElement | null): void {
+  useEffect(() => {
+    if (!covered) return;
+    return () => {
+      if (focusLost()) part()?.querySelector<HTMLElement>('[role="dialog"]')?.focus({ preventScroll: true });
+    };
+  }, [covered, part]);
 }
