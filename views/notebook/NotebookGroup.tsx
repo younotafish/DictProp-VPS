@@ -77,9 +77,9 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
 
   return (
     <div ref={carouselRef} className="relative" style={{ touchAction: 'pan-y' }}>
-      {/* Navigation arrows for desktop */}
-      {index > 0 && <CarouselArrow direction="previous" onClick={() => setCurrentIndex(index - 1)} />}
-      {index < totalItems - 1 && <CarouselArrow direction="next" onClick={() => setCurrentIndex(index + 1)} />}
+      {/* Navigation arrows for desktop, which loop past either end as swipes and the trackpad do */}
+      <CarouselArrow direction="previous" onClick={() => step(-1)} />
+      <CarouselArrow direction="next" onClick={() => step(1)} />
       {/* Card */}
       <div className="w-full" onTouchStart={swipe.onTouchStart} onTouchEnd={swipe.onTouchEnd}>
         {/* Keyed by sense, so an actions panel or a long press left open on one meaning doesn't carry over to the next */}
