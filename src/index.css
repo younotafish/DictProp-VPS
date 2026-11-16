@@ -31,13 +31,13 @@ button,
 }
 
 /* macOS sentence review: holding Command previews the word that a click will look up. */
-.sentence-command-seek-active [data-word-offset] {
+.sentence-command-lookup-active [data-word-offset] {
   cursor: pointer;
   border-radius: 0.25rem;
   transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
-.sentence-command-seek-active [data-word-offset]:hover {
+.sentence-command-lookup-active [data-word-offset]:hover {
   color: #4338ca;
   background-color: #eef2ff;
   box-shadow: 0 0 0 2px #c7d2fe;

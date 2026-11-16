@@ -44,8 +44,8 @@ export function SentenceHero({
       <p
         data-sentence-hero
         className={split
-          ? `text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${commandHeld ? 'sentence-command-seek-active' : ''} text-xl sm:text-3xl`
-          : `max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${commandHeld ? 'sentence-command-seek-active' : ''} text-2xl sm:text-4xl`}
+          ? `text-center md:text-left font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${commandHeld ? 'sentence-command-lookup-active' : ''} text-xl sm:text-3xl`
+          : `max-w-2xl mx-auto text-center font-normal leading-relaxed tracking-tight text-slate-800 cursor-pointer select-text ${commandHeld ? 'sentence-command-lookup-active' : ''} text-2xl sm:text-4xl`}
         onTouchStartCapture={onWordTouchStartCapture}
         onClickCapture={onWordClickCapture}
         title={isMobile

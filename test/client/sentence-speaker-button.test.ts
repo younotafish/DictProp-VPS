@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { FakeTtsServer, IPHONE_USER_AGENT, installFakeMedia, until } from '../support/audio/fakeMedia.ts';
+import { readRepoFile } from '../support/paths.ts';
 
 const media = installFakeMedia({ userAgent: IPHONE_USER_AGENT });
 const server = new FakeTtsServer();
@@ -11,6 +12,7 @@ server.install();
 const tts = await import('../../services/neuralTts.ts');
 const { ttsKey } = await import('../../services/api.ts');
 const { SentenceSpeakerButton } = await import('../../components/SentenceSpeakerButton.tsx');
+const { SentenceHero } = await import('../../views/detail/SentenceHero.tsx');
 
 const render = (text: string, props: { className?: string } = {}) => renderToStaticMarkup(createElement(SentenceSpeakerButton, { text, ...props }));
 const labelOf = (markup: string) => markup.match(/aria-label="([^"]*)"/)?.[1];
@@ -53,4 +55,19 @@ test('the button follows its sentence through loading, playing and paused, and i
   assert.match(markup, /class=" transition-colors text-indigo-500 h-9 w-9"/, 'a caller className replaces the default sizing');
   tts.stopCurrent();
   assert.equal(labelOf(render(SENTENCE)), 'Listen to this sentence');
+});
+
+test('the sentence hero around the button marks Command-held look-up with the class the stylesheet styles', () => {
+  const hero = (layout: 'split' | 'centered', commandHeld: boolean) => renderToStaticMarkup(createElement(SentenceHero, {
+    layout, text: SENTENCE, sourceWord: 'sentence', onSearchWord: () => {}, commandHeld,
+    onWordClickCapture: () => {}, onListened: () => {}, copyState: null, onCopy: () => {},
+  })).match(/<p data-sentence-hero="[^"]*" class="([^"]*)"/)?.[1] ?? '';
+  for (const layout of ['split', 'centered'] as const) {
+    assert.ok(hero(layout, true).split(' ').includes('sentence-command-lookup-active'), layout);
+    assert.ok(!hero(layout, false).includes('sentence-command'), layout);
+  }
+  const css = readRepoFile('src/index.css');
+  assert.match(css, /^\.sentence-command-lookup-active \[data-word-offset\] \{/m);
+  assert.match(css, /^\.sentence-command-lookup-active \[data-word-offset\]:hover \{/m);
+  assert.doesNotMatch(css, /seek-active/);
 });
