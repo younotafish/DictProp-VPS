@@ -7,15 +7,17 @@ import { countDueSpellings } from '../../services/studyStats';
  *  it's open, rather than on every card change and review. */
 export const LibraryCounts = React.memo(function LibraryCounts({ savedItems }: { savedItems: StoredItem[] }) {
   const { memorizedCount, dueCount } = useMemo(() => ({
+    // The meanings (one card each) at 70% memory or more, archived ones left out.
     memorizedCount: savedItems.filter(i => !i.isDeleted && !i.isArchived && (i.srs?.memoryStrength ?? 0) >= 70).length,
     // Due as the Study dashboard counts it: reviewed before and due now. A never-reviewed card waits with the new ones.
     dueCount: countDueSpellings(savedItems, Date.now()),
   }), [savedItems]);
+  const memorizedLabel = `${memorizedCount} ${memorizedCount === 1 ? 'meaning' : 'meanings'} at 70% memory or more`;
   const dueLabel = `${dueCount} due (reviewed cards)`;
   return (
     <>
       <span className="text-slate-300">•</span>
-      <span className="text-emerald-600 flex items-center gap-0.5">
+      <span className="text-emerald-600 flex items-center gap-0.5" role="img" aria-label={memorizedLabel} title={memorizedLabel}>
         <CheckCircle2 size={12} />
         {memorizedCount}
       </span>

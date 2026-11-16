@@ -98,7 +98,7 @@ test('the card header\'s clock shows the dashboard\'s due count, and says it cou
   assert.equal(due, 2);
   assert.match(markup, new RegExp(`<span class="text-amber-600 flex items-center gap-0\\.5" role="img" aria-label="${due} due \\(reviewed cards\\)" title="${due} due \\(reviewed cards\\)"><svg[^]*?</svg>${due}</span>$`));
   // The memorized count is as before: strength 70 or more, archived cards left out.
-  assert.match(markup, /<span class="text-emerald-600 flex items-center gap-0\.5"><svg[^]*?<\/svg>1<\/span>/);
+  assert.match(markup, /<span class="text-emerald-600 flex items-center gap-0\.5"[^>]*><svg[^]*?<\/svg>1<\/span>/);
 });
 
 test('reviewed items band from each minimum strength down to struggling, and New counts the never reviewed', () => {
