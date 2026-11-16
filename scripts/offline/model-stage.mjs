@@ -142,7 +142,8 @@ export function indexedResults(parsed, count, { wrongCount, duplicate }) {
 // Up to three attempts at one batch, with jittered backoff from retryDelayMs. A cached result is reused. An
 // answer that fails validation is deleted, and the next attempt's prompt carries the reason so the model can
 // correct it; a call that failed outright (a ModelCallError) is repeated as it was sent. A batch that can be
-// split is split as soon as it times out, since its halves may fit the time; a single item gets one more try.
+// split is split as soon as it times out, since its halves may fit the time; a single item that times out
+// gets one more try, within its three attempts, and gives up at its second timeout.
 //   prompt(correction)  the full prompt, with the correction text ('' on the first attempt) in its place
 //   correction(message) the correction text for a failure
 //   ask(request)        sends { prompt, resultPath } to the model and resolves to the parsed result
@@ -151,6 +152,7 @@ export async function runCachedModelBatch({
   resultPath, prompt, correction, ask, validate, retryDelayMs, splittable = false, lifecycle,
 }) {
   let correctionText = '';
+  let timedOutBefore = false;
   for (let attempt = 0; ; attempt++) {
     try {
       const parsed = existsSync(resultPath)
@@ -159,7 +161,8 @@ export async function runCachedModelBatch({
       return validate(parsed);
     } catch (error) {
       const failedCall = error instanceof ModelCallError ? error.kind : undefined;
-      const outOfTime = failedCall === 'timeout' && (splittable || attempt > 0);
+      const outOfTime = failedCall === 'timeout' && (splittable || timedOutBefore);
+      if (failedCall === 'timeout') timedOutBefore = true;
       if (lifecycle.aborting || attempt === 2 || outOfTime) throw error;
       if (!failedCall) correctionText = correction(errorMessage(error));
       if (existsSync(resultPath)) unlinkSync(resultPath);

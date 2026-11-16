@@ -186,6 +186,43 @@ test('a batch that times out is handed back for splitting at once, and a single 
   assert.equal(await attempts(false), 2);
 });
 
+test('a single item whose first timeout follows another failure still gets its third attempt', async t => {
+  const dir = workDir(t);
+  // What the model does at each attempt: answer invalidly, fail outright, time out, or answer.
+  const run = async (name: string, steps: Array<'invalid' | 'exit' | 'timeout' | 'ok'>) => {
+    const prompts: string[] = [];
+    const result = await runCachedModelBatch({
+      resultPath: join(dir, `${name}.json`),
+      prompt: (correction: string) => `ask${correction}`,
+      correction: (message: string) => ` [fix: ${message}]`,
+      ask: async ({ prompt }: { prompt: string }) => {
+        const step = steps[prompts.push(prompt) - 1];
+        if (step === 'exit') throw new ModelCallError('exit', 'Claude exited with 1: API Error: 529 overloaded');
+        if (step === 'timeout') throw new ModelCallError('timeout', 'Claude did not answer within 40 min');
+        return { valid: step === 'ok' };
+      },
+      validate: (parsed: { valid: boolean }) => {
+        if (!parsed.valid) throw new Error('missing field');
+        return ['done'];
+      },
+      retryDelayMs: 0,
+      splittable: false,
+      lifecycle: lifecycle(),
+    }).catch((error: Error) => error.message);
+    return { result, prompts };
+  };
+  // The timeout keeps the correction the invalid answer earned.
+  assert.deepEqual(await run('invalid-timeout-ok', ['invalid', 'timeout', 'ok']), {
+    result: ['done'],
+    prompts: ['ask', 'ask [fix: missing field]', 'ask [fix: missing field]'],
+  });
+  assert.deepEqual(await run('exit-timeout-ok', ['exit', 'timeout', 'ok']), { result: ['done'], prompts: ['ask', 'ask', 'ask'] });
+  assert.deepEqual(await run('timeout-timeout', ['timeout', 'timeout', 'ok']), {
+    result: 'Claude did not answer within 40 min',
+    prompts: ['ask', 'ask'],
+  });
+});
+
 test('a stage that is aborting does not retry a failed batch', async t => {
   const dir = workDir(t);
   const stage = lifecycle();
