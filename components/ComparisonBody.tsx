@@ -16,32 +16,19 @@ const WORD_COLORS = [
 
 const wordColorAt = (index: number) => WORD_COLORS[(index >= 0 ? index : 0) % WORD_COLORS.length];
 
-// A saved comparison may predate today's shape, so each part is checked before it renders: a malformed part
-// is left out rather than breaking the whole comparison.
-const listOf = <T,>(value: unknown): T[] => (Array.isArray(value) ? value : []);
-const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
-const textEntries = (value: unknown): [string, string][] =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-    : [];
-
 /**
  * Renders a comparison result (summary, dimensions, examples, mistakes, verdict). Used by the
  * bottom-right search popup so a comparison shows in the same place as a word-search result.
- * Just the body — no header/close chrome.
+ * Just the body — no header/close chrome. Every comparison reaches it cleaned by sanitizeComparisonResult
+ * (/api/compare's reply, the server's saved list and the device's cached copy), so it renders the fields as typed.
  */
 export const ComparisonBody: React.FC<{ result: ComparisonResult }> = ({ result }) => {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const toggle = (i: number) =>
     setCollapsed(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
 
-  const words = listOf<unknown>(result.words).map(textOf);
+  const { words, summary, dimensions, examples, commonMistakes, verdict } = result;
   const colorFor = (word: string) => wordColorAt(words.findIndex(w => w.toLowerCase() === word.toLowerCase()));
-  const summary = textOf(result.summary);
-  const verdict = textOf(result.verdict);
-  const dimensions = listOf<ComparisonResult['dimensions'][number]>(result.dimensions).filter(dim => dim && typeof dim === 'object');
-  const examples = listOf<ComparisonResult['examples'][number]>(result.examples).filter(ex => ex && typeof ex === 'object');
-  const commonMistakes = listOf<unknown>(result.commonMistakes).map(textOf).filter(Boolean);
 
   return (
     <div className="space-y-4">
@@ -64,14 +51,14 @@ export const ComparisonBody: React.FC<{ result: ComparisonResult }> = ({ result 
         return (
           <div key={di} className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
             <button onClick={() => toggle(di)} className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
-              <h4 className="font-bold text-slate-800 text-sm">{textOf(dim.label)}</h4>
+              <h4 className="font-bold text-slate-800 text-sm">{dim.label}</h4>
               {isCollapsed ? <ChevronDown size={18} className="text-slate-400" /> : <ChevronUp size={18} className="text-slate-400" />}
             </button>
             {!isCollapsed && (
               <div className="px-5 pb-5 pt-0 space-y-3">
-                <p className="text-sm text-slate-600 leading-relaxed">{textOf(dim.analysis)}</p>
+                <p className="text-sm text-slate-600 leading-relaxed">{dim.analysis}</p>
                 <div className="space-y-2">
-                  {textEntries(dim.perWord).map(([word, desc]) => {
+                  {Object.entries(dim.perWord).map(([word, desc]) => {
                     const c = colorFor(word);
                     return (
                       <div key={word} className={`rounded-xl p-3 ${c.bg} border ${c.border}`}>
@@ -97,9 +84,9 @@ export const ComparisonBody: React.FC<{ result: ComparisonResult }> = ({ result 
           <div className="divide-y divide-slate-100">
             {examples.map((ex, ei) => (
               <div key={ei} className="px-5 py-4">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">{textOf(ex.context)}</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">{ex.context}</p>
                 <div className="space-y-2">
-                  {textEntries(ex.sentences).map(([word, sentence]) => {
+                  {Object.entries(ex.sentences).map(([word, sentence]) => {
                     const c = colorFor(word);
                     return (
                       <div key={word} className="flex items-start gap-2.5">
