@@ -1,31 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isVocabItem, savedVocabKey, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { normalizeSentenceIdentity, sameSentenceText } from '../services/sentenceIdentity';
-import { sameItemContent } from '../services/items';
+import { isLiveWordOrPhrase, sameItemContent } from '../services/items';
 import { buildVariantIndex, matchBaseWords } from '../services/wordMatch';
 import { buildSavedVocabByBase, pickSavedItem, savedCardsForBases } from '../services/notebook/libraryLookups';
 import { catalogProgressKind, type CatalogKind } from '../services/catalogProgressIdentity';
 import { useStableArray } from './useStableValue';
 
-// Words and phrases still in the library, archived or not. Sentences have their own lists.
-export const isActiveLibraryItem = (item: StoredItem): boolean => !item.isDeleted && item.type !== 'sentence';
-
 /** The lists the screens show, derived from the library, and the lookups that tell what's saved. */
 export function useLibraryViews(savedItems: StoredItem[]) {
   // Derived state - memoized filtered items. Reviewing a sentence replaces the library array but no word,
   // so the stable copies keep the notebook, the study queue and the open card from rebuilding.
-  const filteredActiveItems = useMemo(() => savedItems.filter(isActiveLibraryItem), [savedItems]);
-  const allActiveItems = useStableArray(filteredActiveItems);
+  // libraryWords: the words and phrases still in the library, archived or not (isLiveWordOrPhrase).
+  const filteredLibraryWords = useMemo(() => savedItems.filter(isLiveWordOrPhrase), [savedItems]);
+  const libraryWords = useStableArray(filteredLibraryWords);
   // The lookup indexes read only item content. A review replaces an item's wrapper but keeps its data,
   // so they key on this content snapshot and skip the rebuild each review would otherwise cost.
-  const activeContent = useStableArray(allActiveItems, sameItemContent);
+  const libraryWordContent = useStableArray(libraryWords, sameItemContent);
   // Variant-aware lookup index (base word + each inflected form → base word), rebuilt
   // only when content changes. Powers "search a variant → pop up the saved card, skip AI".
-  const variantIndex = useMemo(() => buildVariantIndex(activeContent), [activeContent]);
+  const variantIndex = useMemo(() => buildVariantIndex(libraryWordContent), [libraryWordContent]);
   // base word → its most useful saved vocab item, so footnote lookup is O(1) per word
   // instead of an O(n) scan over the whole library on every rendered token. See findSavedItem.
   // The review-count tie-break reads the snapshot's counts, which is close enough for a tie-break.
-  const savedVocabByBase = useMemo(() => buildSavedVocabByBase(activeContent), [activeContent]);
+  const savedVocabByBase = useMemo(() => buildSavedVocabByBase(libraryWordContent), [libraryWordContent]);
   // Items available for study (excludes archived and sentences)
   const filteredStudyItems = useMemo(() => savedItems.filter(i => !i.isDeleted && !i.isArchived && i.type !== 'sentence'), [savedItems]);
   const studyItems = useStableArray(filteredStudyItems);
@@ -93,9 +91,9 @@ export function useLibraryViews(savedItems: StoredItem[]) {
 
   const savedVocabKeys = useMemo(() => {
     const keys = new Set<string>();
-    for (const item of activeContent) if (isVocabItem(item)) keys.add(savedVocabKey(item.data));
+    for (const item of libraryWordContent) if (isVocabItem(item)) keys.add(savedVocabKey(item.data));
     return keys;
-  }, [activeContent]);
+  }, [libraryWordContent]);
   const isVocabSaved = useCallback(
     (vocab: VocabCard) => savedVocabKeys.has(savedVocabKey(vocab)),
     [savedVocabKeys],
@@ -108,8 +106,8 @@ export function useLibraryViews(savedItems: StoredItem[]) {
   const findSavedByWord = useCallback((word: string): VocabCard[] => {
     const bases = matchBaseWords(word, variantIndex);
     if (bases.size === 0) return [];
-    return savedCardsForBases(bases, activeContent);
-  }, [activeContent, variantIndex]);
+    return savedCardsForBases(bases, libraryWordContent);
+  }, [libraryWordContent, variantIndex]);
 
   // Footnote lookup: the saved item (vocab or phrase) a sentence term maps to, or null. Variant-aware
   // for vocab (running→run etc.) via variantIndex; exact normalized match for phrases. Picks the
@@ -129,7 +127,7 @@ export function useLibraryViews(savedItems: StoredItem[]) {
   const hasSavedVariant = useCallback((q: string) => matchSavedBases(q).size > 0, [matchSavedBases]);
 
   return {
-    allActiveItems, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems, sentenceItemsById,
+    libraryWords, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems, sentenceItemsById,
     sentenceDueCount, isSentenceSaved, isVocabSaved, findSavedByWord, findSavedItem, matchSavedBases, hasSavedVariant,
   };
 }

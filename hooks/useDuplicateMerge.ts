@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { log } from '../services/logger';
-import { isActiveLibraryItem } from './useLibraryViews';
+import { isLiveWordOrPhrase } from '../services/items';
 import type { JobNotices } from './useJobNotice';
 import type { Library } from './useLibrary';
 import type { Overlays } from './useOverlays';
@@ -16,7 +16,7 @@ export function useDuplicateMerge(
   // Finding none is a passing pill (services/jobNotices); the merge itself stays a decision in the dialog.
   const handleFindDuplicates = useCallback(async () => {
     const { findDuplicateClusterViews, describeDuplicateScan } = await import('../services/libraryTools');
-    const detailed = findDuplicateClusterViews(latestItemsRef.current.filter(isActiveLibraryItem));
+    const detailed = findDuplicateClusterViews(latestItemsRef.current.filter(isLiveWordOrPhrase));
     const notice = describeDuplicateScan(detailed.length);
     if (notice) showJobNotice(notice);
     else setDuplicateClusters(detailed);

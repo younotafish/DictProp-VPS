@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  findSavedCopy, findSavedCopyIndex, makeSentenceStoredItem, makeVocabStoredItem, patchLiveCopy, sameItemContent,
-  type SavedCopyProbe,
+  findSavedCopy, findSavedCopyIndex, isLiveWordOrPhrase, makeSentenceStoredItem, makeVocabStoredItem, patchLiveCopy,
+  sameItemContent, type SavedCopyProbe,
 } from '../../services/items.ts';
 import type { SearchResult, SentenceAnalysis, SentenceData, StoredItem, VocabCard } from '../../types.ts';
 
@@ -92,6 +92,12 @@ test('a saved copy is the item with the same id, else the same spelling and type
 
   assert.equal(findSavedCopy(items, phrase('new', 'RUN DOWN')), items[3]);
   assert.equal(findSavedCopy(items, phrase('new', 'run up')), undefined);
+});
+
+test('the live words and phrases are those not deleted, archived ones too; a sentence never counts', () => {
+  const live = [word('w1', 'visceral'), { ...word('w2', 'gamut'), isArchived: true }, phrase('p1', 'run down')];
+  const gone = [{ ...word('w3', 'atlas'), isDeleted: true }, makeSentenceStoredItem('She ran home.', 'run')];
+  assert.deepEqual([...live, ...gone].filter(isLiveWordOrPhrase), live);
 });
 
 test('a deleted copy is still found, so saving a deleted card again brings its history back', () => {

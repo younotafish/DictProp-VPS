@@ -102,7 +102,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const { comparisons, handleCompareReady, handleCompare } = useComparisons(user.id);
   const libraryViews = useLibraryViews(library.savedItems);
   const {
-    allActiveItems, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems,
+    libraryWords, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems,
     sentenceDueCount, isSentenceSaved, isVocabSaved, findSavedByWord, findSavedItem, matchSavedBases,
   } = libraryViews;
   const detail = useDetailView(libraryViews, library);
@@ -114,7 +114,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const { undoMessage, closeUndoOffer, undoLastChange } = undo;
   const { navRef, revealNav, handleScroll, navigate, syncScrollPosition } = useNavBar(currentView, setCurrentView);
   const mainRef = useRef<HTMLElement>(null);
-  const overlays = useOverlays(allActiveItems);
+  const overlays = useOverlays(libraryWords);
   const {
     cardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters, confirmModal, setConfirmModal,
     showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp, showRefusedReviews, setShowRefusedReviews, openRefusedReviews, dialogOpen, modalOpen,
@@ -126,7 +126,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   // The tabs sit under DetailView and the card popup, so their lists skip the reviews made there as they happen.
   // They catch up a second after the reviews stop, while hidden, so closing them doesn't have to.
   const frozen = !!detailContext || !!cardPopup;
-  const notebookItems = useFrozenWhile(allActiveItems, frozen, 1_000);
+  const notebookItems = useFrozenWhile(libraryWords, frozen, 1_000);
   const shownSentenceItems = useFrozenWhile(sentenceItems, frozen, 1_000);
   const shownRealLifeProgress = useFrozenWhile(realLifeProgressItems, frozen, 1_000);
   const shownEssayProgress = useFrozenWhile(essayProgressItems, frozen, 1_000);
@@ -284,7 +284,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
               onArchive={handleArchive}
               onUnarchive={handleUnarchive}
               onResetSRS={resetSRS}
-              savedItems={allActiveItems}
+              savedItems={libraryWords}
               savedSentenceItems={allSentenceItems}
               onSearch={handleRecursiveSearch}
               onRefresh={handleRefreshViaGlobal}

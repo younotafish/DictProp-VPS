@@ -36,17 +36,17 @@ export function openDialogs({ cardPopup, popupItems, confirmModal, showKeyboardH
  * What can open over the page: the card popup, the confirm and duplicates dialogs, the shortcuts and the refused
  * reviews, and whether any of them covers it (openDialogs).
  */
-export function useOverlays(allActiveItems: StoredItem[]) {
+export function useOverlays(libraryWords: StoredItem[]) {
   // The card popup — keyed by the word's SPELLING (so deleting one sense doesn't lose the rest)
   // plus the sense to open on. popupItems = every saved sense of that word, for in-popup paging; it's
-  // re-resolved live from allActiveItems so Got it / Reset / Delete update the card in place.
+  // re-resolved live from libraryWords so Got it / Reset / Delete update the card in place.
   const [cardPopup, setCardPopup] = useState<CardPopup | null>(null);
   const openCardPopup = useCallback((it: StoredItem) => setCardPopup({ spelling: getItemSpelling(it), initialId: it.data.id }), []);
   const popupItems = useMemo(
     () => (cardPopup
-      ? sortStoredSensesByUsage(allActiveItems.filter(i => i.type === 'vocab' && getItemSpelling(i) === cardPopup.spelling))
+      ? sortStoredSensesByUsage(libraryWords.filter(i => i.type === 'vocab' && getItemSpelling(i) === cardPopup.spelling))
       : []),
-    [cardPopup, allActiveItems],
+    [cardPopup, libraryWords],
   );
   const closeCardPopup = useCallback(() => setCardPopup(null), []);
   // Once every sense the popup showed is gone, deleted here or on another device, it closes, rather than staying

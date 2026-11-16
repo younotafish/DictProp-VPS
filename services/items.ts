@@ -95,6 +95,9 @@ export const patchLiveCopy = (
  */
 export const sameItemContent = (a: StoredItem, b: StoredItem): boolean => a.data === b.data;
 
+/** A word or phrase still in the library, archived or not; sentences have lists of their own. */
+export const isLiveWordOrPhrase = (item: StoredItem): boolean => !item.isDeleted && item.type !== 'sentence';
+
 /**
  * `incoming` saved over `existing`, the saved copy of the same card: the incoming content and schedule under
  * the saved card's id. A fresh AI result carries no revision, so it builds on the saved copy's.

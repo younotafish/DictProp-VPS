@@ -81,7 +81,7 @@ const sameGroupItems = (a: ItemGroup, b: ItemGroup): boolean => a === b ||
 
 /** The open card view: the cards in it, kept live with the library, and the ways it opens and loses cards. */
 export function useDetailView(
-  { allActiveItems, sentenceItemsById }: Pick<LibraryViews, 'allActiveItems' | 'sentenceItemsById'>,
+  { libraryWords, sentenceItemsById }: Pick<LibraryViews, 'libraryWords' | 'sentenceItemsById'>,
   { latestItemsRef }: Pick<Library, 'latestItemsRef'>,
 ) {
   // Updated DetailContext to support Group-based navigation (2D: Groups vs Items)
@@ -118,12 +118,12 @@ export function useDetailView(
     const groups = detailContext?.groups;
     if (!groups?.length) return NO_GROUPS;
     const live = new Map<string, StoredItem>();
-    for (const item of allActiveItems) if (detailGroupIds.has(item.data.id)) live.set(item.data.id, item);
+    for (const item of libraryWords) if (detailGroupIds.has(item.data.id)) live.set(item.data.id, item);
     return groups.map(group => {
       const items = group.items.map(item => live.get(item.data.id) ?? item);
       return items.every((item, index) => item === group.items[index]) ? group : { ...group, items };
     });
-  }, [detailContext?.groups, detailGroupIds, allActiveItems]);
+  }, [detailContext?.groups, detailGroupIds, libraryWords]);
   // A change to a card that isn't open leaves them as they were, so the view's autoplay keeps its beat.
   const liveDetailGroups = useStableArray(resolvedDetailGroups, sameGroupItems);
   const closeDetail = useCallback(() => updateDetailContext(null), [updateDetailContext]);
