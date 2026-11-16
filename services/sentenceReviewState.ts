@@ -1,13 +1,9 @@
 import type { SRSData } from '../types';
 import { sentenceReviewState, type SentenceReviewFilter } from './sentenceOrdering';
 
-// The rule itself, a sentence's review state and the filter chips over it, is written once, in sentenceOrdering.ts;
-// this module passes it on beside what is built from it: the study run's test, the summaries and what the chips say.
-export { matchesReviewFilter, sentenceReviewState, type SentenceReviewState } from './sentenceOrdering';
-
-/** Whether a study run takes the sentence: it was never reviewed, or it is due again. */
-export const needsReview = (srs: SRSData | undefined, now: number): boolean =>
-  sentenceReviewState(srs, now) !== 'memorized';
+// The rule itself, a sentence's review state, the filter chips over it and whether it is to review, is written once,
+// in sentenceOrdering.ts; this module passes it on beside what is built from it: the summaries, and what the chips say.
+export { matchesReviewFilter, needsReview, sentenceReviewState, type SentenceReviewState } from './sentenceOrdering';
 
 /** How a list of sentences stands in review. */
 export interface ReviewSummary {

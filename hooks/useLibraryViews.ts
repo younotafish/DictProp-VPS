@@ -5,6 +5,7 @@ import { isLiveWordOrPhrase, sameItemContent } from '../services/items';
 import { buildVariantIndex, matchBaseWords } from '../services/wordMatch';
 import { buildSavedVocabByBase, pickSavedItem, savedCardsForBases } from '../services/notebook/libraryLookups';
 import { catalogProgressKind, type CatalogKind } from '../services/catalogProgressIdentity';
+import { needsReview } from '../services/sentenceOrdering';
 import { useStableArray } from './useStableValue';
 
 /** The lists the screens show, derived from the library, and the lookups that tell what's saved. */
@@ -51,12 +52,13 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     () => new Map(allSentenceItems.map(item => [item.data.id, item])),
     [allSentenceItems],
   );
-  // The badge counts the sentences due now, so it counts again when the next one falls due, and when the
-  // page comes back after sleeping through some. The clock only says when; the count reads the time itself.
+  // The badge counts the sentences to review now, by the rule the Sentences header counts with (needsReview: never
+  // reviewed, or due again). It counts again when the next one falls due, and when the page comes back after sleeping
+  // through some; the clock only says when, and the count reads the time itself.
   const [sentenceDueClock, setSentenceDueClock] = useState(0);
   const sentenceDueCount = useMemo(() => {
     const now = Date.now();
-    return sentenceItems.filter(s => !s.isArchived && ((s.srs?.nextReview ?? 0) <= now)).length;
+    return sentenceItems.filter(s => !s.isArchived && needsReview(s.srs, now)).length;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sentenceDueClock is the recount trigger: the count reads the time itself
   }, [sentenceItems, sentenceDueClock]);
   useEffect(() => {
@@ -64,7 +66,7 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     let nextDue = Infinity;
     for (const s of sentenceItems) {
       const due = s.srs?.nextReview ?? 0;
-      if (!s.isArchived && due > now && due < nextDue) nextDue = due;
+      if (!s.isArchived && !needsReview(s.srs, now) && due < nextDue) nextDue = due;
     }
     const recount = () => setSentenceDueClock(Date.now());
     const onVisible = () => { if (document.visibilityState === 'visible') recount(); };

@@ -14,6 +14,14 @@ export function sentenceReviewState(srs: SRSData | undefined, now: number): Sent
   return (srs?.nextReview ?? 0) <= now ? 'due' : 'memorized';
 }
 
+/**
+ * Whether a sentence is to review: it was never reviewed, or it is due again. A study run takes these, and the Sentences
+ * tab counts them in its header and on its tab-bar badge. The badge is counted in the app's first chunk
+ * (hooks/useLibraryViews), which takes this module but not the summaries in sentenceReviewState.ts.
+ */
+export const needsReview = (srs: SRSData | undefined, now: number): boolean =>
+  sentenceReviewState(srs, now) !== 'memorized';
+
 /** Whether a sentence belongs under a review filter chip. */
 export const matchesReviewFilter = (srs: SRSData | undefined, filter: SentenceReviewFilter, now: number): boolean =>
   filter === 'all' || sentenceReviewState(srs, now) === filter;
