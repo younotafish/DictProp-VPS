@@ -242,13 +242,13 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         </div>
 
         {/* Most Reviewed */}
-        {stats.mostReviewed.length > 0 && (stats.mostReviewed[0].srs?.totalReviews ?? 0) > 0 && (
+        {stats.mostReviewed.length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-100">
             <p className="text-xs font-medium text-slate-600 mb-2">Most Practiced</p>
             <div className="flex flex-wrap gap-2">
-              {stats.mostReviewed.slice(0, 3).map((item, idx) => (
+              {stats.mostReviewed.map(item => (
                 <span 
-                  key={idx}
+                  key={item.data.id}
                   className="px-2 py-1 bg-emerald-50 text-emerald-700 text-xs rounded-full font-medium"
                 >
                   {getItemTitle(item)} ({item.srs?.totalReviews ?? 0}x)

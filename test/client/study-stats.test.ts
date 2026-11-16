@@ -98,6 +98,12 @@ test('reviewed items band from each minimum strength down to struggling, and New
   assert.deepEqual(computeStudyStats(neverReviewed, recentOnly([]), NOW).mastery, { grandmaster: 0, mastered: 0, proficient: 0, learning: 0, struggling: 0, new: 4 });
 });
 
+test('the most practiced are reviewed items only, so a new library lists the few it has reviewed', () => {
+  const items = [vocab('walk', 'walk'), vocab('run', 'run', { reviews: 5 }), vocab('jump', 'jump'), vocab('hop', 'hop')];
+  assert.deepEqual(computeStudyStats(items, recentOnly([]), NOW).mostReviewed.map(item => item.data.id), ['run']);
+  assert.deepEqual(computeStudyStats([vocab('a', 'a'), vocab('b', 'b')], recentOnly([]), NOW).mostReviewed, []);
+});
+
 test('study stats pick the three most reviewed items, earlier items first on ties', () => {
   const items = [
     vocab('a', 'a', { reviews: 4 }),

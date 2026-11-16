@@ -15,6 +15,7 @@ export interface StudyStats {
   weeklyRecallRate: number;
   totalLifetimeReviews: number;
   longestStreak: number;
+  /** Up to three reviewed items, the most reviewed first. */
   mostReviewed: StoredItem[];
   /** Reviews on each of the last seven days, oldest first; `day` is that day's local midnight. */
   last7Days: { day: number; reviews: number }[];
@@ -70,9 +71,9 @@ export function computeItemStats(items: readonly StoredItem[], now: number): Ite
     legacyReviewFloor += srs?.totalReviews ?? 0;
     longestStreak = Math.max(longestStreak, srs?.correctStreak ?? 0);
 
-    // The most reviewed items, earlier items first on ties.
+    // The most reviewed items, earlier items first on ties; an item never reviewed isn't among them.
     const reviews = reviewsOf(item);
-    if (mostReviewed.length < MOST_REVIEWED || reviews > reviewsOf(mostReviewed[MOST_REVIEWED - 1])) {
+    if (reviews > 0 && (mostReviewed.length < MOST_REVIEWED || reviews > reviewsOf(mostReviewed[MOST_REVIEWED - 1]))) {
       let at = mostReviewed.length;
       while (at > 0 && reviewsOf(mostReviewed[at - 1]) < reviews) at--;
       mostReviewed.splice(at, 0, item);
