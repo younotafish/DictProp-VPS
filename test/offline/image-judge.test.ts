@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -127,6 +127,25 @@ test('an image the reviewer cannot judge is rejected on its own, and the rest of
   assert.match(result.stderr, /Image judgment batch 1 failed \(Claude exited with 1: API Error: 400 output blocked by content filtering policy\); splitting 5 images into 3\+2\n/);
   assert.match(result.stderr, /Image three could not be judged; rejecting this candidate: /);
   assert.ok(readdirSync(paths.work).some(name => /^split-0001-[0-9a-f]{16}\.json$/.test(name)));
+});
+
+test('an accepted image that cannot be copied into place fails the judge, and no image is blamed for it', {
+  skip: process.getuid?.() === 0 ? 'root can write to a read-only directory' : false,
+}, t => {
+  const { paths, judge, calls } = imageSetup(t, { one: 'A harbor at dawn.', two: 'A lighthouse.' });
+  chmodSync(paths.images, 0o555);
+  let result;
+  try {
+    result = judge();
+  } finally {
+    chmodSync(paths.images, 0o755);
+  }
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /EACCES/);
+  // One request for the batch: no split, no retry, and no readiness check to blame an image.
+  assert.deepEqual(calls(), [{ kind: 'judge', briefs: ['A harbor at dawn.', 'A lighthouse.'] }]);
+  assert.equal(existsSync(join(paths.work, 'rejected-targets.json')), false);
+  assert.deepEqual(readdirSync(paths.images), []);
 });
 
 test('when the model itself is down, the judge fails as before and blames no image', t => {

@@ -80,11 +80,10 @@ const filesFor = (batch, batchIndex) => batchFiles(workDir, batchIndex, batchFin
   instruction: [JUDGMENT_INTRODUCTION, JUDGMENT_POLICY], schema, records: judgmentRecords(batch, candidateNumber),
 }));
 
-// Each accepted candidate is copied into place as soon as its batch is judged, so a later failure keeps it.
-async function judgeBatch(batch, batchIndex) {
+function judgeBatch(batch, batchIndex) {
   const records = judgmentRecords(batch, candidateNumber);
   const candidates = batch.map(candidatePath);
-  const verdicts = await runCachedModelBatch({
+  return runCachedModelBatch({
     resultPath: filesFor(batch, batchIndex).result,
     prompt: correction => `${JUDGMENT_INTRODUCTION}\n${JSON.stringify(records)}\n\n${JUDGMENT_POLICY}${correction}`,
     correction: message => ` Your previous response failed validation: ${message}. Return every itemIndex exactly once.`,
@@ -96,10 +95,6 @@ async function judgeBatch(batch, batchIndex) {
     splittable: batch.length > 1,
     lifecycle,
   });
-  for (const { target, result, candidate } of verdicts) {
-    if (result.acceptable) copyFileAtomic(candidate, join(imageDir, target.filename));
-  }
-  return verdicts;
 }
 
 // A batch that keeps failing is halved down to the image that fails alone. That image is rejected as one the
@@ -138,7 +133,13 @@ await runPool(batches.length, concurrency, lifecycle, async index => {
   // A missing candidate means the renderer and this stage disagree, which is no fault of the image.
   if (batch.some(target => !existsSync(candidatePath(target)))) throw new Error(`Batch ${index + 1} is missing a candidate image`);
   const { results: verdicts, failures: unjudged } = await judgeResilient(batch, index);
-  for (const { target, result } of verdicts) if (!result.acceptable) rejectionReasons.set(target, result.reason);
+  // Each accepted candidate is copied into place as soon as its batch is judged, so a later batch's failure
+  // keeps it. The copy runs outside the split-and-retry path, so a local fault such as an unwritable image
+  // directory fails the stage instead of being blamed on the images.
+  for (const { target, result, candidate } of verdicts) {
+    if (result.acceptable) copyFileAtomic(candidate, join(imageDir, target.filename));
+    else rejectionReasons.set(target, result.reason);
+  }
   for (const { target, reason } of unjudged) rejectionReasons.set(target, reason);
 });
 
