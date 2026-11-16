@@ -604,6 +604,10 @@ interface RouteOptions {
   omitRouteCsp?: boolean;
   /** How many requests first get a 502, as from an app that a deploy is restarting. */
   restartingFor?: number;
+  /** Backups an earlier run left beside the Caddyfile, by file name. */
+  earlierBackups?: string[];
+  /** `caddy validate` fails on a Caddyfile holding this text. */
+  caddyRefuses?: string;
 }
 
 /** Runs a trip workflow's Caddy step on a scratch Caddyfile, prefixed with the exports drone-ssh writes for `envs:`. */
@@ -612,7 +616,14 @@ function configureTripRoute(name: string, options: RouteOptions) {
   try {
     const bin = join(dir, 'bin');
     mkdirSync(bin);
-    for (const command of ['chown', 'caddy', 'systemctl', 'sleep']) stub(bin, command, 'exit 0');
+    for (const command of ['chown', 'sleep']) stub(bin, command, 'exit 0');
+    const calls = join(dir, 'calls');
+    stub(bin, 'caddy', String.raw`
+printf 'caddy %s\n' "$1" >> "$CALLS"
+if [ "$1" = validate ] && [ -n "$CADDY_REFUSES" ] && grep -qF "$CADDY_REFUSES" "$3"; then exit 1; fi`);
+    stub(bin, 'systemctl', String.raw`printf 'systemctl %s\n' "$*" >> "$CALLS"`);
+    const temp = join(dir, 'tmp');
+    mkdirSync(temp);
     const requests = join(dir, 'requests');
     // Answers as Caddy would: the route's headers as configured, plus whatever the app adds upstream.
     stub(bin, 'curl', String.raw`
@@ -649,6 +660,7 @@ printf '%s' "$RESPONSE_STATUS"`);
     writeFileSync(join(dir, 'var', 'www', site, 'index.html'), 'site');
     mkdirSync(join(dir, 'etc', 'caddy'), { recursive: true });
     const caddyfile = join(dir, 'etc', 'caddy', 'Caddyfile');
+    for (const name of options.earlierBackups ?? []) writeFileSync(join(dir, 'etc', 'caddy', name), `${name}\n`);
     const before = [
       'dictprop.online, www.dictprop.online {',
       `    ${marker}`,
@@ -675,8 +687,12 @@ printf '%s' "$RESPONSE_STATUS"`);
         OMIT_ROUTE_CSP: options.omitRouteCsp ? '1' : '',
         REQUESTS: requests,
         RESTARTING_FOR: String(options.restartingFor ?? 0),
+        CALLS: calls,
+        CADDY_REFUSES: options.caddyRefuses ?? '',
+        TMPDIR: temp,
       }),
     });
+    const backupNames = readdirSync(join(dir, 'etc', 'caddy')).filter(name => name !== 'Caddyfile').sort();
     return {
       status: result.status,
       output: `${result.stdout}${result.stderr}`,
@@ -685,6 +701,12 @@ printf '%s' "$RESPONSE_STATUS"`);
       after: readFileSync(caddyfile, 'utf8'),
       marker,
       csp,
+      /** Every caddy subcommand and systemctl call, in order. */
+      calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [],
+      /** The files beside the Caddyfile afterwards, by name, with their contents. */
+      backups: Object.fromEntries(backupNames.map(name => [name, readFileSync(join(dir, 'etc', 'caddy', name), 'utf8')])),
+      /** What the script left in its temp directory. */
+      leftovers: readdirSync(temp),
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -743,6 +765,69 @@ test('the SD cards route sends sign-in back to the cards and answers its redirec
   assert.notEqual(configureTripRoute('deploy-sd-cards.yml', { ...options, omitRouteCsp: true }).status, 0);
   // Before the app lets sign-in return to the cards, the gate sends people to / instead: that is a failed deploy.
   assert.notEqual(configureTripRoute('deploy-sd-cards.yml', { ...options, location: '/api/auth/login?returnTo=%2F' }).status, 0);
+});
+
+const SD_CARDS_REDIRECT = {
+  status: '302',
+  location: '/api/auth/login?returnTo=%2Fsd-cards%2F',
+  appCsp: "default-src 'self'; base-uri 'self'; object-src 'none'",
+};
+const EARLIER_SD_CARDS_BACKUPS = ['Caddyfile.sd-cards.20260101T000000Z', 'Caddyfile.sd-cards.20261001T120000Z'];
+
+test('a deployed SD cards route keeps one Caddyfile backup, its own, and leaves no temp file', t => {
+  if (!hasPython) return t.skip('python3 is not installed');
+  const deployed = configureTripRoute('deploy-sd-cards.yml', { ...SD_CARDS_REDIRECT, earlierBackups: EARLIER_SD_CARDS_BACKUPS });
+  assert.equal(deployed.status, 0, deployed.output);
+  const [backup, ...others] = Object.keys(deployed.backups);
+  assert.deepEqual(others, []);
+  assert.match(backup, /^Caddyfile\.sd-cards\.\d{8}T\d{6}Z$/);
+  assert.equal(EARLIER_SD_CARDS_BACKUPS.includes(backup), false);
+  assert.equal(deployed.backups[backup], deployed.before, 'the backup holds the configuration from before the run');
+  assert.deepEqual(deployed.leftovers, []);
+  assert.deepEqual(deployed.calls, ['caddy fmt', 'caddy validate', 'systemctl reload caddy']);
+});
+
+test('an SD cards route that answers 2xx without a session comes out again, so the cards are never left ungated', t => {
+  if (!hasPython) return t.skip('python3 is not installed');
+  const exposed = configureTripRoute('deploy-sd-cards.yml', { status: '200', earlierBackups: EARLIER_SD_CARDS_BACKUPS });
+  assert.notEqual(exposed.status, 0);
+  assert.match(exposed.output,
+    /^::error::The SD cards route failed its check \(HTTP 200 without a session\), so the route was removed$/m);
+  assert.equal(exposed.after, 'dictprop.online, www.dictprop.online {\n    reverse_proxy localhost:3000\n}\n');
+  assert.deepEqual(exposed.calls,
+    ['caddy fmt', 'caddy validate', 'systemctl reload caddy', 'caddy validate', 'systemctl reload caddy']);
+  // A failed run removes no backup, and still its temp file.
+  assert.equal(Object.keys(exposed.backups).length, EARLIER_SD_CARDS_BACKUPS.length + 1);
+  assert.deepEqual(exposed.leftovers, []);
+});
+
+test('an SD cards route that fails its check any other way gives back the Caddyfile from before the run', t => {
+  if (!hasPython) return t.skip('python3 is not installed');
+  for (const [problem, options] of [
+    ['the app stays down', { ...SD_CARDS_REDIRECT, restartingFor: 100 }],
+    ['sign-in would not come back to the cards', { ...SD_CARDS_REDIRECT, location: '/api/auth/login?returnTo=%2F' }],
+    ["the redirect lacks the route's own policy", { ...SD_CARDS_REDIRECT, omitRouteCsp: true }],
+    ['the route is not found', { status: '404' }],
+  ] as const) {
+    const failed = configureTripRoute('deploy-sd-cards.yml', options);
+    assert.notEqual(failed.status, 0, problem);
+    assert.equal(failed.after, failed.before, problem);
+    assert.match(failed.output,
+      /^::error::The SD cards route failed its check \(HTTP \d{3} without a session\), so the Caddyfile from before this run was restored$/m,
+      problem);
+    assert.deepEqual(failed.calls,
+      ['caddy fmt', 'caddy validate', 'systemctl reload caddy', 'caddy validate', 'systemctl reload caddy'], problem);
+    assert.deepEqual(failed.leftovers, [], problem);
+  }
+});
+
+test('when Caddy refuses the SD cards fallback, the run says the failing route is still live', t => {
+  if (!hasPython) return t.skip('python3 is not installed');
+  // The restored Caddyfile is the one holding the earlier route.
+  const refused = configureTripRoute('deploy-sd-cards.yml', { status: '404', caddyRefuses: 'earlier route' });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.output, /^::error::The SD cards route failed its check \(HTTP 404 without a session\), and Caddy refused the fallback, so the route is still live$/m);
+  assert.deepEqual(refused.calls, ['caddy fmt', 'caddy validate', 'systemctl reload caddy', 'caddy validate']);
 });
 
 // The sites queue apart from production deploys, so the app behind forward_auth may be restarting during the check.
