@@ -3,6 +3,7 @@ import { Search, X, Send, BookmarkPlus, BookmarkCheck, MessageSquareQuote } from
 import type { SentenceData, StoredItem } from '../../types';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { isImeKey } from '../keyboardTarget';
+import { inputEnterAction } from './searchSheetKeys';
 
 interface Props {
   inputRef: React.RefObject<HTMLInputElement | null>;
@@ -90,14 +91,13 @@ export const SearchInputBar: React.FC<Props> = ({
             return;
           }
           if (e.key === 'Enter') {
-            // A highlighted suggestion → jump to that card; otherwise run the real AI search.
-            if (highlightedIndex >= 0 && suggestions[highlightedIndex]) {
-              e.preventDefault();
-              onOpenSuggestion(highlightedIndex);
-            } else if (query.trim()) {
-              e.preventDefault();
-              onSubmit();
-            }
+            // A highlighted suggestion → jump to that card; typed text → the real AI search; an empty box → the results.
+            const action = inputEnterAction({ query, highlightedIndex, suggestionCount: suggestions.length, readyCount });
+            if (!action) return;
+            e.preventDefault();
+            if (action === 'open-suggestion') onOpenSuggestion(highlightedIndex);
+            else if (action === 'submit') onSubmit();
+            else onViewResults();
           }
           // Escape (clear and close) is handled by GlobalSearch's escape layer.
         }}

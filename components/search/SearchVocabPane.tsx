@@ -12,8 +12,8 @@ interface Props {
   /** The open result's meanings, and the one on screen. */
   vocabs: VocabCard[];
   meaningIndex: number;
-  /** Shows another meaning; with `speak`, also says its word. */
-  onShowMeaning: (index: number, options?: { speak?: boolean }) => void;
+  /** Shows another meaning, saying its word. */
+  onShowMeaning: (index: number) => void;
   zoneFlash: ZoneFlash | null;
   flashZone: (zone: number) => void;
   playOrToggleSentence: (sentence: string) => void;
@@ -50,11 +50,11 @@ export const SearchVocabPane: React.FC<Props> = ({
   // The sentence the result came from scrolls with the card, so the sheet's header never changes height.
   const sourceLine = contextLine(context, viewingVocab?.word ?? '');
 
-  // Moves to the next or previous meaning. Each control keeps its own rule: the arrows wrap only forwards and
-  // stay quiet; a swipe says the word, and wraps only forwards too.
-  const step = (delta: 1 | -1, wrap: boolean, speak: boolean) => {
-    const next = stepMeaning(meaningIndex, viewingVocabCount, delta, wrap);
-    if (next !== null) onShowMeaning(next, { speak });
+  // Moves to the next or previous meaning, which says its word. The chevrons and a swipe both come round forwards
+  // after the last meaning, and stop at the first going back.
+  const step = (delta: 1 | -1) => {
+    const next = stepMeaning(meaningIndex, viewingVocabCount, delta, false);
+    if (next !== null) onShowMeaning(next);
   };
 
   // Touch handlers for swipe navigation in results popup
@@ -72,7 +72,7 @@ export const SearchVocabPane: React.FC<Props> = ({
 
     // A swipe left goes to the next meaning, round to the first after the last; a swipe right goes back, and
     // stops at the first.
-    step(diffX < 0 ? 1 : -1, diffX < 0, true);
+    step(diffX < 0 ? 1 : -1);
   };
 
   // Eyes-free zone read: a click/tap in the popup body's top quarter plays the 1st example sentence, the
@@ -102,7 +102,7 @@ export const SearchVocabPane: React.FC<Props> = ({
         {/* Navigation arrows for vocabs */}
         {viewingVocabCount > 1 && meaningIndex > 0 && (
           <button
-            onClick={() => step(-1, false, false)}
+            onClick={() => step(-1)}
             aria-label="Previous meaning"
             className="absolute -left-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
           >
@@ -111,7 +111,7 @@ export const SearchVocabPane: React.FC<Props> = ({
         )}
         {viewingVocabCount > 1 && (
           <button
-            onClick={() => step(1, true, false)}
+            onClick={() => step(1)}
             aria-label="Next meaning"
             className="absolute -right-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white text-indigo-600 rounded-full flex items-center justify-center shadow-md hover:bg-indigo-50 transition-colors hidden md:flex"
           >

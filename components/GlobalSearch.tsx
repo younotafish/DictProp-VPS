@@ -2,12 +2,12 @@ import React, { useState, useRef, useEffect, useCallback, useDeferredValue, useI
 import { createPortal } from 'react-dom';
 import { SearchResult, VocabCard, StoredItem, ComparisonResult } from '../types';
 import { makeVocabStoredItem } from '../services/items';
-import { speakWord, prefetchTTS } from '../services/neuralTts';
+import { prefetchTTS } from '../services/neuralTts';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { useSentenceSearch } from '../hooks/useSentenceSearch';
-import { useEscapeLayer } from './escapeStack';
+import { hasEscapeLayerAbove, useEscapeLayer } from './escapeStack';
 import { useNoticeSlot } from './noticeSlots';
-import { isTypingTarget } from './keyboardTarget';
+import { isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
 import { useLatest } from '../hooks/useStableValue';
@@ -17,8 +17,9 @@ import { useSearchQueue } from './search/useSearchQueue';
 import { useSheetPlayback } from './search/useSheetPlayback';
 import { useTimedMessage } from '../hooks/useTimedMessage';
 import {
-  clampMeaning, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, stepMeaning, type SearchMode,
+  clampMeaning, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, type SearchMode,
 } from './search/searchViewing';
+import { searchSheetKeys, type SheetAction } from './search/searchSheetKeys';
 import { nextFailureExpiry, openIndexForResults, summarizeFailures } from './search/searchQueue';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
@@ -78,7 +79,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // again whose result is ready. Other AI results wait on the floating button.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const { zoneFlash, flashZone, playOrToggleSentence } = useSheetPlayback(mode);
+  const {
+    zoneFlash, flashZone, playOrToggleSentence, speakSheetWord, readExamples, togglePlayback, stopSheetAudio,
+  } = useSheetPlayback(mode);
 
   // The error toast shows a passing notice (a request refused offline, a refresh that failed) for 6 s, or else the
   // failures the queue keeps (see summarizeFailures). The floating search has no inline results area, so without it a
@@ -160,19 +163,24 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const meaningIndex = clampMeaning(viewingVocabIdx, viewingVocabCount);
   const viewingVocab = viewingResult?.vocabs?.[meaningIndex];
 
-  // Shows another meaning of the open result; with `speak` (the arrow keys and swipes), also says its word.
-  const showMeaning = useCallback((index: number, options?: { speak?: boolean }) => {
+  // Shows another meaning of the open result and says its word, however it was asked for: the arrows, a swipe, the
+  // chevrons or a dot. The sheet's own audio stops first.
+  const showMeaning = useCallback((index: number) => {
+    stopSheetAudio();
     setViewingVocabIdx(index);
     const word = viewingResult?.vocabs?.[index]?.word;
-    if (options?.speak && word) speakWord(word);
-  }, [viewingResult]);
-  // Opens another ready result (the sheet passes its position), at its first meaning.
+    if (word) speakSheetWord(word);
+  }, [viewingResult, stopSheetAudio, speakSheetWord]);
+  // Opens another ready result (the sheet passes its position) at its first meaning, and says its word.
   const showResult = useCallback((index: number) => {
-    const id = readyItems[index]?.id;
-    if (!id) return;
-    setViewingId(id);
+    const item = readyItems[index];
+    if (!item) return;
+    stopSheetAudio();
+    setViewingId(item.id);
     setViewingVocabIdx(0);
-  }, [readyItems]);
+    const word = item.results?.vocabs?.[0]?.word;
+    if (word) speakSheetWord(word);
+  }, [readyItems, stopSheetAudio, speakSheetWord]);
 
   // Open the sheet on the pendingOpenId entry once it's ready, at its first meaning, and say its word.
   useEffect(() => {
@@ -184,8 +192,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setMode('viewing');
     setPendingOpenId(null);
     const w = item.results?.vocabs?.[0]?.word;
-    if (w) speakWord(w);
-  }, [pendingOpenId, readyItems]);
+    if (w) speakSheetWord(w);
+  }, [pendingOpenId, readyItems, speakSheetWord]);
 
   // The open result can leave the ready ones while the sheet is up: a refresh of the same word from its card replaces
   // the entry, and the fresh result opens by itself once it's ready. Until then the sheet closes, rather than show
@@ -197,54 +205,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // button and the results pill count only the others.
   const openUnseenId = viewingItem && !viewingItem.seen ? viewingItem.id : null;
   useEffect(() => { if (openUnseenId) updateQueue({ type: 'mark-seen', id: openUnseenId }); }, [openUnseenId, updateQueue]);
-
-  // The arrow and Cmd+1–4 keys read the open result through this ref, so their listener is added once per mode
-  // instead of again after every change to the queue.
-  const sheetKeysRef = useLatest({ viewingItem, meaningIndex, playOrToggleSentence, showMeaning });
-
-  // Cmd+F / Ctrl+F keyboard shortcut
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if (mode === 'input') {
-          inputRef.current?.focus();
-        } else {
-          setMode('input');
-        }
-      }
-      // Arrow key navigation in viewing mode — stop propagation so background carousel doesn't also move
-      const { viewingItem, meaningIndex, playOrToggleSentence, showMeaning } = sheetKeysRef.current;
-      if (mode === 'viewing' && viewingItem) {
-        if (isTypingTarget(e.target)) return;
-        const currentResult = viewingItem.results;
-        const vocabCount = currentResult?.vocabs?.length || 0;
-
-        // Cmd/Ctrl+1–4: read the displayed card's corresponding example sentence (natural voice).
-        // A second press on the same sentence pauses/resumes — matches the DetailView shortcut.
-        if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          const vocab = currentResult?.vocabs?.[meaningIndex];
-          const sentence = stripSentenceMarkers((vocab?.examples || [])[Number(e.key) - 1] || '').trim();
-          if (!sentence) return;
-          playOrToggleSentence(sentence);
-          return;
-        }
-
-        // ←/→ step through the meanings, round from either end, and say the word.
-        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          const next = stepMeaning(meaningIndex, vocabCount, e.key === 'ArrowLeft' ? -1 : 1, true);
-          if (next !== null) showMeaning(next, { speak: true });
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [mode, sheetKeysRef]);
 
   // Auto-focus input, selecting the text when Edit put a failed query there.
   const selectOnOpenRef = useRef(false);
@@ -314,6 +274,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const handleSaveVocab = useCallback((vocab: VocabCard) => {
     if (saveOneVocab(vocab)) showSaveToast(`Saved "${vocab.word}"`);
   }, [saveOneVocab, showSaveToast]);
+  // S saves the meaning on screen, and says so when it was saved already: S never unsaves.
+  const saveOpenMeaning = useCallback((vocab: VocabCard) => {
+    if (isVocabSaved(vocab)) showSaveToast(`"${vocab.word}" already saved`);
+    else handleSaveVocab(vocab);
+  }, [isVocabSaved, showSaveToast, handleSaveVocab]);
 
   // Save the raw typed sentence to the Sentences list (sentence mode). No analysis — we "just save the
   // sentence"; the already-saved expressions inside it are indexed/highlighted automatically wherever it's
@@ -332,15 +297,18 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }
   }, [query, onSaveSentence, isSentenceSaved, showSaveToast]);
 
-  // The sheet's Dismiss drops the open result and shows the next ready one, or the previous one after the last;
-  // dismissing the only one closes the sheet.
+  // The sheet's Dismiss drops the open result and shows the next ready one, or the previous one after the last,
+  // saying its word as any switch of result does; dismissing the only one closes the sheet.
   const dismissQueueItem = useCallback((id: string) => {
     const next = neighbourAfterDismiss(readyItems, id);
     updateQueue({ type: 'dismiss', id });
+    stopSheetAudio();
     setViewingId(next);
     setViewingVocabIdx(0);
-    if (next === null) setMode('idle');
-  }, [readyItems, updateQueue]);
+    if (next === null) { setMode('idle'); return; }
+    const word = readyItems.find(item => item.id === next)?.results?.vocabs?.[0]?.word;
+    if (word) speakSheetWord(word);
+  }, [readyItems, updateQueue, stopSheetAudio, speakSheetWord]);
 
   // Clear all completed items
   const clearQueue = useCallback(() => {
@@ -355,7 +323,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setMode('input');
   };
 
-  // The results pill opens the first result not seen yet, or the newest, and says its word.
+  // The results pill (or Enter in an empty box) opens the first result not seen yet, or the newest, and says its word.
   const handleViewResults = () => {
     const opening = readyItems[openIndexForResults(readyItems)];
     if (!opening) return;
@@ -363,7 +331,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setViewingVocabIdx(0);
     setMode('viewing');
     if (opening.results?.vocabs?.[0]?.word) {
-      speakWord(opening.results.vocabs[0].word);
+      speakSheetWord(opening.results.vocabs[0].word);
     }
   };
 
@@ -379,7 +347,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const resultsOpen = viewingItem !== null;
   const resultsDialogRef = useRef<HTMLDivElement>(null);
   useOverlay(resultsOpen);
-  useModalFocus(resultsDialogRef, resultsOpen);
+  // A dialog that opens above the sheet (the review popup, a confirmation) takes the focus and the Tab key.
+  useModalFocus(resultsDialogRef, resultsOpen, () => hasEscapeLayerAbove(55));
 
   // Warm the TTS cache for the card's example SENTENCES (the word uses the system voice) so taps are instant.
   useEffect(() => {
@@ -399,6 +368,67 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       setViewingVocabIdx(index => meaningAfterRefresh(openId, item.id, index));
     });
   }, [viewingItemRef, refreshInPlace]);
+
+  // What a key does in the results sheet (see searchSheetKeys), on the open result and meaning.
+  const examplesOf = (vocab: VocabCard | undefined): string[] =>
+    (vocab?.examples || []).map(example => stripSentenceMarkers(example || '').trim()).filter(Boolean);
+  const applySheetAction = (action: SheetAction) => {
+    const examples = examplesOf(viewingVocab);
+    switch (action.type) {
+      case 'meaning': showMeaning(action.index); return;
+      case 'result': showResult(action.index); return;
+      case 'swallow': return;
+      case 'readExample': if (examples[action.index]) playOrToggleSentence(examples[action.index]); return;
+      case 'save': if (viewingVocab) saveOpenMeaning(viewingVocab); return;
+      case 'saveAll': handleSaveWord(viewingResult ?? null); return;
+      case 'pronounce': if (viewingVocab?.word) speakSheetWord(viewingVocab.word); return;
+      case 'readExamples': readExamples(examples.slice(0, 2)); return;
+      case 'togglePlayback': togglePlayback(examples[0]);
+    }
+  };
+  // The keys read the open result through this ref, so their listener is added once per mode instead of again after
+  // every change to the queue.
+  const sheetKeysRef = useLatest({
+    viewing, meaningIndex, meaningCount: viewingVocabCount, hasCard: !!viewingVocab, resultCount: readyItems.length, applySheetAction,
+  });
+
+  // Cmd+F / Ctrl+F opens the search box, or focuses it; in the results sheet, its keys. A dialog above the sheet (the
+  // review popup, a confirmation) has the keys instead: the search leaves them all to it, only keeping Cmd+F from the
+  // browser's find. A key the sheet acts on stops there, so nothing behind the sheet acts on it too.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const dialogAbove = hasEscapeLayerAbove(55);
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        if (dialogAbove) return;
+        e.stopImmediatePropagation();
+        if (mode === 'input') {
+          inputRef.current?.focus();
+        } else {
+          setMode('input');
+        }
+        return;
+      }
+      const sheet = sheetKeysRef.current;
+      if (mode !== 'viewing' || !sheet.viewing) return;
+      const action = searchSheetKeys(e, {
+        typing: isTypingTarget(e.target),
+        dialogAbove,
+        onControl: isKeyboardFocusedControl(e.target),
+        resultCount: sheet.resultCount,
+        resultIndex: sheet.viewing.index,
+        meaningCount: sheet.meaningCount,
+        meaningIndex: sheet.meaningIndex,
+        hasCard: sheet.hasCard,
+      });
+      if (!action) return;
+      if (action.type !== 'swallow') e.preventDefault();
+      e.stopImmediatePropagation();
+      sheet.applySheetAction(action);
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [mode, sheetKeysRef]);
 
   // The error toast's buttons. Retry runs every failure that retrying could fix again, each in its own mode, where it
   // was; Edit puts a query the model found no entry for back in the box, selected, to fix the spelling; × drops every
