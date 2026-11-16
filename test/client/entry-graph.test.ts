@@ -28,6 +28,7 @@ const LAZY_ONLY = [
   'services/studySessionRecord.ts',
   'components/AppGateScreens.tsx',
   'components/JobPills.tsx',
+  'components/RefusedChanges.tsx',
   'services/authGate.ts',
   'services/catalogQueue.ts',
   'services/reviewGestures.ts',
