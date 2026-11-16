@@ -13,6 +13,9 @@ import { MAX_IMAGE_BYTES } from './item-images.js';
 const IMAGE_FETCH_TIMEOUT_MS = 30_000;
 const MAX_IMPORT_IMAGES = 100;
 const IMAGE_FETCH_CONCURRENCY = 5;
+// The image phase's budget as a whole: past it no picture starts and those still downloading are cut off, so slow
+// picture hosts can't hold the cards and the reply past the client's 12-minute wait (services/api/jsonImport.ts).
+const IMAGE_PHASE_DEADLINE_MS = 8 * 60_000;
 
 async function readLimitedBody(response: Response, maxBytes: number): Promise<Buffer | null> {
   if (!response.body) return Buffer.alloc(0);
@@ -32,12 +35,12 @@ async function readLimitedBody(response: Response, maxBytes: number): Promise<Bu
   return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), length);
 }
 
-/** Fetch an image URL and return as base64 data URI, or undefined on failure. */
-async function fetchImageAsBase64(url: string): Promise<string | undefined> {
+/** Fetch an image URL and return as base64 data URI, or undefined on failure, after 30 s or once `signal` aborts. */
+async function fetchImageAsBase64(url: string, signal: AbortSignal): Promise<string | undefined> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetchPublicHttpUrl(url, { signal: controller.signal });
+    const response = await fetchPublicHttpUrl(url, { signal: AbortSignal.any([controller.signal, signal]) });
     if (!response.ok) {
       await response.body?.cancel();
       return undefined;
@@ -83,11 +86,16 @@ function wrapVocabCard(card: Record<string, unknown>) {
 }
 
 export interface ImportRouteDependencies {
-  /** Fetch a remote image as a data URI, or undefined when it can't be had. */
-  fetchImage?: (url: string) => Promise<string | undefined>;
+  /** Fetch a remote image as a data URI, or undefined when it can't be had or `signal` aborts first. */
+  fetchImage?: (url: string, signal: AbortSignal) => Promise<string | undefined>;
+  /** How long the image phase may run in all; tests shorten it. */
+  imagePhaseDeadlineMs?: number;
 }
 
-export function createImportRoutes({ fetchImage = fetchImageAsBase64 }: ImportRouteDependencies = {}) {
+export function createImportRoutes({
+  fetchImage = fetchImageAsBase64,
+  imagePhaseDeadlineMs = IMAGE_PHASE_DEADLINE_MS,
+}: ImportRouteDependencies = {}) {
   const importRoutes = new Hono<AppEnv>();
 
   // POST /api/import — bulk import
@@ -120,8 +128,8 @@ export function createImportRoutes({ fetchImage = fetchImageAsBase64 }: ImportRo
     }
 
     // Every remote image URL, the items' own first and then their phrase vocabs', in order. The first 100 are
-    // fetched into data URIs, a few at a time; the rest, and any that fail, lose their URL so it doesn't break
-    // the client.
+    // fetched into data URIs, a few at a time, until the image phase's deadline; the rest, any that fail and any the
+    // deadline leaves unfetched lose their URL so it doesn't break the client.
     const isRemote = (url: unknown): url is string => !!url && typeof url === 'string' && url.startsWith('http');
     const holders: Array<Record<string, unknown>> = items.filter(item => isRemote(item.data.imageUrl)).map(item => item.data);
     for (const item of items) {
@@ -132,15 +140,18 @@ export function createImportRoutes({ fetchImage = fetchImageAsBase64 }: ImportRo
     for (const holder of holders.slice(MAX_IMPORT_IMAGES)) delete holder.imageUrl;
     const fetching = holders.slice(0, MAX_IMPORT_IMAGES);
     let imagesFetched = 0;
+    // At the deadline the pool starts no further fetch, and the fetches in flight are aborted.
+    const deadline = AbortSignal.timeout(imagePhaseDeadlineMs);
     await runPool(fetching, IMAGE_FETCH_CONCURRENCY, async (holder) => {
-      const base64 = await fetchImage(holder.imageUrl as string);
+      const base64 = await fetchImage(holder.imageUrl as string, deadline);
       if (base64) {
         holder.imageUrl = base64;
         imagesFetched++;
       } else {
         delete holder.imageUrl;
       }
-    });
+    }, deadline);
+    for (const holder of fetching) if (isRemote(holder.imageUrl)) delete holder.imageUrl;
 
     upsertMany(items, userId);
     return c.json({
