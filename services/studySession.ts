@@ -7,8 +7,8 @@ import {
   isPhraseItem,
   isVocabItem,
 } from '../types';
-import { stripSentenceMarkers } from './sentenceMarkers';
 import { sentenceReviewState } from './sentenceReviewState';
+import { createClozePrompt } from './studyPrompt';
 // The review-time labels live in services/reviewTime.ts; these names stay reachable here for the modules that import
 // them from this file.
 export { formatReviewInterval, formatTimeUntil } from './reviewTime';
@@ -50,15 +50,6 @@ export function getStudyContent(item: StoredItem): StudyContent {
     };
   }
   return { word: getItemTitle(item), chinese: '', definition: '', example: '' };
-}
-
-export function createClozePrompt(sentence: string, word: string): string {
-  const markedCloze = (sentence || '').replace(/\{\{(.+?)\}\}/g, '_____');
-  const plain = stripSentenceMarkers(markedCloze);
-  if (plain.includes('_____')) return plain;
-  if (!word.trim()) return plain;
-  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return plain.replace(new RegExp(`\\b${escaped}\\b`, 'i'), '_____');
 }
 
 export function selectReviewTask(item: StoredItem): ReviewTaskType {

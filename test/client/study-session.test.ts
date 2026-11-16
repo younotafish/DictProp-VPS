@@ -4,7 +4,6 @@ import type { StoredItem } from '../../types.ts';
 import {
   advanceSession,
   buildReviewQueue,
-  createClozePrompt,
   findSessionCard,
   formatReviewInterval,
   formatTimeUntil,
@@ -103,14 +102,6 @@ test('review task selection increases recall difficulty only when the prompt con
     reviews: 4,
     example: 'Nothing relevant appears here.',
   })), 'production');
-});
-
-test('cloze prompts hide marked inflections and strip secondary markers', () => {
-  assert.equal(
-    createClozePrompt('They {{led}} the group with [[aplomb]].', 'lead'),
-    'They _____ the group with aplomb.',
-  );
-  assert.equal(createClozePrompt('Please lead the way.', 'lead'), 'Please _____ the way.');
 });
 
 test('rating interval labels remain compact', () => {

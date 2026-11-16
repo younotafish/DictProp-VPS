@@ -3,7 +3,8 @@ import { getItemSense, type ReviewRating, type StoredItem } from '../../types';
 import { previewRatings } from '../../services/fsrsScheduler';
 import { speakNatural } from '../../services/neuralTts';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
-import { RATINGS, createClozePrompt, formatReviewInterval, getStudyContent, selectReviewTask, type StudySession } from '../../services/studySession';
+import { RATINGS, formatReviewInterval, getStudyContent, selectReviewTask, type StudySession } from '../../services/studySession';
+import { createClozePrompt } from '../../services/studyPrompt';
 import { isImeKey } from '../keyboardTarget';
 
 const RATING_STYLES: Record<ReviewRating, string> = {
