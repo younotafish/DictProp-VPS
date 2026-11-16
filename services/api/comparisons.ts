@@ -58,21 +58,27 @@ export const sanitizeComparisonResult = (comparison: unknown, fallbackWords: str
 // A comparison as saved: its words and result are cleaned before display, the rest is kept as saved.
 type SavedComparison = Omit<StoredComparison, 'words' | 'data'> & { words?: unknown; data?: unknown };
 
-export const loadComparisons = async (): Promise<StoredComparison[]> => {
-  const stored = await requestJson<unknown>(
-    '/api/comparisons',
-    undefined,
-    'Load comparisons',
-  );
-  // Comparisons saved before /api/compare validated its output can hold non-string values; clean them
-  // for display (nothing here is written back).
-  return (Array.isArray(stored) ? stored : [])
+/**
+ * A list of saved comparisons cleaned for display: an entry that isn't an object is dropped, only string words are
+ * kept, and each result keeps its well-formed parts (sanitizeComparisonResult); the rest is kept as saved.
+ * Comparisons saved before /api/compare validated its output can hold non-string values. Nothing here is written back.
+ */
+export const sanitizeStoredComparisons = (raw: unknown): StoredComparison[] =>
+  (Array.isArray(raw) ? raw : [])
     .filter((entry: SavedComparison | null): entry is SavedComparison => !!entry && typeof entry === 'object')
     .map((entry): StoredComparison => {
       const words = (Array.isArray(entry.words) ? entry.words : [])
         .filter((word: unknown): word is string => typeof word === 'string');
       return { ...entry, words, data: sanitizeComparisonResult(entry.data, words) };
     });
+
+export const loadComparisons = async (): Promise<StoredComparison[]> => {
+  const stored = await requestJson<unknown>(
+    '/api/comparisons',
+    undefined,
+    'Load comparisons',
+  );
+  return sanitizeStoredComparisons(stored);
 };
 
 export const saveComparisonApi = async (comparison: StoredComparison): Promise<void> => {
