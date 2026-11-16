@@ -116,7 +116,7 @@ const fabClasses = () => renderToStaticMarkup(createElement(SearchFab, {
   unseenCount: 0, readyCount: 0, runningCount: 0, isBusy: false, aboveTabBar: true, onClick: () => {},
 })).match(/<button[^>]*? class="([^"]*)"/)![1].split(/\s+/).filter(Boolean);
 const errorToastClasses = () => classOf(renderToStaticMarkup(createElement(SearchToasts, {
-  saveToast: null, statusToast: null, error: { msg: 'Couldn’t look that up' }, onRetry: () => {}, onDismissError: () => {}, aboveTabBar: true,
+  saveToast: null, error: { msg: 'Couldn’t look that up' }, onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, aboveTabBar: true,
 })), 'div');
 const TAB_PLACES = [
   ['a laptop', { insetBottom: 0, vw: 1440 }],

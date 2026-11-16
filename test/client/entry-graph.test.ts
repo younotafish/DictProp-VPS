@@ -36,6 +36,9 @@ const LAZY_ONLY = [
   'services/notebook/listView.ts',
   'services/notebook/searchBox.ts',
   'services/notebook/searchRank.ts',
+  'services/readingPosition.ts',
+  'components/activateOnKey.ts',
+  'services/reviewHistory.ts',
 ];
 
 const ENTRY = 'index.tsx';

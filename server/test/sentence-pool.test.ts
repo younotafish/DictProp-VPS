@@ -36,13 +36,9 @@ const texts = [
   '   ',
 ];
 
-test('the offline sentence lookup normalizes and hashes exactly as the server does', () => {
-  for (const text of texts) {
-    assert.equal(offlineNormalizeSentenceLookup(text), normalizeSentenceLookup(text), JSON.stringify(text));
-    assert.equal(offlineSentenceLookupHash(text), sentenceLookupHash(text), JSON.stringify(text));
-  }
-  // The server's String(value || '') turns a missing text into ''.
-  assert.equal(offlineNormalizeSentenceLookup(undefined), normalizeSentenceLookup(undefined as unknown as string));
+test('the offline sentence lookup is the server\'s own functions, re-exported', () => {
+  assert.equal(offlineNormalizeSentenceLookup, normalizeSentenceLookup);
+  assert.equal(offlineSentenceLookupHash, sentenceLookupHash);
 });
 
 test('texts that differ only in markup, case, quotes or spacing share one lookup identity', () => {
