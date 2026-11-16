@@ -10,7 +10,7 @@ import {
   orderSentencesForReview,
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
-import { summarizeReviewStates } from '../services/sentenceReviewState';
+import { needsReview, summarizeReviewStates } from '../services/sentenceReviewState';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
 import { useNow } from '../hooks/useNow';
@@ -24,8 +24,9 @@ const listComponents = { Footer: () => <div className="h-[calc(5rem+env(safe-are
 
 interface SentenceRowProps {
   item: SentenceItem;
-  isDue: boolean;
-  /** When a sentence that isn't due comes due ('tomorrow', 'in 3d'), read from the same clock as isDue. */
+  /** Never reviewed, or due again: the orange row with Reviewed, one of the header's 'to review'. */
+  toReview: boolean;
+  /** When a sentence not to review comes due ('tomorrow', 'in 3d'), read from the same clock as toReview. */
   dueLabel?: string;
   confirmingDelete: boolean;
   onOpen: (item: StoredItem) => void;
@@ -41,7 +42,7 @@ interface SentenceRowProps {
  *  every keystroke in the search box or every change elsewhere in the library. */
 const SentenceRow = React.memo(function SentenceRow({
   item,
-  isDue,
+  toReview,
   dueLabel,
   confirmingDelete,
   onOpen,
@@ -64,7 +65,7 @@ const SentenceRow = React.memo(function SentenceRow({
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onOpen(item); }}
         title="Open card to study this sentence"
-        className={`relative rounded-xl border p-3 transition-colors cursor-pointer hover:border-indigo-300 hover:shadow-sm ${isDue ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100 bg-white'}`}
+        className={`relative rounded-xl border p-3 transition-colors cursor-pointer hover:border-indigo-300 hover:shadow-sm ${toReview ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100 bg-white'}`}
       >
         <div className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${barColor}`} />
         <div className="pl-3">
@@ -86,7 +87,7 @@ const SentenceRow = React.memo(function SentenceRow({
               )}
             </div>
             <div className="flex items-center gap-1">
-              {isDue && (
+              {toReview && (
                 <button
                   onClick={(e) => { e.stopPropagation(); void onUpdateSRS(d.id); }}
                   className="flex items-center gap-1 min-h-8 text-xs font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 rounded-lg transition-colors"
@@ -186,12 +187,14 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
 
   const renderSentence = useCallback((_index: number, item: StoredItem) => {
     if (!isSentenceItem(item)) return null;
-    const isDue = (item.srs?.nextReview ?? 0) <= now;
+    // The header's rule: a sentence never reviewed is to review whatever its schedule says, even one saved on a device
+    // whose clock runs ahead.
+    const toReview = needsReview(item.srs, now);
     return (
       <SentenceRow
         item={item}
-        isDue={isDue}
-        dueLabel={!isDue && item.srs?.nextReview ? formatDueLabel(item.srs.nextReview, now) : undefined}
+        toReview={toReview}
+        dueLabel={!toReview && item.srs?.nextReview ? formatDueLabel(item.srs.nextReview, now) : undefined}
         confirmingDelete={confirmDeleteId === item.data.id}
         onOpen={openSentence}
         onUpdateSRS={onUpdateSRS}
