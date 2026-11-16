@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PendingReviewMutation } from '../../services/reviewQueue.ts';
 import { HttpError } from '../../services/http.ts';
-import { enqueuePendingReviewMutation, isRefusedReviewMutation, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation } from '../../services/reviewQueue.ts';
+import { isRefusedReviewMutation } from '../../services/refusedReviews.ts';
+import { enqueuePendingReviewMutation, overlayPendingReviews, readPendingReviewMutations, removePendingReviewMutation } from '../../services/reviewQueue.ts';
 import type { StoredItem } from '../../types.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 

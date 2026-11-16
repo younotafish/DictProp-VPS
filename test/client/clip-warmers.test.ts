@@ -21,7 +21,7 @@ test.after(() => { URL.createObjectURL = realCreateObjectURL; });
 const { preloadAudio, prefetchTTS, ensureTTS, WARM_CONCURRENCY } = await import('../../services/audio/clipWarmers.ts');
 const { loadClipUrl, loadTimingsCached } = await import('../../services/audio/clipStore.ts');
 const cache = await import('../../services/audioCache.ts');
-const { ttsKey } = await import('../../services/api.ts');
+const { ttsKey } = await import('../../services/api/tts.ts');
 
 const clip = () => new Blob([new Uint8Array(24)], { type: 'audio/mpeg' });
 const timings = [{ text: 'Word', start: 0.1, end: 0.3 }];

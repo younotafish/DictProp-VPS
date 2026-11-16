@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { AppliedReviewResponse } from '../../services/api.ts';
+import type { AppliedReviewResponse } from '../../services/api/library.ts';
 import { HttpError } from '../../services/http.ts';
 import { drainReviewOutbox, reviewSeed, type ReviewOutboxDrain } from '../../services/reviewOutbox.ts';
-import { isRefusedReviewMutation, type PendingReviewMutation } from '../../services/reviewQueue.ts';
+import { isRefusedReviewMutation } from '../../services/refusedReviews.ts';
+import type { PendingReviewMutation } from '../../services/reviewQueue.ts';
 import type { SRSData, StoredItem } from '../../types.ts';
 
 const schedule = (id: string, totalReviews: number): SRSData => ({

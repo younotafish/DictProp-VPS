@@ -27,5 +27,3 @@ export const logError = (...args: unknown[]): void => {
   console.error(...args);
 };
 
-/** logError under the name its importers rename (`error as logError`), until they import logError itself. */
-export const error = logError;

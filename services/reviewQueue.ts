@@ -131,10 +131,3 @@ export function overlayPendingReviews(
       : item;
   });
 }
-
-// The refused-review log lives in services/refusedReviews.ts; these names stay reachable here for the modules that
-// still import them from the outbox.
-export {
-  clearRefusedReviews, describeRefusedReview, dismissRefusedReviews, isRefusedReviewMutation, readRefusedReviews,
-  recordRefusedReview, subscribeRefusedReviews, unseenRefusedReviews, type RefusedReview, type RefusedReviewLog,
-} from './refusedReviews';

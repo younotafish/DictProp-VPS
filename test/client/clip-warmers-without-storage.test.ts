@@ -13,7 +13,7 @@ URL.createObjectURL = (blob: Blob) => { urlsOpened++; return realCreateObjectURL
 test.after(() => { URL.createObjectURL = realCreateObjectURL; });
 
 const { preloadAudio } = await import('../../services/audio/clipWarmers.ts');
-const { ttsKey } = await import('../../services/api.ts');
+const { ttsKey } = await import('../../services/api/tts.ts');
 
 test('without IndexedDB a session warm keeps its clips open in memory, as before', async () => {
   const texts = ['The first stored-nowhere sentence.', 'The second stored-nowhere sentence.'];

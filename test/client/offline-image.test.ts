@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { OfflineImage } from '../../components/OfflineImage.tsx';
-import { saveImage } from '../../services/storage.ts';
+import { saveImage } from '../../services/imageStore.ts';
 
 const render = (props: Parameters<typeof OfflineImage>[0]) => renderToStaticMarkup(createElement(OfflineImage, props));
 const PIXEL = 'data:image/png;base64,iVBORw0KGgo=';

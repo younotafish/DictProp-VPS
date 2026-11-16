@@ -9,7 +9,7 @@ const server = new FakeTtsServer();
 server.install();
 
 const engine = await import('../../services/neuralTts.ts');
-const { ttsKey } = await import('../../services/api.ts');
+const { ttsKey } = await import('../../services/api/tts.ts');
 const { setTtsStyle } = await import('../../services/ttsSettings.ts');
 
 const clip = () => new Blob([new Uint8Array(16)], { type: 'audio/mpeg' });

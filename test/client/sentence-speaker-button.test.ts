@@ -10,7 +10,7 @@ const server = new FakeTtsServer();
 server.install();
 
 const tts = await import('../../services/neuralTts.ts');
-const { ttsKey } = await import('../../services/api.ts');
+const { ttsKey } = await import('../../services/api/tts.ts');
 const { SentenceSpeakerButton } = await import('../../components/SentenceSpeakerButton.tsx');
 const { SentenceHero } = await import('../../views/detail/SentenceHero.tsx');
 
