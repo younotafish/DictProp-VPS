@@ -16,6 +16,7 @@ import {
   isDueForReview,
   isSessionCardLive,
   moveSessionTo,
+  receiptText,
   requeueShortStep,
   selectReviewTask,
   sessionRatings,
@@ -260,13 +261,13 @@ test('moving past cards that left marks where they begin; moving back to one tha
   assert.deepEqual(back, { ...session(), index: 2, passedOverFrom: 1, revealed: false, typedAnswer: '', promptStartedAt: 9_500 });
 });
 
-test('a grade records the card, its task, the time on its prompt and the typed answer', () => {
+test('a grade records the card, its word and interval, its task, the time on its prompt and the typed answer', () => {
   const current = session();
   const card = vocab('b', 'walk', { strength: 40, reviews: 2 });
   const { grade, itemIds } = gradeSessionCard(current, card, 'good', 'event-1', 4_000, 2_880);
   assert.deepEqual(grade, {
-    eventId: 'event-1', sessionId: 'session', itemId: 'b', itemIndex: 1, rating: 'good', taskType: 'production',
-    durationMs: 3_000, typedAnswer: 'ran', requeuedAt: undefined,
+    eventId: 'event-1', sessionId: 'session', itemId: 'b', itemIndex: 1, word: 'walk', intervalMinutes: 2_880,
+    rating: 'good', taskType: 'production', durationMs: 3_000, typedAnswer: 'ran', requeuedAt: undefined,
   });
   assert.equal(itemIds, current.itemIds, 'a grade a day or more away doesn\'t queue the card again');
   assert.equal(gradeSessionCard(current, card, 'good', 'event-2', 500, 2_880).grade.durationMs, 0, 'a clock that went back counts no time');
@@ -304,6 +305,19 @@ test('undoing a grade goes back to its card, revealed, and takes back the grade 
   const moved = undoSessionGrade({ ...after, itemIds: ['a', 'b', 'c', 'x', 'b'], grades: [{ itemId: 'a', rating: 'good' }] }, grade, 7_000);
   assert.deepEqual(moved.itemIds, ['a', 'b', 'c', 'x', 'b']);
   assert.deepEqual(moved.grades, [{ itemId: 'a', rating: 'good' }]);
+});
+
+test('the receipt names the word, the grade and when the card comes back, and says when it waits or is undoing', () => {
+  const good = { word: 'crestfallen', rating: 'good', intervalMinutes: 59 * 1_440, requeued: false, undoing: false, waiting: false } as const;
+  assert.deepEqual(receiptText(good), { word: 'crestfallen', rating: 'good', ratingLabel: 'Good', detail: 'next in 59d' });
+  assert.equal(receiptText({ ...good, intervalMinutes: 180 }).detail, 'next in 3h');
+  const again = { ...good, rating: 'again', intervalMinutes: 10, requeued: true } as const;
+  assert.deepEqual(receiptText(again), { word: 'crestfallen', rating: 'again', ratingLabel: 'Again', detail: 'again later this session' });
+  assert.equal(receiptText({ ...good, waiting: true }).detail, 'next in 59d · saved on this device');
+  assert.equal(receiptText({ ...again, waiting: true }).detail, 'again later this session · saved on this device');
+  assert.equal(receiptText({ ...good, undoing: true }).detail, 'Undoing…');
+  assert.equal(receiptText({ ...good, undoing: true, waiting: true }).detail, 'Undoing…');
+  assert.deepEqual(['again', 'hard', 'good', 'easy'].map(rating => receiptText({ ...good, rating: rating as 'good' }).ratingLabel), ['Again', 'Hard', 'Good', 'Easy']);
 });
 
 test('an undo that comes back changes only the session its grade was made in', () => {

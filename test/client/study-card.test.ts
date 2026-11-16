@@ -35,7 +35,7 @@ const session = (overrides: Partial<StudySession> = {}): StudySession => ({
 
 const noop = () => {};
 const render = (props: Partial<StudyCardProps> & Pick<StudyCardProps, 'item'>) => renderToStaticMarkup(createElement(StudyCard, {
-  session: session(), canUndo: false, undoing: false, undoError: '', onUndo: noop, onClose: noop, onReveal: noop,
+  session: session(), canUndo: false, undoing: false, receipt: null, undoError: '', onUndo: noop, onClose: noop, onReveal: noop,
   onTypeAnswer: noop, onGrade: noop, onOpenExampleSentence: noop, ...props,
 }));
 
@@ -86,4 +86,68 @@ test('once the answer shows, its full sense sits under the word, and a typed ans
 
 test('a meaning card shows no verdict, whatever the session holds', () => {
   assert.doesNotMatch(render({ item: card(), session: session({ revealed: true, typedAnswer: 'stale' }) }), /stale/);
+});
+
+/** The card's three parts: the header, the scrolling body, and the footer above the tab bar. */
+const partsOf = (markup: string) => ({
+  header: markup.match(/<header[^]*?<\/header>/)?.[0] ?? '',
+  body: markup.match(/<section[^]*?<\/section>/)?.[0] ?? '',
+  footer: markup.match(/<footer[^]*?<\/footer>/)?.[0] ?? '',
+});
+const buttonsOf = (markup: string) => [...markup.matchAll(/<button[^>]*>/g)].map(match => match[0]);
+
+test('before the reveal the footer holds one full-width Show answer and no grade, below the receipt line', () => {
+  const markup = render({ item: card() });
+  const { header, body, footer } = partsOf(markup);
+  assert.ok(markup.indexOf(header) < markup.indexOf(body) && markup.indexOf(body) < markup.indexOf(footer), 'header, body, footer');
+  assert.match(footer, /^<footer class="shrink-0 px-4 pb-\[calc\(var\(--nav-h,95px\)\+0\.5rem\)\]">/);
+  // The receipt line is there, empty, from the first card on.
+  assert.match(footer, /<div class="h-8 flex items-center gap-2 text-xs text-slate-500"><div class="min-w-0 flex-1 truncate" aria-live="polite"><\/div><\/div>/);
+  const buttons = buttonsOf(footer);
+  assert.equal(buttons.length, 1);
+  assert.match(buttons[0], /class="mt-1\.5 w-full h-14 [^"]*"/);
+  assert.match(buttons[0], /aria-keyshortcuts="Space Enter"/);
+  assert.match(footer, /Show answer<\/button>/);
+  assert.doesNotMatch(body, /<button/, 'nothing to press in the body of a meaning prompt');
+  assert.match(body, /^<section class="flex-1 min-h-0 overflow-y-auto px-4"><div class="max-w-2xl mx-auto pt-\[8vh\] pb-6 text-center">/);
+});
+
+test('once revealed the same slot holds the four grades in one row, in key order, with their intervals', () => {
+  const { footer } = partsOf(render({ item: card(), session: session({ revealed: true }) }));
+  assert.match(footer, /<div class="mt-1\.5 grid grid-cols-4 gap-2">/);
+  const grades = buttonsOf(footer).map(button => button.match(/aria-keyshortcuts="(\d)"/)?.[1]);
+  assert.deepEqual(grades, ['1', '2', '3', '4']);
+  assert.deepEqual([...footer.matchAll(/<span class="block">([a-z]+)<\/span>/g)].map(match => match[1]), ['again', 'hard', 'good', 'easy']);
+  assert.doesNotMatch(footer, /Show answer/);
+});
+
+test('the header keeps the count, the instruction and End, and no longer holds Undo', () => {
+  const { header } = partsOf(render({ item: card(), canUndo: true }));
+  assert.match(header, /1 \/ 2/);
+  assert.equal(buttonsOf(header).length, 1);
+  assert.match(header, /aria-label="End study session"/);
+  assert.doesNotMatch(header, /Undo/);
+});
+
+test('the receipt line names the last grade, with an Undo button that keeps the line 32 px tall', () => {
+  const receipt = { word: 'walk', rating: 'good', ratingLabel: 'Good', detail: 'next in 2d' } as const;
+  const { footer } = partsOf(render({ item: card(), receipt, canUndo: true }));
+  assert.match(footer, /<div class="min-w-0 flex-1 truncate" aria-live="polite"><span aria-hidden="true">↶ <\/span>walk · <span class="text-emerald-700">Good<\/span> · next in 2d<\/div>/);
+  assert.equal(textOf(footer.match(/<div class="h-8[^]*?<\/button><\/div>/)?.[0] ?? '').replace('Undo', '').trim(), '↶ walk · Good · next in 2d');
+  const undo = buttonsOf(footer)[0];
+  assert.match(undo, /class="h-11 -my-1\.5 shrink-0 [^"]*"/);
+  assert.match(undo, /aria-keyshortcuts="U"/);
+  assert.match(undo, /title="Undo last rating \(U\)"/);
+  assert.doesNotMatch(undo, / disabled=""/);
+  assert.match(buttonsOf(partsOf(render({ item: card(), receipt, canUndo: true, undoing: true })).footer)[0], /disabled=""/);
+});
+
+test('a failed undo is said in the receipt line itself, so the card never moves for it', () => {
+  const receipt = { word: 'walk', rating: 'good', ratingLabel: 'Good', detail: 'next in 2d' } as const;
+  const markup = render({ item: card(), receipt, canUndo: true, undoError: 'Reconnect to undo this review.' });
+  const { footer, body } = partsOf(markup);
+  assert.match(footer, /<div class="min-w-0 flex-1 truncate" aria-live="polite"><span class="text-rose-700" role="alert">Reconnect to undo this review\.<\/span><\/div>/);
+  assert.doesNotMatch(footer, /next in 2d/);
+  assert.doesNotMatch(body, /Reconnect/);
+  assert.equal(markup.match(/role="alert"/g)?.length, 1);
 });

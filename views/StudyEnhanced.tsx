@@ -16,6 +16,7 @@ import {
   gradeSessionCard,
   isSessionCardLive,
   moveSessionTo,
+  receiptText,
   sessionRatings,
   sessionSiblingCounts,
   startStudySession,
@@ -50,7 +51,12 @@ interface StudyEnhancedProps {
 interface LastGrade extends SessionGrade {
   /** An undo of this grade is under way. */
   undoing: boolean;
+  /** The grade is still in the review outbox, not yet on the server. */
+  waiting: boolean;
 }
+
+/** How long a failed undo is said in the receipt line before the receipt comes back. */
+const UNDO_ERROR_MS = 4_000;
 
 const revealAnswer = (current: StudySession | null): StudySession | null => current ? { ...current, revealed: true } : null;
 
@@ -108,7 +114,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       SRSAlgorithm.ensure(currentItem.srs, currentItem.data.id, currentItem.type), rating, now,
     ).interval;
     const { grade: sessionGrade, itemIds } = gradeSessionCard(session, currentItem, rating, eventId, now, intervalMinutes);
-    const grade: LastGrade = { ...sessionGrade, undoing: false };
+    const grade: LastGrade = { ...sessionGrade, undoing: false, waiting: false };
     setLastGrade(grade);
     setUndoError('');
     void onReview(currentItem.data.id, rating, {
@@ -137,6 +143,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       }
     }
   };
+
+  // On a card the failed undo takes the receipt line's place for a few seconds; the summary keeps its own line.
+  const showingCard = !!session && !!currentItem;
+  useEffect(() => {
+    if (!undoError || !showingCard) return;
+    const timer = window.setTimeout(() => setUndoError(''), UNDO_ERROR_MS);
+    return () => window.clearTimeout(timer);
+  }, [undoError, showingCard]);
 
   const closeSession = () => {
     setLastGrade(null);
@@ -199,7 +213,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const undo = () => void undoLastGrade();
     if (!currentItem) {
       return (
-        <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-24">
+        <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-[calc(var(--nav-h,95px)+1rem)]">
           <StudySummary
             ratings={sessionRatings(session)}
             canUndo={!!lastGrade}
@@ -213,12 +227,13 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     }
 
     return (
-      <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-4 pb-24">
+      <div ref={rootRef} className="h-full flex flex-col bg-slate-50">
         <StudyCard
           session={session}
           item={currentItem}
           canUndo={!!lastGrade}
           undoing={undoing}
+          receipt={lastGrade && receiptText({ ...lastGrade, requeued: lastGrade.requeuedAt !== undefined })}
           undoError={undoError}
           onUndo={undo}
           onClose={closeSession}

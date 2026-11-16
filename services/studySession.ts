@@ -7,6 +7,7 @@ import {
   isPhraseItem,
   isVocabItem,
 } from '../types';
+import { formatReviewInterval } from './reviewTime';
 import { sentenceReviewState } from './sentenceReviewState';
 import { createClozePrompt, pickExample } from './studyPrompt';
 // The review-time labels live in services/reviewTime.ts; these names stay reachable here for the modules that import
@@ -141,6 +142,9 @@ export interface SessionGrade {
   sessionId: string;
   itemId: string;
   itemIndex: number;
+  /** The card's word, and the interval the grade set in minutes, for the receipt line (receiptText). */
+  word: string;
+  intervalMinutes: number;
   rating: ReviewRating;
   taskType: ReviewTaskType;
   durationMs: number;
@@ -237,6 +241,8 @@ export function gradeSessionCard(
       sessionId: session.id,
       itemId: item.data.id,
       itemIndex: session.index,
+      word: getItemTitle(item),
+      intervalMinutes,
       rating,
       taskType: selectReviewTask(item),
       durationMs: cappedDuration(session.promptStartedAt, now),
@@ -327,4 +333,37 @@ const DAY_MINUTES = 1_440;
  */
 export function requeueShortStep(itemIds: string[], index: number, intervalMinutes: number): string[] {
   return intervalMinutes < DAY_MINUTES && index < itemIds.length ? [...itemIds, itemIds[index]] : itemIds;
+}
+
+/** What the receipt line under a study card says about the last grade (components/study/GradeReceipt.tsx). */
+export interface GradeReceiptText {
+  word: string;
+  rating: ReviewRating;
+  /** The grade as its button names it: 'Good'. */
+  ratingLabel: string;
+  /** When the card comes back ('next in 59d', or 'again later this session' for one the grade brought back), or
+   *  'Undoing…' while the grade is being undone; ' · saved on this device' while it waits in the review outbox. */
+  detail: string;
+}
+
+/** The receipt line for the last grade: '↶ crestfallen · Good · next in 59d'. */
+export function receiptText(grade: {
+  word: string;
+  rating: ReviewRating;
+  intervalMinutes: number;
+  /** The grade brought the card back later in the session (requeueShortStep). */
+  requeued: boolean;
+  undoing: boolean;
+  /** The grade is still in the review outbox, not yet on the server. */
+  waiting: boolean;
+}): GradeReceiptText {
+  const detail = grade.undoing
+    ? 'Undoing…'
+    : grade.requeued ? 'again later this session' : `next in ${formatReviewInterval(grade.intervalMinutes)}`;
+  return {
+    word: grade.word,
+    rating: grade.rating,
+    ratingLabel: grade.rating.charAt(0).toUpperCase() + grade.rating.slice(1),
+    detail: grade.waiting && !grade.undoing ? `${detail} · saved on this device` : detail,
+  };
 }
