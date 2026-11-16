@@ -23,9 +23,22 @@ const PARTICIPLE_ADVERBS = 'well|ill|much|long|so|half|hard|highly|newly|widely|
   'most|least|greatly|nicely';
 const ED_NON_VERBS = 'bed|red|deed|reed|seed|weed|steed|creed|greed|tweed|sled|hundred|sacred|naked|wicked|kindred';
 const ED_VERB_NOUNS = 'shed|need|feed|speed|breed|bleed';
+const ED_VERB = `(?!(?:${ED_NON_VERBS})\\b)(?!(?:${ED_VERB_NOUNS})$)\\S+ed`;
+const VERB = `(?:${AUX}|${IRREGULAR_PAST}|${ED_VERB})`;
+// The verb right after a one-word subject: "the kids ran home", "the team agreed". "Well" is also a noun, so an -ed
+// word ending the input after it is the verb: "the well collapsed" is a sentence, and so, wrongly, is "the well
+// dressed".
+const VERB_AFTER_WORD =
+  `\\S+\\s+(?:${AUX}|${IRREGULAR_PAST})|(?!(?:${PARTICIPLE_ADVERBS})\\s)\\S+\\s+${ED_VERB}|well\\s+${ED_VERB}$`;
+// Such a participle or -ed word belongs to the subject, and the verb comes after the rest of it: "the newly elected
+// mayor resigned", "the flower bed was ruined", "the bright red car crashed". A participle always has a noun after it,
+// one or two words ("a freshly opened can" stays a phrase); an -ed noun may end the subject itself. A conjunction joins
+// two modifiers instead ("a highly skilled and dedicated worker" stays a phrase).
+const NOUN_WORD = '(?!(?:and|or|but|nor)\\s)\\S+';
+const VERB_AFTER_NOUN = `(?:${PARTICIPLE_ADVERBS})\\s+\\S+ed(?:\\s+${NOUN_WORD}){1,2}\\s+${VERB}|` +
+  `\\S+\\s+(?:${ED_NON_VERBS})(?:\\s+${NOUN_WORD}){0,2}\\s+${VERB}`;
 const RE_DET_SUBJ_VERB = new RegExp(
-  `^(?:the|a|an|my|your|his|her|our|their|this|that)\\s+(?:\\S+\\s+(?:${AUX}|${IRREGULAR_PAST})|` +
-  `(?!(?:${PARTICIPLE_ADVERBS})\\s)\\S+\\s+(?!(?:${ED_NON_VERBS})\\b)(?!(?:${ED_VERB_NOUNS})$)\\S+ed)\\b`,
+  `^(?:the|a|an|my|your|his|her|our|their|this|that)\\s+(?:${VERB_AFTER_WORD}|${VERB_AFTER_NOUN})\\b`,
 );
 
 /**
