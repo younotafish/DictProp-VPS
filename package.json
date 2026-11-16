@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=22 <23"
+    "node": ">=22.18 <23"
   },
   "packageManager": "npm@10.9.8",
   "scripts": {
@@ -24,6 +24,7 @@
     "check": "npm run typecheck && npm run typecheck:server && npm test && npm run test:server && npm run build:all && npm run check:bundle && npm run check:sw"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.5.1",
     "fuse.js": "^7.1.0",
     "kokoro-js": "^1.2.1",
     "lucide-react": "^0.554.0",

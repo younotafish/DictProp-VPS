@@ -15,6 +15,8 @@ The cycle and every publisher call the GitHub CLI at `.tools/gh` under the repos
 
     mkdir -p .tools && git cat-file blob f40102e:.gh > .tools/gh && chmod 755 .tools/gh
 
+Some scripts import server modules from `server/src` to share their contracts with production. Plain `node` loads those TypeScript files by stripping their types, which is on by default from Node 22.18, so both `package.json` files ask for that version. Such a module imports nothing but `node:` builtins, since plain node can't map a relative `./x.js` import to its `.ts` file; `test/offline/offline-server-imports.test.ts` checks both.
+
 ## The cycle
 
 The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` starts `run-incremental-example-enrichment.sh` every six hours. The paths in the stages below are relative to the cycle's root, `data/offline-backfill/incremental-example-enrichment/`. Each publishing step waits until production has imported what it sent. When a stage fails without crashing, the runner logs it and usually carries on with the remaining stages, and the cycle then exits 1. To find where the runner calls a script, search the runner for the script's name.
