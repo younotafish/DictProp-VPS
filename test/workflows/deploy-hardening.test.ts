@@ -222,6 +222,16 @@ if [ "$(cat "$RUNNING")" = "$RELEASE_IMAGE" ]; then [ -z "$FAIL_HEALTH" ]; else 
   };
   const previous = publish('previous release');
   git(dir, 'clone', '--quiet', origin, app);
+  /** Pushes a commit on top of main to another branch, as a change tried out from a branch would be, and returns its SHA. */
+  const pushBranch = (name: string, message: string): string => {
+    git(work, 'checkout', '--quiet', '-b', name);
+    writeFileSync(join(work, 'docker-compose.yml'), `# ${message}\n`);
+    git(work, 'commit', '--quiet', '-am', message);
+    git(work, 'push', '--quiet', 'origin', name);
+    const sha = git(work, 'rev-parse', 'HEAD');
+    git(work, 'checkout', '--quiet', 'main');
+    return sha;
+  };
 
   const deploy = (part: 'env' | 'release', variables: Record<string, string> = {}): DeployRun => {
     const script = deployScript();
@@ -249,6 +259,7 @@ if [ "$(cat "$RUNNING")" = "$RELEASE_IMAGE" ]; then [ -z "$FAIL_HEALTH" ]; else 
     app,
     previous,
     publish,
+    pushBranch,
     deploy,
     head: () => git(app, 'rev-parse', 'HEAD'),
     branch: () => git(app, 'rev-parse', '--abbrev-ref', 'HEAD'),
@@ -381,6 +392,27 @@ test('a run for a commit production already contains changes nothing, and the ru
     assert.notEqual(unknown.status, 0);
     assert.deepEqual(unknown.calls, []);
     assert.equal(server.head(), newer);
+  } finally {
+    server.remove();
+  }
+});
+
+// A build from a branch would contain main's newest commit, so every later run for main would change nothing.
+test('a commit that is not on main is refused, so production stays on main and main\'s runs still deploy', () => {
+  const server = makeServer();
+  try {
+    const trial = server.pushBranch('trial', 'a change tried out from a branch');
+    const refused = server.deploy('release', { RELEASE_SHA: trial });
+    assert.equal(refused.status, 1, refused.output);
+    assert.match(refused.output, new RegExp(`::error::${trial} is not on main, so it is not deployed`));
+    assert.deepEqual(refused.calls, [], 'no backup, pull or container swap');
+    assert.equal(server.head(), server.previous);
+    assert.equal(server.branch(), 'main');
+
+    const again = server.deploy('release', { RELEASE_SHA: server.previous });
+    assert.equal(again.status, 0, again.output);
+    assert.match(again.output, /Release is healthy/);
+    assert.equal(composeUps(again).length, 1);
   } finally {
     server.remove();
   }

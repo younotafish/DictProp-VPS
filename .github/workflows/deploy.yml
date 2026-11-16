@@ -121,9 +121,15 @@ jobs:
             }
             trap finish EXIT
             # The checkout is the commit this run deploys, whatever main is now, so it always matches the image.
+            # Only main's history is deployed, so production always runs a commit on main: after a build from a
+            # branch that contains main's newest commit, every later run for main would change nothing.
+            git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
+            if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+              echo "::error::$RELEASE_SHA is not on main, so it is not deployed"
+              exit 1
+            fi
             # Running an older run again, or one finishing after a newer push's deploy, must not roll production
             # back: a release production already contains is left alone. A rollback is a revert commit.
-            git fetch --quiet origin
             if [ "$RELEASE_SHA" != "$PREVIOUS_SHA" ] && git merge-base --is-ancestor "$RELEASE_SHA" "$PREVIOUS_SHA"; then
               echo "::notice::Production runs $PREVIOUS_SHA, which already contains $RELEASE_SHA, so there is nothing to deploy"
               exit 0
