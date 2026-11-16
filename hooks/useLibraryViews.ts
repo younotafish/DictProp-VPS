@@ -6,6 +6,7 @@ import { buildVariantIndex, matchBaseWords } from '../services/wordMatch';
 import { buildSavedVocabByBase, pickSavedItem, savedCardsForBases } from '../services/notebook/libraryLookups';
 import { isRealLifeProgressItem } from '../services/realLifeProgressIdentity';
 import { isEssayProgressItem } from '../services/essayProgressIdentity';
+import { isCatalogProgressItem } from '../services/catalogProgressIdentity';
 import { useStableArray } from './useStableValue';
 
 // Words and phrases still in the library, archived or not. Sentences have their own lists.
@@ -49,7 +50,7 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     [allSentenceItems],
   );
   const sentenceItems = useMemo(
-    () => allSentenceItems.filter(item => !isRealLifeProgressItem(item) && !isEssayProgressItem(item)),
+    () => allSentenceItems.filter(item => !isCatalogProgressItem(item)),
     [allSentenceItems],
   );
   const sentenceItemsById = useMemo(
