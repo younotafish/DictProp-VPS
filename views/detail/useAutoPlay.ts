@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { primeKeepAlive } from '../../services/neuralTts';
+import { createSessionClock, type SessionClock } from '../../services/audio/autoplayController';
 import { useLatest } from '../../hooks/useStableValue';
 import { useWakeLock } from './useWakeLock';
 
@@ -18,7 +19,8 @@ export type AutoPlayMode = 'off' | 'slideshow' | 'examples';
  * The card view's two auto-play modes and their settings. The word slideshow (isAutoPlaying) steps through the
  * cards; sentence auto-play (isSentenceAutoPlaying) reads each card's example sentences, or in sentence review
  * the sentence itself. Only one runs at a time. Either keeps the screen awake, and stops itself when its timer
- * runs out.
+ * runs out. Sentence auto-play can pause (its reader reports it through setSentenceAutoPlayPaused): the timer stands
+ * still meanwhile, and the screen stays awake for the pause's first two minutes only.
  */
 export function useAutoPlay() {
   const [autoPlayMode, setAutoPlayMode] = useState<AutoPlayMode>('off');
@@ -26,15 +28,35 @@ export function useAutoPlay() {
   const isSentenceAutoPlaying = autoPlayMode === 'examples';
   const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
   const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(20);
-  const [autoPlayStartedAt, setAutoPlayStartedAt] = useState<number | null>(null);
   const isSentenceAutoPlayingRef = useLatest(isSentenceAutoPlaying);
   const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between every read (repeats + distinct sentences)
   const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
+  const [sentenceAutoPlayPaused, setPausedState] = useState(false);
+
+  // The timer's clock, one per run of either mode: the time spent paused doesn't count.
+  const [clock, setClock] = useState<SessionClock | null>(null);
+  const clockRef = useRef<SessionClock | null>(null);
 
   // Keep the screen awake while EITHER auto-play mode is active, so the phone doesn't auto-dim/lock and pause
   // playback; the browser lets the lock go whenever the page is hidden, and it's taken again on the way back
-  // (useWakeLock). Requires HTTPS + iOS 16.4+; a manual lock still suspends.
-  useWakeLock(isAutoPlaying || isSentenceAutoPlaying, false);
+  // (useWakeLock), and a pause keeps it for two minutes only. Requires HTTPS + iOS 16.4+; a manual lock still suspends.
+  const { rearm: rearmWakeLock } = useWakeLock(isAutoPlaying || isSentenceAutoPlaying, sentenceAutoPlayPaused);
+
+  /** Sentence auto-play paused or resumed: the timer stands still while it's paused. */
+  const setSentenceAutoPlayPaused = useCallback((paused: boolean) => {
+    const current = clockRef.current;
+    if (current) {
+      if (paused) current.pause();
+      else current.resume();
+    }
+    setPausedState(paused);
+  }, []);
+
+  /** After a pause: take the screen lock and the silent keep-alive again, which the system may have let go meanwhile. */
+  const rearmAutoPlay = useCallback(() => {
+    primeKeepAlive();
+    rearmWakeLock();
+  }, [rearmWakeLock]);
 
   // How long each slide shows; useWordSlideshow reads it as each slide starts.
   const autoPlaySpeedRef = useLatest(autoPlaySpeed);
@@ -81,28 +103,46 @@ export function useAutoPlay() {
   const sentenceGapRef = useLatest(sentenceGap);
   const sentenceRepeatsRef = useLatest(sentenceRepeats);
 
-  // Timer: stamp start time on play, clear on stop (covers both word- and sentence-autoplay)
+  // Timer: a fresh clock for each run (either mode, or a switch between them), none while stopped.
   useEffect(() => {
-    setAutoPlayStartedAt((isAutoPlaying || isSentenceAutoPlaying) ? Date.now() : null);
-  }, [isAutoPlaying, isSentenceAutoPlaying]);
+    const next = autoPlayMode === 'off' ? null : createSessionClock(() => Date.now());
+    next?.start();
+    clockRef.current = next;
+    setClock(next);
+    setPausedState(false);
+  }, [autoPlayMode]);
 
-  // Stop auto-play when the timer expires. The check sets no state until then, so the card doesn't
-  // re-render every second; AutoPlayCountdown shows the time left.
+  // What the timer's end does while sentence auto-play reads: its reader lets the read under way finish first. With
+  // nothing registered (the slideshow) auto-play stops at once.
+  const timerExpiryRef = useRef<(() => void) | null>(null);
+  const setTimerExpiry = useCallback((onExpired: (() => void) | null) => { timerExpiryRef.current = onExpired; }, []);
+
+  // Stop auto-play when the timer expires; a paused session's timer stands still, so it can't run out. The check sets
+  // no state until then, so the card doesn't re-render every second; AutoPlayCountdown shows the time left.
+  const durationMs = autoPlayTimerMinutes * 60_000;
   useEffect(() => {
-    if ((!isAutoPlaying && !isSentenceAutoPlaying) || autoPlayStartedAt === null) return;
+    if (!clock) return;
     const interval = setInterval(() => {
-      if (Date.now() - autoPlayStartedAt >= autoPlayTimerMinutes * 60_000) setAutoPlayMode('off');
+      if (clock.isPaused() || clock.remainingMs(durationMs) > 0) return;
+      const onExpired = timerExpiryRef.current;
+      if (onExpired) onExpired();
+      else setAutoPlayMode('off');
     }, 1000);
     return () => clearInterval(interval);
-  }, [isAutoPlaying, isSentenceAutoPlaying, autoPlayStartedAt, autoPlayTimerMinutes]);
+  }, [clock, durationMs]);
 
-  const countdownStartedAt = isAutoPlaying || isSentenceAutoPlaying ? autoPlayStartedAt : null;
+  // The countdown: while running, when its run began, moved on by the time spent paused (so it ends at start +
+  // Duration); while paused, the time left, standing still.
+  const runningDeadline = clock && !sentenceAutoPlayPaused ? clock.deadline(durationMs) : null;
+  const countdownStartedAt = runningDeadline === null ? null : runningDeadline - durationMs;
+  const countdownFrozenMs = clock && sentenceAutoPlayPaused ? clock.remainingMs(durationMs) : null;
 
   return {
     isAutoPlaying, isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow, stopSentenceAutoPlay,
     autoPlaySpeed, autoPlaySpeedRef, cycleSpeed, autoPlayTimerMinutes, cycleTimerDuration, countdownStartedAt,
-    sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef, cycleRepeats,
-    toggleAutoPlay, toggleSentenceAutoPlay,
+    countdownFrozenMs, sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef, cycleRepeats,
+    toggleAutoPlay, toggleSentenceAutoPlay, sentenceAutoPlayPaused, setSentenceAutoPlayPaused, setTimerExpiry,
+    rearmAutoPlay,
   };
 }
 

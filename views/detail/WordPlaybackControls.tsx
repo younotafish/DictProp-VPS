@@ -1,10 +1,13 @@
-import { AudioLines, Pause, Play } from 'lucide-react';
+import { AudioLines, Pause, Play, Square } from 'lucide-react';
 import { SpeechStyleToggle } from '../../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../../components/PlaybackSpeedToggle';
 import { AutoPlayCountdown } from '../../components/AutoPlayCountdown';
 
 interface WordPlaybackControlsProps {
+  /** When the running countdown began, moved on by the time spent paused; null while stopped or paused. */
   countdownStartedAt: number | null;
+  /** The time left while example auto-play is paused, standing still. */
+  countdownFrozenMs?: number | null;
   timerMinutes: number;
   onCycleTimer: () => void;
   /** The word slideshow (Space) is running. */
@@ -25,8 +28,8 @@ interface WordPlaybackControlsProps {
 
 /** The word card's floating playback cluster: voice settings, the auto-play timer, and the two auto-play modes with their settings. */
 export function WordPlaybackControls({
-  countdownStartedAt, timerMinutes, onCycleTimer, slideshowPlaying, slideSpeed, onCycleSpeed, onToggleSlideshow,
-  examplesPlaying, repeats, onCycleRepeats, gap, onCycleGap, onToggleExamples,
+  countdownStartedAt, countdownFrozenMs = null, timerMinutes, onCycleTimer, slideshowPlaying, slideSpeed, onCycleSpeed,
+  onToggleSlideshow, examplesPlaying, repeats, onCycleRepeats, gap, onCycleGap, onToggleExamples,
 }: WordPlaybackControlsProps) {
   return (
     <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-6 z-[60] flex items-center gap-2">
@@ -39,7 +42,11 @@ export function WordPlaybackControls({
         className="bg-white text-slate-600 text-sm font-bold px-3 py-2 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
         title="Auto-play duration"
       >
-        <AutoPlayCountdown startedAt={countdownStartedAt} minutes={timerMinutes} />
+        <AutoPlayCountdown
+          deadline={countdownStartedAt === null ? null : countdownStartedAt + timerMinutes * 60_000}
+          frozenRemainingMs={countdownFrozenMs}
+          minutes={timerMinutes}
+        />
       </button>
       {slideshowPlaying && (
         <button
@@ -77,7 +84,7 @@ export function WordPlaybackControls({
         }`}
         title={examplesPlaying ? 'Stop auto-play (Space)' : 'Auto-play first sentence of each card'}
       >
-        {examplesPlaying ? <Pause size={20} /> : <AudioLines size={20} />}
+        {examplesPlaying ? <Square size={18} fill="currentColor" /> : <AudioLines size={20} />}
       </button>
       <button
         onClick={onToggleSlideshow}

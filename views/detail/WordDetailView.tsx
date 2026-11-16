@@ -94,8 +94,8 @@ export function WordDetailView(props: DetailViewBodyProps) {
   const {
     isAutoPlaying, isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow, stopSentenceAutoPlay,
     autoPlaySpeed, autoPlaySpeedRef, cycleSpeed, autoPlayTimerMinutes, cycleTimerDuration, countdownStartedAt,
-    sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef, cycleRepeats, toggleAutoPlay,
-    toggleSentenceAutoPlay,
+    countdownFrozenMs, sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef, cycleRepeats,
+    toggleAutoPlay, toggleSentenceAutoPlay, setSentenceAutoPlayPaused, setTimerExpiry, rearmAutoPlay,
   } = useAutoPlay();
   const speechStyle = useSpeechStyle();
   const { toast, tryRemember, showRemembered } = useRememberToast();
@@ -256,6 +256,9 @@ export function WordDetailView(props: DetailViewBodyProps) {
     currentItem,
     sentenceReview: false,
     readCard: () => ({ texts: autoPlayTexts(currentItem), title, artist: 'DictProp' }),
+    onPausedChange: setSentenceAutoPlayPaused,
+    setTimerExpiry,
+    rearm: rearmAutoPlay,
   });
 
   // Fresh ref to the on-screen card so the keyboard readers below read current data without re-subscribing.
@@ -454,6 +457,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
       {/* Playback controls: the word slideshow and the examples' auto-play. */}
       <WordPlaybackControls
         countdownStartedAt={countdownStartedAt}
+        countdownFrozenMs={countdownFrozenMs}
         timerMinutes={autoPlayTimerMinutes}
         onCycleTimer={cycleTimerDuration}
         slideshowPlaying={isAutoPlaying}

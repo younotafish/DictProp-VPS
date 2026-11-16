@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { getItemImageUrl, type ItemGroup, type StoredItem } from '../../types';
 import {
-  acquireKeepAlive, afterGap, getPlaybackState, pauseCurrent, releaseKeepAlive, resumeCurrent, setMediaMetadata,
-  setMediaSessionHandlers, speakNatural, subscribePlayback,
+  acquireKeepAlive, afterGap, getPlaybackState, pauseCurrent, releaseKeepAlive, reservePlayback, resumeCurrent,
+  setMediaMetadata, setMediaSessionHandlers, setPlaybackStateOverride, speakNatural, subscribePlayback,
 } from '../../services/neuralTts';
 import { createAutoplayController, type AutoplayController } from '../../services/audio/autoplayController';
 import { useLatest } from '../../hooks/useStableValue';
@@ -35,12 +35,16 @@ interface AutoPlayReaderOptions {
   readCard: () => { texts: string[]; title: string; artist: string };
   /** A fully heard round of the sentence under review (sentence review only). */
   onRoundListened?: () => void;
+  /** Hears auto-play pause and resume, and false when it stops: the countdown stands still and the button shows it. */
+  onPausedChange?: (paused: boolean) => void;
+  /** Registers what the Duration timer's end does while the reading runs (useAutoPlay's setTimerExpiry). */
+  setTimerExpiry?: (onExpired: (() => void) | null) => void;
+  /** After a pause, takes the screen lock and the silent keep-alive again (useAutoPlay's rearmAutoPlay). */
+  rearm?: () => void;
 }
 
 /** What the view does with sentence auto-play while it runs. */
 export interface AutoPlayReaderControls {
-  /** Auto-play is paused: it holds its place until resumed. */
-  paused: boolean;
   /** Pause or resume, from any point: mid-read, while a sentence loads, or between reads. */
   togglePause: () => void;
   pause: () => void;
@@ -52,17 +56,22 @@ export interface AutoPlayReaderControls {
 /**
  * Sentence auto-play's reading: it reads each card's sentences in turn, as many times as asked with the gap between
  * reads, then moves to the next card, until the last card or Stop (services/audio/autoplayController.ts, one per run).
- * While it runs it holds the audio session open and drives the lock screen, so the installed app keeps reading with
- * the screen off; the lock screen's pause holds the reading even between reads.
+ * Other speech (a lookup, a popup, a word) or a change of voice pauses sentence review's reading, and a resume reads
+ * the cut-off sentence again; on word cards it ends the reading. While it runs it holds the audio session open and
+ * drives the lock screen, which shows it playing through the gaps and paused while paused, so the installed app keeps
+ * reading with the screen off and a headset's play/pause works between reads too.
  */
 export function useAutoPlayReader({
   active, stop, repeatsRef, gapRef, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
   setCurrentItemIndex, currentGroupIndexRef, currentItem, sentenceReview, sentenceItemsRef, readCard, onRoundListened,
+  onPausedChange, setTimerExpiry, rearm,
 }: AutoPlayReaderOptions): AutoPlayReaderControls {
   const controllerRef = useRef<AutoplayController | null>(null);
-  const [paused, setPaused] = useState(false);
   const stopRef = useLatest(stop);
   const onRoundListenedRef = useLatest(onRoundListened);
+  const onPausedChangeRef = useLatest(onPausedChange);
+  const setTimerExpiryRef = useLatest(setTimerExpiry);
+  const rearmRef = useLatest(rearm);
 
   // One controller per run of auto-play, which follows the engine's state (a pause it didn't ask for included).
   useEffect(() => {
@@ -70,27 +79,46 @@ export function useAutoPlayReader({
     const controller = createAutoplayController({
       mode: sentenceReview ? 'sentence-review' : 'word-cards',
       // Deliberate action → allow the one-time model download.
-      speak: (text, { onEnd, onError }) => speakNatural(text, { allowDownload: true, onEnd, onError }),
+      speak: (text, { onEnd, onError, onInterrupted }) => speakNatural(text, { allowDownload: true, onEnd, onError, onInterrupted }),
       pauseClip: pauseCurrent,
       resumeClip: resumeCurrent,
       playbackStatus: () => getPlaybackState().status,
       afterGap,
+      // Holds the engine through each gap, so speech then pauses (or ends) the reading as it would mid-read.
+      reserve: reservePlayback,
       // Read as the reading goes, so a change applies from the next read.
       settings: () => ({ repeats: repeatsRef.current, gapMs: gapRef.current }),
       finish: () => stopRef.current(),
       roundListened: () => onRoundListenedRef.current?.(),
+      rearm: () => rearmRef.current?.(),
     });
     controllerRef.current = controller;
-    const unsubscribe = controller.subscribe(() => setPaused(controller.getState().phase === 'paused'));
+    let paused = false;
+    const reportPaused = (next: boolean) => {
+      paused = next;
+      onPausedChangeRef.current?.(next);
+    };
+    setPlaybackStateOverride('playing');
+    const unsubscribe = controller.subscribe(() => {
+      const next = controller.getState().phase === 'paused';
+      if (next === paused) return;
+      setPlaybackStateOverride(next ? 'paused' : 'playing');
+      reportPaused(next);
+    });
     const unsubscribeEngine = subscribePlayback(state => controller.engineState(state.status));
+    // The timer's end lets the read under way finish, then ends auto-play.
+    const setExpiry = setTimerExpiryRef.current;
+    setExpiry?.(() => controller.timerEnded());
     return () => {
+      setExpiry?.(null);
       unsubscribeEngine();
       unsubscribe();
       controller.stop();
       controllerRef.current = null;
-      setPaused(false);
+      setPlaybackStateOverride(null);
+      if (paused) reportPaused(false);
     };
-  }, [active, sentenceReview, repeatsRef, gapRef, stopRef, onRoundListenedRef]);
+  }, [active, sentenceReview, repeatsRef, gapRef, stopRef, onRoundListenedRef, onPausedChangeRef, setTimerExpiryRef, rearmRef]);
 
   useEffect(() => {
     const controller = controllerRef.current;
@@ -165,5 +193,5 @@ export function useAutoPlayReader({
   const pause = useCallback(() => controllerRef.current?.pause(), []);
   const resume = useCallback(() => controllerRef.current?.resume(), []);
   const restartRead = useCallback(() => controllerRef.current?.restartRead(), []);
-  return { paused, togglePause, pause, resume, restartRead };
+  return useMemo(() => ({ togglePause, pause, resume, restartRead }), [togglePause, pause, resume, restartRead]);
 }

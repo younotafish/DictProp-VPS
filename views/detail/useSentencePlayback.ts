@@ -136,9 +136,11 @@ export function useSentencePlayback({
     const next = list[clamped];
     const sentence = next ? stripSentenceMarkers((next.data as SentenceData).text || '').trim() : '';
     const nextSpeechStyle = next ? (next.data as SentenceData).preferredSpeechStyle : undefined;
-    if (nextSpeechStyle) setTtsStyle(nextSpeechStyle);
+    // During auto-play the view's per-sentence style effect sets the voice, after the reading has let go of the last
+    // sentence; a change of voice now would cut that read off as an interruption and show auto-play paused.
+    if (nextSpeechStyle && !keepAutoPlaying) setTtsStyle(nextSpeechStyle);
     // The autoplay effect restarts itself at the selected sentence after the index changes. Starting a
-    // separate manual clip here would supersede that chain and leave autoplay visually on but stalled.
+    // separate manual clip here would supersede that chain and pause auto-play.
     if (!keepAutoPlaying && sentence && next) {
       speakNatural(sentence, {
         allowDownload: true,

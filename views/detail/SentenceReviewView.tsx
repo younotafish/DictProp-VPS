@@ -95,8 +95,9 @@ export function SentenceReviewView({
   const isCommandHeld = useCommandKeyHeld(isMacDesktop);
   const {
     isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSentenceAutoPlay, autoPlayTimerMinutes,
-    cycleTimerDuration, countdownStartedAt, sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef,
-    cycleRepeats, toggleSentenceAutoPlay,
+    cycleTimerDuration, countdownStartedAt, countdownFrozenMs, sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats,
+    sentenceRepeatsRef, cycleRepeats, toggleSentenceAutoPlay, sentenceAutoPlayPaused, setSentenceAutoPlayPaused,
+    setTimerExpiry, rearmAutoPlay,
   } = useAutoPlay();
   const [showSentenceAutoPlayPanel, setShowSentenceAutoPlayPanel] = useState(false);
   const speechStyle = useSpeechStyle();
@@ -286,7 +287,7 @@ export function SentenceReviewView({
     setCurrentGroupIndex, setCurrentItemIndex, onListened: handleListened,
   });
 
-  useAutoPlayReader({
+  const autoPlayReader = useAutoPlayReader({
     active: isSentenceAutoPlaying,
     stop: stopSentenceAutoPlay,
     repeatsRef: sentenceRepeatsRef,
@@ -306,6 +307,9 @@ export function SentenceReviewView({
       artist: (currentSentence?.data as SentenceData)?.sourceWord || 'DictProp',
     }),
     onRoundListened: noteListened,
+    onPausedChange: setSentenceAutoPlayPaused,
+    setTimerExpiry,
+    rearm: rearmAutoPlay,
   });
 
   // Fresh ref to the source card so the Cmd/Ctrl+1–4 readers read current data without re-subscribing.
@@ -523,10 +527,13 @@ export function SentenceReviewView({
       <SentencePlaybackControls
         onSpeechStyleChange={rememberCurrentSentenceSpeechStyle}
         autoPlaying={isSentenceAutoPlaying}
+        paused={sentenceAutoPlayPaused}
         onAutoPlayButton={handleSentenceAutoPlayFab}
+        onResume={autoPlayReader.resume}
         showPanel={showSentenceAutoPlayPanel}
         onClosePanel={() => setShowSentenceAutoPlayPanel(false)}
         countdownStartedAt={countdownStartedAt}
+        countdownFrozenMs={countdownFrozenMs}
         timerMinutes={autoPlayTimerMinutes}
         onCycleTimer={cycleTimerDuration}
         repeats={sentenceRepeats}
