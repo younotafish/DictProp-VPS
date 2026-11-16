@@ -64,8 +64,8 @@ test('a run\'s own saved sentences can leave it; a Real Life or essay line stays
 
 interface Props {
   viewIds: readonly string[];
-  liveNow: LiveIds | null;
-  onRemoveFromView: ((id: string) => void) | undefined;
+  liveNow: LiveIds;
+  onRemoveFromView: (id: string) => void;
 }
 
 /**
@@ -90,11 +90,9 @@ async function leaveHarness() {
   };
   return {
     removed,
-    /** Renders the view showing `viewIds` over a library holding `live`, with App able to take items out or not. */
-    show: (viewIds: readonly string[], live: readonly string[] | null, { appTakesOut = true } = {}) =>
-      act(() => root.render(createElement(View, {
-        viewIds, liveNow: live && new Set(live), onRemoveFromView: appTakesOut ? takeOut : undefined,
-      }))),
+    /** Renders the view showing `viewIds` over a library holding `live`. */
+    show: (viewIds: readonly string[], live: readonly string[]) =>
+      act(() => root.render(createElement(View, { viewIds, liveNow: new Set(live), onRemoveFromView: takeOut }))),
     close: async () => {
       await act(() => root.unmount());
       delete globals.window;
@@ -153,15 +151,3 @@ test('a card the library never held stays, and one saved while open leaves when 
   }
 });
 
-test('until App passes onRemoveFromView a deleted card stays open, as before', async () => {
-  const view = await leaveHarness();
-  try {
-    await view.show(['a', 'b'], ['a', 'b'], { appTakesOut: false });
-    await view.show(['a', 'b'], ['a'], { appTakesOut: false });
-    // The word view gathers no live ids then; nothing is asked either way.
-    await view.show(['a', 'b'], null);
-    assert.deepEqual(view.removed, []);
-  } finally {
-    await view.close();
-  }
-});

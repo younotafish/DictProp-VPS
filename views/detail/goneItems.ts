@@ -38,17 +38,15 @@ export const ownSentenceIds = (sentenceItems: readonly StoredItem[]): string[] =
  * Takes each item of the open view that the library held and no longer does, as when another device deleted it, out
  * of the view (onRemoveFromView), once. An item the view never saw live, such as an unsaved card or an example
  * preview, is never gone; nor is one deleted here, which the delete already took out of the view, so an undo still
- * puts it back. `viewIds` and `liveNow` should keep their identity between library changes. Without onRemoveFromView
- * it does nothing, and a deleted item stays open as before.
+ * puts it back. `viewIds` and `liveNow` should keep their identity between library changes.
  */
 export function useLeaveGoneItems(
   viewIds: readonly string[],
-  liveNow: LiveIds | null,
-  onRemoveFromView: ((id: string) => void) | undefined,
+  liveNow: LiveIds,
+  onRemoveFromView: (id: string) => void,
 ): void {
   const wasLiveRef = useRef(new Set<string>());
   useEffect(() => {
-    if (!onRemoveFromView || !liveNow) return;
     const wasLive = wasLiveRef.current;
     const gone = goneFromLibrary(viewIds, wasLive, liveNow);
     for (const id of viewIds) if (liveNow.has(id)) wasLive.add(id);
