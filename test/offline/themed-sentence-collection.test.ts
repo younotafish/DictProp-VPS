@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { writeExecutable, writeJson } from '../support/fs.ts';
-import { repoPath } from '../support/paths.ts';
+import { readRepoFile, repoPath } from '../support/paths.ts';
 
 const generator = repoPath('scripts', 'offline', 'generate-themed-sentence-collection.mjs');
 const audit = repoPath('scripts', 'offline', 'audit-themed-sentence-collection.mjs');
@@ -59,11 +59,23 @@ const brief = {
   ],
 };
 
-function setup() {
+// The executive communication brief, whose forbidden patterns keep its lines from naming or quoting its source.
+const executiveBrief = JSON.parse(readRepoFile('content/research/mike-li-executive-communication-brief.json'));
+
+// A whole airport section whose every line quotes the source.
+const quotingSection = JSON.stringify({
+  sectionId: 'airport',
+  sentences: Array.from({ length: 8 }, (_, index) => ({
+    text: `According to Mike, line ${index + 1} is how you hold the reservation politely.`,
+    focus: 'hold the reservation',
+  })),
+});
+
+function setup(briefChanges: Record<string, unknown> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-themed-'));
   const codex = join(root, 'codex');
   writeExecutable(codex, fakeCodex);
-  writeJson(join(root, 'brief.json'), brief);
+  writeJson(join(root, 'brief.json'), { ...brief, ...briefChanges });
   return { root, codex, calls: join(root, 'calls.jsonl') };
 }
 
@@ -107,18 +119,11 @@ test('the themed generator writes one validated collection from a bounded Codex 
 });
 
 test('the themed generator retries a section that fails validation, then gives up', () => {
-  const { root, codex, calls } = setup();
+  const { root, codex, calls } = setup({ forbiddenPatterns: executiveBrief.forbiddenPatterns });
   const output = join(root, 'collection.json');
-  const quoting = JSON.stringify({
-    sectionId: 'airport',
-    sentences: Array.from({ length: 8 }, (_, index) => ({
-      text: `According to Mike, line ${index + 1} is how you hold the reservation politely.`,
-      focus: 'hold the reservation',
-    })),
-  });
 
   const result = run(generator, [join(root, 'brief.json'), output], {
-    CODEX_BIN: codex, FAKE_CODEX_CALLS: calls, FAKE_CODEX_OUTPUT: quoting, CODEX_CONCURRENCY: '1',
+    CODEX_BIN: codex, FAKE_CODEX_CALLS: calls, FAKE_CODEX_OUTPUT: quotingSection, CODEX_CONCURRENCY: '1',
   });
 
   assert.notEqual(result.status, 0);
@@ -126,6 +131,45 @@ test('the themed generator retries a section that fails validation, then gives u
   assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, 3);
   assert.equal(existsSync(output), false);
   assert.deepEqual(readdirSync(root).filter(name => name.startsWith('collection')), []);
+});
+
+test('a brief without forbidden patterns accepts the lines another brief forbids', () => {
+  const { root, codex } = setup({ sections: brief.sections.slice(0, 1) });
+  const output = join(root, 'collection.json');
+
+  const result = run(generator, [join(root, 'brief.json'), output], { CODEX_BIN: codex, FAKE_CODEX_OUTPUT: quotingSection });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')).sections[0].sentences, JSON.parse(quotingSection).sentences);
+});
+
+test('a forbidden pattern that is not a regular expression stops the generator before any Codex call', () => {
+  for (const [forbiddenPatterns, message] of [
+    [['(unclosed'], /brief is invalid: forbiddenPatterns\[0\] is not a regular expression/],
+    [['according to mike', 42], /brief is invalid: forbiddenPatterns\[1\] is not a regular expression/],
+    ['according to mike', /brief is invalid/],
+  ] as const) {
+    const { root, codex, calls } = setup({ forbiddenPatterns });
+    const result = run(generator, [join(root, 'brief.json'), join(root, 'collection.json')], {
+      CODEX_BIN: codex, FAKE_CODEX_CALLS: calls,
+    });
+    assert.notEqual(result.status, 0, JSON.stringify(forbiddenPatterns));
+    assert.match(result.stderr, message);
+    assert.equal(existsSync(calls), false);
+  }
+});
+
+test('the executive communication brief forbids naming or quoting its source, as the generator once did for every brief', () => {
+  const patterns = executiveBrief.forbiddenPatterns.map((source: string) => new RegExp(source, 'i'));
+  const forbidden = (text: string) => patterns.some((pattern: RegExp) => pattern.test(text));
+  for (const text of [
+    'According to Mike, a headline comes before the context.',
+    'As Mike Li puts it, brevity earns attention.',
+    'Mengxi Lao Li would push back on that framing.',
+    'Mike says to own the recap.',
+    'mike recommends a weekly update loop.',
+  ]) assert.equal(forbidden(text), true, text);
+  assert.equal(forbidden('Let me lead with the headline, then walk you through the risks.'), false);
 });
 
 test('a section that keeps failing stops the sections still running, and the generator exits non-zero', async () => {

@@ -17,9 +17,21 @@ if (!briefArg || !outputArg) {
 
 const brief = readJson(briefArg);
 if (brief?.version !== 1 || !brief.collection?.id || !Array.isArray(brief.methodology) ||
-    !Array.isArray(brief.sections) || brief.sections.length === 0) {
+    !Array.isArray(brief.sections) || brief.sections.length === 0 || !Array.isArray(brief.forbiddenPatterns ?? [])) {
   throw new Error('The themed-sentence generation brief is invalid');
 }
+// Patterns a brief's lines must never match, as case-insensitive regular expressions. The executive communication
+// brief uses them to keep its lines from naming or quoting the person whose methods it draws on; a brief without any
+// adds no rule.
+const forbiddenPatterns = (brief.forbiddenPatterns ?? []).map((source, index) => {
+  const message = `The themed-sentence generation brief is invalid: forbiddenPatterns[${index}] is not a regular expression`;
+  if (typeof source !== 'string') throw new Error(message);
+  try {
+    return new RegExp(source, 'i');
+  } catch (error) {
+    throw new Error(message, { cause: error });
+  }
+});
 const sentencesPerSection = Number(brief.sentencesPerSection ?? 18);
 if (!Number.isSafeInteger(sentencesPerSection) || sentencesPerSection < 8 || sentencesPerSection > 50) {
   throw new Error('sentencesPerSection must be an integer from 8 to 50');
@@ -84,7 +96,7 @@ function validateSection(value, section) {
       throw new Error(`${section.id}/${index + 1}: focus must be an exact contiguous source span`);
     }
     if (seen.has(textKey)) throw new Error(`${section.id}/${index + 1}: duplicate sentence`);
-    if (/\b(?:mike|mengxi)\s+(?:li|lao li)\b|according to mike|mike (?:says|teaches|recommends)/i.test(text)) {
+    if (forbiddenPatterns.some(pattern => pattern.test(text))) {
       throw new Error(`${section.id}/${index + 1}: practice lines must not impersonate or quote the source`);
     }
     seen.add(textKey);

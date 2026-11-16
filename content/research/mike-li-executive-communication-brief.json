@@ -39,6 +39,9 @@
     "Own the full meeting cycle: prepare, facilitate, read the room, handle disagreement, recap, assign ownership, and follow through.",
     "Build visibility through useful judgment and proactive communication rather than speaking volume."
   ],
+  "forbiddenPatterns": [
+    "\\b(?:mike|mengxi)\\s+(?:li|lao li)\\b|according to mike|mike (?:says|teaches|recommends)"
+  ],
   "sections": [
     {
       "id": "headline-first-brevity",
