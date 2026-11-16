@@ -107,6 +107,17 @@ export const seekTimeForOffset = (aligned: AlignedWord[], clickedOffset: number)
   return ans === -1 ? aligned[0].startTime : aligned[ans].startTime;
 };
 
+/**
+ * Where to start a clip of `text` to play from the word at `offset`, a character index in `text` as shown (markers
+ * stripped, leading spaces kept, as HighlightedSentence's data-word-offset counts). The timings belong to the clip of
+ * the trimmed text, so the offset loses the leading spaces first. Null without timings or anchors.
+ */
+export const startAtForOffset = (text: string, timings: WordTiming[] | null | undefined, offset: number): number | null => {
+  const stripped = text.trim();
+  const leading = text.length - text.trimStart().length;
+  return seekTimeForOffset(alignWordsToStripped(stripped, timings), Math.max(0, offset - leading));
+};
+
 // MiMo clips carry a quiet ~100ms lead-in (a soft breath/onset) before speech — heard as "starts quiet,
 // then louder". When the caller hasn't asked for a specific start, begin at the first word's timestamp
 // (less a small preroll so a soft onset isn't clipped) to drop that lead-in. Falls back to 0 when

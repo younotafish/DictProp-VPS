@@ -44,6 +44,8 @@ export const fetchTimingsOnce = (key: string): Promise<WordTiming[] | null> => f
 export const hasClipInMemory = (key: string): boolean => ttsUrlCache.has(key);
 /** Whether clip `key`'s timings are in memory, without counting as a use. */
 export const hasTimingsInMemory = (key: string): boolean => ttsTimingsCache.has(key);
+/** Clip `key`'s timings if they're in memory, at once; null otherwise. */
+export const timingsInMemory = (key: string): WordTiming[] | null => ttsTimingsCache.get(key) ?? null;
 
 /** Ready-to-play object URL for clip `key` (memory → IDB → server, write-through). Null on a true miss. */
 export const loadClipUrl = (key: string): Promise<string | null> => {
@@ -79,6 +81,35 @@ export const resolveCachedClip = async (text: string, style: TtsStyle): Promise<
     if (url) return { key, url, token };
   }
   return null;
+};
+
+/** The clip a sentence plays: the style's own, or in the casual style the clear one standing in for it (`fallback`). */
+export interface PlayableClip extends ResolvedCachedClip { fallback: boolean }
+
+export interface PlayableClipOptions {
+  /** Runs when the style's own clip is missing, before the casual style looks for the clear one. */
+  onStyleMiss?: () => void;
+  /** Checked after the first lookup: once it's false, the lookup stops there and finds nothing. */
+  stillWanted?: () => boolean;
+}
+
+/**
+ * The clip speakNatural plays for `text` in `style`: the style's own clip, else in the casual style the clear clip,
+ * while the server makes the casual one. Decided by which clip exists, not which timings do, so word timings looked
+ * up through it always belong to the clip that plays. Null when neither exists.
+ */
+export const resolvePlayableClip = async (
+  text: string,
+  style: TtsStyle,
+  { onStyleMiss, stillWanted = () => true }: PlayableClipOptions = {},
+): Promise<PlayableClip | null> => {
+  const own = await resolveCachedClip(text, style);
+  if (own) return { ...own, fallback: false };
+  if (!stillWanted()) return null;
+  onStyleMiss?.();
+  if (style !== 'casual') return null;
+  const clear = await resolveCachedClip(text, 'clear');
+  return clear ? { ...clear, fallback: true } : null;
 };
 
 /** Per-word timings for clip `key` (memory → IDB → server, write-through). Null when none exist. */

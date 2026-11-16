@@ -150,6 +150,12 @@ export const supersedePlayback = (reason: InterruptReason = 'superseded'): (() =
   return () => token === player.token;
 };
 
+/** The current request's check, without starting one: true until anything supersedes that request. */
+export const currentRequestCheck = (): (() => boolean) => {
+  const token = player.token;
+  return () => token === player.token;
+};
+
 /**
  * Start a request that tells `onInterrupted` if another request or a stop ends it before it ends by itself. release()
  * lets go first, as the owner does before stopping the request itself, so the owner's own stop is never reported.
