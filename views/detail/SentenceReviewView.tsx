@@ -12,7 +12,8 @@ import { analysisPlaceholderState } from '../../services/sentenceAnalysisState';
 import { useKeyboardNavigation, useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
-import { ensureTimings, prefetchTTS, preloadAudio, stopCurrent } from '../../services/neuralTts';
+import { ensureTimings, prefetchTTS, preloadAudio, speakNatural, stopCurrent, type PlaybackState } from '../../services/neuralTts';
+import { styleChangeReplay } from '../../services/audio/playbackToggle';
 import { getTtsStyle, setTtsStyle, type TtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
@@ -316,6 +317,18 @@ export function SentenceReviewView({
   });
   useLayoutEffect(() => { autoPlayControlsRef.current = autoPlayReader; }, [autoPlayReader]);
 
+  // Clear or Casual, clicked: auto-play reads its sentence again in the new voice, keeping its count of repeats (paused,
+  // it stays paused); otherwise what was playing or loading starts again from the top in the new voice. The engine
+  // has already stopped it; a programmatic change of style (moving to a sentence with its own voice) never replays.
+  const handleStyleClicked = useCallback((_style: TtsStyle, before: PlaybackState) => {
+    if (isSentenceAutoPlayingRef.current) { autoPlayReader.restartRead(); return; }
+    if (styleChangeReplay(before.status) !== 'replay' || !before.text) return;
+    const sentence = currentSentenceRef.current;
+    const shown = sentence ? stripSentenceMarkers((sentence.data as SentenceData).text || '').trim() : '';
+    if (sentence && before.text === shown) speakNatural(shown, { allowDownload: true, onEnd: () => noteListened(sentence.data.id) });
+    else speakNatural(before.text, { allowDownload: true }); // one of the source card's examples (Cmd/Ctrl+1–4)
+  }, [isSentenceAutoPlayingRef, autoPlayReader, noteListened]);
+
   // Fresh ref to the source card so the Cmd/Ctrl+1–4 readers read current data without re-subscribing.
   const currentItemRef = useLatest(currentItem);
 
@@ -533,6 +546,7 @@ export function SentenceReviewView({
           settings belong in the secondary panel. */}
       <SentencePlaybackControls
         onSpeechStyleChange={rememberCurrentSentenceSpeechStyle}
+        onStyleClicked={handleStyleClicked}
         autoPlaying={isSentenceAutoPlaying}
         paused={sentenceAutoPlayPaused}
         onAutoPlayButton={handleSentenceAutoPlayFab}

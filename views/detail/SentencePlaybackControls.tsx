@@ -5,10 +5,13 @@ import { PlaybackSpeedToggle } from '../../components/PlaybackSpeedToggle';
 import { AutoPlayCountdown } from '../../components/AutoPlayCountdown';
 import { useLongPress } from '../notebook/useLongPress';
 import type { TtsStyle } from '../../services/ttsSettings';
+import type { PlaybackState } from '../../services/neuralTts';
 
 interface SentencePlaybackControlsProps {
   /** Clear or Casual, remembered on the sentence under review. */
   onSpeechStyleChange: (style: TtsStyle) => void;
+  /** A click that changed the style, with what was playing before it, inside the click (see SpeechStyleToggle). */
+  onStyleClicked?: (style: TtsStyle, before: PlaybackState) => void;
   autoPlaying: boolean;
   /** Auto-play is paused (something else spoke, or a pause control): its button shows Play, and a tap resumes. */
   paused?: boolean;
@@ -53,7 +56,7 @@ export const autoPlayFabAction = ({ autoPlaying, paused, longPress = false }: {
  * auto-play clears the search button, at any safe-area inset (test/client/card-float-geometry.test.ts).
  */
 export function SentencePlaybackControls({
-  onSpeechStyleChange, autoPlaying, paused = false, onAutoPlayButton, onResume, onOpenPanel, showPanel, onClosePanel,
+  onSpeechStyleChange, onStyleClicked, autoPlaying, paused = false, onAutoPlayButton, onResume, onOpenPanel, showPanel, onClosePanel,
   countdownStartedAt, countdownFrozenMs = null, timerMinutes, onCycleTimer, repeats, onCycleRepeats, gap, onCycleGap,
   onStop,
 }: SentencePlaybackControlsProps) {
@@ -79,6 +82,7 @@ export function SentencePlaybackControls({
       <SpeechStyleToggle
         className="shrink-0 bg-white shadow-lg border border-slate-200"
         onChange={onSpeechStyleChange}
+        onStyleClicked={onStyleClicked}
       />
       <div className="relative shrink-0">
         {showPanel && (

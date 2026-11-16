@@ -57,6 +57,12 @@ test('a long press on the auto-play button opens its panel, paused or not, and s
   assert.equal(autoPlayFabAction({ autoPlaying: false, paused: false, longPress: true }), 'start');
 });
 
+test('the Clear/Casual switch renders the same with a replay handler', () => {
+  const toggle = (markup: string) => markup.match(/<div[^>]*role="group"[^>]*>.*?<\/div>/)?.[0];
+  assert.ok(toggle(sentenceControls()));
+  assert.equal(toggle(sentenceControls({ onStyleClicked: noop })), toggle(sentenceControls()));
+});
+
 test('the panel\'s Duration stands still while auto-play is paused', () => {
   const panel = sentenceControls({ showPanel: true, paused: true, countdownFrozenMs: 125_000 });
   assert.match(panel, /Duration<\/span>2:05<\/button>/);

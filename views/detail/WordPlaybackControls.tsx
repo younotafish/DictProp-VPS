@@ -2,6 +2,8 @@ import { AudioLines, Pause, Play, Square } from 'lucide-react';
 import { SpeechStyleToggle } from '../../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../../components/PlaybackSpeedToggle';
 import { AutoPlayCountdown } from '../../components/AutoPlayCountdown';
+import type { TtsStyle } from '../../services/ttsSettings';
+import type { PlaybackState } from '../../services/neuralTts';
 
 interface WordPlaybackControlsProps {
   /** When the running countdown began, moved on by the time spent paused; null while stopped or paused. */
@@ -24,17 +26,19 @@ interface WordPlaybackControlsProps {
   gap: number;
   onCycleGap: () => void;
   onToggleExamples: () => void;
+  /** A click on Clear or Casual that changed the style, with what was playing before it, inside the click. */
+  onStyleClicked?: (style: TtsStyle, before: PlaybackState) => void;
 }
 
 /** The word card's floating playback cluster: voice settings, the auto-play timer, and the two auto-play modes with their settings. */
 export function WordPlaybackControls({
   countdownStartedAt, countdownFrozenMs = null, timerMinutes, onCycleTimer, slideshowPlaying, slideSpeed, onCycleSpeed,
-  onToggleSlideshow, examplesPlaying, repeats, onCycleRepeats, gap, onCycleGap, onToggleExamples,
+  onToggleSlideshow, examplesPlaying, repeats, onCycleRepeats, gap, onCycleGap, onToggleExamples, onStyleClicked,
 }: WordPlaybackControlsProps) {
   return (
     <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-6 z-[60] flex items-center gap-2">
       {/* Clear ⇄ Casual speech style (global) — sits with the playback controls. */}
-      <SpeechStyleToggle className="bg-white shadow-lg border border-slate-200" />
+      <SpeechStyleToggle className="bg-white shadow-lg border border-slate-200" onStyleClicked={onStyleClicked} />
       {/* Voice speed (global): default 1×, up to 2×. Distinct from the "Speed per slide" pill below. */}
       <PlaybackSpeedToggle className="bg-white shadow-lg border border-slate-200" />
       <button

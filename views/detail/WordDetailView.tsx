@@ -14,8 +14,11 @@ import { findSavedCopy } from '../../services/items';
 import { useKeyboardNavigation, useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
-import { getPlaybackState, pauseCurrent, prefetchTTS, resumeCurrent, speakWord, stopCurrent } from '../../services/neuralTts';
-import { wordCardSpaceAction } from '../../services/audio/playbackToggle';
+import {
+  getPlaybackState, pauseCurrent, prefetchTTS, resumeCurrent, speakNatural, speakWord, stopCurrent, type PlaybackState,
+} from '../../services/neuralTts';
+import { styleChangeReplay, wordCardSpaceAction } from '../../services/audio/playbackToggle';
+import type { TtsStyle } from '../../services/ttsSettings';
 import { autoPlayTexts, preloadSession, pronounceOnCardChange, wordZoneBands as countWordZoneBands } from './cardReading';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
@@ -326,6 +329,14 @@ export function WordDetailView(props: DetailViewBodyProps) {
     }
   }, [isSentenceAutoPlayingRef, toggleSentenceAutoPlay, toggleAutoPlay]);
 
+  // Clear or Casual, clicked: example auto-play reads its sentence again in the new voice, keeping its count of
+  // repeats; otherwise the sentence that was playing or loading (only that one, in a two-example E run) starts again
+  // from the top in the new voice.
+  const handleStyleClicked = useCallback((_style: TtsStyle, before: PlaybackState) => {
+    if (isSentenceAutoPlayingRef.current) { autoPlayReader.restartRead(); return; }
+    if (styleChangeReplay(before.status) === 'replay' && before.text) speakNatural(before.text, { allowDownload: true });
+  }, [isSentenceAutoPlayingRef, autoPlayReader]);
+
   const { zoneFlash, handleScroll, onContentTouchStart, onContentTouchEnd, handleDoubleClick } = useWordGestures({
     scrollContainerRef, showHeader, setShowHeader, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
     setCurrentGroupIndex, setCurrentItemIndex, stopSlideshow, toggleSpeak, onClose, handleRemember,
@@ -493,6 +504,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
         gap={sentenceGap}
         onCycleGap={cycleGap}
         onToggleExamples={toggleSentenceAutoPlay}
+        onStyleClicked={handleStyleClicked}
       />
       {/* The Remembered! confirmation, shown only while the card it confirms is on screen */}
       {toast && toast.id === data.id && <RememberToast intervalDays={toast.intervalDays} />}
