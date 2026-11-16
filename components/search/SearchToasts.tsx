@@ -21,17 +21,15 @@ interface Props {
   /** × on the error toast: drops every failure and the notice. */
   onDismissError: () => void;
   /** On a tab (true), or over a card or sentence view (false); see errorBottom. */
-  aboveTabBar?: boolean;
+  aboveTabBar: boolean;
 }
 
 /**
  * The error toast's offset from the bottom of the screen, above the search button. On a tab it clears the tab bar
- * and, on Study, the grade footer; over a card it sits 8 px above the lesson's attach-image button. Until the caller
- * says which, it keeps bottom-44.
+ * and, on Study, the grade footer; over a card it sits 8 px above the lesson's attach-image button.
  */
-const errorBottom = (aboveTabBar: boolean | undefined): string =>
-  aboveTabBar === undefined ? 'bottom-44'
-  : aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+4rem)]'
+const errorBottom = (aboveTabBar: boolean): string =>
+  aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+4rem)]'
   : 'bottom-[calc(var(--card-float-bottom,6rem)+7.5rem)]';
 
 /**

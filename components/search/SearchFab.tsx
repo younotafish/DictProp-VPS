@@ -11,7 +11,7 @@ interface Props {
   /** Lookups are running or a sentence is being scanned. */
   isBusy: boolean;
   /** On a tab (true), or over a card or sentence view (false); see fabBottom. */
-  aboveTabBar?: boolean;
+  aboveTabBar: boolean;
   /** The status line is showing a new result, so the button doesn't signal it too: no red count, its quiet look. */
   quiet?: boolean;
   onClick: () => void;
@@ -19,12 +19,10 @@ interface Props {
 
 /**
  * The button's offset from the bottom of the screen. On a tab it floats above the tab bar and, on Study, the grade
- * footer; over a card it sits on the card float line, clear of the lesson row (96 px on a laptop, as before). Until
- * the caller says which, it keeps bottom-24.
+ * footer; over a card it sits on the card float line, clear of the lesson row (96 px on a laptop, as before).
  */
-const fabBottom = (aboveTabBar: boolean | undefined): string =>
-  aboveTabBar === undefined ? 'bottom-24'
-  : aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]'
+const fabBottom = (aboveTabBar: boolean): string =>
+  aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]'
   : 'bottom-[var(--card-float-bottom,6rem)]';
 
 /** The count on the button's corner, in the tone of what it counts. */

@@ -56,13 +56,13 @@ interface Props {
   onOpenSentence?: (ordered: StoredItem[], index: number) => void;
   /**
    * Where the search button and its error toast float: true on a tab, above the tab bar; false over a card or
-   * sentence view, above the lesson row. Left out, they keep their old offsets (bottom-24 and bottom-44).
+   * sentence view, above the lesson row.
    */
-  aboveTabBar?: boolean;
+  aboveTabBar: boolean;
   /** A decision dialog is open (App's useOverlays().modalOpen), so the status line stays out of its way. */
-  statusHidden?: boolean;
+  statusHidden: boolean;
   /** Offers `undo` on the app's undo pill, labelled `message`: Clear all offers to put the results back. */
-  onOfferUndo?: (message: string, undo: () => void) => void;
+  onOfferUndo: (message: string, undo: () => void) => void;
 }
 
 /**
@@ -321,7 +321,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setViewingId(null);
     setViewingVocabIdx(0);
     const results = removed.filter(item => item.kind !== 'scan' && item.status === 'ready').length;
-    if (results > 0 && onOfferUndo) {
+    if (results > 0) {
       onOfferUndo(`Cleared ${results} ${results === 1 ? 'result' : 'results'}`, () => updateQueue({ type: 'restore', entries: removed }));
     }
   }, [queue, updateQueue, onOfferUndo]);

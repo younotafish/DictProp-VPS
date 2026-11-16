@@ -16,26 +16,24 @@ const bottomOf = (markup: string): string[] => classesOf(markup).filter(name => 
 const otherClassesOf = (markup: string): string[] => classesOf(markup).filter(name => !name.startsWith('bottom-'));
 
 const fab = (props: Partial<FabProps> = {}) => renderToStaticMarkup(createElement(SearchFab, {
-  unseenCount: 0, readyCount: 0, runningCount: 0, isBusy: false, onClick: () => {}, ...props,
+  unseenCount: 0, readyCount: 0, runningCount: 0, isBusy: false, aboveTabBar: true, onClick: () => {}, ...props,
 }));
 const errorToast = (props: Partial<ToastProps> = {}) => renderToStaticMarkup(createElement(SearchToasts, {
   saveToast: null, error: { msg: 'Couldn’t reach DictProp for “gamut”.', action: 'retry' },
-  onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, ...props,
+  onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, aboveTabBar: true, ...props,
 }));
 
 // Where the button and the error toast float: on a tab, above the tab bar (and Study's grade footer); over a card,
-// on the card float line that clears the lesson row; and where App doesn't say yet, the old offsets.
+// on the card float line that clears the lesson row.
 const FAB_BOTTOM = {
-  unset: 'bottom-24',
   tab: 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]',
   card: 'bottom-[var(--card-float-bottom,6rem)]',
 };
 const TOAST_BOTTOM = {
-  unset: 'bottom-44',
   tab: 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+4rem)]',
   card: 'bottom-[calc(var(--card-float-bottom,6rem)+7.5rem)]',
 };
-const PLACES = [['unset', undefined], ['tab', true], ['card', false]] as const;
+const PLACES = [['tab', true], ['card', false]] as const;
 
 const FAB_STATES: Partial<FabProps>[] = [
   {},
@@ -46,7 +44,7 @@ const FAB_STATES: Partial<FabProps>[] = [
   { readyCount: 1, unseenCount: 1, isBusy: true, runningCount: 1 },
 ];
 
-test('the search button sits above the tab bar on a tab, on the card float line over a card, and at bottom-24 when not told', () => {
+test('the search button sits above the tab bar on a tab, and on the card float line over a card', () => {
   for (const state of FAB_STATES) {
     for (const [place, aboveTabBar] of PLACES) {
       assert.deepEqual(bottomOf(fab({ ...state, aboveTabBar })), [FAB_BOTTOM[place]], `${place} ${JSON.stringify(state)}`);
@@ -56,12 +54,10 @@ test('the search button sits above the tab bar on a tab, on the card float line 
 
 test('where the search button floats changes only its bottom offset', () => {
   for (const state of FAB_STATES) {
-    const unset = fab(state);
-    for (const aboveTabBar of [true, false]) {
-      const placed = fab({ ...state, aboveTabBar });
-      assert.deepEqual(otherClassesOf(placed), otherClassesOf(unset));
-      assert.equal(placed.replace(/class="[^"]*"/, ''), unset.replace(/class="[^"]*"/, ''), 'the rest of the markup is the same');
-    }
+    const onTab = fab({ ...state, aboveTabBar: true });
+    const onCard = fab({ ...state, aboveTabBar: false });
+    assert.deepEqual(otherClassesOf(onCard), otherClassesOf(onTab));
+    assert.equal(onCard.replace(/class="[^"]*"/, ''), onTab.replace(/class="[^"]*"/, ''), 'the rest of the markup is the same');
   }
 });
 
@@ -75,7 +71,7 @@ test('the error toast sits above the search button: over the tab bar on a tab, o
 });
 
 test('the save toast stays at the top whatever aboveTabBar says, and the search has no status toast of its own', () => {
-  for (const aboveTabBar of [undefined, true, false]) {
+  for (const aboveTabBar of [true, false]) {
     const markup = renderToStaticMarkup(createElement(SearchToasts, {
       saveToast: 'Sentence saved', error: null, onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, aboveTabBar,
     }));
@@ -88,6 +84,7 @@ test('GlobalSearch hands aboveTabBar to its search button', () => {
   for (const [place, aboveTabBar] of PLACES) {
     const markup = renderToStaticMarkup(createElement(GlobalSearch, {
       onSave: () => {}, isVocabSaved: () => false, findSavedByWord: () => [], onSearch: () => {}, isOnline: true, aboveTabBar,
+      statusHidden: false, onOfferUndo: () => {},
     }));
     assert.match(markup, /^<button aria-label="Search"/, 'idle, the search shows only its button');
     assert.deepEqual(bottomOf(markup), [FAB_BOTTOM[place]], place);
