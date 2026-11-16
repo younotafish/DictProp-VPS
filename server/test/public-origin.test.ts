@@ -6,6 +6,7 @@ process.env.PUBLIC_ORIGIN = 'https://staging.example/';
 
 const { createApp } = await import('../src/app.js');
 const { env, parsePublicOrigin } = await import('../src/env.js');
+const { signInOrigin, wantsSecureCookies } = await import('../src/canonical-host.js');
 const app = createApp({ logging: false, serveStaticFiles: false });
 
 test('PUBLIC_ORIGIN is read as an origin, and anything but an http(s) URL stops startup', () => {
@@ -36,4 +37,10 @@ test('sign-in returns to PUBLIC_ORIGIN', async () => {
   assert.equal(response.status, 302);
   const location = new URL(response.headers.get('Location')!);
   assert.equal(location.searchParams.get('redirect_uri'), 'https://staging.example/api/auth/callback');
+});
+
+test('PUBLIC_ORIGIN wins over a local server\'s origin, and its https makes cookies Secure', () => {
+  const localHttp = { header: (name: string) => (name === 'host' ? 'localhost:3000' : undefined) };
+  assert.equal(signInOrigin(localHttp), 'https://staging.example');
+  assert.equal(wantsSecureCookies(localHttp), true);
 });

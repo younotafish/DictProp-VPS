@@ -3,16 +3,15 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { randomUUID } from 'crypto';
 import { env } from '../env.js';
 import { proxyFetch, type FetchLike } from '../proxy-fetch.js';
-import { resolveSession, SESSION_COOKIE } from '../middleware/auth.js';
+import { clearSessionCookie, resolveSession, SESSION_COOKIE, setSessionCookie } from '../middleware/auth.js';
 import { createPkcePair, GoogleKeysUnavailableError, verifyGoogleIdToken, type GoogleIdentity } from '../google-auth.js';
-import { CANONICAL_ORIGIN, forwardedHost, forwardedProto, isWwwHost } from '../canonical-host.js';
+import { CANONICAL_ORIGIN, forwardedHost, isWwwHost, signInOrigin, wantsSecureCookies } from '../canonical-host.js';
 import {
   findUserByGoogleId,
   createUserAndClaimItems,
   getUserCount,
   createSession,
   deleteSession,
-  SESSION_LIFETIME_MS,
 } from '../db.js';
 import { ownerLoginDecision } from '../owner-access.js';
 import { sanitizeAuthReturnTo } from '../auth-return.js';
@@ -30,24 +29,8 @@ export interface AuthRouteDependencies {
   verifyIdToken?: (idToken: string, audience: string) => Promise<GoogleIdentity>;
 }
 
-/** A local development server's origin, when the request came to one; a request without a Host header did. */
-function localDevOrigin(c: Context): string | undefined {
-  const host = forwardedHost(c.req, { keepPort: true, fallback: 'localhost:3001' });
-  return forwardedProto(c.req) === 'http' && /^(?:localhost|127\.0\.0\.1):(?:3000|3001|3002)$/.test(host)
-    ? `http://${host}`
-    : undefined;
-}
-
-// Google sends the sign-in back to this URI: PUBLIC_ORIGIN's when set, else a local server's, else the canonical one.
-function getRedirectUri(c: Context): string {
-  if (env.PUBLIC_ORIGIN) return `${env.PUBLIC_ORIGIN}/api/auth/callback`;
-  return `${localDevOrigin(c) ?? CANONICAL_ORIGIN}/api/auth/callback`;
-}
-
-// Cookies are Secure whenever the sign-in round trip runs on https, even if a proxy leaves out the header.
-function isSecure(c: Context): boolean {
-  return forwardedProto(c.req) === 'https' || getRedirectUri(c).startsWith('https://');
-}
+// Google sends the sign-in back to this URI.
+const getRedirectUri = (c: Context): string => `${signInOrigin(c.req)}/api/auth/callback`;
 
 export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
   const fetchToken = deps.fetch ?? proxyFetch;
@@ -66,7 +49,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     setCookie(c, 'oauth_state', `${state}.${pkce.verifier}`, {
       httpOnly: true,
       sameSite: 'Lax',
-      secure: isSecure(c),
+      secure: wantsSecureCookies(c.req),
       path: '/api/auth/callback',
       maxAge: 300, // 5 minutes
     });
@@ -74,7 +57,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     setCookie(c, 'oauth_return_to', returnTo, {
       httpOnly: true,
       sameSite: 'Lax',
-      secure: isSecure(c),
+      secure: wantsSecureCookies(c.req),
       path: '/api/auth/callback',
       maxAge: 300, // 5 minutes
     });
@@ -194,17 +177,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     }
     if (!userRow) return c.json({ error: 'This DictProp instance is private.' }, 403);
 
-    // Create session
-    const session = createSession(userRow.id);
-
-    setCookie(c, SESSION_COOKIE, session.token, {
-      httpOnly: true,
-      sameSite: 'Lax',
-      secure: isSecure(c),
-      path: '/',
-      maxAge: SESSION_LIFETIME_MS / 1000,
-    });
-
+    setSessionCookie(c, createSession(userRow.id).token);
     return c.redirect(returnTo);
   });
 
@@ -242,7 +215,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     if (token) {
       deleteSession(token);
     }
-    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    clearSessionCookie(c);
     return c.json({ ok: true });
   });
 

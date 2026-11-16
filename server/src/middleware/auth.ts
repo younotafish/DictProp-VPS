@@ -1,6 +1,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
-import { deleteCookie, getCookie } from 'hono/cookie';
-import { deleteSession, getSessionUser, type UserRow } from '../db.js';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import { wantsSecureCookies } from '../canonical-host.js';
+import { deleteSession, getSessionUser, SESSION_LIFETIME_MS, type UserRow } from '../db.js';
 import { env } from '../env.js';
 import { isOwnerUser } from '../owner-access.js';
 
@@ -31,6 +32,26 @@ export const DEV_AUTH_USER: AuthUser = {
 
 export const SESSION_COOKIE = 'session';
 
+/**
+ * Send the session cookie: to every path, never to scripts, and for as long as the session row lasts, through
+ * Max-Age rather than an Expires date the device's clock would judge. Anything that hands out or renews a
+ * session sends the cookie through here.
+ */
+export function setSessionCookie(c: Context, token: string): void {
+  setCookie(c, SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: wantsSecureCookies(c.req),
+    path: '/',
+    maxAge: SESSION_LIFETIME_MS / 1000,
+  });
+}
+
+/** Tell the browser to stop sending the session cookie. */
+export function clearSessionCookie(c: Context): void {
+  deleteCookie(c, SESSION_COOKIE, { path: '/' });
+}
+
 export function userRowToAuthUser(row: UserRow): AuthUser {
   return {
     id: row.id,
@@ -60,13 +81,13 @@ export function resolveSession(c: Context): SessionState {
   const row = getSessionUser(token);
   if (!row) {
     // An expired or unknown session never comes back, so the browser can stop sending its cookie.
-    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    clearSessionCookie(c);
     return { kind: 'expired' };
   }
   if (!isOwnerUser(row, env.OWNER_GOOGLE_EMAIL)) {
     // Only the owner keeps a session: one from before the owner email changed ends here.
     deleteSession(token);
-    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    clearSessionCookie(c);
     return { kind: 'not-owner' };
   }
   return { kind: 'owner', user: userRowToAuthUser(row) };

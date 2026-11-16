@@ -1,3 +1,5 @@
+import { env } from './env.js';
+
 // dictprop.online is the one canonical origin: Google returns every sign-in to it, so the sign-in cookies a
 // www.dictprop.online login set never came back and the sign-in failed. www requests are sent to the apex.
 export const CANONICAL_ORIGIN = 'https://dictprop.online';
@@ -18,3 +20,20 @@ export function forwardedHost(req: HeaderReader, { keepPort = false, fallback = 
 export const forwardedProto = (req: HeaderReader): string => req.header('x-forwarded-proto') || 'http';
 
 export const isWwwHost = (host: string): boolean => host === WWW_HOST;
+
+/** A local development server's origin, when the request came to one; a request without a Host header did. */
+function localDevOrigin(req: HeaderReader): string | undefined {
+  const host = forwardedHost(req, { keepPort: true, fallback: 'localhost:3001' });
+  return forwardedProto(req) === 'http' && /^(?:localhost|127\.0\.0\.1):(?:3000|3001|3002)$/.test(host)
+    ? `http://${host}`
+    : undefined;
+}
+
+/** The origin sign-in runs on, where Google sends it back: PUBLIC_ORIGIN's when set, else a local server's, else the canonical one. */
+export function signInOrigin(req: HeaderReader): string {
+  return env.PUBLIC_ORIGIN || localDevOrigin(req) || CANONICAL_ORIGIN;
+}
+
+/** Cookies are Secure whenever sign-in runs on https, even if a proxy leaves out the header. */
+export const wantsSecureCookies = (req: HeaderReader): boolean =>
+  forwardedProto(req) === 'https' || signInOrigin(req).startsWith('https://');
