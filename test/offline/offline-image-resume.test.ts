@@ -230,10 +230,7 @@ test('example enrichment publication finishes without waiting for deferred image
   });
   writeFileSync(join(wave, 'published'), 'published\n');
   const key = join(root, 'key');
-  const python = join(root, 'python');
   writeFileSync(key, 'test-key\n');
-  writeFileSync(python, '#!/bin/sh\nexit 0\n');
-  chmodSync(python, 0o700);
 
   const output = execFileSync('bash', [
     repoPath('scripts', 'offline', 'dispatch-staged-example-enrichments.sh'), root, '100', 'test-sha',
@@ -248,7 +245,6 @@ test('example enrichment publication finishes without waiting for deferred image
       ALLOW_DEFERRED_IMAGES: '1',
       EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT: join(root, 'publish-state'),
       SENTENCE_BRIDGE_KEY_FILE: key,
-      PYTHON_BIN: python,
     },
   });
 
