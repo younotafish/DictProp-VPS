@@ -4,7 +4,7 @@ import type { TtsStyle } from '../ttsSettings';
 /**
  * Cached clips are keyed by a voice token (the casual token MUST match the server's CASUAL_STYLE). Each speech
  * style plays the clips of its tokens in order of preference and asks the server to generate the last one. Today
- * each style has a single token; a voice rollout puts the new token first (see the note in api.ts).
+ * each style has a single token; a voice rollout puts the new token first (see the note in services/api/tts.ts).
  */
 export interface StyleVoices {
   /** Tokens whose clips the style plays, best first. */
