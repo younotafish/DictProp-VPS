@@ -26,7 +26,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
    - `sweep-bridge-leftovers.sh` clears what killed runs left behind.
    - `check-structured-model.mjs` checks that the model answers, before any production data is exported.
 2. **Export.**
-   - The runner dispatches `sentence-backfill.yml` with `operation=corpus-export`.
+   - The runner dispatches `sentence-backfill.yml` with `operation=corpus-export`. A run that ends any way but success gets one more dispatch, and a second such run ends the cycle.
    - `fetch-workflow-export.sh` then decrypts that run's artifact into `current-corpus.json`.
 3. **Vocabulary.**
    - `prepare-incremental-vocab-source.mjs` reads `current-corpus.json` and writes `vocabulary/source.json`.

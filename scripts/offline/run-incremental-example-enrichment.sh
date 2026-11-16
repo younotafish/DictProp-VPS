@@ -303,11 +303,16 @@ run_corpus_export() {
   done
 }
 
-# Exports the production corpus into CURRENT_CORPUS. The successful run's id names the cycle: CYCLE_ID. The run's
-# conclusion is read from a variable rather than run_corpus_export's status, since calling it in a condition would
-# turn set -e off inside it.
+# Exports the production corpus into CURRENT_CORPUS. A deploy's container swap can end an export mid-query, and a
+# newer job in its queue cancels one still waiting, so a run that ends any way but success gets one more. The
+# successful run's id names the cycle: CYCLE_ID. The run's conclusion is read from a variable rather than
+# run_corpus_export's status, since calling it in a condition would turn set -e off inside it.
 export_corpus() {
   run_corpus_export
+  if [ "$EXPORT_CONCLUSION" != success ]; then
+    log "corpus export run $EXPORT_RUN_ID ended as $EXPORT_CONCLUSION; requesting one more export"
+    run_corpus_export
+  fi
   if [ "$EXPORT_CONCLUSION" != success ]; then
     echo "Corpus export run $EXPORT_RUN_ID ended as $EXPORT_CONCLUSION" >&2
     exit 1

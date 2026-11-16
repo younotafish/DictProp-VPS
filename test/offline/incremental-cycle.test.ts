@@ -51,13 +51,16 @@ let name = basename(process.argv[1]);
 if (args[0] === '--as') { name = args[1]; args.splice(0, 2); }
 const scenario = JSON.parse(readFileSync(process.env.SCENARIO, 'utf8'));
 const counterFile = process.env.SCENARIO + '.counters';
+// count(key, add): the counter named key, after adding add to it.
+function count(key, add = 0) {
+  const counters = existsSync(counterFile) ? JSON.parse(readFileSync(counterFile, 'utf8')) : {};
+  counters[key] = (counters[key] ?? 0) + add;
+  writeFileSync(counterFile, JSON.stringify(counters));
+  return counters[key];
+}
 function next(key, fallback) {
   const values = [].concat(scenario[key] ?? fallback);
-  const counters = existsSync(counterFile) ? JSON.parse(readFileSync(counterFile, 'utf8')) : {};
-  const index = counters[key] ?? 0;
-  counters[key] = index + 1;
-  writeFileSync(counterFile, JSON.stringify(counters));
-  return values[Math.min(index, values.length - 1)];
+  return values[Math.min(count(key, 1) - 1, values.length - 1)];
 }
 const traced = ${JSON.stringify(TRACED_ENV)}.filter(key => process.env[key] !== undefined).map(key => key + '=' + process.env[key]);
 appendFileSync(process.env.TRACE, [name, ...args.map(arg => arg === '' ? "''" : arg)].join(' ') + (traced.length ? '  [' + traced.join(' ') + ']' : '') + '\\n');
@@ -69,11 +72,16 @@ const pipeline = path => path.includes('saved-sentences') ? 'saved' : 'example';
 
 switch (name) {
   case 'gh': {
+    // The newest export run is 100 until the first dispatch, which starts run 101, the next one 102, and so on.
+    // Each run ends as the scenario's exportConclusions say, the last one repeating.
     const call = args.join(' ');
-    if (call.startsWith('run list') && call.includes('--limit 1')) console.log('100');
-    else if (call.startsWith('run list')) console.log('101');
-    else if (call.startsWith('run view 101') && call.includes('--json jobs')) console.log('corpus-export');
-    else if (call.startsWith('run view 101')) console.log('completed\\tsuccess');
+    const runs = count('exports', call.startsWith('workflow run') ? 1 : 0);
+    if (call.startsWith('run list')) console.log(String(100 + runs));
+    else if (call.startsWith('run view') && call.includes('--json jobs')) console.log('corpus-export');
+    else if (call.startsWith('run view')) {
+      const conclusions = [].concat(scenario.exportConclusions ?? 'success');
+      console.log('completed\\t' + conclusions[Math.min(Number(args[2]) - 101, conclusions.length - 1)]);
+    }
     break;
   }
   case 'tsx': write(args[2], { version: 1, sentences: [] }); break;
@@ -157,6 +165,8 @@ const shellStub = (name: string, stub: string) =>
   `#!/bin/bash\nexec "$STUB_NODE" "${stub}" --as ${name} "$@"\n`;
 
 interface Scenario {
+  // How each corpus export run ends, the last one repeating; success unless given.
+  exportConclusions?: string[];
   vocab?: number;
   vocabStatus?: number;
   saved?: number[];
@@ -323,6 +333,8 @@ const SCENARIOS: Record<string, Scenario> = {
     seed: { 'item-images/images/item-image-0.webp': 'image' },
   },
   'bad-setting': { env: { INCREMENTAL_VOCAB_LOOKBACK_HOURS: 'week' } },
+  'export-retried': { exportConclusions: ['failure', 'success'] },
+  'export-failed': { exportConclusions: ['cancelled', 'timed_out'] },
   'no-base-images': { baseImageRoot: 'missing-images' },
   previous: {
     seed: {
@@ -360,18 +372,22 @@ const STATE = `${C}/publish-state`;
 
 // The calls every cycle makes before its first stage. The sweep gets each stage's root of per-cycle roots, the image
 // loops' roots of per-cycle working directories, then the roots cycles shared before.
-const START = [
+const PREPARE = [
   `sweep-bridge-leftovers.sh ${STATE}/vocabulary ${STATE}/saved-sentences ${STATE}/item-images ${STATE}/example-analyses ${STATE}/example-enrichments `
     + `${C}/item-images/streaming-quality ${C}/final-images/streaming-quality `
     + `${C}/publish-state-coverage-v2 ${C}/analysis-publish-state-coverage-v2 ${C}/saved-sentences/publish-state-detailed-v1 ${C}/vocabulary/publish-state ${C}/item-images/publish-state`,
   'check-structured-model.mjs',
+];
+// One corpus export: its dispatch, the search for its run, newer than the one before, and the wait for it.
+const exportCalls = (run: number) => [
   'gh run list --repo younotafish/DictProp-VPS --workflow sentence-backfill.yml --event workflow_dispatch --limit 1 --json databaseId --jq if length == 0 then 0 else .[0].databaseId end',
   'gh workflow run sentence-backfill.yml --repo younotafish/DictProp-VPS --ref main -f operation=corpus-export',
-  'gh run list --repo younotafish/DictProp-VPS --workflow sentence-backfill.yml --event workflow_dispatch --limit 30 --json databaseId,createdAt --jq .[] | select(.databaseId > 100 and .createdAt >= "<time>") | .databaseId',
-  'gh run view 101 --repo younotafish/DictProp-VPS --json jobs --jq .jobs[] | select(.name == "corpus-export" and .conclusion != "skipped") | .name',
-  'gh run view 101 --repo younotafish/DictProp-VPS --json status,conclusion --jq [.status, .conclusion] | @tsv',
-  'fetch-workflow-export.sh 101 corpus-export <root>/<scenario>/cycle/current-corpus.json',
+  `gh run list --repo younotafish/DictProp-VPS --workflow sentence-backfill.yml --event workflow_dispatch --limit 30 --json databaseId,createdAt --jq .[] | select(.databaseId > ${run - 1} and .createdAt >= "<time>") | .databaseId`,
+  `gh run view ${run} --repo younotafish/DictProp-VPS --json jobs --jq .jobs[] | select(.name == "corpus-export" and .conclusion != "skipped") | .name`,
+  `gh run view ${run} --repo younotafish/DictProp-VPS --json status,conclusion --jq [.status, .conclusion] | @tsv`,
 ];
+const fetchCorpus = (run: number) => `fetch-workflow-export.sh ${run} corpus-export <root>/<scenario>/cycle/current-corpus.json`;
+const START = [...PREPARE, ...exportCalls(101), fetchCorpus(101)];
 const START_LOG = [
   'checking that local Claude claude-opus-5-5 can answer before exporting production data',
   'requesting a fresh encrypted production corpus export',
@@ -601,6 +617,47 @@ test('a setting that is not a positive integer stops the cycle before it takes t
   assert.deepEqual(result.stderr, ['INCREMENTAL_VOCAB_LOOKBACK_HOURS must be a positive integer']);
   assert.deepEqual(result.trace, []);
   assert.equal(existsSync(join(fixture.root, 'bad-setting', 'cycle')), false);
+});
+
+test('a corpus export that ends without success is requested once more, and the cycle goes on with the second', async () => {
+  const result = await cycle('export-retried');
+  assert.equal(result.status, 0, result.stderr.join('\n'));
+  assert.deepEqual(result.trace, [
+    ...PREPARE,
+    ...exportCalls(101),
+    ...exportCalls(102),
+    fetchCorpus(102),
+    vocabSource,
+    savedSource('-'),
+    savedFilter,
+    itemImagePrep('-', '-'),
+    itemImageFilter,
+    pool('-'),
+    exampleSource(),
+    exampleFilter,
+    summary,
+  ]);
+  assert.deepEqual(result.log.slice(0, 6), [
+    ...START_LOG,
+    'corpus export run 101 ended as failure; requesting one more export',
+    'requesting a fresh encrypted production corpus export',
+    'waiting for corpus export run 102',
+  ]);
+  assert.equal(result.lock, false);
+});
+
+test('a second corpus export that ends without success ends the cycle', async () => {
+  const result = await cycle('export-failed');
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.trace, [...PREPARE, ...exportCalls(101), ...exportCalls(102)]);
+  assert.deepEqual(result.log, [
+    ...START_LOG,
+    'corpus export run 101 ended as cancelled; requesting one more export',
+    'requesting a fresh encrypted production corpus export',
+    'waiting for corpus export run 102',
+  ]);
+  assert.deepEqual(result.stderr, ['Corpus export run 102 ended as timed_out']);
+  assert.equal(result.lock, false);
 });
 
 test('a baseline image root without its images folder stops the cycle before it exports anything', async () => {
