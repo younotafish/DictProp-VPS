@@ -27,8 +27,9 @@ function fakeOutbox(queued: PendingReviewMutation[], respond: (mutation: Pending
   const outbox = [...queued];
   const log: string[] = [];
   let removable = true;
+  let reads = 0;
   const drain: ReviewOutboxDrain = {
-    read: () => [...outbox].sort((a, b) => a.event.reviewedAt - b.event.reviewedAt),
+    read: () => { reads++; return [...outbox].sort((a, b) => a.event.reviewedAt - b.event.reviewedAt); },
     apply: async mutation => { log.push(`apply ${mutation.event.id}`); return respond(mutation); },
     isRefused: isRefusedReviewMutation,
     reconcile: async response => { log.push(`reconcile ${response.event.id}`); },
@@ -40,7 +41,7 @@ function fakeOutbox(queued: PendingReviewMutation[], respond: (mutation: Pending
     },
     markUnsynced: async itemIds => { log.push(`unsynced ${itemIds.join(',')}`); },
   };
-  return { drain, outbox, log, keepEverything: () => { removable = false; } };
+  return { drain, outbox, log, reads: () => reads, keepEverything: () => { removable = false; } };
 }
 const applied = (mutation: PendingReviewMutation): AppliedReviewResponse => ({ applied: true, event: mutation.event, items: [] });
 
@@ -56,6 +57,18 @@ test('applied reviews are reconciled and removed oldest first, including one que
     'apply queued-meanwhile', 'reconcile queued-meanwhile', 'remove queued-meanwhile',
   ]);
   assert.deepEqual(fake.outbox, []);
+  assert.equal(fake.reads(), 3, 'a pass for the two queued at the start, one for the review queued meanwhile, and the empty read');
+});
+
+test('the drain reads the outbox once per pass, not once per review', async () => {
+  const fake = fakeOutbox([review('first', 'a', 10), review('second', 'b', 20), review('third', 'c', 30)], async mutation => applied(mutation));
+  await drainReviewOutbox(fake.drain);
+  assert.deepEqual(fake.log.filter(line => line.startsWith('apply')), ['apply first', 'apply second', 'apply third']);
+  assert.equal(fake.reads(), 2, 'one pass, then the read that finds nothing left');
+
+  const empty = fakeOutbox([], async mutation => applied(mutation));
+  await drainReviewOutbox(empty.drain);
+  assert.equal(empty.reads(), 1);
 });
 
 test('a refused review is recorded, removed and handed to the item push, and the drain goes on', async () => {
@@ -78,6 +91,7 @@ test('a passing failure stops the drain and keeps the rest queued for the next o
   await assert.rejects(drainReviewOutbox(fake.drain), /Unavailable: first/);
   assert.deepEqual(fake.log, ['apply first']);
   assert.deepEqual(fake.outbox.map(mutation => mutation.event.id), ['first', 'second']);
+  assert.equal(fake.reads(), 1);
 
   const offline = fakeOutbox([review('first', 'a', 10)], async () => { throw new TypeError('Failed to fetch'); });
   await assert.rejects(drainReviewOutbox(offline.drain), /Failed to fetch/);
@@ -92,6 +106,7 @@ test('a review the outbox will not let go of is sent once per drain, not in a lo
     'apply stuck', 'reconcile stuck', 'remove stuck',
     'apply after', 'reconcile after', 'remove after',
   ]);
+  assert.equal(fake.reads(), 2, 'the second read finds only reviews already sent, and ends the drain');
 });
 
 test('an item the server has never stored travels with its review, holding the schedule from before it', () => {

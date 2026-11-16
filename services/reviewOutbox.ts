@@ -26,25 +26,33 @@ export interface ReviewOutboxDrain {
  * same way and hold back every review queued behind it. Any other failure stops the drain and keeps the rest
  * queued for the next one. A review the outbox won't let go of isn't sent twice in one drain: the next drain
  * resends it, and the server ignores a review it has applied.
+ *
+ * The outbox is read once per pass, not once per review: a pass sends what the read found, and the next pass
+ * picks up the reviews queued meanwhile, which are newer, so the order holds. Nothing else takes a review out
+ * during a pass: useReviewOutbox runs one drain at a time (across tabs too, through a Web Lock where the browser
+ * has them), and undoing a review waits for the drain. A review another tab's drain sent first anyway is one
+ * the server has applied, so it ignores the repeat.
  */
 export async function drainReviewOutbox(outbox: ReviewOutboxDrain): Promise<void> {
   const sent = new Set<string>();
   for (;;) {
-    const mutation = outbox.read().find(pending => !sent.has(pending.event.id));
-    if (!mutation) return;
-    sent.add(mutation.event.id);
-    let response: AppliedReviewResponse;
-    try {
-      response = await outbox.apply(mutation);
-    } catch (error) {
-      if (!outbox.isRefused(error)) throw error;
-      outbox.recordRefusal(mutation, error);
+    const pending = outbox.read().filter(mutation => !sent.has(mutation.event.id));
+    if (pending.length === 0) return;
+    for (const mutation of pending) {
+      sent.add(mutation.event.id);
+      let response: AppliedReviewResponse;
+      try {
+        response = await outbox.apply(mutation);
+      } catch (error) {
+        if (!outbox.isRefused(error)) throw error;
+        outbox.recordRefusal(mutation, error);
+        outbox.remove(mutation.event.id);
+        await outbox.markUnsynced(mutation.itemIds);
+        continue;
+      }
+      await outbox.reconcile(response);
       outbox.remove(mutation.event.id);
-      await outbox.markUnsynced(mutation.itemIds);
-      continue;
     }
-    await outbox.reconcile(response);
-    outbox.remove(mutation.event.id);
   }
 }
 
