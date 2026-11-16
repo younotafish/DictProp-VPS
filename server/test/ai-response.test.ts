@@ -11,9 +11,10 @@ import {
   repairGeneratedExample,
   repairIpa,
   REGISTER_MINIMUM,
+  sortVocabsByUsage,
   vocabValidationIssues,
 } from '../src/ai-response.js';
-import { isUsageAudit } from '../src/usage-audit.js';
+import { isUsageAudit, type UsageStatus } from '../src/shared/usage-audit.js';
 
 const completeCard = (overrides: Record<string, unknown> = {}) => ({
   word: 'bank',
@@ -91,6 +92,22 @@ test('normalization keeps usable siblings, drops unusable cards, and orders sens
   ]);
   assert.ok(result.data.vocabs.every(vocab => isUsageAudit(vocab.usageAudit)));
   assert.ok(result.data.vocabs.every(vocab => vocab.usageAudit.auditedAt === 5678));
+});
+
+test('the card order follows the shared usage priority and puts senses without an audit last, each in its own order', () => {
+  const sense = (id: string, status?: UsageStatus) => ({ id, ...(status ? { usageAudit: { status } } : {}) });
+  const ordered = sortVocabsByUsage([
+    sense('unaudited-first'),
+    sense('rare', 'rare_or_dated'),
+    sense('unaudited-second'),
+    sense('british', 'british_only'),
+    sense('specialized', 'narrow_specialized'),
+    sense('general', 'current_general'),
+    sense('modern', 'modern_american'),
+  ]);
+  assert.deepEqual(ordered.map(vocab => vocab.id), [
+    'modern', 'general', 'specialized', 'british', 'rare', 'unaudited-first', 'unaudited-second',
+  ]);
 });
 
 test('a card that comes back without its word is for the query in word mode and dropped in a sentence', () => {

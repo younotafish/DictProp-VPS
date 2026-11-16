@@ -6,7 +6,7 @@ import {
   corpusSourceHash,
   validateCorpusAuditBundle,
 } from '../src/corpus-audit.js';
-import { resolveUsageArchive } from '../src/usage-audit.js';
+import { resolveUsageArchive } from '../src/shared/usage-audit.js';
 
 const audit = { status: 'modern_american', reason: 'Common in present-day American English.', confidence: 'high', auditedAt: 1 };
 const data = {

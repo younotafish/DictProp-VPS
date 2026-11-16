@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { markLocalAdvancedEnrichment } from '../../scripts/offline/local-advanced-enrichment.mjs';
 import { corpusSourceHash } from '../src/corpus-audit.js';
-import { USAGE_STATUSES, shouldArchiveUsage, type UsageAudit } from '../src/usage-audit.js';
+import { USAGE_STATUSES, shouldArchiveUsage, type UsageAudit } from '../src/shared/usage-audit.js';
 import { repoPath } from './support/paths.js';
 
 const script = repoPath('scripts', 'offline', 'prepare-incremental-vocab-source.mjs');

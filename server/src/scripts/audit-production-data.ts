@@ -10,7 +10,7 @@ import {
 import { fieldsOf } from '../incremental-enrichment.js';
 import { normalizeLabel, sentenceIdentityKey, sentenceTextKey, vocabSenseKey } from '../library-identity.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
-import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../usage-audit.js';
+import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../shared/usage-audit.js';
 import { isAdvancedEnrichmentMarker, validateStoredItem } from '../validation.js';
 import { storedEnrichmentRows } from './support/enrichment-rows.js';
 import { requireOwner } from './support/run.js';
