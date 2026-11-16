@@ -212,6 +212,14 @@ export function undoSessionGrade(session: StudySession, grade: SessionGrade, now
 }
 
 /**
+ * The session once the undo of `grade` has gone through: undone if it's still the session the grade was made in.
+ * An undo that comes back after its session ended, or after another one started, changes nothing.
+ */
+export function applyUndoneGrade(current: StudySession | null, grade: SessionGrade, now: number): StudySession | null {
+  return current?.id === grade.sessionId ? undoSessionGrade(current, grade, now) : current;
+}
+
+/**
  * The position of the card a session shows, from `index` on. Cards that left the study list mid-session
  * (deleted or archived) are passed over, and one passed over since `passedOverFrom` that is back, as an
  * undone delete brings it, is shown again where it was. itemIds.length once no card is left.

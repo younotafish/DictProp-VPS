@@ -11,11 +11,11 @@ import { StoredItem, type ReviewHistory, type ReviewRating, type ReviewTaskType 
 import { BrainCircuit } from 'lucide-react';
 import {
   advanceSession,
+  applyUndoneGrade,
   findSessionCard,
   gradeSessionCard,
   moveSessionTo,
   startStudySession,
-  undoSessionGrade,
   type SessionGrade,
   type StudySession,
 } from '../services/studySession';
@@ -85,8 +85,16 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     setSession(startStudySession(crypto.randomUUID(), queue, Date.now()));
   }, []);
 
+  // While an undo is under way, grading and revealing wait: the undo is about to bring back the card it undoes.
+  const undoing = lastGrade?.undoing ?? false;
+  const sessionIdRef = useLatest(session?.id);
+
+  const reveal = () => {
+    if (!undoing) setSession(revealAnswer);
+  };
+
   const gradeCurrent = (rating: ReviewRating) => {
-    if (!session || !currentItem || !session.revealed) return;
+    if (!session || !currentItem || !session.revealed || undoing) return;
     const eventId = crypto.randomUUID();
     const { grade: sessionGrade, itemIds } = gradeSessionCard(session, currentItem, rating, eventId, Date.now());
     const grade: LastGrade = { ...sessionGrade, undoing: false };
@@ -108,11 +116,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     setUndoError('');
     try {
       await onUndoReview(grade.eventId);
-      setSession(current => current ? undoSessionGrade(current, grade, Date.now()) : null);
-      setLastGrade(null);
+      // The session may have ended, or another started, while the undo was on its way.
+      setSession(current => applyUndoneGrade(current, grade, Date.now()));
+      setLastGrade(current => current?.eventId === grade.eventId ? null : current);
     } catch (error) {
       setLastGrade(current => current?.eventId === grade.eventId ? { ...current, undoing: false } : current);
-      setUndoError(error instanceof Error ? error.message : 'The review could not be undone.');
+      if (sessionIdRef.current === grade.sessionId) {
+        setUndoError(error instanceof Error ? error.message : 'The review could not be undone.');
+      }
     }
   };
 
@@ -132,14 +143,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   // The session's keys (services/studyKeys.ts). One listener while the session has the keys, reading the
   // session and the handlers as they are now, so typing an answer doesn't register it again.
-  const keyContext = useLatest({ session, currentItem, lastGrade, gradeCurrent, undoLastGrade });
+  const keyContext = useLatest({ session, currentItem, lastGrade, reveal, gradeCurrent, undoLastGrade });
   const keysActive = !!session && !interactionLocked;
   useEffect(() => {
     if (!keysActive) return;
     // In the capture phase the session gets its keys before the window-level shortcuts (1-3 also switch
     // tabs), and stops the ones it uses so no other shortcut reacts to them.
     const handleSessionKey = (event: KeyboardEvent) => {
-      const { session, currentItem, lastGrade, gradeCurrent, undoLastGrade } = keyContext.current;
+      const { session, currentItem, lastGrade, reveal, gradeCurrent, undoLastGrade } = keyContext.current;
       if (!session) return;
       const action = resolveStudyKey(event, {
         phase: currentItem ? 'card' : 'summary',
@@ -155,7 +166,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       event.stopImmediatePropagation();
       if (action.type === 'grade') gradeCurrent(action.rating);
       else if (action.type === 'undo') void undoLastGrade();
-      else if (action.type === 'reveal') setSession(revealAnswer);
+      else if (action.type === 'reveal') reveal();
     };
     window.addEventListener('keydown', handleSessionKey, true);
     return () => window.removeEventListener('keydown', handleSessionKey, true);
@@ -175,7 +186,6 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   if (session) {
     const undo = () => void undoLastGrade();
-    const undoing = lastGrade?.undoing ?? false;
     if (!currentItem) {
       return (
         <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-24">
@@ -201,7 +211,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           undoError={undoError}
           onUndo={undo}
           onClose={closeSession}
-          onReveal={() => setSession(revealAnswer)}
+          onReveal={reveal}
           onTypeAnswer={typedAnswer => setSession(current => current ? { ...current, typedAnswer } : null)}
           onGrade={gradeCurrent}
           onOpenExampleSentence={onOpenExampleSentence}

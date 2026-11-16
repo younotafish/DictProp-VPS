@@ -44,6 +44,17 @@ test('U undoes the last grade while one can be undone and no undo is under way, 
   assert.equal(resolveStudyKey(press('u'), card({ canUndo: true, undoing: true })), null, 'already undoing');
 });
 
+test('while an undo is under way, 1-4 and Space or Enter do nothing, and stay the session\'s', () => {
+  for (const key of ['1', '2', '3', '4']) {
+    assert.deepEqual(resolveStudyKey(press(key), card({ revealed: true, canUndo: true, undoing: true })), { type: 'swallow' }, key);
+  }
+  for (const key of [' ', 'Enter']) {
+    assert.deepEqual(resolveStudyKey(press(key), card({ canUndo: true, undoing: true })), { type: 'swallow' }, key);
+    // A control the keyboard focused still gets the key.
+    assert.equal(resolveStudyKey(press(key), card({ canUndo: true, undoing: true, onControl: true })), null, `${key} on a control`);
+  }
+});
+
 test('keys with a modifier, keys a view already used, typing and an open dialog are left alone', () => {
   const ready = card({ revealed: true, canUndo: true });
   for (const key of ['1', 'u', ' ', 'Enter']) {

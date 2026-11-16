@@ -39,16 +39,19 @@ const RATING_KEYS: ReadonlyMap<string, ReviewRating> = new Map(RATINGS.map((rati
 /**
  * What a key does in a study session, or null when the session leaves it alone. The session owns 1-4 even
  * before the answer shows: an early press does nothing rather than switch tabs mid-session. U undoes the last
- * grade, and Space or Enter shows the answer unless the keyboard focused a control they should press.
+ * grade, and Space or Enter shows the answer unless the keyboard focused a control they should press. While an
+ * undo is under way, grading and revealing wait: the undo is about to bring back the card it undoes.
  */
 export function resolveStudyKey(event: StudyKeyEvent, state: StudyKeyState): StudyKeyAction | null {
   if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return null;
   if (state.typing || state.dialogOutside) return null;
   const rating = RATING_KEYS.get(event.key);
-  if (rating) return state.phase === 'card' && state.revealed ? { type: 'grade', rating } : { type: 'swallow' };
+  if (rating) {
+    return state.phase === 'card' && state.revealed && !state.undoing ? { type: 'grade', rating } : { type: 'swallow' };
+  }
   if (event.key.toLowerCase() === 'u' && state.canUndo && !state.undoing) return { type: 'undo' };
   if ((event.key === ' ' || event.key === 'Enter') && state.phase === 'card' && !state.revealed && !state.onControl) {
-    return { type: 'reveal' };
+    return state.undoing ? { type: 'swallow' } : { type: 'reveal' };
   }
   return null;
 }

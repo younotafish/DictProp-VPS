@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { StoredItem } from '../../types.ts';
 import {
   advanceSession,
+  applyUndoneGrade,
   buildReviewQueue,
   findSessionCard,
   formatReviewInterval,
@@ -197,6 +198,17 @@ test('undoing a grade goes back to its card, revealed, and takes back its count 
   const moved = undoSessionGrade({ ...after, itemIds: ['a', 'b', 'c', 'x', 'b'], ratings: { again: 0, hard: 0, good: 0, easy: 0 } }, grade, 7_000);
   assert.deepEqual(moved.itemIds, ['a', 'b', 'c', 'x', 'b']);
   assert.equal(moved.ratings.again, 0);
+});
+
+test('an undo that comes back changes only the session its grade was made in', () => {
+  const before = session();
+  const { grade, itemIds } = gradeSessionCard(before, vocab('b', 'walk'), 'again', 'event', 2_000);
+  const after = advanceSession(before, itemIds, 'again', 2_000);
+  assert.deepEqual(applyUndoneGrade(after, grade, 7_000), undoSessionGrade(after, grade, 7_000));
+  // The session ended, or another started, while the undo was on its way.
+  assert.equal(applyUndoneGrade(null, grade, 7_000), null);
+  const next = { ...after, id: 'next-session' };
+  assert.equal(applyUndoneGrade(next, grade, 7_000), next);
 });
 
 test('time until a review reads in whole days, else hours, else minutes, and now when under a minute', () => {

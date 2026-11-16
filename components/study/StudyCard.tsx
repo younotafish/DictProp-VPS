@@ -18,7 +18,8 @@ interface StudyCardProps {
   session: StudySession;
   /** The card at session.index. */
   item: StoredItem;
-  /** Whether the session's last grade can still be undone, and whether an undo is under way. */
+  /** Whether the session's last grade can still be undone, and whether an undo is under way (which holds the
+   *  reveal and the grades until it's done). */
   canUndo: boolean;
   undoing: boolean;
   undoError: string;
@@ -134,7 +135,8 @@ export function StudyCard({
         ) : (
           <button
             onClick={onReveal}
-            className="mt-12 mx-auto h-12 px-6 inline-flex items-center gap-2 bg-white border border-slate-300 rounded-lg font-semibold text-slate-700 hover:bg-slate-100"
+            disabled={undoing}
+            className="mt-12 mx-auto h-12 px-6 inline-flex items-center gap-2 bg-white border border-slate-300 rounded-lg font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
             aria-keyshortcuts="Space Enter"
           >
             <Eye size={18} /> Reveal answer
@@ -148,8 +150,9 @@ export function StudyCard({
             <button
               key={rating}
               onClick={() => onGrade(rating)}
+              disabled={undoing}
               aria-keyshortcuts={String(i + 1)}
-              className={`h-14 rounded-lg border font-semibold capitalize ${RATING_STYLES[rating]}`}
+              className={`h-14 rounded-lg border font-semibold capitalize disabled:opacity-50 ${RATING_STYLES[rating]}`}
             >
               <span className="block">{rating}</span>
               <span className="block text-[11px] font-normal opacity-75">{formatReviewInterval(previews[rating].interval)}</span>
