@@ -13,7 +13,7 @@ export function useBatchImport(
   { latestItemsRef, persistChangedItems }: Pick<Library, 'latestItemsRef' | 'persistChangedItems'>,
   { setConfirmModal, showNotice }: Pick<Overlays, 'setConfirmModal' | 'showNotice'>,
   { handleSave }: Pick<LibraryActions, 'handleSave'>,
-  { runSpeechGenerationRef }: Pick<SpeechBackfill, 'runSpeechGenerationRef'>,
+  { runSpeechGeneration }: Pick<SpeechBackfill, 'runSpeechGeneration'>,
 ) {
   // The import under way, shown in the notebook; null while none runs.
   const [batchImportProgress, setBatchImportProgress] = useState<BatchImportProgress | null>(null);
@@ -67,9 +67,9 @@ export function useBatchImport(
         const imported = new Set(importedIds);
         await persistChangedItems(latestItemsRef.current.filter(item => imported.has(item.data.id)), 'Batch import');
       })().catch(e => warn('Post-batch persistence failed:', e));
-      runSpeechGenerationRef.current(importedIds, { silent: true }).catch(e => warn('Post-batch speech generation failed:', e));
+      runSpeechGeneration(importedIds, { silent: true }).catch(e => warn('Post-batch speech generation failed:', e));
     }
-  }, []);
+  }, [runSpeechGeneration]);
 
   return { batchImportProgress, handleBatchImport };
 }
