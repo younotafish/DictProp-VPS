@@ -64,8 +64,16 @@ test('a band tap reads its example; a single example answers both bands, and a p
   assert.equal(zoneText(phrase('q', [vocabCard('x', ['Ex.'])]), 0), 'q');
   assert.equal(zoneText(phrase('q', [vocabCard('x', ['Ex.'])]), 1), 'Ex.');
   assert.equal(zoneText(phrase('q', []), 1), 'q');
-  // The band counts readable examples but indexes the full list: a blank first example still takes band 0.
-  assert.equal(zoneText(vocab('a', ['', 'Two']), 0), '');
+});
+
+test('band taps read the examples the bands are counted from: after a blank first example, both bands read the second', () => {
+  const blankFirst = vocab('a', ['', 'Two', 'Three']);
+  assert.equal(wordZoneBands(blankFirst), 1);
+  assert.equal(zoneText(blankFirst, 0), 'Two');
+  assert.equal(zoneText(blankFirst, 1), 'Two');
+  assert.equal(zoneText(vocab('a', ['One', '']), 1), 'One');
+  // Without markers, as auto-play reads them; the reader strips them anyway.
+  assert.equal(zoneText(vocab('a', ['The {{cat}} sat.', 'A [[rare]] word.']), 1), 'A rare word.');
 });
 
 test('the auto-play preload takes listed sentences in sentence review, else each card\'s auto-play texts, and stored pictures', () => {

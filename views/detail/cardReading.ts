@@ -55,16 +55,16 @@ export const wordZoneBands = (item: StoredItem | null): number => {
 
 /**
  * What a tap in eyes-free band `zone` reads: a phrase, then its first Key Vocabulary example (or the phrase
- * again); a word's first, then second example, where a single example answers both bands. Null when the word has
- * no example. The band counts readable examples but indexes the full list, as it always has.
+ * again); a word's first, then second auto-play text, the examples its bands are counted from (wordZoneBands),
+ * where a single one answers both bands. Null when the word has none.
  */
 export const zoneText = (item: StoredItem, zone: 0 | 1): string | null => {
   if (isPhraseItem(item)) {
     const phrase = item.data as SearchResult;
     return zone === 0 ? phrase.query : (keyVocabExample(phrase) || phrase.query);
   }
-  const count = autoPlayTexts(item).length;
-  return count > 0 ? exampleAt(item, Math.min(zone, count - 1)) : null;
+  const texts = autoPlayTexts(item);
+  return texts.length > 0 ? texts[Math.min(zone, texts.length - 1)] : null;
 };
 
 /**
