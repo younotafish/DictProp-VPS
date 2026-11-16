@@ -92,6 +92,44 @@ const WordCheckItem: React.FC<{
   </button>
 );
 
+// ─── Offline ────────────────────────────────────────────────────────────────
+
+/** What the analyzer says offline, under Scan and under Analyze & Save: both need the connection. */
+const OfflineNotice: React.FC = () => (
+  <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2 mt-2 text-center">
+    Offline. Text analysis requires an internet connection.
+  </p>
+);
+
+/**
+ * The bar under the words being chosen: Analyze & Save for the chosen ones. Offline it's disabled, with Scan's notice
+ * in place of its hint, instead of failing every word.
+ */
+export const AnalyzeBar: React.FC<{ count: number; isOnline: boolean; onAnalyze: () => void }> = ({ count, isOnline, onAnalyze }) => {
+  const disabled = count === 0 || !isOnline;
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-10 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-gradient-to-t from-white via-white to-transparent">
+      <button
+        onClick={onAnalyze}
+        disabled={disabled}
+        className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all ${
+          disabled
+            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+            : 'bg-indigo-600 hover:bg-indigo-700 text-white active:scale-[0.98] shadow-lg'
+        }`}
+      >
+        <Sparkles size={16} />
+        Analyze & Save {count > 0 ? `(${count})` : ''}
+      </button>
+      {isOnline ? (
+        <p className="text-[10px] text-slate-400 text-center mt-2">
+          Each word will be fully analyzed with all meanings and saved to your notebook
+        </p>
+      ) : <OfflineNotice />}
+    </div>
+  );
+};
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 interface TextAnalyzerProps {
@@ -194,7 +232,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
 
   const handleAnalyzeAndSave = useCallback(async () => {
     const wordsToAnalyze = detectedWords.filter(w => selectedWords.has(w.word));
-    if (wordsToAnalyze.length === 0) return;
+    if (wordsToAnalyze.length === 0 || !isOnline) return;
 
     setStep('analyzing');
     setAnalysisCurrent(0);
@@ -241,7 +279,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     }
 
     setStep('done');
-  }, [detectedWords, selectedWords, savedItems, onSave]);
+  }, [detectedWords, selectedWords, savedItems, onSave, isOnline]);
 
   // ── Navigation ─────────────────────────────────────────────────────────
 
@@ -361,11 +399,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
               </p>
             )}
 
-            {!isOnline && (
-              <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2 mt-2 text-center">
-                Offline. Text analysis requires an internet connection.
-              </p>
-            )}
+            {!isOnline && <OfflineNotice />}
 
             {/* Nothing found: a note, with nothing to retry */}
             {nothingFound && (
@@ -427,8 +461,9 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
         )}
 
         {/* ══════ STEP 2: SELECT WORDS ══════ */}
+        {/* The list leaves room under its last word for the bar, which Scan's notice makes taller offline. */}
         {step === 'selecting' && (
-          <div className="px-4 pt-3 pb-[calc(6rem+env(safe-area-inset-bottom))]">
+          <div className={`px-4 pt-3 ${isOnline ? 'pb-[calc(6rem+env(safe-area-inset-bottom))]' : 'pb-[calc(7rem+env(safe-area-inset-bottom))]'}`}>
             {/* Chinese translate-first step — show the English the AI actually scanned */}
             {translation && (
               <div className="mb-3 px-3 py-2.5 rounded-xl bg-violet-50 border border-violet-100">
@@ -463,23 +498,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
             </div>
 
             {/* Bottom CTA */}
-            <div className="fixed bottom-0 left-0 right-0 z-10 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-gradient-to-t from-white via-white to-transparent">
-              <button
-                onClick={handleAnalyzeAndSave}
-                disabled={selectedWords.size === 0}
-                className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all ${
-                  selectedWords.size === 0
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white active:scale-[0.98] shadow-lg'
-                }`}
-              >
-                <Sparkles size={16} />
-                Analyze & Save {selectedWords.size > 0 ? `(${selectedWords.size})` : ''}
-              </button>
-              <p className="text-[10px] text-slate-400 text-center mt-2">
-                Each word will be fully analyzed with all meanings and saved to your notebook
-              </p>
-            </div>
+            <AnalyzeBar count={selectedWords.size} isOnline={isOnline} onAnalyze={handleAnalyzeAndSave} />
           </div>
         )}
 
