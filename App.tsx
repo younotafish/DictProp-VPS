@@ -209,6 +209,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         onUndo={undoLastChange}
         aboveTabBar={!detailContext}
         holdUpdate={!!detailContext || !!cardPopup}
+        liftAbovePopup={!!cardPopup && (!!undoMessage || libraryWriteFailed)}
       />
 
       {detailContext && (

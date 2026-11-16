@@ -25,6 +25,7 @@ const quiet: StackProps = {
   onUndo: () => {},
   aboveTabBar: true,
   holdUpdate: false,
+  liftAbovePopup: false,
 };
 const renderStack = (props: Partial<StackProps> = {}) => renderToStaticMarkup(createElement(AppStatusPills, { ...quiet, ...props }));
 /** The class list of the stack's own element, the first in the markup. */
@@ -33,10 +34,16 @@ const refuseOneReview = () => recordRefusedReview('u1', { itemId: 'i1', word: 'g
 
 test('the stack is a fixed, centred column that lets taps through between its pills', () => {
   const classes = stackClasses(renderStack());
-  for (const name of ['fixed', 'left-1/2', '-translate-x-1/2', 'z-[80]', 'flex', 'flex-col', 'items-center', 'gap-2', 'pointer-events-none']) {
+  for (const name of ['fixed', 'left-1/2', '-translate-x-1/2', 'flex', 'flex-col', 'items-center', 'gap-2', 'pointer-events-none']) {
     assert.ok(classes.includes(name), name);
   }
-  assert.ok(stackClasses(renderStack({ undoMessage: 'Deleted “gamut”' })).includes('z-[110]'), 'an undo offer lifts it');
+});
+
+test('the stack rises above the card popup only when told to, and otherwise stays beneath every dialog', () => {
+  assert.ok(stackClasses(renderStack({ liftAbovePopup: true, undoMessage: 'Deleted “gamut”' })).includes('z-[110]'));
+  const beneath = stackClasses(renderStack({ undoMessage: 'Deleted “gamut”' }));
+  assert.ok(beneath.includes('z-[80]'), 'an undo offer alone no longer lifts it over open dialogs');
+  assert.ok(!beneath.includes('z-[110]'));
 });
 
 test('on the tabs the stack floats above the tab bar and a tab\'s footer; over a card it starts at --card-float-bottom', () => {

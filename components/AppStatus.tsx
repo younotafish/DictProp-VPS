@@ -53,6 +53,11 @@ interface AppStatusPillsProps {
   aboveTabBar: boolean;
   /** An open card or the card popup covers the page, so a new version's reload offer waits for it to close. */
   holdUpdate: boolean;
+  /**
+   * The card popup is open and a notice the user has to reach over it shows (the undo offer, the couldn't-save alert):
+   * the stack rises above the popup. Otherwise it stays beneath the popup and every dialog.
+   */
+  liftAbovePopup: boolean;
 }
 
 /** The speech sweep's progress line, with its rough time left. */
@@ -71,13 +76,13 @@ const describeSpeechGeneration = ({ current, total }: { current: number; total: 
  * slot, then the background jobs), then the long-lived notices at the bottom (refused reviews, then the update).
  * Both slots are always rendered, under the same parent: the notices that portal into them would vanish with a slot
  * rendered conditionally or moved. On the tabs the stack floats above the tab bar, so it never covers a tab; over a card
- * it starts where the card's floating controls end. An undo offer lifts it above the card popup.
+ * it starts where the card's floating controls end.
  */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
   userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress,
-  ttsGenProgress, onStopSpeechGeneration, undoMessage, onUndo, aboveTabBar, holdUpdate,
+  ttsGenProgress, onStopSpeechGeneration, undoMessage, onUndo, aboveTabBar, holdUpdate, liftAbovePopup,
 }) => (
-  <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 ${undoMessage ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
+  <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
       <NoticePill tone="dark" actions={[{ label: 'Undo', onClick: onUndo }]}>{undoMessage}</NoticePill>
     )}
