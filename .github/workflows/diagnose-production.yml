@@ -99,6 +99,11 @@ jobs:
             echo '=== CONTAINERS ==='
             docker compose ps
             docker stats --no-stream || true
+            echo '=== DOCKER STORAGE ==='
+            # What holds the disk besides the database: every image with the containers using it, and the build cache.
+            docker info --format 'Docker {{.ServerVersion}}, storage driver {{.Driver}}' || true
+            docker ps -a --format '{{.Names}} {{.Image}} {{.Status}}' || true
+            docker system df -v || true
             echo '=== RELEVANT PROCESSES ==='
             # Command lines can carry credentials, so the rest of a line after a key, token, secret or password is masked.
             ps -eo pid,ppid,stat,etime,%cpu,%mem,cmd \
