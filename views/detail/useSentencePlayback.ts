@@ -1,15 +1,13 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { SentenceData, StoredItem } from '../../types';
-import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { getPlaybackState, getTimingsFor, pauseCurrent, resumeCurrent, seekCurrent, speakNatural } from '../../services/neuralTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../../services/ttsAlignment';
-import { getTtsStyle, setTtsStyle } from '../../services/ttsSettings';
+import { setTtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
-import { SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
 import { readInTurnOrToggle } from './useExampleSpeech';
 
 interface SentencePlaybackOptions {
-  /** The sentence under review; a listen writes the updated copy back so the next one builds on it. */
+  /** The sentence under review. */
   currentSentenceRef: RefObject<StoredItem | null>;
   sentenceItemsRef: RefObject<StoredItem[] | undefined>;
   currentGroupIndexRef: RefObject<number>;
@@ -18,45 +16,34 @@ interface SentencePlaybackOptions {
   stopAutoPlay: () => void;
   setCurrentGroupIndex: Dispatch<SetStateAction<number>>;
   setCurrentItemIndex: Dispatch<SetStateAction<number>>;
-  onSave: (item: StoredItem) => void;
+  /** The sentence on screen was heard to its end; the view decides whether that writes anything. */
+  onListened: (sentence: StoredItem) => void;
 }
 
 /**
  * Sentence review's reading: the sentence from the top, from a chosen word, or after moving to another sentence.
  * All speech funnels through the shared playback state, so the speaker icons stay in sync and a second press
  * pauses, resumes or restarts what's playing. Sentence auto-play owns the audio chain while it runs: these
- * readers may pause or resume its clip, but never start one over it. A fully heard read counts as a listen.
+ * readers may pause or resume its clip, but never start one over it. A read heard to its end is a listen, which
+ * onListened hears about while its sentence is still the one on screen.
  */
 export function useSentencePlayback({
   currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay,
-  setCurrentGroupIndex, setCurrentItemIndex, onSave,
+  setCurrentGroupIndex, setCurrentItemIndex, onListened,
 }: SentencePlaybackOptions) {
-  const recordSentenceExposure = useCallback((expectedSentenceId?: string) => {
+  // A finished read of `expectedSentenceId` (by default, whatever is on screen) is a listen of the sentence on
+  // screen, unless the learner has moved on to another one since.
+  const noteListened = useCallback((expectedSentenceId?: string) => {
     const sentence = currentSentenceRef.current;
     if (!sentence || (expectedSentenceId && sentence.data.id !== expectedSentenceId)) return;
-    const sentenceData = sentence.data as SentenceData;
-    // Listening to an unsaved word-card preview must not silently save it. Catalog previews already
-    // have stable progress identities and are intentionally persisted like ordinary saved sentences.
-    if (sentence.data.id.startsWith(SENTENCE_PREVIEW_ID_PREFIX) && !sentenceData.catalogSentenceId) return;
-    const now = Date.now();
-    const speechStyle = getTtsStyle();
-    const updated: StoredItem = {
-      ...sentence,
-      data: sentenceData.preferredSpeechStyle === speechStyle
-        ? sentenceData
-        : { ...sentenceData, preferredSpeechStyle: speechStyle },
-      srs: SRSAlgorithm.updateAfterExposure(sentence.srs, now),
-      updatedAt: now,
-    };
-    currentSentenceRef.current = updated;
-    onSave(updated);
-  }, [onSave, currentSentenceRef]);
+    onListened(sentence);
+  }, [onListened, currentSentenceRef]);
 
   // E: read the saved sentence. Press again to pause; once more to resume.
   const readCurrentSentence = useCallback(() => {
     const sentence = currentSentenceRef.current;
     if (!sentence) return;
-    const exposureSentenceId = sentence.data.id;
+    const sentenceId = sentence.data.id;
     const sentences = [stripSentenceMarkers((sentence.data as SentenceData).text)].filter(Boolean);
     if (!sentences.length) return;
 
@@ -69,8 +56,8 @@ export function useSentencePlayback({
       return;
     }
 
-    readInTurnOrToggle(sentences, stopAutoPlay, () => recordSentenceExposure(exposureSentenceId));
-  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
+    readInTurnOrToggle(sentences, stopAutoPlay, () => noteListened(sentenceId));
+  }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Speak the saved sentence from the top (shared by the swipe gestures and the arrow keys).
   const speakCurrentSentence = useCallback(() => {
@@ -82,9 +69,9 @@ export function useSentencePlayback({
     stopAutoPlay();
     speakNatural(sentence, {
       allowDownload: true,
-      onEnd: () => recordSentenceExposure(s.data.id),
+      onEnd: () => noteListened(s.data.id),
     });
-  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
+  }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Tap the sentence (or context-aware Space): pause it if it's playing, resume if paused, otherwise
   // (re)start it from the top. Routed through the shared playback state so it stays in sync with the
@@ -104,9 +91,9 @@ export function useSentencePlayback({
     stopAutoPlay();
     speakNatural(sentence, {
       allowDownload: true,
-      onEnd: () => recordSentenceExposure(s.data.id),
+      onEnd: () => noteListened(s.data.id),
     });
-  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
+  }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Play the current sentence starting at a clicked/selected word (by its char offset in the stripped
   // sentence). If this sentence's clip is already the active audio, seek it in place (seamless);
@@ -137,9 +124,9 @@ export function useSentencePlayback({
     speakNatural(textToSpeak, {
       allowDownload: true,
       startAt: startAt ?? undefined,
-      onEnd: () => recordSentenceExposure(s.data.id),
+      onEnd: () => noteListened(s.data.id),
     }); // (re)start AT the word
-  }, [recordSentenceExposure, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
+  }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Enter: play from the word the caret/selection sits in. No-op if not in a word, so it never hijacks
   // Enter elsewhere. Words carry data-word-offset (see HighlightedSentence).
@@ -174,16 +161,16 @@ export function useSentencePlayback({
     if (!keepAutoPlaying && sentence && next) {
       speakNatural(sentence, {
         allowDownload: true,
-        onEnd: () => recordSentenceExposure(next.data.id),
+        onEnd: () => noteListened(next.data.id),
       });
     }
   }, [
-    recordSentenceExposure, speakCurrentSentence, sentenceItemsRef, isSentenceAutoPlayingRef, currentGroupIndexRef,
+    noteListened, speakCurrentSentence, sentenceItemsRef, isSentenceAutoPlayingRef, currentGroupIndexRef,
     setCurrentGroupIndex, setCurrentItemIndex,
   ]);
 
   return {
-    recordSentenceExposure, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
+    noteListened, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
     goToSentence,
   };
 }

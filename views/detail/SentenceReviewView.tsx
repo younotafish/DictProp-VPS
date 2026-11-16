@@ -11,11 +11,12 @@ import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
 import { ensureTimings, prefetchTTS, preloadAudio, stopCurrent } from '../../services/neuralTts';
-import { setTtsStyle, type TtsStyle } from '../../services/ttsSettings';
+import { getTtsStyle, setTtsStyle, type TtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { preloadSession } from './cardReading';
-import { resolveSentenceUnderReview } from './sentenceUnderReview';
+import { resolveSentenceUnderReview, SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
+import { withSpeechStyle } from './speechStyle';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { SentenceHero } from './SentenceHero';
@@ -143,16 +144,22 @@ export function SentenceReviewView({
   const rememberCurrentSentenceSpeechStyle = useCallback((nextStyle: TtsStyle) => {
     const sentence = currentSentenceRef.current;
     if (!sentence || isSentencePreview) return;
-    const sentenceData = sentence.data as SentenceData;
-    if (sentenceData.preferredSpeechStyle === nextStyle) return;
-    const updated: StoredItem = {
-      ...sentence,
-      data: { ...sentenceData, preferredSpeechStyle: nextStyle },
-      updatedAt: Date.now(),
-    };
+    const updated = withSpeechStyle(sentence, nextStyle, Date.now());
+    if (!updated) return;
     currentSentenceRef.current = updated;
     onSaveRef.current(updated);
   }, [isSentencePreview, onSaveRef]);
+
+  // A sentence heard to its end remembers the voice it was heard in. Nothing is written when it already does, so a
+  // listen no longer saves and pushes the sentence each time. An unsaved word-card preview is never saved by a
+  // listen; a catalog line, with its stable progress identity, is: its first listen creates its record.
+  const handleListened = useCallback((sentence: StoredItem) => {
+    if (sentence.data.id.startsWith(SENTENCE_PREVIEW_ID_PREFIX) && !(sentence.data as SentenceData).catalogSentenceId) return;
+    const updated = withSpeechStyle(sentence, getTtsStyle(), Date.now());
+    if (!updated) return;
+    currentSentenceRef.current = updated;
+    onSaveRef.current(updated);
+  }, [onSaveRef]);
 
   // Sentence stats (mirror the word-card stats, computed across the saved sentences).
   const sentenceMastery = !isSentencePreview && currentSentence?.srs
@@ -226,11 +233,11 @@ export function SentenceReviewView({
   const getPreloadSession = (): PreloadSession => preloadSession(sentenceItems, true);
 
   const {
-    recordSentenceExposure, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
+    noteListened, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
     goToSentence,
   } = useSentencePlayback({
     currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay,
-    setCurrentGroupIndex, setCurrentItemIndex, onSave,
+    setCurrentGroupIndex, setCurrentItemIndex, onListened: handleListened,
   });
 
   useAutoPlayReader({
@@ -252,7 +259,7 @@ export function SentenceReviewView({
       title: stripSentenceMarkers(currentSentenceText || ''),
       artist: (currentSentence?.data as SentenceData)?.sourceWord || 'DictProp',
     }),
-    onRoundListened: recordSentenceExposure,
+    onRoundListened: noteListened,
   });
 
   // Fresh ref to the source card so the Cmd/Ctrl+1–4 readers read current data without re-subscribing.
@@ -346,7 +353,7 @@ export function SentenceReviewView({
     commandHeld: isCommandHeld,
     onWordTouchStartCapture: isMobile ? handleMobileWordTouchStart : undefined,
     onWordClickCapture: handleSentenceWordClickCapture,
-    onListened: () => recordSentenceExposure(currentSentence.data.id),
+    onListened: () => noteListened(currentSentence.data.id),
     copyState: sentenceCopy,
     onCopy: () => { void handleCopySentence(); },
   } : null;
