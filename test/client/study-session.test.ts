@@ -20,7 +20,9 @@ import {
   gradeSessionCard,
   isDueForReview,
   isSessionCardLive,
+  listeningPrompt,
   moveSessionTo,
+  openCardGroup,
   receiptText,
   requeueShortStep,
   resumeSession,
@@ -30,6 +32,7 @@ import {
   startStudySession,
   summarizeSession,
   undoSessionGrade,
+  upcomingListeningPrompts,
   type StudySession,
 } from '../../services/studySession.ts';
 
@@ -137,7 +140,7 @@ test('study content carries the forms and synonyms a typed answer is checked aga
   const leadCard = { ...lead, data: { ...lead.data, forms: ['leads, led'], synonyms: ['guide'] } };
   assert.deepEqual(getStudyContent(leadCard), {
     word: 'lead', sense: 'verb: guide', chinese: 'meaning', definition: 'definition', example: '',
-    forms: ['leads, led'], synonyms: ['guide'],
+    forms: ['leads, led'], synonyms: ['guide'], ipa: '',
   });
 
   const giveUp: VocabCard = {
@@ -155,6 +158,26 @@ test('study content carries the forms and synonyms a typed answer is checked aga
   // Another word's card fills in the meaning, but its forms and synonyms aren't the phrase's.
   const other = getStudyContent(phrase('give up smoking'));
   assert.deepEqual([other.chinese, other.definition, other.forms, other.synonyms], ['放弃', 'stop trying', [], []]);
+});
+
+test('study content says how the card is said: a word\'s IPA, a phrase\'s pronunciation', () => {
+  const word = vocab('w', 'crestfallen');
+  assert.equal(getStudyContent({ ...word, data: { ...word.data, ipa: '/ˈkrestˌfɔːlən/' } }).ipa, '/ˈkrestˌfɔːlən/');
+  assert.equal(getStudyContent(word).ipa, '');
+  const phrase: StoredItem = {
+    type: 'phrase',
+    data: { id: 'p', query: 'give up', translation: '放弃', grammar: '', visualKeyword: '', pronunciation: '/ɡɪv ˈʌp/', timestamp: 0, vocabs: [] },
+    srs: word.srs,
+    savedAt: 0,
+  };
+  assert.equal(getStudyContent(phrase).ipa, '/ɡɪv ˈʌp/');
+});
+
+test('a card\'s listening prompt is the example it plays while its task is listening, and none otherwise', () => {
+  const examples = ['She looked {{crestfallen}}.'];
+  assert.equal(listeningPrompt(vocab('l', 'crestfallen', { strength: 70, reviews: 5, examples })), examples[0]);
+  assert.equal(listeningPrompt(vocab('c', 'crestfallen', { strength: 70, reviews: 4, examples })), null, 'cloze');
+  assert.equal(listeningPrompt(vocab('m', 'crestfallen', { examples })), null, 'meaning');
 });
 
 test('rating interval labels remain compact', () => {
@@ -257,6 +280,36 @@ test('a card reviewed elsewhere since the session began is passed over; the sess
   const cards = new Map([['x', vocab('x', 'x')], ['y', vocab('y', 'y', { reviews: 1, lastReviewed: 2_000 })], ['z', vocab('z', 'z')]]);
   const live = (id: string) => isSessionCardLive(cards.get(id), current);
   assert.equal(findSessionCard(['x', 'y', 'z'], 1, undefined, live), 2);
+});
+
+test('the next three listening prompts after the card shown are fetched ahead, skipping cards that left the session', () => {
+  const examples = (word: string) => [`They were ${word} today.`];
+  const listening = (id: string, extra: { lastReviewed?: number } = {}) =>
+    vocab(id, id, { strength: 70, reviews: 5, examples: examples(id), ...extra });
+  const cards = new Map([
+    ['now', listening('now')],
+    ['meaning', vocab('meaning', 'meaning')],
+    ['one', listening('one')],
+    ['elsewhere', listening('elsewhere', { lastReviewed: 2_000 })],
+    ['two', listening('two')],
+    ['three', listening('three')],
+    ['four', listening('four')],
+  ]);
+  const current = session({ itemIds: ['now', 'meaning', 'gone', 'one', 'elsewhere', 'two', 'three', 'four'], startedAt: 1_000, grades: [] });
+  const get = (id: string) => cards.get(id);
+  assert.deepEqual(upcomingListeningPrompts(current, 0, get), ['They were one today.', 'They were two today.', 'They were three today.']);
+  assert.deepEqual(upcomingListeningPrompts(current, 5, get, 2), ['They were three today.', 'They were four today.']);
+  assert.deepEqual(upcomingListeningPrompts(current, 7, get), [], 'the last card has none after it');
+});
+
+test('Open card lists the card among the study items that share its spelling, so the card view reaches its other senses', () => {
+  const items = [
+    vocab('lead-verb', 'lead'), vocab('walk', 'walk'), vocab('lead-noun', 'Lead '), vocab('lead-metal', 'lead'),
+  ];
+  assert.deepEqual(openCardGroup(items[2], items), { group: { title: 'Lead ', items: [items[0], items[2], items[3]] }, index: 1 });
+  assert.deepEqual(openCardGroup(items[1], items), { group: { title: 'walk', items: [items[1]] }, index: 0 });
+  const outside = vocab('lead-new', 'lead');
+  assert.deepEqual(openCardGroup(outside, items), { group: { title: 'lead', items: [outside] }, index: 0 }, 'a card the list lacks');
 });
 
 test('moving past cards that left marks where they begin; moving back to one that returned keeps the mark', () => {

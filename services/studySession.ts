@@ -1,4 +1,5 @@
 import {
+  type ItemGroup,
   type ReviewRating,
   type ReviewTaskType,
   type StoredItem,
@@ -27,6 +28,8 @@ export interface StudyContent {
   /** The word's listed forms and synonyms, which a typed answer is checked against. */
   forms: string[];
   synonyms: string[];
+  /** How it's said: the word's IPA, or a phrase's pronunciation; '' when the card has none. */
+  ipa?: string;
 }
 
 /** The tasks a study session sets; 'quick' is the review popup's. */
@@ -52,6 +55,7 @@ export function getStudyContent(item: StoredItem): StudyContent {
       example: pickExample(item.data.examples, reviews),
       forms: item.data.forms ?? [],
       synonyms: item.data.synonyms ?? [],
+      ipa: item.data.ipa ?? '',
     };
   }
   if (isPhraseItem(item)) {
@@ -68,9 +72,10 @@ export function getStudyContent(item: StoredItem): StudyContent {
       // Only the phrase's own card lists its forms and synonyms; another word of the phrase has its own.
       forms: exact?.forms ?? [],
       synonyms: exact?.synonyms ?? [],
+      ipa: item.data.pronunciation ?? '',
     };
   }
-  return { word: getItemTitle(item), sense: '', chinese: '', definition: '', example: '', forms: [], synonyms: [] };
+  return { word: getItemTitle(item), sense: '', chinese: '', definition: '', example: '', forms: [], synonyms: [], ipa: '' };
 }
 
 export function selectReviewTask(item: StoredItem): StudyTaskType {
@@ -83,6 +88,11 @@ export function selectReviewTask(item: StoredItem): StudyTaskType {
   const cloze = createClozePrompt(content.example, content.word);
   if (!content.example || !cloze.includes('_____')) return 'production';
   return reviews % 2 === 0 ? 'cloze' : 'listening';
+}
+
+/** The sentence a card's listening prompt plays, or null when its task this time isn't listening. */
+export function listeningPrompt(item: StoredItem): string | null {
+  return selectReviewTask(item) === 'listening' ? getStudyContent(item).example : null;
 }
 
 export function buildReviewQueue(
@@ -362,6 +372,38 @@ export function isSessionCardLive(item: StoredItem | undefined, session: Pick<St
   if (!item) return false;
   if ((item.srs?.lastReviewDate ?? 0) <= session.startedAt) return true;
   return session.grades.some(grade => grade.itemId === item.data.id);
+}
+
+/**
+ * The sentences the next `limit` listening prompts after the card at `index` will play, among the cards still in the
+ * session (isSessionCardLive), so their clips can be fetched before they're needed.
+ */
+export function upcomingListeningPrompts(
+  session: Pick<StudySession, 'itemIds' | 'startedAt' | 'grades'>,
+  index: number,
+  getItem: (id: string) => StoredItem | undefined,
+  limit = 3,
+): string[] {
+  const prompts: string[] = [];
+  for (let at = index + 1; at < session.itemIds.length && prompts.length < limit; at++) {
+    const item = getItem(session.itemIds[at]);
+    const prompt = item && isSessionCardLive(item, session) ? listeningPrompt(item) : null;
+    if (prompt) prompts.push(prompt);
+  }
+  return prompts;
+}
+
+/**
+ * What Open card shows: the card among the study items (`items`) that share its spelling, its other senses, in their
+ * order, so the card view's ← and → reach them. A card no other item shares a spelling with is a list of one.
+ */
+export function openCardGroup(item: StoredItem, items: readonly StoredItem[]): { group: ItemGroup; index: number } {
+  const spelling = getItemSpelling(item);
+  const senses = spelling ? items.filter(other => getItemSpelling(other) === spelling) : [];
+  const index = senses.findIndex(other => other.data.id === item.data.id);
+  return index < 0
+    ? { group: { title: getItemTitle(item), items: [item] }, index: 0 }
+    : { group: { title: getItemTitle(item), items: senses }, index };
 }
 
 const DAY_MINUTES = 1_440;
