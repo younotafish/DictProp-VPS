@@ -393,6 +393,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         onOpenSentence={handleViewSentence}
         aboveTabBar={!detailContext}
         statusHidden={modalOpen}
+        onOfferUndo={undo.offerUndoAction}
       />
       </ErrorBoundary>
       </Suspense>
