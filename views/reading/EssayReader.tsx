@@ -3,7 +3,8 @@ import { ArrowLeft, Clock3, ExternalLink, Play } from 'lucide-react';
 import type { StoredItem } from '../../types';
 import type { Essay, EssayBodyParagraph, EssaySentence } from '../../services/essayCatalog';
 import { buildEssayStudyItems } from '../../services/essayProgress';
-import { sentencesToStudy, summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
+import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
+import { buildCatalogQueue, studyButtonLabel } from '../../services/catalogQueue';
 import { sentenceReviewState, type SentenceReviewState } from '../../services/sentenceReviewState';
 import { useLatest } from '../../hooks/useStableValue';
 import { essayStyle } from './essayStyle';
@@ -64,14 +65,15 @@ interface EssayReaderProps {
 }
 
 /**
- * An essay on one page, each body sentence a button that opens its lesson, and Review for the sentences still to
- * review.
+ * An essay on one page, each body sentence a button that opens its lesson, and Study for its due reviews and then its
+ * new sentences.
  */
 export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence, onScroll }: EssayReaderProps) {
   const progress = useMemo(
     () => summarizeCatalogProgress(essay.sentences, progressIndex, now),
     [essay, now, progressIndex],
   );
+  const studyQueue = useMemo(() => buildCatalogQueue(essay.sentences, progressIndex, now), [essay, now, progressIndex]);
 
   // Read when tapped, so the paragraphs' callback stays the same while progress changes.
   const latest = useLatest({ essay, progressIndex, onOpenSentence });
@@ -82,7 +84,7 @@ export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence,
   }, [latest]);
 
   const startStudy = () => {
-    onOpenSentence(buildEssayStudyItems(sentencesToStudy(essay.sentences, progressIndex, now), progressIndex, Date.now()), 0);
+    onOpenSentence(buildEssayStudyItems(studyQueue.sentences, progressIndex, Date.now()), 0);
   };
 
   const style = essayStyle[essay.accent];
@@ -104,13 +106,15 @@ export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence,
             <h1 className="truncate text-base font-bold text-slate-950 sm:text-lg">{essay.title}</h1>
             <p className="truncate text-[11px] text-slate-500 sm:text-xs">{essay.author} · {essay.publication}</p>
           </div>
+          {/* Wide enough for 'Practice' and 'Study 999', so a changing count never moves the header. */}
           <button
             type="button"
             onClick={startStudy}
-            className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white transition-colors hover:bg-slate-700 sm:px-4"
-            title={`Review ${essay.title}`}
+            disabled={studyQueue.sentences.length === 0}
+            className="flex min-h-10 min-w-[6.5rem] shrink-0 items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300 sm:px-4"
+            title={`Study ${essay.title}`}
           >
-            <Play size={14} fill="currentColor" /> Review
+            <Play size={14} fill="currentColor" /> <span className="tabular-nums">{studyButtonLabel(studyQueue)}</span>
           </button>
         </div>
       </header>

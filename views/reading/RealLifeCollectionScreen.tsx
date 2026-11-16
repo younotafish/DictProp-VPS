@@ -19,7 +19,8 @@ import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import type { RealLifeCollection, RealLifeSentence } from '../../services/realLifeCatalog';
 import { buildRealLifeStudyItems, createRealLifeProgressItem } from '../../services/realLifeProgress';
 import { realLifeProgressItemId } from '../../services/realLifeProgressIdentity';
-import { sentencesToStudy, summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
+import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
+import { buildCatalogQueue, studyButtonLabel } from '../../services/catalogQueue';
 import type { SentenceReviewFilter } from '../../services/sentenceOrdering';
 import { sentenceReviewState } from '../../services/sentenceReviewState';
 import { useLatest } from '../../hooks/useStableValue';
@@ -137,7 +138,7 @@ interface RealLifeCollectionScreenProps {
 }
 
 /**
- * A collection's lines, narrowed by theme, review state and search, and Study for the lines still to review. Its
+ * A collection's lines, narrowed by theme, review state and search, and Study for the theme and search in view. Its
  * parent mounts it afresh for each collection opened, so every collection starts on All with an empty search.
  */
 export function RealLifeCollectionScreen({
@@ -167,12 +168,19 @@ export function RealLifeCollectionScreen({
     [deferredQuery, now, progressIndex, reviewFilter, sectionId, collection],
   );
 
+  // Study takes the theme and the search in view but not the review chip: due reviews first, then new lines.
+  const studyQueue = useMemo(() => buildCatalogQueue(
+    filterRealLifeSentences(collection.sentences, { sectionId, reviewFilter: 'all', query: deferredQuery }, progressIndex, now),
+    progressIndex,
+    now,
+  ), [collection, deferredQuery, now, progressIndex, sectionId]);
+
   const openSentence = (ordered: readonly RealLifeSentence[], index: number) => {
     onOpenSentence(buildRealLifeStudyItems(ordered, progressIndex, Date.now()), index);
   };
 
   const startStudy = () => {
-    openSentence(sentencesToStudy(collection.sentences, progressIndex, now), 0);
+    openSentence(studyQueue.sentences, 0);
   };
 
   // Row callbacks stay stable, so typing in the search box doesn't re-render the rows on screen.
@@ -244,13 +252,15 @@ export function RealLifeCollectionScreen({
             <span className={`hidden rounded-full px-2.5 py-1 text-xs font-bold sm:inline-flex ${style.soft}`}>
               {collection.level}
             </span>
+            {/* Wide enough for 'Practice' and 'Study 999', so a changing count never moves the header. */}
             <button
               type="button"
               onClick={startStudy}
-              className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-bold text-white transition-colors hover:bg-slate-700"
+              disabled={studyQueue.sentences.length === 0}
+              className="flex min-h-10 min-w-[6.5rem] shrink-0 items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-bold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               title={`Study ${collection.title}`}
             >
-              <Play size={14} fill="currentColor" /> Study
+              <Play size={14} fill="currentColor" /> <span className="tabular-nums">{studyButtonLabel(studyQueue)}</span>
             </button>
           </div>
 

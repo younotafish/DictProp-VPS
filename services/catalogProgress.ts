@@ -1,9 +1,10 @@
 import type { StoredItem } from '../types';
 import { catalogProgressKind, type CatalogKind, type CatalogProgressItem } from './catalogProgressIdentity';
-import { needsReview, summarizeReviewStates, type ReviewSummary } from './sentenceReviewState';
+import { summarizeReviewStates, type ReviewSummary } from './sentenceReviewState';
 
 // What the Real Life and Essays screens do with their catalog's progress records (catalogProgressIdentity.ts
-// says which records those are): index them, summarize a collection or an essay, and build its study runs.
+// says which records those are): index them, summarize a collection or an essay, and open its lines' records.
+// catalogQueue.ts picks the lines a Study run takes.
 
 const isProgressItemOf = (item: StoredItem, kind: CatalogKind): item is CatalogProgressItem =>
   catalogProgressKind(item) === kind;
@@ -36,14 +37,4 @@ export function catalogStudyItems<T extends { id: string }>(
   create: (sentence: T) => StoredItem,
 ): StoredItem[] {
   return sentences.map(sentence => index.get(sentence.id) ?? create(sentence));
-}
-
-/** What a Study run takes: the sentences never reviewed or due again, or all of them when none are. */
-export function sentencesToStudy<T extends { id: string }>(
-  sentences: readonly T[],
-  index: CatalogProgressIndex,
-  now: number,
-): readonly T[] {
-  const actionable = sentences.filter(sentence => needsReview(index.get(sentence.id)?.srs, now));
-  return actionable.length > 0 ? actionable : sentences;
 }

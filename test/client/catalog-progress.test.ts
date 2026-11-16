@@ -3,7 +3,6 @@ import test from 'node:test';
 import {
   catalogStudyItems,
   indexCatalogProgress,
-  sentencesToStudy,
   summarizeCatalogProgress,
 } from '../../services/catalogProgress.ts';
 import {
@@ -97,17 +96,4 @@ test('a run opens each line\'s stored record, and a new one for a line never sto
   assert.deepEqual(created, ['e-1']);
   assert.equal(items[1], stored);
   assert.equal(items[0].data.id, 'essay-sentence:e-1');
-});
-
-test('Study takes the unreviewed and due lines, or every line when all are memorized', () => {
-  const memorized = realLife('c:s:01');
-  memorized.srs = { ...memorized.srs, totalReviews: 1, nextReview: NOW + 1 };
-  const due = realLife('c:s:02');
-  due.srs = { ...due.srs, totalReviews: 1, nextReview: NOW };
-  const lines = [{ id: 'c:s:01' }, { id: 'c:s:02' }, { id: 'c:s:03' }];
-
-  const index = indexCatalogProgress([memorized, due], 'real-life');
-  assert.deepEqual(sentencesToStudy(lines, index, NOW).map(line => line.id), ['c:s:02', 'c:s:03']);
-  const allMemorized = indexCatalogProgress([memorized], 'real-life');
-  assert.equal(sentencesToStudy([lines[0]], allMemorized, NOW).length, 1);
 });
