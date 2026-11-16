@@ -19,9 +19,9 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   PUBLISHER_TAG_PATTERN,
-  removeDecryptionTempFiles,
+  removeBridgeTempFiles,
   removeLeftovers,
-  selectDecryptionTempFiles,
+  selectBridgeTempFiles,
   selectLocalLeftovers,
   selectStaleReleases,
 } from '../../scripts/offline/bridge-leftovers.mjs';
@@ -228,22 +228,24 @@ test('symlinks are never followed or removed', t => {
   assert.ok(existsSync(join(outside, 'keep.enc')));
 });
 
-test('decryption temp files idle for a day go from anywhere under a root, and nothing else does', t => {
+test('bridge temp files idle for a day go from anywhere under a root, and nothing else does', t => {
   const root = tempDir(t);
   const outside = tempDir(t);
   const old = join(root, 'incremental-example-enrichment', '.current-corpus.json.decrypting-123-abcdef012345');
   const nested = join(root, 'incremental-example-enrichment', 'saved-sentences', '.export.json.gunzipping-77-0123456789ab');
+  // An encryption's temp file holds no plaintext, but a day old it belongs to no running encryption either.
+  const encrypting = join(root, '.wave.enc.encrypting-123-abcdef012345');
   const fresh = join(root, '.current-corpus.json.decrypting-456-abcdef012345');
-  // Encryption's temp files hold no plaintext, and names that only resemble decryption's are someone else's.
+  // Names that only resemble the bridge's temp files are someone else's.
   const kept = [
     fresh,
-    join(root, '.wave.enc.encrypting-123-abcdef012345'),
     join(root, 'current-corpus.json.decrypting-123-abcdef012345'),
     join(root, '.current-corpus.json.decrypting-123-abcdef'),
     join(root, '.current-corpus.json.decrypting-123-abcdef012345.bak'),
+    join(root, '.wave.enc.compressing-123-abcdef012345'),
   ];
-  for (const path of [old, nested, ...kept]) write(path, 'plaintext');
-  for (const path of [old, ...kept.slice(1)]) age(path, now - 2 * DAY);
+  for (const path of [old, nested, encrypting, ...kept]) write(path, 'plaintext');
+  for (const path of [old, encrypting, ...kept.slice(1)]) age(path, now - 2 * DAY);
   age(nested, now - 25 * HOUR);
   age(fresh, now - HOUR);
   // A symlink named like a temp file stays, and so does a temp file that only a linked directory reaches.
@@ -253,25 +255,26 @@ test('decryption temp files idle for a day go from anywhere under a root, and no
   symlinkSync(linkedTemp, join(root, '.linked.json.decrypting-9-0123456789ab'));
   symlinkSync(outside, join(root, 'linked-data'));
 
-  const files = selectDecryptionTempFiles([root, join(root, 'incremental-example-enrichment'), join(root, 'missing')], { now });
-  assert.deepEqual(files.map(({ path }: { path: string }) => path).sort(), [nested, old].sort());
+  const files = selectBridgeTempFiles([root, join(root, 'incremental-example-enrichment'), join(root, 'missing')], { now });
+  assert.deepEqual(files.map(({ path }: { path: string }) => path).sort(), [encrypting, nested, old].sort());
   assert.deepEqual(files.find(({ path }: { path: string }) => path === old), { path: old, idleMs: 2 * DAY, bytes: 9 });
 
   const lines: string[] = [];
-  removeDecryptionTempFiles(files, { dryRun: true, log: (line: string) => lines.push(line) });
-  assert.ok(lines.includes(`would remove decryption temp file ${old} (0.0 MB, idle 2.0 days)`), lines.join('\n'));
-  assert.equal(lines.at(-1), 'would remove 2 decryption temp file(s) (0.0 MB)');
-  for (const path of [old, nested]) assert.ok(existsSync(path), `dry run kept ${path}`);
+  removeBridgeTempFiles(files, { dryRun: true, log: (line: string) => lines.push(line) });
+  assert.ok(lines.includes(`would remove bridge temp file ${old} (0.0 MB, idle 2.0 days)`), lines.join('\n'));
+  assert.ok(lines.includes(`would remove bridge temp file ${encrypting} (0.0 MB, idle 2.0 days)`), lines.join('\n'));
+  assert.equal(lines.at(-1), 'would remove 3 bridge temp file(s) (0.0 MB)');
+  for (const path of [old, nested, encrypting]) assert.ok(existsSync(path), `dry run kept ${path}`);
 
-  removeDecryptionTempFiles(files, { log: (line: string) => lines.push(line) });
-  assert.equal(lines.at(-1), 'removed 2 decryption temp file(s) (0.0 MB)');
-  for (const path of [old, nested]) assert.equal(existsSync(path), false, path);
+  removeBridgeTempFiles(files, { log: (line: string) => lines.push(line) });
+  assert.equal(lines.at(-1), 'removed 3 bridge temp file(s) (0.0 MB)');
+  for (const path of [old, nested, encrypting]) assert.equal(existsSync(path), false, path);
   for (const path of [...kept, linkedTemp, join(root, '.linked.json.decrypting-9-0123456789ab')]) {
     assert.ok(existsSync(path), path);
   }
-  assert.deepEqual(selectDecryptionTempFiles([root], { now }), []);
+  assert.deepEqual(selectBridgeTempFiles([root], { now }), []);
   // A day is the default limit, and another can be given.
-  assert.deepEqual(selectDecryptionTempFiles([root], { now, maxAgeMs: HOUR / 2 }).map(({ path }: { path: string }) => path), [fresh]);
+  assert.deepEqual(selectBridgeTempFiles([root], { now, maxAgeMs: HOUR / 2 }).map(({ path }: { path: string }) => path), [fresh]);
 });
 
 // A stand-in for the GitHub CLI: logs each call, serves the release list, and fails to delete one tag.
@@ -294,7 +297,7 @@ function fakeGh(dir: string, releases: unknown, { failList = false, failDelete =
   return { gh, calls: () => (existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : []) };
 }
 
-// dataRoot stands in for data/offline-backfill, where the sweep looks for decryption temp files.
+// dataRoot stands in for data/offline-backfill, where the sweep looks for bridge temp files.
 function runSweep(gh: string, args: string[], dataRoot: string) {
   return spawnSync('/bin/bash', [sweep, ...args], {
     encoding: 'utf8',
@@ -305,7 +308,7 @@ function runSweep(gh: string, args: string[], dataRoot: string) {
   });
 }
 
-test('the sweep deletes stale publisher releases, clears the wave roots and old decryption temp files, and --dry-run deletes nothing', t => {
+test('the sweep deletes stale publisher releases, clears the wave roots and old bridge temp files, and --dry-run deletes nothing', t => {
   const dir = tempDir(t);
   const root = join(dir, 'state');
   const data = join(dir, 'data');
@@ -334,8 +337,8 @@ test('the sweep deletes stale publisher releases, clears the wave roots and old 
   assert.doesNotMatch(preview.stdout, /example-analyses|v1\.0\.0/);
   assert.match(preview.stdout, /would remove failed wave .*wave-0001\.failed/);
   assert.match(preview.stdout, /would remove published archive .*wave-0002\/corpus-audit\.enc/);
-  assert.match(preview.stdout, /would remove decryption temp file .*\/\.current-corpus\.json\.decrypting-123-abcdef012345 \(0\.0 MB, idle 2\.0 days\)/);
-  assert.match(preview.stdout, /would remove 1 decryption temp file\(s\) \(0\.0 MB\)/);
+  assert.match(preview.stdout, /would remove bridge temp file .*\/\.current-corpus\.json\.decrypting-123-abcdef012345 \(0\.0 MB, idle 2\.0 days\)/);
+  assert.match(preview.stdout, /would remove 1 bridge temp file\(s\) \(0\.0 MB\)/);
   assert.ok(existsSync(failed) && existsSync(join(published, 'corpus-audit.enc')) && existsSync(killedTemp));
   rmSync(join(dir, 'gh-calls.log'));
 
@@ -353,7 +356,7 @@ test('the sweep deletes stale publisher releases, clears the wave roots and old 
   assert.equal(existsSync(failed), false);
   assert.equal(existsSync(join(published, 'corpus-audit.enc')), false);
   assert.ok(existsSync(join(published, 'published')));
-  assert.match(swept.stdout, /removed decryption temp file .*\.current-corpus\.json\.decrypting-123-abcdef012345/);
+  assert.match(swept.stdout, /removed bridge temp file .*\.current-corpus\.json\.decrypting-123-abcdef012345/);
   assert.equal(existsSync(killedTemp), false);
   assert.ok(existsSync(runningTemp));
 });

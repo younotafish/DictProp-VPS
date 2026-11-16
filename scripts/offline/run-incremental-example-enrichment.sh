@@ -573,7 +573,8 @@ fi
 # repository; this deletes publisher releases idle for six hours, which none of this cycle's publishers
 # would still hold, and clears failed waves after a week and published waves' archives. A wave an earlier
 # cycle left unpublished in its own root counts as failed, since no cycle opens that root again. It also
-# removes the plaintext temp files a killed decryption leaves under data/offline-backfill once a day old.
+# removes the temp files a killed encryption or decryption leaves under data/offline-backfill once a day
+# old, a decryption's with plaintext in them.
 # The last five roots are the ones cycles shared until 2026-11-15, still swept for what they hold.
 if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" GITHUB_REPOSITORY="$REPO" scripts/offline/sweep-bridge-leftovers.sh \
   "$PUBLISH_STATE_ROOT/vocabulary" "$PUBLISH_STATE_ROOT/saved-sentences" "$PUBLISH_STATE_ROOT/item-images" \

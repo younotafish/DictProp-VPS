@@ -2,8 +2,8 @@
 # Deletes publisher releases idle for six hours, which a killed publisher leaves on the public
 # repository with their encrypted archive, then removes failed waves idle for a week (a wave a past
 # cycle left unpublished counts as failed) and the archives of published waves under each wave-state
-# root, and the plaintext temp files a killed decryption leaves, once a day old, anywhere under
-# OFFLINE_DATA_ROOT. --dry-run lists all of it and deletes nothing.
+# root, and the temp files a killed encryption or decryption leaves (a decryption's hold plaintext),
+# once a day old, anywhere under OFFLINE_DATA_ROOT. --dry-run lists all of it and deletes nothing.
 # Every part runs even if another fails; the exit status is 1 if any did.
 
 set -euo pipefail
@@ -54,7 +54,7 @@ if ! "$NODE_BIN" "$OFFLINE_DIR/bridge-leftovers.mjs" local ${DRY_RUN:+--dry-run}
 fi
 
 if ! "$NODE_BIN" "$OFFLINE_DIR/bridge-leftovers.mjs" temp-files ${DRY_RUN:+--dry-run} "$OFFLINE_DATA_ROOT"; then
-  log "could not clear decryption temp files under $OFFLINE_DATA_ROOT"
+  log "could not clear bridge temp files under $OFFLINE_DATA_ROOT"
   status=1
 fi
 exit "$status"

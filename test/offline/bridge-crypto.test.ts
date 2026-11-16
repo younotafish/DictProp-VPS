@@ -9,8 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import test from 'node:test';
 import {
+  BRIDGE_TEMP_PATTERN,
   BridgeCryptoError,
-  DECRYPTION_TEMP_PATTERN,
   HEADER_BYTES,
   MAGIC,
   TAG_BYTES,
@@ -18,7 +18,7 @@ import {
   encryptFile,
   loadKey,
 } from '../../scripts/offline/bridge-crypto.mjs';
-import { selectDecryptionTempFiles } from '../../scripts/offline/bridge-leftovers.mjs';
+import { selectBridgeTempFiles } from '../../scripts/offline/bridge-leftovers.mjs';
 
 const script = fileURLToPath(new URL('../../scripts/offline/bridge-crypto.mjs', import.meta.url));
 const passphrase = 'correct horse battery staple';
@@ -329,10 +329,40 @@ test('a decryption killed outright leaves its temp file, which the cycle sweep r
     assert.equal(await exited, 'SIGKILL');
     const [left, ...rest] = leftovers(dir, ['blob.dpb']);
     assert.deepEqual(rest, []);
-    assert.match(left, DECRYPTION_TEMP_PATTERN);
-    assert.deepEqual(selectDecryptionTempFiles([dir]), []);
+    assert.match(left, BRIDGE_TEMP_PATTERN);
+    assert.deepEqual(selectBridgeTempFiles([dir]), []);
     const dayLater = Date.now() + 25 * 60 * 60 * 1_000;
-    assert.deepEqual(selectDecryptionTempFiles([dir], { now: dayLater }).map(({ path }: { path: string }) => path), [join(dir, left)]);
+    assert.deepEqual(selectBridgeTempFiles([dir], { now: dayLater }).map(({ path }: { path: string }) => path), [join(dir, left)]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an encryption killed outright leaves its temp file too, which the cycle sweep also removes once a day old', async () => {
+  const dir = tempDir();
+  try {
+    const child = spawn(process.execPath, [script, 'encrypt', '--purpose', purpose, '--out', join(dir, 'wave.dpb')], {
+      env: { ...process.env, SENTENCE_BRIDGE_KEY: passphrase },
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+    const exited = new Promise<number | string | null>(resolve => child.on('exit', (code, signal) => resolve(code ?? signal)));
+    child.stdin.on('error', () => {});
+    // Half the input and no end, so the encryption is still writing when it is killed.
+    child.stdin.write(randomBytes(1_000_000));
+    const deadline = Date.now() + 10_000;
+    const partial = () => readdirSync(dir).find(name => name.startsWith('.wave.dpb.encrypting-'));
+    while (!partial() || statSync(join(dir, partial()!)).size === 0) {
+      assert.ok(Date.now() < deadline, 'the encryption started writing its temp file');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    child.kill('SIGKILL');
+    assert.equal(await exited, 'SIGKILL');
+    const [left, ...rest] = leftovers(dir, []);
+    assert.deepEqual(rest, []);
+    assert.match(left, BRIDGE_TEMP_PATTERN);
+    assert.deepEqual(selectBridgeTempFiles([dir]), []);
+    const dayLater = Date.now() + 25 * 60 * 60 * 1_000;
+    assert.deepEqual(selectBridgeTempFiles([dir], { now: dayLater }).map(({ path }: { path: string }) => path), [join(dir, left)]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

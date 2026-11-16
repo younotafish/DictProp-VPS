@@ -4,9 +4,9 @@
 // import is verified or it gives up, but one that is killed outright leaves the release, encrypted
 // archive and all, on the public repository. A wave whose publication failed is set aside as
 // wave-N.failed for inspection, a wave a cycle left unpublished stays in that cycle's directory, and a
-// published wave keeps its archive, which nothing reads again: every run encrypts a fresh one. A
-// decryption that is killed outright leaves its temp file, plaintext and all, beside the file it was
-// writing.
+// published wave keeps its archive, which nothing reads again: every run encrypts a fresh one. An
+// encryption or decryption that is killed outright leaves its temp file beside the file it was writing,
+// plaintext and all for a decryption.
 //
 //   bridge-leftovers.mjs releases [--now <iso>] [--max-age-hours <n>] < releases.json
 //     Reads `gh api --paginate --slurp repos/<owner>/<repo>/releases` (or a single page) and prints each
@@ -15,14 +15,14 @@
 //     Removes failed waves idle longer than the limit, a past cycle's unpublished ones included, and the
 //     archives of published waves; with --dry-run it lists them and removes nothing.
 //   bridge-leftovers.mjs temp-files [--dry-run] [--now <iso>] [--max-age-hours <n>] <root>...
-//     Removes decryption temp files anywhere under the roots that are idle longer than the limit, a day
+//     Removes bridge-crypto's temp files anywhere under the roots that are idle longer than the limit, a day
 //     unless given; with --dry-run it lists them and removes nothing.
 
 import { lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DECRYPTION_TEMP_PATTERN } from './bridge-crypto.mjs';
+import { BRIDGE_TEMP_PATTERN } from './bridge-crypto.mjs';
 
 const HOUR_MS = 60 * 60 * 1_000;
 // Each cycle's publishers give up after two hours and a manual publisher after four, and deadline.sh
@@ -30,8 +30,8 @@ const HOUR_MS = 60 * 60 * 1_000;
 // has no publisher left.
 export const RELEASE_MAX_AGE_MS = 6 * HOUR_MS;
 export const FAILED_WAVE_MAX_AGE_MS = 7 * 24 * HOUR_MS;
-// Decryption takes minutes, so a temp file a day old belongs to no running decryption.
-export const DECRYPTION_TEMP_MAX_AGE_MS = 24 * HOUR_MS;
+// Encryption and decryption take minutes, so a temp file a day old belongs to no running one.
+export const BRIDGE_TEMP_MAX_AGE_MS = 24 * HOUR_MS;
 
 // Exactly the tags the dispatchers and the essay publisher create, so no other release is ever touched.
 export const PUBLISHER_TAG_PATTERN = new RegExp(
@@ -137,9 +137,9 @@ export function selectLocalLeftovers(roots, { now = Date.now(), failedMaxAgeMs =
   return [...leftovers.values()];
 }
 
-// Decryption writes its temp file beside its output, which can be anywhere in the cycle's data, so the
+// bridge-crypto writes its temp file beside its output, which can be anywhere in the cycle's data, so the
 // whole tree under each root is searched. Symlinks are never followed, so nothing outside it is touched.
-export function selectDecryptionTempFiles(roots, { now = Date.now(), maxAgeMs = DECRYPTION_TEMP_MAX_AGE_MS } = {}) {
+export function selectBridgeTempFiles(roots, { now = Date.now(), maxAgeMs = BRIDGE_TEMP_MAX_AGE_MS } = {}) {
   // Keyed by path, since overlapping roots can reach the same file twice.
   const files = new Map();
   const visit = directory => {
@@ -147,12 +147,12 @@ export function selectDecryptionTempFiles(roots, { now = Date.now(), maxAgeMs = 
       const path = join(directory, entry.name);
       if (entry.isDirectory()) {
         visit(path);
-      } else if (entry.isFile() && DECRYPTION_TEMP_PATTERN.test(entry.name)) {
+      } else if (entry.isFile() && BRIDGE_TEMP_PATTERN.test(entry.name)) {
         let stat;
         try {
           stat = lstatSync(path);
         } catch (error) {
-          // A decryption that finished meanwhile renamed its temp file into place.
+          // An encryption or decryption that finished meanwhile renamed its temp file into place.
           if (error.code === 'ENOENT') continue;
           throw error;
         }
@@ -165,14 +165,14 @@ export function selectDecryptionTempFiles(roots, { now = Date.now(), maxAgeMs = 
   return [...files.values()];
 }
 
-export function removeDecryptionTempFiles(files, { dryRun = false, log = line => { process.stdout.write(`${line}\n`); } } = {}) {
+export function removeBridgeTempFiles(files, { dryRun = false, log = line => { process.stdout.write(`${line}\n`); } } = {}) {
   for (const file of files) {
     if (!dryRun) rmSync(file.path, { force: true });
-    log(`${dryRun ? 'would remove' : 'removed'} decryption temp file ${file.path} ` +
+    log(`${dryRun ? 'would remove' : 'removed'} bridge temp file ${file.path} ` +
       `(${(file.bytes / 1e6).toFixed(1)} MB, idle ${(file.idleMs / (24 * HOUR_MS)).toFixed(1)} days)`);
   }
   const megabytes = files.reduce((total, file) => total + file.bytes, 0) / 1e6;
-  log(`${dryRun ? 'would remove' : 'removed'} ${files.length} decryption temp file(s) (${megabytes.toFixed(1)} MB)`);
+  log(`${dryRun ? 'would remove' : 'removed'} ${files.length} bridge temp file(s) (${megabytes.toFixed(1)} MB)`);
 }
 
 function describe(leftover) {
@@ -241,9 +241,9 @@ function main(argv) {
   }
   if (command === 'temp-files' && roots.length > 0) {
     const maxAgeMs = values['max-age-hours'] === undefined
-      ? DECRYPTION_TEMP_MAX_AGE_MS
+      ? BRIDGE_TEMP_MAX_AGE_MS
       : parsePositive(values['max-age-hours'], '--max-age-hours') * HOUR_MS;
-    removeDecryptionTempFiles(selectDecryptionTempFiles(roots, { now, maxAgeMs }), { dryRun: values['dry-run'] });
+    removeBridgeTempFiles(selectBridgeTempFiles(roots, { now, maxAgeMs }), { dryRun: values['dry-run'] });
     return;
   }
   throw new Error(USAGE);

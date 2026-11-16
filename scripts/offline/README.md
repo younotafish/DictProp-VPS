@@ -71,7 +71,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
   - publisher releases that have been idle for six hours;
   - failed waves, a wave a past cycle left unpublished among them, once idle for a week (later cycles publish whatever of it production still lacks);
   - the archives of published waves;
-  - the plaintext temp files that a killed decryption left, once they are a day old.
+  - the temp files that a killed encryption or decryption left, once they are a day old; a decryption's hold plaintext.
 
   `scripts/offline/sweep-bridge-leftovers.sh [--dry-run] <wave-state-root>...`
 - `bridge-leftovers.mjs` — The sweep's decisions: which releases, waves and temp files count as leftovers.
