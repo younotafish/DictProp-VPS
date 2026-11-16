@@ -2,9 +2,17 @@ import React from 'react';
 import { Check, Scale, X } from 'lucide-react';
 import type { ItemGroup } from '../../types';
 import type { NotebookSection } from '../../services/notebookList';
+import { MAX_COMPARE_WORDS } from '../../server/src/shared/query-mode';
 import { NotebookGroup } from './NotebookGroup';
 
 const noop = () => {};
+
+/**
+ * Whether `word` can be ticked, or unticked, with `selected` ticked: one comparison takes up to MAX_COMPARE_WORDS
+ * words, as the word card's picker and /api/compare do.
+ */
+export const canSelectForCompare = (selected: readonly string[], word: string): boolean =>
+  selected.includes(word) || selected.length < MAX_COMPARE_WORDS;
 
 /** Heads the list in compare mode: what to do, how many are picked, and the way out. */
 export const CompareBanner: React.FC<{ selectedCount: number; onExit: () => void }> = ({ selectedCount, onExit }) => (
@@ -13,7 +21,7 @@ export const CompareBanner: React.FC<{ selectedCount: number; onExit: () => void
       <div className="flex items-center gap-2">
         <Scale size={16} className="text-indigo-500" />
         <span className="text-sm font-medium text-indigo-700">
-          Select 2-3 words to compare
+          Select 2–{MAX_COMPARE_WORDS} words to compare
         </span>
         {selectedCount > 0 && (
           <span className="text-xs font-bold text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">
@@ -82,7 +90,7 @@ export const CompareRow: React.FC<CompareRowProps> = ({ group, section, now, dis
   </div>
 );
 
-/** Floats above the tab bar once two or three words are picked. */
+/** Floats above the tab bar once two or more words are picked. */
 export const CompareSelectedButton: React.FC<{ count: number; onCompare: () => void }> = ({ count, onCompare }) => (
   <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] left-0 right-0 flex justify-center z-20 pointer-events-none">
     <button

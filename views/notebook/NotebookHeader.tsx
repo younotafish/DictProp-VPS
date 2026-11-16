@@ -3,6 +3,7 @@ import { ArrowDownAZ, Filter, Layers, Scale, Sparkles, Type } from 'lucide-react
 import type { AuthUser } from '../../services/auth';
 import { NEEDS_CONNECTION, networkRowDisabled } from '../../services/connectivityNotice';
 import { filterNoun, type NotebookFilter, type NotebookSort } from '../../services/notebookList';
+import { MAX_COMPARE_WORDS } from '../../server/src/shared/query-mode';
 import { UserMenu } from '../../components/UserMenu';
 
 interface NotebookHeaderProps {
@@ -50,7 +51,7 @@ const CompareToggle: React.FC<{ offline: boolean; compareMode: boolean; onToggle
           ? 'text-indigo-600 bg-indigo-100'
           : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
       }`}
-      title={disabled ? NEEDS_CONNECTION : compareMode ? 'Exit compare mode' : 'Compare words — select 2-3 to compare'}
+      title={disabled ? NEEDS_CONNECTION : compareMode ? 'Exit compare mode' : `Compare words — select 2–${MAX_COMPARE_WORDS} to compare`}
     >
       <Scale size={16} />
     </button>

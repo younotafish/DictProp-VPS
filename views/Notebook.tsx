@@ -24,7 +24,7 @@ import { NotebookHeader } from './notebook/NotebookHeader';
 import { NotebookToolsMenu } from './notebook/NotebookToolsMenu';
 import { NotebookSearchBar } from './notebook/NotebookSearchBar';
 import { ArchivedMatchesHeader, ArchivedToggle, DueHeader, ListNote } from './notebook/ListRows';
-import { CompareBanner, CompareRow, CompareSelectedButton } from './notebook/CompareMode';
+import { CompareBanner, CompareRow, CompareSelectedButton, canSelectForCompare } from './notebook/CompareMode';
 import { EmptyNotebook } from './notebook/EmptyNotebook';
 import { SearchErrorBanner } from './notebook/SearchErrorBanner';
 import { useAutoHidingHeader } from './notebook/useAutoHidingHeader';
@@ -312,7 +312,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     if (compareMode && section === 'main') {
       const displayWord = getItemTitle(group.items[0]) || group.title;
       const isSelected = selectedForCompare.includes(displayWord);
-      const canSelect = selectedForCompare.length < 3 || isSelected;
+      const canSelect = canSelectForCompare(selectedForCompare, displayWord);
       const toggleSelected = () => {
         if (isSelected) {
           setSelectedForCompare(prev => prev.filter(w => w !== displayWord));
