@@ -133,13 +133,8 @@ const applyReviewTransaction = writeTransaction((
   userId: string,
   seedItem: ItemWrite | undefined,
 ): { applied: boolean; event: ReviewEvent; itemIds: string[]; baseRevisions: Record<string, number> } | null => {
-  let seededRevision: number | undefined;
-  if (seedItem !== undefined) {
-    const stored = stmts.getByIdScoped.get(incoming.itemId, userId) as ItemRow | undefined;
-    if (!stored || isDeletedCatalogRecord(stored)) {
-      seededRevision = writeItem(seedItem, userId, stored ? { replaceTombstone: true } : {}).revision;
-    }
-  }
+  // A retry is answered before any seed is stored: its first attempt stored the seed, and a record deleted since
+  // must stay deleted.
   const previous = reviewStmts.byId.get(incoming.id) as ReviewEventDbRow | undefined;
   if (previous) {
     if (previous.user_id !== userId) throw new ConflictError('Review event id belongs to another user');
@@ -160,6 +155,14 @@ const applyReviewTransaction = writeTransaction((
       itemIds: storedIds.length > 0 ? storedIds : [incoming.itemId],
       baseRevisions,
     };
+  }
+
+  let seededRevision: number | undefined;
+  if (seedItem !== undefined) {
+    const stored = stmts.getByIdScoped.get(incoming.itemId, userId) as ItemRow | undefined;
+    if (!stored || isDeletedCatalogRecord(stored)) {
+      seededRevision = writeItem(seedItem, userId, stored ? { replaceTombstone: true } : {}).revision;
+    }
   }
 
   const target = stmts.getByIdScoped.get(incoming.itemId, userId) as ItemRow | undefined;
@@ -215,8 +218,9 @@ const itemsById = (ids: string[], userId: string): StoredItemRecord[] =>
 /**
  * Apply a review to `event.itemId`. `_itemIds` is the item list the request carries: clients have only ever sent
  * the reviewed item there, and anything else is ignored. `seedItem` is the reviewing client's copy of the item,
- * stored only when the server holds no item with that id, or in place of a deleted catalog record, which the review
- * brings back. It commits in the review's transaction, so a failed review leaves no seed behind.
+ * stored only for a review the server hasn't applied yet, and then only when the server holds no item with that id,
+ * or in place of a deleted catalog record, which the review brings back. It commits in the review's transaction, so a
+ * failed review leaves no seed behind.
  */
 export function applyReviewEvent(
   event: ReviewEvent,

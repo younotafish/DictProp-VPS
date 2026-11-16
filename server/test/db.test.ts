@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { exampleSentenceId } from '../src/sentence-lookup.js';
 
-const { getItemById, getItemsAfterRevision, upsertItem, touchItemRevisions, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSession, getSessionUser, extendSession, deleteSession, db } = await import('../src/db.js');
+const { getItemById, getItemsAfterRevision, upsertItem, softDeleteItem, touchItemRevisions, applyReviewEvent, undoReviewEvent, getReviewEvents, upsertItemImageBinary, upsertSentenceEnrichment, getSentenceEnrichmentCount, getSentenceEnrichmentForText, createUserAndClaimItems, createSession, getSession, getSessionUser, extendSession, deleteSession, db } = await import('../src/db.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
 
 const makeItem = (
@@ -349,6 +349,43 @@ test('a review with a seed brings back a deleted catalog record as the reviewing
   assert.equal(applyReviewEvent(review('ordinary seeded', ordinary), [ordinary], userId, record(ordinary, 0, 0)), null);
   assert.equal(getItemById(ordinary, userId)?.isDeleted, true);
   assert.equal(getItemById(ordinary, userId)?.srs.totalReviews, 3);
+});
+
+test('a retried review changes nothing, so a catalog record deleted after its first attempt stays deleted', () => {
+  const userId = 'catalog-retry-user';
+  const id = 'real-life-sentence:collection:02';
+  const seed = {
+    type: 'sentence',
+    data: {
+      id, text: 'Let us {{circle back}} on that.', sourceWord: 'circle back',
+      catalogSentenceId: 'collection:02', catalogCollectionId: 'collection',
+    },
+    srs: {
+      id, type: 'sentence', nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews: 0,
+      correctStreak: 0, stability: 0.5,
+    },
+    savedAt: 1,
+    updatedAt: 1,
+  };
+  const review = {
+    id: 'catalog-retry-review', itemId: id, itemType: 'sentence' as const, reviewedAt: Date.now(),
+    previousStep: 0, nextStep: 1, rating: 'good' as const,
+  };
+
+  // The first attempt seeds the record and counts, but its reply is lost, so the review stays in the outbox.
+  assert.equal(applyReviewEvent(review, [id], userId, seed)?.applied, true);
+  assert.equal(softDeleteItem(id, userId), true);
+  const deleted = getItemById(id, userId, false);
+  assert.equal(deleted?.isDeleted, true);
+
+  const retried = applyReviewEvent(review, [id], userId, seed);
+  assert.equal(retried?.applied, false);
+  assert.deepEqual(retried.baseRevisions, {});
+  const stored = getItemById(id, userId, false);
+  assert.equal(stored?.isDeleted, true);
+  assert.equal(stored?.srs.totalReviews, 1);
+  assert.equal(stored?.serverRevision, deleted?.serverRevision);
+  assert.deepEqual(getReviewEvents(userId, 0).map(event => event.id), [review.id]);
 });
 
 test('revision cursor returns every row when revisions are tied', () => {

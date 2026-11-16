@@ -50,7 +50,7 @@ test('a review can be undone after a device saves its schedule back with the key
   assert.equal(undone.data.definition, 'edited after the review');
 });
 
-test('a review that fails after its seed is stored leaves no seed behind', async () => {
+test('a review that reuses another user\'s event id is refused and stores no seed', async () => {
   upsertItem(vocabItem('other-users-item'), 'other-user');
   assert.equal(applyReviewEvent(review('reused-review-id', 'other-users-item'), ['other-users-item'], 'other-user')?.applied, true);
 
