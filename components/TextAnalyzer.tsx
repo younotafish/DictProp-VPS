@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { StoredItem, isVocabItem, savedVocabKey } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
-import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api';
+import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api/ai';
 import { ensureTTS } from '../services/neuralTts';
 import { makeVocabStoredItem } from '../services/items';
 

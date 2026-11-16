@@ -1,4 +1,4 @@
-import { TTS_CASUAL_VOICE, TTS_LEGACY_CASUAL_VOICE, TTS_LEGACY_VOICE, TTS_VOICE } from '../api';
+import { TTS_CASUAL_VOICE, TTS_LEGACY_CASUAL_VOICE, TTS_LEGACY_VOICE, TTS_VOICE } from '../api/tts';
 import type { TtsStyle } from '../ttsSettings';
 
 /**

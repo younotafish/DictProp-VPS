@@ -11,7 +11,7 @@
  * can't be placed (misheard, an expanded number, punctuation) gets no anchor, and a click on it resolves to the
  * nearest earlier anchor. This degrades gracefully and never throws.
  */
-import type { WordTiming } from './api';
+import type { WordTiming } from './api/tts';
 
 export interface AlignedWord { charOffset: number; startTime: number }
 

@@ -1,7 +1,7 @@
 // Batch warm-ups: fetching the clips (and word timings) of many sentences ahead of a tap, so a later play is
 // instant and an unstable network can't interrupt a session. One bounded, abortable routine serves the three
 // public entry points below.
-import { requestTTSGeneration, ttsKey } from '../api';
+import { requestTTSGeneration, ttsKey } from '../api/tts';
 import { audioCacheReady, getStoredAudioKeys, getStoredTimingKeys, markAudioUsed, putAudioBlob, putTimings } from '../audioCache';
 import { stripSentenceMarkers } from '../sentenceMarkers';
 import { getTtsStyle, type TtsStyle } from '../ttsSettings';

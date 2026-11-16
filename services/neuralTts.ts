@@ -19,7 +19,7 @@
  */
 import { speak as systemSpeak, cancelSpeech } from './speech';
 import { stripSentenceMarkers } from './sentenceMarkers';
-import { requestTTSGeneration } from './api';
+import { requestTTSGeneration } from './api/tts';
 import { warn } from './logger';
 import { getTtsStyle, getPlaybackRate, subscribeTtsStyle } from './ttsSettings';
 import { leadInSkip } from './ttsAlignment';

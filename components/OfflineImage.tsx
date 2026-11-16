@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ImageOff, Loader2 } from 'lucide-react';
 import { getServerImageVersion } from '../services/libraryImages';
-import { loadImage, peekImage } from '../services/storage';
+import { loadImage, peekImage } from '../services/imageStore';
 
 interface Props {
   src?: string;

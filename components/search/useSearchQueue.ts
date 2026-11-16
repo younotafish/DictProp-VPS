@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { comparisonKey, type ComparisonResult, type VocabCard } from '../../types';
-import { analyzeInput, compareWords, detectVocabulary } from '../../services/api';
+import { analyzeInput, compareWords, detectVocabulary } from '../../services/api/ai';
 import { ensureTTS } from '../../services/neuralTts';
 import { log, warn } from '../../services/logger';
 import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../../services/searchRecovery';

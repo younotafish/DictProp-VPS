@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SearchResult } from '../../types';
-import { analyzeInput } from '../../services/api';
+import { analyzeInput } from '../../services/api/ai';
 import { speakWord, ensureTTS } from '../../services/neuralTts';
 import { error as logError } from '../../services/logger';
 

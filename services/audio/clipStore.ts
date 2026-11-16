@@ -1,4 +1,4 @@
-import { ttsKey, fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, type WordTiming } from '../api';
+import { ttsKey, fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, type WordTiming } from '../api/tts';
 import { getAudioBlob, putAudioBlob, getTimings, putTimings } from '../audioCache';
 import { stripSentenceMarkers } from '../sentenceMarkers';
 import { getTtsStyle, type TtsStyle } from '../ttsSettings';

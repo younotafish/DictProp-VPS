@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { loadPrivateEssayCatalog } from '../../services/api';
+import { loadPrivateEssayCatalog } from '../../services/api/essays';
 import { ESSAYS, withPrivateEssays, type Essay } from '../../services/essayCatalog';
 
 export type PrivateCatalogStatus = 'loading' | 'ready' | 'error';

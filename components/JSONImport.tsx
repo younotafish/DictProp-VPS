@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo, useDeferredValue } from 'react';
 import { X, ClipboardPaste, Trash2, FileJson, Upload, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { importJSON } from '../services/api';
+import { importJSON } from '../services/api/jsonImport';
 import { importErrorMessage, parseImportText } from '../services/notebook/jsonImport';
 import { modifierKeyLabel } from '../services/notebook/platform';
 
