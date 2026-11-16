@@ -381,6 +381,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         onCompare={handleCompare}
         sentenceItems={sentenceItems}
         onOpenSentence={handleViewSentence}
+        aboveTabBar={!detailContext}
       />
       </ErrorBoundary>
       </Suspense>
