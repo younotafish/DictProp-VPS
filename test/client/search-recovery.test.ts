@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { HttpError, TimeoutError } from '../../services/http.ts';
 import {
-  consumeSearchRetry, decodePendingLookups, describeSearchError, encodePendingLookups, failureOf, isNetworkFailure,
-  isRetryableSearchError, readPendingLookups, rememberSearchRetry, writePendingLookups, type PendingRequest, type SearchRequest,
+  consumeSearchRetry, decodePendingRequests, describeSearchError, encodePendingRequests, failureOf, isNetworkFailure,
+  isRetryableSearchError, readPendingRequests, rememberSearchRetry, writePendingRequests, type PendingRequest, type SearchRequest,
   type SearchSubject,
 } from '../../services/searchRecovery.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
@@ -153,36 +153,36 @@ const HOUR = 60 * 60 * 1000;
 
 test('across a reload, requests come back as they were asked for: queries and modes only', () => {
   const now = 10 * HOUR;
-  const raw = encodePendingLookups(REQUESTS.map((request, i) => pending(request, now - i * 1_000)));
-  assert.deepEqual(decodePendingLookups(raw, now), REQUESTS);
-  const withExtras = encodePendingLookups([pending({ kind: 'analyze', query: 'gamut', context: 'It ran the gamut.', results: [1] } as unknown as SearchRequest, now)]);
+  const raw = encodePendingRequests(REQUESTS.map((request, i) => pending(request, now - i * 1_000)));
+  assert.deepEqual(decodePendingRequests(raw, now), REQUESTS);
+  const withExtras = encodePendingRequests([pending({ kind: 'analyze', query: 'gamut', context: 'It ran the gamut.', results: [1] } as unknown as SearchRequest, now)]);
   assert.deepEqual(JSON.parse(withExtras), [{ request: { kind: 'analyze', query: 'gamut' }, at: now }], 'never a result or the sentence');
 });
 
 test('at most the newest 20 requests are kept, and only those asked for within the hour', () => {
   const now = 10 * HOUR;
   const many = Array.from({ length: 25 }, (_, i) => pending({ kind: 'analyze', query: `word${i}` }, now - (25 - i) * 1_000));
-  const kept = decodePendingLookups(encodePendingLookups(many), now).map(request => (request as { query: string }).query);
+  const kept = decodePendingRequests(encodePendingRequests(many), now).map(request => (request as { query: string }).query);
   assert.deepEqual(kept, Array.from({ length: 20 }, (_, i) => `word${i + 5}`));
   const ages = [pending({ kind: 'analyze', query: 'old' }, now - HOUR), pending({ kind: 'analyze', query: 'recent' }, now - HOUR + 1), pending({ kind: 'analyze', query: 'ahead' }, now + 1)];
-  assert.deepEqual(decodePendingLookups(encodePendingLookups(ages), now), [{ kind: 'analyze', query: 'recent' }]);
+  assert.deepEqual(decodePendingRequests(encodePendingRequests(ages), now), [{ kind: 'analyze', query: 'recent' }]);
 });
 
 test('a damaged list reads as empty, and damaged entries are skipped', () => {
-  for (const raw of [null, '', '{', '{"request":{}}', '"text"']) assert.deepEqual(decodePendingLookups(raw, HOUR), [], String(raw));
+  for (const raw of [null, '', '{', '{"request":{}}', '"text"']) assert.deepEqual(decodePendingRequests(raw, HOUR), [], String(raw));
   const mixed = JSON.stringify([null, 7, { at: 'soon', request: { kind: 'analyze', query: 'a' } }, { at: HOUR, request: { kind: 'nope' } }, { at: HOUR, request: { kind: 'analyze', query: 'gamut' } }]);
-  assert.deepEqual(decodePendingLookups(mixed, HOUR), [{ kind: 'analyze', query: 'gamut' }]);
+  assert.deepEqual(decodePendingRequests(mixed, HOUR), [{ kind: 'analyze', query: 'gamut' }]);
 });
 
 test('the list lives in sessionStorage, is forgotten when empty, and a refusing storage changes nothing', () => {
   const storage = new MemoryStorage();
-  writePendingLookups([pending({ kind: 'analyze', query: 'gamut' }, 100)], storage);
-  assert.deepEqual(readPendingLookups(200, storage), [{ kind: 'analyze', query: 'gamut' }]);
+  writePendingRequests([pending({ kind: 'analyze', query: 'gamut' }, 100)], storage);
+  assert.deepEqual(readPendingRequests(200, storage), [{ kind: 'analyze', query: 'gamut' }]);
   assert.notEqual(storage.getItem('search_pending_v1'), null);
-  writePendingLookups([], storage);
+  writePendingRequests([], storage);
   assert.equal(storage.getItem('search_pending_v1'), null);
   const refusing = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => { throw new Error('denied'); } };
-  assert.doesNotThrow(() => writePendingLookups([pending({ kind: 'analyze', query: 'gamut' }, 100)], refusing));
-  assert.deepEqual(readPendingLookups(200, refusing), []);
-  assert.deepEqual(readPendingLookups(200, null), []);
+  assert.doesNotThrow(() => writePendingRequests([pending({ kind: 'analyze', query: 'gamut' }, 100)], refusing));
+  assert.deepEqual(readPendingRequests(200, refusing), []);
+  assert.deepEqual(readPendingRequests(200, null), []);
 });

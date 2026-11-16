@@ -86,14 +86,14 @@ export interface PendingRequest {
   at: number;
 }
 
-const PENDING_LOOKUPS_KEY = 'search_pending_v1';
+const PENDING_REQUESTS_KEY = 'search_pending_v1';
 /** At most this many requests are kept across a reload, the newest. */
 const MAX_PENDING = 20;
 /** A request older than this isn't run again after a reload. */
 const PENDING_MAX_AGE_MS = 60 * 60 * 1000;
 
 /** The newest MAX_PENDING of `pending`, as search_pending_v1 keeps them. */
-export function encodePendingLookups(pending: readonly PendingRequest[]): string {
+export function encodePendingRequests(pending: readonly PendingRequest[]): string {
   return JSON.stringify(pending.slice(-MAX_PENDING).flatMap(({ request, at }) => {
     const kept = searchRequestOf(request);
     return kept ? [{ request: kept, at }] : [];
@@ -101,7 +101,7 @@ export function encodePendingLookups(pending: readonly PendingRequest[]): string
 }
 
 /** The requests search_pending_v1 kept, asked for within the last hour before `now`; anything malformed is skipped. */
-export function decodePendingLookups(raw: string | null, now: number): SearchRequest[] {
+export function decodePendingRequests(raw: string | null, now: number): SearchRequest[] {
   const parsed = parseJson(raw);
   if (!Array.isArray(parsed)) return [];
   return parsed.slice(-MAX_PENDING).flatMap((entry: unknown) => {
@@ -112,21 +112,21 @@ export function decodePendingLookups(raw: string | null, now: number): SearchReq
 }
 
 /** Keeps `pending` for after a reload (sessionStorage lasts as long as the tab), or forgets the list when it's empty. */
-export function writePendingLookups(pending: readonly PendingRequest[], storage: StorageLike | null = defaultSessionStorage()): void {
+export function writePendingRequests(pending: readonly PendingRequest[], storage: StorageLike | null = defaultSessionStorage()): void {
   if (!storage) return;
   try {
-    if (pending.length === 0) storage.removeItem(PENDING_LOOKUPS_KEY);
-    else storage.setItem(PENDING_LOOKUPS_KEY, encodePendingLookups(pending));
+    if (pending.length === 0) storage.removeItem(PENDING_REQUESTS_KEY);
+    else storage.setItem(PENDING_REQUESTS_KEY, encodePendingRequests(pending));
   } catch {
     // Session storage is a convenience: a reload then only loses the tray, as it always did.
   }
 }
 
-/** The requests kept from before a reload, as decodePendingLookups reads them. */
-export function readPendingLookups(now: number, storage: StorageLike | null = defaultSessionStorage()): SearchRequest[] {
+/** The requests kept from before a reload, as decodePendingRequests reads them. */
+export function readPendingRequests(now: number, storage: StorageLike | null = defaultSessionStorage()): SearchRequest[] {
   if (!storage) return [];
   try {
-    return decodePendingLookups(storage.getItem(PENDING_LOOKUPS_KEY), now);
+    return decodePendingRequests(storage.getItem(PENDING_REQUESTS_KEY), now);
   } catch {
     return [];
   }

@@ -4,7 +4,7 @@ import { analyzeInput, compareWords, detectVocabulary } from '../../services/api
 import { ensureTTS } from '../../services/neuralTts';
 import { log, warn } from '../../services/logger';
 import {
-  consumeSearchRetry, describeSearchError, failureOf, isAuthenticationError, readPendingLookups, rememberSearchRetry, writePendingLookups,
+  consumeSearchRetry, describeSearchError, failureOf, isAuthenticationError, readPendingRequests, rememberSearchRetry, writePendingRequests,
   type SearchRequest,
 } from '../../services/searchRecovery';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
@@ -170,8 +170,8 @@ export function useSearchQueue({
 
   // What a reload would lose is kept as it changes (see pendingRequestsOf), and the list from before this load is read
   // first, so the first write can't erase it. On mount, that list and a retry kept from an expired session run once.
-  const [interrupted] = useState(() => readPendingLookups(Date.now()));
-  useEffect(() => { writePendingLookups(pendingRequestsOf(queue, Date.now())); }, [queue]);
+  const [interrupted] = useState(() => readPendingRequests(Date.now()));
+  useEffect(() => { writePendingRequests(pendingRequestsOf(queue, Date.now())); }, [queue]);
   const resumedRef = useRef(false);
   useEffect(() => {
     if (resumedRef.current) return;
