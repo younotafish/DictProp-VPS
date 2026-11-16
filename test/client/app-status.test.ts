@@ -33,6 +33,7 @@ const quiet: StackProps = {
   writeFailed: false,
   offline: false,
   offlineChip: false,
+  refusedChanges: 0,
   aboveTabBar: true,
   holdUpdate: false,
   liftAbovePopup: false,

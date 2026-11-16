@@ -45,10 +45,9 @@ interface AppStatusPillsProps {
   /** The Offline chip shows (services/connectivityNotice): an outage has settled and nothing covers the tabs. */
   offlineChip: boolean;
   /**
-   * How many items stay on this device because the server refused what they hold (useLibrary's refusedChanges); none
-   * unless given.
+   * How many items stay on this device because the server refused what they hold (useLibrary's refusedChanges).
    */
-  refusedChanges?: number;
+  refusedChanges: number;
   /**
    * The tabs show, with the tab bar: the stack floats just above the bar (src/index.css's --nav-h) and above a footer
    * the visible tab sets (--tab-footer-h, Study's grade row). Otherwise a card covers the bar, and the stack starts at
@@ -81,7 +80,7 @@ interface AppStatusPillsProps {
  */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
   userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress, jobPills, undoMessage,
-  onUndo, stuckSyncPill, writeFailed, offline, offlineChip, refusedChanges = 0, aboveTabBar, holdUpdate, liftAbovePopup,
+  onUndo, stuckSyncPill, writeFailed, offline, offlineChip, refusedChanges, aboveTabBar, holdUpdate, liftAbovePopup,
 }) => (
   <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 w-max ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
