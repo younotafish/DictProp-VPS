@@ -6,8 +6,9 @@
  *     memory and in IndexedDB (services/audioCache.ts), so each one downloads once;
  *  2. in the casual style, the clear clip, while the server generates the casual one;
  *  3. on a miss, after asking the server to generate the clip for next time, the in-browser Kokoro voice
- *     on desktop (audio/neuralVoice.ts: a ~326 MB model, downloaded once and run in a worker), or the
- *     system voice (services/speech.ts) on iOS/iPadOS and wherever Kokoro can't run.
+ *     everywhere but iOS/iPadOS (audio/neuralVoice.ts: a ~326 MB model, downloaded once, after asking first on
+ *     Android, and run in a worker), or the system voice (services/speech.ts) on iOS/iPadOS and wherever Kokoro
+ *     is declined or can't run.
  * A word (speakWord) always uses the system voice: instant, and fine for one word.
  *
  * audio/player.ts holds the one shared <audio> element, the system voice's controls and the playback state
@@ -65,7 +66,8 @@ export interface SpeakHandle {
 }
 
 export interface SpeakOptions {
-  /** Whether a cache miss may start the one-time Kokoro model download (desktop only). Defaults to true. */
+  /** Whether a cache miss may start the one-time Kokoro model download (never on iOS/iPadOS, and on Android only
+   *  once the user agrees). Defaults to true. */
   allowDownload?: boolean;
   /** Start playback this many seconds into the clip (word-level seek). Cached-clip path only. */
   startAt?: number;

@@ -36,9 +36,10 @@ interface PlayerRecord {
   token: number;
   /** What the speaker buttons show, published to subscribers on every change. */
   state: PlaybackState;
-  /** The active request's output once it has one; null while it loads and when nothing is active. Pause and
-   *  resume, progress and seek act on the <audio> element only while it's 'clip': otherwise the element may
-   *  still hold an earlier clip, or one the browser refused to play. */
+  /** The active request's output once it has one; null while it loads and when nothing is active. Resume,
+   *  progress and seek act on the <audio> element only while it's 'clip': otherwise the element may still hold an
+   *  earlier clip, or one the browser refused to play. A pause pauses the element whatever the output, which does
+   *  no harm: the element is already paused then. */
   backend: PlaybackBackend | null;
 }
 

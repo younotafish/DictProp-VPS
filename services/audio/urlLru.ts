@@ -5,7 +5,7 @@
 // could exhaust a mobile tab's memory budget and crash it. These caches are capped, and the clip caches
 // revoke the object-URL of anything evicted, so memory plateaus instead of climbing.
 export const MAX_TTS_URLS = 200;     // cached MiMo clips (short WAV/MP3 blobs)
-export const MAX_KOKORO_URLS = 100;  // in-browser Kokoro clips (desktop only)
+export const MAX_KOKORO_URLS = 100;  // in-browser Kokoro clips (never on iOS/iPadOS)
 export const MAX_TIMINGS = 300;      // per-word timing arrays (no blob → cap only, nothing to revoke)
 
 /** A map capped at `cap` entries that evicts the least recently used one; a read or a write marks an entry used. */

@@ -24,7 +24,7 @@ interface Props {
 
 /**
  * Small icon button that reads an example sentence aloud in the natural voice: the server's cached MiMo
- * clip, or on a miss the in-browser Kokoro voice (desktop) or the system voice (iOS/iPadOS).
+ * clip, or on a miss the in-browser Kokoro voice (the system voice on iOS/iPadOS).
  *
  * It is a PURE SUBSCRIBER to the shared playback state (services/lazyTts), keyed by the sentence
  * text. So the icon always reflects what's actually playing — whether playback was started by THIS

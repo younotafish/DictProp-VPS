@@ -1,10 +1,10 @@
 /**
- * The in-browser Kokoro voice (Kokoro-82M through kokoro-js), the desktop fallback when a sentence's clip is
- * missing: the download consent, the client of the worker that loads and runs the model off the page's thread
- * (services/kokoroWorker.ts), and the cache of the clips it made. The ~326 MB fp32 model comes from the Hugging
- * Face CDN into the browser's Cache Storage once, then works offline. Chromium with WebGPU runs it on the GPU,
- * retrying on WASM if that fails to load; other browsers run it on the CPU through WASM (platform.ts says why
- * Safari stays on WASM). iOS/iPadOS never gets here.
+ * The in-browser Kokoro voice (Kokoro-82M through kokoro-js), the fallback everywhere but iOS/iPadOS when a
+ * sentence's clip is missing: the download consent (asked on Android), the client of the worker that loads and runs
+ * the model off the page's thread (services/kokoroWorker.ts), and the cache of the clips it made. The ~326 MB fp32
+ * model comes from the Hugging Face CDN into the browser's Cache Storage once, then works offline. Chromium with
+ * WebGPU runs it on the GPU, retrying on WASM if that fails to load; other browsers run it on the CPU through WASM
+ * (platform.ts says why Safari stays on WASM). iOS/iPadOS never gets here.
  *
  * Named for what it is rather than "kokoro…": the build marks chunks whose names start with "kokoro" as
  * optional downloads, and this module ships with the engine.
@@ -134,7 +134,7 @@ const synthesize = async (text: string, voice: KokoroVoice): Promise<string> => 
   return url;
 };
 
-// macOS / desktop cache-miss fallback: synthesize in-browser with Kokoro, then play. Falls back to
+// The cache-miss fallback everywhere but iOS/iPadOS: synthesize in-browser with Kokoro, then play. Falls back to
 // the system voice if the model can't load / consent is declined. iOS/iPadOS never reaches here.
 export const speakViaKokoro = async (
   plain: string,

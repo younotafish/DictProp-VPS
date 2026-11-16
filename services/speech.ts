@@ -1,6 +1,6 @@
 /**
  * Shared speech synthesis utilities: the system voice, which reads words, and sentences whose cached clip
- * is missing on iOS/iPadOS (services/neuralTts.ts).
+ * is missing on iOS/iPadOS or wherever the Kokoro voice is declined, unavailable or fails (services/neuralTts.ts).
  *
  * Chrome on macOS loads voices asynchronously — getVoices() returns []
  * until the voiceschanged event fires (~1-2s after page load). We cache
