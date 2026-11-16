@@ -8,8 +8,13 @@ import { useNow } from '../../hooks/useNow';
 /** How long typing must pause before a query nothing contains gets its fuzzy scan. */
 const FUZZY_PAUSE_MS = 300;
 
-/** The notebook list for the typed query: literal matches at once, fuzzy ones once typing pauses. */
-export function useNotebookSearch(items: StoredItem[], query: string, sortMode: NotebookSort, filterMode: NotebookFilter) {
+/**
+ * The notebook list for the typed query: literal matches at once, fuzzy ones once typing pauses. `clockBump` moves
+ * the list's clock on when the notebook says the view changed (a card opened over the list).
+ */
+export function useNotebookSearch(
+  items: StoredItem[], query: string, sortMode: NotebookSort, filterMode: NotebookFilter, clockBump: number,
+) {
   // Defer the heavy grouping/search pipeline so typing stays responsive on large libraries: the input
   // updates immediately (query) while the filtered/grouped list catches up a tick behind.
   const deferredSearchQuery = useDeferredValue(query);
@@ -27,15 +32,16 @@ export function useNotebookSearch(items: StoredItem[], query: string, sortMode: 
     [items, searchQuery],
   );
   const fuzzyReady = !!searchQuery && !literalMatches && pausedQuery === searchQuery;
-  // The time the list counts what's due from (list.now), which the header's counts and the rows' Due badges share.
-  // It's read again whenever the list is rebuilt from new input, when the tab is shown again and when the page
-  // comes back into view, so what fell due while the list was out of sight shows as due. It doesn't tick while
-  // the list is read.
-  const listInputs = useMemo(
-    () => ({ items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode }),
-    [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode],
+  // The time the list counts what's due from (list.now), which its order, its due block, the rows' Due badges and
+  // the header's counts share. It's read again only when the view changes: the search or its fuzzy results, the sort
+  // or the filter change, a card opens over the list (clockBump), the tab is shown again or the page comes back into view. A
+  // sync, an enrichment or an acknowledgement rebuilds the list at the same clock, so rows refresh in place and only
+  // a card whose own schedule changed moves; nothing slides into the due block while the list is read.
+  const listClockKey = useMemo(
+    () => ({ searchQuery, fuzzyReady, sortMode, filterMode, clockBump }),
+    [searchQuery, fuzzyReady, sortMode, filterMode, clockBump],
   );
-  const now = useNow(listInputs);
+  const now = useNow(listClockKey);
   const shownList = useRef<NotebookList | null>(null);
   const list = useMemo(() => {
     // The list on screen lends the new one its unchanged groups, so their rows don't redraw.

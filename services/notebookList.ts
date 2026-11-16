@@ -2,6 +2,7 @@ import Fuse from 'fuse.js';
 import { getItemSpelling, getItemTitle } from '../types';
 import type { ItemGroup, SearchResult, StoredItem, VocabCard } from '../types';
 import { sortStoredSensesByUsage } from './usageAudit';
+import { needsReview } from './sentenceReviewState';
 
 export type NotebookSort = 'familiarity' | 'alphabetical';
 export type NotebookFilter = 'all' | 'vocab' | 'phrase';
@@ -19,9 +20,20 @@ export const nextNotebookFilter = (filter: NotebookFilter): NotebookFilter => {
 export const nextNotebookSort = (sort: NotebookSort): NotebookSort =>
   sort === 'familiarity' ? 'alphabetical' : 'familiarity';
 
-/** What the filter lists, as a plural noun for the list's messages. */
-export const filterNoun = (filter: NotebookFilter): string =>
-  filter === 'phrase' ? 'phrases' : filter === 'vocab' ? 'words' : 'items';
+/** What the filter lists, as a noun for `count` of them (1 word, 3 phrases, 2 items); plural without a count. */
+export const filterNoun = (filter: NotebookFilter, count?: number): string => {
+  const noun = filter === 'phrase' ? 'phrase' : filter === 'vocab' ? 'word' : 'item';
+  return count === 1 ? noun : `${noun}s`;
+};
+
+/**
+ * Whether the notebook counts a card as due at `now`: never reviewed, or reviewed and due again (needsReview, the
+ * rule the reading tabs use too), and not archived. This one rule orders the list, fills the due block, draws the
+ * rows' Due badges and strips and makes the header's "to review" count, so all of them agree. Study's dashboard
+ * counts only reviewed cards as due, which is why the header says "to review" rather than "due".
+ */
+export const isNotebookDue = (item: StoredItem, now: number): boolean =>
+  !item.isArchived && needsReview(item.srs, now);
 
 export interface NotebookList {
   /** The listed unarchived items, grouped by spelling in display order. */
@@ -30,7 +42,7 @@ export interface NotebookList {
   archivedGroups: ItemGroup[];
   /** While searching, the due items the results leave out, weakest first. Empty otherwise. */
   dueGroups: ItemGroup[];
-  /** The time the list counted what's due from; its rows' Due badges count from it too. */
+  /** The time the list counted what's due from; its rows' Due badges and the header's counts count from it too. */
   now: number;
 }
 
@@ -109,18 +121,16 @@ export const findNotebookMatches = (items: StoredItem[], query: string): StoredI
 
 const byTitle = (a: StoredItem, b: StoredItem): number => getItemTitle(a).localeCompare(getItemTitle(b));
 
-// Due items first, weakest memory then longest overdue; the rest by next review.
+// Due items first (isNotebookDue), weakest memory then longest overdue; the rest by next review.
 const byReviewPriority = (now: number) => (a: StoredItem, b: StoredItem): number => {
-  const dueA = a.srs?.nextReview || 0;
-  const dueB = b.srs?.nextReview || 0;
-  const isDueA = dueA <= now;
-  const isDueB = dueB <= now;
+  const isDueA = isNotebookDue(a, now);
+  const isDueB = isNotebookDue(b, now);
   if (isDueA !== isDueB) return isDueA ? -1 : 1;
   if (isDueA) {
     const strength = (a.srs?.memoryStrength || 0) - (b.srs?.memoryStrength || 0);
     if (strength !== 0) return strength;
   }
-  return dueA - dueB;
+  return (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0);
 };
 
 /** Groups items by spelling in order of first appearance, each group's senses sorted by usage. */
@@ -178,8 +188,7 @@ export const buildNotebookList = (
   let dueGroups: ItemGroup[] = [];
   if (matches) {
     const shown = new Set(active);
-    const due = items.filter(item =>
-      isListed(item) && !item.isArchived && !shown.has(item) && (item.srs?.nextReview || 0) <= now);
+    const due = items.filter(item => isListed(item) && !shown.has(item) && isNotebookDue(item, now));
     dueGroups = groupByTitle(due.sort(byPriority));
   }
 
@@ -192,37 +201,35 @@ export const buildNotebookList = (
   };
 };
 
-/**
- * The notebook's spellings under the filter, archived ones aside: the "N saved" in its header. Outside a search
- * that's the number of listed groups; during one it's counted here instead, from every item rather than the results.
- */
-export const countSavedSpellings = (items: StoredItem[], filter: NotebookFilter): number => {
-  const spellings = new Set<string>();
-  for (const item of items) {
-    if (!item?.data?.id || item.isDeleted || item.isArchived) continue;
-    if (filter === 'all' || item.type === filter) spellings.add(spellingOf(item));
-  }
-  spellings.delete('');
-  return spellings.size;
-};
+/** The counts in the notebook's header, archived and deleted items aside. */
+export interface NotebookStats {
+  /** Spellings under the filter: outside a search, the listed groups; during one, still the whole notebook's. */
+  saved: number;
+  /** Senses of every type reviewed since local midnight. */
+  reviewedToday: number;
+  /** Spellings under the filter with a sense due by isNotebookDue: exactly those the list shows with a Due badge. */
+  toReview: number;
+}
 
-/**
- * The header's activity counts at `now`, archived and deleted items aside: senses reviewed since local midnight,
- * and senses due, of every type whatever the filter.
- */
-export const notebookStats = (items: StoredItem[], now: number): { reviewedToday: number; dueCount: number } => {
+/** The header's counts at the list's clock `now`, from every item rather than a search's results. */
+export const notebookStats = (items: StoredItem[], filter: NotebookFilter, now: number): NotebookStats => {
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
   const todayTs = todayStart.getTime();
-  let reviewed = 0;
-  let due = 0;
+  let reviewedToday = 0;
+  const saved = new Set<string>();
+  const toReview = new Set<string>();
   for (const item of items) {
-    if (item.isDeleted || item.isArchived || !item.srs) continue;
+    if (!item || item.isDeleted || item.isArchived) continue;
     // A reset stamps lastReviewDate as well, and leaves no reviews.
-    if (item.srs.totalReviews > 0 && item.srs.lastReviewDate >= todayTs) reviewed++;
-    if (item.srs.nextReview <= now) due++;
+    if (item.srs && item.srs.totalReviews > 0 && item.srs.lastReviewDate >= todayTs) reviewedToday++;
+    if (!item.data?.id || (filter !== 'all' && item.type !== filter)) continue;
+    const spelling = spellingOf(item);
+    if (!spelling) continue;
+    saved.add(spelling);
+    if (isNotebookDue(item, now)) toReview.add(spelling);
   }
-  return { reviewedToday: reviewed, dueCount: due };
+  return { saved: saved.size, reviewedToday, toReview: toReview.size };
 };
 
 export interface ListNoteContent {

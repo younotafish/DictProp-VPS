@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
-import type { ItemGroup, StoredItem } from '../../types';
-import type { NotebookSection } from '../../services/notebookList';
+import type { ItemGroup } from '../../types';
+import { isNotebookDue, type NotebookSection } from '../../services/notebookList';
 import { useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { NotebookItem } from './NotebookItem';
 import { CarouselArrow, CarouselDots } from './Carousel';
@@ -18,15 +18,13 @@ interface NotebookGroupProps {
   onUnarchive?: (id: string) => void;
 }
 
-const isDueAt = (item: StoredItem, now: number) => (item.srs?.nextReview ?? 0) <= now;
-
 // A row redraws when its group (a new one only when its senses changed, see buildNotebookList), its section or a
 // handler changes, or when the list's clock passes the review time of one of its senses, flipping its Due badge.
 // A clock that moves on without flipping one changes nothing the row shows.
 const sameRow = (a: NotebookGroupProps, b: NotebookGroupProps): boolean =>
   a.group === b.group && a.section === b.section && a.onViewDetail === b.onViewDetail && a.onDelete === b.onDelete &&
   a.onArchive === b.onArchive && a.onUnarchive === b.onUnarchive &&
-  (a.now === b.now || a.group.items.every(item => isDueAt(item, a.now) === isDueAt(item, b.now)));
+  (a.now === b.now || a.group.items.every(item => isNotebookDue(item, a.now) === isNotebookDue(item, b.now)));
 
 export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
   group, section, now, onViewDetail, onDelete, onArchive, onUnarchive
@@ -63,7 +61,7 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
     return (
       <NotebookItem
         item={group.items[0]}
-        isDue={isDueAt(group.items[0], now)}
+        isDue={isNotebookDue(group.items[0], now)}
         itemIndex={0}
         onOpen={openSense}
         onDelete={onDelete}
@@ -88,7 +86,7 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
         <NotebookItem
           key={currentItem.data.id}
           item={currentItem}
-          isDue={isDueAt(currentItem, now)}
+          isDue={isNotebookDue(currentItem, now)}
           itemIndex={index}
           onOpen={openSense}
           onDelete={onDelete}

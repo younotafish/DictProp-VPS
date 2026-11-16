@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, startTransition } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { getItemTitle, type AppUser, type ItemGroup, type StoredItem, type SyncStatus, type VocabCard } from '../types';
 import { TextAnalyzer } from '../components/TextAnalyzer';
@@ -8,7 +8,7 @@ import { makeVocabStoredItem } from '../services/items';
 import { useLatest } from '../hooks/useStableValue';
 import type { BatchImportProgress } from '../hooks/useBatchImport';
 import {
-  buildNotebookRows, countSavedSpellings, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats,
+  buildNotebookRows, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats,
   type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
 } from '../services/notebookList';
 import { isImeKey, isTypingTarget } from '../components/keyboardTarget';
@@ -77,6 +77,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [filterMode, setFilterMode] = useState<NotebookFilter>('vocab'); // Default to vocab only
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  // Moves the list's clock on (see useNotebookSearch) when a card opens over the list.
+  const [clockBump, setClockBump] = useState(0);
   const { headerRef, handleScroll, showHeader } = useAutoHidingHeader(onScroll);
 
   // AI Search state
@@ -160,16 +162,14 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onSave(makeVocabStoredItem(vocab));
   }, [onSave]);
 
-  const { searchQuery, list, searchSettled } = useNotebookSearch(items, localSearchQuery, sortMode, filterMode);
+  const { searchQuery, list, searchSettled } = useNotebookSearch(items, localSearchQuery, sortMode, filterMode, clockBump);
 
-  // "N saved" counts the notebook's spellings under the current filter, not the search results. Outside a
-  // search they're the listed groups; during one they're counted apart, once per search rather than per key.
-  const searching = !!searchQuery;
-  const savedWhileSearching = useMemo(
-    () => (searching ? countSavedSpellings(items, filterMode) : 0),
-    [items, filterMode, searching],
+  // The header counts the notebook's spellings under the current filter at the list's clock, not the search
+  // results: outside a search "N saved" is the listed groups, and "N to review" the ones listed with a Due badge.
+  const { saved: savedCount, reviewedToday, toReview } = useMemo(
+    () => notebookStats(items, filterMode, list.now),
+    [items, filterMode, list.now],
   );
-  const savedCount = searching ? savedWhileSearching : list.groups.length;
   // The empty-notebook screen is for a notebook with nothing in it, not one the filter or the archive hides.
   const hasSavedItems = useMemo(() => items.some(item => !!item?.data?.id && !item.isDeleted), [items]);
   // Its header holds the tools and the account menu. The list's scrolling may have slid it away, and an empty
@@ -198,7 +198,11 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     const groups = section === 'due' ? current.dueGroups : section === 'archived' ? current.archivedGroups : current.groups;
     let groupIndex = groups.indexOf(group);
     if (groupIndex < 0) groupIndex = groups.findIndex(g => g.title === group.title);
-    if (groupIndex >= 0) onViewDetail(groups, groupIndex, itemIndex);
+    if (groupIndex < 0) return;
+    onViewDetail(groups, groupIndex, itemIndex);
+    // The list catches up with the clock behind the card, at low priority so the card's first paint doesn't wait,
+    // and what fell due meanwhile is in place when the card closes.
+    startTransition(() => setClockBump(n => n + 1));
   }, [listRef, onViewDetail]);
 
   const virtualRows = useMemo(
@@ -218,7 +222,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       );
     }
 
-    if (row.type === 'due-header') return <DueHeader count={row.count} />;
+    if (row.type === 'due-header') return <DueHeader count={row.count} filter={filterMode} />;
 
     if (row.type === 'archived-toggle') {
       return <ArchivedToggle count={row.count} expanded={showArchived} onToggle={() => setShowArchived(open => !open)} />;
@@ -265,9 +269,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         />
       </div>
     );
-  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive, listNote, list.now]);
-
-  const { reviewedToday, dueCount } = useMemo(() => notebookStats(items, list.now), [items, list.now]);
+  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive, listNote, list.now, filterMode]);
 
   // The list scrolls inside this container. React detaches refs while the tab is hidden, and letting go of
   // the container then would unmount the list and lose its place, so only a new container replaces it.
@@ -289,7 +291,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         headerRef={headerRef}
         savedCount={savedCount}
         reviewedToday={reviewedToday}
-        dueCount={dueCount}
+        toReviewCount={toReview}
         isOnline={isOnline}
         toolsMenu={
           <NotebookToolsMenu

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Archive, ChevronDown, ChevronUp, Filter, Wand2 } from 'lucide-react';
-import type { ListNoteContent } from '../../services/notebookList';
+import { filterNoun, type ListNoteContent, type NotebookFilter } from '../../services/notebookList';
 
 /** Why nothing is listed above the due and archived sections, and the ways out (listNoteFor decides which). */
 export const ListNote: React.FC<{ note: ListNoteContent; onLookUp: () => void; onShowAll: () => void }> = ({ note, onLookUp, onShowAll }) => (
@@ -29,12 +29,12 @@ export const ListNote: React.FC<{ note: ListNoteContent; onLookUp: () => void; o
   </div>
 );
 
-/** Heads the due items a search leaves out, listed after its results. */
-export const DueHeader: React.FC<{ count: number }> = ({ count }) => (
+/** Heads the due items a search leaves out, listed after its results, named for what the filter lists. */
+export const DueHeader: React.FC<{ count: number; filter: NotebookFilter }> = ({ count, filter }) => (
   <div className="px-3 mt-4 pt-3 border-t border-dashed border-orange-200">
     <div className="flex items-center gap-2 px-1 mb-3">
       <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full uppercase tracking-wide">Due for Review</span>
-      <span className="text-xs text-slate-400">{count} words to revisit</span>
+      <span className="text-xs text-slate-400">{count} {filterNoun(filter, count)} to revisit</span>
     </div>
   </div>
 );

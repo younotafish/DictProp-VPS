@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
-  buildNotebookList, buildNotebookRows, countSavedSpellings, filterNoun, findFuzzyMatches, findLiteralMatches, findNotebookMatches,
-  groupByTitle, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats, type NotebookRow,
+  buildNotebookList, buildNotebookRows, filterNoun, findFuzzyMatches, findLiteralMatches, findNotebookMatches,
+  groupByTitle, isNotebookDue, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats, type NotebookFilter,
+  type NotebookRow,
 } from '../../services/notebookList.ts';
 import type { ItemGroup, SearchResult, StoredItem, UsageStatus, VocabCard } from '../../types.ts';
+import { NotebookHeader } from '../../views/notebook/NotebookHeader.tsx';
+import { DueHeader } from '../../views/notebook/ListRows.tsx';
 
 const DAY = 86_400_000;
 const NOW = 1_000 * DAY;
@@ -20,7 +25,8 @@ interface Options {
   reviews?: number;
 }
 
-const srs = (id: string, type: StoredItem['type'], { due = NOW + DAY, strength = 0, reviewedAt = 0, reviews = 0 }: Options) => ({
+// Reviewed once unless told otherwise: a card never reviewed is due whatever its next review says.
+const srs = (id: string, type: StoredItem['type'], { due = NOW + DAY, strength = 0, reviewedAt = 0, reviews = 1 }: Options) => ({
   id,
   type,
   nextReview: due,
@@ -172,10 +178,13 @@ test('the filter button cycles all, words, phrases; the sort button toggles; eac
   assert.equal(nextNotebookFilter('phrase'), 'all');
   assert.equal(nextNotebookSort('familiarity'), 'alphabetical');
   assert.equal(nextNotebookSort('alphabetical'), 'familiarity');
-  assert.deepEqual((['all', 'vocab', 'phrase'] as const).map(filterNoun), ['items', 'words', 'phrases']);
+  assert.deepEqual((['all', 'vocab', 'phrase'] as const).map(filter => filterNoun(filter)), ['items', 'words', 'phrases']);
+  // With a count, one is singular.
+  assert.deepEqual((['all', 'vocab', 'phrase'] as const).map(filter => filterNoun(filter, 1)), ['item', 'word', 'phrase']);
+  assert.deepEqual([0, 2, 340].map(count => filterNoun('vocab', count)), ['words', 'words', 'words']);
 });
 
-test('the saved count is the number of listed spellings, counted the same way while searching', () => {
+test('the saved count is the number of listed spellings under the filter, counted the same way while searching', () => {
   const items: StoredItem[] = [
     vocab('Bank', { sense: 'money' }),
     vocab('bank', { sense: 'river' }),
@@ -186,27 +195,81 @@ test('the saved count is the number of listed spellings, counted the same way wh
     phrase('break a leg', '祝你好运', { archived: true }),
   ];
   for (const filter of ['all', 'vocab', 'phrase'] as const) {
-    assert.equal(countSavedSpellings(items, filter), buildNotebookList(items, null, 'familiarity', filter, NOW).groups.length, filter);
+    assert.equal(notebookStats(items, filter, NOW).saved, buildNotebookList(items, null, 'familiarity', filter, NOW).groups.length, filter);
   }
-  assert.equal(countSavedSpellings(items, 'all'), 3);
-  assert.equal(countSavedSpellings(items, 'vocab'), 2);
-  assert.equal(countSavedSpellings(items, 'phrase'), 1);
+  assert.deepEqual((['all', 'vocab', 'phrase'] as const).map(filter => notebookStats(items, filter, NOW).saved), [3, 2, 1]);
 });
 
-test('reviewed today counts reviews since local midnight, and due counts every unarchived sense due at that time', () => {
+test('reviewed today counts reviews of every type since local midnight, whatever the filter', () => {
   // Local wall-clock times, so the test passes in any time zone.
   const at = (day: number, hour: number, minute = 0) => new Date(2026, 10, day, hour, minute).getTime();
   const items: StoredItem[] = [
     vocab('late', { reviewedAt: at(14, 23, 30), reviews: 3, due: at(15, 3) }),
     vocab('reset', { reviewedAt: at(14, 23, 0), reviews: 0, due: at(14, 23, 0) }),
-    phrase('on the fence', '犹豫不决', { due: at(14, 9) }),
+    phrase('on the fence', '犹豫不决', { reviewedAt: at(14, 21), due: at(15, 9) }),
     vocab('archived', { archived: true, reviewedAt: at(14, 22), reviews: 1, due: at(14, 1) }),
     { ...vocab('deleted', { reviewedAt: at(14, 22), reviews: 1, due: at(14, 1) }), isDeleted: true },
   ];
-  // 23:45 the same evening: the 23:30 review counts; 'late' isn't due until 03:00.
-  assert.deepEqual(notebookStats(items, at(14, 23, 45)), { reviewedToday: 1, dueCount: 2 });
-  // 08:00 the next morning: yesterday's review no longer counts, and 'late' fell due overnight.
-  assert.deepEqual(notebookStats(items, at(15, 8)), { reviewedToday: 0, dueCount: 3 });
+  // 23:45 the same evening: the 21:00 and 23:30 reviews count, the reset doesn't, under every filter.
+  for (const filter of ['all', 'vocab', 'phrase'] as const) assert.equal(notebookStats(items, filter, at(14, 23, 45)).reviewedToday, 2, filter);
+  // 08:00 the next morning: yesterday's reviews no longer count.
+  assert.equal(notebookStats(items, 'all', at(15, 8)).reviewedToday, 0);
+});
+
+test('a card is due by the notebook when it was never reviewed or its review time has passed, and never when archived', () => {
+  assert.equal(isNotebookDue(vocab('overdue', { due: NOW - DAY }), NOW), true);
+  assert.equal(isNotebookDue(vocab('now', { due: NOW }), NOW), true);
+  assert.equal(isNotebookDue(vocab('later', { due: NOW + DAY }), NOW), false);
+  // Never reviewed: due at any clock, so a card saved or reset a minute ago lists with the due cards.
+  for (const at of [NOW - 365 * DAY, NOW, NOW + 365 * DAY]) {
+    assert.equal(isNotebookDue(vocab('new', { reviews: 0, due: NOW + 60_000 }), at), true);
+  }
+  assert.equal(isNotebookDue(vocab('archived', { archived: true, due: NOW - DAY }), NOW), false);
+  assert.equal(isNotebookDue(vocab('archived new', { archived: true, reviews: 0 }), NOW), false);
+});
+
+test('to review counts spellings under the filter with a due sense, never-reviewed ones included', () => {
+  const items: StoredItem[] = [
+    // One word with three due senses counts once.
+    vocab('bank', { sense: 'money', due: NOW - DAY }),
+    vocab('bank', { sense: 'river', due: NOW - 2 * DAY }),
+    vocab('bank', { sense: 'tilt', reviews: 0, due: NOW + DAY }),
+    // A word with one sense due and one resting counts.
+    vocab('run', { sense: 'move', due: NOW - DAY }),
+    vocab('run', { sense: 'manage', due: NOW + DAY }),
+    vocab('saved just now', { reviews: 0, due: NOW + 60_000 }),
+    vocab('resting', { due: NOW + DAY }),
+    vocab('archived', { archived: true, due: NOW - DAY }),
+    { ...vocab('deleted', { due: NOW - DAY }), isDeleted: true },
+    phrase('on the fence', '犹豫不决', { due: NOW - DAY }),
+    phrase('break a leg', '祝你好运', { due: NOW + DAY }),
+  ];
+  assert.deepEqual((['all', 'vocab', 'phrase'] as const).map(filter => notebookStats(items, filter, NOW).toReview), [4, 3, 1]);
+  // Later on, the resting senses have fallen due too.
+  assert.equal(notebookStats(items, 'all', NOW + 2 * DAY).toReview, 6);
+});
+
+test('the header’s to-review count is the number of listed spellings with a Due badge at the list’s clock', () => {
+  const items: StoredItem[] = [
+    vocab('bank', { sense: 'money', due: NOW - DAY }),
+    vocab('bank', { sense: 'river', due: NOW + DAY }),
+    vocab('saved just now', { reviews: 0, due: NOW + 60_000 }),
+    vocab('resting', { due: NOW + DAY }),
+    vocab('soon', { due: NOW + 60_000 }),
+    vocab('archived', { archived: true, due: NOW - DAY }),
+    phrase('on the fence', '犹豫不决', { due: NOW - DAY }),
+    phrase('break a leg', '祝你好运', { reviews: 0 }),
+  ];
+  for (const filter of ['all', 'vocab', 'phrase'] as NotebookFilter[]) {
+    for (const now of [NOW, NOW + 60_000, NOW + 2 * DAY]) {
+      const list = buildNotebookList(items, null, 'familiarity', filter, now);
+      const withBadge = list.groups.filter(group => group.items.some(item => isNotebookDue(item, list.now))).length;
+      assert.equal(notebookStats(items, filter, list.now).toReview, withBadge, `${filter} at ${now - NOW}`);
+    }
+  }
+  // The archived section shows no Due badge.
+  const list = buildNotebookList(items, null, 'familiarity', 'all', NOW);
+  assert.ok(list.archivedGroups.every(group => group.items.every(item => !isNotebookDue(item, list.now))));
 });
 
 test('the list note explains an empty list and offers the way out, but says nothing while results are listed or a search is unsettled', () => {
@@ -294,4 +357,51 @@ test('a rebuild keeps the earlier object of every group whose senses are unchang
   assert.deepEqual(titles(searching.dueGroups), ['bank']);
   assert.notEqual(searching.dueGroups[0], second.groups[0]);
   assert.equal(searching.groups[0], second.groups[2]);
+});
+
+test('at one clock, a content change rebuilds the list in the same order and keeps the other rows’ groups', () => {
+  const items = [
+    vocab('overdue', { due: NOW - DAY, strength: 50 }),
+    vocab('soon', { due: NOW + 60_000 }),
+    vocab('later', { due: NOW + 3 * DAY }),
+  ];
+  const first = buildNotebookList(items, null, 'familiarity', 'all', NOW);
+  assert.deepEqual(titles(first.groups), ['overdue', 'soon', 'later']);
+  // An enrichment lands on 'later' and a sync acknowledges 'overdue' a minute on, after 'soon' fell due: at the list's
+  // clock nothing moves, and only the changed rows get new groups.
+  const enriched = items.map(item => (item.data.id === 'later:' ? { ...item, data: { ...item.data, history: 'Old English' } } : item));
+  const acknowledged = enriched.map(item => (item.data.id === 'overdue:' ? { ...item, updatedAt: NOW + 60_000 } : item));
+  const second = buildNotebookList(acknowledged, null, 'familiarity', 'all', first.now, first);
+  assert.deepEqual(titles(second.groups), ['overdue', 'soon', 'later']);
+  assert.equal(second.groups[1], first.groups[1]);
+  assert.notEqual(second.groups[2], first.groups[2]);
+  // When the clock moves on (a view change), 'soon' joins the due cards.
+  assert.deepEqual(titles(buildNotebookList(acknowledged, null, 'familiarity', 'all', NOW + 60_000, second).groups), ['soon', 'overdue', 'later']);
+});
+
+test('a card saved or reset after the list’s clock lists with the due cards at once, in browse and in a search’s due block', () => {
+  const items = [
+    vocab('overdue', { due: NOW - DAY, strength: 50 }),
+    vocab('resting', { due: NOW + DAY }),
+    // Saved from the AI card a minute after the list read its clock: due now by its own schedule, not yet by the list's.
+    vocab('just saved', { reviews: 0, due: NOW + 60_000 }),
+    vocab('archived new', { reviews: 0, archived: true }),
+  ];
+  assert.deepEqual(titles(buildNotebookList(items, null, 'familiarity', 'all', NOW).groups), ['just saved', 'overdue', 'resting']);
+  const searching = buildNotebookList(items, findNotebookMatches(items, 'resting'), 'familiarity', 'all', NOW);
+  assert.deepEqual(titles(searching.dueGroups), ['just saved', 'overdue']);
+});
+
+test('the header line reads saved, reviewed today and to review, and the due block names what the filter lists', () => {
+  const noop = () => {};
+  const header = renderToStaticMarkup(createElement(NotebookHeader, {
+    headerRef: null, savedCount: 1532, reviewedToday: 12, toReviewCount: 340, isOnline: true, toolsMenu: null, empty: false,
+    compareMode: false, onToggleCompare: noop, filterMode: 'vocab', onCycleFilter: noop, sortMode: 'familiarity',
+    onCycleSort: noop, user: null, onSignIn: noop, onSignOut: noop, children: null,
+  }));
+  assert.match(header, /<p class="text-xs text-slate-500 font-medium truncate">1532 saved · 12 reviewed today · 340 to review<\/p>/);
+  const due = (count: number, filter: NotebookFilter) => renderToStaticMarkup(createElement(DueHeader, { count, filter }));
+  assert.match(due(1, 'vocab'), />1 word to revisit</);
+  assert.match(due(3, 'phrase'), />3 phrases to revisit</);
+  assert.match(due(2, 'all'), />2 items to revisit</);
 });
