@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 process.env.OWNER_GOOGLE_EMAIL = 'owner@example.com';
 
 const { authRoutes } = await import('../src/routes/auth.js');
-const { createSession, createUserAndClaimItems } = await import('../src/db.js');
+const { createSession, createUserAndClaimItems, db, findUserByGoogleId, getSession } = await import('../src/db.js');
 
 const app = new Hono();
 app.route('/api/auth', authRoutes);
@@ -82,4 +82,23 @@ test('sign-in cookies are Secure unless the whole round trip is local http', asy
   for (const cookie of await cookiesFor('http://localhost:3000/api/auth/login', { Host: 'localhost:3000' })) {
     assert.doesNotMatch(cookie, /Secure/i);
   }
+});
+
+test('the gate lets a session due for renewal through without renewing it, since Caddy drops the gate\'s cookies', async () => {
+  const owner = findUserByGoogleId('owner-google-id') ?? createUserAndClaimItems({
+    googleId: 'owner-google-id', email: 'owner@example.com', displayName: 'Owner', photoUrl: null,
+  });
+  const { token } = createSession(owner.id);
+  // Eight days into its 30: renewable, but only an API request renews.
+  const createdAt = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  db.prepare('UPDATE sessions SET created_at = ?, expires_at = ? WHERE user_id = ?')
+    .run(createdAt, createdAt + 30 * 24 * 60 * 60 * 1000, owner.id);
+
+  const response = await app.request(
+    'https://dictprop.online/api/auth/gate?returnTo=%2Fsd-cards%2F',
+    { headers: { Cookie: `session=${token}` } },
+  );
+  assert.equal(response.status, 204);
+  assert.deepEqual(response.headers.getSetCookie(), []);
+  assert.equal(getSession(token)?.expiresAt, createdAt + 30 * 24 * 60 * 60 * 1000);
 });

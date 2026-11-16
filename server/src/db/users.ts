@@ -88,8 +88,8 @@ export function createSession(userId: string): { token: string; expiresAt: numbe
   const now = Date.now();
   const expiresAt = now + SESSION_LIFETIME_MS;
   sessionStmts.create.run({ token: sessionTokenHash(token), user_id: userId, created_at: now, expires_at: expiresAt });
-  // Lookups already ignore expired sessions; a sign-in, which writes anyway, deletes them, so the request path
-  // stays read-only. A busy database never fails a sign-in over this.
+  // Lookups already ignore expired sessions; a sign-in, which writes anyway, deletes them, so a request writes to the
+  // sessions table only to renew one (at most weekly). A busy database never fails a sign-in over this.
   try {
     sessionStmts.deleteExpired.run(now);
   } catch (error) {

@@ -7,7 +7,7 @@ process.env.GOOGLE_CLIENT_ID = 'test-client';
 
 const { createAuthRoutes } = await import('../src/routes/auth.js');
 const { setSessionCookie } = await import('../src/middleware/auth.js');
-const { getSessionUser } = await import('../src/db.js');
+const { db, getSession, getSessionUser } = await import('../src/db.js');
 
 const owner = { sub: 'owner-google-id', email: 'owner@example.com', email_verified: true as const };
 const app = new Hono().route('/api/auth', createAuthRoutes({
@@ -87,4 +87,17 @@ test('a renewed cookie carries the sign-in cookie\'s attributes, with Max-Age th
   assert.deepEqual(cookie?.attributes, {
     'max-age': String(10 * 24 * 60 * 60), path: '/', httponly: '', secure: '', samesite: 'Lax',
   });
+});
+
+test('/api/auth/me answers for a session due for renewal without renewing it or sending its cookie again', async () => {
+  const headers = { Host: 'dictprop.online', 'X-Forwarded-Proto': 'https' };
+  const { value: token } = await signIn('http://dictprop.online', headers);
+  // Eight days into its 30: renewable, but only an API request renews.
+  const createdAt = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  db.prepare('UPDATE sessions SET created_at = ?, expires_at = ? WHERE user_id = ?')
+    .run(createdAt, createdAt + 30 * 24 * 60 * 60 * 1000, getSessionUser(token)!.id);
+  const response = await app.request('http://dictprop.online/api/auth/me', { headers: { ...headers, Cookie: `session=${token}` } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.headers.getSetCookie(), []);
+  assert.equal(getSession(token)?.expiresAt, createdAt + 30 * 24 * 60 * 60 * 1000);
 });
