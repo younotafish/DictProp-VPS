@@ -103,8 +103,8 @@ function SignedInApp({ user }: { user: AuthUser }) {
   } = libraryViews;
   const detail = useDetailView(libraryViews, library);
   const {
-    detailContext, liveDetailGroups, liveDetailSentenceItems, closeDetail,
-    handleViewStoredItem, handleViewSentence, prepareExampleSentence, handleOpenStudyExample,
+    detailContext, liveDetailGroups, liveDetailSentenceItems, closeDetail, removeItemFromDetailContext,
+    removeSentenceFromDetailContext, handleViewStoredItem, handleViewSentence, prepareExampleSentence, handleOpenStudyExample,
   } = detail;
   const undo = useUndoOffer(library, detail);
   const { undoMessage, closeUndoOffer, undoLastChange } = undo;
@@ -147,7 +147,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const actions = useLibraryActions(library, detail, undo);
   const {
     handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,
-    handleSaveSentence, handleRefreshReplace, resetSRS,
+    patchLiveItem, handleSaveSentence, handleRefreshReplace, resetSRS,
   } = actions;
   const { batchImportProgress, handleBatchImport } = useBatchImport(library, overlays, actions, speech);
 
@@ -165,6 +165,13 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const handleRefreshViaGlobal = useCallback((text: string) => {
     requestLookup({ query: text, source: 'expression', forceAI: true });
   }, []);
+
+  // A card or sentence the open view showed that has left the library, deleted on another device, leaves the view.
+  // It's stable, so DetailView's memo holds; a local delete has already taken the item out, so this changes nothing.
+  const handleRemoveFromView = useCallback((id: string) => {
+    removeItemFromDetailContext(id);
+    removeSentenceFromDetailContext(id);
+  }, [removeItemFromDetailContext, removeSentenceFromDetailContext]);
 
   if (libraryReadFailed) {
     return (
@@ -239,6 +246,8 @@ function SignedInApp({ user }: { user: AuthUser }) {
               sentenceItems={liveDetailSentenceItems}
               onClose={closeDetail}
               onSave={handleSave}
+              onPatchItem={patchLiveItem}
+              onRemoveFromView={handleRemoveFromView}
               onDelete={handleDelete}
               onArchive={handleArchive}
               onUnarchive={handleUnarchive}
