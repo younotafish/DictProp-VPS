@@ -5,7 +5,8 @@
 # that fails answers "can't tell", which the callers treat as a reason to wait rather than to act.
 #
 # A concurrency group holds one running and one pending job, and a newly queued job cancels the pending one, so
-# nothing should be queued in dictprop-production while one of these workflows has a run waiting there.
+# nothing should be queued in dictprop-production while one of these workflows has a run waiting there. A workflow
+# test (test/workflows/workflow-hardening.test.ts) checks that the list names exactly the workflows with a job there.
 PRODUCTION_WORKFLOWS="deploy.yml sentence-backfill.yml recover-production.yml offsite-backup.yml"
 
 # production_carries SHA: 0 when production runs a commit that contains SHA, 1 when it doesn't, 2 when that can't be

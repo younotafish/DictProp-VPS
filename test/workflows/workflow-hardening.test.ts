@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { repoPath } from '../support/paths.ts';
 import { jobs, loadWorkflows, steps } from './support/workflow.ts';
 
 const workflows = loadWorkflows();
@@ -26,6 +28,20 @@ test('the static sites queue apart from the jobs that change production', () => 
   }
   assert.equal(group('deploy.yml', 'deploy'), 'dictprop-production');
   assert.equal(group('recover-production.yml', 'restart'), 'dictprop-production');
+});
+
+// The off-site backup dispatches only while production_busy (scripts/offline/deploy-state.sh) finds none of the
+// workflows on its list in flight, so a workflow missing from the list could have its waiting job cancelled.
+test("deploy-state.sh's list of production workflows is exactly the workflows with a dictprop-production job", () => {
+  // Word-split as production_busy reads it.
+  const listed = spawnSync('bash', ['-c', '. "$1" && printf "%s\\n" $PRODUCTION_WORKFLOWS', 'bash',
+    repoPath('scripts/offline/deploy-state.sh')], { encoding: 'utf8' });
+  assert.equal(listed.status, 0, listed.stderr);
+  // Every form of the group counts, a job's or the workflow's, an expression's choice among them, but not a comment
+  // (the static sites' comments mention the group) or dictprop-production-read.
+  const inGroup = (line: string) => !line.trimStart().startsWith('#') && /dictprop-production(?![-\w])/.test(line);
+  const inQueue = workflows.filter(({ text }) => text.split('\n').some(inGroup)).map(({ name }) => name);
+  assert.deepEqual(listed.stdout.trim().split('\n').sort(), inQueue);
 });
 
 // Without one, GitHub lets a wedged job hold its runner, and any concurrency group it joins, for six hours.
