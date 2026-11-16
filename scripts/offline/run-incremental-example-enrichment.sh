@@ -69,9 +69,11 @@ RECONCILIATION="$ROOT/final-reconciliation"
 IMAGE_ROOT="$ROOT/final-images"
 IMAGE_TARGETS="$IMAGE_ROOT/cycle-targets.json"
 # Each stage publishes from a wave-state root of its own per cycle, publish-state/<stage>/<cycle>, where
-# <cycle> is CYCLE_ID, the run id of the cycle's corpus export. A dispatcher counts only the waves
-# published after its stage's input was made, so an earlier cycle's waves would never count anyway. The
-# image loops keep their working state per cycle too, in streaming-quality/<cycle> under each image root.
+# <cycle> is CYCLE_ID, the run id of the cycle's corpus export. The example and saved-sentence dispatchers
+# also ignore waves published before their input was made, but the vocabulary and item-image dispatchers
+# count every wave published in their root, whatever the cycle: for those two, the per-cycle root is all
+# that keeps an earlier cycle's waves from counting, so never share it. The image loops keep their working
+# state per cycle too, in streaming-quality/<cycle> under each image root.
 PUBLISH_STATE_ROOT="$ROOT/publish-state"
 SAVED_ROOT="$ROOT/saved-sentences"
 SAVED_SOURCE="$SAVED_ROOT/source.json"

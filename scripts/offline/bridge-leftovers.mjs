@@ -96,8 +96,10 @@ function marked(path) {
   }
 }
 
-// Waves sit directly in a state root, or one level down under the vocabulary and item-image stages'
-// fingerprint directories. Nothing inside a wave other than its archives is touched.
+// Waves sit directly in a state root, as in the roots cycles shared until 2026-11-15, or one level down: in
+// a stage's per-cycle directories (publish-state/<stage>/<cycle>), or the fingerprint directories the
+// vocabulary and item-image stages used before those. Nothing inside a wave other than its archives is
+// touched.
 export function selectLocalLeftovers(roots, { now = Date.now(), failedMaxAgeMs = FAILED_WAVE_MAX_AGE_MS } = {}) {
   // Keyed by path, since overlapping roots can reach the same wave twice.
   const leftovers = new Map();
