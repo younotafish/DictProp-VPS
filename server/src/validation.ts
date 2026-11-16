@@ -1,4 +1,5 @@
 import type { ItemWrite, ReviewEvent } from './db.js';
+import { LOCAL_IMAGE_ENRICHMENT_PROVIDER } from './incremental-enrichment.js';
 import { isSentenceAnalysis } from './sentence-analysis.js';
 import { isReviewRating, isReviewTaskType } from './shared/review.js';
 import { isUsageAudit } from './shared/usage-audit.js';
@@ -59,10 +60,15 @@ export function isAdvancedEnrichmentMarker(value: unknown): boolean {
 }
 
 function isLocalImageEnrichmentMarker(value: unknown): boolean {
-  return isRecord(value) && value.version === 1 && value.provider === 'local-ernie' &&
+  return isRecord(value) && value.version === 1 && value.provider === LOCAL_IMAGE_ENRICHMENT_PROVIDER &&
     typeof value.model === 'string' && value.model.length > 0 && value.model.length <= 300 &&
     isPositiveFinite(value.generatedAt) && isSha256(value.promptHash);
 }
+
+/** The SRS counters a stored item must carry, each a finite, non-negative number. */
+export const REQUIRED_SRS_FIELDS = [
+  'nextReview', 'interval', 'memoryStrength', 'lastReviewDate', 'totalReviews', 'correctStreak', 'stability',
+] as const;
 
 /** 'nested' when the value is too deep to walk, true when a string in it holds an inline image. */
 function containsInlineImage(value: unknown, depth = 0): boolean | 'nested' {
@@ -109,7 +115,7 @@ export function validateStoredItem(value: unknown): string | null {
   if (shapeError) return shapeError;
   if (!isRecord(value.srs)) return 'item.srs must be an object';
   if (value.srs.id !== value.data.id || value.srs.type !== value.type) return 'item.srs identity does not match item.data';
-  for (const field of ['nextReview', 'interval', 'memoryStrength', 'lastReviewDate', 'totalReviews', 'correctStreak', 'stability']) {
+  for (const field of REQUIRED_SRS_FIELDS) {
     if (!isFiniteNonNegative(value.srs[field])) return `item.srs.${field} is invalid`;
   }
   if (value.srs.lastExposureDate !== undefined && !isFiniteNonNegative(value.srs.lastExposureDate)) {
