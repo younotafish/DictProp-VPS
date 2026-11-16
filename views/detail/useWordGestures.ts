@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type UIEvent as ReactUIEvent } from 'react';
+import { useRef, type Dispatch, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type UIEvent as ReactUIEvent } from 'react';
 import type { ItemGroup, SearchResult, StoredItem, VocabCard } from '../../types';
-import type { ZoneFlash } from '../../components/EyesFreeZones';
+import { useZoneFlash } from '../../components/EyesFreeZones';
 import { speakWord } from '../../services/neuralTts';
 import { log } from '../../services/logger';
 import { zoneText } from './cardReading';
@@ -51,16 +51,7 @@ export function useWordGestures({
   const touchStartY = useRef<number | null>(null);
   // Eyes-free zone tap-confirmation flash (see EyesFreeZones). The guides only render on touch devices, since
   // those zones only fire from taps (a mouse click does nothing there).
-  const [zoneFlash, setZoneFlash] = useState<ZoneFlash | null>(null);
-  const zoneFlashN = useRef(0);
-  const zoneFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashZone = useCallback((zone: number) => {
-    zoneFlashN.current += 1;
-    setZoneFlash({ zone, n: zoneFlashN.current });
-    if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current);
-    zoneFlashTimer.current = setTimeout(() => setZoneFlash(null), 500);
-  }, []);
-  useEffect(() => () => { if (zoneFlashTimer.current) clearTimeout(zoneFlashTimer.current); }, []);
+  const { zoneFlash, flashZone } = useZoneFlash();
 
   const onContentTouchStart = (e: ReactTouchEvent) => {
     const touch = e.touches[0];
