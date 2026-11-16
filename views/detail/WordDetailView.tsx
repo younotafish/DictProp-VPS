@@ -10,12 +10,12 @@ import { useEscapeLayer } from '../../components/escapeStack';
 import { isDialogOpenOutside } from '../../components/keyboardTarget';
 import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
+import { findSavedCopy } from '../../services/items';
 import { useKeyboardNavigation, useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
 import { prefetchTTS, speakWord, stopCurrent } from '../../services/neuralTts';
 import { autoPlayTexts, preloadSession, wordZoneBands as countWordZoneBands } from './cardReading';
-import { findSavedCard } from './savedCard';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { DetailActionMenu } from './DetailActionMenu';
@@ -153,8 +153,8 @@ export function WordDetailView(props: DetailViewBodyProps) {
     if (sentences.length) prefetchTTS(sentences);
   }, [upcomingItems, speechStyle]);
 
-  // Find saved item - first try by ID (most reliable), then fallback to title+sense matching
-  const savedItemMatch = useMemo(() => findSavedCard(savedItems, data, title), [savedItems, data, title]);
+  // The card's saved copy: the same id, else the saved card with its spelling (and, for a word, its exact sense label).
+  const savedItemMatch = useMemo(() => findSavedCopy(savedItems, { type, data }), [savedItems, type, data]);
   const isSaved = !!savedItemMatch;
 
   // Get mastery info for current item

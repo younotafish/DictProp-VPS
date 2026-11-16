@@ -1,7 +1,7 @@
 import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import { getItemSense, getItemTitle, isVocabItem, savedVocabKey, type ReviewRating, type SRSData, type StoredItem, type VocabCard } from '../../types';
+import { isVocabItem, savedVocabKey, type ReviewRating, type SRSData, type StoredItem, type VocabCard } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
-import { makeVocabStoredItem } from '../../services/items';
+import { findSavedCopy, makeVocabStoredItem } from '../../services/items';
 import { updateAfterRating } from '../../services/fsrsScheduler';
 import { log, warn } from '../../services/logger';
 import { acceptDestructive } from '../../services/actionGuards';
@@ -13,7 +13,7 @@ interface WordActionsOptions {
   data: StoredItem['data'];
   type: StoredItem['type'];
   title: string;
-  /** The card's saved copy (findSavedCard), if it's in the library. */
+  /** The card's saved copy (findSavedCopy), if it's in the library. */
   savedItemMatch: StoredItem | undefined;
   isSaved: boolean;
   savedItemsRef: RefObject<StoredItem[]>;
@@ -117,15 +117,8 @@ export function useWordActions({
 
     log('🔄 DetailView: Resetting SRS for item:', data.id, title);
 
-    const targetTitle = (title || '').toLowerCase().trim();
-    const targetSense = type === 'vocab' ? (data as VocabCard).sense || '' : '';
-    const target = savedItemsRef.current.find(item => item.data.id === data.id) ??
-      savedItemsRef.current.find(item =>
-        !item.isDeleted &&
-        item.type === type &&
-        getItemTitle(item).toLowerCase().trim() === targetTitle &&
-        (type !== 'vocab' || getItemSense(item) === targetSense)
-      );
+    // savedItemsRef holds the live library only, so a deleted copy is never the target.
+    const target = findSavedCopy(savedItemsRef.current, { type, data });
 
     if (target) {
       if (!onResetSRS?.(target.data.id)) onSave({ ...target, srs: SRSAlgorithm.reset(target.data.id, target.type) });
@@ -143,12 +136,7 @@ export function useWordActions({
   }, [data, title, type, onSave, onResetSRS, savedItemsRef, setShowActionMenu]);
 
   const handleRemember = useCallback(() => {
-    const targetTitle = (title || '').toLowerCase().trim();
-    const saved = savedItemsRef.current.find(item => item.data.id === data.id) ??
-      savedItemsRef.current.find(item =>
-        !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle &&
-        getItemSense(item) === (type === 'vocab' ? (data as VocabCard).sense || '' : '')
-      );
+    const saved = findSavedCopy(savedItemsRef.current, { type, data });
     // One gesture reviews a card once: the same card's second remember within 1.5 s is dropped, while the next card's
     // counts at once.
     const id = saved?.data.id ?? data.id;
@@ -181,7 +169,7 @@ export function useWordActions({
         srs: newSRS
       });
     }
-  }, [data, type, onSave, onUpdateSRS, title, savedItemsRef, tryRemember, showRemembered]);
+  }, [data, type, onSave, onUpdateSRS, savedItemsRef, tryRemember, showRemembered]);
 
   return {
     handleSaveVocab, handleSave, handleSaveShortcut, handleDeleteItem, handleArchiveItem, handleUnarchiveItem,
