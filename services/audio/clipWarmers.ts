@@ -1,11 +1,13 @@
 // Batch warm-ups: fetching the clips (and word timings) of many sentences ahead of a tap, so a later play is
 // instant and an unstable network can't interrupt a session. One bounded, abortable routine serves the three
 // public entry points below.
-import { fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, ttsKey } from '../api';
+import { requestTTSGeneration, ttsKey } from '../api';
 import { audioCacheReady, getStoredAudioKeys, getStoredTimingKeys, markAudioUsed, putAudioBlob, putTimings } from '../audioCache';
 import { stripSentenceMarkers } from '../sentenceMarkers';
 import { getTtsStyle, type TtsStyle } from '../ttsSettings';
-import { hasClipInMemory, hasTimingsInMemory, loadClipUrl, loadTimingsCached, resolveCachedClip } from './clipStore';
+import {
+  fetchClipOnce, fetchTimingsOnce, hasClipInMemory, hasTimingsInMemory, loadClipUrl, loadTimingsCached, resolveCachedClip,
+} from './clipStore';
 import { STYLE_VOICES } from './voices';
 
 /** Clips a warm-up fetches at once, like the session preload's pictures: enough to keep the line busy without
@@ -33,13 +35,16 @@ const eachLimited = async <T>(items: readonly T[], limit: number, signal: AbortS
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 };
 
-// A clip, then its timings, from the server straight into IndexedDB: no object URL, so nothing to evict.
+// A clip, then its timings, from the server straight into IndexedDB: no object URL, so nothing to evict. A download
+// playback started is joined rather than repeated, and timings playback already holds aren't fetched again (it
+// stores what it fetches too).
 const storeTimings = async (key: string): Promise<void> => {
-  const timings = await fetchCachedTTSTimings(key);
+  if (hasTimingsInMemory(key)) return;
+  const timings = await fetchTimingsOnce(key);
   if (timings && timings.length) await putTimings(key, timings);
 };
 const storeClip = async (key: string): Promise<boolean> => {
-  const blob = await fetchCachedTTS(key);
+  const blob = await fetchClipOnce(key);
   if (!blob) return false;
   await putAudioBlob(key, blob);
   await storeTimings(key);

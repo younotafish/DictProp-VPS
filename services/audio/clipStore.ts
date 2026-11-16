@@ -19,9 +19,26 @@ const ttsTimingsCache = new Lru<WordTiming[]>(MAX_TIMINGS);
 // (which revokes evicted URLs), so in-session memory management is unchanged — IDB is purely a durable
 // layer beneath it. Both are best-effort: an unavailable IDB (private mode) just falls through to network.
 // A lookup already under way is shared, so tapping a sentence whose clip is still prefetching joins that
-// download instead of starting a second one from scratch.
+// download instead of starting a second one from scratch. So is the download itself (fetchClipOnce,
+// fetchTimingsOnce), which a session warm storing clips straight into IndexedDB (clipWarmers.ts) also goes
+// through: the warm joins a download playback started, and playback joins one the warm started.
 const clipLoads = new Map<string, Promise<string | null>>();
 const timingsLoads = new Map<string, Promise<WordTiming[] | null>>();
+const clipFetches = new Map<string, Promise<Blob | null>>();
+const timingsFetches = new Map<string, Promise<WordTiming[] | null>>();
+
+/** `fetch(key)`, or the call of it for `key` already under way. */
+const fetchOnce = <T>(fetches: Map<string, Promise<T>>, key: string, fetch: (key: string) => Promise<T>): Promise<T> => {
+  const pending = fetches.get(key);
+  if (pending) return pending;
+  const started = fetch(key).finally(() => fetches.delete(key));
+  fetches.set(key, started);
+  return started;
+};
+/** Clip `key` from the server, or null on a miss or a failure, joining a download of it already under way. */
+export const fetchClipOnce = (key: string): Promise<Blob | null> => fetchOnce(clipFetches, key, fetchCachedTTS);
+/** Clip `key`'s word timings from the server, or null when there are none, joining a download already under way. */
+export const fetchTimingsOnce = (key: string): Promise<WordTiming[] | null> => fetchOnce(timingsFetches, key, fetchCachedTTSTimings);
 
 /** Whether clip `key` is open in memory, without counting as a use. */
 export const hasClipInMemory = (key: string): boolean => ttsUrlCache.has(key);
@@ -41,7 +58,7 @@ export const loadClipUrl = (key: string): Promise<string | null> => {
       ttsUrlCache.set(key, url);
       return url;
     }
-    const blob = await fetchCachedTTS(key);
+    const blob = await fetchClipOnce(key);
     if (!blob) return null;
     void putAudioBlob(key, blob); // write-through (fire-and-forget; never blocks playback)
     const url = URL.createObjectURL(blob);
@@ -73,7 +90,7 @@ export const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => 
   const load = (async () => {
     const stored = await getTimings(key);
     if (stored && stored.length) { ttsTimingsCache.set(key, stored); return stored; }
-    const t = await fetchCachedTTSTimings(key);
+    const t = await fetchTimingsOnce(key);
     if (t && t.length) { void putTimings(key, t); ttsTimingsCache.set(key, t); return t; }
     return null;
   })().finally(() => timingsLoads.delete(key));

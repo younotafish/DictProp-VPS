@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
-import { FakeTtsServer, installFakeMedia } from '../support/audio/fakeMedia.ts';
+import { FakeTtsServer, installFakeMedia, until } from '../support/audio/fakeMedia.ts';
 
 Object.assign(globalThis, { indexedDB, IDBKeyRange });
 installFakeMedia();
@@ -19,6 +19,7 @@ URL.createObjectURL = (blob: Blob) => { urlsOpened++; return realCreateObjectURL
 test.after(() => { URL.createObjectURL = realCreateObjectURL; });
 
 const { preloadAudio, prefetchTTS, ensureTTS, WARM_CONCURRENCY } = await import('../../services/audio/clipWarmers.ts');
+const { loadClipUrl, loadTimingsCached } = await import('../../services/audio/clipStore.ts');
 const cache = await import('../../services/audioCache.ts');
 const { ttsKey } = await import('../../services/api.ts');
 
@@ -29,6 +30,8 @@ const sentence = () => `Warm-up sentence number ${++sentences}.`;
 const keyOf = (text: string) => ttsKey(text, 'Mia');
 const mp3Requests = (key: string) => server.requests.filter(url => url.endsWith(`/api/tts/${key}.mp3`)).length;
 const timingRequests = (key: string) => server.requests.filter(url => url.endsWith(`/api/tts/${key}/timings`)).length;
+/** Let pending tasks run (IndexedDB reads among them), so every path started has reached the network. */
+const settle = async () => { for (let round = 0; round < 50; round++) await new Promise(resolve => setImmediate(resolve)); };
 const metaAt = (key: string) => new Promise<number | undefined>((resolve, reject) => {
   const open = indexedDB.open('DictPropAudioCache', 1);
   open.onerror = () => reject(open.error);
@@ -126,3 +129,37 @@ test('a prefetch never asks the server to generate', async () => {
   assert.equal(mp3Requests(key), 1);
   assert.ok(!server.generated.some(item => item.text === text));
 });
+
+test('playback and a session warm share the download of a clip and of its timings, whichever asks first', async () => {
+  for (const playbackFirst of [true, false]) {
+    const text = sentence();
+    const key = await keyOf(text);
+    server.clips.set(key, clip());
+    server.timings.set(key, timings);
+    const gates: Array<() => void> = [];
+    server.latency = () => new Promise<void>(resolve => gates.push(resolve));
+    // A tap (speakNatural) loads the clip, then its timings, through these two.
+    const playback = async () => { await loadClipUrl(key); await loadTimingsCached(key); };
+    const warm = () => preloadAudio([text], undefined, { intoMemory: false });
+    try {
+      const first = playbackFirst ? playback() : warm();
+      await until(() => mp3Requests(key) === 1, 'the clip is asked for');
+      const second = playbackFirst ? warm() : playback();
+      await settle();
+      for (const release of gates.splice(0)) release();
+      await until(() => timingRequests(key) === 1, 'its timings are asked for');
+      await settle();
+      server.latency = null;
+      for (const release of gates.splice(0)) release();
+      await Promise.all([first, second]);
+      const order = playbackFirst ? 'playback first' : 'the warm first';
+      assert.equal(mp3Requests(key), 1, `one clip download (${order})`);
+      assert.equal(timingRequests(key), 1, `one timings download (${order})`);
+      assert.ok((await cache.getStoredAudioKeys([key])).has(key), 'the clip is stored');
+    } finally {
+      server.latency = null;
+      for (const release of gates.splice(0)) release();
+    }
+  }
+});
+
