@@ -20,7 +20,8 @@ const sentences: SentenceExportRecord[] = getAllItems(owner.id)
       hasAnalysis: isSentenceAnalysis(data.analysis),
       hasGrammar: hasSentenceGrammarAnalysis(data.analysis),
       hasDetailedAnalysis: hasCompleteSentenceAnalysis(data.analysis),
-      // The read path gives every stored image, inline ones included, a server:has_image marker.
+      // Item data never holds image bytes: a write moves an inline image into item_images, and the read path gives
+      // each image stored there a server:has_image marker.
       hasImage: typeof data.imageUrl === 'string' && data.imageUrl.startsWith('server:has_image'),
     };
   });
