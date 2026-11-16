@@ -1,5 +1,5 @@
 import type { ItemWrite, ReviewEvent } from './db.js';
-import { LOCAL_IMAGE_ENRICHMENT_PROVIDER } from './incremental-enrichment.js';
+import { LOCAL_IMAGE_ENRICHMENT_PROVIDER } from './local-enrichment-markers.js';
 import { isSentenceAnalysis } from './sentence-analysis.js';
 import { isReviewRating, isReviewTaskType } from './shared/review.js';
 import { isUsageAudit } from './shared/usage-audit.js';
