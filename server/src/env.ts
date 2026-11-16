@@ -50,3 +50,8 @@ export const env = {
   // server then listens on loopback only, so the no-auth API isn't reachable from the local network.
   DEV_AUTH_BYPASS,
 };
+
+/** Where the server listens: PORT on every interface, or on loopback only while the auth bypass is on. */
+export function listenOptions(e: { PORT: number; DEV_AUTH_BYPASS: boolean } = env): { port: number; hostname?: string } {
+  return { port: e.PORT, ...(e.DEV_AUTH_BYPASS ? { hostname: '127.0.0.1' } : {}) };
+}
