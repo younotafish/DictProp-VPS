@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { StoredItem, VocabCard } from '../../types.ts';
 import { StudySummary } from '../../components/study/StudySummary.tsx';
 import { previewRatings, updateAfterRating } from '../../services/fsrsScheduler.ts';
+import { HttpError } from '../../services/http.ts';
 import { formatReviewInterval, formatTimeUntil } from '../../services/reviewTime.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import {
@@ -30,6 +31,7 @@ import {
   sessionSiblingCounts,
   startStudySession,
   summarizeSession,
+  undoFailureText,
   undoSessionGrade,
   upcomingListeningPrompts,
   type StudySession,
@@ -421,6 +423,16 @@ test('the receipt names the word, the grade and when the card comes back, and sa
   assert.deepEqual(['again', 'hard', 'good', 'easy'].map(rating => receiptText({ ...good, rating: rating as 'good' }).ratingLabel), ['Again', 'Hard', 'Good', 'Easy']);
 });
 
+test('a failed undo is said in words: a card changed since, a review still syncing, or offline, to reconnect first', () => {
+  const failed = (status: number, body: string) => ({ error: new HttpError(`Undo review failed (${status}): ${body}`, status, body) });
+  assert.equal(undoFailureText(failed(409, 'Review is no longer the latest change for this item'), true), 'This card changed since, so the review can’t be undone.');
+  assert.equal(undoFailureText(failed(404, 'Review event not found'), true), 'The review could not be undone.');
+  assert.equal(undoFailureText({ error: new TypeError('Failed to fetch') }, true), 'The review could not be undone.', 'the server out of reach');
+  assert.equal(undoFailureText({ error: new TypeError('Failed to fetch') }, false), 'Reconnect to undo this review.');
+  assert.equal(undoFailureText('waiting', true), 'This review is still syncing. Try undo again.');
+  assert.equal(undoFailureText('waiting', false), 'Reconnect to undo this review.');
+});
+
 test('an undo that comes back changes only the session its grade was made in', () => {
   const before = session();
   const { grade, itemIds } = gradeSessionCard(before, vocab('b', 'walk'), 'again', 'event', 2_000, 10);
@@ -509,7 +521,7 @@ test('Hard counts as recalled, as FSRS and the dashboard count it, and its words
 test('the summary keeps its undo for the last rating, and says when an undo failed', () => {
   const markup = summaryMarkup({ canUndo: true, undoError: 'Reconnect to undo this review.' });
   assert.match(summaryText(markup), /Undo last rating Reconnect to undo this review\. Done$/);
-  assert.match(summaryMarkup({ canUndo: true, undoing: true }), /disabled="" [^>]*aria-keyshortcuts="U">.*Undoing\.\.\.<\/button>/);
+  assert.match(summaryMarkup({ canUndo: true, undoing: true }), /disabled="" [^>]*aria-keyshortcuts="U">.*Undoing…<\/button>/);
 });
 
 test('a session ended early keeps its place: Resume takes it up at the same card, unrevealed, and an undo runs it again', () => {

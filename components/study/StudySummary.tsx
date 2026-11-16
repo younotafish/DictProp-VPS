@@ -69,7 +69,7 @@ export function StudySummary({ summary, endedEarly, onResume, missed, onOpenMiss
       )}
       {canUndo && (
         <button onClick={onUndo} disabled={undoing} className="mb-3 w-full h-12 border border-slate-300 text-slate-700 font-semibold rounded-lg hover:bg-slate-100 disabled:opacity-60 inline-flex items-center justify-center gap-2" aria-keyshortcuts="U">
-          <Undo2 size={18} /> {undoing ? 'Undoing...' : 'Undo last rating'}
+          <Undo2 size={18} /> {undoing ? 'Undoing…' : 'Undo last rating'}
         </button>
       )}
       {undoError && <p className="mb-3 text-sm text-rose-700" role="alert">{undoError}</p>}

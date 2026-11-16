@@ -27,9 +27,11 @@ import {
   sessionSiblingCounts,
   startStudySession,
   summarizeSession,
+  undoFailureText,
   upcomingListeningPrompts,
   type SessionGrade,
   type StudySession,
+  type UndoFailure,
 } from '../services/studySession';
 import { updateAfterRating } from '../services/fsrsScheduler';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
@@ -60,7 +62,8 @@ interface StudyEnhancedProps {
     rating: ReviewRating,
     context: { taskType: ReviewTaskType; durationMs: number; sessionId: string; eventId: string; reviewedAt: number },
   ) => Promise<boolean>;
-  onUndoReview: (eventId: string) => Promise<void>;
+  /** Takes back a review on the server: false while it's still in the outbox, and a request that fails throws. */
+  onUndoReview: (eventId: string) => Promise<boolean>;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
   /** Opens the card view on `groups` (App's handleViewStoredItem): the words the summary lists to look at again open
    *  their cards through it. */
@@ -249,17 +252,20 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     audio.stopAll();
     setLastGrade(current => current?.eventId === grade.eventId ? { ...current, undoing: true } : current);
     setUndoError('');
+    let failure: UndoFailure;
     try {
-      await onUndoReview(grade.eventId);
-      // The session may have ended, or another started, while the undo was on its way.
-      setSession(current => applyUndoneGrade(current, grade, Date.now()));
-      setLastGrade(current => current?.eventId === grade.eventId ? null : current);
-    } catch (error) {
-      setLastGrade(current => current?.eventId === grade.eventId ? { ...current, undoing: false } : current);
-      if (sessionIdRef.current === grade.sessionId) {
-        setUndoError(error instanceof Error ? error.message : 'The review could not be undone.');
+      if (await onUndoReview(grade.eventId)) {
+        // The session may have ended, or another started, while the undo was on its way.
+        setSession(current => applyUndoneGrade(current, grade, Date.now()));
+        setLastGrade(current => current?.eventId === grade.eventId ? null : current);
+        return;
       }
+      failure = 'waiting';
+    } catch (error) {
+      failure = { error };
     }
+    setLastGrade(current => current?.eventId === grade.eventId ? { ...current, undoing: false } : current);
+    if (sessionIdRef.current === grade.sessionId) setUndoError(undoFailureText(failure, navigator.onLine));
   };
 
   // The summary shows once no card is left, or once the session was ended early; a session ended early with a card

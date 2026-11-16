@@ -193,7 +193,7 @@ test('the study screen takes a session up at its card after a reload, and clears
   const items = ['a', 'b', 'c', 'd'].map(card);
   const render = (userId: string) => renderToStaticMarkup(createElement(StudyEnhanced, {
     userId, items, reviewHistory: { recent: [], olderTimes: [], olderCount: 0 },
-    onReview: async () => true, onUndoReview: async () => {}, onOpenExampleSentence: () => {}, onViewCards: () => {},
+    onReview: async () => true, onUndoReview: async () => true, onOpenExampleSentence: () => {}, onViewCards: () => {},
   }));
   storage.setItem(STUDY_SESSION_KEY, encodeStudySession(session(), USER, NOW - HOUR / 2));
 
@@ -212,7 +212,7 @@ test('the study screen takes a session up at its card after a reload, and clears
   const reviewedElsewhere = items.map(item => ({ ...item, srs: { ...item.srs, totalReviews: 1, lastReviewDate: NOW - 60_000 } }));
   assert.match(renderToStaticMarkup(createElement(StudyEnhanced, {
     userId: USER, items: reviewedElsewhere, reviewHistory: { recent: [], olderTimes: [], olderCount: 0 },
-    onReview: async () => true, onUndoReview: async () => {}, onOpenExampleSentence: () => {}, onViewCards: () => {},
+    onReview: async () => true, onUndoReview: async () => true, onOpenExampleSentence: () => {}, onViewCards: () => {},
   })), /Today&#x27;s Study/);
   assert.equal(storage.getItem(STUDY_SESSION_KEY), null);
 });

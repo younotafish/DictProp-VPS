@@ -9,6 +9,7 @@ import {
   isVocabItem,
 } from '../types';
 import { REVIEW_RATINGS } from '../server/src/shared/review';
+import { HttpError } from './http';
 import { formatReviewInterval } from './reviewTime';
 import { sentenceReviewState } from './sentenceReviewState';
 import { createClozePrompt, pickExample } from './studyPrompt';
@@ -468,4 +469,19 @@ export function receiptText(grade: {
     ratingLabel: grade.rating.charAt(0).toUpperCase() + grade.rating.slice(1),
     detail: grade.waiting && !grade.undoing ? `${detail} · saved on this device` : detail,
   };
+}
+
+/** Why an undo failed: its review is still waiting in the outbox, not yet on the server, or the server's undo failed. */
+export type UndoFailure = 'waiting' | { error: unknown };
+
+/**
+ * What the receipt line and the summary say when an undo fails, in words rather than the error: the server refuses to
+ * take back a review that a later change to the card superseded (409); offline, the undo waits for the connection.
+ */
+export function undoFailureText(failure: UndoFailure, online: boolean): string {
+  if (failure !== 'waiting' && failure.error instanceof HttpError && failure.error.status === 409) {
+    return 'This card changed since, so the review can’t be undone.';
+  }
+  if (!online) return 'Reconnect to undo this review.';
+  return failure === 'waiting' ? 'This review is still syncing. Try undo again.' : 'The review could not be undone.';
 }

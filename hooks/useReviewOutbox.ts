@@ -89,14 +89,17 @@ export function useReviewOutbox(
     }
   }, [userId, latestItemsRef, markItemsUnsynced, reconcileAppliedReview]);
 
-  const undoSRSReview = useCallback(async (eventId: string): Promise<void> => {
+  /**
+   * Takes back a review on the server. False, with nothing done, while the review is still in the outbox, not yet on
+   * the server to take back; a request that fails throws its error. The study screen says either in words.
+   */
+  const undoSRSReview = useCallback(async (eventId: string): Promise<boolean> => {
     await flushPendingReviews();
-    if (readPendingReviewMutations(userId).some(mutation => mutation.event.id === eventId)) {
-      throw new Error(navigator.onLine ? 'This review is still syncing. Try undo again.' : 'Reconnect to undo this review.');
-    }
+    if (readPendingReviewMutations(userId).some(mutation => mutation.event.id === eventId)) return false;
     const response = await undoReviewMutation(eventId);
     await reconcileAppliedReview(response.items, response.baseRevisions);
     removeReview(eventId);
+    return true;
   }, [userId, flushPendingReviews, reconcileAppliedReview, removeReview]);
 
   // SRS update for one sense/item. The server applies the same FSRS transition atomically.
