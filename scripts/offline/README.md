@@ -67,14 +67,15 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
 - `check-installed-dependencies.mjs` — Checks that each tree's installed packages are the versions its `package-lock.json` locks, reading each installed `package.json`. A package the lockfile marks optional may be missing, since npm skips the platform packages that don't fit the machine, and packages installed but not locked are ignored. When a tree differs, it exits 1 and names up to five differences. `vetted-checkout.sh` runs it for the repository root and `server/`, so once main moves to a commit that changes a lockfile, every cycle exits 75 until `npm ci` has run in that folder; run it holding the cycle lock.
   `node scripts/offline/check-installed-dependencies.mjs <tree>...`
 - `deadline.sh` — Sourced by the runner and by most of the shell scripts it calls, so that no wait holds the cycle lock forever. It provides wall-clock deadlines; `run_bounded` and `run_stage`, which run a command in its own process group under a time limit; `gh_bounded` for GitHub CLI calls; and `cap_publish_deadline`.
-- `sweep-bridge-leftovers.sh` — Deletes the leftovers of killed runs:
+- `sweep-bridge-leftovers.sh` — Deletes the leftovers of killed runs and past cycles:
   - publisher releases that have been idle for six hours;
+  - a past cycle's own directory under a stage's state root, and each fingerprint directory the stages used before those, once nothing in it has changed for a week;
   - failed waves, a wave a past cycle left unpublished among them, once idle for a week (later cycles publish whatever of it production still lacks);
   - the archives of published waves;
   - the temp files that a killed encryption or decryption left, once they are a day old; a decryption's hold plaintext.
 
   `scripts/offline/sweep-bridge-leftovers.sh [--dry-run] <wave-state-root>...`
-- `bridge-leftovers.mjs` — The sweep's decisions: which releases, waves and temp files count as leftovers.
+- `bridge-leftovers.mjs` — The sweep's decisions: which releases, cycle directories, waves and temp files count as leftovers.
   `node scripts/offline/bridge-leftovers.mjs <releases|local|temp-files> ...`
 - `check-structured-model.mjs` — Sends one small request with an image through `structured-model.mjs`. If it fails, the cycle stops before it exports anything.
   `node scripts/offline/check-structured-model.mjs`

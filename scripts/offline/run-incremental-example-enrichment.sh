@@ -571,11 +571,11 @@ fi
 
 # A publisher that was killed leaves its release, and the encrypted archive in it, on the public
 # repository; this deletes publisher releases idle for six hours, which none of this cycle's publishers
-# would still hold, and clears failed waves after a week and published waves' archives. A wave an earlier
-# cycle left unpublished in its own root counts as failed, since no cycle opens that root again. It also
-# removes the temp files a killed encryption or decryption leaves under data/offline-backfill once a day
-# old, a decryption's with plaintext in them.
-# The last five roots are the ones cycles shared until 2026-11-15, still swept for what they hold.
+# would still hold, clears past cycles' directories and failed waves once idle for a week, and removes
+# published waves' archives. No cycle opens a past cycle's directory again, so a wave one left unpublished
+# there counts as failed. It also removes the temp files a killed encryption or decryption leaves under
+# data/offline-backfill once a day old, a decryption's with plaintext in them.
+# The last five roots are the ones cycles used until 2026-11-15, still swept for what they hold.
 if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" GITHUB_REPOSITORY="$REPO" scripts/offline/sweep-bridge-leftovers.sh \
   "$PUBLISH_STATE_ROOT/vocabulary" "$PUBLISH_STATE_ROOT/saved-sentences" "$PUBLISH_STATE_ROOT/item-images" \
   "$PUBLISH_STATE_ROOT/example-analyses" "$PUBLISH_STATE_ROOT/example-enrichments" \

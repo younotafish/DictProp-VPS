@@ -162,7 +162,7 @@ test('failed waves go after a week idle, and only archives leave published waves
   const lines: string[] = [];
   removeLeftovers(leftovers, { dryRun: true, log: (line: string) => lines.push(line) });
   assert.equal(lines.filter(line => line.startsWith('would remove failed wave ')).length, 3);
-  assert.match(lines.at(-1) ?? '', /^would remove 3 failed wave\(s\) and 3 published archive\(s\) \(0\.0 MB\)$/);
+  assert.match(lines.at(-1) ?? '', /^would remove 3 failed wave\(s\), 0 stale cycle directories and 3 published archive\(s\) \(0\.0 MB\)$/);
   for (const { path } of leftovers) assert.ok(existsSync(path), `dry run kept ${path}`);
 
   removeLeftovers(leftovers, { log: (line: string) => lines.push(line) });
@@ -210,6 +210,57 @@ test('a wave a past cycle left unpublished in its own directory goes after a wee
   for (const path of [join(recent, 'sentence-backfill.enc'), join(inShared, 'sentence-backfill.enc'), join(published, 'manifest.json')]) {
     assert.ok(existsSync(path), path);
   }
+});
+
+test('a past cycle\'s directory goes whole once nothing in it has changed for a week, and a younger one is looked into', t => {
+  const root = tempDir(t);
+  const stage = join(root, 'publish-state', 'vocabulary');
+  // Cycle 2001 ended eight days ago, with a published wave, an unpublished one and one set aside.
+  const stale = join(stage, '2001');
+  wave(stale, 'wave-0001', { 'manifest.json': '{}', published: 'x', 'corpus-audit.enc': 'blob' });
+  wave(stale, 'wave-0002', { 'manifest.json': '{}', 'corpus-audit.enc': 'blob' });
+  wave(stale, 'wave-0003.failed', { 'manifest.json': '{}' });
+  write(join(stale, 'complete'), '1\n');
+  age(stale, now - 8 * DAY);
+  // Cycle 2002 ended six days ago, so only its published wave's archive goes.
+  const recent = wave(join(stage, '2002'), 'wave-0001', { 'manifest.json': '{}', published: 'x', 'corpus-audit.enc': 'blob' });
+  age(join(stage, '2002'), now - 6 * DAY);
+  // The stage's fingerprint directories from before go the same way, while an unpublished wave directly in their
+  // root stays, as in any root.
+  const legacy = join(root, 'vocabulary', 'publish-state');
+  const fingerprint = join(legacy, '058483d4f053b501');
+  wave(fingerprint, 'wave-0001', { 'manifest.json': '{}', published: 'x', 'corpus-audit.enc': 'blob' });
+  const legacyWave = wave(legacy, 'wave-0002', { 'manifest.json': '{}', 'corpus-audit.enc': 'blob' });
+  age(legacy, now - 30 * DAY);
+  // A shared root's completion marker stays, and a directory the sweep doesn't recognize is never removed whole.
+  const shared = join(root, 'publish-state-coverage-v2');
+  write(join(shared, 'complete'), '4\n');
+  const unknown = wave(shared, 'notes', { 'readme.txt': 'kept' });
+  age(shared, now - 30 * DAY);
+
+  const leftovers = selectLocalLeftovers([stage, legacy, shared], { now });
+  assert.deepEqual(leftovers.map(({ kind, path }: { kind: string; path: string }) => [kind, path]).sort(), [
+    ['published archive', join(recent, 'corpus-audit.enc')],
+    ['stale cycle directory', fingerprint],
+    ['stale cycle directory', stale],
+  ].sort());
+
+  const lines: string[] = [];
+  removeLeftovers(leftovers, { dryRun: true, log: (line: string) => lines.push(line) });
+  assert.ok(lines.includes(`would remove stale cycle directory ${stale} (idle 8.0 days)`), lines.join('\n'));
+  assert.equal(lines.at(-1), 'would remove 0 failed wave(s), 2 stale cycle directories and 1 published archive(s) (0.0 MB)');
+  assert.ok(existsSync(stale) && existsSync(fingerprint));
+
+  removeLeftovers(leftovers, { log: (line: string) => lines.push(line) });
+  assert.equal(lines.at(-1), 'removed 0 failed wave(s), 2 stale cycle directories and 1 published archive(s) (0.0 MB)');
+  for (const path of [stale, fingerprint, join(recent, 'corpus-audit.enc')]) assert.equal(existsSync(path), false, path);
+  for (const path of [join(recent, 'manifest.json'), join(legacyWave, 'corpus-audit.enc'), join(shared, 'complete'), join(unknown, 'readme.txt')]) {
+    assert.ok(existsSync(path), path);
+  }
+
+  const one: string[] = [];
+  removeLeftovers([{ kind: 'stale cycle directory', path: stale, idleMs: 8 * DAY }], { dryRun: true, log: (line: string) => one.push(line) });
+  assert.equal(one.at(-1), 'would remove 0 failed wave(s), 1 stale cycle directory and 0 published archive(s) (0.0 MB)');
 });
 
 test('symlinks are never followed or removed', t => {
@@ -315,6 +366,9 @@ test('the sweep deletes stale publisher releases, clears the wave roots and old 
   const failed = wave(root, 'wave-0001.failed', { 'manifest.json': '{}' });
   age(failed, Date.now() - 8 * DAY);
   const published = wave(root, 'wave-0002', { published: 'x', 'corpus-audit.enc': 'blob' });
+  const pastCycle = join(root, '1001');
+  wave(pastCycle, 'wave-0001', { 'manifest.json': '{}', published: 'x', 'corpus-audit.enc': 'blob' });
+  age(pastCycle, Date.now() - 8 * DAY);
   const killedTemp = join(data, 'incremental-example-enrichment', '.current-corpus.json.decrypting-123-abcdef012345');
   write(killedTemp, 'plaintext');
   age(killedTemp, Date.now() - 2 * DAY);
@@ -337,9 +391,10 @@ test('the sweep deletes stale publisher releases, clears the wave roots and old 
   assert.doesNotMatch(preview.stdout, /example-analyses|v1\.0\.0/);
   assert.match(preview.stdout, /would remove failed wave .*wave-0001\.failed/);
   assert.match(preview.stdout, /would remove published archive .*wave-0002\/corpus-audit\.enc/);
+  assert.match(preview.stdout, /would remove stale cycle directory .*\/1001 \(idle 8\.0 days\)/);
   assert.match(preview.stdout, /would remove bridge temp file .*\/\.current-corpus\.json\.decrypting-123-abcdef012345 \(0\.0 MB, idle 2\.0 days\)/);
   assert.match(preview.stdout, /would remove 1 bridge temp file\(s\) \(0\.0 MB\)/);
-  assert.ok(existsSync(failed) && existsSync(join(published, 'corpus-audit.enc')) && existsSync(killedTemp));
+  assert.ok(existsSync(failed) && existsSync(join(published, 'corpus-audit.enc')) && existsSync(pastCycle) && existsSync(killedTemp));
   rmSync(join(dir, 'gh-calls.log'));
 
   // One delete fails: the rest still runs, and the sweep reports the failure.
@@ -354,6 +409,7 @@ test('the sweep deletes stale publisher releases, clears the wave roots and old 
   assert.match(swept.stdout, /deleted release corpus-audit-wave-0001-20260928T120000Z/);
   assert.match(swept.stdout, /could not delete release vocab-images-wave-0002-20260928T120000Z/);
   assert.equal(existsSync(failed), false);
+  assert.equal(existsSync(pastCycle), false);
   assert.equal(existsSync(join(published, 'corpus-audit.enc')), false);
   assert.ok(existsSync(join(published, 'published')));
   assert.match(swept.stdout, /removed bridge temp file .*\.current-corpus\.json\.decrypting-123-abcdef012345/);
