@@ -43,11 +43,7 @@ while :; do
     exit 0
   fi
 
-  # One past the waves published, so a wave an earlier run left unpublished is prepared again in place,
-  # as server/test/incremental-saved-sentences.test.ts expects; the other dispatchers set it aside instead
-  # (open_next_wave). The cycle gives each run a root of its own, so there the next cycle publishes such a
-  # wave's analyses again in a fresh wave, and the sweep clears the old one (bridge-leftovers.mjs).
-  open_wave "$((${#PUBLISHED_MANIFESTS[@]} + 1))"
+  open_next_wave
   WAVE_COUNT="$(prepare_wave scripts/offline/prepare-saved-sentence-analysis-wave.mjs "$ANALYSIS" "$WAVE_DIR" "$BATCH_SIZE")"
   if [ "$WAVE_COUNT" -eq 0 ]; then
     discard_wave

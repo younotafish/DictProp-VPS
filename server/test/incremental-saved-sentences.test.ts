@@ -293,25 +293,30 @@ esac
   return { root, releases, dispatch, waves };
 }
 
-test('saved-sentence publication sets a failed wave aside so the next run starts a fresh one', () => {
+test('saved-sentence publication sets a failed or abandoned wave aside so the next run starts a fresh one', () => {
   const fixture = savedSentenceDispatchFixture('dictprop-saved-set-aside-');
   try {
-    // A transient failure keeps the wave, and its release, for the next run.
+    // A transient failure leaves the wave unpublished, with its release.
     const transient = fixture.dispatch({ FAKE_PUBLISH_MODE: 'transient' });
     assert.equal(transient.status, 1, transient.stderr);
     assert.deepEqual(fixture.waves(), ['wave-0001']);
 
+    // The next run sets that wave aside instead of preparing it again, and a fresh wave-0001 takes the entries.
     const failed = fixture.dispatch({ FAKE_PUBLISH_MODE: 'fail' });
     assert.equal(failed.status, 1, failed.stderr);
-    assert.match(failed.stdout,
-      /publication of wave-0001 failed; set it aside as wave-0001\.failed so the next run starts a fresh wave/);
-    assert.deepEqual(fixture.waves(), ['wave-0001.failed']);
+    assert.match(failed.stdout, /wave-0001 was left unpublished by an earlier run; set it aside as wave-0001\.failed$/m);
+    const stamped = /publication of wave-0001 failed; set it aside as (wave-0001\.failed-\d{8}T\d{6}Z) so the next run starts a fresh wave/
+      .exec(failed.stdout)?.[1];
+    assert.ok(stamped, failed.stdout);
+    assert.deepEqual(fixture.waves(), ['wave-0001.failed', stamped]);
 
+    // Each wave set aside keeps a name of its own beside the others, even within the same second.
     const failedAgain = fixture.dispatch({ FAKE_PUBLISH_MODE: 'fail' });
     assert.equal(failedAgain.status, 1, failedAgain.stderr);
-    const [first, second, ...rest] = fixture.waves();
-    assert.equal(first, 'wave-0001.failed');
-    assert.match(second, /^wave-0001\.failed-\d{8}T\d{6}Z$/);
+    const [first, second, third, ...rest] = fixture.waves();
+    assert.deepEqual([first, second], ['wave-0001.failed', stamped]);
+    assert.match(third, /^wave-0001\.failed-\d{8}T\d{6}Z$/);
+    assert.ok(third > stamped, third);
     assert.deepEqual(rest, []);
 
     const published = fixture.dispatch();
