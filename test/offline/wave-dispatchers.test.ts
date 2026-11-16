@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -606,4 +606,43 @@ test('a wave preparer that fails stops the dispatcher before anything is sealed 
   assert.deepEqual(run.gh, []);
   assert.deepEqual(run.published, []);
   assert.equal(existsSync(join(run.cwd, 'state', 'wave-0001', 'sentence-backfill.enc')), false);
+});
+
+test('a wave set aside again gets a name of its own, waiting for the next second rather than moving into a taken one', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'wave-set-aside-'));
+  try {
+    const bin = join(cwd, 'bin');
+    const slept = join(cwd, 'slept');
+    mkdirSync(bin);
+    // The clock reads the same second until the first sleep, and the next second after it.
+    writeExecutable(join(bin, 'date'), `#!/bin/sh\nif [ -e '${slept}' ]; then echo 20260101T000001Z; else echo 20260101T000000Z; fi\n`);
+    writeExecutable(join(bin, 'sleep'), `#!/bin/sh\necho "$1" >> '${slept}'\n`);
+    const script = [
+      'set -euo pipefail',
+      '. "$1"',
+      'for run in 1 2 3; do',
+      '  mkdir -p state/wave-0001',
+      '  echo "$run" > state/wave-0001/run',
+      '  set_wave_aside state/wave-0001',
+      '  echo "${WAVE_SET_ASIDE_AS##*/}"',
+      'done',
+    ].join('\n');
+    const result = spawnSync('bash', ['-c', script, 'set-aside', repoPath('scripts', 'offline', 'wave-dispatch.sh')], {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}` },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const names = ['wave-0001.failed', 'wave-0001.failed-20260101T000000Z', 'wave-0001.failed-20260101T000001Z'];
+    assert.deepEqual(result.stdout.trim().split('\n'), names);
+    // Each run's wave sits beside the others with its own contents, none inside another.
+    assert.deepEqual(readdirSync(join(cwd, 'state')).sort(), names);
+    names.forEach((name, index) => {
+      assert.deepEqual(readdirSync(join(cwd, 'state', name)), ['run'], name);
+      assert.equal(readFileSync(join(cwd, 'state', name, 'run'), 'utf8'), `${index + 1}\n`, name);
+    });
+    assert.equal(readFileSync(slept, 'utf8'), '1\n');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

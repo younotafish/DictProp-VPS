@@ -173,10 +173,18 @@ ensure_release() {
 }
 
 # set_wave_aside WAVE_DIR: keeps the wave for inspection as wave-N.failed (WAVE_SET_ASIDE_AS), a name the
-# dispatchers ignore, so its entries go into a fresh wave with a new release.
+# dispatchers ignore, so its entries go into a fresh wave with a new release. Once that name is taken, the
+# wave gets the time as well, wave-N.failed-<stamp>, waiting for the next second while the stamp is taken:
+# given a directory that exists, mv would move the wave into it. The sweep knows both names.
 set_wave_aside() {
   WAVE_SET_ASIDE_AS="$1.failed"
-  if [ -e "$WAVE_SET_ASIDE_AS" ]; then WAVE_SET_ASIDE_AS="$1.failed-$(date -u +%Y%m%dT%H%M%SZ)"; fi
+  if [ -e "$WAVE_SET_ASIDE_AS" ]; then
+    WAVE_SET_ASIDE_AS="$1.failed-$(date -u +%Y%m%dT%H%M%SZ)"
+    while [ -e "$WAVE_SET_ASIDE_AS" ]; do
+      sleep 1
+      WAVE_SET_ASIDE_AS="$1.failed-$(date -u +%Y%m%dT%H%M%SZ)"
+    done
+  fi
   mv "$1" "$WAVE_SET_ASIDE_AS"
 }
 
