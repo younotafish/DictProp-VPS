@@ -1,12 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue, useId } from 'react';
 import { SearchResult, VocabCard, StoredItem, ComparisonResult } from '../types';
-import { analyzeInput } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
 import { speakWord, prefetchTTS } from '../services/lazyTts';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { useSentenceSearch } from '../services/sentenceSearch';
-import { warn } from '../services/logger';
-import { describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../services/searchRecovery';
 import { useEscapeLayer } from './escapeStack';
 import { isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
@@ -115,7 +112,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [suggestions, onOpenSentence]);
 
   const {
-    queue, readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, finalizeResult,
+    queue, readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace,
   } = useSearchQueue({
     findSavedByWord, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showError, clearError, showStatus,
   });
@@ -337,30 +334,14 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     prefetchTTS((viewingVocab.examples || []).filter(Boolean) as string[]);
   }, [viewingVocab]);
 
-  // Refresh button on the card: a REAL re-run of the AI for this word. We refresh the viewed item
-  // IN PLACE — keep showing its current card (with a spinner) while the AI runs, then swap in the fresh
-  // result — instead of clearing the queue entry (which blanked the popup until the API returned).
-  // It reads the open item through a ref, so the card's onRefresh stays the same while other results arrive.
+  // Refresh button on the card: a real re-run of the AI for this word, refreshing the open result in place (see
+  // refreshInPlace), which then opens at its first meaning. It reads the open result through a ref, so the card's
+  // onRefresh stays the same while other results arrive.
   const viewingItemRef = useLatest(viewingItem);
   const handleRefreshCard = useCallback((word: string) => {
-    const trimmed = word.trim();
     const item = viewingItemRef.current;
-    if (!trimmed || !item || item.refreshing) return;
-    const id = item.id;
-    const analyzeMode = item.analyzeMode;
-    updateQueue({ type: 'refresh-start', id }); // keep results visible
-    // An expression taken from a sentence is refreshed as the same unit, not re-split into its words.
-    analyzeInput(trimmed, analyzeMode ? { mode: analyzeMode } : undefined).then(result => {
-      updateQueue({ type: 'refresh-ready', id, query: trimmed, results: result });
-      setViewingVocabIdx(0);
-      finalizeResult(trimmed, result, { refresh: true });
-    }).catch(err => {
-      warn('🔍 Refresh failed "' + trimmed + '":', err?.message);
-      updateQueue({ type: 'refresh-fail', id });
-      if (isAuthenticationError(err)) rememberSearchRetry({ query: trimmed, analyzeMode });
-      showError(describeSearchError(trimmed, err), isRetryableSearchError(err) ? trimmed : undefined, analyzeMode);
-    });
-  }, [viewingItemRef, finalizeResult, showError, updateQueue]);
+    if (item) refreshInPlace(item, word, () => setViewingVocabIdx(0));
+  }, [viewingItemRef, refreshInPlace]);
 
   // The error toast's retry: replays the query the failure carries.
   const retryFailedSearch = (failed: SearchErrorToast) => {

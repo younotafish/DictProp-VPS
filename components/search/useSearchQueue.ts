@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types';
+import { comparisonKey, type ComparisonResult, type VocabCard } from '../../types';
 import { analyzeInput, compareWords, detectVocabulary } from '../../services/api';
 import { ensureTTS } from '../../services/lazyTts';
 import { log, warn } from '../../services/logger';
@@ -7,6 +7,7 @@ import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetry
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
+import { runLookup } from './runLookup';
 import {
   busyCountOf, findLiveComparison, isQueued, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
   type QueueAction, type QueueItem,
@@ -118,19 +119,17 @@ export function useSearchQueue({
     }
   }, [enqueue, showError, showStatus]);
 
-  // The library as it is when a request settles, not as it was when the request started.
+  // What every AI lookup reads and changes beyond its own queue entry (see runLookup). The library is read through a
+  // ref, as it is when a request settles, not as it was when the request started. The audio is generated if it
+  // isn't cached yet, so the first play is instant.
   const findSavedByWordRef = useLatest(findSavedByWord);
-
-  // Post-process a fresh server result: prepare audio and, for a refresh, replace the word's saved cards (keeping
-  // their SRS) if the word is saved now that the result is in. A card deleted during the refresh stays deleted,
-  // and a word saved during it gets the fresh result. Images are deliberately left empty so the Mac's local
-  // enrichment cycle creates them.
-  const finalizeResult = useCallback((queryWord: string, result: SearchResult, { refresh }: { refresh: boolean }) => {
-    const vocabs = result.vocabs ?? [];
-    // Prepare the API audio up front so the first play is instant (generates if not cached yet).
-    ensureTTS(vocabs.flatMap(v => v.examples || []));
-    if (refresh && vocabs.length > 0 && findSavedByWordRef.current(queryWord).length > 0) onRefreshReplace?.(queryWord, vocabs);
-  }, [onRefreshReplace, findSavedByWordRef]);
+  const lookupEffects = useMemo(() => ({
+    analyze: (query: string, analyzeMode?: 'batch') => analyzeInput(query, analyzeMode ? { mode: analyzeMode } : undefined),
+    savedCards: (word: string) => findSavedByWordRef.current(word),
+    prepareAudio: ensureTTS,
+    replaceSaved: onRefreshReplace,
+    showError,
+  }), [findSavedByWordRef, onRefreshReplace, showError]);
 
   // Process a single queue item: comparison, saved-card reuse, or a fresh analyze. The id was added to
   // processingIdsRef by the driver effect before this ran; every terminal path calls done().
@@ -169,27 +168,40 @@ export function useSearchQueue({
     setQueue(queueUpdate({ type: 'start', id: itemId }));
 
     log('🔍 Queue: searching "' + item.query + '"' + (item.analyzeMode ? ' (' + item.analyzeMode + ')' : ''));
-    // A refresh of the same word replaces this entry while its request runs; the outcome then belongs to the
-    // newer request, so this one changes nothing: no toast, no queue change, no saved-card write.
-    const superseded = () => {
-      if (isQueued(queueRef.current, itemId)) return false;
-      log('🔍 Queue: dropping the superseded result for "' + item.query + '"');
-      return true;
-    };
-    analyzeInput(item.query, item.analyzeMode ? { mode: item.analyzeMode } : undefined).then(result => {
-      if (superseded()) return;
-      clearError(); // a fresh success clears any lingering failure toast
-      setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: result }));
-      if (item.forceAI) openWhenReady(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
-      finalizeResult(item.query, result, { refresh: !!item.forceAI }); // prepare audio; a refresh replaces the saved card
-    }).catch(err => {
-      if (superseded()) return;
-      warn('🔍 Queue: failed "' + item.query + '":', err?.message);
-      setQueue(queueUpdate({ type: 'fail', id: itemId }));
-      if (isAuthenticationError(err)) rememberSearchRetry({ query: item.query, analyzeMode: item.analyzeMode });
-      showError(describeSearchError(item.query, err), isRetryableSearchError(err) ? item.query : undefined, item.analyzeMode);
+    void runLookup({ query: item.query, analyzeMode: item.analyzeMode, refresh: !!item.forceAI }, {
+      ...lookupEffects,
+      // A refresh of the same word replaces this entry while its request runs; the outcome then belongs to the
+      // newer request, so this one changes nothing: no toast, no queue change, no saved-card write.
+      isCurrent: () => isQueued(queueRef.current, itemId),
+      showResult: result => {
+        clearError(); // a fresh success clears any lingering failure toast
+        setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: result }));
+        if (item.forceAI) openWhenReady(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
+      },
+      showFailure: () => setQueue(queueUpdate({ type: 'fail', id: itemId })),
     }).finally(done);
-  }, [findSavedByWord, finalizeResult, showError, onCompareReady, openWhenReady, clearError]);
+  }, [findSavedByWord, lookupEffects, showError, onCompareReady, openWhenReady, clearError]);
+
+  // The results sheet's refresh button: re-run the AI for `word` and swap the fresh result into `item` in place,
+  // keeping its current result on screen (with a spinner) meanwhile, rather than clearing the entry, which blanked
+  // the sheet until the AI answered. Like any refresh, it replaces the word's saved cards. `onFresh` runs once the
+  // fresh result is in the entry.
+  const refreshInPlace = useCallback((item: QueueItem, word: string, onFresh: () => void) => {
+    const query = word.trim();
+    if (!query || item.refreshing) return;
+    const { id, analyzeMode } = item;
+    setQueue(queueUpdate({ type: 'refresh-start', id }));
+    // An expression taken from a sentence is refreshed as the same unit, not re-split into its words.
+    void runLookup({ query, analyzeMode, refresh: true }, {
+      ...lookupEffects,
+      isCurrent: () => true,
+      showResult: results => {
+        setQueue(queueUpdate({ type: 'refresh-ready', id, query, results }));
+        onFresh();
+      },
+      showFailure: () => setQueue(queueUpdate({ type: 'refresh-fail', id })),
+    });
+  }, [lookupEffects]);
 
   // Driver: start every pending text-model job immediately. DeepInfra owns provider capacity; locally we
   // only de-duplicate starts so a re-render while a request is in flight cannot submit the same item twice.
@@ -227,8 +239,8 @@ export function useSearchQueue({
   // Derived state — searches AND comparisons are both queue items, so all counts include both.
   const readyItems = useMemo(() => readyItemsOf(queue), [queue]);
   const busyCount = busyCountOf(queue);
-  // Applies a state change GlobalSearch makes itself: an in-place refresh, a dismissal, Clear all.
+  // Applies a state change GlobalSearch makes itself: a dismissal, Clear all.
   const updateQueue = useCallback((action: QueueAction) => setQueue(queueUpdate(action)), []);
 
-  return { queue, readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, finalizeResult };
+  return { queue, readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace };
 }
