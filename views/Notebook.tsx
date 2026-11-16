@@ -533,7 +533,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
       ) : (
         // Typing stays on this screen, in the same box: its search opens the search sheet, where the first word
         // is saved.
-        <EmptyNotebook query={localSearchQuery} onQueryChange={changeQuery} onSearch={onSearch} />
+        <EmptyNotebook query={localSearchQuery} onQueryChange={changeQuery} />
       )}
 
       {/* Text Analyzer Modal */}

@@ -62,7 +62,7 @@ test('both notebook boxes are search boxes: no capitals or autofill, and Return 
     isRecording: false, isTranscribing: false, isSearching: false, onToggleRecording: noop, onSearchWithAI: noop,
     onClear: noop, inputRef: null, onFocusChange: noop,
   }));
-  const empty = renderToStaticMarkup(createElement(EmptyNotebook, { query: '', onQueryChange: noop, onSearch: noop }));
+  const empty = renderToStaticMarkup(createElement(EmptyNotebook, { query: '', onQueryChange: noop }));
   for (const html of [bar, empty]) {
     const input = html.match(/<input [^>]*>/)?.[0] ?? '';
     for (const attribute of ['autoComplete="off"', 'autoCapitalize="off"', 'enterKeyHint="search"']) {
