@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { X, RotateCcw, Trash2, CheckCircle2, ChevronLeft, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
 import { StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
@@ -11,7 +11,9 @@ import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/neuralTts';
 import { detectPlatform } from '../services/platform';
 import { acceptRemember } from '../services/reviewGestures';
+import { reviewIntervalDays } from '../services/reviewTime';
 import { useLatest } from '../hooks/useStableValue';
+import { useTimedMessage } from '../hooks/useTimedMessage';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useBackdropClick } from './backdropPress';
 import { useEscapeLayer } from './escapeStack';
@@ -58,6 +60,10 @@ const hasTouchPoints = (): boolean =>
 /** The card shown while no page is (the popup always opens on at least one saved sense), one object for every render. */
 const EMPTY_VOCAB = {} as VocabCard;
 
+/** How long a confirmation ('Next review in 3d') shows, and how long an armed delete waits for its confirming press. */
+const FLASH_MS = 1_600;
+const DELETE_CONFIRM_MS = 2_500;
+
 /**
  * The full review card for a saved word, shown in an overlay — opened by tapping a saved word in a
  * sentence. Pages through ALL of the word's meanings: saved senses (with the SRS row — mastery, Got it /
@@ -95,10 +101,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   useOverlay();
   // Focus the panel on open, keep Tab inside it, and restore focus on close.
   useModalFocus(panelRef);
-  const [confirmDel, setConfirmDel] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
+  // One timer each, so a confirmation or an armed delete always gets its full time: showing another restarts it.
   // Turning to another meaning disarms a delete armed on this one.
-  const disarmDelete = useCallback(() => setConfirmDel(false), []);
+  const { message: confirmDel, show: armDelete, clear: disarmDelete } = useTimedMessage<true>(DELETE_CONFIRM_MS);
+  const { message: flash, show: showFlash } = useTimedMessage<string>(FLASH_MS);
 
   // Paging to another saved meaning shows its picture at once.
   useWarmImages(items, onLazyLoadImage);
@@ -179,37 +185,35 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const handleGotIt = useCallback(() => {
     if (!currentSaved || !current || !tryRemember(current.sense)) return;
     const base = SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type);
-    const preview = updateAfterRating(base, 'good');
+    // The interval the review schedules, as the card view's Remembered toast says it.
+    const now = Date.now();
+    const preview = updateAfterRating(base, 'good', now);
     onUpdateSRS(currentSaved.data.id);
-    setFlash(`Next review in ${Math.max(1, Math.round(preview.stability))}d`);
-    setTimeout(() => setFlash(null), 1600);
-  }, [current, currentSaved, onUpdateSRS, tryRemember]);
+    showFlash(`Next review in ${reviewIntervalDays(preview.nextReview, now)}d`);
+  }, [current, currentSaved, onUpdateSRS, tryRemember, showFlash]);
 
   const handleReset = useCallback(() => {
     if (!currentSaved) return;
     onResetSRS(currentSaved.data.id);
-    setFlash('Memory reset');
-    setTimeout(() => setFlash(null), 1600);
-  }, [currentSaved, onResetSRS]);
+    showFlash('Memory reset');
+  }, [currentSaved, onResetSRS, showFlash]);
 
   const handleDelete = useCallback(() => {
     if (!currentSaved) return;
     if (!confirmDel) {
-      setConfirmDel(true);
-      setTimeout(() => setConfirmDel(false), 2500);
+      armDelete(true);
       return;
     }
     onDelete(currentSaved.data.id);
-    setConfirmDel(false);
+    disarmDelete();
     if (items.length <= 1) onClose(); // deleted the last SAVED sense → close (unsaved-only has nothing to review)
-  }, [confirmDel, currentSaved, items.length, onDelete, onClose]);
+  }, [confirmDel, currentSaved, items.length, onDelete, onClose, armDelete, disarmDelete]);
 
   const handleSaveThis = useCallback(() => {
     if (current?.kind !== 'unsaved' || !onSaveVocab || !tryRemember(current.sense)) return;
     onSaveVocab(current.vocab);
-    setFlash('Saved to your library');
-    setTimeout(() => setFlash(null), 1600);
-  }, [current, onSaveVocab, tryRemember]);
+    showFlash('Saved to your library');
+  }, [current, onSaveVocab, tryRemember, showFlash]);
 
   // Eyes-free read zones are for touch only — on macOS the keyboard (P / E / Cmd+1–4) covers reading.
   const isTouch = hasTouchPoints();
