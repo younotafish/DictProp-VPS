@@ -34,8 +34,12 @@ import { useEscapeLayer } from '../components/escapeStack';
 import { isDialogOpenOutside, isKeyboardFocusedControl, isTypingTarget } from '../components/keyboardTarget';
 import { useLatest } from '../hooks/useStableValue';
 import { warn } from '../services/logger';
+import { readPendingReviewMutations } from '../services/reviewQueue';
 
 interface StudyEnhancedProps {
+  /** The signed-in user, whose review outbox tells when a grade has reached the server. Optional until App passes
+   *  it; without it the receipt never says a grade is waiting. */
+  userId?: string;
   items: StoredItem[];
   reviewHistory: ReviewHistory;
   onReview: (
@@ -58,10 +62,17 @@ interface LastGrade extends SessionGrade {
 
 /** How long a failed undo is said in the receipt line before the receipt comes back. */
 const UNDO_ERROR_MS = 4_000;
+/** How often the receipt looks for a waiting grade to have left the review outbox. */
+const OUTBOX_RECHECK_MS = 3_000;
+
+/** Whether a review is still in the user's outbox, not yet on the server. Without a user it can't tell, so it says no. */
+const isQueuedReview = (userId: string | undefined, eventId: string): boolean =>
+  !!userId && readPendingReviewMutations(userId).some(mutation => mutation.event.id === eventId);
 
 const revealAnswer = (current: StudySession | null): StudySession | null => current ? { ...current, revealed: true } : null;
 
 export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({ 
+  userId,
   items, 
   reviewHistory,
   onReview,
@@ -98,6 +109,17 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     setSession(startStudySession(crypto.randomUUID(), queue, Date.now(), sessionSiblingCounts(queue, items)));
   }, [items]);
 
+  // While the last grade waits in the outbox, look every few seconds for it to have reached the server.
+  const waitingEventId = lastGrade?.waiting ? lastGrade.eventId : undefined;
+  useEffect(() => {
+    if (!waitingEventId) return;
+    const timer = window.setInterval(() => {
+      if (isQueuedReview(userId, waitingEventId)) return;
+      setLastGrade(current => current?.eventId === waitingEventId ? { ...current, waiting: false } : current);
+    }, OUTBOX_RECHECK_MS);
+    return () => window.clearInterval(timer);
+  }, [waitingEventId, userId]);
+
   // While an undo is under way, grading and revealing wait: the undo is about to bring back the card it undoes.
   const undoing = lastGrade?.undoing ?? false;
   const sessionIdRef = useLatest(session?.id);
@@ -129,6 +151,10 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       durationMs: grade.durationMs,
       sessionId: session.id,
       eventId,
+    }).then(synced => {
+      // Not on the server yet: the receipt says it's saved on this device until the outbox sends it.
+      if (synced || !isQueuedReview(userId, eventId)) return;
+      setLastGrade(current => current?.eventId === eventId ? { ...current, waiting: true } : current);
     }).catch(error => warn('Review failed:', error));
     setSession(current => current ? advanceSession(current, itemIds, grade, now) : null);
   };
