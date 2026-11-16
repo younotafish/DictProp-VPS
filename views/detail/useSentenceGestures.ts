@@ -256,7 +256,8 @@ export function useSentenceGestures({
 
   const handleDoubleClick = (e: ReactMouseEvent<HTMLElement>) => {
     // A double click on a control is two clicks on it, never Got it: double-tapping the speaker, Copy, Reset or a
-    // term's search button doesn't review the sentence. Its words aren't controls here, so a double tap on them does.
+    // term's search button doesn't review the sentence. Its words aren't controls here, so a double tap on them does,
+    // while a laptop's double click on a word selects the word, and the selection check below leaves it at that.
     if ((e.target as HTMLElement | null)?.closest(doubleTapControlSelector('sentence'))) return;
     // Avoid triggering when selecting text
     const selection = window.getSelection();
