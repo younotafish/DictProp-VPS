@@ -1,9 +1,10 @@
-import React, { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Clock3, ExternalLink, Play } from 'lucide-react';
-import type { StoredItem } from '../../types';
+import type { SentenceData, StoredItem } from '../../types';
 import { useEscapeLayer } from '../../components/escapeStack';
 import type { Essay, EssayBodyParagraph, EssaySentence } from '../../services/essayCatalog';
 import { buildEssayStudyItems } from '../../services/essayProgress';
+import { beginLesson, subscribeLessonEnd } from '../../services/lessonTrail';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
 import { buildCatalogQueue, studyButtonLabel } from '../../services/catalogQueue';
 import { sentenceReviewState, type SentenceReviewState } from '../../services/sentenceReviewState';
@@ -33,6 +34,8 @@ interface EssayParagraphProps {
   states: string;
   sentenceCount: number;
   onOpenSentence: (sentence: EssaySentence) => void;
+  /** A sentence of this paragraph to tint for a moment, the one a lesson just came back to. */
+  highlightId?: string;
 }
 
 /** A body paragraph, each sentence a button underlined by its review state. */
@@ -41,11 +44,12 @@ const EssayParagraph = React.memo(function EssayParagraph({
   states,
   sentenceCount,
   onOpenSentence,
+  highlightId,
 }: EssayParagraphProps) {
   return (
     <p className="mb-6 indent-7 sm:mb-7 sm:indent-10">
       {paragraph.sentences.map((sentence, sentenceIndex) => {
-        const stateClass = STATE_UNDERLINE[states[sentenceIndex]];
+        const stateClass = STATE_UNDERLINE[states[sentenceIndex]] + (sentence.id === highlightId ? ' bg-indigo-100' : '');
         return (
           <Fragment key={sentence.id}>
             <button
@@ -112,13 +116,18 @@ export function EssayReader({
   // Read when a sentence is tapped and when the essay opens or is left, so the paragraphs' callback stays the same while
   // progress changes.
   const latest = useLatest({ essay, progressIndex, onOpenSentence, initialPosition, onSavePosition });
+  // Where the last reading lesson opened, for when the sentence it ended on has gone from the essay.
+  const lessonOpenedAtRef = useRef(1);
   const openSentence = useCallback((sentence: EssaySentence) => {
     const { essay, progressIndex, onOpenSentence } = latest.current;
     const index = essay.sentences.findIndex(candidate => candidate.id === sentence.id);
+    lessonOpenedAtRef.current = sentence.position;
+    beginLesson({ kind: 'essay', collectionId: essay.id, mode: 'read' });
     onOpenSentence(buildEssayStudyItems(essay.sentences, progressIndex, Date.now()), Math.max(0, index));
   }, [latest]);
 
   const startStudy = () => {
+    beginLesson({ kind: 'essay', collectionId: essay.id, mode: 'study' });
     onOpenSentence(buildEssayStudyItems(studyQueue.sentences, progressIndex, Date.now()), 0);
   };
 
@@ -192,6 +201,36 @@ export function EssayReader({
     onScroll(event);
   };
 
+  // A reading lesson opened here (a tapped sentence, not a Study run) brings the page back, when it closes, to the last
+  // sentence it showed, which becomes the essay's place: on the reading line if it's out of view, tinted for a moment,
+  // and focused where there's a fine pointer (a laptop), so Enter opens it again.
+  const [returnedTo, setReturnedTo] = useState<{ id: string } | null>(null);
+  useEffect(() => subscribeLessonEnd(({ origin, lastItem }) => {
+    const { essay, onSavePosition } = latest.current;
+    if (origin.collectionId !== essay.id || origin.mode !== 'read' || !lastItem) return;
+    const lastId = (lastItem.data as SentenceData).catalogSentenceId ?? '';
+    const target = returnTarget({ id: lastId, position: lessonOpenedAtRef.current }, essay.sentences);
+    if (!target) return;
+    onSavePosition?.(readingPosition(essay, target, target === essay.sentences[essay.sentences.length - 1], Date.now()));
+    setReturnedTo({ id: target.id });
+  }), [latest]);
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    const button = returnedTo && [...(scroller?.querySelectorAll<HTMLElement>('[data-sentence-id]') ?? [])]
+      .find(candidate => candidate.dataset.sentenceId === returnedTo.id);
+    if (!scroller || !button) return;
+    const contentTop = scroller.getBoundingClientRect().top - scroller.scrollTop;
+    const box = button.getBoundingClientRect();
+    const top = scrollTopToShow(
+      { top: box.top - contentTop, bottom: box.bottom - contentTop }, scroller.scrollTop, scroller.clientHeight,
+    );
+    if (top !== null) scroller.scrollTop = top;
+    viewRef.current.scrollTop = keptAtRef.current = scroller.scrollTop;
+    if (window.matchMedia?.('(pointer: fine)').matches) button.focus({ preventScroll: true });
+    const timer = window.setTimeout(() => setReturnedTo(null), 1_500);
+    return () => window.clearTimeout(timer);
+  }, [returnedTo]);
+
   // Esc goes back to the essays, unless a layer above (a lesson, a dialog, the search sheet) takes it first.
   useEscapeLayer(back, 0);
 
@@ -264,6 +303,7 @@ export function EssayReader({
                 <EssayParagraph
                   key={paragraph.id}
                   paragraph={paragraph}
+                  highlightId={paragraph.sentences.some(sentence => sentence.id === returnedTo?.id) ? returnedTo?.id : undefined}
                   states={paragraph.sentences
                     .map(sentence => STATE_LETTER[sentenceReviewState(progressIndex.get(sentence.id)?.srs, now)])
                     .join('')}
