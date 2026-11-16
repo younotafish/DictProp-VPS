@@ -1,17 +1,10 @@
 /**
- * Where a word card's outside links point, and the signal the app sends before leaving for one of them.
- * Pure URL builders, so the encoding and the platform rules are pinned by node tests.
+ * Where a word card's outside links point, and the signal the app sends before leaving for one of them
+ * (services/externalNavigation.ts). Pure URL builders, so the encoding and the platform rules are pinned by
+ * node tests.
  */
 
-/**
- * Dispatched just before the app navigates to an outside site; useLibrarySync saves the library on it. On
- * an iPhone home-screen app, opening a link can suspend the page before visibilitychange gets to save.
- */
-export const EXTERNAL_NAV_EVENT = 'dictprop:before-external-nav';
-
-export function noteExternalNavigation(): void {
-  window.dispatchEvent(new Event(EXTERNAL_NAV_EVENT));
-}
+export { EXTERNAL_NAV_EVENT, noteExternalNavigation } from './externalNavigation';
 
 export const youglishUrl = (word: string): string =>
   `https://youglish.com/pronounce/${encodeURIComponent(word)}/english/us`;

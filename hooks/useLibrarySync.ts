@@ -6,6 +6,7 @@ import { dropExpiredTombstones } from '../services/sync';
 import { isItemDirty } from '../services/itemHash';
 import { stripAndStoreImages } from '../services/libraryImages';
 import { setReloadGuard } from '../services/appUpdate';
+import { EXTERNAL_NAV_EVENT } from '../services/externalNavigation';
 import { readPendingReviewMutations } from '../services/reviewQueue';
 import { prepareStoredLibrary } from '../services/libraryLaunch';
 import { sendBeforeLeaving } from '../services/unsentChanges';
@@ -154,10 +155,10 @@ export function useLibrarySync(
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('dictprop:before-external-nav', handleBeforeExternalNav);
+    window.addEventListener(EXTERNAL_NAV_EVENT, handleBeforeExternalNav);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('dictprop:before-external-nav', handleBeforeExternalNav);
+      window.removeEventListener(EXTERNAL_NAV_EVENT, handleBeforeExternalNav);
     };
   }, [saveNow, pushDirtyItems]);
 
