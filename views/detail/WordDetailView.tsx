@@ -25,6 +25,7 @@ import { MeaningDots } from './MeaningDots';
 import { WordComparisons, comparisonsInvolving } from './WordComparisons';
 import { PhraseBody } from './PhraseBody';
 import { ExampleSentencePreview } from './ExampleSentencePreview';
+import { buildToReviewFrom, cardPositionLine } from './cardPosition';
 import { useCardNavigation } from './useCardNavigation';
 import { useAutoPlay } from './useAutoPlay';
 import { useAutoPlayReader } from './useAutoPlayReader';
@@ -156,6 +157,17 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // The card's saved copy: the same id, else the saved card with its spelling (and, for a word, its exact sense label).
   const savedItemMatch = useMemo(() => findSavedCopy(savedItems, { type, data }), [savedItems, type, data]);
   const isSaved = !!savedItemMatch;
+
+  // The line at the end of the card: its place in the view and the words after it left to review, counted once per
+  // list (the clock moves on with the list, as the Notebook's does).
+  const toReviewFrom = useMemo(() => buildToReviewFrom(groups, Date.now()), [groups]);
+  const groupIndex = Math.min(currentGroupIndex, groups.length - 1);
+  const positionLine = cardPositionLine({
+    index: groupIndex,
+    total: groups.length,
+    toReviewAfter: toReviewFrom[groupIndex + 1] ?? 0,
+    archived: !!savedItemMatch?.isArchived,
+  });
 
   // Get mastery info for current item
   const mastery = savedItemMatch?.srs ? SRSAlgorithm.getMasteryLevel(savedItemMatch.srs) : null;
@@ -414,6 +426,12 @@ export function WordDetailView(props: DetailViewBodyProps) {
               onOpenExampleSentence={onOpenExampleSentence ? openExampleSentencePreview : undefined}
               isSentenceSaved={isSentenceSaved}
             />
+          )}
+
+          {positionLine && (
+            <p className="mt-6 mx-auto max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] text-center text-xs text-slate-400">
+              {positionLine}
+            </p>
           )}
 
         </div>
