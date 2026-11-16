@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MASTERY_LEVELS, SRSAlgorithm, masteryLevelFor } from '../../services/srsAlgorithm.ts';
+import { masteryText } from '../../components/mastery.tsx';
 
 test('display strength is 18·ln(1 + stability), rounded and capped, as the table in its doc says', () => {
   const table: [stability: number, strength: number][] = [
@@ -38,30 +39,48 @@ test('ensure creates a record for an item without one and migrates one that exis
   assert.equal(migrate(legacy).lastExposureDate, 0);
 });
 
-test('mastery bands run from Grandmaster down to New, each from its minimum strength', () => {
+test('mastery levels run from Grandmaster down to Struggling by minimum strength, then New, which has none', () => {
   assert.deepEqual(MASTERY_LEVELS.map(level => [level.key, level.label, level.min, level.color]), [
     ['grandmaster', 'Grandmaster', 85, 'purple'],
     ['mastered', 'Mastered', 70, 'emerald'],
     ['proficient', 'Proficient', 50, 'blue'],
     ['learning', 'Learning', 30, 'amber'],
-    ['struggling', 'Struggling', 10, 'orange'],
-    ['new', 'New', -Infinity, 'slate'],
+    ['struggling', 'Struggling', -Infinity, 'orange'],
+    ['new', 'New', null, 'slate'],
   ]);
-  const keyOf = (strength: number) => masteryLevelFor(strength)?.key;
+  // A reviewed card bands by strength, down to Struggling.
+  const keyOf = (strength: number) => masteryLevelFor(strength, 3)?.key;
   assert.deepEqual([100, 85, 84.9, 70, 69.9, 50, 49.9, 30, 29.9, 10, 9.9, 0, -1].map(keyOf), [
     'grandmaster', 'grandmaster', 'mastered', 'mastered', 'proficient', 'proficient', 'learning', 'learning',
-    'struggling', 'struggling', 'new', 'new', 'new',
+    'struggling', 'struggling', 'struggling', 'struggling', 'struggling',
   ]);
-  assert.equal(masteryLevelFor(NaN), undefined, 'NaN reaches no band');
+  assert.equal(masteryLevelFor(NaN, 3), undefined, 'NaN reaches no band');
+  // A card never reviewed is New, whatever its strength.
+  for (const strength of [0, 7, 95, NaN]) assert.equal(masteryLevelFor(strength, 0)?.key, 'new', `strength ${strength}`);
+  assert.equal(masteryLevelFor(40, Number.NaN)?.key, 'new', 'an unreadable count is no review');
 });
 
-test('a badge shows the band of the strength recomputed from stability', () => {
-  const badge = (stability: number) => SRSAlgorithm.getMasteryLevel({ ...SRSAlgorithm.createNew('x', 'vocab', 0), stability });
-  assert.deepEqual(badge(0.5), { label: 'New', color: 'slate', percentage: 7 });
+test('a badge reads New at 0 for a card never reviewed, else the band of the strength recomputed from stability', () => {
+  const fresh = SRSAlgorithm.createNew('x', 'vocab', 0);
+  for (const stability of [0.5, 7, 143, NaN]) {
+    assert.deepEqual(SRSAlgorithm.getMasteryLevel({ ...fresh, stability }), { label: 'New', color: 'slate', percentage: 0 }, `stability ${stability}`);
+  }
+  assert.deepEqual(SRSAlgorithm.getMasteryLevel({ ...fresh, totalReviews: undefined as unknown as number }), { label: 'New', color: 'slate', percentage: 0 });
+
+  const badge = (stability: number) => SRSAlgorithm.getMasteryLevel({ ...fresh, totalReviews: 2, stability });
+  assert.deepEqual(badge(0.5), { label: 'Struggling', color: 'orange', percentage: 7 }, 'reviewed and weak is Struggling, not New');
   assert.deepEqual(badge(1), { label: 'Struggling', color: 'orange', percentage: 12 });
   assert.deepEqual(badge(7), { label: 'Learning', color: 'amber', percentage: 37 });
   assert.deepEqual(badge(25), { label: 'Proficient', color: 'blue', percentage: 59 });
   assert.deepEqual(badge(47), { label: 'Mastered', color: 'emerald', percentage: 70 });
   assert.deepEqual(badge(143), { label: 'Grandmaster', color: 'purple', percentage: 89 });
-  assert.deepEqual(badge(NaN), { label: 'New', color: 'slate', percentage: NaN });
+  assert.deepEqual(badge(NaN), { label: 'Struggling', color: 'orange', percentage: NaN });
+});
+
+test('a badge says the level and strength, and just New for a card never reviewed', () => {
+  const fresh = SRSAlgorithm.createNew('x', 'vocab', 0);
+  assert.equal(masteryText(SRSAlgorithm.getMasteryLevel(fresh)), 'New');
+  assert.equal(masteryText(SRSAlgorithm.getMasteryLevel({ ...fresh, totalReviews: 4, stability: 7 })), 'Learning 37%');
+  assert.equal(masteryText(SRSAlgorithm.getMasteryLevel({ ...fresh, totalReviews: 1, stability: 0.5 })), 'Struggling 7%');
+  assert.equal(masteryText({ label: 'Learning', percentage: 44.6 }), 'Learning 45%');
 });

@@ -43,8 +43,8 @@ test('study stats bucket items by memory strength and count due spellings once',
     vocab('a1', 'run', { strength: 90, reviews: 3, due: NOW - HOUR }),
     vocab('a2', 'run', { strength: 72, reviews: 2, due: NOW - DAY }),
     vocab('b', 'walk', { strength: 55, reviews: 1, due: NOW }),
-    vocab('c', 'jump', { strength: 30 }),
-    vocab('d', 'skip', { strength: 12 }),
+    vocab('c', 'jump', { strength: 30, reviews: 2 }),
+    vocab('d', 'skip', { strength: 12, reviews: 1 }),
     vocab('e', 'hop', { strength: 0, due: NOW - HOUR }),
   ];
   const stats = computeStudyStats(items, recentOnly([]), NOW);
@@ -71,10 +71,11 @@ test('the due count takes each spelling once, reviewed and due, leaving out new,
   assert.equal(countDueSpellings([], NOW), 0);
 });
 
-test('each band starts at its minimum strength, and a strength below every band counts as new', () => {
-  const items = [85, 84, 70, 69, 50, 49, 30, 29, 10, 9, 0, -2].map((strength, i) => vocab(String(i), String(i), { strength }));
-  const stats = computeStudyStats(items, recentOnly([]), NOW);
-  assert.deepEqual(stats.mastery, { grandmaster: 1, mastered: 2, proficient: 2, learning: 2, struggling: 2, new: 3 });
+test('reviewed items band from each minimum strength down to struggling, and New counts the never reviewed', () => {
+  const reviewed = [85, 84, 70, 69, 50, 49, 30, 29, 10, 9, 0, -2].map((strength, i) => vocab(String(i), String(i), { strength, reviews: 1 }));
+  assert.deepEqual(computeStudyStats(reviewed, recentOnly([]), NOW).mastery, { grandmaster: 1, mastered: 2, proficient: 2, learning: 2, struggling: 5, new: 0 });
+  const neverReviewed = [0, 7, 45, 90].map((strength, i) => vocab(`n${i}`, `n${i}`, { strength }));
+  assert.deepEqual(computeStudyStats(neverReviewed, recentOnly([]), NOW).mastery, { grandmaster: 0, mastered: 0, proficient: 0, learning: 0, struggling: 0, new: 4 });
 });
 
 test('study stats pick the three most reviewed items, earlier items first on ties', () => {

@@ -5,7 +5,7 @@ import { sentenceReviewState } from './sentenceReviewState';
 export interface StudyStats {
   /** Distinct due spellings (countDueSpellings). */
   due: number;
-  /** How many items each mastery band holds, by their stored display strength. */
+  /** How many items each mastery level holds: New for the never reviewed, the rest banded by stored display strength. */
   mastery: Record<MasteryKey, number>;
   total: number;
   avgStrength: number;
@@ -60,7 +60,7 @@ export function computeStudyStats(
   for (const item of items) {
     const srs = item.srs;
     const strength = srs?.memoryStrength ?? 0;
-    const level = masteryLevelFor(strength);
+    const level = masteryLevelFor(strength, srs?.totalReviews ?? 0);
     if (level) mastery[level.key]++;
     strengthSum += strength;
     legacyReviewFloor += srs?.totalReviews ?? 0;

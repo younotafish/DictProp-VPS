@@ -1,7 +1,7 @@
 import React from 'react';
 import { Flame } from 'lucide-react';
 import type { SRSData } from '../../types';
-import { MasteryBadge, type MasteryClasses } from '../mastery';
+import { MasteryBadge, masteryText, type MasteryClasses } from '../mastery';
 import { formatTimeUntil } from '../../services/reviewTime';
 
 interface SrsStatsProps {
@@ -24,7 +24,7 @@ export function SrsStats({ srs, mastery, colors, compact = false, children }: Sr
     <>
       {compact ? <MasteryBadge {...mastery} /> : (
         <span className={`${colors.bg} ${colors.text} px-2 py-0.5 rounded-full font-semibold`}>
-          {mastery.label} {Math.round(mastery.percentage)}%
+          {masteryText(mastery)}
         </span>
       )}
       <div className={`${compact ? 'hidden sm:block ' : ''}flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden`}>

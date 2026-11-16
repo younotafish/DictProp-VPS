@@ -30,7 +30,14 @@ export const barColorFor = (percentage?: number | null): string =>
     : percentage >= 40 ? 'bg-amber-400'
     : 'bg-red-400';
 
-/** The "Label NN%" pill shown in review headers. Pass the object from SRSAlgorithm.getMasteryLevel(). */
+/**
+ * What a mastery badge says: the level and the strength ('Learning 45%'), or just 'New' for a card never reviewed,
+ * which has no strength to show. Pass the object from SRSAlgorithm.getMasteryLevel().
+ */
+export const masteryText = ({ label, percentage }: { label: string; percentage: number }): string =>
+  label === 'New' ? label : `${label} ${Math.round(percentage)}%`;
+
+/** The "Label NN%" pill shown in review headers (masteryText). Pass the object from SRSAlgorithm.getMasteryLevel(). */
 export const MasteryBadge: React.FC<{ label: string; color: string; percentage: number; className?: string }> = ({
   label,
   color,
@@ -40,7 +47,7 @@ export const MasteryBadge: React.FC<{ label: string; color: string; percentage: 
   const c = getMasteryColors(color);
   return (
     <span className={`${c.bg} ${c.text} px-2 py-0.5 rounded-full font-semibold whitespace-nowrap${className ? ` ${className}` : ''}`}>
-      {label} {Math.round(percentage)}%
+      {masteryText({ label, percentage })}
     </span>
   );
 };

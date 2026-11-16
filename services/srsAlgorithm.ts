@@ -8,14 +8,18 @@
 
 import { SRSData } from '../types';
 
-/** The mastery bands, strongest first: a badge and the study dashboard's breakdown both band by this table. */
+/**
+ * The mastery levels, strongest first: a badge and the study dashboard's breakdown both use this table. A reviewed
+ * card is in the strongest band whose minimum display strength it reaches, down to Struggling; New is a card never
+ * reviewed, whatever strength its seed stability gives it, so it has no minimum.
+ */
 export const MASTERY_LEVELS = [
   { key: 'grandmaster', label: 'Grandmaster', min: 85, color: 'purple' },
   { key: 'mastered', label: 'Mastered', min: 70, color: 'emerald' },
   { key: 'proficient', label: 'Proficient', min: 50, color: 'blue' },
   { key: 'learning', label: 'Learning', min: 30, color: 'amber' },
-  { key: 'struggling', label: 'Struggling', min: 10, color: 'orange' },
-  { key: 'new', label: 'New', min: -Infinity, color: 'slate' },
+  { key: 'struggling', label: 'Struggling', min: -Infinity, color: 'orange' },
+  { key: 'new', label: 'New', min: null, color: 'slate' },
 ] as const;
 
 export type MasteryLevel = typeof MASTERY_LEVELS[number];
@@ -23,15 +27,18 @@ export type MasteryKey = MasteryLevel['key'];
 /** The colour a band is drawn in; components/mastery.tsx turns it into classes. */
 export type MasteryColor = MasteryLevel['color'];
 
-/**
- * The band a display strength (0–100) falls in: the strongest whose minimum it reaches. Only NaN, which
- * compares false with every minimum, has none; a badge shows it as New, and the breakdown leaves it out.
- */
-export function masteryLevelFor(strength: number): MasteryLevel | undefined {
-  return MASTERY_LEVELS.find(level => strength >= level.min);
-}
+const STRUGGLING_LEVEL = MASTERY_LEVELS[4] satisfies { key: 'struggling' };
+const NEW_LEVEL = MASTERY_LEVELS[5] satisfies { key: 'new' };
 
-const NEW_LEVEL = MASTERY_LEVELS[MASTERY_LEVELS.length - 1];
+/**
+ * The level of a card with `totalReviews` reviews and a display strength (0–100): New if it was never reviewed,
+ * else the strongest band whose minimum the strength reaches. Only a reviewed card's NaN strength, which compares
+ * false with every minimum, reaches no band; a badge shows it as Struggling, and the breakdown leaves it out.
+ */
+export function masteryLevelFor(strength: number, totalReviews: number): MasteryLevel | undefined {
+  if (!(totalReviews > 0)) return NEW_LEVEL;
+  return MASTERY_LEVELS.find(level => level.min !== null && strength >= level.min);
+}
 
 export class SRSAlgorithm {
   /**
@@ -131,11 +138,15 @@ export class SRSAlgorithm {
     return Math.min(100, Math.round(18 * Math.log(1 + stability)));
   }
 
-  /** The mastery badge for a schedule: its band in MASTERY_LEVELS and its display strength (0–100). */
+  /**
+   * The mastery badge for a schedule: its level in MASTERY_LEVELS and its display strength (0–100). A card never
+   * reviewed is New at 0, since the strength of its seed stability isn't anything learned.
+   */
   static getMasteryLevel(srs: SRSData): { label: string; color: MasteryColor; percentage: number } {
+    const totalReviews = srs.totalReviews ?? 0;
     // Recalculate display strength from stability to ensure consistency
-    const strength = SRSAlgorithm.stabilityToDisplayStrength(srs.stability);
-    const { label, color } = masteryLevelFor(strength) ?? NEW_LEVEL;
+    const strength = totalReviews > 0 ? SRSAlgorithm.stabilityToDisplayStrength(srs.stability) : 0;
+    const { label, color } = masteryLevelFor(strength, totalReviews) ?? STRUGGLING_LEVEL;
     return { label, color, percentage: strength };
   }
 }
