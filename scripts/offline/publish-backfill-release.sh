@@ -120,9 +120,10 @@ IMPORT_DISPATCHED_AT=""
 PREVIOUS_RUN_ID=""
 IMPORT_RUN_ID=""
 
-# A deployment run as "<id> <status> <conclusion> <attempt> <commit> <url>", tab-separated. A run that hasn't ended
-# has the conclusion "none", since read would merge an empty field into the next.
-DEPLOY_RUN_FIELDS='[.status, (.conclusion // "none"), .attempt, .headSha, .url]'
+# A deployment run as "<id> <status> <conclusion> <attempt> <commit> <url>", tab-separated. gh gives a run that hasn't
+# ended an empty conclusion (GitHub's API a null one), and read would merge an empty field into the next, so such a run
+# has the conclusion "none".
+DEPLOY_RUN_FIELDS='[.status, (if (.conclusion // "") == "" then "none" else .conclusion end), .attempt, .headSha, .url]'
 
 deploy_run_line() {
   local run_id="$1"

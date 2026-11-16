@@ -177,7 +177,8 @@ fi
 // release's run and, at the same moment, a run another release dispatched.
 // FAKE_GH_FAIL=<text>@<n> fails the nth call that mentions <text>, as GitHub does now and then with a 502.
 // FAKE_DEPLOY_STATES lists the deployment of FAKE_DEPLOY_SHA at each lookup as <status>[:<conclusion>[:<attempt>]],
-// or none when it has no run; the last one repeats. A completed run succeeded, at attempt 1, unless it says otherwise.
+// or none when it has no run; the last one repeats. A completed run succeeded, at attempt 1, unless it says otherwise,
+// and a run that hasn't ended has the empty conclusion gh gives it.
 // FAKE_SUCCESSFUL_DEPLOYS is the JSON of the newest successful deploy runs, FAKE_COMPARE_STATUS how each of their
 // commits compares with FAKE_DEPLOY_SHA (or fail), and FAKE_MAIN_HEAD main's newest commit. FAKE_IN_FLIGHT lists, at
 // each look, how many deploy runs are queued or running (or fail); the last one repeats.
@@ -224,8 +225,8 @@ case "$*" in
     if [ "$status" = none ]; then printf '[]\n' | respond; exit 0; fi
     if [ -z "$conclusion" ] && [ "$status" = completed ]; then conclusion=success; fi
     jq -n --arg status "$status" --arg conclusion "$conclusion" --argjson attempt "\${attempt:-1}" --arg sha "$FAKE_DEPLOY_SHA" \\
-      '[{databaseId: 100, status: $status, conclusion: (if $conclusion == "" then null else $conclusion end), attempt: $attempt,
-         headSha: $sha, url: "https://deploy.test"}]' | respond ;;
+      '[{databaseId: 100, status: $status, conclusion: $conclusion, attempt: $attempt, headSha: $sha, url: "https://deploy.test"}]' \\
+      | respond ;;
   "run list "*"--workflow sentence-backfill.yml"*)
     respond < "$state/import-runs.json" ;;
   "run view "*)
@@ -649,4 +650,25 @@ test('a commit with no deployment of its own that production already carries nee
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
+});
+
+test("a deployment run's fields read in order whether or not the run has ended", () => {
+  // The publisher's own field list, applied to a run as gh gives it, and the line read as the publisher reads it.
+  const publisher = readFileSync(repoPath('scripts', 'offline', 'publish-backfill-release.sh'), 'utf8');
+  const fields = /^DEPLOY_RUN_FIELDS='(.+)'$/m.exec(publisher)?.[1];
+  assert.ok(fields, 'the publisher sets DEPLOY_RUN_FIELDS');
+  const read = (run: Record<string, unknown>) => {
+    const result = spawnSync('bash', ['-c', [
+      'line="$(jq -r --arg id 100 "[\\$id] + $FIELDS | @tsv" <<< "$RUN")"',
+      "IFS=$'\\t' read -r deploy_id deploy_status deploy_conclusion deploy_attempt deploy_commit _ <<< \"$line\"",
+      'echo "$deploy_id $deploy_status $deploy_conclusion $deploy_attempt $deploy_commit"',
+    ].join('\n')], { encoding: 'utf8', env: { ...process.env, FIELDS: fields, RUN: JSON.stringify(run) } });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const run = { attempt: 2, headSha: deploySha, url: 'https://deploy.test' };
+  // gh gives a run that hasn't ended an empty conclusion, and GitHub's API a null one.
+  assert.equal(read({ ...run, status: 'in_progress', conclusion: '' }), `100 in_progress none 2 ${deploySha}`);
+  assert.equal(read({ ...run, status: 'queued', conclusion: null }), `100 queued none 2 ${deploySha}`);
+  assert.equal(read({ ...run, status: 'completed', conclusion: 'failure' }), `100 completed failure 2 ${deploySha}`);
 });
