@@ -33,12 +33,15 @@ if [[ "$args" == "release view "* ]]; then echo 1; exit 0; fi
 if [[ "$args" == "release upload "* || "$args" == "release delete "* ]]; then exit 0; fi
 if [[ "$args" == "workflow run deploy.yml "* ]]; then touch "$state/deploy"; exit 0; fi
 if [[ "$args" == "workflow run sentence-backfill.yml "* ]]; then touch "$state/import"; exit 0; fi
+# Production runs no commit containing this one, and no deployment is queued or running.
+if [[ "$args" == "run list "*"--status success"* ]]; then exit 0; fi
+if [[ "$args" == "run list "*"--json status --jq"* ]]; then echo 0; exit 0; fi
 if [[ "$args" == "run list "*"--workflow deploy.yml"*"--commit"* ]]; then exit 0; fi
 if [[ "$args" == "run list "*"--workflow deploy.yml"*"--event workflow_dispatch"* ]]; then
   if [[ -e "$state/deploy" ]]; then echo 101; else echo 100; fi
   exit 0
 fi
-if [[ "$args" == "run view 101 "* ]]; then printf '101\\tcompleted\\tsuccess\\thttps://deploy.test\\n'; exit 0; fi
+if [[ "$args" == "run view 101 "* ]]; then printf '101\\tcompleted\\tsuccess\\t1\\tmainhead\\thttps://deploy.test\\n'; exit 0; fi
 if [[ "$args" == "run list "*"--workflow sentence-backfill.yml"* ]]; then
   if [[ -e "$state/import" ]]; then echo 201; else echo 200; fi
   exit 0
@@ -80,6 +83,8 @@ fi
 
   const state = join(root, `dictprop-publish-${tag}`);
   const ghLog = readFileSync(join(fakeState, 'gh.log'), 'utf8');
+  // Production was asked first whether it already runs a commit containing this one.
+  assert.match(ghLog, /^run list .*--workflow deploy\.yml --branch main --status success /m);
   assert.match(output, /no deployment run exists for (deadbeef){5}; dispatching it explicitly/);
   assert.match(output, /required deployment succeeded; dispatching image-import import/);
   assert.equal(ghLog.match(/^workflow run deploy\.yml /gm)?.length, 1);
@@ -111,8 +116,9 @@ if [[ "$args" == "workflow run sentence-backfill.yml "* ]]; then
   echo "$((count + 1))" > "$state/import-count"
   exit 0
 fi
+if [[ "$args" == "run list "*"--json status --jq"* ]]; then echo 0; exit 0; fi
 if [[ "$args" == "run list "*"--workflow deploy.yml"*"--commit"* ]]; then
-  printf '100\tcompleted\tsuccess\thttps://deploy.test\n'
+  printf '100\tcompleted\tsuccess\t1\tdeploysha\thttps://deploy.test\n'
   exit 0
 fi
 if [[ "$args" == "run list "*"--workflow sentence-backfill.yml"* ]]; then
@@ -170,7 +176,11 @@ fi
 // Answers like gh, including --jq, over a shared list of bridge runs. Every dispatch adds this
 // release's run and, at the same moment, a run another release dispatched.
 // FAKE_GH_FAIL=<text>@<n> fails the nth call that mentions <text>, as GitHub does now and then with a 502.
-// FAKE_DEPLOY_STATES lists the deployment's status at each lookup; the last one repeats.
+// FAKE_DEPLOY_STATES lists the deployment of FAKE_DEPLOY_SHA at each lookup as <status>[:<conclusion>[:<attempt>]],
+// or none when it has no run; the last one repeats. A completed run succeeded, at attempt 1, unless it says otherwise.
+// FAKE_SUCCESSFUL_DEPLOYS is the JSON of the newest successful deploy runs, FAKE_COMPARE_STATUS how each of their
+// commits compares with FAKE_DEPLOY_SHA (or fail), and FAKE_MAIN_HEAD main's newest commit. FAKE_IN_FLIGHT lists, at
+// each look, how many deploy runs are queued or running (or fail); the last one repeats.
 const fakeGhWithRuns = `#!/usr/bin/env bash
 set -euo pipefail
 state="$FAKE_GH_STATE"
@@ -187,18 +197,35 @@ for arg in "$@"; do
   previous="$arg"
 done
 respond() { jq -r "$filter"; }
+# nth NAME LIST: the next of LIST's comma-separated values, counted in NAME; the last one repeats.
+nth() {
+  local count=$(( $(cat "$state/$1" 2>/dev/null || echo 0) + 1 ))
+  printf '%s\n' "$count" > "$state/$1"
+  printf '%s\n' "$2" | awk -F, -v n="$count" '{ print (n <= NF ? $n : $NF) }'
+}
 case "$*" in
   "release view "*)
     printf '%s\n' '{"assets":[{"name":"sentence-backfill.enc"}]}' | respond ;;
   "release upload "* | "release delete "*) ;;
+  "run list "*"--status success"*)
+    printf '%s\n' "\${FAKE_SUCCESSFUL_DEPLOYS:-[]}" | respond ;;
+  "run list "*"--json status --jq"*)
+    in_flight="$(nth in-flight-looks "\${FAKE_IN_FLIGHT:-0}")"
+    if [ "$in_flight" = fail ]; then echo 'HTTP 502: Bad Gateway' >&2; exit 1; fi
+    jq -n --argjson count "$in_flight" '[range($count) | {status: "queued"}]' | respond ;;
+  "api repos/"*"/compare/"*)
+    if [ "\${FAKE_COMPARE_STATUS:-behind}" = fail ]; then echo 'HTTP 502: Bad Gateway' >&2; exit 1; fi
+    printf '{"status":"%s"}\n' "\${FAKE_COMPARE_STATUS:-behind}" | respond ;;
+  "api repos/"*"/commits/main "*)
+    printf '{"sha":"%s"}\n' "\${FAKE_MAIN_HEAD:-$FAKE_DEPLOY_SHA}" | respond ;;
+  "run rerun "*) ;;
   "run list "*"--workflow deploy.yml"*)
-    lookups=$(( $(cat "$state/deploy-lookups" 2>/dev/null || echo 0) + 1 ))
-    printf '%s\n' "$lookups" > "$state/deploy-lookups"
-    status="$(printf '%s\n' "\${FAKE_DEPLOY_STATES:-completed}" | awk -F, -v n="$lookups" '{ print (n <= NF ? $n : $NF) }')"
-    conclusion=success
-    if [ "$status" != completed ]; then conclusion=; fi
-    jq -n --arg status "$status" --arg conclusion "$conclusion" \\
-      '[{databaseId: 100, status: $status, conclusion: (if $conclusion == "" then null else $conclusion end), url: "https://deploy.test"}]' | respond ;;
+    IFS=: read -r status conclusion attempt <<< "$(nth deploy-lookups "\${FAKE_DEPLOY_STATES:-completed}")"
+    if [ "$status" = none ]; then printf '[]\n' | respond; exit 0; fi
+    if [ -z "$conclusion" ] && [ "$status" = completed ]; then conclusion=success; fi
+    jq -n --arg status "$status" --arg conclusion "$conclusion" --argjson attempt "\${attempt:-1}" --arg sha "$FAKE_DEPLOY_SHA" \\
+      '[{databaseId: 100, status: $status, conclusion: (if $conclusion == "" then null else $conclusion end), attempt: $attempt,
+         headSha: $sha, url: "https://deploy.test"}]' | respond ;;
   "run list "*"--workflow sentence-backfill.yml"*)
     respond < "$state/import-runs.json" ;;
   "run view "*)
@@ -258,8 +285,13 @@ fi
     env: {
       ...process.env,
       FAKE_ACTIONS_STATUS: 'operational',
+      FAKE_COMPARE_STATUS: '',
+      FAKE_DEPLOY_SHA: deploySha,
       FAKE_DEPLOY_STATES: '',
       FAKE_GH_FAIL: '',
+      FAKE_IN_FLIGHT: '',
+      FAKE_MAIN_HEAD: '',
+      FAKE_SUCCESSFUL_DEPLOYS: '',
       FAKE_GH_STATE: fakeState,
       FAKE_IMPORT_CONCLUSIONS: '',
       FAKE_REAL_SLEEP: '',
@@ -470,6 +502,149 @@ test('a status page that cannot be read does not hold publication back', () => {
     assert.equal(result.stdout.match(/GitHub status unknown \(API=unknown, Actions=unknown\); carrying on/g)?.length, 1);
     assert.doesNotMatch(result.stdout, /GitHub not ready/);
     assert.equal(fixture.dispatches(), 2);
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+const reruns = (log: string) => log.match(/^run rerun /gm)?.length ?? 0;
+const deployDispatches = (log: string) => log.match(/^workflow run deploy\.yml /gm)?.length ?? 0;
+const newerCommit = 'beef'.repeat(10);
+
+test('a failed deployment that a newer successful one contains is not rerun, and the import goes ahead', () => {
+  const fixture = bridgeFixture('dictprop-publisher-deploy-contained-');
+  try {
+    const result = fixture.publish({
+      FAKE_DEPLOY_STATES: 'completed:failure:1',
+      FAKE_SUCCESSFUL_DEPLOYS: JSON.stringify([{ headSha: newerCommit }]),
+      FAKE_COMPARE_STATUS: 'ahead',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`deployment of ${deploySha} ended as failure; a successful deployment already contains it`));
+    assert.match(fixture.ghLog(), new RegExp(`^api repos/\\S+/compare/${deploySha}\\.\\.\\.${newerCommit} --jq \\.status$`, 'm'));
+    assert.equal(reruns(fixture.ghLog()), 0);
+    assert.equal(fixture.dispatches(), 1);
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a deployment of main's head that ended without success is rerun once, and the rerun's success lets the import go", () => {
+  const fixture = bridgeFixture('dictprop-publisher-deploy-rerun-');
+  try {
+    // GitHub still shows the cancelled first attempt at the look after the rerun was asked for.
+    const result = fixture.publish({ FAKE_DEPLOY_STATES: 'completed:cancelled:1,completed:cancelled:1,in_progress::2,completed:success:2' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /deployment 100 ended as cancelled; requesting one rerun/);
+    assert.match(result.stdout, /waiting for the rerun of deployment 100 to start/);
+    assert.match(result.stdout, /waiting for required deployment 100 \(in_progress\)/);
+    assert.equal(reruns(fixture.ghLog()), 1);
+    assert.match(fixture.ghLog(), /^run rerun 100 --repo \S+$/m);
+    assert.equal(fixture.dispatches(), 1);
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a rerun that fails too, or a deployment already at its third attempt, ends the publication at once', () => {
+  for (const [states, message, expectedReruns] of [
+    ['completed:failure:1,completed:failure:2', `deployment of ${deploySha} failed again after a rerun; stopping for inspection`, 1],
+    ['completed:failure:3', `deployment of ${deploySha} ended as failure after 3 attempts; stopping for inspection`, 0],
+  ] as const) {
+    const fixture = bridgeFixture('dictprop-publisher-deploy-give-up-');
+    try {
+      const result = fixture.publish({ FAKE_DEPLOY_STATES: states });
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stdout, new RegExp(message));
+      assert.equal(reruns(fixture.ghLog()), expectedReruns, states);
+      assert.doesNotMatch(fixture.ghLog(), /^workflow run sentence-backfill\.yml /m);
+      assert.match(fixture.ghLog(), releaseDelete);
+      assert.ok(existsSync(join(fixture.stateDir, 'failed')));
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('a failed deployment is not rerun once main has moved on', () => {
+  const fixture = bridgeFixture('dictprop-publisher-deploy-moved-on-');
+  try {
+    const result = fixture.publish({ FAKE_DEPLOY_STATES: 'completed:failure:1', FAKE_MAIN_HEAD: newerCommit });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stdout,
+      new RegExp(`production does not carry ${deploySha} and main has moved on; a redeploy or revert is the owner's call`));
+    assert.equal(reruns(fixture.ghLog()), 0);
+    assert.doesNotMatch(fixture.ghLog(), /^workflow run /m);
+    assert.ok(existsSync(join(fixture.stateDir, 'failed')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a failed deployment waits while another deployment is queued or running, or while a comparison fails', () => {
+  const queued = bridgeFixture('dictprop-publisher-deploy-queued-');
+  try {
+    const result = queued.publish({
+      FAKE_DEPLOY_STATES: 'completed:failure:1,completed:failure:1,completed:success:2',
+      FAKE_IN_FLIGHT: '1,0',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /deployment 100 ended as failure, and a deployment is queued or running; checking again later/);
+    assert.equal(reruns(queued.ghLog()), 1);
+    assert.ok(existsSync(join(queued.stateDir, 'complete')));
+  } finally {
+    rmSync(queued.root, { recursive: true, force: true });
+  }
+
+  // Neither a rerun nor a give-up while production's state can't be read; only the deadline ends the wait.
+  const unreadable = bridgeFixture('dictprop-publisher-deploy-unreadable-');
+  try {
+    const result = unreadable.publish({
+      FAKE_DEPLOY_STATES: 'completed:failure:1',
+      FAKE_SUCCESSFUL_DEPLOYS: JSON.stringify([{ headSha: newerCommit }]),
+      FAKE_COMPARE_STATUS: 'fail',
+      FAKE_REAL_SLEEP: '1',
+      PUBLISH_DEADLINE_SECONDS: '2',
+    }, '1');
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stdout, new RegExp(`deployment 100 ended as failure, and whether production runs ${deploySha} can't be told; checking again later`));
+    assert.match(result.stdout, new RegExp(`import import of ${bridgeTag} was not verified within 2s; giving up and deleting the release`));
+    assert.doesNotMatch(result.stdout, /stopping for inspection|main has moved on/);
+    assert.equal(reruns(unreadable.ghLog()), 0);
+  } finally {
+    rmSync(unreadable.root, { recursive: true, force: true });
+  }
+});
+
+test('no import is dispatched while a deployment is queued or running, and the wait uses up no attempt', () => {
+  const fixture = bridgeFixture('dictprop-publisher-import-waits-');
+  try {
+    const result = fixture.publish({ FAKE_IN_FLIGHT: '2,fail,0' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /a deployment is queued or running; dispatching the import after it/);
+    assert.match(result.stdout, /could not tell whether a deployment is queued or running; checking again before dispatching the import/);
+    const log = fixture.ghLog().split('\n');
+    const looks = log.flatMap((line, index) => line.includes('--json status --jq') ? [index] : []);
+    assert.equal(looks.length, 3);
+    assert.ok(log.findIndex(line => line.startsWith('workflow run sentence-backfill.yml ')) > looks[2]);
+    assert.equal(fixture.dispatches(), 1);
+    assert.ok(existsSync(join(fixture.stateDir, 'complete')));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a commit with no deployment of its own that production already carries needs no deployment', () => {
+  const fixture = bridgeFixture('dictprop-publisher-deploy-carried-');
+  try {
+    const result = fixture.publish({ FAKE_DEPLOY_STATES: 'none', FAKE_SUCCESSFUL_DEPLOYS: JSON.stringify([{ headSha: deploySha }]) });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`production already runs a commit containing ${deploySha}; no deployment needed`));
+    assert.equal(deployDispatches(fixture.ghLog()), 0);
+    assert.equal(fixture.dispatches(), 1);
     assert.ok(existsSync(join(fixture.stateDir, 'complete')));
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Publishes one encrypted bridge archive to production: uploads it to its release, waits until the commit
-# the import needs is deployed, dispatches the import, follows that exact run to success and a healthy
-# production, then deletes the release. No wait outlasts PUBLISH_DEADLINE_SECONDS: at the deadline the
-# release is deleted and STATE_DIR/failed written, so the dispatcher sets the wave aside.
+# Publishes one encrypted bridge archive to production: uploads it to its release, waits until production
+# runs a commit containing the one the import needs, dispatches the import once no deployment is queued or
+# running, follows that exact run to success and a healthy production, then deletes the release. No wait
+# outlasts PUBLISH_DEADLINE_SECONDS: at the deadline, or when no deployment it may wait for or rerun would
+# deploy the commit, the release is deleted and STATE_DIR/failed written, so the dispatcher sets the wave aside.
 #
 # Only STATE_DIR/complete and STATE_DIR/failed outlive this process. Every caller encrypts a fresh archive,
 # with a new salt and IV, before calling, so nothing a stopped publisher had in flight could be resumed.
@@ -26,7 +27,9 @@ PUBLISH_DEADLINE_SECONDS="${PUBLISH_DEADLINE_SECONDS:-14400}"
 CLOCK_SKEW_SECONDS=120
 NODE_BIN="${NODE_BIN:-node}"
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deadline.sh"
+OFFLINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$OFFLINE_DIR/deadline.sh"
+. "$OFFLINE_DIR/deploy-state.sh"
 
 # GitHub matches a deployment by its full head SHA, so the commit must resolve here or be given in full.
 if ! DEPLOY_SHA="$(git rev-parse --verify --quiet "$5^{commit}" 2>/dev/null)"; then
@@ -109,6 +112,7 @@ DEPLOY_DISPATCHED=""
 DEPLOY_DISPATCHED_AT=""
 PREVIOUS_DEPLOY_RUN_ID=0
 DEPLOY_RUN_ID=""
+# The attempt of the deployment that ended without success when this publisher asked GitHub to rerun it.
 DEPLOY_RERUN=""
 IMPORT_DISPATCH_COUNT=0
 IMPORT_TRIGGERED=""
@@ -116,12 +120,16 @@ IMPORT_DISPATCHED_AT=""
 PREVIOUS_RUN_ID=""
 IMPORT_RUN_ID=""
 
+# A deployment run as "<id> <status> <conclusion> <attempt> <commit> <url>", tab-separated. A run that hasn't ended
+# has the conclusion "none", since read would merge an empty field into the next.
+DEPLOY_RUN_FIELDS='[.status, (.conclusion // "none"), .attempt, .headSha, .url]'
+
 deploy_run_line() {
   local run_id="$1"
   gh_bounded run view "$run_id" \
     --repo "$REPO" \
-    --json status,conclusion,url \
-    --jq "[\"$run_id\",.status,.conclusion,.url] | @tsv" \
+    --json status,conclusion,attempt,headSha,url \
+    --jq "[\"$run_id\"] + $DEPLOY_RUN_FIELDS | @tsv" \
     2>/dev/null || true
 }
 
@@ -229,12 +237,83 @@ archive_uploaded() {
   UPLOADED=1
 }
 
-# Production must run DEPLOY_SHA before the import does. Its own deployment is followed; when it has
-# none, the deploy workflow is dispatched once on main and the run that dispatch started is followed.
-# A deployment that failed gets one rerun. A lookup that fails is retried, never taken to mean that no
-# deployment exists, and once the deployment has succeeded it is not looked up again.
+# A deployment that completed without success, given as its id, conclusion, attempt and commit. Returns 0 when
+# production carries DEPLOY_SHA all the same, and 1 to check again after a poll. Otherwise the deployment is rerun
+# once, while its commit is still main's head and fewer than three attempts have run, and when even that can't
+# deploy DEPLOY_SHA the publisher gives up with the reason. Every query that fails waits instead of acting.
+unsuccessful_deployment_settled() {
+  local deploy_id="$1" conclusion="$2" attempt="$3" commit="$4" carried=0 in_flight=0 main_head
+  production_carries "$DEPLOY_SHA" || carried=$?
+  case "$carried" in
+    0)
+      log "deployment of $DEPLOY_SHA ended as $conclusion; a successful deployment already contains it"
+      DEPLOY_VERIFIED=1
+      return 0
+      ;;
+    1) ;;
+    *)
+      log "deployment $deploy_id ended as $conclusion, and whether production runs $DEPLOY_SHA can't be told; checking again later"
+      sleep_for_poll
+      return 1
+      ;;
+  esac
+  # A newer deployment may still carry DEPLOY_SHA, and a rerun queued behind it would only wait.
+  deploy_in_flight || in_flight=$?
+  case "$in_flight" in
+    1) ;;
+    0)
+      log "deployment $deploy_id ended as $conclusion, and a deployment is queued or running; checking again later"
+      sleep_for_poll
+      return 1
+      ;;
+    *)
+      log "deployment $deploy_id ended as $conclusion, and whether a deployment is queued or running can't be told; checking again later"
+      sleep_for_poll
+      return 1
+      ;;
+  esac
+  if ! [[ "$attempt" =~ ^[0-9]+$ ]]; then
+    log "could not read the attempt of deployment $deploy_id; checking again later"
+    sleep_for_poll
+    return 1
+  fi
+  if [ -n "$DEPLOY_RERUN" ]; then
+    if [ "$attempt" -gt "$DEPLOY_RERUN" ]; then
+      give_up "deployment of $DEPLOY_SHA failed again after a rerun; stopping for inspection"
+    fi
+    # GitHub hasn't started the rerun this publisher asked for yet.
+    log "waiting for the rerun of deployment $deploy_id to start"
+    sleep_for_poll
+    return 1
+  fi
+  if [ "$attempt" -ge 3 ]; then
+    give_up "deployment of $DEPLOY_SHA ended as $conclusion after $attempt attempts; stopping for inspection"
+  fi
+  if ! main_head="$(gh_bounded api "repos/$REPO/commits/main" --jq .sha 2>/dev/null)" \
+    || ! [[ "$main_head" =~ ^[0-9a-f]{40}$ ]]; then
+    log "could not read main's head; checking again later"
+    sleep_for_poll
+    return 1
+  fi
+  # Once main has moved on, its own newer deployment is the one that would carry DEPLOY_SHA, and it didn't.
+  if [ "$main_head" != "$commit" ]; then
+    give_up "production does not carry $DEPLOY_SHA and main has moved on; a redeploy or revert is the owner's call"
+  fi
+  log "deployment $deploy_id ended as $conclusion; requesting one rerun"
+  if gh_bounded run rerun "$deploy_id" --repo "$REPO"; then
+    DEPLOY_RERUN="$attempt"
+  fi
+  sleep_for_poll
+  return 1
+}
+
+# Production must carry DEPLOY_SHA before the import runs. Its own deployment is followed. When it has none,
+# production may already run a commit containing it; otherwise the deploy workflow is dispatched once on main and
+# the run that dispatch started is followed. A deployment that ends without success is settled by
+# unsuccessful_deployment_settled. A lookup that fails is retried, never taken to mean that no deployment exists,
+# and once production carries DEPLOY_SHA it is not looked up again.
 required_deployment_succeeded() {
-  local deploy_line deploy_id deploy_status deploy_conclusion _
+  local deploy_line deploy_id deploy_status deploy_conclusion deploy_attempt deploy_commit _ carried
 
   if [ -n "$DEPLOY_RUN_ID" ]; then
     deploy_line="$(deploy_run_line "$DEPLOY_RUN_ID")"
@@ -243,8 +322,8 @@ required_deployment_succeeded() {
     --workflow deploy.yml \
     --commit "$DEPLOY_SHA" \
     --limit 1 \
-    --json databaseId,status,conclusion,url \
-    --jq 'if length == 0 then empty else .[0] | [.databaseId,.status,.conclusion,.url] | @tsv end' \
+    --json databaseId,status,conclusion,attempt,headSha,url \
+    --jq "if length == 0 then empty else .[0] | [.databaseId] + $DEPLOY_RUN_FIELDS | @tsv end" \
     2>/dev/null)"; then
     log "could not query the deployment of $DEPLOY_SHA; checking again later"
     sleep_for_poll
@@ -252,6 +331,22 @@ required_deployment_succeeded() {
   fi
   if [ -z "$deploy_line" ]; then
     if [ -z "$DEPLOY_DISPATCHED" ]; then
+      # A commit pushed together with a later one has no deployment of its own, and the later one's may carry it.
+      carried=0
+      production_carries "$DEPLOY_SHA" || carried=$?
+      case "$carried" in
+        0)
+          log "production already runs a commit containing $DEPLOY_SHA; no deployment needed"
+          DEPLOY_VERIFIED=1
+          return 0
+          ;;
+        1) ;;
+        *)
+          log "could not tell whether production runs a commit containing $DEPLOY_SHA; checking again later"
+          sleep_for_poll
+          return 1
+          ;;
+      esac
       PREVIOUS_DEPLOY_RUN_ID="$(gh_bounded run list \
         --repo "$REPO" \
         --workflow deploy.yml \
@@ -283,16 +378,10 @@ required_deployment_succeeded() {
     fi
   fi
 
-  IFS=$'\t' read -r deploy_id deploy_status deploy_conclusion _ <<< "$deploy_line"
+  IFS=$'\t' read -r deploy_id deploy_status deploy_conclusion deploy_attempt deploy_commit _ <<< "$deploy_line"
   if [ "$deploy_status" = "completed" ] && [ "$deploy_conclusion" != "success" ]; then
-    if [ -z "$DEPLOY_RERUN" ]; then
-      log "deployment $deploy_id ended as $deploy_conclusion; requesting one rerun"
-      if gh_bounded run rerun "$deploy_id" --repo "$REPO"; then
-        DEPLOY_RERUN=1
-      fi
-    fi
-    sleep_for_poll
-    return 1
+    unsuccessful_deployment_settled "$deploy_id" "$deploy_conclusion" "$deploy_attempt" "$deploy_commit"
+    return
   fi
   if [ "$deploy_status" != "completed" ] || [ "$deploy_conclusion" != "success" ]; then
     log "waiting for required deployment $deploy_id ($deploy_status)"
@@ -302,14 +391,31 @@ required_deployment_succeeded() {
   DEPLOY_VERIFIED=1
 }
 
-# Each archive gets three fresh import workflows; a cancelled one does not count (import_succeeded).
+# Each archive gets three fresh import workflows; a cancelled one does not count (import_succeeded). An import
+# queued while a deployment waits in dictprop-production would cancel that deployment, so none is dispatched while
+# one is queued or running, and waiting for it uses up no attempt.
 import_dispatched() {
+  local in_flight=0
   if [ -n "$IMPORT_TRIGGERED" ]; then
     return 0
   fi
   if [ "$IMPORT_DISPATCH_COUNT" -ge 3 ]; then
     give_up "$OPERATION import failed three fresh workflows; stopping for inspection"
   fi
+  deploy_in_flight || in_flight=$?
+  case "$in_flight" in
+    1) ;;
+    0)
+      log "a deployment is queued or running; dispatching the import after it"
+      sleep_for_poll
+      return 1
+      ;;
+    *)
+      log "could not tell whether a deployment is queued or running; checking again before dispatching the import"
+      sleep_for_poll
+      return 1
+      ;;
+  esac
   PREVIOUS_RUN_ID="$(gh_bounded run list \
     --repo "$REPO" \
     --workflow sentence-backfill.yml \
