@@ -11,7 +11,7 @@ import { fieldsOf } from '../incremental-enrichment.js';
 import { normalizeLabel, sentenceIdentityKey, sentenceTextKey, vocabSenseKey } from '../library-identity.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../usage-audit.js';
-import { validateStoredItem } from '../validation.js';
+import { isAdvancedEnrichmentMarker, validateStoredItem } from '../validation.js';
 import { storedEnrichmentRows } from './support/enrichment-rows.js';
 import { requireOwner } from './support/run.js';
 
@@ -34,6 +34,12 @@ const invalidItems = allItems.flatMap(item => {
   const error = validateStoredItem(item);
   return error ? [{ id: String(item?.data?.id || ''), error }] : [];
 });
+// Validation checks advancedEnrichment only on vocab cards and a phrase's vocabs. It can check the field on every
+// item once this counts none; until then, that check would refuse every push of these phrases and sentences, live
+// or deleted.
+const invalidTopLevelAdvancedEnrichmentCount = allItems.filter(item =>
+  (item.type === 'phrase' || item.type === 'sentence') && item.data?.advancedEnrichment !== undefined &&
+  !isAdvancedEnrichmentMarker(item.data.advancedEnrichment)).length;
 
 const missingUsageAudit: string[] = [];
 const invalidUsageAudit: string[] = [];
@@ -276,6 +282,7 @@ const report = {
   storageIntegrity: {
     invalidItemCount: invalidItems.length,
     invalidItems: invalidItems.slice(0, 100),
+    invalidTopLevelAdvancedEnrichmentCount,
     inlineImageItemCount,
     legacyImageRowCount,
     registeredUserCount: users.length,

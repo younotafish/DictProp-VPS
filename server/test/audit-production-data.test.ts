@@ -21,6 +21,8 @@ const legacyAnalysis = {
   imagePrompt: 'A realistic photograph of something new, without text.',
 };
 const { pronunciation: _pronunciation, ...incompleteAnalysis } = completeAnalysis;
+// An advanced-enrichment marker of a version validation doesn't know.
+const unknownMarker = { version: 2 };
 const examples = [
   'This example has everything it needs.',
   'This example lacks its pronunciation guide.',
@@ -30,11 +32,16 @@ const examples = [
 
 // Two spellings of one sense, two of one phrase, and two of one sentence once markup is set aside.
 save('ap-candid', 'vocab', { word: 'Candid', sense: 'adj: frank', examples: examples.slice(0, 2) });
-save('ap-candid-2', 'vocab', { word: 'candid ', sense: 'ADJ:  frank', examples: examples.slice(2) });
+save('ap-candid-2', 'vocab', {
+  word: 'candid ', sense: 'ADJ:  frank', examples: examples.slice(2), advancedEnrichment: unknownMarker,
+});
 save('ap-phrase-1', 'phrase', { query: 'Limpid prose', vocabs: [{ id: 'ap-nested', word: 'limpid' }] });
-save('ap-phrase-2', 'phrase', { query: 'limpid  prose', vocabs: [] });
+save('ap-phrase-2', 'phrase', { query: 'limpid  prose', vocabs: [], advancedEnrichment: unknownMarker });
 save('ap-s1', 'sentence', {
   text: 'Keep {{going}} until the end.', sourceWord: 'candid', analysis: completeAnalysis, analysisGeneratedAt: 5,
+  advancedEnrichment: {
+    version: 1, provider: 'claude-code', model: 'claude', generatedAt: 5, contentHash: sha256('ap-s1'),
+  },
 });
 addItemImage(owner.id, 'ap-s1');
 save('ap-s2', 'sentence', { text: 'keep going until the [[end]].', sourceWord: 'Candid' });
@@ -84,8 +91,13 @@ test('the production audit reports storage, sentences, example enrichments, imag
     },
   });
   assert.deepEqual(report.storageIntegrity, {
-    invalidItemCount: 1,
-    invalidItems: [{ id: 'ap-inline', error: 'item has an inline image outside imageUrl' }],
+    invalidItemCount: 2,
+    invalidItems: [
+      { id: 'ap-candid-2', error: 'vocab advancedEnrichment is invalid' },
+      { id: 'ap-inline', error: 'item has an inline image outside imageUrl' },
+    ],
+    // The phrase's marker: validation already refuses the vocab's, and the sentence's is valid.
+    invalidTopLevelAdvancedEnrichmentCount: 1,
     inlineImageItemCount: 1,
     legacyImageRowCount: 1,
     registeredUserCount: 2,

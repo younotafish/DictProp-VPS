@@ -50,7 +50,8 @@ export function parseReviewEvent(value: unknown): ReviewEvent | null {
 const MAX_ITEM_DATA_BYTES = 256 * 1024;
 const MAX_NESTING = 32;
 
-function isAdvancedEnrichmentMarker(value: unknown): boolean {
+/** An advanced-enrichment marker as validation accepts one: a known provider, a model, a time and a content hash. */
+export function isAdvancedEnrichmentMarker(value: unknown): boolean {
   return isRecord(value) && value.version === 1 &&
     (value.provider === 'codex-harness' || value.provider === 'claude-code' || value.provider === 'local-mlx') &&
     typeof value.model === 'string' && value.model.length > 0 && value.model.length <= 300 &&
