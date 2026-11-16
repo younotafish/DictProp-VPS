@@ -8,8 +8,8 @@ import { HttpError, TimeoutError } from '../../services/http.ts';
 const realFetch = globalThis.fetch;
 test.after(() => { globalThis.fetch = realFetch; });
 
-function respondWith(respond: (body: any) => Response) {
-  const calls: Array<{ url: string; body: any }> = [];
+function respondWith(respond: (body: unknown) => Response) {
+  const calls: Array<{ url: string; body: unknown }> = [];
   globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
     const body = typeof init.body === 'string' ? JSON.parse(init.body) : undefined;
     calls.push({ url, body });
