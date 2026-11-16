@@ -1,18 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { X, GitMerge, AlertTriangle, ArrowRight } from 'lucide-react';
-import { StoredItem, VocabCard } from '../types';
+import type { VocabCard } from '../types';
+import type { DuplicateClusterView } from '../services/duplicateClusters';
 import { Button } from './Button';
 import { Modal } from './Modal';
-import { cardBase } from '../services/wordMatch';
 
-// One cluster of variant-duplicate words (e.g. base words ["run","running"]) plus the
-// actual saved cards involved and a suggested canonical headword.
-export interface DuplicateClusterView {
-  id: string;
-  baseWords: string[];
-  items: StoredItem[];
-  suggestedCanonical: string;
-}
+// The cluster type lives with the code that builds it; hooks/useOverlays still imports it from here.
+export type { DuplicateClusterView };
 
 interface Props {
   clusters: DuplicateClusterView[];
@@ -39,17 +33,6 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
       .filter(c => sel[c.id].include)
       .map(c => ({ baseWords: c.baseWords, canonical: sel[c.id].canonical }));
     onMerge(merges);
-  };
-
-  // Count cards per base word inside a cluster (for the little badges), by the normalized base the clusters are
-  // made of (cardBase, cached per card), so "don’t" with a curly apostrophe counts under its "don't" chip.
-  const countByWord = (cluster: DuplicateClusterView) => {
-    const counts = new Map<string, number>();
-    for (const it of cluster.items) {
-      const w = cardBase(it.data as VocabCard);
-      counts.set(w, (counts.get(w) || 0) + 1);
-    }
-    return counts;
   };
 
   return (
@@ -90,7 +73,6 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
         <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 space-y-3">
           {clusters.map(cluster => {
             const s = sel[cluster.id];
-            const counts = countByWord(cluster);
             const include = s.include;
             return (
               <div
@@ -104,7 +86,8 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
                   <div className="flex flex-wrap items-center gap-1.5">
                     {cluster.baseWords.map(bw => {
                       const isCanon = s.canonical === bw;
-                      const n = counts.get(bw) || 0;
+                      // The little badge: how many cards this base word has.
+                      const n = cluster.counts[bw] ?? 0;
                       return (
                         <button
                           key={bw}
