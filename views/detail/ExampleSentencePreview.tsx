@@ -23,17 +23,21 @@ export function ExampleSentencePreview({ viewProps, requestId, sourceGroup, sent
     onLazyLoadImage, onUpdateSRS, onCompare, comparisons, onOpenComparison, onSaveSentence, isSentenceSaved, isVocabSaved,
     onRemoveVocabFromPhrase, findSaved, onOpenCard, interactionLocked, onAttachImage,
   } = viewProps;
+  const reviewKey = `example-sentence:${requestId}`;
   return (
     <ErrorBoundary
       onReset={onClose}
       fallbackMessage="Something went wrong displaying this sentence. Your word card is still open."
     >
       <SentenceReviewView
-        key={`example-sentence:${requestId}`}
+        key={reviewKey}
         groups={[sourceGroup]}
         initialGroupIndex={0}
         initialItemIndex={0}
         sentenceItems={[sentence]}
+        // The review follows the example by its own key rather than its id, which Save sentence changes when it swaps
+        // the preview for the saved copy, so a save doesn't scroll the sentence page back to its top.
+        followIds={[reviewKey]}
         onClose={onClose}
         onSave={onSave}
         onPatchItem={onPatchItem}

@@ -67,4 +67,12 @@ export interface DetailViewProps {
 export type DetailViewBodyProps = DetailViewProps & { groups: ItemGroup[] };
 
 /** Sentence review's props: sentenceItems lists the sentences, aligned with the groups of their source cards. */
-export type SentenceReviewViewProps = DetailViewBodyProps & { sentenceItems: StoredItem[] };
+export type SentenceReviewViewProps = DetailViewBodyProps & {
+  sentenceItems: StoredItem[];
+  /**
+   * What the view follows the sentences by, aligned with sentenceItems: their ids unless given. A word card's example
+   * passes one key for the preview's life, since Save sentence swaps the preview for the saved copy, under another id,
+   * and the view would take that for the sentence leaving. Reviews, deletes and other writes still use the ids.
+   */
+  followIds?: readonly string[];
+};

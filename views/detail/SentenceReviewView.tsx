@@ -75,6 +75,7 @@ export function SentenceReviewView({
   onUpdateSRS,
   onSaveSentence,
   sentenceItems,
+  followIds,
   findSaved,
   onOpenCard,
   interactionLocked = false,
@@ -92,8 +93,8 @@ export function SentenceReviewView({
   const heroScrollRef = useRef<HTMLDivElement>(null);
 
   // State for navigation between sentences (a group each). Sentences of one word share its source card, so the view
-  // follows the sentence on screen by its id when the run changes.
-  const sentenceIds = useMemo(() => sentenceItems.map(item => item.data.id), [sentenceItems]);
+  // follows the sentence on screen by its id, or by the caller's followIds, when the run changes.
+  const sentenceIds = useMemo(() => followIds ?? sentenceItems.map(item => item.data.id), [followIds, sentenceItems]);
   const {
     currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentItem,
   } = useCardNavigation(groups, {

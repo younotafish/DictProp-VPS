@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { act, createElement, useLayoutEffect } from 'react';
+import { act, createElement, isValidElement, useLayoutEffect, type ReactElement, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { ItemGroup, StoredItem, VocabCard } from '../../types.ts';
+import ts from 'typescript';
+import type { ItemGroup, SentenceData, StoredItem, VocabCard } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { followShownCard, useCardNavigation, type CardKeys } from '../../views/detail/useCardNavigation.ts';
+import { ExampleSentencePreview } from '../../views/detail/ExampleSentencePreview.tsx';
+import { SentenceReviewView } from '../../views/detail/SentenceReviewView.tsx';
+import type { DetailViewBodyProps, SentenceReviewViewProps } from '../../views/detail/types.ts';
+import { readRepoFile } from '../support/paths.ts';
 
 // Where the card view is in its cards (views/detail/useCardNavigation.ts) when a delete, an archive or an undo changes
 // them under it, here or on another device: it stays on the card it shows, and only when that card itself leaves does
@@ -220,4 +225,79 @@ test('an undo that puts the deleted card back moves the view to it, and a move s
   } finally {
     await view.close();
   }
+});
+
+/** The SentenceReviewView element in `node`, found through each element's children. */
+function sentenceReviewIn(node: ReactNode): ReactElement<SentenceReviewViewProps> | undefined {
+  if (Array.isArray(node)) return node.map(sentenceReviewIn).find(Boolean);
+  if (!isValidElement<{ children?: ReactNode }>(node)) return undefined;
+  if (node.type === SentenceReviewView) return node as ReactElement<SentenceReviewViewProps>;
+  return sentenceReviewIn(node.props.children);
+}
+
+test('Save sentence in a word card\'s example keeps the sentence page where it was scrolled, as does the save going away', async () => {
+  const source = group(card('come clean'));
+  const preview: StoredItem = {
+    type: 'sentence',
+    data: { id: 'sentence-preview:7f3a', text: 'He finally came clean.', sourceWord: 'come clean' },
+    savedAt: 1,
+    srs: SRSAlgorithm.createNew('sentence-preview:7f3a', 'sentence', 0),
+  };
+  // After Save sentence the preview shows the saved copy merged over it (useExampleSentencePreview), under the saved
+  // copy's new id.
+  const savedCopy: StoredItem = { ...preview, data: { ...(preview.data as SentenceData), id: 'b1e4c9d2' }, srs: SRSAlgorithm.createNew('b1e4c9d2', 'sentence', 0) };
+  // ExampleSentencePreview uses no hooks, so it's called as a function and the review it renders is read from it.
+  const review = (sentence: StoredItem, saved: boolean) => {
+    const element = sentenceReviewIn(ExampleSentencePreview({
+      viewProps: {} as DetailViewBodyProps, requestId: 3, sourceGroup: source, sentence, saved, onClose: () => {},
+    }));
+    assert.ok(element, 'the preview renders a sentence review');
+    return element.props;
+  };
+  const before = review(preview, false);
+  const after = review(savedCopy, true);
+  assert.notEqual(after.sentenceItems[0].data.id, before.sentenceItems[0].data.id, 'the sentence takes the saved copy\'s id');
+  assert.ok(before.followIds, 'the review follows the example by a key of its own');
+  assert.deepEqual(after.followIds, before.followIds, 'which the save keeps');
+
+  // The view follows the run by those keys, as sentence review does (pinned below).
+  const view = await navigationHarness();
+  try {
+    await view.show({ groups: [source], sentenceIds: before.followIds, initialGroupIndex: 0 });
+    view.scroller.scrollTop = 200;
+    view.takeShown();
+    await view.show({ groups: [source], sentenceIds: after.followIds, initialGroupIndex: 0 });
+    assert.equal(view.scroller.scrollTop, 200, 'Save sentence leaves the page where it was');
+    // The saved copy deleted on another device turns back into the preview, which stays open.
+    await view.show({ groups: [source], sentenceIds: before.followIds, initialGroupIndex: 0 });
+    assert.equal(view.scroller.scrollTop, 200);
+    assert.deepEqual([...new Set(view.takeShown())], before.followIds);
+  } finally {
+    await view.close();
+  }
+});
+
+test('sentence review follows its run by the caller\'s followIds when given, and by the sentences\' ids otherwise', () => {
+  const file = ts.createSourceFile(
+    'SentenceReviewView.tsx', readRepoFile('views/detail/SentenceReviewView.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX,
+  );
+  const declared = new Map<string, ts.Expression>();
+  const navigationOptions: ts.ObjectLiteralExpression[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) declared.set(node.name.text, node.initializer);
+    if (ts.isCallExpression(node) && node.expression.getText() === 'useCardNavigation') {
+      const options = node.arguments[1];
+      if (options && ts.isObjectLiteralExpression(options)) navigationOptions.push(options);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  assert.equal(navigationOptions.length, 1, 'the view moves through its run with useCardNavigation');
+  const followed = navigationOptions[0].properties.find(property => property.name?.getText() === 'sentenceIds');
+  assert.ok(followed && ts.isShorthandPropertyAssignment(followed), 'and hands it the view\'s sentenceIds');
+  const memo = declared.get('sentenceIds');
+  assert.ok(memo && ts.isCallExpression(memo) && memo.expression.getText() === 'useMemo');
+  const compute = memo.arguments[0];
+  assert.ok(compute && ts.isArrowFunction(compute));
+  assert.equal(compute.body.getText().replace(/\s+/g, ' '), 'followIds ?? sentenceItems.map(item => item.data.id)');
 });
