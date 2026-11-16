@@ -9,7 +9,7 @@ import { isDialogOpenOutside } from '../../components/keyboardTarget';
 import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { analysisPlaceholderState } from '../../services/sentenceAnalysisState';
-import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
+import { useKeyboardNavigation, useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
 import { ensureTimings, prefetchTTS, preloadAudio, stopCurrent } from '../../services/neuralTts';
@@ -324,6 +324,17 @@ export function SentenceReviewView({
   });
 
   usePassKeysToFocusedControl(!interactionLocked);
+
+  // A two-finger sideways swipe on a trackpad flips between the sentence and its analysis, once per swipe, as ←/→ do:
+  // it never leaves the view, and scrolling up and down is left alone. The analysis page lies inside the root, so its
+  // swipes count too.
+  useWheelNavigation({
+    containerRef: rootRef,
+    onScrollLeft: navLeft,
+    onScrollRight: navRight,
+    threshold: 80,
+    enabled: !interactionLocked,
+  });
 
   const { handleDeleteItem, handleResetSRS, handleRemember } = useSentenceActions({
     currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
