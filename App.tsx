@@ -96,7 +96,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const libraryViews = useLibraryViews(library.savedItems);
   const {
     allActiveItems, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems,
-    sentenceDueCount, isSentenceSaved, isVocabSaved, findSavedByWord, findSavedItem,
+    sentenceDueCount, isSentenceSaved, isVocabSaved, findSavedByWord, findSavedItem, matchSavedBases,
   } = libraryViews;
   const detail = useDetailView(libraryViews, library);
   const {
@@ -105,7 +105,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   } = detail;
   const undo = useUndoOffer(library, detail);
   const { undoMessage, closeUndoOffer, undoLastChange } = undo;
-  const { navRef, revealNav, handleScroll, navigate } = useNavBar(currentView, setCurrentView);
+  const { navRef, revealNav, handleScroll, navigate, syncScrollPosition } = useNavBar(currentView, setCurrentView);
   const mainRef = useRef<HTMLElement>(null);
   const overlays = useOverlays(allActiveItems);
   const {
@@ -296,6 +296,8 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onForceSync={handleForceSync}
             isOnline={isOnline}
             offline={offlineSettled}
+            matchSavedBases={matchSavedBases}
+            onSyncScroll={syncScrollPosition}
             isVocabSaved={isVocabSaved}
             onFindDuplicates={handleFindDuplicates}
             onArchive={handleArchive}

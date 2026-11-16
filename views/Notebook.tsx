@@ -62,7 +62,7 @@ interface NotebookProps {
   /** The saved base words a query inflects (ran -> run), which a search lists first after the word typed. */
   matchSavedBases?: (query: string) => Set<string>;
   /** Tells the nav bar that the notebook moved its list itself, so the jump doesn't hide the bar. */
-  onSyncScroll?: (element: Element) => void;
+  onSyncScroll?: (element: HTMLElement) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onFindDuplicates: () => void;
   onArchive: (id: string) => void;
