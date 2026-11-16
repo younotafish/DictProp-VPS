@@ -51,6 +51,8 @@ interface AppStatusPillsProps {
    * --card-float-bottom, as everything floating over a card does.
    */
   aboveTabBar: boolean;
+  /** An open card or the card popup covers the page, so a new version's reload offer waits for it to close. */
+  holdUpdate: boolean;
 }
 
 /** The speech sweep's progress line, with its rough time left. */
@@ -73,7 +75,7 @@ const describeSpeechGeneration = ({ current, total }: { current: number; total: 
  */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
   userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress,
-  ttsGenProgress, onStopSpeechGeneration, undoMessage, onUndo, aboveTabBar,
+  ttsGenProgress, onStopSpeechGeneration, undoMessage, onUndo, aboveTabBar, holdUpdate,
 }) => (
   <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 ${undoMessage ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
@@ -108,6 +110,6 @@ export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
     )}
 
     <RefusedReviewsNotice userId={userId} onView={onViewRefusedReviews} />
-    <AppUpdateToast />
+    <AppUpdateToast hold={holdUpdate} />
   </div>
 );

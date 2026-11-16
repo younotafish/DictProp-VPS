@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { announceUpdate, dismissUpdate, hasUnsentChanges, isChunkLoadError, pendingUpdate, reloadApp, setReloadGuard } from '../../services/appUpdate.ts';
+import {
+  announceUpdate, dismissUpdate, hasUnsentChanges, isChunkLoadError, pendingUpdate, reloadApp, setReloadGuard, updateNoticeVisible,
+} from '../../services/appUpdate.ts';
 
 let reloads = 0;
 (globalThis as { window?: unknown }).window = { location: { reload: () => { reloads++; } } };
@@ -15,6 +17,15 @@ test('a failed chunk outranks a plain update, and dismissing clears either', () 
   assert.equal(pendingUpdate(), 'chunk-load', 'a later update notice does not hide the failed chunk');
   dismissUpdate();
   assert.equal(pendingUpdate(), null);
+});
+
+test('a new version waits while a card or popup covers the page; code that failed to load shows at once', () => {
+  assert.equal(updateNoticeVisible('service-worker', false), true);
+  assert.equal(updateNoticeVisible('service-worker', true), false);
+  assert.equal(updateNoticeVisible('chunk-load', false), true);
+  assert.equal(updateNoticeVisible('chunk-load', true), true);
+  assert.equal(updateNoticeVisible(null, false), false);
+  assert.equal(updateNoticeVisible(null, true), false);
 });
 
 test('only a module that could not be fetched counts as a chunk failure', () => {

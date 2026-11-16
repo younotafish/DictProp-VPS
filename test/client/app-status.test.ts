@@ -24,6 +24,7 @@ const quiet: StackProps = {
   undoMessage: null,
   onUndo: () => {},
   aboveTabBar: true,
+  holdUpdate: false,
 };
 const renderStack = (props: Partial<StackProps> = {}) => renderToStaticMarkup(createElement(AppStatusPills, { ...quiet, ...props }));
 /** The class list of the stack's own element, the first in the markup. */
@@ -62,7 +63,7 @@ test('the stack keeps its notices in order of how long they stay: undo, search, 
     ttsGenProgress: { isRunning: true, current: 10, total: 100 },
   });
   const order = ['Deleted “gamut”', 'data-notice-slot="search"', 'data-notice-slot="progress"', 'Offline images · 3/40',
-    'Generating sentence audio · 10/100', '1 review wasn’t accepted', 'A new version is available'].map(text => html.indexOf(text));
+    'Generating sentence audio · 10/100', '1 review wasn’t accepted', 'Update ready'].map(text => html.indexOf(text));
   assert.ok(order.every(index => index >= 0), `every notice renders: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
@@ -84,6 +85,21 @@ test('every pill is capped short of the search button\'s column and truncates it
     assert.ok(!pill.includes('whitespace-nowrap'), 'the text truncates instead');
   }
   assert.equal([...html.matchAll(/<span class="min-w-0 truncate">/g)].length, 6);
+});
+
+test('the update notice says it in two words, with the sentence as its title and name, and a new version waits while covered', t => {
+  t.after(dismissUpdate);
+  announceUpdate('service-worker');
+  const ready = renderStack();
+  assert.match(ready, /<div role="status" title="A new version is available" aria-label="A new version is available" class="[^"]*"><span class="min-w-0 truncate">Update ready<\/span>/);
+  assert.match(ready, />Reload<\/button>/);
+  assert.match(ready, /title="Not now" aria-label="Dismiss the update notice"/);
+  assert.doesNotMatch(renderStack({ holdUpdate: true }), /Update ready/, 'held while a card or popup is open');
+
+  announceUpdate('chunk-load');
+  for (const holdUpdate of [false, true]) {
+    assert.match(renderStack({ holdUpdate }), /title="Part of the app couldn’t load" aria-label="Part of the app couldn’t load" class="[^"]*"><span class="min-w-0 truncate">Reload needed</);
+  }
 });
 
 test('the jobs keep their texts and their stop buttons', () => {
