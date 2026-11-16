@@ -26,6 +26,8 @@ interface AppStatusPillsProps {
   jobPills: React.ReactNode;
   undoMessage: string | null;
   onUndo: () => void;
+  /** The stuck-sync pill (components/JobPills), which App renders once pushes keep failing. */
+  stuckSyncPill: React.ReactNode;
   /** This device couldn't save the library, so the couldn't-save alert shows, everywhere. */
   writeFailed: boolean;
   /** An outage has settled (useOnlineStatus's offlineSettled), which the couldn't-save alert's advice follows. */
@@ -53,14 +55,14 @@ interface AppStatusPillsProps {
  * keeps its pills in order of how long they stay, so one coming or going moves only the shorter-lived ones above
  * it: short-lived on top (the undo offer, then the search status line's slot), then progress (a session's preload
  * slot, the background jobs and Sync now, then the result of the last job to end), then the long-lived notices at
- * the bottom (the couldn't-save alert, the Offline chip, refused reviews, then the update).
+ * the bottom (the couldn't-save alert, changes that won't sync, the Offline chip, refused reviews, then the update).
  * Both slots are always rendered, under the same parent: the notices that portal into them would vanish with a slot
  * rendered conditionally or moved. On the tabs the stack floats above the tab bar, so it never covers a tab; over a card
  * it starts where the card's floating controls end.
  */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
   userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress, jobPills, undoMessage,
-  onUndo, writeFailed, offline, offlineChip, aboveTabBar, holdUpdate, liftAbovePopup,
+  onUndo, stuckSyncPill, writeFailed, offline, offlineChip, aboveTabBar, holdUpdate, liftAbovePopup,
 }) => (
   <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
@@ -92,6 +94,7 @@ export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
           : 'Couldn\u2019t save on this device. Your changes still sync.'}
       </NoticePill>
     )}
+    {stuckSyncPill}
     {offlineChip && <NoticePill tone="amber" icon={<WifiOff size={16} className="shrink-0" />}>Offline</NoticePill>}
     <RefusedReviewsNotice userId={userId} onView={onViewRefusedReviews} />
     <AppUpdateToast hold={holdUpdate} />

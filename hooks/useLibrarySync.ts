@@ -48,7 +48,7 @@ export function useLibrarySync(
 ) {
   const {
     savedItems, latestItemsRef, userSaveData, adoptStoredLibrary, hasUnsentChanges, inSyncLane, pushNow, pushDirtyItems,
-    syncFullSnapshot, syncWithServer,
+    noteOnline, retryPushIfDue, syncFullSnapshot, syncWithServer,
   } = library;
   // Becomes true once IndexedDB has been read (or failed), whether or not it held any items.
   const [isLoaded, setIsLoaded] = useState(false);
@@ -105,6 +105,20 @@ export function useLibrarySync(
       onError: error => warn('Unsent changes stay on this device until the next launch:', error),
     });
   }, [closeUndoOffer, isLoaded, userSaveData, flushPendingReviews, pushDirtyItems]);
+
+  // The stuck-sync pill's Retry: the reviews, then a pull of what changed and a push, cheaper than Sync now's full
+  // snapshot. The push goes out even when the pull fails, and it succeeding takes the pill away.
+  const retrySync = useCallback(async () => {
+    try {
+      await flushPendingReviews();
+      await inSyncLane(async () => {
+        await syncWithServer().catch(error => warn('Pulling changes will retry:', error));
+        await pushNow();
+      });
+    } catch (error) {
+      warn('Unsent changes stay on this device until a push gets through:', error);
+    }
+  }, [flushPendingReviews, inSyncLane, syncWithServer, pushNow]);
 
   const handleSignOut = useCallback(async (): Promise<boolean> => {
     await sendUnsentChanges();
@@ -244,8 +258,19 @@ export function useLibrarySync(
     try {
       await flushPendingReviews();
       await inSyncLane(async () => {
-        await syncWithServer();
-        if (!initialSyncIncompleteRef.current) return;
+        // A push that failed goes out again once its retry is due (services/syncRetry), whether or not the pull gets
+        // through: the two can fail for different reasons.
+        const retryFailedPush = () => retryPushIfDue().catch(error => warn('The unsent changes will go again:', error));
+        try {
+          await syncWithServer();
+        } catch (error) {
+          await retryFailedPush();
+          throw error;
+        }
+        if (!initialSyncIncompleteRef.current) {
+          await retryFailedPush();
+          return;
+        }
         await pushNow();
         initialSyncIncompleteRef.current = false;
         void prefetchImages(latestItemsRef.current);
@@ -257,7 +282,7 @@ export function useLibrarySync(
     } finally {
       deltaPullInProgressRef.current = false;
     }
-  }, [flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages, imageUploadRetry]);
+  }, [flushPendingReviews, inSyncLane, syncWithServer, retryPushIfDue, pushNow, prefetchImages, imageUploadRetry]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -265,7 +290,9 @@ export function useLibrarySync(
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') tick();
     };
+    // Back online, a push that was failing is due at once, with its backoff started over.
     const handleOnline = () => {
+      noteOnline();
       imageUploadRetry.retryAfterNextSync();
       tick();
     };
@@ -282,7 +309,7 @@ export function useLibrarySync(
       window.removeEventListener('focus', tick);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [isLoaded, pullServerChanges, imageUploadRetry]);
+  }, [isLoaded, pullServerChanges, imageUploadRetry, noteOnline]);
 
   // 3. SAVE EFFECTS (Persistence + Server Sync)
   // Changes reach this device's storage a moment after they settle, so closing the page, a crash or the OS
@@ -330,5 +357,8 @@ export function useLibrarySync(
   const retryLibraryLoad = () => { setLibraryReadFailed(false); setLibraryLoadAttempt(attempt => attempt + 1); };
   const openWithServerCopy = () => { setLibraryReadFailed(false); setIsLoaded(true); };
 
-  return { isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, forceSync, libraryWriteFailed, handleForceSync, handleSignOut };
+  return {
+    isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, forceSync, libraryWriteFailed, handleForceSync,
+    retrySync, handleSignOut,
+  };
 }

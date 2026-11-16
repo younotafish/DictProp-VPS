@@ -30,6 +30,20 @@ export const hasUnsentChanges = (
   countPendingReviews: () => number,
 ): boolean => hold.heldIds.size > 0 || countPendingReviews() > 0 || items.some(item => isUnsent(item, hold));
 
+/**
+ * The items with a change still waiting to reach the server, each once, as hasUnsentChanges counts them: an unsent
+ * item, an item an open undo offer holds, and an item with a queued review (`pendingReviewItemIds`).
+ */
+export function unsentItemIds(
+  items: readonly StoredItem[],
+  hold: PushHold,
+  pendingReviewItemIds: Iterable<string>,
+): Set<string> {
+  const ids = new Set([...hold.heldIds, ...pendingReviewItemIds]);
+  for (const item of items) if (isUnsent(item, hold)) ids.add(item.data.id);
+  return ids;
+}
+
 /** The steps that send what this device hasn't sent yet. */
 export interface LeavingFlush {
   /** Ends the undo offer, which sends its change on. */

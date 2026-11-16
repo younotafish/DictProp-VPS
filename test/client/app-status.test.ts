@@ -4,15 +4,15 @@ import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as AppStatus from '../../components/AppStatus.tsx';
 import { AppStatusPills } from '../../components/AppStatus.tsx';
-import { JobPills } from '../../components/JobPills.tsx';
+import { JobPills, StuckSyncPill } from '../../components/JobPills.tsx';
 import { NoticePill, type NoticeTone } from '../../components/NoticePill.tsx';
 import { announceUpdate, dismissUpdate } from '../../services/appUpdate.ts';
 import type { JobNotice } from '../../services/jobNotices.ts';
 import { clearRefusedReviews, recordRefusedReview } from '../../services/refusedReviews.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
-// components/AppStatus.tsx's notice stack, the job pills App renders into it (components/JobPills.tsx), and
-// components/NoticePill.tsx, rendered on the server. The refused-reviews notice reads this device's log from
+// components/AppStatus.tsx's notice stack, the job and stuck-sync pills App renders into it (components/JobPills.tsx),
+// and components/NoticePill.tsx, rendered on the server. The refused-reviews notice reads this device's log from
 // localStorage, and the update notice reads services/appUpdate.
 (globalThis as unknown as { localStorage: MemoryStorage }).localStorage = new MemoryStorage();
 
@@ -26,6 +26,7 @@ const quiet: StackProps = {
   jobPills: null,
   undoMessage: null,
   onUndo: () => {},
+  stuckSyncPill: null,
   writeFailed: false,
   offline: false,
   offlineChip: false,
@@ -108,6 +109,48 @@ test('a failed save on this device is an alert in the long-lived group, whose ad
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'below the progress pills, above refused reviews');
   assert.match(renderStack({ writeFailed: true, offline: true }), />Couldn’t save on this device\. Keep this tab open until you’re back online\.</);
   assert.doesNotMatch(renderStack({ offline: true }), /role="alert"/);
+});
+
+type StuckProps = ComponentProps<typeof StuckSyncPill>;
+/** The stuck-sync pill with `unsent` changes unsent, two pushes having failed a minute ago or more. */
+const stuckPill = (unsent: number, props: Partial<StuckProps> = {}) => createElement(StuckSyncPill, {
+  library: {
+    savedItems: [],
+    pushTrouble: { failures: 2, firstFailureAt: Date.now() - 61_000, nextRetryAt: Date.now() + 1_000 },
+    countUnsentChanges: () => unsent,
+  },
+  online: true,
+  onRetry: () => {},
+  ...props,
+});
+/** Renders with a page whose visibility the stuck-sync pill reads. */
+const onPage = (visibilityState: DocumentVisibilityState, render: () => string): string => {
+  const globals = globalThis as Record<string, unknown>;
+  globals.document = { visibilityState };
+  try {
+    return render();
+  } finally {
+    delete globals.document;
+  }
+};
+
+test('changes that won\'t sync get an amber pill with Retry, below the couldn\'t-save alert and above refused reviews', t => {
+  refuseOneReview();
+  t.after(() => clearRefusedReviews('u1'));
+  const html = onPage('visible', () => renderStack({ stuckSyncPill: stuckPill(3), writeFailed: true }));
+  assert.match(html, /<div role="status" class="[^"]*bg-amber-600[^"]*"><span class="min-w-0 truncate">3 changes not synced<\/span><button type="button" class="[^"]*">Retry<\/button><\/div>/);
+  assert.match(onPage('visible', () => renderToStaticMarkup(stuckPill(1))), />1 change not synced</);
+  const order = ['role="alert"', '3 changes not synced', '1 review wasn’t accepted'].map(text => html.indexOf(text));
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
+});
+
+test('the stuck-sync pill waits for its minute, and stays away offline, on a hidden page or with nothing unsent', () => {
+  const visible = (pill: ReturnType<typeof stuckPill>) => onPage('visible', () => renderToStaticMarkup(pill));
+  const recent = { failures: 2, firstFailureAt: Date.now() - 30_000, nextRetryAt: Date.now() + 1_000 };
+  assert.equal(visible(stuckPill(3, { library: { savedItems: [], pushTrouble: recent, countUnsentChanges: () => 3 } })), '');
+  assert.equal(visible(stuckPill(3, { online: false })), '', 'offline is the Offline chip\'s to say');
+  assert.equal(visible(stuckPill(0)), '');
+  assert.equal(onPage('hidden', () => renderToStaticMarkup(stuckPill(3))), '');
 });
 
 test('the Offline chip shows only when told, below the couldn\'t-save alert and above refused reviews', t => {

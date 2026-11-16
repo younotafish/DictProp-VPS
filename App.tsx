@@ -55,8 +55,10 @@ const EssaysView = lazyScreen('essays', () => import('./views/EssaysView').then(
 const DetailView = lazyScreen('detail', () => import('./views/DetailView').then(module => ({ default: React.memo(module.DetailView) })));
 const SignInScreen = lazyScreen('sign-in', () => import('./components/AppGateScreens').then(module => ({ default: module.SignInScreen })));
 const LibraryReadFailedScreen = lazyScreen('library-read-failed', () => import('./components/AppGateScreens').then(module => ({ default: module.LibraryReadFailedScreen })));
-// The background jobs' pills render only while one shows, and their code loads after the first screen with the rest.
+// The background jobs' pills and the stuck-sync pill render only while they show, and their code loads after the
+// first screen with the rest.
 const JobPills = lazyScreen('job-pills', () => import('./components/JobPills').then(module => ({ default: module.JobPills })));
+const StuckSyncPill = lazyScreen('stuck-sync', () => import('./components/JobPills').then(module => ({ default: module.StuckSyncPill })));
 const TAB_SCREENS = {
   notebook: NotebookView,
   study: StudyEnhanced,
@@ -143,7 +145,8 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const offlineImages = useOfflineImages(library);
   const { imagePrefetchProgress, imageRestoreProgress, stopImageDownload, handleDownloadOfflineImages, handleRestoreImagesToServer } = offlineImages;
   const {
-    isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, forceSync, libraryWriteFailed, handleForceSync, handleSignOut,
+    isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, forceSync, libraryWriteFailed, handleForceSync, retrySync,
+    handleSignOut,
   } = useLibrarySync(user.id, library, { flushPendingReviews, closeUndoOffer, prefetchImages: offlineImages.prefetchImages });
 
   const speech = useSpeechBackfill(jobs);
@@ -244,6 +247,14 @@ function SignedInApp({ user }: { user: AuthUser }) {
         )}
         undoMessage={undoMessage}
         onUndo={undoLastChange}
+        // Pushes failing twice in a row are when the pill can first show (it waits a minute after the first).
+        stuckSyncPill={library.pushTrouble.failures >= 2 && (
+          <Suspense fallback={null}>
+            <ErrorBoundary variant="overlay">
+              <StuckSyncPill library={library} online={isOnline} onRetry={retrySync} />
+            </ErrorBoundary>
+          </Suspense>
+        )}
         writeFailed={libraryWriteFailed}
         offline={offlineSettled}
         offlineChip={connectivityNotice({ offline: offlineSettled, onTab: !detailContext && !cardPopup }) === 'chip'}
@@ -473,7 +484,7 @@ const App: React.FC = () => {
     const preloadRest = () => {
       for (const screen of [
         DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal,
-        RefusedReviewsDialog, SignInScreen, LibraryReadFailedScreen, JobPills,
+        RefusedReviewsDialog, SignInScreen, LibraryReadFailedScreen, JobPills, StuckSyncPill,
       ]) {
         screen.preload();
       }

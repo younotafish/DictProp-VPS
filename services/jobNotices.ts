@@ -4,9 +4,10 @@ import type { SpeechSweepOutcome } from './speechSweep';
 
 /**
  * What the background jobs and sync tell the user, as pills in the notice stack (components/JobPills), never a dialog,
- * since none of it asks for a decision: each job's result and Sync now; and how the speech sweep's watch rides out a
- * failed progress check. It loads with the notebook tools (services/libraryTools) and the pills, so it stays out of
- * the app's first chunk; elsewhere only `import type` from here.
+ * since none of it asks for a decision: each job's result, Sync now, and changes that won't sync, with when that pill
+ * shows; and how the speech sweep's watch rides out a failed progress check. It loads with the notebook tools
+ * (services/libraryTools) and the pills, so it stays out of the app's first chunk; elsewhere only `import type` from
+ * here.
  */
 
 /** A job's result as its pill shows it. */
@@ -105,3 +106,38 @@ export type ForceSyncPhase = 'syncing' | 'done' | 'failed';
 /** What the Sync now pill says; a failed one also offers Retry. */
 export const forceSyncText = (phase: ForceSyncPhase): string =>
   phase === 'syncing' ? 'Syncing…' : phase === 'done' ? 'Up to date' : 'Couldn’t sync';
+
+// How long pushes must have been failing before the stuck-sync pill shows.
+const STUCK_AFTER_MS = 60_000;
+
+/** What decides the stuck-sync pill. */
+export interface SyncNoticeFacts {
+  online: boolean;
+  visible: boolean;
+  /** Pushes failed in a row, and when the first of them failed (services/syncRetry's PushTrouble). */
+  failures: number;
+  firstFailureAt: number | null;
+  /** How many items have changes still unsent. */
+  unsent: number;
+  now: number;
+}
+
+/**
+ * Whether the stuck-sync pill shows: online and visible, with changes unsent, after two failed pushes in a row and a
+ * minute since the first. Offline is never an error here; the Offline chip says it. When only the minute is missing,
+ * `recheckAt` is when it will have passed.
+ */
+export function syncNoticeState({ online, visible, failures, firstFailureAt, unsent, now }: SyncNoticeFacts): {
+  show: boolean;
+  recheckAt: number | null;
+} {
+  if (!online || !visible || unsent === 0 || failures < 2 || firstFailureAt === null) {
+    return { show: false, recheckAt: null };
+  }
+  const stuckAt = firstFailureAt + STUCK_AFTER_MS;
+  return now >= stuckAt ? { show: true, recheckAt: null } : { show: false, recheckAt: stuckAt };
+}
+
+/** What the stuck-sync pill says; it also offers Retry. */
+export const stuckText = (changes: number): string =>
+  `${count(changes)} ${changes === 1 ? 'change' : 'changes'} not synced`;

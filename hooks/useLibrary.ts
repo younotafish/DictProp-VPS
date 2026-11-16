@@ -7,7 +7,8 @@ import { loadAllItems, loadItemChangesSince, saveItems } from '../services/api/l
 import { excludePendingReviewItems, readPendingReviewMutations } from '../services/reviewQueue';
 import { createSerialLane } from '../services/serialLane';
 import { pullOrSnapshot, syncSnapshot } from '../services/serverSync';
-import { hasUnsentChanges as anyUnsentChanges, selectUnsent } from '../services/unsentChanges';
+import { hasUnsentChanges as anyUnsentChanges, selectUnsent, unsentItemIds } from '../services/unsentChanges';
+import { cameOnline, NO_TROUBLE, pushFailed, pushSucceeded, retryDue, type PushTrouble } from '../services/syncRetry';
 import { log, logError, warn } from '../services/logger';
 
 const NOTHING_HELD: ReadonlySet<string> = new Set();
@@ -93,14 +94,49 @@ export function useLibrary(userId: string) {
     () => readPendingReviewMutations(userId).length,
   ), [userId]);
 
-  /** Pushes the dirty items (all, or those in `ids`) and records what the server kept. Returns the count. */
+  /**
+   * How many items have a change still waiting to reach the server among `items`, the library as rendered, each once
+   * (services/unsentChanges' unsentItemIds): for the stuck-sync pill.
+   */
+  const countUnsentChanges = useCallback((items: readonly StoredItem[]) => unsentItemIds(
+    items,
+    { heldIds: heldIdsRef.current, refused: refusedPushesRef.current },
+    readPendingReviewMutations(userId).flatMap(mutation => mutation.itemIds),
+  ).size, [userId]);
+
+  // Pushes failing in a row (services/syncRetry). The ref holds the truth and the state follows it only when it
+  // changes, so the pushes that get through, nearly all of them, don't re-render the app.
+  const pushTroubleRef = useRef<PushTrouble>(NO_TROUBLE);
+  const [pushTrouble, setPushTrouble] = useState<PushTrouble>(NO_TROUBLE);
+  const notePushTrouble = useCallback((trouble: PushTrouble) => {
+    if (trouble === pushTroubleRef.current) return;
+    pushTroubleRef.current = trouble;
+    setPushTrouble(trouble);
+  }, []);
+  /** The connection came back: a push that was failing is due at once, its backoff started over. */
+  const noteOnline = useCallback(() => {
+    notePushTrouble(cameOnline(pushTroubleRef.current, Date.now()));
+  }, [notePushTrouble]);
+
+  /**
+   * Pushes the dirty items (all, or those in `ids`) and records what the server kept. Returns the count. A push that
+   * doesn't reach the server counts as a failure for the retries (services/syncRetry), and one that does ends them, as
+   * does finding nothing at all left to send (a pull can bring back what a push whose answer was lost had saved).
+   */
   const pushNow = useCallback(async (ids?: ReadonlySet<string>): Promise<number> => {
     const refused = refusedPushesRef.current;
     const unsent = selectUnsent(latestItemsRef.current, { heldIds: heldIdsRef.current, refused }, ids);
     // Items with an unsent review wait for the review outbox, which applies the review atomically.
     const toPush = excludePendingReviewItems(unsent, userId);
-    if (toPush.length === 0) return 0;
-    const result = await saveItems(toPush);
+    if (toPush.length === 0) {
+      if (!ids) notePushTrouble(pushSucceeded());
+      return 0;
+    }
+    const result = await saveItems(toPush).catch((error: unknown) => {
+      notePushTrouble(pushFailed(pushTroubleRef.current, Date.now()));
+      throw error;
+    });
+    notePushTrouble(result.error ? pushFailed(pushTroubleRef.current, Date.now()) : pushSucceeded());
     const next = updateItems(items => applyServerSave(items, toPush, result));
     await saveData(next, userId);
     for (const [id, reason] of result.rejected) {
@@ -110,7 +146,13 @@ export function useLibrary(userId: string) {
     }
     if (result.error) throw result.error;
     return toPush.length;
-  }, [updateItems, userId]);
+  }, [updateItems, userId, notePushTrouble]);
+
+  /** Pushes again when a failed push's next try is due (services/syncRetry). Call it in the sync lane, as pushNow. */
+  const retryPushIfDue = useCallback(
+    (): Promise<number> => (retryDue(pushTroubleRef.current, Date.now()) ? pushNow() : Promise.resolve(0)),
+    [pushNow],
+  );
 
   const pushDirtyItems = useCallback(
     (ids?: ReadonlySet<string>) => inSyncLane(() => pushNow(ids)),
@@ -191,7 +233,8 @@ export function useLibrary(userId: string) {
 
   return {
     userId, savedItems, latestItemsRef, updateItems, replaceItem, userSaveData, storeItemUpdates, adoptStoredLibrary,
-    holdFromPush, hasUnsentChanges, inSyncLane, pushNow, pushDirtyItems, syncFullSnapshot, syncWithServer, persistChangedItems,
+    holdFromPush, hasUnsentChanges, countUnsentChanges, inSyncLane, pushNow, pushDirtyItems, pushTrouble, noteOnline,
+    retryPushIfDue, syncFullSnapshot, syncWithServer, persistChangedItems,
   };
 }
 

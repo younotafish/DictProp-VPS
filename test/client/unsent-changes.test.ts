@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { useUndoOffer } from '../../hooks/useUndoOffer.ts';
 import type { DetailContext } from '../../hooks/useDetailView.ts';
 import { getItemContentHash } from '../../services/itemHash.ts';
-import { hasUnsentChanges, isUnsent, selectUnsent, sendBeforeLeaving, type PushHold } from '../../services/unsentChanges.ts';
+import { hasUnsentChanges, isUnsent, selectUnsent, sendBeforeLeaving, unsentItemIds, type PushHold } from '../../services/unsentChanges.ts';
 import type { StoredItem } from '../../types.ts';
 
 const card = (id: string, definition = `definition of ${id}`): StoredItem => ({
@@ -68,6 +68,27 @@ test('an undo offer can hold several items back, and an empty hold holds none', 
   assert.deepEqual(selectUnsent(items, noHold).map(item => item.data.id), ['a', 'b', 'c']);
   assert.equal(hasUnsentChanges([synced(card('a'))], hold, () => 0), true, 'held items wait for the offer to close');
   assert.equal(hasUnsentChanges([synced(card('a'))], noHold, () => 0), false);
+});
+
+test('the items with unsent work are counted once each: unsent, held for an undo, or with a queued review', () => {
+  const refusedCopy = edited(synced(card('refused')), 'too large');
+  const items = [
+    card('new'), synced(card('clean')), edited(synced(card('reviewed')), 'changed too'), refusedCopy,
+    edited(synced(card('held')), 'deleted, maybe'),
+  ];
+  const hold: PushHold = { heldIds: new Set(['held']), refused: new Map([['refused', getItemContentHash(refusedCopy)]]) };
+  const ids = unsentItemIds(items, hold, ['reviewed', 'catalog-line', 'reviewed']);
+  assert.deepEqual([...ids].sort(), ['catalog-line', 'held', 'new', 'reviewed'],
+    'a dirty item with a queued review counts once, the refused one waits for its next edit, a queued review of a line not in the library still counts');
+  // The reload guard asks whether there is any of the same.
+  const refusedOnly: PushHold = { ...noHold, refused: hold.refused };
+  const cases: Array<[StoredItem[], PushHold, string[]]> = [
+    [[synced(card('clean'))], noHold, []], [[refusedCopy], refusedOnly, []], [[synced(card('clean'))], noHold, ['clean']],
+    [[card('new')], noHold, []], [[synced(card('clean'))], { ...noHold, heldIds: new Set(['clean']) }, []],
+  ];
+  for (const [library, holdHere, reviews] of cases) {
+    assert.equal(unsentItemIds(library, holdHere, reviews).size > 0, hasUnsentChanges(library, holdHere, () => reviews.length));
+  }
 });
 
 // hooks/useUndoOffer.ts, run once through a server render. Its callbacks keep working afterwards: they close over

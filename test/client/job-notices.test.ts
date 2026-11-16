@@ -3,13 +3,13 @@ import test from 'node:test';
 import type { TtsBackfillStatus } from '../../services/api/tts.ts';
 import type { BatchImportTally } from '../../services/batchImport.ts';
 import {
-  describeBatchResult, describeDuplicateScan, describeSpeechResult, forceSyncText, nextPollDelay, retryingPoll,
-  type JobNotice,
+  describeBatchResult, describeDuplicateScan, describeSpeechResult, forceSyncText, nextPollDelay, retryingPoll, stuckText,
+  syncNoticeState, type JobNotice, type SyncNoticeFacts,
 } from '../../services/jobNotices.ts';
 import { runSpeechSweep } from '../../services/speechSweep.ts';
 
-// services/jobNotices.ts: what each background job's result pill says, in what tone and for how long, and what Sync
-// now says.
+// services/jobNotices.ts: what each background job's result pill says, in what tone and for how long, what Sync now
+// says, and when the stuck-sync pill shows.
 
 const tally = (counts: Partial<BatchImportTally> = {}): BatchImportTally => ({
   added: 0, saved: 0, skipped: 0, failed: 0, failedWords: [], importedIds: [], ...counts,
@@ -146,4 +146,36 @@ test('Sync now says it is syncing, then up to date, or that it could not sync', 
   assert.equal(forceSyncText('syncing'), 'Syncing…');
   assert.equal(forceSyncText('done'), 'Up to date');
   assert.equal(forceSyncText('failed'), 'Couldn’t sync');
+});
+
+const SECOND = 1_000;
+const MINUTE = 60 * SECOND;
+
+const stuck = (facts: Partial<SyncNoticeFacts>) => syncNoticeState({
+  online: true, visible: true, failures: 2, firstFailureAt: 0, unsent: 3, now: MINUTE, ...facts,
+});
+
+test('the stuck pill shows a minute after the first of two or more failed pushes, while changes are unsent', () => {
+  assert.deepEqual(stuck({}), { show: true, recheckAt: null });
+  assert.deepEqual(stuck({ failures: 7, now: 10 * MINUTE }), { show: true, recheckAt: null });
+});
+
+test('before its minute the pill waits, and says when to look again', () => {
+  assert.deepEqual(stuck({ firstFailureAt: 5 * SECOND, now: 30 * SECOND }), { show: false, recheckAt: 65 * SECOND });
+});
+
+test('one failure, nothing unsent, offline or a hidden page never shows the pill', () => {
+  const hidden = { show: false, recheckAt: null };
+  assert.deepEqual(stuck({ failures: 1 }), hidden);
+  assert.deepEqual(stuck({ unsent: 0 }), hidden);
+  assert.deepEqual(stuck({ online: false }), hidden, 'offline is not an error: the Offline chip says it');
+  assert.deepEqual(stuck({ visible: false }), hidden);
+  assert.deepEqual(stuck({ firstFailureAt: null }), hidden);
+  assert.deepEqual(stuck({ failures: 1, now: 0 }), hidden, 'no recheck either until a second failure');
+});
+
+test('the stuck pill counts the changes, one or many', () => {
+  assert.equal(stuckText(1), '1 change not synced');
+  assert.equal(stuckText(3), '3 changes not synced');
+  assert.equal(stuckText(1_204), '1,204 changes not synced');
 });
