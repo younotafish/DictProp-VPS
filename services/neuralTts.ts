@@ -34,6 +34,7 @@ import {
   currentRequestCheck,
   endPlayback,
   getPlaybackState,
+  markPlaying,
   pauseCurrent,
   playSpeech,
   playUrl,
@@ -131,7 +132,7 @@ const beginRequest = (displayText: string, opts: SpeakOptions): { read: ReadCont
   // which would record a read that was cut off or carry a stopped autoplay chain on to the next sentence.
   const read: ReadContext = {
     isCurrent,
-    markStart: () => { if (!isCurrent()) return; setPlaybackState({ status: 'playing' }); },
+    markStart: () => { if (!isCurrent()) return; markPlaying(); },
     markEnd: () => { if (!isCurrent()) return; endPlayback(); opts.onEnd?.(); },
     markError: (error: unknown) => { if (!isCurrent()) return; endPlayback(); opts.onError?.(error); },
   };

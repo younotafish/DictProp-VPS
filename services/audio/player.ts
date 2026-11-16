@@ -55,9 +55,15 @@ interface PlayerRecord {
   backend: PlaybackBackend | null;
   /** The live request (its token is the current one) until it ends, fails or is superseded; null otherwise. */
   request: RequestRecord | null;
+  /** A pause was asked for while the current request loaded: its output stays silent until resumeCurrent(). */
+  pendingPause: boolean;
+  /** ...and the output is ready and held: a clip set on the element but not played, or one paused as it started. */
+  armed: boolean;
 }
 
-const player: PlayerRecord = { token: 0, state: { text: null, status: 'idle' }, backend: null, request: null };
+const player: PlayerRecord = {
+  token: 0, state: { text: null, status: 'idle' }, backend: null, request: null, pendingPause: false, armed: false,
+};
 const playbackListeners = new Set<(s: PlaybackState) => void>();
 
 // ---------------------------------------------------------------------------
@@ -146,6 +152,8 @@ export const supersedePlayback = (reason: InterruptReason = 'superseded'): (() =
   const token = ++player.token;
   player.backend = null;
   player.request = null;
+  player.pendingPause = false;
+  player.armed = false;
   if (live) reportInterruption(live, reason);
   return () => token === player.token;
 };
@@ -194,7 +202,19 @@ export const setPlaybackState = (patch: Partial<PlaybackState>): void => {
 export const endPlayback = (): void => {
   player.backend = null;
   player.request = null;
+  player.pendingPause = false;
+  player.armed = false;
   setPlaybackState({ text: null, status: 'idle' });
+};
+
+/** The current request's output started. A pause asked for while it loaded takes hold now, before anyone hears it. */
+export const markPlaying = (): void => {
+  if (player.pendingPause) {
+    pausePlayback();
+    player.armed = true;
+    return;
+  }
+  setPlaybackState({ status: 'playing' });
 };
 
 /** Read the current playback state (text + status) synchronously. */
@@ -214,17 +234,45 @@ export const getPlaybackProgress = (): number => {
   return 0;
 };
 
-/** Pause whatever is currently playing (no-op unless something is playing). Keeps position for resume. */
+/**
+ * Pause whatever is playing, keeping its position for resume. A read still loading is held too: it shows paused at
+ * once, and its output stays silent once ready, until resumeCurrent(). No-op while idle or paused.
+ */
 export const pauseCurrent = (): void => {
+  if (player.state.status === 'loading') {
+    player.pendingPause = true;
+    setPlaybackState({ status: 'paused' });
+    return;
+  }
   if (player.state.status !== 'playing') return;
   pausePlayback();
   setPlaybackState({ status: 'paused' });
 };
 
-/** Resume after pauseCurrent() (no-op unless paused). */
+/** Resume after pauseCurrent() (no-op unless paused). A read held while it loaded starts, or goes on loading. */
 export const resumeCurrent = (): void => {
   if (player.state.status !== 'paused') return;
   const token = player.token;
+  if (player.pendingPause) {
+    player.pendingPause = false;
+    // Still loading: it starts by itself once ready.
+    if (!player.armed) { setPlaybackState({ status: 'loading' }); return; }
+    player.armed = false;
+    // Held at its start, so play whatever its position (resumePlayback's position check would refuse a clip at 0).
+    if (player.backend === 'clip') {
+      audioEl?.play().catch(() => {
+        // Refused: held as before, so the next resume tries again.
+        if (token !== player.token || player.state.status !== 'playing') return;
+        player.pendingPause = true;
+        player.armed = true;
+        setPlaybackState({ status: 'paused' });
+      });
+    } else {
+      try { window.speechSynthesis?.resume(); } catch { /* ignore */ }
+    }
+    setPlaybackState({ status: 'playing' });
+    return;
+  }
   resumePlayback(() => {
     // The browser refused (iOS can want a fresh tap after an interruption): it's still paused.
     if (token === player.token && player.state.status === 'playing') setPlaybackState({ status: 'paused' });
@@ -256,6 +304,9 @@ subscribePlaybackRate(rate => {
 export const seekCurrent = (timeSec: number): void => {
   const a = audioEl;
   if (!a || player.backend !== 'clip') return;
+  // A clip held as it loaded plays from the seek, as a paused one does.
+  player.pendingPause = false;
+  player.armed = false;
   try { a.currentTime = Math.max(0, timeSec); } catch { /* ignore */ }
   if (a.paused && !a.ended) {
     const token = player.token;
@@ -310,7 +361,19 @@ export const playUrl = async (
   el.src = url;
   setUrlInUse(url);
   player.backend = 'clip';
-  if (begin <= 0) { try { el.currentTime = 0; } catch { /* ignore */ } applyRate(el); await el.play(); return; }
+  // A pause asked for while this clip loaded leaves it ready but silent, for resumeCurrent() to play.
+  const holdForPause = () => {
+    if (!player.pendingPause) return false;
+    player.armed = true;
+    return true;
+  };
+  if (begin <= 0) {
+    try { el.currentTime = 0; } catch { /* ignore */ }
+    applyRate(el);
+    if (holdForPause()) return;
+    await el.play();
+    return;
+  }
   // Start partway in (skip the lead-in / word seek). CRITICAL on iOS: a currentTime set before
   // metadata is loaded is IGNORED, and setting it *after* play() makes the clip start at 0 and then
   // audibly jump to `begin` — i.e. the quiet lead-in plays first and sounds like a fade-in. So wait
@@ -327,6 +390,7 @@ export const playUrl = async (
       if (!isCurrent()) { resolve(); return; } // superseded → let the newer call drive playback
       try { el.currentTime = begin; } catch { /* ignore */ }
       applyRate(el);
+      if (holdForPause()) { resolve(); return; }
       el.play().then(() => resolve(), reject); // a refused play() falls back, as on the path above
     };
     if (el.readyState >= 1 /* HAVE_METADATA */) go();

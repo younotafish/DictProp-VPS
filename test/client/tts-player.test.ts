@@ -421,3 +421,87 @@ test('the pause events the engine causes itself change nothing: its own pause, a
   own.el.onpause?.();
   assert.deepEqual(engine.getPlaybackState(), { text: null, status: 'idle' }, 'a stopped read stays stopped');
 });
+
+test('a pause while the clip loads holds it: shown paused at once, never started, and a resume plays it', async () => {
+  const text = await sentence(true);
+  const callbacks = reads();
+  engine.speakNatural(text, { allowDownload: true, ...callbacks });
+  const el = media.element();
+  const plays = el.playCalls;
+  engine.pauseCurrent();
+  assert.deepEqual(engine.getPlaybackState(), { text, status: 'paused' });
+  await until(() => el.src.startsWith('blob:'), 'the clip is ready');
+  await microtasks();
+  assert.equal(el.playCalls, plays, 'not played');
+  assert.equal(el.paused, true);
+  engine.resumeCurrent();
+  assert.equal(engine.getPlaybackState().status, 'playing');
+  assert.equal(el.playCalls, plays + 1, 'played, though it never got past its start');
+  el.startPlaying();
+  el.finish();
+  assert.deepEqual(callbacks.heard, ['end']);
+});
+
+test('a resume before the clip is ready lets it start by itself', async () => {
+  const text = await sentence(true);
+  engine.speakNatural(text, { allowDownload: true });
+  engine.pauseCurrent();
+  engine.resumeCurrent();
+  assert.equal(engine.getPlaybackState().status, 'loading');
+  const el = media.element();
+  await until(() => el.src.startsWith('blob:') && !el.paused, 'the clip plays');
+  el.startPlaying();
+  assert.equal(engine.getPlaybackState().status, 'playing');
+});
+
+test('a pause that lands between play() and the clip starting pauses it as it starts', async () => {
+  const text = await sentence(true);
+  engine.speakNatural(text, { allowDownload: true });
+  const el = media.element();
+  await until(() => el.src.startsWith('blob:') && !el.paused, 'play() was called');
+  engine.pauseCurrent();
+  el.startPlaying();
+  assert.equal(el.paused, true, 'held as soon as it started');
+  assert.equal(engine.getPlaybackState().status, 'paused');
+  engine.resumeCurrent();
+  assert.equal(el.paused, false);
+  assert.equal(engine.getPlaybackState().status, 'playing');
+});
+
+test('the system voice asked to pause while it loads pauses as it starts, and resumes', async () => {
+  const text = await sentence(false);
+  engine.speakNatural(text, { allowDownload: true });
+  engine.pauseCurrent();
+  await until(() => media.synth.last?.text === text, 'the system voice is asked to read');
+  const mark = media.synth.calls.length;
+  media.synth.last?.onstart?.();
+  assert.deepEqual(media.synth.calls.slice(mark), ['pause']);
+  assert.equal(engine.getPlaybackState().status, 'paused');
+  engine.resumeCurrent();
+  assert.deepEqual(media.synth.calls.slice(mark), ['pause', 'resume']);
+  assert.equal(engine.getPlaybackState().status, 'playing');
+});
+
+test('a held clip plays from a word tapped meanwhile, and a newer read forgets the held pause', async () => {
+  const text = await sentence(true);
+  engine.speakNatural(text, { allowDownload: true });
+  engine.pauseCurrent();
+  const el = media.element();
+  await until(() => el.src.startsWith('blob:'), 'the clip is ready');
+  await microtasks();
+  engine.seekCurrent(1.5);
+  assert.equal(el.currentTime, 1.5);
+  assert.equal(el.paused, false);
+  assert.equal(engine.getPlaybackState().status, 'playing');
+  el.startPlaying();
+  assert.equal(el.paused, false, 'no longer held');
+
+  const held = await sentence(true);
+  engine.speakNatural(held, { allowDownload: true });
+  engine.pauseCurrent();
+  const next = await sentence(true);
+  engine.speakNatural(next, { allowDownload: true });
+  await until(() => el.src.startsWith('blob:') && !el.paused, 'the newer read plays');
+  el.startPlaying();
+  assert.deepEqual(engine.getPlaybackState(), { text: next, status: 'playing' });
+});
