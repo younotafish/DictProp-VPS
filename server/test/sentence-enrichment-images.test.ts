@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { enrichmentId } from '../src/example-enrichment-coverage.js';
+import { exampleSentenceId } from '../src/sentence-lookup.js';
 
 process.env.DEV_AUTH_BYPASS = '1';
 
@@ -22,7 +22,7 @@ const analysis = {
 };
 const prepare = (image: Buffer, generatedAt: number) => upsertSentenceEnrichment({
   entry: {
-    id: enrichmentId(lookupHash), text, lookupHash,
+    id: exampleSentenceId(lookupHash), text, lookupHash,
     textHash: createHash('sha256').update(text).digest('hex'), analysis, generatedAt,
   },
   image,

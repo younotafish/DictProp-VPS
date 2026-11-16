@@ -3,7 +3,7 @@ import { readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { enrichmentId } from '../src/example-enrichment-coverage.js';
+import { exampleSentenceId } from '../src/sentence-lookup.js';
 import { srs } from './support/fixtures.js';
 import { png, sha256 } from './support/fs.js';
 
@@ -35,7 +35,7 @@ const analysis = {
 const enrich = (text: string, image: Buffer) => {
   const lookupHash = sentenceLookupHash(text);
   upsertSentenceEnrichment({
-    entry: { id: enrichmentId(lookupHash), text, lookupHash, textHash: sha256(text), analysis, generatedAt: 10 },
+    entry: { id: exampleSentenceId(lookupHash), text, lookupHash, textHash: sha256(text), analysis, generatedAt: 10 },
     image,
     mimeType: 'image/png',
   });

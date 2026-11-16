@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { enrichmentId } from '../src/example-enrichment-coverage.js';
+import { exampleSentenceId } from '../src/sentence-lookup.js';
 
 process.env.DEV_AUTH_BYPASS = '1';
 
@@ -311,7 +311,7 @@ test('saving a prepared example returns the server-enriched canonical sentence',
   };
   upsertSentenceEnrichment({
     entry: {
-      id: enrichmentId(lookupHash),
+      id: exampleSentenceId(lookupHash),
       text,
       lookupHash,
       textHash: createHash('sha256').update(text).digest('hex'),

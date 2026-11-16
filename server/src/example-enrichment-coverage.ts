@@ -33,8 +33,6 @@ export interface ExampleEnrichmentCoverage {
 }
 
 const sample = (values: string[], limit = 100): string[] => values.slice(0, limit);
-/** The id of an example's enrichment: exampleSentenceId, under the name the tests import. */
-export const enrichmentId = exampleSentenceId;
 
 /** A stored analysis, or undefined when its text isn't JSON: a malformed row counts as incomplete, never as an error. */
 export function parseStoredAnalysis(text: string): unknown {

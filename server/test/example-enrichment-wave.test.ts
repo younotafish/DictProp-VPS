@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { sentenceLookupHash } from '../src/sentence-enrichment.js';
-import { enrichmentId } from '../src/example-enrichment-coverage.js';
+import { exampleSentenceId } from '../src/sentence-lookup.js';
 import { repoPath } from './support/paths.js';
 
 const analysis = {
@@ -20,7 +20,7 @@ const analysis = {
 function sentence(text: string) {
   const lookupHash = sentenceLookupHash(text);
   return {
-    id: enrichmentId(lookupHash),
+    id: exampleSentenceId(lookupHash),
     text,
     lookupHash,
     textHash: createHash('sha256').update(text).digest('hex'),
