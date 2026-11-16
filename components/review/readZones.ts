@@ -1,13 +1,18 @@
+import { eyesFreeZoneAt } from '../eyesFreeBands';
+
 /**
  * Where the review popup's eyes-free read zones are. A zone is a band down the side of a surface: the top
  * quarter reads the first example (0) and the second quarter the second (1); the lower half reads nothing.
  */
 export type ReadZone = 0 | 1;
 
-/** The band a point `offsetY` below the top of a surface `height` tall falls in, or null in the lower half. */
+/**
+ * The band a point `offsetY` below the top of a surface `height` tall falls in, or null in the lower half: the
+ * app's one eyes-free split, which the card view and the search sheet use too.
+ */
 export function readBandAt(offsetY: number, height: number): ReadZone | null {
-  if (offsetY >= height * 0.5) return null;
-  return offsetY < height * 0.25 ? 0 : 1;
+  const zone = eyesFreeZoneAt(offsetY, height);
+  return zone === -1 ? null : zone;
 }
 
 /**
