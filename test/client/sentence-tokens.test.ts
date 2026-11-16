@@ -74,10 +74,29 @@ test('segments spell the spoken text even when markers nest or cross, which the 
 test('edge punctuation is stripped from lookup terms, keeping apostrophes', () => {
   assert.equal(stripEdgePunct('cat.'), 'cat');
   assert.equal(stripEdgePunct('"Hello,"'), 'Hello');
+  assert.equal(stripEdgePunct('“Hello,”'), 'Hello');
   assert.equal(stripEdgePunct("don't."), "don't");
+  assert.equal(stripEdgePunct('‘tis'), 'tis');
   assert.equal(stripEdgePunct('(a)'), 'a');
   assert.equal(stripEdgePunct('...'), '');
   assert.equal(stripEdgePunct('—'), '');
+});
+
+test('a lookup term keeps the accented letters it starts or ends with', () => {
+  assert.equal(stripEdgePunct('café.'), 'café');
+  assert.equal(stripEdgePunct('touché!'), 'touché');
+  assert.equal(stripEdgePunct('élan'), 'élan');
+  assert.equal(stripEdgePunct('(über)'), 'über');
+  assert.equal(stripEdgePunct('“naïveté”'), 'naïveté');
+  // A combining accent (NFD) stays on its letter, and digits stay too.
+  assert.equal(stripEdgePunct('cafe\u0301,'), 'cafe\u0301');
+  assert.equal(stripEdgePunct('1990s,'), '1990s');
+  // Look-ups read the whole word, from plain text and from the studied item.
+  const units = unitsOf(tokenizeSentence('Touché! A café in {{Montréal.}}', { itemWord: '', lookupAnyWord: true }));
+  assert.deepEqual(units.flatMap(u => (u.kind === 'lookup' || u.kind === 'item' ? [u.term] : [])), ['Touché', 'A', 'café', 'in', 'Montréal']);
+  // A saved phrase that starts with an accented letter is found too.
+  const phrases = unitsOf(tokenizeSentence('Order it à la carte.', { itemWord: '', findSaved: findSavedFrom(['à la carte']), lookupAnyWord: false }));
+  assert.deepEqual(phrases.filter(u => u.kind === 'phrase').map(u => u.text), ['à la carte.']);
 });
 
 test('without saved lookup or tap-any-word, plain runs stay whole and nothing is addressable', () => {

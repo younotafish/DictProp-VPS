@@ -49,8 +49,11 @@ export function parseSentenceMarkers(text: string): SentenceSegment[] {
   return segments;
 }
 
-/** Strips leading and trailing punctuation, keeping internal apostrophes (couldn't), for a lookup term. */
-export const stripEdgePunct = (s: string): string => s.replace(/^[^\w']+|[^\w']+$/g, '');
+/**
+ * Strips punctuation and symbols from both ends of a lookup term, keeping letters (accented ones too, so 'touché!'
+ * looks up 'touché'), digits and straight apostrophes (couldn't).
+ */
+export const stripEdgePunct = (s: string): string => s.replace(/^[^\p{L}\p{M}\p{N}']+|[^\p{L}\p{M}\p{N}']+$/gu, '');
 
 /** The longest saved phrase, in words, looked for in plain text. */
 const MAX_SAVED_PHRASE_WORDS = 6;
