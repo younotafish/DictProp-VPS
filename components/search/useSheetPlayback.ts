@@ -56,15 +56,20 @@ export function useSheetPlayback(mode: SearchMode) {
   // Says a word: on opening a result and on every switch of result or meaning, and on P.
   const speakSheetWord = useCallback((word: string) => audio.word(word), [audio]);
 
-  // E: reads the examples in turn; pressed again while one of them is playing or paused, pauses or resumes it, as the
-  // review popup's E does.
+  // E: reads the examples in turn. Pressed again while one of them is the active read, it follows the speaker's rule, as
+  // the card view's and the review popup's E do: pause it, resume it, leave it loading, or once 85% of it has played
+  // start the run again from the first example.
   const readExamples = useCallback((examples: readonly string[]) => {
     if (examples.length === 0) return;
     holdKeepAlive();
-    const { text, status } = getPlaybackState();
-    if (text && examples.includes(text) && (status === 'playing' || status === 'paused')) {
-      if (status === 'playing') pauseCurrent(); else resumeCurrent();
-      return;
+    const state = getPlaybackState();
+    if (state.text && examples.includes(state.text)) {
+      switch (toggleActionFor(state, state.text, getPlaybackProgress(), { onLoading: 'ignore', restartNearEnd: true })) {
+        case 'pause': pauseCurrent(); return;
+        case 'resume': resumeCurrent(); return;
+        case 'ignore': case 'cancel': return; // still loading
+        case 'restart': case 'start': break; // nearly over: the run starts again
+      }
     }
     audio.inTurn(examples);
   }, [holdKeepAlive, audio]);

@@ -63,14 +63,20 @@ export function usePopupPlayback(examplesList: readonly string[]) {
     }
   }, [examplesList, holdKeepAlive, speakPopupNatural]);
 
-  // E: read both example sentences in turn; press again to pause / resume.
+  // E: read both example sentences in turn. Pressed again while one of them is the active read, it follows the speaker's
+  // rule, as the card view's E does: pause it, resume it, leave it loading, or once 85% of it has played start the run
+  // again from the first example.
   const readBothExamples = useCallback(() => {
     if (!examplesList.length) return;
     holdKeepAlive();
     const pb = getPlaybackState();
-    if (pb.text && examplesList.includes(pb.text) && (pb.status === 'playing' || pb.status === 'paused')) {
-      if (pb.status === 'playing') pauseCurrent(); else resumeCurrent();
-      return;
+    if (pb.text && examplesList.includes(pb.text)) {
+      switch (toggleActionFor(pb, pb.text, getPlaybackProgress(), { onLoading: 'ignore', restartNearEnd: true })) {
+        case 'pause': pauseCurrent(); return;
+        case 'resume': resumeCurrent(); return;
+        case 'ignore': case 'cancel': return; // still loading
+        case 'restart': case 'start': break; // nearly over: the run starts again
+      }
     }
     let i = 0;
     let handle: ReturnType<typeof speakNatural> | undefined;

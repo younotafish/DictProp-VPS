@@ -67,3 +67,25 @@ test('Space waits for a read still loading, pauses and resumes what plays (near 
   audio.togglePlayback();
   assert.deepEqual(state(), { text: first, status: 'loading' });
 });
+
+test('E reads both examples in turn, and pressed again pauses or resumes, waits while one loads, and near the end starts the run again', async () => {
+  const [first, second] = await examples();
+  const audio = popupAudio([first, second]);
+  audio.readBothExamples();
+  await plays(first, 0.5);
+  audio.readBothExamples();
+  assert.deepEqual(state(), { text: first, status: 'paused' });
+  audio.readBothExamples();
+  assert.deepEqual(state(), { text: first, status: 'playing' });
+
+  // The first ends, and after a breath the second loads: E leaves the load alone.
+  playerElement().finish();
+  await until(() => state().text === second, 'the second example loads');
+  assert.equal(state().status, 'loading');
+  audio.readBothExamples();
+  assert.deepEqual(state(), { text: second, status: 'loading' }, 'the read still loading carries on');
+
+  await plays(second, 0.9);
+  audio.readBothExamples();
+  assert.deepEqual(state(), { text: first, status: 'loading' }, 'at 85% or more the run starts again from the first example');
+});
