@@ -24,10 +24,12 @@ type OutboxStorage = StorageLike & Pick<Storage, 'key' | 'length'>;
 const pendingKey = (userId: string) => `review_mutations_pending_${userId}`;
 const entryKey = (userId: string, eventId: string) => `${pendingKey(userId)}:${eventId}`;
 
-const isPendingReviewMutation = (mutation: any): mutation is PendingReviewMutation =>
-  !!mutation && typeof mutation.event?.id === 'string' &&
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object';
+
+const isPendingReviewMutation = (mutation: unknown): mutation is PendingReviewMutation =>
+  isRecord(mutation) && isRecord(mutation.event) && typeof mutation.event.id === 'string' &&
   Array.isArray(mutation.itemIds) && mutation.itemIds.every((id: unknown) => typeof id === 'string') &&
-  !!mutation.optimisticSrs && typeof mutation.optimisticSrs === 'object';
+  isRecord(mutation.optimisticSrs);
 
 const readLegacyMutations = (userId: string, storage: StorageLike): PendingReviewMutation[] => {
   const parsed = parseJson(storage.getItem(pendingKey(userId)));

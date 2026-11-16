@@ -3,7 +3,11 @@ import { announceUpdate, hasUnsentChanges, isChunkLoadError } from '../services/
 
 type Module<T> = { default: T };
 
-export type LazyScreen<T extends ComponentType<any>> = LazyExoticComponent<T> & {
+/** A component with any props: the constraint React.lazy and LazyExoticComponent put on theirs. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- React's own constraint: ComponentType<never> fails it, and unknown or {} props reject components that require props
+type AnyComponent = ComponentType<any>;
+
+export type LazyScreen<T extends AnyComponent> = LazyExoticComponent<T> & {
   /** Fetches the screen's code ahead of its first render. */
   preload: () => void;
 };
@@ -18,7 +22,7 @@ export type LazyScreen<T extends ComponentType<any>> = LazyExoticComponent<T> & 
  * an open page asks for, the page reloads once to pick up the current build. While changes are still on
  * their way to the server it offers the reload instead (services/appUpdate), which sends them first.
  */
-export function lazyScreen<T extends ComponentType<any>>(name: string, load: () => Promise<Module<T>>): LazyScreen<T> {
+export function lazyScreen<T extends AnyComponent>(name: string, load: () => Promise<Module<T>>): LazyScreen<T> {
   const reloadKey = `lazy_screen_reload:${name}`;
   let loaded: Module<T> | undefined;
   let loading: Promise<Module<T>> | undefined;
