@@ -4,13 +4,18 @@ import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AppNavigation from '../../components/AppNavigation.tsx';
 import { AppStatusPills } from '../../components/AppStatus.tsx';
+import { NoticePill } from '../../components/NoticePill.tsx';
+import { SearchFab } from '../../components/search/SearchFab.tsx';
+import { SearchToasts } from '../../components/search/SearchToasts.tsx';
+import { TAB_FOOTER_HEIGHT } from '../../components/study/StudyCard.tsx';
 import { arbitraryValue, cssLength, readRootVars } from '../support/cssLength.ts';
 import { readRepoFile } from '../support/paths.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 // The tab bar's height lives twice: in components/AppNavigation.tsx's classes, and in src/index.css's --nav-h, which
-// the notice stack floats above. These tests work the bar's height out of its rendered classes and hold the variable
-// to it, on a laptop (no safe area) and on a Face ID iPhone (a 34 px home-indicator strip).
+// the notice stack and the search button float above. These tests work the bar's height out of its rendered classes and
+// hold the variable to it, on a laptop (no safe area) and on a Face ID iPhone (a 34 px home-indicator strip), then
+// check what floats above it.
 (globalThis as unknown as { localStorage: MemoryStorage }).localStorage = new MemoryStorage();
 
 const LAPTOP = { insetBottom: 0, vw: 1440 };
@@ -96,4 +101,50 @@ test('over a card the notice stack starts at --card-float-bottom: 96 px on a lap
   assert.equal(bottom, 'var(--card-float-bottom)');
   assert.equal(cssLength(bottom!, { ...LAPTOP, vars: rootVars }), 96);
   assert.equal(cssLength(bottom!, { ...IPHONE, vars: rootVars }), 122);
+});
+
+// The tab bands: on the tabs the search button floats beside the notice stack, at the same height, and its error toast
+// above it. Each length comes from the rendered classes, with Study's grade footer (--tab-footer-h) and without.
+const fabClasses = () => renderToStaticMarkup(createElement(SearchFab, {
+  unseenCount: 0, readyCount: 0, runningCount: 0, isBusy: false, aboveTabBar: true, onClick: () => {},
+})).match(/<button[^>]*? class="([^"]*)"/)![1].split(/\s+/).filter(Boolean);
+const errorToastClasses = () => classOf(renderToStaticMarkup(createElement(SearchToasts, {
+  saveToast: null, statusToast: null, error: { msg: 'Couldn’t look that up' }, onRetry: () => {}, onDismissError: () => {}, aboveTabBar: true,
+})), 'div');
+const TAB_PLACES = [
+  ['a laptop', { insetBottom: 0, vw: 1440 }],
+  ['a Face ID iPhone', { insetBottom: 34, vw: 390 }],
+] as const;
+const FOOTERS = [['no footer', {}], ['Study\'s grade footer', { '--tab-footer-h': TAB_FOOTER_HEIGHT }]] as const;
+
+test('on the tabs the search button sits level with the notice stack, and its error toast clears it by 8 px', () => {
+  const fab = fabClasses();
+  const fabBottom = arbitraryValue(fab, 'bottom')!;
+  const stackBottom = arbitraryValue(stack({ aboveTabBar: true }), 'bottom')!;
+  const toastBottom = arbitraryValue(errorToastClasses(), 'bottom')!;
+  for (const [place, at] of TAB_PLACES) {
+    for (const [footer, vars] of FOOTERS) {
+      const context = { ...at, vars: { ...rootVars, ...vars } };
+      const where = `${place}, ${footer}`;
+      const fabAt = cssLength(fabBottom, context);
+      assert.equal(fabAt, cssLength(stackBottom, context), where);
+      assert.ok(cssLength(toastBottom, context) >= fabAt + spacing(fab, 'h') + 8, where);
+    }
+  }
+});
+
+test('on a phone the notice pills end at least 8 px short of the search button\'s column', () => {
+  const fab = fabClasses();
+  const pill = classOf(renderToStaticMarkup(createElement(NoticePill, { tone: 'dark', children: 'Deleted “gamut”' })), 'div');
+  const cap = arbitraryValue(pill, 'max-w')!;
+  assert.equal(cap, 'calc(100vw-9rem)');
+  const stackClasses = stack({ aboveTabBar: true });
+  for (const centred of ['left-1/2', '-translate-x-1/2']) assert.ok(stackClasses.includes(centred), centred);
+  for (const vw of [375, 390]) {
+    const at = { insetBottom: 34, vw };
+    // The stack is centred, so its widest pill ends half its cap right of the middle.
+    const pillRight = vw / 2 + cssLength(cap, at) / 2;
+    const fabLeft = vw - spacing(fab, 'right') - spacing(fab, 'w');
+    assert.ok(fabLeft - pillRight >= 8, `${vw} px: the pill ends at ${pillRight}, the button starts at ${fabLeft}`);
+  }
 });
