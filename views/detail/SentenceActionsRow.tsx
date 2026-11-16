@@ -1,12 +1,12 @@
 import { Bookmark, CheckCircle2, RotateCcw, Trash2 } from 'lucide-react';
 import type { SRSData } from '../../types';
 import type { MasteryClasses } from '../../components/mastery';
-import { SrsStats } from './SrsStats';
+import { SrsStats } from '../../components/review/SrsStats';
 
 interface SentenceActionsRowProps {
   srs: SRSData | undefined;
   /** The sentence's mastery and its colors; left out for a preview, which has no progress to show. */
-  mastery: { label: string; percentage: number } | null;
+  mastery: { label: string; color: string; percentage: number } | null;
   masteryColors: MasteryClasses | null;
   /** Sentences in this list at least 70% strong. */
   memorizedCount: number;

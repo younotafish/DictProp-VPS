@@ -1,15 +1,16 @@
 import React from 'react';
 import { Flame } from 'lucide-react';
 import type { SRSData } from '../../types';
-import type { MasteryClasses } from '../../components/mastery';
-import { formatTimeUntil } from '../../services/studySession';
+import { MasteryBadge, type MasteryClasses } from '../mastery';
+import { formatTimeUntil } from '../../services/reviewTime';
 
 interface SrsStatsProps {
   srs: SRSData | undefined;
   /** From SRSAlgorithm.getMasteryLevel. */
-  mastery: { label: string; percentage: number };
+  mastery: { label: string; color: string; percentage: number };
+  /** getMasteryColors(mastery.color): the bar's classes, and the badge's in the full layout. */
   colors: MasteryClasses;
-  /** The sentence banner keeps each stat on one line and leaves the bar out on phones. */
+  /** The sentence banner and the review popup keep each stat on one line and leave the bar out on phones. */
   compact?: boolean;
   /** Shown between the streak and the next review. */
   children?: React.ReactNode;
@@ -17,11 +18,15 @@ interface SrsStatsProps {
 
 /** A card's memory at a glance: mastery badge and bar, reviews, streak, and when it's due. Lays out in its parent's row. */
 export function SrsStats({ srs, mastery, colors, compact = false, children }: SrsStatsProps) {
+  const nextReview = srs?.nextReview ?? 0;
+  const now = Date.now();
   return (
     <>
-      <span className={`${colors.bg} ${colors.text} px-2 py-0.5 rounded-full font-semibold${compact ? ' whitespace-nowrap' : ''}`}>
-        {mastery.label} {Math.round(mastery.percentage)}%
-      </span>
+      {compact ? <MasteryBadge {...mastery} /> : (
+        <span className={`${colors.bg} ${colors.text} px-2 py-0.5 rounded-full font-semibold`}>
+          {mastery.label} {Math.round(mastery.percentage)}%
+        </span>
+      )}
       <div className={`${compact ? 'hidden sm:block ' : ''}flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden`}>
         <div className={`h-full ${colors.bar} transition-all duration-300`} style={{ width: `${mastery.percentage}%` }} />
       </div>
@@ -31,7 +36,7 @@ export function SrsStats({ srs, mastery, colors, compact = false, children }: Sr
       )}
       {children}
       <span className={`text-slate-500${compact ? ' whitespace-nowrap' : ''}`}>
-        {(srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatTimeUntil(srs?.nextReview ?? 0, Date.now())}
+        {nextReview <= now ? 'due' : formatTimeUntil(nextReview, now)}
       </span>
     </>
   );

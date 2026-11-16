@@ -4,7 +4,7 @@ import type { SRSData, StoredItem } from '../../types';
 import type { MasteryClasses } from '../../components/mastery';
 import { Button } from '../../components/Button';
 import { LibraryCounts } from './LibraryCounts';
-import { SrsStats } from './SrsStats';
+import { SrsStats } from '../../components/review/SrsStats';
 
 interface WordCardHeaderProps {
   /** Asked for (a short swipe down or H): it opens to its own height, and otherwise stays closed and inert. */
@@ -21,7 +21,7 @@ interface WordCardHeaderProps {
   showActionMenu: boolean;
   onToggleActionMenu: () => void;
   /** The saved card's memory; null when the card isn't saved. */
-  stats: { srs: SRSData; mastery: { label: string; percentage: number }; colors: MasteryClasses } | null;
+  stats: { srs: SRSData; mastery: { label: string; color: string; percentage: number }; colors: MasteryClasses } | null;
   /** For the library-wide counts, scanned only while the header is open. */
   savedItems: StoredItem[];
 }
