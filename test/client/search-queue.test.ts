@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  PASSING_FAILURE_MS, classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, finishedEntries, hasLiveDuplicate, isBusyOf, isQueued,
+  PASSING_FAILURE_MS, classifyEnqueue, createRefreshLog, findLiveComparison, finishedEntries, hasLiveDuplicate, isBusyOf, isQueued,
   nextFailureExpiry, openIndexForResults, pendingRequestsOf, queueUpdate, readyItemsOf, requestOf, runningCountOf,
   savedCardsResult, searchQueueReducer, summarizeFailures, unseenReadyCount, type QueueAction, type QueueItem,
 } from '../../components/search/searchQueue.ts';
@@ -212,32 +212,41 @@ test("a forced lookup drops an entry mid-way through an in-place refresh, as the
 
 const ready = (id: string, query = id): QueueAction[] => [add(id, query), { type: 'search-ready', id, results: result(query) }];
 
+/** A queue holding a lookup in each state asking again tells apart: ready, queued, waiting on its answer, and failed. */
+const askedBefore = (): QueueItem[] => run([
+  ...ready('q-1', 'gamut'),
+  add('q-2', 'impasse'),
+  add('q-3', 'obfuscate'), start('q-3'),
+  add('q-4', 'rot'), fail('q-4'),
+]);
+
 test('asking again for a lookup opens it when ready, says so while it runs, and queues a new one otherwise', () => {
-  const queue = run([
-    ...ready('q-1', 'gamut'),
-    add('q-2', 'impasse'),
-    add('q-3', 'obfuscate'), start('q-3'),
-    add('q-4', 'rot'), fail('q-4'),
-  ]);
-  assert.equal(classifyEnqueue(queue, 'gamut'), 'open');
-  assert.equal(classifyEnqueue(queue, 'impasse'), 'running', 'queued');
-  assert.equal(classifyEnqueue(queue, 'obfuscate'), 'running', 'waiting on its answer');
-  assert.equal(classifyEnqueue(queue, 'rot'), 'new', 'a failed lookup is asked for again');
-  assert.equal(classifyEnqueue(queue, 'tangent'), 'new');
-  assert.equal(classifyEnqueue([], 'gamut'), 'new');
+  const queue = askedBefore();
+  assert.deepEqual(classifyEnqueue(queue, { query: 'gamut' }), { kind: 'open', id: 'q-1' });
+  assert.deepEqual(classifyEnqueue(queue, { query: 'impasse' }), { kind: 'running', id: 'q-2' }, 'queued');
+  assert.deepEqual(classifyEnqueue(queue, { query: 'obfuscate' }), { kind: 'running', id: 'q-3' }, 'waiting on its answer');
+  assert.deepEqual(classifyEnqueue(queue, { query: 'rot' }), { kind: 'new' }, 'a failed lookup is asked for again');
+  assert.deepEqual(classifyEnqueue(queue, { query: 'tangent' }), { kind: 'new' });
+  assert.deepEqual(classifyEnqueue([], { query: 'gamut' }), { kind: 'new' });
+});
+
+test('a refresh always runs, whatever the queue holds for its query', () => {
+  const queue = askedBefore();
+  for (const query of ['gamut', 'impasse', 'obfuscate', 'rot', 'tangent']) {
+    assert.deepEqual(classifyEnqueue(queue, { query, forceAI: true }), { kind: 'new' }, query);
+  }
+  assert.deepEqual(classifyEnqueue(queue, { query: 'gamut', forceAI: false }), { kind: 'open', id: 'q-1' }, 'only a refresh');
 });
 
 test('asking again matches the lookup trimmed and whatever its case, and finds the entry to open', () => {
   const queue = run(ready('q-1', 'Gamut'));
-  assert.equal(classifyEnqueue(queue, '  gAMUT '), 'open');
-  assert.equal(findLiveLookup(queue, ' GAMUT')?.id, 'q-1');
-  assert.equal(findLiveLookup(queue, 'gamuts'), undefined);
+  assert.deepEqual(classifyEnqueue(queue, { query: '  gAMUT ' }), { kind: 'open', id: 'q-1' });
+  assert.deepEqual(classifyEnqueue(queue, { query: 'gamuts' }), { kind: 'new' });
 });
 
 test('a comparison is never taken for a lookup of its text', () => {
   const queue = run([{ type: 'add-compare', id: 'q-1', words: ['fable', 'parable'], cached: comparison(['fable', 'parable']) }]);
-  assert.equal(classifyEnqueue(queue, 'fable vs parable'), 'new');
-  assert.equal(findLiveLookup(queue, 'fable vs parable'), undefined);
+  assert.deepEqual(classifyEnqueue(queue, { query: 'fable vs parable' }), { kind: 'new' });
 });
 
 test('asking again while a lookup runs notes when, and leaves its request alone', () => {
@@ -335,8 +344,7 @@ test('clear all drops finished and failed scans and keeps the ones still running
 test('a lookup never takes a scan of the same text for a duplicate, and a refresh leaves it running', () => {
   const queue = run([scan('q-1'), start('q-1')]);
   assert.equal(hasLiveDuplicate(queue, SENTENCE), false);
-  assert.equal(classifyEnqueue(queue, SENTENCE), 'new');
-  assert.equal(findLiveLookup(queue, SENTENCE), undefined);
+  assert.deepEqual(classifyEnqueue(queue, { query: SENTENCE }), { kind: 'new' });
   assert.deepEqual(run([add('q-2', SENTENCE)], queue).map(item => [item.id, item.kind]), [['q-1', 'scan'], ['q-2', 'lookup']]);
   assert.deepEqual(run([add('q-2', SENTENCE, { forceAI: true })], queue).map(item => [item.id, item.kind]), [['q-1', 'scan'], ['q-2', 'lookup']]);
 });

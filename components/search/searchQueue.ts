@@ -1,5 +1,6 @@
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types';
 import type { PendingRequest, SearchFailure, SearchRequest } from '../../services/searchRecovery';
+import type { LookupRequest } from '../../services/searchRequests';
 
 /**
  * The search queue as data: every lookup, comparison and sentence scan the search button runs, and the state changes
@@ -200,20 +201,26 @@ export const queueUpdate = (action: QueueAction) => (queue: QueueItem[]): QueueI
 /** Whether the entry `id` is still in the queue (a refresh of the same word replaces it, a dismissal drops it). */
 export const isQueued = (queue: readonly QueueItem[], id: string): boolean => queue.some(item => item.id === id);
 
-/**
- * The lookup of `query` still running or ready, if any, matched trimmed and whatever its case: what asking for the
- * word again finds.
- */
-export const findLiveLookup = (queue: readonly QueueItem[], query: string): QueueItem | undefined =>
-  queue.find(item => item.kind === 'lookup' && item.status !== 'failed' && sameQuery(item.query, query.trim()));
+/** What asking for a lookup does, given the queue (see classifyEnqueue). */
+export type AskAgain =
+  /** The entry `id` has the result ready: open it. */
+  | { kind: 'open'; id: string }
+  /** The entry `id` is still looking it up: say so, instead of sending the lookup again. */
+  | { kind: 'running'; id: string }
+  /** Run the lookup. */
+  | { kind: 'new' };
 
 /**
- * What asking again for `query` does: 'open' its ready result, say it's still 'running', or queue a 'new' lookup
- * when none is live (a failed one is asked for again). Only lookups count, not comparisons or sentence scans.
+ * What asking for a lookup of `query` does: 'open' the entry whose result for it is ready, say that the one still
+ * looking it up is 'running', or run a 'new' lookup when none is live (a failed one is asked for again). The query
+ * matches trimmed and whatever its case, and only lookups count, not comparisons or sentence scans. A refresh
+ * (forceAI) is always new: it replaces every entry for its query.
  */
-export function classifyEnqueue(queue: readonly QueueItem[], query: string): 'open' | 'running' | 'new' {
-  const live = findLiveLookup(queue, query);
-  return !live ? 'new' : live.status === 'ready' ? 'open' : 'running';
+export function classifyEnqueue(queue: readonly QueueItem[], { query, forceAI }: Pick<LookupRequest, 'query' | 'forceAI'>): AskAgain {
+  if (forceAI) return { kind: 'new' };
+  const live = queue.find(item => item.kind === 'lookup' && item.status !== 'failed' && sameQuery(item.query, query.trim()));
+  if (!live) return { kind: 'new' };
+  return { kind: live.status === 'ready' ? 'open' : 'running', id: live.id };
 }
 
 /**

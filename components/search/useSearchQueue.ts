@@ -14,7 +14,7 @@ import { subscribeSearchRequests, type CompareRequest, type LookupRequest } from
 import { routeLookup } from './searchRouting';
 import { runLookup } from './runLookup';
 import {
-  createRefreshLog, findLiveComparison, findLiveLookup, isBusyOf, isQueued, queueUpdate, readyItemsOf, runningCountOf,
+  classifyEnqueue, createRefreshLog, findLiveComparison, isBusyOf, isQueued, queueUpdate, readyItemsOf, runningCountOf,
   pendingRequestsOf, requestOf, savedCardsResult, searchQueueReducer, unseenReadyCount, type OpenPolicy, type QueueAction,
   type QueueItem,
 } from './searchQueue';
@@ -90,24 +90,24 @@ export function useSearchQueue({
   }, []);
 
   // A lookup asked for anywhere: typed in the box, picked on screen, or a refresh. Asking again for a word whose result
-  // is ready opens it, and for one still running says so instead of sending it again; neither needs the network.
-  // Otherwise routeLookup decides how it runs, the same way for every entry point: a direct lookup opens by itself
-  // only when the library answers it, a refresh as soon as it's ready. Returns false when the device is offline and
-  // the lookup needs the network, after saying so.
+  // is ready opens it, and for one still running says so instead of sending it again; neither needs the network (see
+  // classifyEnqueue). Otherwise routeLookup decides how it runs, the same way for every entry point: a direct lookup
+  // opens by itself only when the library answers it, a refresh as soon as it's ready. Returns false when the device
+  // is offline and the lookup needs the network, after saying so.
   const findSavedByWordRef = useLatest(findSavedByWord);
   const isOnlineRef = useLatest(isOnline);
   const lookUp = useCallback((request: LookupRequest): boolean => {
     const query = request.query.trim();
     if (!query) return true;
-    const live = request.forceAI ? undefined : findLiveLookup(queueRef.current, query);
-    if (live?.status === 'ready') {
+    const ask = classifyEnqueue(queueRef.current, { query, forceAI: request.forceAI });
+    if (ask.kind === 'open') {
       log('🔍 Queue: opening "' + query + '", already looked up');
-      openWhenReady(live.id);
+      openWhenReady(ask.id);
       return true;
     }
-    if (live) {
+    if (ask.kind === 'running') {
       log('🔍 Queue: "' + query + '" is still being looked up');
-      setQueue(queueUpdate({ type: 'repeat-asked', id: live.id, at: Date.now() })); // the status line says so
+      setQueue(queueUpdate({ type: 'repeat-asked', id: ask.id, at: Date.now() })); // the status line says so
       return true;
     }
     const route = routeLookup(request, {
