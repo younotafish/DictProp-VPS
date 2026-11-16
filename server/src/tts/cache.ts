@@ -23,7 +23,7 @@ const OFFLINE_VOICES = new Set<string>(OFFLINE_TTS_VOICES);
 export const isOfflineVoice = (voice: string): boolean => OFFLINE_VOICES.has(voice);
 export const TTS_DIR = resolve(env.DATA_DIR, 'tts');
 
-// key = sha256(voice + "\n" + text.trim()) hex — MUST match the client (services/api.ts ttsKey).
+// key = sha256(voice + "\n" + text.trim()) hex — MUST match the client (services/api/tts.ts ttsKey).
 export function ttsKey(text: string, voice: string): string {
   return createHash('sha256').update(`${voice}\n${text.trim()}`).digest('hex');
 }
