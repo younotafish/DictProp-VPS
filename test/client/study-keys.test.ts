@@ -3,8 +3,10 @@ import test from 'node:test';
 import { resolveStudyKey, type StudyKeyEvent, type StudyKeyState } from '../../services/studyKeys.ts';
 
 const press = (key: string, modifiers: Partial<StudyKeyEvent> = {}): StudyKeyEvent => ({
-  key, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, ...modifiers,
+  key, repeat: false, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, ...modifiers,
 });
+/** The repeats a key sends while it's held down. */
+const held = (key: string) => press(key, { repeat: true });
 
 /** A card with its answer hidden and nothing to undo, the key going to the page. */
 const card = (overrides: Partial<StudyKeyState> = {}): StudyKeyState => ({
@@ -53,6 +55,19 @@ test('while an undo is under way, 1-4 and Space or Enter do nothing, and stay th
     // A control the keyboard focused still gets the key.
     assert.equal(resolveStudyKey(press(key), card({ canUndo: true, undoing: true, onControl: true })), null, `${key} on a control`);
   }
+});
+
+test('a held key acts once: its repeats grade, reveal and undo nothing, and a held 1-4 stays the session\'s', () => {
+  const revealed = card({ revealed: true, canUndo: true });
+  for (const key of ['1', '2', '3', '4']) {
+    assert.deepEqual(resolveStudyKey(held(key), revealed), { type: 'swallow' }, `held ${key} answered`);
+    assert.deepEqual(resolveStudyKey(held(key), card()), { type: 'swallow' }, `held ${key} unanswered`);
+  }
+  for (const key of [' ', 'Enter']) assert.equal(resolveStudyKey(held(key), card()), null, `held ${key}`);
+  assert.equal(resolveStudyKey(held('u'), card({ canUndo: true })), null, 'held U');
+  // The table has no arrow keys, held or not.
+  assert.equal(resolveStudyKey(held('ArrowRight'), revealed), null);
+  assert.equal(resolveStudyKey(press('ArrowRight'), revealed), null);
 });
 
 test('keys with a modifier, keys a view already used, typing and an open dialog are left alone', () => {

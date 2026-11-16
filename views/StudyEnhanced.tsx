@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { StoredItem, type ReviewHistory, type ReviewRating, type ReviewTaskType } from '../types';
 import { BrainCircuit } from 'lucide-react';
 import {
+  acceptFooterTap,
   advanceSession,
   applyUndoneGrade,
   findSessionCard,
@@ -100,13 +101,19 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   // While an undo is under way, grading and revealing wait: the undo is about to bring back the card it undoes.
   const undoing = lastGrade?.undoing ?? false;
   const sessionIdRef = useLatest(session?.id);
+  // When the last reveal or grade happened, made any way, on a clock that never goes back: a footer tap just
+  // after it is the second tap of a double tap (acceptFooterTap).
+  const lastActionAtRef = useRef<number | undefined>(undefined);
 
   const reveal = () => {
-    if (!undoing) setSession(revealAnswer);
+    if (undoing) return;
+    lastActionAtRef.current = performance.now();
+    setSession(revealAnswer);
   };
 
   const gradeCurrent = (rating: ReviewRating) => {
     if (!session || !currentItem || !session.revealed || undoing) return;
+    lastActionAtRef.current = performance.now();
     const eventId = crypto.randomUUID();
     const now = Date.now();
     // The interval the grade sets, scheduled as updateSRS will schedule it.
@@ -124,6 +131,15 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       eventId,
     }).catch(error => warn('Review failed:', error));
     setSession(current => current ? advanceSession(current, itemIds, grade, now) : null);
+  };
+
+  // The footer's Show answer and grades ignore a tap that is the second of a double tap; keys act at once.
+  const footerTapCounts = () => acceptFooterTap(lastActionAtRef.current, performance.now());
+  const footerReveal = () => {
+    if (footerTapCounts()) reveal();
+  };
+  const footerGrade = (rating: ReviewRating) => {
+    if (footerTapCounts()) gradeCurrent(rating);
   };
 
   const undoLastGrade = async () => {
@@ -238,8 +254,9 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           onUndo={undo}
           onClose={closeSession}
           onReveal={reveal}
+          onFooterReveal={footerReveal}
+          onFooterGrade={footerGrade}
           onTypeAnswer={typedAnswer => setSession(current => current ? { ...current, typedAnswer } : null)}
-          onGrade={gradeCurrent}
           onOpenExampleSentence={onOpenExampleSentence}
         />
       </div>

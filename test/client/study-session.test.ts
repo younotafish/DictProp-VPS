@@ -4,6 +4,7 @@ import type { StoredItem, VocabCard } from '../../types.ts';
 import { previewRatings, updateAfterRating } from '../../services/fsrsScheduler.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import {
+  acceptFooterTap,
   advanceSession,
   applyUndoneGrade,
   buildReviewQueue,
@@ -305,6 +306,14 @@ test('undoing a grade goes back to its card, revealed, and takes back the grade 
   const moved = undoSessionGrade({ ...after, itemIds: ['a', 'b', 'c', 'x', 'b'], grades: [{ itemId: 'a', rating: 'good' }] }, grade, 7_000);
   assert.deepEqual(moved.itemIds, ['a', 'b', 'c', 'x', 'b']);
   assert.deepEqual(moved.grades, [{ itemId: 'a', rating: 'good' }]);
+});
+
+test('a footer tap within 350 ms of a reveal or a grade is the second tap of a double tap', () => {
+  assert.equal(acceptFooterTap(undefined, 1_000), true, 'nothing revealed or graded yet');
+  assert.equal(acceptFooterTap(1_000, 1_349), false);
+  assert.equal(acceptFooterTap(1_000, 1_350), true);
+  assert.equal(acceptFooterTap(1_000, 900), true, 'a clock that went back holds nothing back');
+  assert.equal(acceptFooterTap(1_000, 1_100, 50), true);
 });
 
 test('the receipt names the word, the grade and when the card comes back, and says when it waits or is undoing', () => {

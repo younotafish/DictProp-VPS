@@ -4,6 +4,7 @@
  */
 
 import type { ReviewRating } from '../types';
+import { acceptKeyRepeat } from '../components/keyboardTarget';
 import { RATINGS } from './studySession';
 
 /** What the session shows, and the facts about the key's target that the table needs. */
@@ -31,7 +32,7 @@ export type StudyKeyAction =
   /** A key the session owns that does nothing now. It's still stopped, so no other shortcut acts on it. */
   | { type: 'swallow' };
 
-export type StudyKeyEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'defaultPrevented'>;
+export type StudyKeyEvent = Pick<KeyboardEvent, 'key' | 'repeat' | 'metaKey' | 'ctrlKey' | 'altKey' | 'defaultPrevented'>;
 
 /** Keys 1-4 give the grades in the order of their buttons. */
 const RATING_KEYS: ReadonlyMap<string, ReviewRating> = new Map(RATINGS.map((rating, i) => [String(i + 1), rating]));
@@ -40,15 +41,18 @@ const RATING_KEYS: ReadonlyMap<string, ReviewRating> = new Map(RATINGS.map((rati
  * What a key does in a study session, or null when the session leaves it alone. The session owns 1-4 even
  * before the answer shows: an early press does nothing rather than switch tabs mid-session. U undoes the last
  * grade, and Space or Enter shows the answer unless the keyboard focused a control they should press. While an
- * undo is under way, grading and revealing wait: the undo is about to bring back the card it undoes.
+ * undo is under way, grading and revealing wait: the undo is about to bring back the card it undoes. A held key
+ * acts once, when pressed (acceptKeyRepeat); a held 1-4 stays the session's, so its repeats don't switch tabs.
  */
 export function resolveStudyKey(event: StudyKeyEvent, state: StudyKeyState): StudyKeyAction | null {
   if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return null;
   if (state.typing || state.dialogOutside) return null;
+  const firstPress = acceptKeyRepeat(event);
   const rating = RATING_KEYS.get(event.key);
   if (rating) {
-    return state.phase === 'card' && state.revealed && !state.undoing ? { type: 'grade', rating } : { type: 'swallow' };
+    return firstPress && state.phase === 'card' && state.revealed && !state.undoing ? { type: 'grade', rating } : { type: 'swallow' };
   }
+  if (!firstPress) return null;
   if (event.key.toLowerCase() === 'u' && state.canUndo && !state.undoing) return { type: 'undo' };
   if ((event.key === ' ' || event.key === 'Enter') && state.phase === 'card' && !state.revealed && !state.onControl) {
     return state.undoing ? { type: 'swallow' } : { type: 'reveal' };

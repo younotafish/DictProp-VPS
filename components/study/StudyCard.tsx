@@ -36,9 +36,12 @@ interface StudyCardProps {
   undoError: string;
   onUndo: () => void;
   onClose: () => void;
+  /** Enter, or Space in an empty box, in the answer box: shows the answer at once. */
   onReveal: () => void;
+  /** The footer's Show answer and grade buttons, which ignore a tap just after a reveal or a grade (acceptFooterTap). */
+  onFooterReveal: () => void;
+  onFooterGrade: (rating: ReviewRating) => void;
   onTypeAnswer: (text: string) => void;
-  onGrade: (rating: ReviewRating) => void;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
 }
 
@@ -53,8 +56,9 @@ export function StudyCard({
   onUndo,
   onClose,
   onReveal,
+  onFooterReveal,
+  onFooterGrade,
   onTypeAnswer,
-  onGrade,
   onOpenExampleSentence,
 }: StudyCardProps) {
   const task = selectReviewTask(item);
@@ -168,7 +172,7 @@ export function StudyCard({
               {RATINGS.map((rating, i) => (
                 <button
                   key={rating}
-                  onClick={() => onGrade(rating)}
+                  onClick={() => onFooterGrade(rating)}
                   disabled={undoing}
                   aria-keyshortcuts={String(i + 1)}
                   className={`h-14 rounded-lg border font-semibold capitalize disabled:opacity-50 ${RATING_STYLES[rating]}`}
@@ -180,7 +184,7 @@ export function StudyCard({
             </div>
           ) : (
             <button
-              onClick={onReveal}
+              onClick={onFooterReveal}
               disabled={undoing}
               className="mt-1.5 w-full h-14 inline-flex items-center justify-center gap-2 bg-white border border-slate-300 rounded-lg font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
               aria-keyshortcuts="Space Enter"

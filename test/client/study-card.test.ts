@@ -36,7 +36,7 @@ const session = (overrides: Partial<StudySession> = {}): StudySession => ({
 const noop = () => {};
 const render = (props: Partial<StudyCardProps> & Pick<StudyCardProps, 'item'>) => renderToStaticMarkup(createElement(StudyCard, {
   session: session(), canUndo: false, undoing: false, receipt: null, undoError: '', onUndo: noop, onClose: noop, onReveal: noop,
-  onTypeAnswer: noop, onGrade: noop, onOpenExampleSentence: noop, ...props,
+  onFooterReveal: noop, onFooterGrade: noop, onTypeAnswer: noop, onOpenExampleSentence: noop, ...props,
 }));
 
 const textOf = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();

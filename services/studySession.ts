@@ -335,6 +335,18 @@ export function requeueShortStep(itemIds: string[], index: number, intervalMinut
   return intervalMinutes < DAY_MINUTES && index < itemIds.length ? [...itemIds, itemIds[index]] : itemIds;
 }
 
+/** How long after a reveal or a grade a tap on the study card's footer is taken for the second tap of a double tap. */
+export const FOOTER_TAP_GUARD_MS = 350;
+
+/**
+ * Whether a tap on the study card's footer counts: not within `windowMs` of the last reveal or grade (made any
+ * way), so a double tap can't run from Show answer into a grade, or from a grade into the next card's reveal.
+ * Keys aren't held back. A clock that went back lets the tap through rather than holding every tap.
+ */
+export function acceptFooterTap(lastActionAt: number | undefined, now: number, windowMs = FOOTER_TAP_GUARD_MS): boolean {
+  return lastActionAt === undefined || now - lastActionAt >= windowMs || now < lastActionAt;
+}
+
 /** What the receipt line under a study card says about the last grade (components/study/GradeReceipt.tsx). */
 export interface GradeReceiptText {
   word: string;
