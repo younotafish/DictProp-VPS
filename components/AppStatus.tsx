@@ -8,6 +8,16 @@ import type { ImagePrefetchProgress, ImageRestoreProgress } from '../hooks/useOf
 
 // The app-wide notices: the stack of pills that floats at the bottom of the screen.
 
+const imageCount = (n: number) => `${n} ${n === 1 ? 'image' : 'images'}`;
+
+/** The offline-image download's pill: how far it has got, then how it ended. */
+const describeImagePrefetch = ({ phase, done, total, saved, failed }: ImagePrefetchProgress): string => {
+  if (phase === 'downloading') return `Offline images · ${done}/${total}`;
+  if (phase === 'empty') return 'No images to download';
+  if (phase === 'nothing') return 'All images are already offline';
+  return failed ? `Saved ${saved} of ${imageCount(total)} · ${failed} couldn\u2019t download` : `Saved ${imageCount(saved)} for offline use`;
+};
+
 const describeImageRestore = ({ phase, done, total, failed }: ImageRestoreProgress): string => {
   if (phase === 'checking') return 'Checking which images the server is missing…';
   if (phase === 'uploading') return `Restoring images to server: ${done}/${total}`;
@@ -71,15 +81,17 @@ export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
     <div ref={noticeSlotRef('search')} data-notice-slot="search" className="flex flex-col items-center gap-2 empty:hidden" />
 
     <div ref={noticeSlotRef('progress')} data-notice-slot="progress" className="flex flex-col items-center gap-2 empty:hidden" />
-    {imagePrefetchProgress && (
+    {imagePrefetchProgress && (imagePrefetchProgress.phase === 'downloading' ? (
       <NoticePill
         tone="indigo"
-        spinner={imagePrefetchProgress.done < imagePrefetchProgress.total}
+        spinner
         actions={[{ label: 'Stop downloading offline images', title: 'Stop downloading', dismiss: true, onClick: onStopImageDownload }]}
       >
-        Offline images · {imagePrefetchProgress.done}/{imagePrefetchProgress.total}
+        {describeImagePrefetch(imagePrefetchProgress)}
       </NoticePill>
-    )}
+    ) : (
+      <NoticePill tone={imagePrefetchProgress.failed ? 'rose' : 'emerald'} wrap>{describeImagePrefetch(imagePrefetchProgress)}</NoticePill>
+    ))}
     {imageRestoreProgress && (
       <NoticePill tone={imageRestoreProgress.phase === 'failed' || imageRestoreProgress.failed ? 'rose' : 'emerald'}>
         {describeImageRestore(imageRestoreProgress)}

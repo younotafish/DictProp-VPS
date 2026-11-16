@@ -8,8 +8,34 @@ import { log, warn } from '../services/logger';
 import type { Library } from './useLibrary';
 
 export type { ImageRestoreProgress } from '../services/imageRestore';
-/** How far the explicit offline-image download has got. */
-export interface ImagePrefetchProgress { done: number; total: number }
+/**
+ * The explicit offline-image download: 'downloading' while it runs, then how it ended: 'done', 'nothing' when this
+ * device already had every picture, or 'empty' when the library has none. Of the `total` pictures this device lacked,
+ * `done` have been tried; `saved` were stored and `failed` couldn't be downloaded or stored. A picture the server
+ * doesn't have is neither.
+ */
+export interface ImagePrefetchProgress { phase: 'downloading' | 'done' | 'nothing' | 'empty'; done: number; total: number; saved: number; failed: number }
+
+/**
+ * Downloads a batch of pictures and stores them for offline use, saying how many it stored and how many failed: those
+ * whose download threw, all that arrived when storing them fails, and the whole batch when the batch itself throws. A
+ * picture the server doesn't have is in neither. Tests pass their own `load` and `store`.
+ */
+export async function fetchImageBatch(
+  ids: string[],
+  versions: ReadonlyMap<string, string>,
+  load = loadItemImagesBatch,
+  store = saveImagesBatch,
+): Promise<{ saved: number; failed: number }> {
+  try {
+    const { images, failed } = await load(ids, versions);
+    const stored = await store([...images].map(([id, image]) => ({ id, image, version: versions.get(id) })), { remember: false });
+    return stored ? { saved: images.size, failed: failed.length } : { saved: 0, failed: failed.length + images.size };
+  } catch (e) {
+    warn('Image pre-fetch batch failed:', e);
+    return { saved: 0, failed: ids.length };
+  }
+}
 
 /** Pictures kept for offline use: the study ones cached quietly, all of them on request, and restoring the server's. */
 export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsRef'>) {
@@ -59,12 +85,26 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
       if (item.isDeleted || item.isArchived) continue;
       for (const { id, imageUrl } of picturesOf(item)) addImageMarker(id, imageUrl);
     }
-    if (idsWithImages.length === 0) return;
+    // Only the offline download shows a pill (the quiet priority caching reports nothing, so `end` does nothing for it
+    // either). Its last word stays a few seconds, longer when pictures failed, unless a newer download or Stop has
+    // replaced it.
+    const report = mode === 'all' ? setImagePrefetchProgress : () => {};
+    const end = (progress: ImagePrefetchProgress) => {
+      report(progress);
+      setTimeout(() => report(shown => (shown === progress ? null : shown)), progress.failed ? 6000 : 3000);
+    };
+    if (idsWithImages.length === 0) {
+      end({ phase: 'empty', done: 0, total: 0, saved: 0, failed: 0 });
+      return;
+    }
 
     // Check which IDs already have images in IDB
     const alreadyStored = await getStoredImageIds(idsWithImages, imageVersions);
     const missing = idsWithImages.filter(id => !alreadyStored.has(id));
-    if (missing.length === 0) return;
+    if (missing.length === 0) {
+      end({ phase: 'nothing', done: 0, total: 0, saved: 0, failed: 0 });
+      return;
+    }
 
     // Sort by SRS nextReview (soonest first) so study-relevant images load first
     const srsMap = new Map<string, number>();
@@ -75,31 +115,29 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
     missing.sort((a, b) => (srsMap.get(a) || Infinity) - (srsMap.get(b) || Infinity));
 
     log(`🖼️ Caching ${missing.length} ${mode === 'all' ? 'offline' : 'priority'} images...`);
-    // Only the offline download supersedes others, so the pill it shows is always its own to clear.
+    // Only the offline download supersedes others, and a superseded run reports nothing more, so the pill it shows
+    // is always its own.
     const run = mode === 'all' ? ++prefetchRunRef.current : prefetchRunRef.current;
-    const report = mode === 'all' ? setImagePrefetchProgress : () => {};
-    report({ done: 0, total: missing.length });
+    report({ phase: 'downloading', done: 0, total: missing.length, saved: 0, failed: 0 });
 
     const BATCH_SIZE = 20;
     let done = 0;
+    let saved = 0;
+    let failed = 0;
     for (let i = 0; i < missing.length; i += BATCH_SIZE) {
       if (prefetchRunRef.current !== run) return;
       const batch = missing.slice(i, i + BATCH_SIZE);
-      try {
-        const { images } = await loadItemImagesBatch(batch, imageVersions);
-        const toSave = [...images].map(([id, image]) => ({ id, image, version: imageVersions.get(id) }));
-        if (toSave.length > 0) await saveImagesBatch(toSave, { remember: false });
-      } catch (e) {
-        warn("Image pre-fetch batch failed:", e);
-      }
+      const tally = await fetchImageBatch(batch, imageVersions);
+      if (prefetchRunRef.current !== run) return;
       done += batch.length;
-      report({ done, total: missing.length });
+      saved += tally.saved;
+      failed += tally.failed;
+      report({ phase: 'downloading', done, total: missing.length, saved, failed });
       // Yield to main thread between batches
       await new Promise(r => setTimeout(r, 100));
     }
     log(`🖼️ Pre-fetch complete: ${done}/${missing.length} images`);
-    // Clear progress after a short delay
-    setTimeout(() => { if (prefetchRunRef.current === run) report(null); }, 3000);
+    if (prefetchRunRef.current === run) end({ phase: 'done', done, total: missing.length, saved, failed });
   }, []);
 
   const stopImageDownload = useCallback(() => {

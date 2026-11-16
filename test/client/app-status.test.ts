@@ -6,14 +6,17 @@ import * as AppStatus from '../../components/AppStatus.tsx';
 import { AppStatusPills } from '../../components/AppStatus.tsx';
 import { JobPills, StuckSyncPill } from '../../components/JobPills.tsx';
 import { NoticePill, type NoticeTone } from '../../components/NoticePill.tsx';
+import { fetchImageBatch, type ImagePrefetchProgress } from '../../hooks/useOfflineImages.ts';
 import { announceUpdate, dismissUpdate } from '../../services/appUpdate.ts';
+import type { ImageToStore } from '../../services/imageStore.ts';
 import type { JobNotice } from '../../services/jobNotices.ts';
 import { clearRefusedReviews, recordRefusedReview } from '../../services/refusedReviews.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 // components/AppStatus.tsx's notice stack, the job and stuck-sync pills App renders into it (components/JobPills.tsx),
-// and components/NoticePill.tsx, rendered on the server. The refused-reviews notice reads this device's log from
-// localStorage, and the update notice reads services/appUpdate.
+// and components/NoticePill.tsx, rendered on the server; and the counts the offline-image download's pill reports
+// (hooks/useOfflineImages.ts). The refused-reviews notice reads this device's log from localStorage, and the update
+// notice reads services/appUpdate.
 (globalThis as unknown as { localStorage: MemoryStorage }).localStorage = new MemoryStorage();
 
 type StackProps = ComponentProps<typeof AppStatusPills>;
@@ -51,6 +54,8 @@ const noJobs: JobProps = {
 /** The job pills as App renders them into the stack. */
 const jobPills = (props: Partial<JobProps>) => createElement(JobPills, { ...noJobs, ...props });
 const renderJobs = (props: Partial<JobProps>) => renderStack({ jobPills: jobPills(props) });
+/** The offline-image download `done` of `total` pictures in, as its pill shows it. */
+const downloading = (done: number, total: number): ImagePrefetchProgress => ({ phase: 'downloading', done, total, saved: done, failed: 0 });
 /** The class list of the stack's own element, the first in the markup. */
 const stackClasses = (html: string) => html.match(/^<div class="([^"]*)"/)![1].split(/\s+/);
 const refuseOneReview = () => recordRefusedReview('u1', { itemId: 'i1', word: 'gamut', reviewedAt: 1, reason: 'The card isn’t on the server' });
@@ -89,7 +94,7 @@ test('the stack keeps its notices in order of how long they stay: undo, search, 
   t.after(() => { clearRefusedReviews('u1'); dismissUpdate(); });
   const html = renderStack({
     undoMessage: 'Deleted “gamut”',
-    imagePrefetchProgress: { done: 3, total: 40 },
+    imagePrefetchProgress: downloading(3, 40),
     jobPills: jobPills({ speechProgress: { current: 10, total: 100 } }),
   });
   const order = ['Deleted “gamut”', 'data-notice-slot="search"', 'data-notice-slot="progress"', 'Offline images · 3/40',
@@ -101,7 +106,7 @@ test('the stack keeps its notices in order of how long they stay: undo, search, 
 test('a failed save on this device is an alert in the long-lived group, whose advice follows the connection', t => {
   refuseOneReview();
   t.after(() => clearRefusedReviews('u1'));
-  const online = renderStack({ writeFailed: true, imagePrefetchProgress: { done: 3, total: 40 } });
+  const online = renderStack({ writeFailed: true, imagePrefetchProgress: downloading(3, 40) });
   const alert = online.match(/<div role="alert" class="([^"]*)"><span class="min-w-0 line-clamp-2">Couldn’t save on this device\. Your changes still sync\.<\/span><\/div>/);
   assert.ok(alert, 'a rose alert of up to two lines');
   for (const name of ['bg-rose-600', 'rounded-2xl']) assert.ok(alert[1].split(/\s+/).includes(name), name);
@@ -173,7 +178,7 @@ test('every pill is capped short of the search button\'s column and truncates it
   t.after(() => { clearRefusedReviews('u1'); dismissUpdate(); });
   const html = renderStack({
     undoMessage: 'Deleted “gamut”',
-    imagePrefetchProgress: { done: 3, total: 40 },
+    imagePrefetchProgress: downloading(3, 40),
     imageRestoreProgress: { phase: 'uploading', done: 1, total: 4, failed: 0 },
     jobPills: jobPills({ speechProgress: { current: 10, total: 100 } }),
   });
@@ -207,11 +212,51 @@ test('the update notice says it in two words, with the sentence as its title and
   }
 });
 
-test('the image jobs keep their texts and their stop button', () => {
-  const html = renderStack({ imagePrefetchProgress: { done: 40, total: 40 } });
+test('the offline-image download spins with its stop button while it runs', () => {
+  const html = renderStack({ imagePrefetchProgress: downloading(120, 340) });
+  assert.match(html, /<div role="status" class="[^"]*bg-indigo-600[^"]*"><svg[^>]*animate-spin[^>]*>.*?<\/svg><span class="min-w-0 truncate">Offline images · 120\/340<\/span>/);
   assert.match(html, /aria-label="Stop downloading offline images"/);
   assert.match(html, /title="Stop downloading"/);
-  assert.doesNotMatch(html, /animate-spin/, 'a finished download stops spinning');
+});
+
+test('the offline-image download then says what it saved, what failed, or that there was nothing to do', () => {
+  const ended = (progress: Partial<ImagePrefetchProgress>) =>
+    renderStack({ imagePrefetchProgress: { phase: 'done', done: 0, total: 0, saved: 0, failed: 0, ...progress } });
+  // On a phone the text takes a second line rather than lose the count that failed.
+  const pill = (tone: string, text: string) =>
+    new RegExp(`<div role="status" class="[^"]*rounded-2xl bg-${tone}-600[^"]*"><span class="min-w-0 line-clamp-2">${text}</span></div>`);
+  assert.match(ended({ done: 340, total: 340, saved: 340 }), pill('emerald', 'Saved 340 images for offline use'));
+  assert.match(ended({ done: 1, total: 1, saved: 1 }), pill('emerald', 'Saved 1 image for offline use'));
+  assert.match(ended({ done: 340, total: 340, saved: 300, failed: 40 }), pill('rose', 'Saved 300 of 340 images · 40 couldn’t download'));
+  assert.match(ended({ phase: 'nothing' }), pill('emerald', 'All images are already offline'));
+  assert.match(ended({ phase: 'empty' }), pill('emerald', 'No images to download'));
+  for (const phase of ['done', 'nothing', 'empty'] as const) {
+    assert.doesNotMatch(ended({ phase }), /animate-spin|<button/, `${phase}: nothing left to stop`);
+  }
+});
+
+test('a batch of the offline download counts what it stored and what failed, and a picture the server lacks as neither', async () => {
+  const versions = new Map([['a', 'v1']]);
+  const stored: ImageToStore[][] = [];
+  const blob = new Blob(['x']);
+  // a and b arrive, c's download throws, and the server has no picture for d.
+  const load = async (ids: string[], given?: ReadonlyMap<string, string>) => {
+    assert.equal(given, versions);
+    return { images: new Map(ids.filter(id => id === 'a' || id === 'b').map(id => [id, blob])), failed: ids.filter(id => id === 'c') };
+  };
+  const store = (ok: boolean) => async (images: ImageToStore[], options?: { remember?: boolean }) => {
+    assert.deepEqual(options, { remember: false }, 'a bulk download leaves the memory cache to the cards just viewed');
+    stored.push(images);
+    return ok;
+  };
+  assert.deepEqual(await fetchImageBatch(['a', 'b', 'c', 'd'], versions, load, store(true)), { saved: 2, failed: 1 });
+  assert.deepEqual(stored[0], [{ id: 'a', image: blob, version: 'v1' }, { id: 'b', image: blob, version: undefined }]);
+  assert.deepEqual(await fetchImageBatch(['a', 'b', 'c', 'd'], versions, load, store(false)), { saved: 0, failed: 3 }, 'storing failed');
+  const offline = async () => { throw new Error('offline'); };
+  assert.deepEqual(await fetchImageBatch(['a', 'b', 'c', 'd'], versions, offline, store(true)), { saved: 0, failed: 4 }, 'the batch threw');
+});
+
+test('the image restore keeps its texts', () => {
   assert.match(renderStack({ imageRestoreProgress: { phase: 'failed', done: 0, total: 0, failed: 0 } }), /bg-rose-600/);
   assert.match(renderStack({ imageRestoreProgress: { phase: 'done', done: 4, total: 4, failed: 0 } }), /bg-emerald-600[^>]*><span class="min-w-0 truncate">Restored 4 images to the server ✓/);
 });
@@ -267,7 +312,7 @@ test('the jobs come after the progress slot, and the last result just above the 
   refuseOneReview();
   t.after(() => clearRefusedReviews('u1'));
   const html = renderStack({
-    imagePrefetchProgress: { done: 3, total: 40 },
+    imagePrefetchProgress: downloading(3, 40),
     jobPills: jobPills({
       speechProgress: { current: 10, total: 100 },
       batchImportProgress: importing(12, 40),
