@@ -26,6 +26,7 @@ import { WordComparisons, comparisonsInvolving } from './WordComparisons';
 import { PhraseBody } from './PhraseBody';
 import { ExampleSentencePreview } from './ExampleSentencePreview';
 import { buildToReviewFrom, cardPositionLine } from './cardPosition';
+import { cardIds, liveIdsAmong, useLeaveGoneItems } from './goneItems';
 import { useCardNavigation } from './useCardNavigation';
 import { useAutoPlay } from './useAutoPlay';
 import { useAutoPlayReader } from './useAutoPlayReader';
@@ -55,6 +56,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     navigationKey,
     onClose,
     onSave,
+    onRemoveFromView,
     onDelete,
     onArchive,
     onUnarchive,
@@ -100,6 +102,14 @@ export function WordDetailView(props: DetailViewBodyProps) {
 
   // Keep a ref to savedItems so callbacks always see fresh data without re-creating
   const savedItemsRef = useLatest(savedItems);
+
+  // A card deleted on another device leaves the view, once App can take it out.
+  const viewCardIds = useMemo(() => cardIds(groups), [groups]);
+  const liveCardIds = useMemo(
+    () => onRemoveFromView ? liveIdsAmong(viewCardIds, savedItems) : null,
+    [viewCardIds, savedItems, onRemoveFromView],
+  );
+  useLeaveGoneItems(viewCardIds, liveCardIds, onRemoveFromView);
   // Preview lookups run on every render, so index saved sentences once instead of re-normalizing all of them.
   const savedSentenceIndex = useSavedSentenceIndex(savedSentenceItems);
 

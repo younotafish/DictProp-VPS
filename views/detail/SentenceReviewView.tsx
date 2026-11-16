@@ -19,7 +19,7 @@ import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { preloadSession } from './cardReading';
 import { resolveSentenceUnderReview } from './sentenceUnderReview';
 import { withSpeechStyle } from './speechStyle';
-import { automaticWrite } from './goneItems';
+import { automaticWrite, ownSentenceIds, useLeaveGoneItems } from './goneItems';
 import { lessonReviewPill, memorizedCount, sentenceRowState } from './sentenceRowState';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
@@ -60,6 +60,7 @@ export function SentenceReviewView({
   onClose,
   onSave,
   onPatchItem,
+  onRemoveFromView,
   onDelete,
   onResetSRS,
   savedSentenceItems = [],
@@ -107,6 +108,10 @@ export function SentenceReviewView({
   const savedSentenceIndexRef = useLatest(savedSentenceIndex);
   const onSaveRef = useLatest(onSave);
   const onPatchItemRef = useLatest(onPatchItem);
+
+  // A saved sentence deleted on another device leaves the run, once App can take it out.
+  const leavingSentenceIds = useMemo(() => ownSentenceIds(sentenceItems), [sentenceItems]);
+  useLeaveGoneItems(leavingSentenceIds, savedSentenceIndex.byId, onRemoveFromView);
 
   // The sentence's source card.
   const data = currentItem.data;

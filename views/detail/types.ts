@@ -17,6 +17,11 @@ export interface DetailViewProps {
    * only to a sentence the library still holds.
    */
   onPatchItem?: (id: string, patch: (item: StoredItem) => StoredItem | null) => void;
+  /**
+   * Takes an item the library no longer holds, as when another device deleted it, out of the open view: the view
+   * moves to the next card or sentence, or closes after the last. Until App passes it, such an item stays open.
+   */
+  onRemoveFromView?: (id: string) => void;
   onDelete: (id: string) => void;
   onArchive?: (id: string) => void;
   /** Returns an archived card to review; the action menu and the A key offer it on archived cards. */
