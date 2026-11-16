@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react';
 import { Eye, Maximize2, Volume2, X } from 'lucide-react';
 import { getItemSense, type ReviewRating, type StoredItem } from '../../types';
 import { previewRatings } from '../../services/fsrsScheduler';
@@ -14,6 +15,13 @@ const RATING_STYLES: Record<ReviewRating, string> = {
   good: 'border-emerald-300 text-emerald-700 bg-emerald-50',
   easy: 'border-blue-300 text-blue-700 bg-blue-50',
 };
+
+/**
+ * How far the card's footer reaches above the tab bar: 0.5rem over the bar, then its border, the 2rem receipt line,
+ * a 0.375rem gap and the 3.5rem slot, 103 px in all, rounded up. While a card shows, the page's notices and the
+ * search button rise by it on the tabs (calc(var(--nav-h) + var(--tab-footer-h, 0px) + 0.5rem), UX-10).
+ */
+export const TAB_FOOTER_HEIGHT = '6.5rem';
 
 // The typed answer's verdict: right, nearly (a typo or a synonym), or not.
 const VERDICT_STYLES = { correct: 'text-emerald-700', close: 'text-amber-700', wrong: 'text-rose-700' } as const;
@@ -61,6 +69,15 @@ export function StudyCard({
   onTypeAnswer,
   onOpenExampleSentence,
 }: StudyCardProps) {
+  // Set while the card is on screen; hiding the tab runs the cleanup too.
+  useLayoutEffect(() => {
+    const root = document.documentElement.style;
+    root.setProperty('--tab-footer-h', TAB_FOOTER_HEIGHT);
+    return () => {
+      root.removeProperty('--tab-footer-h');
+    };
+  }, []);
+
   const task = selectReviewTask(item);
   const content = getStudyContent(item);
   const example = stripSentenceMarkers(content.example);

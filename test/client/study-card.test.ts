@@ -8,7 +8,7 @@ import { installFakeMedia } from '../support/audio/fakeMedia.ts';
 
 // The card imports the speech engine, which reads the browser's media when it loads.
 installFakeMedia();
-const { StudyCard } = await import('../../components/study/StudyCard.tsx');
+const { StudyCard, TAB_FOOTER_HEIGHT } = await import('../../components/study/StudyCard.tsx');
 
 type StudyCardProps = Parameters<typeof StudyCard>[0];
 
@@ -150,4 +150,17 @@ test('a failed undo is said in the receipt line itself, so the card never moves 
   assert.doesNotMatch(footer, /next in 2d/);
   assert.doesNotMatch(body, /Reconnect/);
   assert.equal(markup.match(/role="alert"/g)?.length, 1);
+});
+
+test('the footer reaches no higher above the tab bar than the --tab-footer-h it gives the notices and the search button', () => {
+  const REM = 16;
+  const { footer } = partsOf(render({ item: card(), receipt: { word: 'walk', rating: 'good', ratingLabel: 'Good', detail: 'next in 2d' }, canUndo: true }));
+  // The parts the height is made of, as TAB_FOOTER_HEIGHT's comment adds them up.
+  assert.match(footer, /pb-\[calc\(var\(--nav-h,95px\)\+0\.5rem\)\]/);
+  assert.match(footer, /<div class="max-w-2xl mx-auto border-t border-slate-200"><div class="h-8 /);
+  assert.match(footer, /<button[^>]*class="mt-1\.5 w-full h-14 /);
+  const reach = 0.5 * REM + 1 + 2 * REM + 0.375 * REM + 3.5 * REM;
+  assert.equal(reach, 103);
+  assert.equal(TAB_FOOTER_HEIGHT, '6.5rem');
+  assert.ok(reach <= 6.5 * REM);
 });
