@@ -163,3 +163,39 @@ test('playback and a session warm share the download of a clip and of its timing
   }
 });
 
+test('a small warm-up asks for the missing clips without waiting on the timings of the clips it found', async () => {
+  const [found, missing] = [sentence(), sentence()];
+  const foundKey = await keyOf(found);
+  server.clips.set(foundKey, clip());
+  server.timings.set(foundKey, timings);
+  const gates: Array<() => void> = [];
+  // Only timings requests are held. The fake server calls this right after recording the request it holds.
+  server.latency = () => server.requests.at(-1)?.endsWith('/timings') ? new Promise<void>(resolve => gates.push(resolve)) : Promise.resolve();
+  try {
+    const warm = ensureTTS([found, missing]);
+    // No timings answer arrives while they're held, so this can't have waited for the found clip's timings.
+    await until(() => server.generated.some(item => item.text === missing), 'the missing clip is sent to be generated');
+    server.latency = null;
+    for (const release of gates.splice(0)) release();
+    await warm;
+    assert.equal(timingRequests(foundKey), 1, "the found clip's timings are still warmed");
+    const missingKey = await keyOf(missing);
+    assert.equal(mp3Requests(missingKey), 2, 'the generated clip is fetched once it exists');
+    assert.equal(timingRequests(missingKey), 1);
+  } finally {
+    server.latency = null;
+    for (const release of gates.splice(0)) release();
+  }
+});
+
+test('a warm-up counts each sentence once, a found clip once its timings settle', async () => {
+  const texts = [sentence(), sentence(), sentence()];
+  for (const key of await Promise.all(texts.map(keyOf))) {
+    server.clips.set(key, clip());
+    server.timings.set(key, timings);
+  }
+  const progress: string[] = [];
+  await preloadAudio([...texts, texts[0]], (done, total) => progress.push(`${done}/${total}`));
+  assert.deepEqual(progress, ['0/3', '1/3', '2/3', '3/3']);
+});
+

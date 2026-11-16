@@ -11,7 +11,8 @@ import {
 import { STYLE_VOICES } from './voices';
 
 /** Clips a warm-up fetches at once, like the session preload's pictures: enough to keep the line busy without
- *  queueing hundreds of requests ahead of the clip the learner taps next. */
+ *  queueing hundreds of requests ahead of the clip the learner taps next. A warm-up into memory also fetches the
+ *  timings of the clips it found, as many at once, beside them. */
 export const WARM_CONCURRENCY = 4;
 
 export interface WarmOptions {
@@ -67,39 +68,59 @@ export const warmClips = async (texts: string[], options: WarmOptions = {}): Pro
   const tick = () => onProgress?.(++done, total);
 
   const intoMemory = options.intoMemory || !(await audioCacheReady());
-  const missing = intoMemory
+  const { missing, timingsWarmed } = intoMemory
     ? await warmIntoMemory(plains, style, tick, signal)
-    : await warmIntoStorage(plains, style, tick, signal);
+    : { missing: await warmIntoStorage(plains, style, tick, signal), timingsWarmed: Promise.resolve() };
 
   // Generate the missing clips server-side (one batch), then fetch them.
-  if (!generate || !missing.length || signal?.aborted) return;
-  const voice = STYLE_VOICES[style].generate;
-  try { await requestTTSGeneration(missing.map(text => ({ text, voice }))); } catch { /* best-effort */ }
-  await eachLimited(missing, WARM_CONCURRENCY, signal, async (plain) => {
-    try {
-      const key = await ttsKey(plain, voice);
-      if (intoMemory) {
-        await loadClipUrl(key);
-        await loadTimingsCached(key);
-      } else {
-        await storeClip(key);
-      }
-    } catch { /* ignore */ }
-    tick();
-  });
+  const fetchGenerated = async (): Promise<void> => {
+    if (!generate || !missing.length || signal?.aborted) return;
+    const voice = STYLE_VOICES[style].generate;
+    try { await requestTTSGeneration(missing.map(text => ({ text, voice }))); } catch { /* best-effort */ }
+    await eachLimited(missing, WARM_CONCURRENCY, signal, async (plain) => {
+      try {
+        const key = await ttsKey(plain, voice);
+        if (intoMemory) {
+          await loadClipUrl(key);
+          await loadTimingsCached(key);
+        } else {
+          await storeClip(key);
+        }
+      } catch { /* ignore */ }
+      tick();
+    });
+  };
+  // The request to generate goes out as soon as every clip has been looked up, while the clips found still warm
+  // their timings.
+  await Promise.all([timingsWarmed, fetchGenerated()]);
 };
 
-// Resolve each clip as a tap would and warm its timings. Returns the sentences no voice has a clip for.
-const warmIntoMemory = async (plains: string[], style: TtsStyle, tick: () => void, signal?: AbortSignal): Promise<string[]> => {
+// Resolve each clip as a tap would. A clip found warms its timings behind the lookups, in one of WARM_CONCURRENCY
+// lanes that each fetch one at a time, so slow timings hold up neither the next clip nor the request to generate
+// the missing ones; its sentence counts as done once they settle. Returns the sentences no voice has a clip for,
+// and the timings warms still under way.
+const warmIntoMemory = async (
+  plains: string[],
+  style: TtsStyle,
+  tick: () => void,
+  signal?: AbortSignal,
+): Promise<{ missing: string[]; timingsWarmed: Promise<void> }> => {
   const missing: string[] = [];
+  const lanes: Array<Promise<void>> = [];
+  let found = 0;
+  const warmTimings = async (key: string): Promise<void> => {
+    if (!signal?.aborted) await loadTimingsCached(key).catch(() => null);
+    tick();
+  };
   await eachLimited(plains, WARM_CONCURRENCY, signal, async (plain) => {
     try {
       const clip = await resolveCachedClip(plain, style);
-      if (clip) { await loadTimingsCached(clip.key); tick(); return; }
-      missing.push(plain); // absent everywhere → generate
+      if (!clip) { missing.push(plain); return; } // absent everywhere → generate
+      const lane = found++ % WARM_CONCURRENCY;
+      lanes[lane] = (lanes[lane] ?? Promise.resolve()).then(() => warmTimings(clip.key));
     } catch { tick(); }
   });
-  return missing;
+  return { missing, timingsWarmed: Promise.all(lanes).then(() => undefined) };
 };
 
 // Check which clips and timings the device holds, all in one go, and download the rest into IndexedDB, walking
