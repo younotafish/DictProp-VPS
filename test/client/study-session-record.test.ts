@@ -38,7 +38,7 @@ const session = (overrides: Partial<StudySession> = {}): StudySession => ({
   typedAnswer: 'secret answer',
   promptStartedAt: NOW - 30_000,
   startedAt: NOW - HOUR,
-  grades: [{ itemId: 'a', rating: 'again' }, { itemId: 'b', rating: 'good' }],
+  grades: [{ itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000 }, { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000 }],
   siblingCounts: { a: 2 },
   passedOverFrom: 1,
   ...overrides,
@@ -52,7 +52,8 @@ test('the record holds the session\'s ids, place and grades, and nothing of its 
   const raw = encodeStudySession(session(), USER, NOW);
   assert.deepEqual(JSON.parse(raw), {
     version: 2, userId: USER, sessionId: 'session-1', itemIds: ['a', 'b', 'c', 'a'], index: 2,
-    grades: [{ itemId: 'a', rating: 'again' }, { itemId: 'b', rating: 'good' }], startedAt: NOW - HOUR, savedAt: NOW,
+    grades: [{ itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000 }, { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000 }],
+    startedAt: NOW - HOUR, savedAt: NOW,
   });
   assert.doesNotMatch(raw, /secret answer|siblingCounts|revealed/);
   assert.deepEqual(decodeStudySession(raw, USER, NOW + HOUR), JSON.parse(raw));
@@ -70,6 +71,7 @@ test('a record that can\'t be taken up decodes to nothing: unreadable, another v
     ['ids that are not strings', recordJson({ itemIds: ['a', 7] })],
     ['a grade with another rating', recordJson({ grades: [{ itemId: 'a', rating: 'perfect' }] })],
     ['a grade without a card', recordJson({ grades: [{ rating: 'good' }] })],
+    ['a grade with a time that is not one', recordJson({ grades: [{ itemId: 'a', rating: 'good', at: 'soon' }] })],
     ['the place past the end', recordJson({ index: 4 })],
     ['a negative place', recordJson({ index: -1 })],
     ['a fractional place', recordJson({ index: 1.5 })],
@@ -81,6 +83,15 @@ test('a record that can\'t be taken up decodes to nothing: unreadable, another v
   assert.equal(decodeStudySession(recordJson({}, NOW - SESSION_RECORD_MAX_AGE_MS - 1), USER, NOW), null);
   assert.equal(decodeStudySession(recordJson({}, NOW + 1), USER, NOW), null);
   assert.equal(SESSION_RECORD_MAX_AGE_MS, 6 * HOUR);
+});
+
+test('a grade in a record written before grades kept their time is taken as given when the record was saved', () => {
+  const savedAt = NOW - HOUR / 2;
+  const raw = recordJson({ grades: [{ itemId: 'a', rating: 'again' }, { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000 }] }, savedAt);
+  assert.deepEqual(decodeStudySession(raw, USER, NOW)?.grades, [
+    { itemId: 'a', rating: 'again', at: savedAt },
+    { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000 },
+  ]);
 });
 
 test('taken up again, a session goes on at the first card still studied and not reviewed since the record was written', () => {
@@ -100,7 +111,7 @@ test('a restored session is at its card, unrevealed and unanswered, with its sta
   const restored = restoredSession(record, 3, NOW + 60_000, { a: 2 });
   assert.deepEqual(restored, {
     id: 'session-1', itemIds: ['a', 'b', 'c', 'a'], index: 3, revealed: false, typedAnswer: '', promptStartedAt: NOW + 60_000,
-    startedAt: NOW - HOUR, grades: [{ itemId: 'a', rating: 'again' }, { itemId: 'b', rating: 'good' }], siblingCounts: { a: 2 },
+    startedAt: NOW - HOUR, grades: session().grades, siblingCounts: { a: 2 },
   });
   assert.equal('passedOverFrom' in restored, false);
   assert.equal('ended' in restored, false);
@@ -113,7 +124,7 @@ test('the record is written again when the session moves on, never as an answer 
   assert.equal(changed({ ...current, typedAnswer: 'ran' }), false, 'typing');
   assert.equal(changed({ ...current, revealed: true }), false, 'showing the answer');
   assert.equal(changed({ ...current, index: 3 }), true, 'another card');
-  assert.equal(changed({ ...current, grades: [...current.grades, { itemId: 'c', rating: 'easy' }] }), true, 'a grade');
+  assert.equal(changed({ ...current, grades: [...current.grades, { itemId: 'c', rating: 'easy', at: NOW }] }), true, 'a grade');
   assert.equal(changed({ ...current, grades: current.grades.slice(0, -1) }), true, 'an undo');
   assert.equal(changed({ ...current, itemIds: [...current.itemIds, 'c'] }), true, 'a card brought back');
   assert.equal(changed({ ...current, id: 'session-2' }), true, 'another session');

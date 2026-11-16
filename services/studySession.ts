@@ -119,10 +119,12 @@ export const RATINGS = REVIEW_RATINGS;
 
 const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
 
-/** A grade that stands in a session: the card it was given to, and which grade. */
+/** A grade that stands in a session: the card it was given to, which grade, and when. */
 export interface StandingGrade {
   itemId: string;
   rating: ReviewRating;
+  /** When it was given: its review's reviewedAt, which the review stamps as the card's lastReviewDate. */
+  at: number;
 }
 
 /** A review session in progress: the cards it shows, in order, and how far it has got. */
@@ -298,8 +300,13 @@ export function gradeSessionCard(
   };
 }
 
-/** The session after `grade`: on to the next card, unrevealed, with the grade standing. */
-export function advanceSession(session: StudySession, itemIds: string[], grade: StandingGrade, now: number): StudySession {
+/** The session after `grade`, given at `now`: on to the next card, unrevealed, with the grade standing. */
+export function advanceSession(
+  session: StudySession,
+  itemIds: string[],
+  grade: Pick<StandingGrade, 'itemId' | 'rating'>,
+  now: number,
+): StudySession {
   return {
     ...session,
     itemIds,
@@ -308,7 +315,7 @@ export function advanceSession(session: StudySession, itemIds: string[], grade: 
     revealed: false,
     typedAnswer: '',
     promptStartedAt: now,
-    grades: [...session.grades, { itemId: grade.itemId, rating: grade.rating }],
+    grades: [...session.grades, { itemId: grade.itemId, rating: grade.rating, at: now }],
   };
 }
 
@@ -361,14 +368,18 @@ export function findSessionCard(
 
 /**
  * Whether the session still shows a card: it is in the study list (a deleted or archived card isn't), and it
- * wasn't reviewed elsewhere since the session began, by Got it in the review popup or the card view, or on
- * another device. Every review stamps the card's lastReviewDate, the session's own too, so the cards this
- * session graded don't count as reviewed elsewhere.
+ * wasn't reviewed elsewhere (by Got it in the review popup or the card view, or on another device) since the
+ * session began or, for a card the session graded, since the latest of its grades. Every review stamps the card's
+ * lastReviewDate, and the session's own reviews stamp their grade's time (StandingGrade.at), so they don't count
+ * as reviewed elsewhere, while a Got it on a card brought back to the end of the session does.
  */
 export function isSessionCardLive(item: StoredItem | undefined, session: Pick<StudySession, 'startedAt' | 'grades'>): boolean {
   if (!item) return false;
-  if ((item.srs?.lastReviewDate ?? 0) <= session.startedAt) return true;
-  return session.grades.some(grade => grade.itemId === item.data.id);
+  let reviewedHere = session.startedAt;
+  for (const grade of session.grades) {
+    if (grade.itemId === item.data.id && grade.at > reviewedHere) reviewedHere = grade.at;
+  }
+  return (item.srs?.lastReviewDate ?? 0) <= reviewedHere;
 }
 
 /**

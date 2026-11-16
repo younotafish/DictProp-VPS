@@ -111,12 +111,14 @@ export function useReviewOutbox(
       durationMs?: number;
       sessionId?: string;
       eventId?: string;
+      /** When the review was given, if not now: a study session passes the time it keeps with the grade. */
+      reviewedAt?: number;
       /** Materializes an implicit catalog sentence on its first review. */
       seedItem?: StoredItem;
     },
   ): Promise<boolean> => {
     const { updateAfterRating } = fsrsScheduler ?? await loadFsrsScheduler();
-    const now = Date.now();
+    const now = context?.reviewedAt ?? Date.now();
 
     // A deleted record isn't reviewed. A catalog sentence's comes back with the review, through its seed below,
     // in place of the deletion; anything else deleted stays so, and the review does nothing.

@@ -33,7 +33,7 @@ export function encodeStudySession(session: RecordedSession, userId: string, now
     sessionId: session.id,
     itemIds: session.itemIds,
     index: session.index,
-    grades: session.grades.map(({ itemId, rating }) => ({ itemId, rating })),
+    grades: session.grades.map(({ itemId, rating, at }) => ({ itemId, rating, at })),
     startedAt: session.startedAt,
     savedAt: now,
   };
@@ -42,8 +42,12 @@ export function encodeStudySession(session: RecordedSession, userId: string, now
 
 const isString = (value: unknown): value is string => typeof value === 'string';
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
-const isGrade = (value: unknown): value is StandingGrade =>
-  !!value && typeof value === 'object' && isString((value as StandingGrade).itemId) && isReviewRating((value as StandingGrade).rating);
+/** A grade as a record holds it. One written before grades kept their time has no `at`. */
+const isGrade = (value: unknown): value is Omit<StandingGrade, 'at'> & { at?: number } => {
+  if (!value || typeof value !== 'object') return false;
+  const { itemId, rating, at } = value as Record<string, unknown>;
+  return isString(itemId) && isReviewRating(rating) && (at === undefined || isTime(at));
+};
 
 /**
  * The record `raw` holds, when `userId` can take it up at `now`: well formed, theirs, saved within the last six hours
@@ -68,7 +72,8 @@ export function decodeStudySession(raw: string, userId: string, now: number): St
     sessionId,
     itemIds,
     index,
-    grades: grades.map(({ itemId, rating }) => ({ itemId, rating })),
+    // A grade without its time is taken as given when the record was written, the latest it can have been.
+    grades: grades.map(({ itemId, rating, at }) => ({ itemId, rating, at: at ?? savedAt })),
     startedAt,
     savedAt,
   };

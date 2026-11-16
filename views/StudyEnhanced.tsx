@@ -54,10 +54,11 @@ interface StudyEnhancedProps {
   items: StoredItem[];
   /** The review history, and whether a load of it has succeeded yet (useReviewHistory). */
   reviewHistory: ReviewHistory & { loaded?: boolean };
+  /** Records a review. `reviewedAt` is the grade's own time, which the review stamps as the card's lastReviewDate. */
   onReview: (
     itemId: string,
     rating: ReviewRating,
-    context: { taskType: ReviewTaskType; durationMs: number; sessionId: string; eventId: string },
+    context: { taskType: ReviewTaskType; durationMs: number; sessionId: string; eventId: string; reviewedAt: number },
   ) => Promise<boolean>;
   onUndoReview: (eventId: string) => Promise<void>;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
@@ -127,8 +128,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const [undoError, setUndoError] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // A card deleted or archived mid-session, or reviewed elsewhere since it began, is passed over instead of
-  // ending the session there.
+  // A card deleted or archived mid-session, or reviewed elsewhere since it began (or since the session last graded
+  // it), is passed over instead of ending the session there.
   const itemsById = useMemo(() => new Map(items.map(item => [item.data.id, item])), [items]);
   const currentIndex = session
     ? findSessionCard(session.itemIds, session.index, session.passedOverFrom, id => isSessionCardLive(itemsById.get(id), session))
@@ -217,11 +218,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const grade: LastGrade = { ...sessionGrade, undoing: false, waiting: false };
     setLastGrade(grade);
     setUndoError('');
+    // The review is stamped with the time the session keeps with the grade (advanceSession), so the card counts as
+    // reviewed elsewhere only once a review comes after it (isSessionCardLive).
     void onReview(currentItem.data.id, rating, {
       taskType: grade.taskType,
       durationMs: grade.durationMs,
       sessionId: session.id,
       eventId,
+      reviewedAt: now,
     }).then(synced => {
       // Not on the server yet: the receipt says it's saved on this device until the outbox sends it.
       if (synced || !isQueuedReview(userId, eventId)) return;
