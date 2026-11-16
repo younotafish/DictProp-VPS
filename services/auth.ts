@@ -1,4 +1,5 @@
 import { fetchWithin } from './http';
+import { clearStoredStudySession } from './studySessionStore';
 
 export interface AuthUser {
   id: string;
@@ -127,6 +128,7 @@ export async function logout(): Promise<boolean> {
     return false;
   }
   clearCachedAuth(); // drop the offline fallback so we don't resurrect the session
+  clearStoredStudySession(); // and the study session a reload would bring back
   window.location.reload();
   return true;
 }

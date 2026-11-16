@@ -3,7 +3,8 @@
  *
  * Review sessions use the same item-level FSRS state and authoritative event stream as quick review. This
  * component holds the session and its keys; each step of the session (start, grade, undo, cards passed over)
- * is a pure function in services/studySession.ts, and components/study draws the card and the summary.
+ * is a pure function in services/studySession.ts, and components/study draws the card and the summary. The
+ * session's record (services/studySessionRecord.ts) lets it survive a reload.
  */
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -37,10 +38,13 @@ import { isDialogOpenOutside, isKeyboardFocusedControl, isTypingTarget } from '.
 import { useLatest } from '../hooks/useStableValue';
 import { warn } from '../services/logger';
 import { readPendingReviewMutations } from '../services/reviewQueue';
+import { decodeStudySession, encodeStudySession, recordChanged, restoreQueue, restoredSession } from '../services/studySessionRecord';
+import { clearStoredStudySession, readStoredStudySession, writeStoredStudySession } from '../services/studySessionStore';
 
 interface StudyEnhancedProps {
-  /** The signed-in user, whose review outbox tells when a grade has reached the server. Optional until App passes
-   *  it; without it the receipt never says a grade is waiting. */
+  /** The signed-in user, whose review outbox tells when a grade has reached the server, and whose session record a
+   *  reload brings back. Optional until App passes it; without it the receipt never says a grade is waiting, and a
+   *  session doesn't survive a reload. */
   userId?: string;
   items: StoredItem[];
   /** The review history, and whether a load of it has succeeded yet (useReviewHistory). */
@@ -77,6 +81,25 @@ const isQueuedReview = (userId: string | undefined, eventId: string): boolean =>
 
 const revealAnswer = (current: StudySession | null): StudySession | null => current ? { ...current, revealed: true } : null;
 
+/**
+ * The session this user had going on this device before a reload, from its record: at the card it was on, unrevealed,
+ * when the record is theirs, under six hours old and has a card left. A record that can't be taken up is cleared.
+ */
+function restoreSession(userId: string | undefined, items: readonly StoredItem[], now: number): StudySession | null {
+  if (!userId || items.length === 0) return null;
+  const raw = readStoredStudySession();
+  if (raw === null) return null;
+  const record = decodeStudySession(raw, userId, now);
+  const itemsById = new Map(items.map(item => [item.data.id, item]));
+  const index = record && restoreQueue(record, id => itemsById.has(id), id => itemsById.get(id)?.srs?.lastReviewDate ?? 0);
+  if (!record || index === null) {
+    clearStoredStudySession();
+    return null;
+  }
+  const queue = record.itemIds.flatMap(id => itemsById.get(id) ?? []);
+  return restoredSession(record, index, now, sessionSiblingCounts(queue, items));
+}
+
 export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({ 
   userId,
   items, 
@@ -88,7 +111,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   interactionLocked = false,
   onScroll,
 }) => {
-  const [session, setSession] = useState<StudySession | null>(null);
+  const [session, setSession] = useState<StudySession | null>(() => restoreSession(userId, items, Date.now()));
+  // A restored session's last grade may still be in the outbox, so it comes back without its undo.
   const [lastGrade, setLastGrade] = useState<LastGrade | null>(null);
   const [undoError, setUndoError] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -108,6 +132,15 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     if (!session || currentIndex === session.index) return;
     setSession(current => current ? moveSessionTo(current, currentIndex, Date.now()) : null);
   }, [session, currentIndex]);
+
+  // The session's record, written when it starts, grades, undoes or moves to another card, never as an answer is typed
+  // or shown. The newest write wins across tabs. A restored session is already written.
+  const recordedRef = useRef(session);
+  useEffect(() => {
+    if (!session || !userId || !recordChanged(recordedRef.current, session)) return;
+    recordedRef.current = session;
+    writeStoredStudySession(encodeStudySession(session, userId, Date.now()));
+  }, [session, userId]);
 
   const startSession = useCallback((queue: StoredItem[]) => {
     if (queue.length === 0) return;
@@ -206,10 +239,13 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     return () => window.clearTimeout(timer);
   }, [undoError, showingCard]);
 
+  // Done, Esc on a summary, or ending before the first grade: the session is over, and a reload doesn't bring it back.
+  // A session ended early keeps its record, so a reload takes it up at its card.
   const closeSession = () => {
     setLastGrade(null);
     setUndoError('');
     setSession(null);
+    clearStoredStudySession();
   };
 
   // Ending a session after a grade shows its summary, 'Ended early', where Resume takes it up again; with no grade
