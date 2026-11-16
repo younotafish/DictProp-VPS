@@ -11,7 +11,7 @@ const realFetch = globalThis.fetch;
 test.after(() => { globalThis.fetch = realFetch; });
 
 const user = { id: 'u1', email: 'me@example.com', displayName: 'Me', photoUrl: null, isAdmin: true };
-const signedIn = () => storage.setItem('vps_auth_user', JSON.stringify({ user, pending: false }));
+const signedIn = () => storage.setItem('vps_auth_user', JSON.stringify({ user }));
 const signedOut = () => storage.removeItem('vps_auth_user');
 const respondWith = (respond: () => Promise<Response>) => {
   globalThis.fetch = (async () => respond()) as typeof fetch;
@@ -19,14 +19,14 @@ const respondWith = (respond: () => Promise<Response>) => {
 
 test('a signed-in answer is cached, and a 401 or 403 clears the cached session', async () => {
   signedOut();
-  respondWith(async () => Response.json({ user, pending: false }));
-  assert.deepEqual(await checkAuth(), { user, pending: false });
-  assert.deepEqual(JSON.parse(storage.getItem('vps_auth_user')!), { user, pending: false });
+  respondWith(async () => Response.json({ user }));
+  assert.deepEqual(await checkAuth(), { user });
+  assert.deepEqual(JSON.parse(storage.getItem('vps_auth_user')!), { user });
 
   for (const status of [401, 403]) {
     signedIn();
     respondWith(async () => new Response('', { status }));
-    assert.deepEqual(await checkAuth(), { user: null, pending: false });
+    assert.deepEqual(await checkAuth(), { user: null });
     assert.equal(storage.getItem('vps_auth_user'), null);
   }
 });
@@ -38,10 +38,10 @@ test('a server error or no connection opens the cached session offline, or none 
   ]) {
     respondWith(respond);
     signedIn();
-    assert.deepEqual(await checkAuth(), { user, pending: false, offline: true });
+    assert.deepEqual(await checkAuth(), { user, offline: true });
     assert.ok(storage.getItem('vps_auth_user'), 'the cached session stays');
     signedOut();
-    assert.deepEqual(await checkAuth(), { user: null, pending: false });
+    assert.deepEqual(await checkAuth(), { user: null });
   }
 });
 
@@ -58,14 +58,23 @@ test('a check that stalls gives up after ten seconds and opens the cached sessio
   await Promise.resolve();
   assert.equal(settled, false);
   t.mock.timers.tick(1);
-  assert.deepEqual(await pending, { user, pending: false, offline: true });
+  assert.deepEqual(await pending, { user, offline: true });
 });
 
 test('launch opens with a cached session, but not with one that has no id', () => {
   signedIn();
-  assert.deepEqual(initialAuthState(), { user, pending: false, loading: false });
-  storage.setItem('vps_auth_user', JSON.stringify({ user: { email: 'me@example.com' }, pending: false }));
-  assert.deepEqual(initialAuthState(), { user: null, pending: false, loading: true });
+  assert.deepEqual(initialAuthState(), { user, loading: false });
+  storage.setItem('vps_auth_user', JSON.stringify({ user: { email: 'me@example.com' } }));
+  assert.deepEqual(initialAuthState(), { user: null, loading: true });
   storage.setItem('vps_auth_user', '{damaged');
-  assert.deepEqual(initialAuthState(), { user: null, pending: false, loading: true });
+  assert.deepEqual(initialAuthState(), { user: null, loading: true });
+});
+
+test('a session cached by an older build, with its pending flag, still opens signed in', async () => {
+  for (const pending of [false, true]) {
+    storage.setItem('vps_auth_user', JSON.stringify({ user, pending }));
+    assert.deepEqual(initialAuthState(), { user, loading: false });
+    respondWith(() => Promise.reject(new TypeError('Failed to fetch')));
+    assert.deepEqual(await checkAuth(), { user, offline: true });
+  }
 });

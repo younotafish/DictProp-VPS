@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
-import { logout } from '../services/auth';
+import React from 'react';
 
 // The screens App shows in place of the library: while sign-in is checked or the library is read, to someone
-// signed out, to an account awaiting approval, and when this device's copy of the library can't be read.
+// signed out, and when this device's copy of the library can't be read.
 
 export const LoadingScreen: React.FC = () => (
   <div className="fixed inset-0 bg-white flex items-center justify-center">
@@ -32,27 +31,6 @@ export const SignInScreen: React.FC<{ onSignIn: () => void }> = ({ onSignIn }) =
     </div>
   </div>
 );
-
-export const PendingApprovalScreen: React.FC = () => {
-  // Signing out needs the server; offline the screen says so instead of doing nothing. There's no library
-  // behind this screen, so nothing waits to be sent first.
-  const [signOutFailed, setSignOutFailed] = useState(false);
-  return (
-    <div className="fixed inset-0 bg-gradient-to-br from-amber-50 to-white flex items-center justify-center">
-      <div className="text-center space-y-4 p-8">
-        <div className="w-12 h-12 mx-auto bg-amber-100 rounded-full flex items-center justify-center">
-          <span className="text-2xl">⏳</span>
-        </div>
-        <h2 className="text-xl font-semibold text-slate-800">Pending Approval</h2>
-        <p className="text-slate-500 max-w-sm">Your account is awaiting admin approval. Please check back later.</p>
-        <button onClick={async () => setSignOutFailed(!(await logout()))} className="text-sm text-slate-400 hover:text-slate-600 underline">Sign out</button>
-        {signOutFailed && (
-          <p role="alert" className="text-sm text-rose-600">Couldn{'\u2019'}t reach the server, so you{'\u2019'}re still signed in.</p>
-        )}
-      </div>
-    </div>
-  );
-};
 
 export const LibraryReadFailedScreen: React.FC<{
   onRetry: () => void;

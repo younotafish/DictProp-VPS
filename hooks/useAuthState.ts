@@ -8,12 +8,12 @@ export function useAuthState(): AuthState {
 
   useEffect(() => {
     // An unchanged session keeps its state, so confirming it re-renders nothing.
-    const applyAuth = ({ user, pending }: { user: AuthUser | null; pending: boolean }) => {
-      setAuthState(current => !current.loading && current.pending === pending && isSameAuthUser(current.user, user)
+    const applyAuth = ({ user }: { user: AuthUser | null }) => {
+      setAuthState(current => !current.loading && isSameAuthUser(current.user, user)
         ? current
-        : { user, pending, loading: false });
+        : { user, loading: false });
     };
-    checkAuth().then(applyAuth).catch(() => applyAuth({ user: null, pending: false }));
+    checkAuth().then(applyAuth).catch(() => applyAuth({ user: null }));
     const handleAuthRequired = () => { void checkAuth().then(applyAuth); };
     window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);

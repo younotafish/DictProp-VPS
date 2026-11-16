@@ -6,7 +6,7 @@ import { loginRedirect, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
-import { LibraryReadFailedScreen, LoadingScreen, PendingApprovalScreen, SignInScreen } from './components/AppGateScreens';
+import { LibraryReadFailedScreen, LoadingScreen, SignInScreen } from './components/AppGateScreens';
 import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppBanners, AppStatusPills } from './components/AppStatus';
 import { useFrozenWhile } from './hooks/useStableValue';
@@ -421,17 +421,13 @@ const App: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, []);
 
-  // Auth gate: show login/pending/loading before the main app
+  // Auth gate: show login/loading before the main app
   if (authState.loading) {
     return <LoadingScreen />;
   }
 
   if (!authState.user) {
     return <SignInScreen onSignIn={loginRedirect} />;
-  }
-
-  if (authState.pending) {
-    return <PendingApprovalScreen />;
   }
 
   return <SignedInApp key={authState.user.id} user={authState.user} />;
