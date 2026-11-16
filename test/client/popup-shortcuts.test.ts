@@ -42,7 +42,11 @@ test('on a saved meaning R is Got it, Shift+R resets and D deletes; Cmd+D and Ct
   assert.deepEqual(action(key('D', { shiftKey: true })), { type: 'delete' });
   assert.equal(action(key('d', { metaKey: true })), null);
   assert.equal(action(key('d', { ctrlKey: true })), null);
-  assert.equal(action(key('Enter')), null, 'Enter does nothing on a saved meaning');
+});
+
+test("Enter does nothing on a saved meaning, so it can't press a clicked Got it or armed delete again", () => {
+  assert.deepEqual(action(key('Enter')), { type: 'swallow' }, 'the popup keeps Enter from the button the mouse clicked');
+  assert.equal(action(key('Enter'), { onControl: true }), null, 'a control the keyboard moved to still takes Enter');
 });
 
 test('on an unsaved meaning R and Enter save it, D does nothing, and Enter on a focused control presses it', () => {

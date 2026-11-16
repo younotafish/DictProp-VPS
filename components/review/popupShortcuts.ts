@@ -7,6 +7,8 @@
  * - Cmd/Ctrl+1–4 read that example; E reads the first two in turn.
  * - On a saved meaning R is Got it, Shift+R resets and D deletes (after a confirming second press);
  *   on an unsaved one R and Enter save it.
+ * - Enter on a saved meaning does nothing ('swallow'), so it can't press a button the mouse clicked (Got it, the
+ *   armed delete) a second time; a control the keyboard moved to still takes Space and Enter.
  */
 export type PopupAction =
   | { type: 'prev' }
@@ -18,7 +20,8 @@ export type PopupAction =
   | { type: 'gotIt' }
   | { type: 'reset' }
   | { type: 'save' }
-  | { type: 'delete' };
+  | { type: 'delete' }
+  | { type: 'swallow' };
 
 export type PopupKey = Pick<KeyboardEvent, 'key' | 'shiftKey' | 'metaKey' | 'ctrlKey'>;
 
@@ -47,7 +50,10 @@ export function resolvePopupShortcut(event: PopupKey, state: PopupKeyState): Pop
     if (!state.saved) return { type: 'save' };
     return { type: event.shiftKey ? 'reset' : 'gotIt' };
   }
-  if (key === 'Enter') return !state.saved && !state.onControl ? { type: 'save' } : null;
+  if (key === 'Enter') {
+    if (state.onControl) return null;
+    return state.saved ? { type: 'swallow' } : { type: 'save' };
+  }
   if (key === 'd' || key === 'D') return state.saved && !event.metaKey && !event.ctrlKey ? { type: 'delete' } : null;
   return null;
 }

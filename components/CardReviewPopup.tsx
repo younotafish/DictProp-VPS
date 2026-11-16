@@ -246,7 +246,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
       const action = resolvePopupShortcut(e, {
         typing: isTypingTarget(e.target),
         // Space and Enter press a control the keyboard moved to (Close, Got it, a toggle). A clicked one keeps
-        // focus too, but then they are the shortcuts, so a click followed by Space never presses it again.
+        // focus too, but then they are the shortcuts, so a click followed by Space or Enter never presses it again.
         onControl: isKeyboardFocusedControl(e.target),
         pageCount: count,
         saved: !!currentSaved,
@@ -270,6 +270,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         case 'reset': handleReset(); break;
         case 'save': handleSaveThis(); break;
         case 'delete': handleDelete(); break;
+        case 'swallow': break;
       }
     };
     window.addEventListener('keydown', onKey);
