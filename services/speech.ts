@@ -85,6 +85,15 @@ export const cancelSpeech = (): void => {
   try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
 };
 
+// A page coming back from the background can find the engine stuck (iOS), so returning resets it, along with any
+// utterance still waiting for the voices. Everything that speaks imports this module, so the reset is in place
+// before anything can speak.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') cancelSpeech();
+  });
+}
+
 /**
  * Speak the given text using browser's speech synthesis.
  *

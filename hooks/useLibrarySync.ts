@@ -138,9 +138,7 @@ export function useLibrarySync(
   // Save data when app goes to background. Returning triggers the delta pull below.
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        window.speechSynthesis?.cancel();
-      } else if (saveNow('on visibility change')) {
+      if (document.visibilityState !== 'visible' && saveNow('on visibility change')) {
         // Best-effort server push before the OS suspends the page
         pushDirtyItems().catch(e => {
           warn("Server push on background failed:", e);
