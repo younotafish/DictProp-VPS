@@ -1,6 +1,5 @@
 import { useCallback, useRef } from 'react';
 import type { StoredItem, VocabCard } from '../types';
-import { analyzeInput } from '../services/api';
 import { makeVocabStoredItem } from '../services/items';
 import { normalizeKey } from '../services/wordMatch';
 
@@ -16,6 +15,8 @@ export function useSenseLookup(handleSave: (item: StoredItem) => void) {
     const cached = senseCacheRef.current.get(key);
     if (cached) return cached;
     try {
+      // The AI client stays out of the first chunk: App fetches it once the first screen is up.
+      const { analyzeInput } = await import('../services/api/ai');
       // A marked term is one expression, even when it's several words long.
       const r = await analyzeInput(word, { mode: 'batch' });
       const vocabs = Array.isArray(r?.vocabs) ? (r.vocabs as VocabCard[]) : [];

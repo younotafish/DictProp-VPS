@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { analyzeInput } from '../services/api';
 import type { BatchImportProgress } from '../services/batchImport';
 import { warn } from '../services/logger';
 import type { Library } from './useLibrary';
@@ -22,7 +21,11 @@ export function useBatchImport(
   const handleBatchImport = useCallback(async (words: string[]) => {
     if (words.length === 0) return;
 
-    const { runBatchImport } = await import('../services/libraryTools');
+    // The import's work and the AI client stay out of the first chunk; App fetches both once the first screen is up.
+    const [{ runBatchImport }, { analyzeInput }] = await Promise.all([
+      import('../services/libraryTools'),
+      import('../services/api/ai'),
+    ]);
     const outcome = await runBatchImport(words, {
       items: () => latestItemsRef.current,
       analyze: word => analyzeInput(word, { mode: 'batch' }),
