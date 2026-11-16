@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { primeKeepAlive } from '../../services/neuralTts';
 import { useLatest } from '../../hooks/useStableValue';
+import { useWakeLock } from './useWakeLock';
 
 // The settings each auto-play control cycles through.
 const SPEED_PRESETS = [1000, 1500, 2000, 3000, 5000];   // ms each slide shows
@@ -30,41 +31,10 @@ export function useAutoPlay() {
   const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between every read (repeats + distinct sentences)
   const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
 
-  // Keep the screen awake while EITHER auto-play mode is active, so the phone doesn't
-  // auto-dim/lock and pause playback. Wake lock auto-releases when the tab is hidden, so we
-  // re-acquire on visibilitychange. (Requires HTTPS + iOS 16.4+; manual lock still suspends.)
-  useEffect(() => {
-    if (!isAutoPlaying && !isSentenceAutoPlaying) return;
-    const wakeLockApi = (navigator as Partial<Pick<Navigator, 'wakeLock'>>).wakeLock;
-    if (!wakeLockApi?.request) return;
-
-    let sentinel: WakeLockSentinel | null = null;
-    let cancelled = false;
-
-    const acquire = async () => {
-      try {
-        const lock = await wakeLockApi.request('screen');
-        if (cancelled) { lock.release?.(); return; }
-        sentinel = lock;
-      } catch {
-        // Ignore — user may have denied, or document not visible
-      }
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible' && !sentinel) acquire();
-    };
-
-    acquire();
-    document.addEventListener('visibilitychange', onVisibility);
-
-    return () => {
-      cancelled = true;
-      document.removeEventListener('visibilitychange', onVisibility);
-      sentinel?.release?.();
-      sentinel = null;
-    };
-  }, [isAutoPlaying, isSentenceAutoPlaying]);
+  // Keep the screen awake while EITHER auto-play mode is active, so the phone doesn't auto-dim/lock and pause
+  // playback; the browser lets the lock go whenever the page is hidden, and it's taken again on the way back
+  // (useWakeLock). Requires HTTPS + iOS 16.4+; a manual lock still suspends.
+  useWakeLock(isAutoPlaying || isSentenceAutoPlaying, false);
 
   // How long each slide shows; useWordSlideshow reads it as each slide starts.
   const autoPlaySpeedRef = useLatest(autoPlaySpeed);
