@@ -154,12 +154,29 @@ test('the sentence playing already moves to the word in place; seekOnly never st
   assert.deepEqual(engine.getPlaybackState(), { text: null, status: 'idle' }, 'nothing starts');
 });
 
-test('a read made up on the spot asks the server for nothing when it misses', async () => {
-  const text = `Made up on the spot, number ${++sentences}`;
-  const before = server.generated.length;
-  engine.speakNatural(text, { generateOnMiss: false });
-  await until(() => media.synth.last?.text === text, 'the system voice reads');
-  assert.equal(server.generated.length, before);
+test('without timings the rest is read at once, and no clip of it is looked up or asked for, though an older version made one', async () => {
+  for (const style of ['clear', 'casual'] as const) {
+    setTtsStyle(style);
+    try {
+      // The sentence's own clip has no timings, so it can't start at the word.
+      const text = await sentence({ [style === 'clear' ? 'Mia' : 'casual']: false });
+      const rest = text.slice(OFFSET_OF_BROWN);
+      const restKeys = [await ttsKey(rest, 'Mia'), await ttsKey(rest, 'casual')];
+      for (const key of restKeys) {
+        server.clips.set(key, clip());
+        server.timings.set(key, TIMINGS);
+      }
+      const requests = server.requests.length;
+      const generated = server.generated.length;
+      engine.speakNaturalAt(text, OFFSET_OF_BROWN);
+      await until(() => media.synth.last?.text === rest, `the system voice reads the rest (${style})`);
+      assert.deepEqual(engine.getPlaybackState(), { text, status: 'loading' }, 'still shown as the whole sentence');
+      assert.ok(!server.requests.slice(requests).some(url => restKeys.some(key => url.includes(key))), `no clip of the rest is looked up (${style})`);
+      assert.ok(!server.generated.slice(generated).some(item => item.text === rest), `none is asked for (${style})`);
+    } finally {
+      setTtsStyle('clear');
+    }
+  }
 });
 
 test('sentence review\'s word tap plays the sentence from the word inside the tap; during auto-play it starts nothing', async () => {

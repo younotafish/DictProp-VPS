@@ -83,9 +83,6 @@ export interface SpeakOptions {
   allowDownload?: boolean;
   /** Start playback this many seconds into the clip (word-level seek). Cached-clip path only. */
   startAt?: number;
-  /** Whether a miss asks the server to make this text's clip (or its missing timings) for next time. Defaults to true;
-   *  a text made up on the spot, such as the rest of a sentence from a word, shouldn't mint a clip of its own. */
-  generateOnMiss?: boolean;
   /** The read reached its end. */
   onEnd?: () => void;
   /** The read failed for good (nothing played it to the end). */
@@ -149,25 +146,38 @@ const beginRequest = (displayText: string, opts: SpeakOptions): { read: ReadCont
   };
 };
 
-/** How readText reads: from where in the clip, and what a miss may start. */
+/** Read `plain` with the system voice as the request `read`. */
+const readWithSystemVoice = (plain: string, { markStart, markEnd, markError }: ReadContext): void => {
+  // A browser without a speech engine would otherwise leave the read loading for good.
+  if (!playSpeech(plain, { rate: getPlaybackRate(), onStart: markStart, onEnd: markEnd, onError: markError })) {
+    markError(new Error('This browser has no speech engine'));
+  }
+};
+
+/**
+ * Read `plain`, which has no clip, as the request `read`: by the Kokoro voice everywhere but iOS/iPadOS, when its model
+ * is loaded or `allowDownload` lets this read start the one-time download; otherwise, or when Kokoro is declined or
+ * fails, by the system voice.
+ */
+const readWithoutClip = async (plain: string, read: ReadContext, allowDownload: boolean): Promise<void> => {
+  const systemFallback = () => readWithSystemVoice(plain, read);
+  if (isIOS()) { systemFallback(); return; }
+  const { isCurrent, markStart, markEnd, markError } = read;
+  await speakViaKokoro(plain, { onStart: markStart, onEnd: markEnd, onError: markError, allowDownload }, isCurrent, systemFallback);
+};
+
+/** How readText reads: from where in the clip, and whether a miss may start the Kokoro download. */
 interface ReadPlan {
   startAt?: number;
   allowDownload: boolean;
-  /** Ask the server to make the clip (or its timings) that's missing, for next time. */
-  generateOnMiss: boolean;
 }
 
 /** Read `plain` with the best voice there is (the order at the top of this file) as the request `read`, in `style`. */
 const readText = async (plain: string, style: TtsStyle, read: ReadContext, plan: ReadPlan): Promise<void> => {
   const { isCurrent, markStart, markEnd, markError } = read;
+  // Ask the server to make the clip (or its timings) that's missing, for next time.
   const generate = (voice: string) => {
-    if (plan.generateOnMiss) requestTTSGeneration([{ text: plain, voice }]).catch(() => { /* best-effort */ });
-  };
-  const systemFallback = () => {
-    // A browser without a speech engine would otherwise leave the read loading for good.
-    if (!playSpeech(plain, { rate: getPlaybackRate(), onStart: markStart, onEnd: markEnd, onError: markError })) {
-      markError(new Error('This browser has no speech engine'));
-    }
+    requestTTSGeneration([{ text: plain, voice }]).catch(() => { /* best-effort */ });
   };
 
   // Resolve per-word timings to trim the quiet lead-in, but WITHOUT blocking the tap on the fetch: we
@@ -204,12 +214,11 @@ const readText = async (plain: string, style: TtsStyle, read: ReadContext, plan:
 
     // 3) MISS — fill the clear cache for next time (fire-and-forget), then fall back now (no timings).
     generate(STYLE_VOICES.clear.generate);
-    if (isIOS()) { systemFallback(); return; }
-    await speakViaKokoro(plain, { onStart: markStart, onEnd: markEnd, onError: markError, allowDownload: plan.allowDownload }, isCurrent, systemFallback);
+    await readWithoutClip(plain, read, plan.allowDownload);
   } catch (err) {
     if (!isCurrent()) return;
     warn('🔊 TTS chain failed, falling back to system voice', err);
-    systemFallback();
+    readWithSystemVoice(plain, read);
   }
 };
 
@@ -222,16 +231,12 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   if (!plain) return INACTIVE_HANDLE;
   const { read, handle } = beginRequest(plain, opts);
   // Capture the style for THIS call so a mid-play toggle can't switch tracks underneath it.
-  void readText(plain, getTtsStyle(), read, {
-    startAt: opts.startAt,
-    allowDownload: opts.allowDownload ?? true,
-    generateOnMiss: opts.generateOnMiss ?? true,
-  });
+  void readText(plain, getTtsStyle(), read, { startAt: opts.startAt, allowDownload: opts.allowDownload ?? true });
   return handle;
 };
 
 /** How speakNaturalAt plays from a word. It never starts the Kokoro download, and never has a fragment's clip made. */
-export interface SpeakAtOptions extends Omit<SpeakOptions, 'startAt' | 'generateOnMiss' | 'allowDownload'> {
+export interface SpeakAtOptions extends Omit<SpeakOptions, 'startAt' | 'allowDownload'> {
   /**
    * Only move the sentence's clip, if it's the one playing or paused, to the word; never start a read. Auto-play's
    * chain owns the audio while it runs, so a word tap then only seeks its clip.
@@ -245,16 +250,18 @@ const currentRequestHandle = (): SpeakHandle => {
   return { stop: () => { if (isCurrent()) stopCurrent(); }, isActive: isCurrent };
 };
 
-// The clip the current request plays, so a word tap can find its timings at once. Only while that request is current.
+// The clip the current request plays, always one of the sentence it shows, so a word tap can find its timings at once.
+// Only while that request is current.
 let activeClip: { key: string; isCurrent: () => boolean } | null = null;
 
 /**
  * Play the sentence `fullText` from the word at `charOffset`, a character index in the sentence as shown (markers
  * stripped, HighlightedSentence's data-word-offset). The speakers show the whole sentence loading from the tap on. When
  * the sentence's clip is already playing or paused, it moves there in place. Otherwise the sentence's own clip (the one
- * speakNatural would play, in its voice) starts at the word, once its timings arrive within 400 ms; without them the
- * rest of the sentence from the word is read, still shown as the whole sentence, and the server is asked for the whole
- * sentence's clip rather than the fragment's. It never starts the Kokoro download.
+ * speakNatural would play, in its voice) starts at the word, once its timings arrive within 400 ms. Without them the
+ * rest of the sentence from the word is read at once, still shown as the whole sentence: no clip of it exists, so none
+ * is looked up, it's read by the system voice (or Kokoro, if its model is already loaded), and the server is asked for
+ * the whole sentence's clip rather than the fragment's. It never starts the Kokoro download.
  */
 export const speakNaturalAt = (fullText: string, charOffset: number, opts: SpeakAtOptions = {}): SpeakHandle => {
   const shown = stripSentenceMarkers(fullText);
@@ -275,7 +282,7 @@ export const speakNaturalAt = (fullText: string, charOffset: number, opts: Speak
   if (opts.seekOnly) return INACTIVE_HANDLE;
 
   const { read, handle } = beginRequest(plain, opts);
-  const readRemainder = () => readText(remainder, style, read, { allowDownload: false, generateOnMiss: false });
+  const readRemainder = () => readWithoutClip(remainder, read, false);
   void (async () => {
     try {
       const clip = await resolvePlayableClip(plain, style, { stillWanted: read.isCurrent });
