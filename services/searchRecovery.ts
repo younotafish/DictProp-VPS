@@ -1,3 +1,4 @@
+import { defaultSessionStorage, parseJson, type StorageLike } from './browserStorage';
 import { HttpError } from './http';
 
 export interface PendingSearchRetry {
@@ -6,15 +7,6 @@ export interface PendingSearchRetry {
 }
 
 const SEARCH_RETRY_KEY = 'dictprop_pending_search_retry';
-type SessionStorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
-
-const getSessionStorage = (): SessionStorageLike | null => {
-  try {
-    return typeof sessionStorage === 'undefined' ? null : sessionStorage;
-  } catch {
-    return null;
-  }
-};
 
 export function isAuthenticationError(error: unknown): error is HttpError {
   return error instanceof HttpError && error.status === 401;
@@ -30,7 +22,7 @@ export function isRetryableSearchError(error: unknown): boolean {
   return error.status === 401 || error.status === 408 || error.status === 429;
 }
 
-export function rememberSearchRetry(retry: PendingSearchRetry, storage: SessionStorageLike | null = getSessionStorage()): void {
+export function rememberSearchRetry(retry: PendingSearchRetry, storage: StorageLike | null = defaultSessionStorage()): void {
   if (!storage || !retry.query.trim()) return;
   try {
     storage.setItem(SEARCH_RETRY_KEY, JSON.stringify(retry));
@@ -39,13 +31,13 @@ export function rememberSearchRetry(retry: PendingSearchRetry, storage: SessionS
   }
 }
 
-export function consumeSearchRetry(storage: SessionStorageLike | null = getSessionStorage()): PendingSearchRetry | null {
+export function consumeSearchRetry(storage: StorageLike | null = defaultSessionStorage()): PendingSearchRetry | null {
   if (!storage) return null;
   try {
     const raw = storage.getItem(SEARCH_RETRY_KEY);
     storage.removeItem(SEARCH_RETRY_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as PendingSearchRetry;
+    const parsed = parseJson(raw) as PendingSearchRetry | null;
     if (!parsed || typeof parsed.query !== 'string' || !parsed.query.trim()) return null;
     return { query: parsed.query, ...(parsed.analyzeMode === 'batch' ? { analyzeMode: 'batch' as const } : {}) };
   } catch {

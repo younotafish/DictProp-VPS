@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mergeComparisons, readCachedComparisons, writeCachedComparisons } from '../../components/search/storedComparisons.ts';
+import { defaultSessionStorage, defaultStorage } from '../../services/browserStorage.ts';
 import type { StoredComparison } from '../../types.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
@@ -37,6 +38,38 @@ test('storage that refuses a write or a read is ignored', () => {
   };
   assert.doesNotThrow(() => writeCachedComparisons('user-a', [comparison('a|b', 1)], broken));
   assert.equal(readCachedComparisons('user-a', broken), null);
+});
+
+/** Runs `body` with the global `name` defined by `descriptor`, then puts back what was there. */
+function withGlobal(name: 'localStorage' | 'sessionStorage', descriptor: PropertyDescriptor, body: () => void): void {
+  const original = Object.getOwnPropertyDescriptor(globalThis, name);
+  Object.defineProperty(globalThis, name, { configurable: true, ...descriptor });
+  try {
+    body();
+  } finally {
+    if (original) Object.defineProperty(globalThis, name, original);
+    else Reflect.deleteProperty(globalThis, name);
+  }
+}
+// What a browser that blocks storage (Safari with all cookies blocked, a sandboxed frame) does when the page touches it.
+const refused: PropertyDescriptor = { get() { throw new DOMException('The operation is insecure.', 'SecurityError'); } };
+
+test('with the browser refusing its storage, the cache reads as nothing and writes nowhere', () => {
+  withGlobal('localStorage', refused, () => {
+    assert.equal(readCachedComparisons('user-a'), null);
+    assert.doesNotThrow(() => writeCachedComparisons('user-a', [comparison('a|b', 1)]));
+  });
+});
+
+// browserStorage's getters: the search retry takes sessionStorage from there, the review outbox localStorage.
+test("the device storage getters hand out the browser's storage, or none where it is missing or refused", () => {
+  const storage = new MemoryStorage();
+  withGlobal('sessionStorage', { value: storage }, () => assert.equal(defaultSessionStorage(), storage));
+  withGlobal('sessionStorage', { value: undefined }, () => assert.equal(defaultSessionStorage(), null));
+  withGlobal('sessionStorage', refused, () => assert.equal(defaultSessionStorage(), null));
+  withGlobal('localStorage', { value: storage }, () => assert.equal(defaultStorage(), storage));
+  withGlobal('localStorage', { value: undefined }, () => assert.equal(defaultStorage(), null));
+  withGlobal('localStorage', refused, () => assert.equal(defaultStorage(), null));
 });
 
 test('the server list comes first, each entry replaced by a newer copy from this device', () => {
