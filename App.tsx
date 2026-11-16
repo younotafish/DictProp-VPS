@@ -104,7 +104,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   } = detail;
   const undo = useUndoOffer(library, detail);
   const { undoMessage, closeUndoOffer, undoLastChange } = undo;
-  const { navRef, revealNav, handleScroll } = useNavBar(currentView);
+  const { navRef, revealNav, handleScroll, navigate } = useNavBar(currentView, setCurrentView);
   const mainRef = useRef<HTMLElement>(null);
   const overlays = useOverlays(allActiveItems);
   const {
@@ -125,7 +125,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   // The console's item inspector, for diagnosing sync and schedule problems: __debugItems('atlas').
   useEffect(() => installDebugItems(() => latestItemsRef.current), [latestItemsRef]);
 
-  useAppShortcuts(setCurrentView, detail, overlays, { undoMessage, undoLastChange, modalOpen });
+  useAppShortcuts(navigate, detail, overlays, { undoMessage, undoLastChange, modalOpen });
   const { isOnline, showOfflineBanner } = useOnlineStatus();
   const offlineImages = useOfflineImages(library);
   const { imagePrefetchProgress, imageRestoreProgress, stopImageDownload, handleDownloadOfflineImages, handleRestoreImagesToServer } = offlineImages;
@@ -388,7 +388,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         <AppNavigation
           ref={navRef}
           currentView={currentView}
-          onNavigate={setCurrentView}
+          onNavigate={navigate}
           sentenceDueCount={sentenceDueCount}
           onKeyboardHelp={openKeyboardHelp}
           covered={overlayOpen}
