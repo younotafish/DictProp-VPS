@@ -79,3 +79,24 @@ test('saving a deleted sense again brings the card back with its history', () =>
   assert.equal(items()[0].isDeleted, undefined);
   assert.equal(items()[0].srs.totalReviews, 5, 'the deleted card\'s schedule, not the fresh one');
 });
+
+test('a saved sentence is stored as services/items builds it, under a fresh id, with the copy\'s truthy fields', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
+  const { actions, items } = renderActions([]);
+  actions.handleSaveSentence('Mind the gap.', 'gap', 'noun: space', {
+    id: 'catalog-line', text: 'Mind the gap.', sourceWord: 'gap', catalogKind: 'real-life', catalogSentenceId: 'line-1',
+    catalogCollectionId: 'london', catalogTitle: '', preferredSpeechStyle: 'casual',
+  });
+  const [sentence] = items();
+  assert.equal(items().length, 1);
+  assert.equal(sentence.type, 'sentence');
+  assert.notEqual(sentence.data.id, 'catalog-line', 'never the copy\'s id');
+  assert.deepEqual(sentence.data, {
+    id: sentence.data.id, text: 'Mind the gap.', sourceWord: 'gap', sourceSense: 'noun: space',
+    preferredSpeechStyle: 'casual', catalogSentenceId: 'line-1', catalogCollectionId: 'london', catalogKind: 'real-life',
+  }, 'an empty title is left out');
+  assert.equal(sentence.srs.id, sentence.data.id);
+  assert.equal(sentence.srs.type, 'sentence');
+  assert.equal(sentence.srs.totalReviews, 0);
+  assert.equal(sentence.savedAt, 1_700_000_000_000);
+});

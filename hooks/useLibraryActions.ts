@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { IMAGE_IDB_MARKER, attachImage, extractInlineImages, offloadImages, restoreInlineImages, unsavedImages } from '../services/libraryImages';
-import { findSavedCopyIndex, makeVocabStoredItem, saveOverExisting } from '../services/items';
+import { findSavedCopyIndex, makeSentenceStoredItem, makeVocabStoredItem, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { planReset, unarchiveUndo } from '../services/undoRules';
 import { log, logError, warn } from '../services/logger';
@@ -163,28 +163,9 @@ export function useLibraryActions(
     await persistChangedItems([unarchived], 'Unarchive');
   }, [latestItemsRef, replaceItem, persistChangedItems, offerUndo]);
 
-  // Save sentence for review
+  // Save a sentence for review, as services/items builds it from the copy the screen holds.
   const handleSaveSentence = useCallback((text: string, sourceWord: string, sourceSense?: string, prepared?: SentenceData) => {
-    const sentenceData: SentenceData = {
-      id: crypto.randomUUID(),
-      text,
-      sourceWord,
-      sourceSense,
-      ...(prepared?.preferredSpeechStyle ? { preferredSpeechStyle: prepared.preferredSpeechStyle } : {}),
-      ...(prepared?.catalogSentenceId ? { catalogSentenceId: prepared.catalogSentenceId } : {}),
-      ...(prepared?.catalogCollectionId ? { catalogCollectionId: prepared.catalogCollectionId } : {}),
-      ...(prepared?.catalogKind ? { catalogKind: prepared.catalogKind } : {}),
-      ...(prepared?.catalogTitle ? { catalogTitle: prepared.catalogTitle } : {}),
-      ...(prepared?.analysis ? { analysis: prepared.analysis } : {}),
-      ...(prepared?.analysisGeneratedAt ? { analysisGeneratedAt: prepared.analysisGeneratedAt } : {}),
-      ...(prepared?.imageUrl ? { imageUrl: prepared.imageUrl } : {}),
-    };
-    handleSave({
-      data: sentenceData,
-      type: 'sentence',
-      savedAt: Date.now(),
-      srs: SRSAlgorithm.createNew(sentenceData.id, 'sentence'),
-    });
+    handleSave(makeSentenceStoredItem(text, sourceWord, sourceSense, prepared));
   }, [handleSave]);
 
   // Refresh-replace: a real re-run of the AI for an already-saved word replaces its saved card(s).
